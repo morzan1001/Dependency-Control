@@ -140,6 +140,91 @@ async def _backfill_synced_team_gitlab_ids(database: AsyncIOMotorDatabase[Any]) 
         )
 
 
+async def _stamp_team_member_provenance(teams: Any, team: dict) -> bool:
+    """Stamp source="gitlab" on members of one synced team that lack a source tag.
+
+    Returns True if a write was issued. Existing source tags (e.g. a manually-added
+    member explicitly marked "manual") are preserved (Finding 16).
+    """
+    members = team.get("members") or []
+    needs_stamp = any("source" not in m for m in members)
+    if not needs_stamp:
+        return False
+    stamped_members = [
+        m if m.get("source") else {**m, "source": "gitlab"} for m in members
+    ]
+    await teams.update_one({"_id": team["_id"]}, {"$set": {"members": stamped_members}})
+    return True
+
+
+async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[Any]) -> None:
+    """One-time, idempotent provenance backfill for W9 (Findings 16 + 18).
+
+    * TeamMember.source: members of teams that carry a ``gitlab_group_id`` (i.e. teams
+      created/managed by GitLab sync) are stamped ``source="gitlab"``. Members already
+      carrying a source (e.g. an explicitly "manual" member) are left untouched, so
+      manually-added members survive the next merge-sync.
+    * Project.team_source: projects whose ``team_id`` references a gitlab-synced team
+      are stamped ``team_source="gitlab"``. Conservative: only projects with no existing
+      ``team_source`` are touched, so a deliberate "manual" stamp is never overwritten.
+
+    Idempotent (skips already-tagged members/projects) with per-team error isolation,
+    mirroring ``_backfill_synced_team_gitlab_ids``.
+    """
+    teams = database["teams"]
+    projects = database["projects"]
+
+    # A synced team is identified by a non-null gitlab_group_id. $ne null excludes
+    # both manual teams (field absent) and teams with an explicit null.
+    cursor = teams.find(
+        {"gitlab_group_id": {"$ne": None}},
+        {"_id": 1, "members": 1, "gitlab_group_id": 1},
+    )
+    synced_teams = await cursor.to_list(None)
+
+    members_stamped = 0
+    projects_stamped = 0
+    failed = 0
+    for team in synced_teams:
+        team_id = team.get("_id")
+        # Per-team isolation: a single failure (e.g. a write error) must not abort the
+        # loop — this runs before index creation and an unhandled raise would crash
+        # startup for every other team/project.
+        try:
+            # Defensive: never treat a team without a real gitlab_group_id as synced.
+            if not team.get("gitlab_group_id"):
+                continue
+            if await _stamp_team_member_provenance(teams, team):
+                members_stamped += 1
+
+            # Stamp team_source on the synced team's projects, but ONLY where it is
+            # unset (absent or null). Projects already stamped "manual" or "gitlab" are
+            # left untouched — never overwrite a deliberate manual assignment, and keep
+            # the migration idempotent. ($nin matches both missing fields and null.)
+            result = await projects.update_many(
+                {"team_id": team_id, "team_source": {"$nin": ["manual", "gitlab"]}},
+                {"$set": {"team_source": "gitlab"}},
+            )
+            projects_stamped += getattr(result, "modified_count", 0) or 0
+        except Exception:
+            failed += 1
+            logger.exception(
+                "Provenance backfill: failed to process synced team %s; skipping it and "
+                "continuing. It can be reconciled on the next live sync.",
+                team_id,
+            )
+            continue
+
+    if synced_teams:
+        logger.info(
+            "Provenance backfill complete: %d synced team(s) had member sources stamped, "
+            "%d project(s) stamped team_source=gitlab, %d team(s) failed and skipped.",
+            members_stamped,
+            projects_stamped,
+            failed,
+        )
+
+
 async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     """Create indexes for all collections."""
     logger.info("Creating database indexes...")
@@ -148,6 +233,9 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     # Reconcile legacy synced teams BEFORE creating the unique team index, so the
     # index build does not trip over partially-tagged data.
     await _backfill_synced_team_gitlab_ids(database)
+    # Stamp member/project provenance (W9, Findings 16 + 18). Runs after the legacy
+    # instance-id backfill so teams that just gained their instance id are included.
+    await _backfill_member_and_team_provenance(database)
 
     # Users
     await database["users"].create_index("username", unique=True)

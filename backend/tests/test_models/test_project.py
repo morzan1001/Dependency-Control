@@ -24,6 +24,17 @@ class TestProjectModel:
         assert project.id is not None
         assert len(project.id) > 0
 
+    def test_team_source_defaults_to_none(self):
+        # Finding 18: provenance of how team_id was last set. None = unknown/legacy.
+        project = Project(name="test", owner_id="user-1")
+        assert project.team_source is None
+
+    def test_team_source_accepts_manual_and_gitlab(self):
+        manual = Project(name="m", team_id="t-1", team_source="manual")
+        gitlab = Project(name="g", team_id="t-2", team_source="gitlab")
+        assert manual.team_source == "manual"
+        assert gitlab.team_source == "gitlab"
+
 
 class TestProjectMemberModel:
     def test_default_role_is_viewer(self):

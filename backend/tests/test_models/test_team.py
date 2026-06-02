@@ -14,6 +14,16 @@ class TestTeamMember:
         member = TeamMember(user_id="user-1", role="admin")
         assert member.role == "admin"
 
+    def test_source_defaults_to_manual(self):
+        # Finding 16: members default to "manual" so existing/manually-added
+        # members are preserved by the merge sync (not silently dropped).
+        member = TeamMember(user_id="user-1")
+        assert member.source == "manual"
+
+    def test_source_can_be_gitlab(self):
+        member = TeamMember(user_id="user-1", source="gitlab")
+        assert member.source == "gitlab"
+
 
 class TestTeamModel:
     def test_minimal(self):

@@ -19,7 +19,10 @@ import asyncio
 
 import pytest
 
-from app.core.init_db import _backfill_synced_team_gitlab_ids
+from app.core.init_db import (
+    _backfill_synced_team_gitlab_ids,
+    _backfill_member_and_team_provenance,
+)
 from tests.mocks.fake_mongo import FakeDatabase
 
 
@@ -146,6 +149,140 @@ class TestBackfillSyncedTeamIds:
         assert any("team-bad" in r.message for r in caplog.records), (
             f"Per-team failure must be logged. Got: {[r.message for r in caplog.records]}"
         )
+
+
+class TestBackfillProvenance:
+    """W9 / Findings 16 + 18: one-time, idempotent provenance backfill.
+
+    * Members of teams that carry a gitlab_group_id are stamped source="gitlab".
+    * Projects whose team_id references a gitlab-synced team get team_source="gitlab".
+    Both stamps are conservative (only unambiguous cases) and idempotent.
+    """
+
+    def test_stamps_gitlab_source_on_synced_team_members(self):
+        db = FakeDatabase()
+        _seed_team(
+            db,
+            "t-synced",
+            "GitLab Group: acme",
+            gitlab_instance_id="inst-a",
+            gitlab_group_id=42,
+            members=[{"user_id": "u1", "role": "member"}, {"user_id": "u2", "role": "admin"}],
+        )
+
+        asyncio.run(_backfill_member_and_team_provenance(db))
+
+        members = db.teams._docs["t-synced"]["members"]
+        assert all(m["source"] == "gitlab" for m in members)
+
+    def test_does_not_touch_manual_team_members(self):
+        db = FakeDatabase()
+        # Manual team: no gitlab_group_id -> members must stay manual/untouched.
+        _seed_team(db, "t-manual", "Atlas", members=[{"user_id": "u1", "role": "admin"}])
+
+        asyncio.run(_backfill_member_and_team_provenance(db))
+
+        members = db.teams._docs["t-manual"]["members"]
+        # No source stamped (defaults to manual at model level), never "gitlab".
+        assert members[0].get("source") != "gitlab"
+
+    def test_preserves_existing_member_source(self):
+        db = FakeDatabase()
+        _seed_team(
+            db,
+            "t-mixed",
+            "GitLab Group: acme",
+            gitlab_instance_id="inst-a",
+            gitlab_group_id=42,
+            members=[
+                {"user_id": "manual-u", "role": "admin", "source": "manual"},
+                {"user_id": "legacy-u", "role": "member"},
+            ],
+        )
+
+        asyncio.run(_backfill_member_and_team_provenance(db))
+
+        members = {m["user_id"]: m for m in db.teams._docs["t-mixed"]["members"]}
+        # A pre-existing manual member must NOT be flipped to gitlab.
+        assert members["manual-u"]["source"] == "manual"
+        # A legacy (unstamped) member of a synced team becomes gitlab.
+        assert members["legacy-u"]["source"] == "gitlab"
+
+    def test_stamps_team_source_gitlab_on_projects_of_synced_team(self):
+        db = FakeDatabase()
+        _seed_team(db, "t-synced", "GitLab Group: acme", gitlab_instance_id="inst-a", gitlab_group_id=42)
+        _seed_project(db, "p1", "t-synced", gitlab_instance_id="inst-a", gitlab_project_id=1)
+
+        asyncio.run(_backfill_member_and_team_provenance(db))
+
+        assert db.projects._docs["p1"]["team_source"] == "gitlab"
+
+    def test_does_not_stamp_team_source_for_manual_team_projects(self):
+        db = FakeDatabase()
+        _seed_team(db, "t-manual", "Atlas")  # no gitlab_group_id
+        _seed_project(db, "p1", "t-manual")
+
+        asyncio.run(_backfill_member_and_team_provenance(db))
+
+        assert db.projects._docs["p1"].get("team_source") is None
+
+    def test_does_not_overwrite_existing_team_source(self):
+        db = FakeDatabase()
+        _seed_team(db, "t-synced", "GitLab Group: acme", gitlab_instance_id="inst-a", gitlab_group_id=42)
+        # A project already explicitly marked manual must be preserved.
+        _seed_project(db, "p1", "t-synced", team_source="manual")
+
+        asyncio.run(_backfill_member_and_team_provenance(db))
+
+        assert db.projects._docs["p1"]["team_source"] == "manual"
+
+    def test_idempotent_second_run_is_noop(self):
+        db = FakeDatabase()
+        _seed_team(
+            db,
+            "t-synced",
+            "GitLab Group: acme",
+            gitlab_instance_id="inst-a",
+            gitlab_group_id=42,
+            members=[{"user_id": "u1", "role": "member"}],
+        )
+        _seed_project(db, "p1", "t-synced", gitlab_instance_id="inst-a", gitlab_project_id=1)
+
+        asyncio.run(_backfill_member_and_team_provenance(db))
+        teams_first = dict(db.teams._docs["t-synced"])
+        proj_first = dict(db.projects._docs["p1"])
+        asyncio.run(_backfill_member_and_team_provenance(db))
+
+        assert db.teams._docs["t-synced"] == teams_first
+        assert db.projects._docs["p1"] == proj_first
+
+    def test_per_team_failure_is_isolated(self, caplog):
+        db = FakeDatabase()
+        _seed_team(
+            db, "t-bad", "GitLab Group: bad", gitlab_instance_id="inst-a", gitlab_group_id=1,
+            members=[{"user_id": "u1"}],
+        )
+        _seed_team(
+            db, "t-good", "GitLab Group: good", gitlab_instance_id="inst-a", gitlab_group_id=2,
+            members=[{"user_id": "u2"}],
+        )
+
+        original_update_one = db.teams.update_one
+
+        async def failing_update_one(query, update, **kwargs):
+            if query.get("_id") == "t-bad":
+                raise RuntimeError("boom")
+            return await original_update_one(query, update, **kwargs)
+
+        db.teams.update_one = failing_update_one  # type: ignore[method-assign]
+
+        with caplog.at_level("ERROR", logger="app.core.init_db"):
+            asyncio.run(_backfill_member_and_team_provenance(db))  # must NOT raise
+
+        # The good team must still have been stamped despite the bad team failing.
+        good_members = db.teams._docs["t-good"]["members"]
+        assert all(m["source"] == "gitlab" for m in good_members)
+        assert any("t-bad" in r.message for r in caplog.records)
 
 
 if __name__ == "__main__":

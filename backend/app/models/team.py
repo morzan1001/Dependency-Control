@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -12,6 +12,10 @@ from app.models.types import PyObjectId
 class TeamMember(BaseModel):
     user_id: str
     role: str = TEAM_ROLE_MEMBER
+    # Provenance of the membership (Finding 16). Defaults to "manual" so that
+    # existing/manually-added members are preserved by the GitLab merge-sync —
+    # only the "gitlab"-sourced subset is replaced on each sync.
+    source: Literal["gitlab", "manual"] = "manual"
 
     @field_validator("role")
     @classmethod

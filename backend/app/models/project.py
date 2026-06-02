@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -41,6 +41,9 @@ class Project(CreatedAtModel):
     name: str
     owner_id: Optional[str] = None  # Deprecated: use team/member admins instead
     team_id: Optional[str] = None
+    # Provenance of how team_id was last set (Finding 18). "manual" assignments are
+    # never reverted by GitLab sync; "gitlab"/None may be overwritten by sync.
+    team_source: Optional[Literal["gitlab", "manual"]] = None
     members: List[ProjectMember] = Field(default_factory=list)
     api_key_hash: Optional[str] = Field(None, exclude=True)
     active_analyzers: List[str] = Field(default_factory=lambda: ["trivy", "osv", "license_compliance", "end_of_life"])
