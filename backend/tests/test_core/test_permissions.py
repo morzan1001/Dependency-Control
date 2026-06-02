@@ -150,3 +150,21 @@ class TestPresets:
         assert Permissions.ARCHIVE_RESTORE not in PRESET_VIEWER
         assert Permissions.ARCHIVE_DOWNLOAD not in PRESET_VIEWER
         assert Permissions.ARCHIVE_READ_ALL not in PRESET_VIEWER
+
+    # Chat + MCP for regular users
+    def test_user_has_chat_and_mcp(self):
+        assert Permissions.CHAT_ACCESS in PRESET_USER
+        assert Permissions.CHAT_HISTORY_READ in PRESET_USER
+        assert Permissions.CHAT_HISTORY_DELETE in PRESET_USER
+        assert Permissions.MCP_ACCESS in PRESET_USER
+
+    # Analytics stays own-projects-only: no global analytics / read-all projects
+    def test_user_analytics_is_own_projects_only(self):
+        assert Permissions.ANALYTICS_GLOBAL not in PRESET_USER
+        assert Permissions.PROJECT_READ_ALL not in PRESET_USER
+
+    def test_viewer_has_no_chat_or_mcp(self):
+        assert Permissions.CHAT_ACCESS not in PRESET_VIEWER
+        assert Permissions.CHAT_HISTORY_READ not in PRESET_VIEWER
+        assert Permissions.CHAT_HISTORY_DELETE not in PRESET_VIEWER
+        assert Permissions.MCP_ACCESS not in PRESET_VIEWER

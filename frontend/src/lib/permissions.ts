@@ -153,6 +153,11 @@ export const PRESET_USER: Permission[] = [
   Permissions.ARCHIVE_READ,
   Permissions.ARCHIVE_DOWNLOAD,
   // Webhooks - managed via project roles (admin), no global override needed
+  // Chat + MCP for regular users; analytics stays own-projects-only (no analytics:global / project:read_all)
+  Permissions.CHAT_ACCESS,
+  Permissions.CHAT_HISTORY_READ,
+  Permissions.CHAT_HISTORY_DELETE,
+  Permissions.MCP_ACCESS,
 ];
 
 // Viewer: Read-only access
