@@ -155,7 +155,7 @@ class ScanManager:
     def _finding_matches_waiver(self, finding: Finding, waiver: Waiver) -> bool:
         """Best-effort exact match at ingest. Location-based findings use the strong-anchor
         signature (no re-anchoring here — the recalc is authoritative for that)."""
-        if finding.match is not None and getattr(waiver, "match", None) is not None:
+        if finding.match is not None and waiver.match is not None:
             from app.services.waivers.matching import waiver_strong_match
             return waiver_strong_match(finding.match, waiver.match, waiver.status or "false_positive")
         # Legacy path for non-location findings (license/eol/vuln-by-type/component)

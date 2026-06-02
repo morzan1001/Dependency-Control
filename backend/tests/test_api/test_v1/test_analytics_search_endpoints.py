@@ -9,7 +9,6 @@ import asyncio
 from typing import Any, Dict, List
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 from app.models.user import User
 from app.core.permissions import ALL_PERMISSIONS

@@ -1,5 +1,9 @@
 from app.models.match_signature import MatchSignature
-from app.services.waivers.matching import waiver_strong_match
+from app.services.waivers.matching import (
+    MatchFinding,
+    apply_waivers_to_findings,
+    waiver_strong_match,
+)
 
 
 def sig(rule="OPENGREP:r", file="a.py", anchor="fp1", kind="scanner_fp", ch="c1", line=10):
@@ -41,9 +45,6 @@ class TestWaiverStrongMatch:
         f = sig(anchor="k", kind="search_key", ch=None)
         w = sig(anchor="k", kind="search_key", ch=None)
         assert waiver_strong_match(f, w, "accepted_risk") is False
-
-
-from app.services.waivers.matching import apply_waivers_to_findings, MatchFinding
 
 
 class _W:

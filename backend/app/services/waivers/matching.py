@@ -5,7 +5,7 @@ path can share one source of truth. See the design spec for the decision table.
 """
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from app.core.constants import WAIVER_STATUS_FALSE_POSITIVE
 from app.models.match_signature import MatchSignature
@@ -51,7 +51,7 @@ class WaiverApplication:
     reanchored: Dict[str, MatchSignature] = field(default_factory=dict)  # waiver_id -> new signature
 
 
-def _waiver_status(w) -> str:
+def _waiver_status(w: Any) -> str:
     return getattr(w, "status", None) or WAIVER_STATUS_FALSE_POSITIVE
 
 
@@ -73,6 +73,7 @@ def apply_waivers_to_findings(findings: Sequence[MatchFinding], waivers: Sequenc
 
     by_group: Dict[Tuple[str, str], List[MatchFinding]] = {}
     for f in located:
+        assert f.sig is not None  # invariant: `located` excludes findings without a signature
         by_group.setdefault(_group_key(f.sig), []).append(f)
 
     _pass1_strong_exact(app, waivers_with_sig, by_group, claimed, matched_waivers)
@@ -100,7 +101,7 @@ def _pass1_strong_exact(
             continue
         status = _waiver_status(w)
         for f in by_group.get(_group_key(wsig), []):
-            if f.id in claimed:
+            if f.id in claimed or f.sig is None:  # by_group holds only located findings; guard for the type checker
                 continue
             if waiver_strong_match(f.sig, wsig, status):
                 app.waived[f.id] = w.id
@@ -131,14 +132,16 @@ def _pass2_reanchor(
 def _resolve_reanchor(
     app: WaiverApplication,
     claimed: set,
-    w,
+    w: Any,
     wsig: MatchSignature,
     status: str,
     candidates: List[MatchFinding],
 ) -> None:
     """Decide how to resolve a single unmatched waiver against its candidate findings."""
     # (a) same content => pure move; content identity is proof of identity, no window required
-    same_content = [f for f in candidates if _content_equal(f.sig.content_hash, wsig.content_hash)]
+    same_content = [
+        f for f in candidates if f.sig is not None and _content_equal(f.sig.content_hash, wsig.content_hash)
+    ]
     chosen = _pick_unique_content_match(same_content, wsig.last_line)
     if chosen is not None:
         _bind_reanchor(app, claimed, w, chosen)
@@ -156,9 +159,9 @@ def _resolve_reanchor(
 
 
 def _line_distance(f: MatchFinding, last_line: Optional[int]) -> float:
-    if last_line is None or f.sig.last_line is None:
+    if last_line is None or f.sig is None or f.sig.last_line is None:
         return float("inf")
-    return abs(f.sig.last_line - last_line)
+    return float(abs(f.sig.last_line - last_line))
 
 
 def _pick_unique_content_match(candidates: List[MatchFinding], last_line: Optional[int]) -> Optional[MatchFinding]:
@@ -196,10 +199,11 @@ def _pick_unique_nearest(candidates: List[MatchFinding], last_line: Optional[int
     return None
 
 
-def _bind_reanchor(app: WaiverApplication, claimed: set, w, finding: MatchFinding) -> None:
+def _bind_reanchor(app: WaiverApplication, claimed: set, w: Any, finding: MatchFinding) -> None:
     app.waived[finding.id] = w.id
     claimed.add(finding.id)
     # capture the finding's current signature with its line as the waiver's new anchor
+    assert finding.sig is not None  # invariant: only located findings are ever bound here
     new_sig = finding.sig.model_copy(update={"last_line": finding.sig.last_line})
     app.reanchored[w.id] = new_sig
 

@@ -85,7 +85,7 @@ async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMot
         return None  # nothing concrete to validate against
 
     finding_query["scan_id"] = latest_scan_id
-    finding = await db.findings.find_one(finding_query, {"match": 1, "type": 1, "component": 1})
+    finding: Optional[dict] = await db.findings.find_one(finding_query, {"match": 1, "type": 1, "component": 1})
     if finding is None:
         raise HTTPException(status_code=422, detail=_MSG_NO_MATCHING_FINDING)
     return finding

@@ -20,7 +20,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.core.permissions import Permissions
-from app.models.project import Project, ProjectMember
+from app.models.project import Project
 from app.models.user import User
 
 ENDPOINTS = "app.api.v1.endpoints.projects"

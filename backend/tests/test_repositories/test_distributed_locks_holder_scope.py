@@ -10,9 +10,7 @@ DistributedLocksRepository logic end-to-end rather than asserting on mock calls.
 """
 
 import asyncio
-from datetime import datetime, timezone
 
-from pymongo import ReadPreference
 
 from app.repositories.distributed_locks import DistributedLocksRepository
 

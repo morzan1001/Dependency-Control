@@ -22,7 +22,6 @@ runs. If the app fixture isn't available in this test context, we fall back to
 direct FastAPI app construction from the router.
 """
 
-import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
