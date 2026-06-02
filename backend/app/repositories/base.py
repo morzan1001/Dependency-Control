@@ -61,12 +61,16 @@ class BaseRepository[T: BaseModel]:
         sort_order: int = 1,
         projection: Optional[Dict[str, int]] = None,
     ) -> List[T]:
+        # Defensive floor: pymongo .limit(0) means "no limit" (unbounded load).
+        # Callers coming through the API already have ge=1 enforced; this guard
+        # protects any direct repo call that might slip through with limit<=0.
+        safe_limit = max(limit, 1)
         with track_db_operation(self.collection_name, "find"):
             cursor = self.collection.find(query, projection)
             if sort_by:
                 cursor = cursor.sort(sort_by, sort_order)
-            cursor = cursor.skip(skip).limit(limit)
-            docs = await cursor.to_list(limit)
+            cursor = cursor.skip(skip).limit(safe_limit)
+            docs = await cursor.to_list(safe_limit)
         return self._to_model_list(docs)
 
     async def find_many_raw(

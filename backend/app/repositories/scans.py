@@ -106,14 +106,19 @@ class ScanRepository:
         limit: Optional[int] = None,
         projection: Optional[Dict[str, int]] = None,
     ) -> List[Scan]:
+        # Defensive floor: ScanRepository does not inherit BaseRepository so the
+        # base-layer floor does not apply here.  pymongo .limit(0) means "no limit"
+        # (unbounded load); None is also unbounded via to_list(None).
+        # Any positive caller-supplied value passes through unchanged.
+        safe_limit: Optional[int] = max(limit, 1) if limit is not None else None
         cursor = self.collection.find(query, projection)
         if sort:
             cursor = cursor.sort(sort)
         if skip:
             cursor = cursor.skip(skip)
-        if limit:
-            cursor = cursor.limit(limit)
-        docs = await cursor.to_list(limit)
+        if safe_limit is not None:
+            cursor = cursor.limit(safe_limit)
+        docs = await cursor.to_list(safe_limit)
         return [Scan(**doc) for doc in docs]
 
     async def find_many_with_stats(

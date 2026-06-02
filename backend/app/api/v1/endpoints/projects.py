@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any, Dict, List, Optional
 
-from fastapi import BackgroundTasks, Depends, HTTPException, Response, status
+from fastapi import BackgroundTasks, Depends, HTTPException, Query, Response, status
 
 from app.api.router import CustomAPIRouter
 
@@ -284,8 +284,8 @@ async def read_projects(
     db: DatabaseDep,
     search: Optional[str] = None,
     team_id: Optional[str] = None,
-    skip: int = 0,
-    limit: int = 20,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> Dict[str, Any]:
@@ -360,8 +360,8 @@ async def read_projects(
 async def read_all_scans(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    limit: int = 20,
-    skip: int = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    skip: Annotated[int, Query(ge=0)] = 0,
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> List[Dict[str, Any]]:
@@ -737,8 +737,8 @@ async def read_project_scans(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    skip: int = 0,
-    limit: int = 20,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 20,
     branch: Optional[str] = None,
     exclude_deleted_branches: bool = False,
     exclude_rescans: bool = False,
@@ -1293,8 +1293,8 @@ async def read_scan_findings(
     scan_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    skip: int = 0,
-    limit: int = 50,
+    skip: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 50,
     sort_by: str = "severity",  # severity, type, component
     sort_order: str = "desc",  # asc, desc
     type: Optional[str] = None,
