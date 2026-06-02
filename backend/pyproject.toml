@@ -16,9 +16,9 @@ pydantic-settings = "^2.13.1"
 motor = "^3.3.2"
 python-jose = {extras = ["cryptography"], version = "^3.5.0"}
 passlib = {extras = ["argon2"], version = "^1.7.4"}
-python-multipart = ">=0.0.26,<0.0.30"
+python-multipart = ">=0.0.26,<0.0.31"
 httpx = "^0.28.1"
-redis = "^7.4.0"
+redis = ">=7.4,<9.0"
 email-validator = "^2.1.0"
 pyotp = "^2.9.0"
 qrcode = "^8.2.0"
@@ -28,7 +28,7 @@ markdown = "^3.10"
 prometheus-client = "^0.25.0"
 aiosmtplib = "^5.1.0"
 aiobotocore = "^3.4.0"
-weasyprint = ">=65,<69"
+weasyprint = ">=65,<70"
 packaging = ">=24.0"
 
 [tool.poetry.group.dev.dependencies]
