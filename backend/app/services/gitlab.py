@@ -150,7 +150,7 @@ class GitLabService:
         self,
         endpoint: str,
         params: Optional[Dict[str, Any]] = None,
-        max_pages: int = 10,
+        max_pages: Optional[int] = 10,
     ) -> Optional[List[Dict[str, Any]]]:
         """
         Make paginated GET requests to the GitLab API.
@@ -160,10 +160,15 @@ class GitLabService:
         Args:
             endpoint: API endpoint
             params: Optional query parameters
-            max_pages: Maximum number of pages to fetch (default 10, ~1000 items)
+            max_pages: Maximum number of pages to fetch (default 10, ~1000 items).
+                Pass ``None`` to fetch ALL pages with no cap (used for membership
+                fetches so large groups are not silently truncated — Finding 17).
 
         Returns:
-            Combined list of all items from all pages, or None on failure
+            Combined list of all items from all pages, or None on failure.
+
+        If a finite ``max_pages`` cap is hit while GitLab still reports more pages,
+        a WARNING is logged so operators know the result was truncated.
         """
         if not self.instance.access_token:
             return None
@@ -174,18 +179,12 @@ class GitLabService:
 
         try:
             async with self._api_client() as client:
-                while page <= max_pages:
-                    request_params = {
-                        **(params or {}),
-                        "page": page,
-                        "per_page": per_page,
-                    }
+                while max_pages is None or page <= max_pages:
                     response = await client.get(
                         f"{self.api_url}{endpoint}",
                         headers=self._get_auth_headers(),
-                        params=request_params,
+                        params={**(params or {}), "page": page, "per_page": per_page},
                     )
-
                     if response.status_code != 200:
                         logger.error(f"GitLab API GET {endpoint} page {page} failed: {response.status_code}")
                         return None
@@ -193,18 +192,12 @@ class GitLabService:
                     items = response.json()
                     if not items:
                         break
-
                     all_items.extend(items)
 
-                    # Check if there are more pages
-                    total_pages = response.headers.get("x-total-pages")
-                    if total_pages and page >= int(total_pages):
+                    if self._is_last_page(items, per_page, page, response.headers.get("x-total-pages")):
                         break
-
-                    # If we got fewer items than per_page, we're on the last page
-                    if len(items) < per_page:
+                    if self._cap_reached(endpoint, page, max_pages, per_page, response.headers.get("x-total-pages")):
                         break
-
                     page += 1
 
         except Exception as e:
@@ -212,6 +205,31 @@ class GitLabService:
             return None
 
         return all_items
+
+    @staticmethod
+    def _is_last_page(items: List[Any], per_page: int, page: int, total_pages: Optional[str]) -> bool:
+        """True when GitLab signals there are no further pages to fetch."""
+        if total_pages and page >= int(total_pages):
+            return True
+        # A short page means we've reached the end.
+        return len(items) < per_page
+
+    @staticmethod
+    def _cap_reached(
+        endpoint: str, page: int, max_pages: Optional[int], per_page: int, total_pages: Optional[str]
+    ) -> bool:
+        """True (and logs a WARNING) when a finite cap is hit while more pages remain (Finding 17)."""
+        if max_pages is None or page < max_pages:
+            return False
+        logger.warning(
+            "GitLab API GET %s hit the pagination cap of %d page(s) (~%d items) but GitLab "
+            "reports more remain (x-total-pages=%s). Result is TRUNCATED.",
+            endpoint,
+            max_pages,
+            max_pages * per_page,
+            total_pages or "unknown",
+        )
+        return True
 
     async def _get_jwks_uri(self) -> Optional[str]:
         """
@@ -402,8 +420,9 @@ class GitLabService:
             logger.warning("Cannot fetch project members: No system GitLab Access Token configured.")
             return None
 
-        # /members/all includes inherited members (from groups)
-        members = await self._api_get_paginated(f"/projects/{project_id}/members/all")
+        # /members/all includes inherited members (from groups). No page cap
+        # (max_pages=None) so large projects are not silently truncated (Finding 17).
+        members = await self._api_get_paginated(f"/projects/{project_id}/members/all", max_pages=None)
         return [GitLabMember(**m) for m in members] if members else None
 
     async def get_group_members(self, group_id: int) -> Optional[List[GitLabMember]]:
@@ -416,7 +435,8 @@ class GitLabService:
             logger.warning("Cannot fetch group members: No system GitLab Access Token configured.")
             return None
 
-        members = await self._api_get_paginated(f"/groups/{group_id}/members/all")
+        # No page cap (max_pages=None) so large groups are not silently truncated (Finding 17).
+        members = await self._api_get_paginated(f"/groups/{group_id}/members/all", max_pages=None)
         return [GitLabMember(**m) for m in members] if members else None
 
     async def _resolve_group_by_path(self, group_path: str) -> Optional[Dict[str, Any]]:
@@ -489,16 +509,43 @@ class GitLabService:
         gitlab_members: List[GitLabMember],
         user_repo: UserRepository,
     ) -> List[TeamMember]:
-        """Resolve each GitLab member to a local user (creating one if missing) and map to TeamMember."""
+        """Resolve each GitLab member to a local user (creating one if missing) and map to TeamMember.
+
+        Members resolved here are always tagged ``source="gitlab"`` (Finding 16) so the
+        merge in ``_upsert_team_with_members`` can distinguish them from manually-added
+        members and refresh only the gitlab-sourced subset.
+        """
         team_members: List[TeamMember] = []
         for member in gitlab_members:
             user = await self._find_or_create_user(member, user_repo)
             if not user:
+                # Could not resolve OR create the member (e.g. no email AND no username).
+                # Do NOT silently drop — log so operators can reconcile (Finding 16).
+                logger.warning(
+                    "Skipping GitLab member that could not be resolved to a local user "
+                    "(no email and no username; access_level=%s). It will not appear in the team.",
+                    member.access_level,
+                )
                 continue
             role = "admin" if member.access_level >= GITLAB_ADMIN_MIN_ACCESS else "member"
             user_id = str(user.get("_id", user.get("id")))
-            team_members.append(TeamMember(user_id=user_id, role=role))
+            team_members.append(TeamMember(user_id=user_id, role=role, source="gitlab"))
         return team_members
+
+    def _synthesize_member_email(self, member: GitLabMember) -> Optional[str]:
+        """Build a deterministic, non-routable synthetic email for an email-less member.
+
+        The local ``User`` model requires a valid ``EmailStr`` (it is not nullable), so an
+        email-less GitLab member that has a username is given a synthetic, instance-scoped
+        address rather than being dropped (Finding 16). Returns None when no username is
+        available to key the account on.
+        """
+        if not member.username:
+            return None
+        # Instance host keeps the synthetic address unique across GitLab instances and
+        # clearly signals it is not a real, deliverable mailbox.
+        host = self.base_url.split("://", 1)[-1].split("/", 1)[0] or "gitlab.local"
+        return f"{member.username}@{host}"
 
     async def _find_or_create_user(
         self,
@@ -512,17 +559,48 @@ class GitLabService:
             user = await user_repo.get_raw_by_username(member.username)
         if user:
             return user
-        if not member.email:
+
+        # Email-less member with no existing local user: synthesize an email so the
+        # account can be created (User.email is required), keyed on the username.
+        # If there is no username either, the member cannot be created — caller logs it.
+        email = member.email or self._synthesize_member_email(member)
+        if not email:
             return None
+
         new_user = User(
-            username=member.username or member.email.split("@")[0],
-            email=member.email,
+            username=member.username or email.split("@")[0],
+            email=email,
             hashed_password=security.get_password_hash(secrets.token_urlsafe(16)),
             is_active=True,
             auth_provider="gitlab",
         )
         await user_repo.create(new_user)
         return new_user.model_dump()
+
+    @staticmethod
+    def _merge_team_members(
+        existing_members: List[Dict[str, Any]],
+        gitlab_members: List[TeamMember],
+    ) -> List[Dict[str, Any]]:
+        """Merge freshly-fetched GitLab members into the existing member list (Finding 16).
+
+        Rules:
+        * Existing ``source == "manual"`` members are KEPT (never dropped by sync).
+        * The existing ``source == "gitlab"`` subset is discarded and REPLACED by the
+          freshly-fetched ``gitlab_members`` (so departed GitLab members disappear).
+        * If a user is both a manual member and present in the GitLab subset, the
+          gitlab-sourced entry WINS (its role/source) and the user is not duplicated.
+        """
+        merged: Dict[str, Dict[str, Any]] = {}
+        # Start with the manually-added members; legacy/untagged members are treated
+        # as manual (the model default) so pre-existing members are preserved.
+        for raw in existing_members:
+            if raw.get("source", "manual") != "gitlab":
+                merged[raw["user_id"]] = {**raw, "source": "manual"}
+        # Overlay the fresh gitlab subset; gitlab entry wins for a synced user.
+        for gm in gitlab_members:
+            merged[gm.user_id] = gm.model_dump()
+        return list(merged.values())
 
     async def _upsert_team_with_members(
         self,
@@ -536,8 +614,11 @@ class GitLabService:
     ) -> Optional[str]:
         now = datetime.now(timezone.utc)
         if existing_team:
+            # MERGE rather than REPLACE (Finding 16): keep manually-added members and
+            # refresh only the gitlab-sourced subset with the freshly-fetched members.
+            merged_members = self._merge_team_members(existing_team.get("members") or [], team_members)
             update_data: dict = {
-                "members": [tm.model_dump() for tm in team_members],
+                "members": merged_members,
                 "updated_at": now,
             }
             # Sync name only if it still has the auto-generated GitLab prefix.

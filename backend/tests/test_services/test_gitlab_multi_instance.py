@@ -866,3 +866,254 @@ class TestTeamSyncInstanceScoping:
 
         assert first_id == second_id
         assert len(teams.docs) == 1
+
+
+class TestTeamSyncMergeSemantics:
+    """Finding 16: sync must MERGE members, not REPLACE the whole array. Manually
+    added members (source="manual") survive; only the gitlab-sourced subset is
+    refreshed from the freshly-fetched GitLab members."""
+
+    def test_manual_member_survives_gitlab_resync(self, gitlab_instance_a):
+        service = GitLabService(gitlab_instance_a)
+
+        # Existing team already has a manually-added member AND a stale gitlab member.
+        existing_team = {
+            "_id": "team-1",
+            "name": "GitLab Group: grp",
+            "gitlab_instance_id": str(gitlab_instance_a.id),
+            "gitlab_group_id": 42,
+            "members": [
+                {"user_id": "manual-user", "role": "admin", "source": "manual"},
+                {"user_id": "stale-gitlab-user", "role": "member", "source": "gitlab"},
+            ],
+        }
+
+        # GitLab now reports a single, different member.
+        members = [GitLabMember(username="newdev", email="newdev@test.com", access_level=30)]
+
+        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
+            mock_members.return_value = members
+            user_doc = {"_id": "new-gitlab-user", "username": "newdev"}
+            users_coll = create_mock_collection(find_one=user_doc)
+            teams_coll = create_mock_collection(find_one=existing_team)
+            db = create_mock_db({"teams": teams_coll, "users": users_coll})
+
+            result = asyncio.run(
+                service.sync_team_from_gitlab(
+                    db=db,
+                    gitlab_project_id=100,
+                    gitlab_project_path="grp/proj",
+                    gitlab_project_data=make_project_details(
+                        namespace_kind="group", namespace_id=42, namespace_path="grp"
+                    ),
+                )
+            )
+
+        assert result == "team-1"
+        teams_coll.update_one.assert_called_once()
+        update_set = teams_coll.update_one.call_args[0][1]["$set"]
+        merged = {m["user_id"]: m for m in update_set["members"]}
+        # Manual member must SURVIVE.
+        assert "manual-user" in merged
+        assert merged["manual-user"]["source"] == "manual"
+        # Stale gitlab member must be dropped (replaced by fresh gitlab subset).
+        assert "stale-gitlab-user" not in merged
+        # Fresh gitlab member must be present and tagged source="gitlab".
+        assert "new-gitlab-user" in merged
+        assert merged["new-gitlab-user"]["source"] == "gitlab"
+
+    def test_user_both_manual_and_gitlab_is_not_duplicated_gitlab_role_wins(self, gitlab_instance_a):
+        service = GitLabService(gitlab_instance_a)
+
+        existing_team = {
+            "_id": "team-2",
+            "name": "GitLab Group: grp",
+            "gitlab_instance_id": str(gitlab_instance_a.id),
+            "gitlab_group_id": 42,
+            "members": [
+                {"user_id": "dual-user", "role": "member", "source": "manual"},
+            ],
+        }
+        # GitLab reports the same user as a Maintainer (admin).
+        members = [GitLabMember(username="dual", email="dual@test.com", access_level=40)]
+
+        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
+            mock_members.return_value = members
+            user_doc = {"_id": "dual-user", "username": "dual"}
+            users_coll = create_mock_collection(find_one=user_doc)
+            teams_coll = create_mock_collection(find_one=existing_team)
+            db = create_mock_db({"teams": teams_coll, "users": users_coll})
+
+            asyncio.run(
+                service.sync_team_from_gitlab(
+                    db=db,
+                    gitlab_project_id=100,
+                    gitlab_project_path="grp/proj",
+                    gitlab_project_data=make_project_details(
+                        namespace_kind="group", namespace_id=42, namespace_path="grp"
+                    ),
+                )
+            )
+
+        update_set = teams_coll.update_one.call_args[0][1]["$set"]
+        dual_entries = [m for m in update_set["members"] if m["user_id"] == "dual-user"]
+        # No duplicate; gitlab-sourced entry wins for a synced user.
+        assert len(dual_entries) == 1
+        assert dual_entries[0]["source"] == "gitlab"
+        assert dual_entries[0]["role"] == "admin"
+
+
+class TestTeamSyncEmaillessMembers:
+    """Finding 16: an email-less GitLab member must NOT be silently dropped."""
+
+    def test_emailless_member_is_created_username_keyed(self, gitlab_instance_a):
+        service = GitLabService(gitlab_instance_a)
+
+        # GitLab member with NO email but a username, and no existing local user.
+        members = [GitLabMember(username="ghost", email=None, access_level=30)]
+
+        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
+            mock_members.return_value = members
+            # find_one returns None -> user does not exist locally yet.
+            users_coll = create_mock_collection(find_one=None)
+            users_coll.insert_one = AsyncMock(return_value=MagicMock(inserted_id="created"))
+            teams_coll = create_mock_collection(find_one=None)
+            teams_coll.insert_one = AsyncMock()
+            db = create_mock_db({"teams": teams_coll, "users": users_coll})
+
+            result = asyncio.run(
+                service.sync_team_from_gitlab(
+                    db=db,
+                    gitlab_project_id=100,
+                    gitlab_project_path="grp/proj",
+                    gitlab_project_data=make_project_details(
+                        namespace_kind="group", namespace_id=42, namespace_path="grp"
+                    ),
+                )
+            )
+
+        # A team must have been created with the email-less member included
+        # (NOT dropped). The synthetic-email user was persisted.
+        assert result is not None
+        users_coll.insert_one.assert_called_once()
+        created_user = users_coll.insert_one.call_args[0][0]
+        assert created_user["username"] == "ghost"
+        # Synthetic email must be a valid, instance-scoped, non-real address.
+        assert created_user["email"].startswith("ghost@")
+        teams_coll.insert_one.assert_called_once()
+        team_doc = teams_coll.insert_one.call_args[0][0]
+        assert any(m["source"] == "gitlab" for m in team_doc["members"])
+
+    def test_emailless_member_without_username_is_logged_not_dropped(self, gitlab_instance_a, caplog):
+        service = GitLabService(gitlab_instance_a)
+
+        # Pathological member: neither email nor username — cannot key an account.
+        members = [GitLabMember(username=None, email=None, access_level=30)]
+
+        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
+            mock_members.return_value = members
+            users_coll = create_mock_collection(find_one=None)
+            teams_coll = create_mock_collection(find_one=None)
+            teams_coll.insert_one = AsyncMock()
+            db = create_mock_db({"teams": teams_coll, "users": users_coll})
+
+            with caplog.at_level("WARNING", logger="app.services.gitlab"):
+                asyncio.run(
+                    service.sync_team_from_gitlab(
+                        db=db,
+                        gitlab_project_id=100,
+                        gitlab_project_path="grp/proj",
+                        gitlab_project_data=make_project_details(
+                            namespace_kind="group", namespace_id=42, namespace_path="grp"
+                        ),
+                    )
+                )
+
+        # No user can be created (no key), but the skip must be LOGGED, not silent.
+        assert any("member" in r.message.lower() for r in caplog.records), (
+            f"Expected a warning when a member cannot be resolved. Got: {[r.message for r in caplog.records]}"
+        )
+
+
+class TestApiGetPaginatedCap:
+    """Finding 17: membership fetches must not be silently truncated at the default
+    cap. Either fetch all pages, or at minimum WARN when a cap is hit."""
+
+    def test_get_group_members_fetches_beyond_default_1000(self, gitlab_instance_a):
+        """Simulate a group with 12 pages (1200 members) and assert all are fetched
+        (the old default max_pages=10 would have truncated to 1000)."""
+        service = GitLabService(gitlab_instance_a)
+
+        total_pages = 12
+        per_page = 100
+
+        def _make_response(page: int):
+            resp = MagicMock()
+            resp.status_code = 200
+            # Each page returns a full page of distinct members.
+            resp.json.return_value = [
+                {"username": f"u{(page - 1) * per_page + i}", "email": f"u{i}p{page}@t.com", "access_level": 30}
+                for i in range(per_page)
+            ]
+            resp.headers = {"x-total-pages": str(total_pages)}
+            return resp
+
+        call_pages: list[int] = []
+
+        async def fake_get(url, headers=None, params=None):
+            page = params["page"]
+            call_pages.append(page)
+            return _make_response(page)
+
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(side_effect=fake_get)
+
+        class _CM:
+            async def __aenter__(self):
+                return mock_client
+
+            async def __aexit__(self, *a):
+                return False
+
+        with patch.object(service, "_api_client", return_value=_CM()):
+            result = asyncio.run(service.get_group_members(42))
+
+        assert result is not None
+        # All 1200 members fetched, NOT truncated at 1000.
+        assert len(result) == total_pages * per_page
+        assert max(call_pages) == total_pages
+
+    def test_paginated_logs_warning_when_cap_reached(self, gitlab_instance_a, caplog):
+        """If a hard cap is ever hit while more pages remain, a WARNING must fire."""
+        service = GitLabService(gitlab_instance_a)
+
+        def _make_response(page: int):
+            resp = MagicMock()
+            resp.status_code = 200
+            resp.json.return_value = [
+                {"id": i, "username": f"u{page}_{i}"} for i in range(100)
+            ]
+            # Always claims there are far more pages than the cap.
+            resp.headers = {"x-total-pages": "9999"}
+            return resp
+
+        async def fake_get(url, headers=None, params=None):
+            return _make_response(params["page"])
+
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(side_effect=fake_get)
+
+        class _CM:
+            async def __aenter__(self):
+                return mock_client
+
+            async def __aexit__(self, *a):
+                return False
+
+        with patch.object(service, "_api_client", return_value=_CM()):
+            with caplog.at_level("WARNING", logger="app.services.gitlab"):
+                asyncio.run(service._api_get_paginated("/groups/42/members/all", max_pages=3))
+
+        assert any("cap" in r.message.lower() or "truncat" in r.message.lower() for r in caplog.records), (
+            f"Expected a cap/truncation warning. Got: {[r.message for r in caplog.records]}"
+        )
