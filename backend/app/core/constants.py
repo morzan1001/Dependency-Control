@@ -413,6 +413,14 @@ EXPLOIT_MATURITY_BOOST: Dict[str, float] = {
 # Used to prevent memory issues with large datasets
 ANALYTICS_MAX_QUERY_LIMIT: int = 100000
 
+# Per-group array cap for analytics $group stages (impact/hotspots). These
+# pipelines $group over up to ANALYTICS_MAX_QUERY_LIMIT findings, so any array
+# accumulated per group (finding ids, slimmed fix-version details) is
+# $slice-bounded to this many elements to keep the mongod working set small.
+# Downstream only the first handful are ever surfaced (top CVEs / fix versions),
+# so this cap does not change the API output for realistic data.
+ANALYTICS_GROUP_ARRAY_CAP: int = 100
+
 # Permission required to query analytics at global scope (all projects)
 PERMISSION_ANALYTICS_GLOBAL: str = "analytics:global"
 

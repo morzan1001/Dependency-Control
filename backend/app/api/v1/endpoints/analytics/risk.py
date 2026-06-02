@@ -14,7 +14,6 @@ from app.api.v1.helpers.analytics import (
     calculate_days_known,
     calculate_days_until_due,
     calculate_impact_score,
-    count_severities,
     extract_fix_versions,
     get_projects_with_scans,
     get_user_project_ids,
@@ -22,6 +21,7 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
+from app.core.constants import ANALYTICS_GROUP_ARRAY_CAP
 from app.core.permissions import Permissions
 from app.repositories import (
     DependencyRepository,
@@ -37,6 +37,44 @@ from app.services.enrichment import get_cve_enrichment
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
+
+# Severity buckets surfaced in the analytics severity breakdown. Computed as
+# scalar $sum/$cond accumulators in the $group stage instead of $push-ing the
+# raw per-finding severity array, which would grow with the (unbounded) group.
+_SEVERITY_BUCKETS = ("critical", "high", "medium", "low")
+
+
+def _severity_count_accumulators() -> Dict[str, Any]:
+    """$group accumulators counting findings per severity (case-insensitive).
+
+    Replaces ``severities: {$push: "$severity"}`` so the group working set holds
+    four integers per group instead of one entry per finding.
+    """
+    return {
+        bucket: {"$sum": {"$cond": [{"$eq": [{"$toLower": "$severity"}, bucket]}, 1, 0]}}
+        for bucket in _SEVERITY_BUCKETS
+    }
+
+
+def _severity_counts_from_row(row: Dict[str, Any]) -> Dict[str, int]:
+    """Read the scalar severity counts back out of an aggregation row."""
+    return {bucket: int(row.get(bucket) or 0) for bucket in _SEVERITY_BUCKETS}
+
+
+# Slimmed projection of the analyzer ``$details`` blob. Only fix-version data is
+# consumed downstream (by ``extract_fix_versions``), so we project ``details``
+# down to those fields BEFORE the $group instead of $push-ing the arbitrarily
+# large raw payload. ``vulnerabilities`` is mapped down to just ``fixed_version``.
+_SLIM_DETAILS_EXPR: Dict[str, Any] = {
+    "fixed_version": "$details.fixed_version",
+    "vulnerabilities": {
+        "$map": {
+            "input": {"$ifNull": ["$details.vulnerabilities", []]},
+            "as": "v",
+            "in": {"fixed_version": "$$v.fixed_version"},
+        }
+    },
+}
 
 
 @router.get("/impact", responses=RESP_AUTH)
@@ -60,12 +98,25 @@ async def get_impact_analysis(
 
     pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
+        # Slim $details to only the fix-version fields BEFORE grouping so the
+        # group never accumulates the arbitrarily large raw analyzer payload.
+        {
+            "$project": {
+                "component": 1,
+                "version": 1,
+                "project_id": 1,
+                "severity": 1,
+                "finding_id": 1,
+                "created_at": 1,
+                "details": _SLIM_DETAILS_EXPR,
+            }
+        },
         {
             "$group": {
                 "_id": {"component": "$component", "version": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
                 "total_findings": {"$sum": 1},
-                "severities": {"$push": "$severity"},
+                **_severity_count_accumulators(),
                 "finding_ids": {"$push": "$finding_id"},
                 "first_seen": {"$min": "$created_at"},
                 "details_list": {"$push": "$details"},
@@ -77,10 +128,11 @@ async def get_impact_analysis(
                 "version": "$_id.version",
                 "project_ids": 1,
                 "total_findings": 1,
-                "severities": 1,
-                "finding_ids": 1,
+                **{bucket: 1 for bucket in _SEVERITY_BUCKETS},
+                # Bound the pushed arrays so the per-group working set stays small.
+                "finding_ids": {"$slice": ["$finding_ids", ANALYTICS_GROUP_ARRAY_CAP]},
                 "first_seen": 1,
-                "details_list": 1,
+                "details_list": {"$slice": ["$details_list", ANALYTICS_GROUP_ARRAY_CAP]},
                 "affected_projects": {"$size": "$project_ids"},
             }
         },
@@ -88,7 +140,7 @@ async def get_impact_analysis(
         {"$limit": limit},
     ]
 
-    results = await finding_repo.aggregate(pipeline)
+    results = await finding_repo.aggregate(pipeline, allow_disk_use=True)
 
     all_cves = [fid for r in results for fid in r.get("finding_ids", []) if fid and fid.startswith("CVE-")]
 
@@ -101,7 +153,7 @@ async def get_impact_analysis(
 
     impact_results = []
     for r in results:
-        severity_counts = count_severities(r.get("severities", []))
+        severity_counts = _severity_counts_from_row(r)
         fix_versions = extract_fix_versions(r.get("details_list", []))
         has_fix = len(fix_versions) > 0
 
@@ -179,7 +231,7 @@ def _build_hotspot(
     project_name_map: Dict[str, str],
     project_ids: List[str],
 ) -> VulnerabilityHotspot:
-    severity_counts = count_severities(r.get("severities", []))
+    severity_counts = _severity_counts_from_row(r)
     fix_versions = extract_fix_versions(r.get("details_list", []))
     has_fix = len(fix_versions) > 0
     dep_type = dep_type_map.get(r["_id"]["component"], "unknown")
@@ -259,15 +311,39 @@ async def get_vulnerability_hotspots(
 
     pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
+        # Slim $details to only fix-version fields BEFORE grouping (see /impact).
+        {
+            "$project": {
+                "component": 1,
+                "version": 1,
+                "project_id": 1,
+                "severity": 1,
+                "finding_id": 1,
+                "created_at": 1,
+                "details": _SLIM_DETAILS_EXPR,
+            }
+        },
         {
             "$group": {
                 "_id": {"component": "$component", "version": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
                 "finding_count": {"$sum": 1},
-                "severities": {"$push": "$severity"},
+                **_severity_count_accumulators(),
                 "first_seen": {"$min": "$created_at"},
                 "finding_ids": {"$push": "$finding_id"},
                 "details_list": {"$push": "$details"},
+            }
+        },
+        # Bound the pushed arrays. ``_id`` is preserved so the $sort below can
+        # still order by ``_id.component`` and ``_build_hotspot`` can read it.
+        {
+            "$project": {
+                "project_ids": 1,
+                "finding_count": 1,
+                **{bucket: 1 for bucket in _SEVERITY_BUCKETS},
+                "first_seen": 1,
+                "finding_ids": {"$slice": ["$finding_ids", ANALYTICS_GROUP_ARRAY_CAP]},
+                "details_list": {"$slice": ["$details_list", ANALYTICS_GROUP_ARRAY_CAP]},
             }
         },
         {"$sort": {mongo_sort_field: sort_direction}},
@@ -281,7 +357,7 @@ async def get_vulnerability_hotspots(
         pipeline.append({"$skip": skip})
         pipeline.append({"$limit": limit})
 
-    results = await finding_repo.aggregate(pipeline)
+    results = await finding_repo.aggregate(pipeline, allow_disk_use=True)
 
     all_cves = list({fid for r in results for fid in r.get("finding_ids", []) if fid and fid.startswith("CVE-")})
 

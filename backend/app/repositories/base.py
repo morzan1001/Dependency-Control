@@ -159,10 +159,26 @@ class BaseRepository[T: BaseModel]:
             result = await self.collection.delete_many(query)
         return result.deleted_count
 
-    async def aggregate(self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Run an aggregation pipeline. Prefer ``$limit`` inside the pipeline over `limit`."""
+    async def aggregate(
+        self,
+        pipeline: List[Dict[str, Any]],
+        limit: Optional[int] = None,
+        allow_disk_use: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Run an aggregation pipeline. Prefer ``$limit`` inside the pipeline over `limit`.
+
+        ``allow_disk_use=True`` lets mongod spill large ``$group``/``$sort``
+        working sets to disk instead of failing the 100MB in-memory limit. Keep
+        it ``False`` by default; only enable it for multi-scan analytics
+        aggregations whose group cardinality is genuinely unbounded.
+        """
         with track_db_operation(self.collection_name, "aggregate"):
-            return await self.collection.aggregate(pipeline).to_list(limit)
+            cursor = (
+                self.collection.aggregate(pipeline, allowDiskUse=True)
+                if allow_disk_use
+                else self.collection.aggregate(pipeline)
+            )
+            return await cursor.to_list(limit)
 
     async def iterate(
         self,

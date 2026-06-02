@@ -677,7 +677,8 @@ class FakeCollection:
         )
         return cursor
 
-    def aggregate(self, pipeline: list) -> _AsyncIter:
+    def aggregate(self, pipeline: list, **_kwargs) -> _AsyncIter:
+        # ``allowDiskUse`` (and any other server-side option) is a no-op in-process.
         return _AsyncIter(_run_pipeline(list(self._docs.values()), pipeline))
 
 
