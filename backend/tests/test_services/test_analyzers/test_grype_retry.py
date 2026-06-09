@@ -75,6 +75,14 @@ class TestGrypeRetryablePatternMatching:
         analyzer = GrypeAnalyzer()
         assert analyzer._is_retryable_error(stderr_text.encode()) is False
 
+    @pytest.mark.parametrize("stderr_bytes", [b"", b"   ", b"\n\t "])
+    def test_empty_stderr_is_retryable(self, stderr_bytes):
+        # A non-zero exit with no stderr means grype was killed (signal/OOM) or
+        # had its error swallowed (e.g. by --quiet). Retry rather than surface
+        # an empty SCAN-ERROR-grype finding.
+        analyzer = GrypeAnalyzer()
+        assert analyzer._is_retryable_error(stderr_bytes) is True
+
 
 class TestGrypeRetryLoop:
     """Verify the full analyze() flow retries / gives up correctly."""
@@ -130,6 +138,23 @@ class TestGrypeRetryLoop:
         assert result.get("error") == "grype analysis failed"
         assert mock_exec.await_count == 1  # no retries on non-transient errors
 
+    @pytest.mark.asyncio
+    async def test_retries_on_empty_stderr(self):
+        # Regression: grype killed/quiet -> empty stderr on a non-zero exit.
+        # This is the exact failure mode that previously slipped past the retry
+        # because the patterns were matched against an empty string.
+        analyzer = GrypeAnalyzer()
+        mock_exec = _exec_results(
+            (b"", b"", 1),
+            (b'{"matches": []}', b"", 0),
+        )
+
+        with patch.object(analyzer, "_execute_command", mock_exec):
+            result = await analyzer.analyze(SBOM)
+
+        assert "error" not in result
+        assert mock_exec.await_count == 2
+
 
 class TestGrypeRetryPolicyConfig:
     """Lock the policy values so a future refactor can't silently remove them."""
@@ -143,3 +168,11 @@ class TestGrypeRetryPolicyConfig:
     def test_cli_timeout_extended_beyond_default(self):
         # The CLIAnalyzer default is 300; grype needs more for large Java SBOMs.
         assert GrypeAnalyzer.cli_timeout >= 600
+
+    def test_quiet_flag_not_passed(self):
+        # Regression: --quiet suppresses grype's stderr, which the retry logic
+        # inspects. It must never be re-added or transient failures go silent.
+        analyzer = GrypeAnalyzer()
+        args = analyzer._build_command_args("sbom.json", None)
+        assert "--quiet" not in args
+        assert "-q" not in args

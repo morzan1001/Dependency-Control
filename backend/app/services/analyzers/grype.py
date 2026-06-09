@@ -11,11 +11,13 @@ class GrypeAnalyzer(CLIAnalyzer):
     cli_command = "grype"
     empty_result_key = "matches"
 
-    # Grype occasionally fails on large SBOMs or while its vulnerability DB is
-    # being refreshed in the background. Without retries the failure surfaces as
-    # a SCAN-ERROR-grype system warning even when a second attempt would have
-    # succeeded — observed repeatedly on a single large Java project where the
-    # rest of the pipeline (trivy, osv) ran cleanly. Match trivy's retry policy.
+    # Grype reads its ~1.8 GB vulnerability DB from a shared, read-only GCSFuse
+    # mount (GRYPE_DB_SHARED=true) that the grype-db-updater CronJob refreshes
+    # periodically. During that refresh window — and on occasional transient
+    # GCSFuse read glitches — grype exits non-zero with "failed to load
+    # vulnerability db: database does not exist" even though the rest of the
+    # pipeline (trivy via its remote server, osv) runs cleanly. A quick retry
+    # almost always succeeds, so mirror trivy's retry policy.
     max_retries = 3
     retry_delay = 3.0
     # Large Java SBOMs (~600+ deps) can legitimately need more than the 5-min
@@ -37,7 +39,13 @@ class GrypeAnalyzer(CLIAnalyzer):
     )
 
     def _is_retryable_error(self, stderr: bytes) -> bool:
-        msg = stderr.decode(errors="replace").lower()
+        msg = stderr.decode(errors="replace").strip().lower()
+        # A non-zero exit with empty stderr means grype was killed before it
+        # could report anything (signal/OOM) or had its output otherwise
+        # swallowed. Both are transient, so retry instead of surfacing an
+        # empty SCAN-ERROR-grype finding.
+        if not msg:
+            return True
         return any(p in msg for p in self._RETRYABLE_PATTERNS)
 
     def _build_command_args(self, sbom_path: str, settings: Optional[Dict[str, Any]]) -> List[str]:
@@ -46,13 +54,19 @@ class GrypeAnalyzer(CLIAnalyzer):
         The Grype DB path is controlled via GRYPE_DB_CACHE_DIR environment variable,
         which is set in docker-entrypoint.sh or by the Kubernetes volume mount.
         No need to set it here - the CLI reads it from the environment.
+
+        ``--quiet`` is intentionally NOT passed: it suppresses grype's stderr,
+        including the fatal "failed to load vulnerability db" message that
+        ``_is_retryable_error`` inspects to decide whether a transient failure
+        is retryable. With ``--quiet`` the stderr arrives empty, the retry never
+        fires, and the failure surfaces as an empty SCAN-ERROR-grype finding.
+        The JSON report goes to stdout regardless, so omitting it is safe.
         """
         return [
             "grype",
             f"sbom:{sbom_path}",
             "-o",
             "json",
-            "--quiet",
         ]
 
     def _parse_output(self, stdout: bytes) -> Dict[str, Any]:
