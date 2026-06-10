@@ -237,6 +237,28 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
 
     app = apply_waivers_to_findings(findings, enriched)
 
+    logger.info(
+        "waiver signature apply: scan=%s waivers=%d waived=%d reanchored=%d lapsed=%d dormant=%d recomputed_sig=%d",
+        scan_id, len(enriched), len(app.waived), len(app.reanchored), len(app.lapsed), len(app.dormant), recomputed,
+    )
+    if app.dormant:
+        group_sizes: Dict[str, int] = {}
+        for f in findings:
+            if f.sig is not None:
+                # \x00 delimiter: rule_key/file_key are scanner IDs and file paths; neither contains NUL (so no key collision).
+                key = f"{f.sig.rule_key}\x00{f.sig.file_key}"
+                group_sizes[key] = group_sizes.get(key, 0) + 1
+        match_by_waiver = {w.id: getattr(w, "match", None) for w in enriched}
+        for wid, dormant_reason in app.dormant.items():
+            m = match_by_waiver.get(wid)
+            rk = getattr(m, "rule_key", None)
+            fk = getattr(m, "file_key", None)
+            logger.warning(
+                "waiver dormant: waiver=%s scan=%s reason=%s rule_key=%s file_key=%s last_line=%s group_findings=%d",
+                wid, scan_id, dormant_reason, rk, fk, getattr(m, "last_line", None),
+                group_sizes.get(f"{rk}\x00{fk}", 0),
+            )
+
     # Group waive writes by reason for fewer queries.
     reason_by_waiver = {w.id: getattr(w, "reason", None) for w in enriched}
     by_reason: Dict[Optional[str], List[str]] = {}

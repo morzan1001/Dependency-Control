@@ -1,4 +1,6 @@
 """Recalc applies waivers via signature matching, follows line shifts, lapses on content change."""
+import logging
+
 import pytest
 
 from app.models.match_signature import MatchSignature
@@ -112,3 +114,18 @@ async def test_backfill_waiver_without_match_from_current_finding():
     await _apply_waivers_signature(repo, wrepo, scan, [w])
     assert "f1" in repo.waived
     assert "w1" in wrepo.updates  # signature back-filled and persisted
+
+
+@pytest.mark.asyncio
+async def test_dormant_waiver_is_logged(caplog):
+    scan = "s1"
+    # One finding in a different group => the waiver binds nothing (dormant).
+    repo = _Repo([_finding_doc(scan, "f1", "fpA", "c1", 5, rule="opengrep:x", file="a.py")])
+    wrepo = _WRepo()
+    w = _Waiver("w1", "false_positive",
+                MatchSignature(rule_key="bearer:java_lang_hardcoded_secret", file_key="a.py",
+                               anchor="fpB", anchor_kind="scanner_fp", content_hash="c1", last_line=100))
+    with caplog.at_level(logging.WARNING):
+        await _apply_waivers_signature(repo, wrepo, scan, [w])
+    assert "f1" not in repo.waived
+    assert any("waiver dormant" in r.getMessage() and "w1" in r.getMessage() for r in caplog.records)
