@@ -8,15 +8,37 @@ findings_delta._FINDING_TYPE_IDENTIFIER.
 
 import hashlib
 import re
-from typing import Any, Dict, List, Optional
+from dataclasses import dataclass
+from typing import Any, Dict, List, Mapping, Optional, Protocol
 
-from app.models.finding import Finding
 from app.models.match_signature import MatchSignature
 
 # Deterministic preference when several scanners confirm one SAST finding.
 _SCANNER_PREFERENCE = ("opengrep", "bearer")
 
 _WS = re.compile(r"\s+")
+
+
+class SignatureSource(Protocol):
+    """Structural view of the fields signature derivation needs.
+
+    Satisfied by both the `Finding` model (ingest path) and `_DocSignatureSource`
+    (recalc self-heal from a raw persisted finding document).
+    """
+
+    @property
+    def id(self) -> Optional[str]: ...
+    @property
+    def details(self) -> Optional[Dict[str, Any]]: ...
+    @property
+    def component(self) -> str: ...
+
+
+@dataclass(frozen=True)
+class _DocSignatureSource:
+    id: Optional[str]
+    details: Optional[Dict[str, Any]]
+    component: str
 
 
 def normalize_snippet(text: Optional[str]) -> Optional[str]:
@@ -45,7 +67,7 @@ def _select_sast_entry(entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]
     return sorted(entries, key=lambda e: (str(e.get("scanner") or ""), str(e.get("id") or "")))[0]
 
 
-def _sast_signature(finding: Finding) -> Optional[MatchSignature]:
+def _sast_signature(finding: SignatureSource) -> Optional[MatchSignature]:
     details = finding.details or {}
     entries = details.get("sast_findings") or []
     entry = _select_sast_entry(entries)
@@ -67,7 +89,7 @@ def _sast_signature(finding: Finding) -> Optional[MatchSignature]:
                           content_hash=content_hash, last_line=line)
 
 
-def _iac_signature(finding: Finding) -> Optional[MatchSignature]:
+def _iac_signature(finding: SignatureSource) -> Optional[MatchSignature]:
     details = finding.details or {}
     rule_id = details.get("rule_id") or "unknown"
     content_hash = _hash("\n".join(str(details.get(k) or "") for k in ("actual_value", "expected_value")))
@@ -88,7 +110,7 @@ def _iac_signature(finding: Finding) -> Optional[MatchSignature]:
                           content_hash=content_hash, last_line=line)
 
 
-def _secret_signature(finding: Finding) -> Optional[MatchSignature]:
+def _secret_signature(finding: SignatureSource) -> Optional[MatchSignature]:
     details = finding.details or {}
     detector = details.get("detector") or "unknown"
     secret_hash = finding.id.rsplit("-", 1)[-1] if finding.id else None
@@ -99,7 +121,7 @@ def _secret_signature(finding: Finding) -> Optional[MatchSignature]:
                           content_hash=secret_hash, last_line=None)
 
 
-def compute_match_signature(finding: Finding) -> Optional[MatchSignature]:
+def compute_match_signature(finding: SignatureSource) -> Optional[MatchSignature]:
     """Return a MatchSignature for SAST/IaC/Secret findings, else None.
 
     Shape-based dispatch: SAST = has sast_findings OR id startswith a SAST prefix;
@@ -115,3 +137,19 @@ def compute_match_signature(finding: Finding) -> Optional[MatchSignature]:
     if fid.startswith("SECRET-"):
         return _secret_signature(finding)
     return None
+
+
+def compute_match_signature_from_doc(doc: Mapping[str, Any]) -> Optional[MatchSignature]:
+    """Recompute a MatchSignature from a raw persisted finding document.
+
+    Used by the recalc self-heal when the stored `match` field is missing, so an
+    ingest/persistence gap cannot silently orphan a waiver. Reads only finding_id,
+    details and component — the same inputs compute_match_signature uses on a Finding.
+    """
+    return compute_match_signature(
+        _DocSignatureSource(
+            id=doc.get("finding_id"),
+            details=doc.get("details"),
+            component=doc.get("component") or "",
+        )
+    )

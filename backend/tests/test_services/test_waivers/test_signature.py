@@ -1,5 +1,5 @@
 from app.models.finding import Finding
-from app.services.waivers.signature import compute_match_signature, normalize_snippet
+from app.services.waivers.signature import compute_match_signature, compute_match_signature_from_doc, normalize_snippet
 
 
 def _sast_merged(component, line, scanner, rule_id, fingerprint, code):
@@ -111,3 +111,34 @@ class TestNonLocationFindings:
         f = Finding(id="CVE-2021-1", type="vulnerability", severity="HIGH", component="lodash",
                     description="d", scanners=["grype"], details={})
         assert compute_match_signature(f) is None
+
+
+def test_compute_match_signature_from_doc_recovers_bearer_sast():
+    # A persisted finding doc with NO "match" field but with the merged SAST details
+    # the aggregator would have stored. Recompute must yield the same signature shape.
+    doc = {
+        "finding_id": "BEARER-java_lang_hardcoded_secret-a.py-94",
+        "component": "a.py",
+        "type": "sast",
+        "details": {
+            "line": 94,
+            "sast_findings": [
+                {
+                    "scanner": "bearer",
+                    "id": "java_lang_hardcoded_secret",
+                    "details": {"fingerprint": "edb203_2", "code_extract": "X=\"s\"", "start": {"line": 94}},
+                }
+            ],
+        },
+    }
+    sig = compute_match_signature_from_doc(doc)
+    assert sig is not None
+    assert sig.rule_key == "bearer:java_lang_hardcoded_secret"
+    assert sig.file_key == "a.py"
+    assert sig.anchor == "edb203_2"
+    assert sig.anchor_kind == "scanner_fp"
+    assert sig.last_line == 94
+
+
+def test_compute_match_signature_from_doc_none_for_non_location():
+    assert compute_match_signature_from_doc({"finding_id": "CVE-2021-1", "component": "pkg", "details": {}}) is None
