@@ -333,7 +333,12 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_waiver_status",
-            "description": "Check if a finding has been waived (marked as false positive or accepted risk).",
+            "description": (
+                "Check whether a finding is currently SUPPRESSED by a waiver in the latest scan. "
+                "Returns waived:false with waiver_present:true and suppressing:false when an active "
+                "waiver exists but the finding is not in the latest scan (fixed/moved/renamed or the "
+                "waiver is dormant)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {

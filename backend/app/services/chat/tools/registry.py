@@ -472,14 +472,22 @@ class ChatToolRegistry:
                     resp["lapsed"] = True
                     resp["lapsed_waiver_id"] = finding.get("lapsed_waiver_id")
                 return resp
-            # Fallback: no finding doc (e.g. finding fixed) — report the waiver record if any.
+            # Fallback: no finding doc for this id in the latest scan (finding fixed/moved/renamed).
+            # A waiver row may still exist, but its existence does NOT mean anything is suppressed —
+            # report it as present-but-not-suppressing rather than waived:true.
             now = datetime.now(timezone.utc)
             waiver = await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": args["project_id"]}) \
                 or await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": None})
             if not waiver:
                 return {"waived": False}
             if _waiver_is_active(waiver, now):
-                return {"waived": True, "waiver": _serialize_doc(waiver)}
+                return {
+                    "waived": False,
+                    "waiver_present": True,
+                    "suppressing": False,
+                    "reason": "no matching finding in the latest scan — finding fixed/moved or waiver dormant",
+                    "waiver": _serialize_doc(waiver),
+                }
             return {"waived": False, "expired_waiver": _serialize_doc(waiver)}
 
         if tool_name == "list_project_waivers":
