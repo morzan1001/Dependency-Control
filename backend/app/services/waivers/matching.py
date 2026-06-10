@@ -49,6 +49,7 @@ class WaiverApplication:
     waived: Dict[str, str] = field(default_factory=dict)          # finding_id -> waiver_id
     lapsed: Dict[str, str] = field(default_factory=dict)          # finding_id -> waiver_id (re-review)
     reanchored: Dict[str, MatchSignature] = field(default_factory=dict)  # waiver_id -> new signature
+    dormant: Dict[str, str] = field(default_factory=dict)         # waiver_id -> reason (bound nothing)
 
 
 def _waiver_status(w: Any) -> str:
@@ -125,7 +126,8 @@ def _pass2_reanchor(
         status = _waiver_status(w)
         candidates = [f for f in by_group.get(_group_key(wsig), []) if f.id not in claimed]
         if not candidates:
-            continue  # waiver dormant
+            app.dormant[w.id] = "no_candidates_in_group"
+            continue
         _resolve_reanchor(app, claimed, w, wsig, status, candidates)
 
 

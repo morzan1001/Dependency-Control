@@ -133,3 +133,14 @@ class TestOrchestrator:
             res = apply_waivers_to_findings(findings, order)
             overlap = set(res.waived) & set(res.lapsed)
             assert not overlap, f"finding in both waived and lapsed for order {[w.id for w in order]}"
+
+
+def test_waiver_with_no_candidates_is_recorded_dormant():
+    waiver = _W("w1", "false_positive",
+                sig(rule="bearer:r", anchor="fpA", ch="c1", line=100))
+    # A finding exists, but in a DIFFERENT group, so the waiver binds nothing.
+    other = mf("f1", rule="opengrep:x", anchor="z", ch="c", line=5)
+    app = apply_waivers_to_findings([other], [waiver])
+    assert "f1" not in app.waived
+    assert app.dormant.get("w1") == "no_candidates_in_group"
+    assert app.lapsed == {}
