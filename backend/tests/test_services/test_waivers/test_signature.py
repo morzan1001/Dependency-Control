@@ -142,3 +142,20 @@ def test_compute_match_signature_from_doc_recovers_bearer_sast():
 
 def test_compute_match_signature_from_doc_none_for_non_location():
     assert compute_match_signature_from_doc({"finding_id": "CVE-2021-1", "component": "pkg", "details": {}}) is None
+
+
+def test_finding_and_raw_doc_produce_same_signature():
+    """Cross-path equivalence: compute_match_signature(Finding) == compute_match_signature_from_doc(doc)
+    for the same logical finding.  Guards against a silent finding_id→id field-name mismatch."""
+    finding = _sast_merged("src/auth.py", 94, "bearer", "java_lang_hardcoded_secret", "edb203_2", 'API_KEY="s3cr3t"')
+    doc = {
+        "finding_id": finding.id,
+        "component": finding.component,
+        "type": "sast",
+        "details": finding.details,
+    }
+    sig_finding = compute_match_signature(finding)
+    sig_doc = compute_match_signature_from_doc(doc)
+    assert sig_finding is not None, "compute_match_signature returned None for a valid SAST finding"
+    assert sig_doc is not None, "compute_match_signature_from_doc returned None for the equivalent doc"
+    assert sig_finding.model_dump() == sig_doc.model_dump()
