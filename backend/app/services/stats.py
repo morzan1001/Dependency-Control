@@ -205,13 +205,23 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
                     w.match = sig
                     await waiver_repo.update(w.id, {"match": legacy_doc["match"]})
 
+    from app.services.waivers.signature import compute_match_signature_from_doc
+
     findings = []
+    recomputed = 0  # count of self-healed signatures; surfaced by the outcome logging below
     for d in docs:
         sig = None
-        if d.get("match"):
-            sig = _safe_match_signature(d["match"], f"finding {d['_id']}")
+        stored = d.get("match")
+        if stored:
+            sig = _safe_match_signature(stored, f"finding {d['_id']}")
             if sig is None:
                 continue  # malformed stored signature — skip rather than abort the batch
+        else:
+            # Self-heal: a missing stored signature would otherwise silently drop this finding
+            # from the matchable set and orphan any waiver in its (rule_key,file_key) group.
+            sig = compute_match_signature_from_doc(d)
+            if sig is not None:
+                recomputed += 1
         findings.append(MatchFinding(id=d["_id"], sig=sig))
 
     # Hydrate waiver .match into MatchSignature objects (waivers may arrive as Waiver models already).

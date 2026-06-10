@@ -81,7 +81,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         """Raw docs for location-based findings of a scan (waiver-matchable)."""
         cursor = self.collection.find(
             {"scan_id": scan_id, "type": {"$in": list(self._LOCATION_TYPES)}},
-            {"_id": 1, "finding_id": 1, "type": 1, "component": 1, "match": 1},
+            {"_id": 1, "finding_id": 1, "type": 1, "component": 1, "match": 1, "details": 1},  # "details" is required by _apply_waivers_signature to recompute a missing match signature (self-heal); do not remove
         )
         return await cursor.to_list(None)
 

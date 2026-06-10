@@ -71,6 +71,36 @@ async def test_content_change_accepted_risk_lapses():
     assert repo.lapsed.get("f1") == "w1"
 
 
+def _finding_doc_no_match(scan_id, fid, finding_id, fingerprint, line, file="a.py"):
+    """A location finding doc with NO stored `match` but with the merged SAST details."""
+    return {
+        "_id": fid, "scan_id": scan_id, "finding_id": finding_id, "type": "sast",
+        "component": file, "severity": "HIGH", "description": "d", "waived": False,
+        "details": {
+            "line": line,
+            "sast_findings": [
+                {"scanner": "bearer", "id": "java_lang_hardcoded_secret",
+                 "details": {"fingerprint": fingerprint, "code_extract": "X=\"s\"", "start": {"line": line}}},
+            ],
+        },
+    }
+
+
+@pytest.mark.asyncio
+async def test_self_heals_finding_without_persisted_match():
+    scan = "s1"
+    # Re-scanned finding drifted to line 94 and (the bug) has NO stored match signature.
+    repo = _Repo([_finding_doc_no_match(scan, "f94", "BEARER-r-a.py-94", "fpNEW_2", 94)])
+    wrepo = _WRepo()
+    # Waiver anchored at the old line 100 with a (now stale) strong anchor.
+    w = _Waiver("w1", "false_positive",
+                MatchSignature(rule_key="bearer:java_lang_hardcoded_secret", file_key="a.py",
+                               anchor="fpOLD_2", anchor_kind="scanner_fp", content_hash="c1", last_line=100))
+    await _apply_waivers_signature(repo, wrepo, scan, [w])
+    assert "f94" in repo.waived          # recovered: recomputed sig made it a Pass-2 candidate
+    assert "w1" in wrepo.updates          # re-anchored signature persisted
+
+
 @pytest.mark.asyncio
 async def test_backfill_waiver_without_match_from_current_finding():
     scan = "s1"
