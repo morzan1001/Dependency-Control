@@ -1,4 +1,37 @@
-# Release 1.7.4
+# Release 1.7.5
+
+## 🚀 Features
+
+- feat(waivers): recompute MatchSignature from a raw finding doc (self-heal input) (#0)
+- feat(waivers): record dormant (no-candidate) waivers in WaiverApplication (#0)
+- feat(waivers): log per-recalc waiver outcomes + dormant detail (rule_key/file_key/group size) (#0)
+- feat(waivers): add rule_keys set + effective_rule_keys to MatchSignature (#0)
+- feat(waivers): populate rule_keys set in signature derivation (#0)
+- feat(waivers): group by file_key + rule-key-set intersection (scanner-flip robustness) (#0)
+- feat(waivers): add last_eval_scan_id + last_match_count to Waiver (#0)
+- feat(waivers): record per-waiver match outcome in recalc (orphaned visibility) (#0)
+- feat(api): expose waiver eval outcome + orphaned list filter (#0)
+- feat(ui): thread orphaned filter + eval-outcome fields through waiver types/api/hooks (#0)
+- feat(ui): orphaned-waiver badge + 'only orphaned' filter in waiver tables (#0)
+
+## 🐛 Fixes
+
+- fix(waivers): self-heal missing finding signature in recalc so re-anchoring isn't silently dropped (#0)
+- fix(chat): get_waiver_status no longer reports waived=true on mere waiver existence (#0)
+- fix(ui): waiver table overflow + a11y + error states, lapsed-badge condition/label, re-waive scope prefill (#0)
+- fix(api): orphaned waiver filter also excludes expired waivers (mirror is_active badge) (#0)
+- fix(ui): team members dialog scrolls instead of overflowing the screen with many members (#0)
+- fix(gitlab): team sync resolves existing users only, never creates GitLab bot/service accounts (#0)
+- fix(ui): truncate username + break long user_id in team members dialog (no horizontal scroll) (#0)
+- fix(gitlab): resolve team members by case-insensitive email so a real user is not silently dropped on case mismatch (#0)
+
+## 🧪 Tests
+
+- test(waivers): assert Finding and raw-doc signature paths are equivalent (#0)
+
+
+
+# Release 1.7.5
 
 ## 🚀 Features
 
