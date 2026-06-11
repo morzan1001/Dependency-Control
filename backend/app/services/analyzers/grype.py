@@ -1,8 +1,8 @@
 import json
 from typing import Any, Dict, List, Optional
 
-from app.models.finding import Severity
 
+from .base import map_vendor_severity
 from .cli_base import CLIAnalyzer
 
 
@@ -134,15 +134,7 @@ class GrypeAnalyzer(CLIAnalyzer):
 
     def _map_severity(self, grype_severity: str) -> str:
         """Map Grype severity to our Severity enum."""
-        severity_map = {
-            "CRITICAL": Severity.CRITICAL.value,
-            "HIGH": Severity.HIGH.value,
-            "MEDIUM": Severity.MEDIUM.value,
-            "LOW": Severity.LOW.value,
-            "NEGLIGIBLE": Severity.INFO.value,
-            "UNKNOWN": Severity.INFO.value,
-        }
-        return severity_map.get(grype_severity.upper(), Severity.MEDIUM.value)
+        return map_vendor_severity(grype_severity)
 
     def _create_message(
         self,

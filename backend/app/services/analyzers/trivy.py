@@ -5,8 +5,8 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from app.core.config import settings
-from app.models.finding import Severity
 
+from .base import map_vendor_severity
 from .cli_base import CLIAnalyzer
 
 logger = logging.getLogger(__name__)
@@ -156,14 +156,7 @@ class TrivyAnalyzer(CLIAnalyzer):
 
     def _map_severity(self, trivy_severity: str) -> str:
         """Map Trivy severity to our Severity enum."""
-        severity_map = {
-            "CRITICAL": Severity.CRITICAL.value,
-            "HIGH": Severity.HIGH.value,
-            "MEDIUM": Severity.MEDIUM.value,
-            "LOW": Severity.LOW.value,
-            "UNKNOWN": Severity.INFO.value,
-        }
-        return severity_map.get(trivy_severity.upper(), Severity.MEDIUM.value)
+        return map_vendor_severity(trivy_severity)
 
     def _create_message(
         self,
