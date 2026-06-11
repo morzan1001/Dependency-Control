@@ -30,3 +30,23 @@ class TestMatchSignature:
         sig = MatchSignature(rule_key="KICS:q", file_key="main.tf", anchor="sim1", anchor_kind="similarity_id")
         w = Waiver(reason="r", created_by="u", match=sig)
         assert w.match.anchor_kind == "similarity_id"
+
+    def test_effective_rule_keys_falls_back_to_single_rule_key(self):
+        s = MatchSignature(rule_key="bearer:X", file_key="a.py", anchor="fp",
+                           anchor_kind="scanner_fp", content_hash="c", last_line=1)
+        assert s.rule_keys == []
+        assert s.effective_rule_keys == {"bearer:X"}
+
+    def test_effective_rule_keys_uses_list_when_present(self):
+        s = MatchSignature(rule_key="bearer:X", file_key="a.py", anchor="fp",
+                           anchor_kind="scanner_fp", content_hash="c", last_line=1,
+                           rule_keys=["bearer:X", "opengrep:X"])
+        assert s.effective_rule_keys == {"bearer:X", "opengrep:X"}
+
+    def test_effective_rule_keys_does_not_inject_primary_when_list_present(self):
+        from app.models.match_signature import MatchSignature
+        s = MatchSignature(rule_key="bearer:X", file_key="a.py", anchor="fp",
+                           anchor_kind="scanner_fp", content_hash="c", last_line=1,
+                           rule_keys=["opengrep:Y", "semgrep:Z"])
+        assert s.effective_rule_keys == {"opengrep:Y", "semgrep:Z"}
+        assert "bearer:X" not in s.effective_rule_keys
