@@ -546,8 +546,13 @@ class GitLabService:
         account via OIDC).
         """
         if member.email:
-            return await user_repo.get_raw_by_email(member.email)
+            # Case-insensitive: GitLab may return the member email in a different case than
+            # the address stored at OIDC login; an exact match would silently drop a real member.
+            return await user_repo.get_raw_by_email_ci(member.email)
         if member.username:
+            # Best-effort fallback for email-less members. Accepted trade-off: a collision-
+            # suffixed DC username (alice -> alice1) won't match, and a same-handle account from
+            # another auth provider could match — email is the reliable key and the primary path.
             return await user_repo.get_raw_by_username(member.username)
         return None
 

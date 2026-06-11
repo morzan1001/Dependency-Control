@@ -1,5 +1,6 @@
 """Repository for user database operations."""
 
+import re
 from typing import Any, Dict, List, Optional
 
 from app.core.metrics import track_db_operation
@@ -28,6 +29,16 @@ class UserRepository(BaseRepository[User]):
     async def get_raw_by_email(self, email: str) -> Optional[Dict[str, Any]]:
         with track_db_operation(self.collection_name, "find_one"):
             return await self.collection.find_one({"email": email})
+
+    async def get_raw_by_email_ci(self, email: str) -> Optional[Dict[str, Any]]:
+        """Case-insensitive email lookup. Stored emails are not normalised and the unique
+        index is not collated, so an exact match can silently fail to resolve a real user
+        whose address differs only in case (e.g. GitLab returns ``Alice@Corp.com`` while the
+        login stored ``alice@corp.com``)."""
+        with track_db_operation(self.collection_name, "find_one"):
+            return await self.collection.find_one(
+                {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}
+            )
 
     async def get_first_admin(self) -> Optional[Dict[str, Any]]:
         """Return the first user holding the system:manage permission."""
