@@ -76,9 +76,9 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
                   return (
                     <TableRow key={member.user_id}>
                       <TableCell>
-                        <div className="flex flex-col">
-                          <span className="font-medium">{member.username || 'Unknown'}</span>
-                          <span className="text-xs text-muted-foreground">{member.user_id}</span>
+                        <div className="flex flex-col min-w-0">
+                          <span className="font-medium truncate">{member.username || 'Unknown'}</span>
+                          <span className="text-xs text-muted-foreground break-all">{member.user_id}</span>
                         </div>
                       </TableCell>
                       <TableCell>
