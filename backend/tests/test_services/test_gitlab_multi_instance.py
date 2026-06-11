@@ -58,6 +58,36 @@ class TestApiMethodTokenGuards:
         assert result is None
 
 
+class TestTeamMemberSyncResolveOnly:
+    """Sync resolves members to EXISTING local users only; it never creates users
+    (which previously pulled GitLab bot/service accounts into Dependency Control)."""
+
+    def test_resolves_existing_user_by_email_no_create(self):
+        service = GitLabService(make_gitlab_instance())
+        existing = {"_id": "u-1", "email": "real@example.com", "username": "real"}
+        user_repo = MagicMock()
+        user_repo.get_raw_by_email = AsyncMock(return_value=existing)
+        user_repo.get_raw_by_username = AsyncMock(return_value=None)
+        user_repo.create = AsyncMock()
+        members = [GitLabMember(username="real", email="real@example.com", access_level=40)]
+        result = asyncio.run(service._build_team_members(members, user_repo))
+        assert len(result) == 1
+        assert result[0].user_id == "u-1"
+        user_repo.create.assert_not_called()
+
+    def test_skips_bot_member_without_local_account_no_create(self):
+        # GitLab service-account / bot: no matching local user -> skipped, NOT created.
+        service = GitLabService(make_gitlab_instance())
+        user_repo = MagicMock()
+        user_repo.get_raw_by_email = AsyncMock(return_value=None)
+        user_repo.get_raw_by_username = AsyncMock(return_value=None)
+        user_repo.create = AsyncMock()
+        members = [GitLabMember(username="group_875_bot_f4597604b42b729d0de22d01e5126164", access_level=40)]
+        result = asyncio.run(service._build_team_members(members, user_repo))
+        assert result == []
+        user_repo.create.assert_not_called()
+
+
 class TestMrDecorationEarlyReturns:
     """MR decoration should bail early in various conditions."""
 
@@ -964,19 +994,20 @@ class TestTeamSyncMergeSemantics:
 
 
 class TestTeamSyncEmaillessMembers:
-    """Finding 16: an email-less GitLab member must NOT be silently dropped."""
+    """Sync resolves members to EXISTING local users only and NEVER creates users —
+    creating them pulled GitLab service accounts / bots (group_<id>_bot_<hash>) into
+    Dependency Control even though they never signed in."""
 
-    def test_emailless_member_is_created_username_keyed(self, gitlab_instance_a):
+    def test_emailless_member_without_local_account_is_skipped(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
 
-        # GitLab member with NO email but a username, and no existing local user.
+        # GitLab member with NO email and a username, and no existing local user.
         members = [GitLabMember(username="ghost", email=None, access_level=30)]
 
         with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
             mock_members.return_value = members
-            # find_one returns None -> user does not exist locally yet.
-            users_coll = create_mock_collection(find_one=None)
-            users_coll.insert_one = AsyncMock(return_value=MagicMock(inserted_id="created"))
+            users_coll = create_mock_collection(find_one=None)  # no local user matches
+            users_coll.insert_one = AsyncMock()
             teams_coll = create_mock_collection(find_one=None)
             teams_coll.insert_one = AsyncMock()
             db = create_mock_db({"teams": teams_coll, "users": users_coll})
@@ -992,44 +1023,27 @@ class TestTeamSyncEmaillessMembers:
                 )
             )
 
-        # A team must have been created with the email-less member included
-        # (NOT dropped). The synthetic-email user was persisted.
-        assert result is not None
-        users_coll.insert_one.assert_called_once()
-        created_user = users_coll.insert_one.call_args[0][0]
-        assert created_user["username"] == "ghost"
-        # Synthetic email must be a valid, instance-scoped, non-deliverable address.
-        # It must use the "users.noreply." subdomain prefix (mirroring the GitHub
-        # no-reply convention) to prevent collisions with real User.email values on
-        # public GitLab instances (e.g. gitlab.com).
-        synth_email = created_user["email"]
-        assert synth_email.startswith("ghost@users.noreply."), (
-            f"synthetic email must be keyed as ghost@users.noreply.<host>; got {synth_email!r}"
-        )
-        # Determinism: calling the helper twice with the same inputs yields the same value.
-        service2 = GitLabService(gitlab_instance_a)
-        member = GitLabMember(username="ghost", email=None, access_level=30)
-        assert service2._synthesize_member_email(member) == synth_email, (
-            "_synthesize_member_email must be deterministic for the same username+instance"
-        )
-        teams_coll.insert_one.assert_called_once()
-        team_doc = teams_coll.insert_one.call_args[0][0]
-        assert any(m["source"] == "gitlab" for m in team_doc["members"])
+        # Sync NEVER creates users (that pulled GitLab service accounts / bots in).
+        users_coll.insert_one.assert_not_called()
+        # The only member was skipped -> empty member set -> no new team created.
+        teams_coll.insert_one.assert_not_called()
+        assert result is None
 
-    def test_emailless_member_without_username_is_logged_not_dropped(self, gitlab_instance_a, caplog):
+    def test_member_without_email_or_username_is_skipped(self, gitlab_instance_a, caplog):
         service = GitLabService(gitlab_instance_a)
 
-        # Pathological member: neither email nor username — cannot key an account.
+        # Pathological member: neither email nor username.
         members = [GitLabMember(username=None, email=None, access_level=30)]
 
         with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
             mock_members.return_value = members
             users_coll = create_mock_collection(find_one=None)
+            users_coll.insert_one = AsyncMock()
             teams_coll = create_mock_collection(find_one=None)
             teams_coll.insert_one = AsyncMock()
             db = create_mock_db({"teams": teams_coll, "users": users_coll})
 
-            with caplog.at_level("WARNING", logger="app.services.gitlab"):
+            with caplog.at_level("DEBUG", logger="app.services.gitlab"):
                 asyncio.run(
                     service.sync_team_from_gitlab(
                         db=db,
@@ -1041,9 +1055,10 @@ class TestTeamSyncEmaillessMembers:
                     )
                 )
 
-        # No user can be created (no key), but the skip must be LOGGED, not silent.
+        # No user is created, and the skip is logged (not silent).
+        users_coll.insert_one.assert_not_called()
         assert any("member" in r.message.lower() for r in caplog.records), (
-            f"Expected a warning when a member cannot be resolved. Got: {[r.message for r in caplog.records]}"
+            f"Expected a skip log. Got: {[r.message for r in caplog.records]}"
         )
 
 

@@ -1,5 +1,4 @@
 import logging
-import secrets
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
@@ -9,7 +8,6 @@ import httpx
 from app.core.http_utils import InstrumentedAsyncClient
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core import security
 from app.core.cache import cache_service
 from app.core.constants import (
     GITLAB_ADMIN_MIN_ACCESS,
@@ -25,7 +23,6 @@ from app.models.gitlab_api import (
 )
 from app.models.gitlab_instance import GitLabInstance
 from app.models.team import Team, TeamMember
-from app.models.user import User
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 from app.repositories import TeamRepository, UserRepository
 
@@ -509,21 +506,24 @@ class GitLabService:
         gitlab_members: List[GitLabMember],
         user_repo: UserRepository,
     ) -> List[TeamMember]:
-        """Resolve each GitLab member to a local user (creating one if missing) and map to TeamMember.
+        """Resolve each GitLab member to an EXISTING local user and map to TeamMember.
 
         Members resolved here are always tagged ``source="gitlab"`` (Finding 16) so the
         merge in ``_upsert_team_with_members`` can distinguish them from manually-added
-        members and refresh only the gitlab-sourced subset.
+        members and refresh only the gitlab-sourced subset. Members without a local
+        account are skipped — sync never creates users (see ``_find_user``).
         """
         team_members: List[TeamMember] = []
         for member in gitlab_members:
-            user = await self._find_or_create_user(member, user_repo)
+            user = await self._find_user(member, user_repo)
             if not user:
-                # Could not resolve OR create the member (e.g. no email AND no username).
-                # Do NOT silently drop — log so operators can reconcile (Finding 16).
-                logger.warning(
-                    "Skipping GitLab member that could not be resolved to a local user "
-                    "(no email and no username; access_level=%s). It will not appear in the team.",
+                # Member has no Dependency Control account yet (never logged in) or is a
+                # GitLab service account / bot (e.g. group_<id>_bot_<hash>). Sync NEVER
+                # creates users — a real member is added once they log in (which creates
+                # their account via OIDC) and the next sync runs.
+                logger.debug(
+                    "Skipping GitLab member with no local account (username=%s, access_level=%s).",
+                    member.username,
                     member.access_level,
                 )
                 continue
@@ -532,62 +532,24 @@ class GitLabService:
             team_members.append(TeamMember(user_id=user_id, role=role, source="gitlab"))
         return team_members
 
-    def _synthesize_member_email(self, member: GitLabMember) -> Optional[str]:
-        """Build a deterministic, non-deliverable synthetic email for an email-less member.
-
-        The local ``User`` model requires a valid ``EmailStr`` (it is not nullable), so an
-        email-less GitLab member that has a username is given a synthetic, instance-scoped
-        address rather than being dropped (Finding 16). Returns None when no username is
-        available to key the account on.
-
-        The address uses a ``users.noreply.`` subdomain prefix (mirroring the GitHub
-        no-reply convention) so it is provably non-deliverable and will never collide with
-        a real user registration — even when the GitLab instance is hosted on a public
-        domain such as ``gitlab.com``.  The value is deterministic (same username +
-        instance → same address), passes ``EmailStr`` validation, and is not used for
-        delivery or lookup.
-
-        Note: the RFC 6761 ``.invalid`` TLD would be the clearest marker, but the
-        ``email-validator`` library (used by pydantic ``EmailStr``) rejects it as a
-        special-use name, so the no-reply subdomain approach is used instead.
-        """
-        if not member.username:
-            return None
-        # Strip the scheme and any path component to get the bare hostname, then prepend
-        # a "users.noreply." subdomain so the address is provably non-deliverable and
-        # cannot collide with a real User.email even on public GitLab instances.
-        host = self.base_url.split("://", 1)[-1].split("/", 1)[0] or "gitlab.local"
-        return f"{member.username}@users.noreply.{host}"
-
-    async def _find_or_create_user(
+    async def _find_user(
         self,
         member: GitLabMember,
         user_repo: UserRepository,
     ) -> Optional[Dict[str, Any]]:
-        user = None
+        """Resolve a GitLab member to an EXISTING local user (by email, else username).
+
+        Returns None when the member has no Dependency Control account. Sync NEVER creates
+        users: doing so pulled GitLab service accounts / bots (e.g. ``group_<id>_bot_<hash>``)
+        into Dependency Control even though they never signed in. A real user is added to the
+        team the next time the sync runs after they have logged in (which creates their
+        account via OIDC).
+        """
         if member.email:
-            user = await user_repo.get_raw_by_email(member.email)
-        elif member.username:
-            user = await user_repo.get_raw_by_username(member.username)
-        if user:
-            return user
-
-        # Email-less member with no existing local user: synthesize an email so the
-        # account can be created (User.email is required), keyed on the username.
-        # If there is no username either, the member cannot be created — caller logs it.
-        email = member.email or self._synthesize_member_email(member)
-        if not email:
-            return None
-
-        new_user = User(
-            username=member.username or email.split("@")[0],
-            email=email,
-            hashed_password=security.get_password_hash(secrets.token_urlsafe(16)),
-            is_active=True,
-            auth_provider="gitlab",
-        )
-        await user_repo.create(new_user)
-        return new_user.model_dump()
+            return await user_repo.get_raw_by_email(member.email)
+        if member.username:
+            return await user_repo.get_raw_by_username(member.username)
+        return None
 
     @staticmethod
     def _merge_team_members(
