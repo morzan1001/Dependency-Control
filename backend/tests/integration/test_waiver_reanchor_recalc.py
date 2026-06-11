@@ -129,3 +129,41 @@ async def test_dormant_waiver_is_logged(caplog):
         await _apply_waivers_signature(repo, wrepo, scan, [w])
     assert "f1" not in repo.waived
     assert any("waiver dormant" in r.getMessage() and "w1" in r.getMessage() for r in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_records_match_outcome_per_waiver():
+    scan = "s1"
+    # f1 is waived by w_active (exact anchor); w_dormant matches nothing.
+    repo = _Repo([
+        _finding_doc(scan, "f1", "fpA", "c1", 10, rule="bearer:X", file="a.py"),
+        _finding_doc(scan, "f2", "zz", "cX", 5, rule="opengrep:y", file="b.py"),
+    ])
+    wrepo = _WRepo()
+    w_active = _Waiver("wa", "false_positive",
+        MatchSignature(rule_key="bearer:X", file_key="a.py", anchor="fpA",
+                       anchor_kind="scanner_fp", content_hash="c1", last_line=10))
+    w_dormant = _Waiver("wd", "false_positive",
+        MatchSignature(rule_key="bearer:X", file_key="a.py", anchor="nomatch",
+                       anchor_kind="scanner_fp", content_hash="cZZ", last_line=999))
+    await _apply_waivers_signature(repo, wrepo, scan, [w_active, w_dormant])
+    assert wrepo.updates["wa"]["last_eval_scan_id"] == scan
+    assert wrepo.updates["wa"]["last_match_count"] == 1
+    assert wrepo.updates["wd"]["last_eval_scan_id"] == scan
+    assert wrepo.updates["wd"]["last_match_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_outcome_write_skipped_when_unchanged():
+    scan = "s1"
+    repo = _Repo([_finding_doc(scan, "f1", "fpA", "c1", 10, rule="bearer:X", file="a.py")])
+    wrepo = _WRepo()
+    w = _Waiver("wa", "false_positive",
+        MatchSignature(rule_key="bearer:X", file_key="a.py", anchor="fpA",
+                       anchor_kind="scanner_fp", content_hash="c1", last_line=10))
+    # Pre-set the outcome to exactly what this recalc would compute (scan s1, count 1).
+    w.last_eval_scan_id = scan
+    w.last_match_count = 1
+    await _apply_waivers_signature(repo, wrepo, scan, [w])
+    assert "f1" in repo.waived            # still waived
+    assert "wa" not in wrepo.updates      # but NO redundant outcome write (guard skipped it)

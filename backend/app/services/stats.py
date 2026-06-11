@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from collections import Counter
 from typing import Any, Dict, List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -258,6 +259,15 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
                 wid, scan_id, dormant_reason, rk, fk, getattr(m, "last_line", None),
                 group_sizes.get(f"{rk}\x00{fk}", 0),
             )
+
+    # Record per-waiver outcome so orphaned waivers (suppressing 0 findings in the latest scan)
+    # are visible in the UI. Covers dormant AND match=None waivers (both yield count 0).
+    match_counts = Counter(app.waived.values())  # waiver_id -> #findings waived
+    # getattr defaults guard pre-schema waiver docs; enriched items are Waiver instances.
+    for w in enriched:
+        count = match_counts.get(w.id, 0)
+        if getattr(w, "last_eval_scan_id", None) != scan_id or getattr(w, "last_match_count", None) != count:
+            await waiver_repo.update(w.id, {"last_eval_scan_id": scan_id, "last_match_count": count})
 
     # Group waive writes by reason for fewer queries.
     reason_by_waiver = {w.id: getattr(w, "reason", None) for w in enriched}
