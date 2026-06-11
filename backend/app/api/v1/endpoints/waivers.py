@@ -157,6 +157,7 @@ async def list_waivers(
     finding_id: Optional[str] = None,
     package_name: Optional[str] = None,
     search: Annotated[Optional[str], Query(description="Search in package name, reason, or finding ID")] = None,
+    orphaned: Annotated[bool, Query(description="Only return orphaned waivers (evaluated but matching 0 findings)")] = False,
     sort_by: Annotated[str, Query(description="Field to sort by")] = "created_at",
     sort_order: Annotated[str, Query(description="Sort order: asc or desc")] = "desc",
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
@@ -212,6 +213,10 @@ async def list_waivers(
             query = {"$and": [query, {"$or": search_or}]}
         else:
             query["$or"] = search_or
+
+    if orphaned:
+        query["last_eval_scan_id"] = {"$ne": None}
+        query["last_match_count"] = 0
 
     waiver_repo = WaiverRepository(db)
 

@@ -499,6 +499,82 @@ class TestListWaivers:
         assert flags == {"w-expired": False, "w-active": True, "w-no-exp": True}
 
 
+class TestOrphanedFilter:
+    def test_orphaned_filter_lists_only_orphaned_waivers(self, admin_user):
+        """orphaned=True must return only waivers with last_match_count==0 AND
+        last_eval_scan_id!=None; response items must expose last_eval_scan_id
+        and last_match_count."""
+        orphaned_waiver = _make_waiver(
+            id="w-orphaned",
+            last_eval_scan_id="s1",
+            last_match_count=0,
+        )
+        active_waiver = _make_waiver(
+            id="w-active",
+            last_eval_scan_id="s1",
+            last_match_count=1,
+        )
+
+        # --- (a) Verify fields appear in response --------------------------------
+        orphaned_doc = orphaned_waiver.model_dump(by_alias=True)
+        mock_repo = MagicMock()
+        mock_repo.count = AsyncMock(return_value=1)
+        mock_repo.find_many = AsyncMock(return_value=[orphaned_doc])
+
+        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+            result = _call_list_waivers(admin_user, orphaned=True)
+
+        item = result["items"][0]
+        assert "last_eval_scan_id" in item, "last_eval_scan_id must be in response"
+        assert "last_match_count" in item, "last_match_count must be in response"
+        assert item["last_eval_scan_id"] == "s1"
+        assert item["last_match_count"] == 0
+
+        # --- (b) orphaned=True filters by Mongo query before count+find ---------
+        both_docs = [
+            orphaned_waiver.model_dump(by_alias=True),
+            active_waiver.model_dump(by_alias=True),
+        ]
+        mock_repo2 = MagicMock()
+        mock_repo2.count = AsyncMock(return_value=1)
+        mock_repo2.find_many = AsyncMock(return_value=[orphaned_doc])
+
+        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo2):
+            result_orphaned = _call_list_waivers(admin_user, orphaned=True)
+
+        assert result_orphaned["total"] == 1
+        assert len(result_orphaned["items"]) == 1
+
+        # The Mongo query passed to count must include the orphaned filter
+        count_query = mock_repo2.count.call_args[0][0]
+        assert count_query.get("last_eval_scan_id") == {"$ne": None}, (
+            "count query must filter last_eval_scan_id != None"
+        )
+        assert count_query.get("last_match_count") == 0, (
+            "count query must filter last_match_count == 0"
+        )
+
+        # Same filter must be in find_many query
+        find_query = mock_repo2.find_many.call_args[0][0]
+        assert find_query.get("last_eval_scan_id") == {"$ne": None}
+        assert find_query.get("last_match_count") == 0
+
+        # Without orphaned flag: both docs present, no orphan filter
+        mock_repo3 = MagicMock()
+        mock_repo3.count = AsyncMock(return_value=2)
+        mock_repo3.find_many = AsyncMock(return_value=both_docs)
+
+        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo3):
+            result_all = _call_list_waivers(admin_user)
+
+        count_query_all = mock_repo3.count.call_args[0][0]
+        assert "last_eval_scan_id" not in count_query_all, (
+            "plain call must NOT add orphaned filter"
+        )
+        assert result_all["total"] == 2
+        assert len(result_all["items"]) == 2
+
+
 class TestDeleteWaiver:
     def test_raises_404_when_not_found(self, admin_user):
         from app.api.v1.endpoints.waivers import delete_waiver

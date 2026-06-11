@@ -69,5 +69,7 @@ class WaiverResponse(WaiverCreate):
     id: PyObjectId = Field(validation_alias="_id")
     created_by: str
     created_at: datetime
+    last_eval_scan_id: Optional[str] = None
+    last_match_count: Optional[int] = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
