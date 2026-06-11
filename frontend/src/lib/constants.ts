@@ -1,14 +1,3 @@
-// Re-export from permissions.ts for legacy import paths.
-export {
-  PERMISSION_GROUPS,
-  Permissions,
-  ALL_PERMISSIONS,
-  PRESET_ADMIN,
-  PRESET_USER,
-  PRESET_VIEWER,
-  hasPermission,
-} from './permissions';
-
 import { Permissions } from './permissions';
 
 export const AVAILABLE_ANALYZERS = [
@@ -57,12 +46,6 @@ export const DEBOUNCE_DELAY_MS = 300;
 export const COPY_FEEDBACK_DELAY_MS = 2000;
 export const API_TIMEOUT_MS = 30000;
 export const API_REFRESH_TIMEOUT_MS = 10000;
-
-export const QUERY_STALE_TIMES = {
-  FAST: 2 * 60 * 1000,       // 2 min - frequently changing data (dashboard stats)
-  STANDARD: 5 * 60 * 1000,   // 5 min - most data
-  SLOW: 30 * 60 * 1000,      // 30 min - rarely changing data (dependency types, configs)
-} as const;
 
 export const ANALYTICS_PERMISSIONS = [
   Permissions.ANALYTICS_READ,

@@ -2,21 +2,6 @@ import { Container, FileCode, HardDrive, Layers, type LucideIcon } from 'lucide-
 
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO' | 'UNKNOWN'
 
-export const SEVERITY_ORDER: Record<string, number> = {
-  CRITICAL: 5,
-  HIGH: 4,
-  MEDIUM: 3,
-  LOW: 2,
-  INFO: 1,
-  UNKNOWN: 0,
-  critical: 5,
-  high: 4,
-  medium: 3,
-  low: 2,
-  info: 1,
-  unknown: 0,
-}
-
 export function getSeverityColor(severity: string): string {
   switch (severity?.toUpperCase()) {
     case 'CRITICAL':
