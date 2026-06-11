@@ -39,6 +39,8 @@ export interface Waiver {
   created_at: string;
   created_by: string;
   is_active: boolean;
+  last_eval_scan_id?: string;
+  last_match_count?: number;
 }
 
 export interface WaiversPaginatedResponse {
@@ -59,4 +61,5 @@ export interface WaiversQueryParams {
   sort_order?: 'asc' | 'desc';
   skip?: number;
   limit?: number;
+  orphaned?: boolean;
 }

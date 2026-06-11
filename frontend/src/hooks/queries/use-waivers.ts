@@ -9,11 +9,11 @@ import { projectKeys } from './use-projects';
 export const waiverKeys = {
     all: ['waivers'] as const,
     project: (projectId: string) => [...waiverKeys.all, 'project', projectId] as const,
-    projectWithParams: (projectId: string, search?: string, sortBy?: string, sortOrder?: string) =>
-        [...waiverKeys.project(projectId), { search, sortBy, sortOrder }] as const,
+    projectWithParams: (projectId: string, search?: string, sortBy?: string, sortOrder?: string, orphaned?: boolean) =>
+        [...waiverKeys.project(projectId), { search, sortBy, sortOrder, orphaned }] as const,
     global: ['waivers', 'global'] as const,
-    globalWithParams: (search?: string, sortBy?: string, sortOrder?: string) =>
-        ['waivers', 'global', { search, sortBy, sortOrder }] as const,
+    globalWithParams: (search?: string, sortBy?: string, sortOrder?: string, orphaned?: boolean) =>
+        ['waivers', 'global', { search, sortBy, sortOrder, orphaned }] as const,
 };
 
 const invalidateWaiverDependents = (queryClient: QueryClient) => {
@@ -65,12 +65,13 @@ export const useProjectWaivers = (
         search?: string;
         sortBy?: string;
         sortOrder?: 'asc' | 'desc';
+        orphaned?: boolean;
     }
 ) => {
-    const { search, sortBy = 'created_at', sortOrder = 'desc' } = options || {};
+    const { search, sortBy = 'created_at', sortOrder = 'desc', orphaned } = options || {};
 
     return useInfiniteQuery({
-        queryKey: waiverKeys.projectWithParams(projectId, search, sortBy, sortOrder),
+        queryKey: waiverKeys.projectWithParams(projectId, search, sortBy, sortOrder, orphaned),
         queryFn: async ({ pageParam = 0 }) => {
             return waiverApi.getByProject(projectId, {
                 skip: pageParam,
@@ -78,6 +79,7 @@ export const useProjectWaivers = (
                 search,
                 sort_by: sortBy,
                 sort_order: sortOrder,
+                orphaned,
             });
         },
         initialPageParam: 0,
@@ -105,12 +107,13 @@ export const useGlobalWaivers = (
         search?: string;
         sortBy?: string;
         sortOrder?: 'asc' | 'desc';
+        orphaned?: boolean;
     }
 ) => {
-    const { search, sortBy = 'created_at', sortOrder = 'desc' } = options || {};
+    const { search, sortBy = 'created_at', sortOrder = 'desc', orphaned } = options || {};
 
     return useInfiniteQuery({
-        queryKey: waiverKeys.globalWithParams(search, sortBy, sortOrder),
+        queryKey: waiverKeys.globalWithParams(search, sortBy, sortOrder, orphaned),
         queryFn: async ({ pageParam = 0 }) => {
             return waiverApi.getAll({
                 global_only: true,
@@ -119,6 +122,7 @@ export const useGlobalWaivers = (
                 search,
                 sort_by: sortBy,
                 sort_order: sortOrder,
+                orphaned,
             });
         },
         initialPageParam: 0,
