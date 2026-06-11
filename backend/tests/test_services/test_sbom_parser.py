@@ -106,6 +106,41 @@ class TestDependencyGraphAnalyzer:
         assert result == {"pkg-a"}
 
 
+class TestResolveCyclonedxDirectRefs:
+    """The fallback (SBOM root bom-ref does not match a graph node) must return the
+    root's CHILDREN — the direct deps — not the root nodes themselves (regression: a
+    mismatched main_bom_ref marked every dependency transitive)."""
+
+    def test_fallback_returns_root_children_not_roots(self):
+        # app -> [A, B]; A -> [C]. "app" is the root (nothing depends on it).
+        deps_graph = {"app": ["A", "B"], "A": ["C"], "B": [], "C": []}
+        all_transitive_refs = {"A", "B", "C"}
+        # main_bom_ref does NOT match any graph node (e.g. a purl vs. plain refs).
+        result = SBOMParser._resolve_cyclonedx_direct_refs(
+            deps_graph, all_transitive_refs, "pkg:maven/com.acme/app@1.0"
+        )
+        assert result == {"A", "B"}  # NOT {"app"}
+
+    def test_fallback_with_no_main_bom_ref(self):
+        deps_graph = {"app": ["A", "B"], "A": [], "B": []}
+        all_transitive_refs = {"A", "B"}
+        result = SBOMParser._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, None)
+        assert result == {"A", "B"}
+
+    def test_matched_main_bom_ref_returns_root_depends_on(self):
+        deps_graph = {"app": ["A", "B"], "A": ["C"], "B": [], "C": []}
+        all_transitive_refs = {"A", "B", "C"}
+        result = SBOMParser._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, "app")
+        assert result == {"A", "B"}
+
+    def test_flat_graph_treats_roots_as_direct(self):
+        # No real edges: every ref is a childless root -> treat all as direct (not empty).
+        deps_graph = {"X": [], "Y": []}
+        all_transitive_refs: set = set()
+        result = SBOMParser._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, None)
+        assert result == {"X", "Y"}
+
+
 class TestSBOMFormatDetection:
     def setup_method(self):
         self.parser = SBOMParser()

@@ -269,7 +269,18 @@ class SBOMParser:
         """Resolve the set of direct refs given the dep graph and main component."""
         if main_bom_ref and main_bom_ref in deps_graph:
             return set(deps_graph[main_bom_ref])
-        return {ref for ref in deps_graph if ref not in all_transitive_refs and ref != main_bom_ref}
+        # Fallback when the SBOM's metadata.component bom-ref does not match any graph node
+        # (varies by SBOM tool). The root(s) are the refs nothing depends on; the DIRECT
+        # dependencies are those roots' children — NOT the roots themselves (a root is the
+        # application/component, not one of its dependencies). Returning the roots marked
+        # every real dependency transitive.
+        roots = {ref for ref in deps_graph if ref not in all_transitive_refs and ref != main_bom_ref}
+        direct: set = set()
+        for root in roots:
+            direct.update(deps_graph.get(root, []))
+        # Degenerate graph (roots have no recorded children): treat the roots as direct so
+        # we don't mark everything transitive.
+        return direct or roots
 
     def _parse_cyclonedx(self, sbom: Dict[str, Any], result: ParsedSBOM) -> None:
         """Parse CycloneDX format SBOM."""
