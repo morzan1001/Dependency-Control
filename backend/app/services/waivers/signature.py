@@ -79,14 +79,15 @@ def _sast_signature(finding: SignatureSource) -> Optional[MatchSignature]:
     fingerprint = edetails.get("fingerprint") or edetails.get("old_fingerprint")
     content_hash = _hash(edetails.get("code_extract"))
     line = details.get("line") or (edetails.get("start") or {}).get("line")
+    rule_keys = sorted({f"{e.get('scanner') or 'unknown'}:{e.get('id') or 'unknown'}" for e in entries})
 
     if fingerprint:
         return MatchSignature(rule_key=f"{scanner}:{rule_id}", file_key=finding.component,
                               anchor=fingerprint, anchor_kind="scanner_fp",
-                              content_hash=content_hash, last_line=line)
+                              content_hash=content_hash, last_line=line, rule_keys=rule_keys)
     return MatchSignature(rule_key=f"{scanner}:{rule_id}", file_key=finding.component,
                           anchor=content_hash, anchor_kind="content_hash",
-                          content_hash=content_hash, last_line=line)
+                          content_hash=content_hash, last_line=line, rule_keys=rule_keys)
 
 
 def _iac_signature(finding: SignatureSource) -> Optional[MatchSignature]:
@@ -97,17 +98,18 @@ def _iac_signature(finding: SignatureSource) -> Optional[MatchSignature]:
     similarity_id = details.get("similarity_id")
     search_key = details.get("search_key")
 
+    kics_key = f"KICS:{rule_id}"
     if similarity_id:
-        return MatchSignature(rule_key=f"KICS:{rule_id}", file_key=finding.component,
+        return MatchSignature(rule_key=kics_key, file_key=finding.component,
                               anchor=similarity_id, anchor_kind="similarity_id",
-                              content_hash=content_hash, last_line=line)
+                              content_hash=content_hash, last_line=line, rule_keys=[kics_key])
     if search_key:
-        return MatchSignature(rule_key=f"KICS:{rule_id}", file_key=finding.component,
+        return MatchSignature(rule_key=kics_key, file_key=finding.component,
                               anchor=search_key, anchor_kind="search_key",
-                              content_hash=content_hash, last_line=line)
-    return MatchSignature(rule_key=f"KICS:{rule_id}", file_key=finding.component,
+                              content_hash=content_hash, last_line=line, rule_keys=[kics_key])
+    return MatchSignature(rule_key=kics_key, file_key=finding.component,
                           anchor=content_hash, anchor_kind="content_hash",
-                          content_hash=content_hash, last_line=line)
+                          content_hash=content_hash, last_line=line, rule_keys=[kics_key])
 
 
 def _secret_signature(finding: SignatureSource) -> Optional[MatchSignature]:
@@ -118,7 +120,7 @@ def _secret_signature(finding: SignatureSource) -> Optional[MatchSignature]:
         return None
     return MatchSignature(rule_key=detector, file_key=finding.component,
                           anchor=secret_hash, anchor_kind="secret_hash",
-                          content_hash=secret_hash, last_line=None)
+                          content_hash=secret_hash, last_line=None, rule_keys=[detector])
 
 
 def compute_match_signature(finding: SignatureSource) -> Optional[MatchSignature]:

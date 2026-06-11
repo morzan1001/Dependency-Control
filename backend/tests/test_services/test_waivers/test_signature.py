@@ -144,6 +144,28 @@ def test_compute_match_signature_from_doc_none_for_non_location():
     assert compute_match_signature_from_doc({"finding_id": "CVE-2021-1", "component": "pkg", "details": {}}) is None
 
 
+def test_sast_signature_collects_all_scanner_rule_keys():
+    doc = {
+        "finding_id": "BEARER-r-a.py-10", "component": "a.py", "type": "sast",
+        "details": {"line": 10, "sast_findings": [
+            {"scanner": "bearer", "id": "X", "details": {"fingerprint": "fpB", "start": {"line": 10}}},
+            {"scanner": "opengrep", "id": "X", "details": {"fingerprint": "fpO", "start": {"line": 10}}},
+        ]},
+    }
+    sig = compute_match_signature_from_doc(doc)
+    assert sig is not None
+    assert sig.rule_keys == ["bearer:X", "opengrep:X"]
+    assert sig.rule_key in sig.rule_keys  # primary is one of them
+
+
+def test_iac_signature_rule_keys_is_single():
+    doc = {"finding_id": "KICS-q1-main.tf-3", "component": "main.tf", "type": "iac",
+           "details": {"rule_id": "q1", "similarity_id": "s", "start": {"line": 3}}}
+    sig = compute_match_signature_from_doc(doc)
+    assert sig is not None
+    assert sig.rule_keys == ["KICS:q1"]
+
+
 def test_finding_and_raw_doc_produce_same_signature():
     """Cross-path equivalence: compute_match_signature(Finding) == compute_match_signature_from_doc(doc)
     for the same logical finding.  Guards against a silent finding_id→id field-name mismatch."""
