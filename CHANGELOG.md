@@ -1,4 +1,17 @@
-# Release 1.7.5
+# Release 1.7.6
+
+## 🐛 Fixes
+
+- fix(sbom): direct-dep fallback returns root children, not roots, when SBOM bom-ref mismatches dependency graph (#0)
+- fix(analysis): read SBOM from primary GridFS with bounded retry; mark scan failed (not silently completed) when no SBOM can be loaded (#0)
+
+## 📦 Build & CI
+
+- chore(frontend): remove dead exports (legacy permission re-exports, QUERY_STALE_TIMES, finding-utils SEVERITY_ORDER) (#0)
+
+
+
+# Release 1.7.6
 
 ## 🚀 Features
 
