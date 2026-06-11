@@ -5,7 +5,7 @@ path can share one source of truth. See the design spec for the decision table.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence
 
 from app.core.constants import WAIVER_STATUS_FALSE_POSITIVE
 from app.models.match_signature import MatchSignature
@@ -20,11 +20,16 @@ def _content_equal(a: Optional[str], b: Optional[str]) -> bool:
     return a is not None and b is not None and a == b
 
 
+def _rule_keys_intersect(a: MatchSignature, b: MatchSignature) -> bool:
+    """True if the two signatures share at least one rule key (handles scanner-selection drift)."""
+    return bool(a.effective_rule_keys & b.effective_rule_keys)
+
+
 def waiver_strong_match(finding_sig: MatchSignature, waiver_sig: MatchSignature, status: str) -> bool:
     """Pass-1 exact-instance match. Only strong anchors qualify; empty anchors never match."""
     if not finding_sig.is_strong or not waiver_sig.is_strong:
         return False
-    if finding_sig.rule_key != waiver_sig.rule_key or finding_sig.file_key != waiver_sig.file_key:
+    if finding_sig.file_key != waiver_sig.file_key or not _rule_keys_intersect(finding_sig, waiver_sig):
         return False
     if finding_sig.anchor != waiver_sig.anchor:
         return False
@@ -56,8 +61,8 @@ def _waiver_status(w: Any) -> str:
     return getattr(w, "status", None) or WAIVER_STATUS_FALSE_POSITIVE
 
 
-def _group_key(s: MatchSignature) -> Tuple[str, str]:
-    return (s.rule_key, s.file_key)
+def _group_key(s: MatchSignature) -> str:
+    return s.file_key
 
 
 def apply_waivers_to_findings(findings: Sequence[MatchFinding], waivers: Sequence) -> WaiverApplication:
@@ -72,7 +77,7 @@ def apply_waivers_to_findings(findings: Sequence[MatchFinding], waivers: Sequenc
     matched_waivers: set = set()
     waivers_with_sig = [w for w in waivers if getattr(w, "match", None) is not None]
 
-    by_group: Dict[Tuple[str, str], List[MatchFinding]] = {}
+    by_group: Dict[str, List[MatchFinding]] = {}
     for f in located:
         assert f.sig is not None  # invariant: `located` excludes findings without a signature
         by_group.setdefault(_group_key(f.sig), []).append(f)
@@ -91,7 +96,7 @@ def apply_waivers_to_findings(findings: Sequence[MatchFinding], waivers: Sequenc
 def _pass1_strong_exact(
     app: WaiverApplication,
     waivers_with_sig: List,
-    by_group: Dict[Tuple[str, str], List[MatchFinding]],
+    by_group: Dict[str, List[MatchFinding]],
     claimed: set,
     matched_waivers: set,
 ) -> None:
@@ -101,6 +106,7 @@ def _pass1_strong_exact(
         if not wsig.is_strong:
             continue
         status = _waiver_status(w)
+        # rule-key intersection + anchor equality are enforced by waiver_strong_match below
         for f in by_group.get(_group_key(wsig), []):
             if f.id in claimed or f.sig is None:  # by_group holds only located findings; guard for the type checker
                 continue
@@ -114,7 +120,7 @@ def _pass1_strong_exact(
 def _pass2_reanchor(
     app: WaiverApplication,
     waivers_with_sig: List,
-    by_group: Dict[Tuple[str, str], List[MatchFinding]],
+    by_group: Dict[str, List[MatchFinding]],
     claimed: set,
     matched_waivers: set,
 ) -> None:
@@ -124,7 +130,10 @@ def _pass2_reanchor(
             continue
         wsig = w.match
         status = _waiver_status(w)
-        candidates = [f for f in by_group.get(_group_key(wsig), []) if f.id not in claimed]
+        candidates = [
+            f for f in by_group.get(_group_key(wsig), [])
+            if f.id not in claimed and f.sig is not None and _rule_keys_intersect(f.sig, wsig)
+        ]
         if not candidates:
             app.dormant[w.id] = "no_candidates_in_group"
             continue

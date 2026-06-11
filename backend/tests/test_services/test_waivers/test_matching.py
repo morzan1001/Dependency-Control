@@ -144,3 +144,41 @@ def test_waiver_with_no_candidates_is_recorded_dormant():
     assert "f1" not in app.waived
     assert app.dormant.get("w1") == "no_candidates_in_group"
     assert app.lapsed == {}
+
+
+def test_scanner_flip_waiver_matches_via_rule_key_intersection():
+    # Waiver was snapshotted when BOTH scanners detected the finding.
+    waiver = _W("w1", "false_positive",
+        MatchSignature(rule_key="opengrep:X", file_key="a.py", anchor="fpA",
+                       anchor_kind="scanner_fp", content_hash="c1", last_line=10,
+                       rule_keys=["bearer:X", "opengrep:X"]))
+    # Re-scanned finding now carries only the bearer entry, with a DIFFERENT anchor (drift),
+    # SAME content_hash, same file. Different single rule_key -> would orphan under old grouping.
+    finding = MatchFinding(id="f1", sig=MatchSignature(rule_key="bearer:X", file_key="a.py",
+        anchor="fpB", anchor_kind="scanner_fp", content_hash="c1", last_line=12,
+        rule_keys=["bearer:X"]))
+    app = apply_waivers_to_findings([finding], [waiver])
+    assert app.waived.get("f1") == "w1"  # rule_key sets intersect on "bearer:X" -> re-anchored
+
+
+def test_backcompat_single_rule_key_unchanged():
+    # No rule_keys list on either side -> behaves exactly as before (exact rule_key match).
+    waiver = _W("w1", "false_positive",
+        MatchSignature(rule_key="bearer:X", file_key="a.py", anchor="fpA",
+                       anchor_kind="scanner_fp", content_hash="c1", last_line=10))
+    finding = MatchFinding(id="f1", sig=MatchSignature(rule_key="bearer:X", file_key="a.py",
+        anchor="fpA", anchor_kind="scanner_fp", content_hash="c1", last_line=10))
+    app = apply_waivers_to_findings([finding], [waiver])
+    assert app.waived.get("f1") == "w1"  # Pass-1 strong-exact still works
+
+
+def test_backcompat_pass2_reanchor_with_no_rule_keys_list():
+    # rule_keys=[] on both sides -> effective_rule_keys falls back to {rule_key};
+    # different anchor forces Pass-2 (not Pass-1), same content_hash -> pure-move re-anchor.
+    waiver = _W("w1", "false_positive",
+        MatchSignature(rule_key="bearer:X", file_key="a.py", anchor="fpOLD",
+                       anchor_kind="scanner_fp", content_hash="c1", last_line=10))
+    finding = MatchFinding(id="f1", sig=MatchSignature(rule_key="bearer:X", file_key="a.py",
+        anchor="fpNEW", anchor_kind="scanner_fp", content_hash="c1", last_line=12))
+    app = apply_waivers_to_findings([finding], [waiver])
+    assert app.waived.get("f1") == "w1"
