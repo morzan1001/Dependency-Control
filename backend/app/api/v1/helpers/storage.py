@@ -11,6 +11,8 @@ from typing import Any, Dict, List, Optional
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
+from app.db.mongodb import open_gridfs_download_with_retry, primary_gridfs_bucket
+
 logger = logging.getLogger(__name__)
 
 
@@ -29,10 +31,11 @@ async def load_from_gridfs(
         Parsed JSON content or None if loading fails
     """
     try:
-        fs = AsyncIOMotorGridFSBucket(db)
-        grid_out = await fs.open_download_stream(ObjectId(file_id))
+        fs = primary_gridfs_bucket(db)
+        grid_out = await open_gridfs_download_with_retry(fs, ObjectId(file_id))
         content: bytes = await grid_out.read()
-        return json.loads(content)
+        data: Dict[str, Any] = json.loads(content)
+        return data
     except Exception as e:
         logger.exception("Failed to load file from GridFS: %s", e)
         return None
@@ -56,14 +59,14 @@ async def resolve_sbom_refs(
         return []
 
     resolved_sboms = []
-    fs = AsyncIOMotorGridFSBucket(db)
+    fs = primary_gridfs_bucket(db)
 
     for index, item in enumerate(sbom_items):
         if isinstance(item, dict) and item.get("type") == "gridfs_reference":
             gridfs_id = item.get("gridfs_id") or item.get("file_id")
             if gridfs_id:
                 try:
-                    stream = await fs.open_download_stream(ObjectId(gridfs_id))
+                    stream = await open_gridfs_download_with_retry(fs, ObjectId(gridfs_id))
                     content: bytes = await stream.read()
                     sbom_data = json.loads(content)
                     resolved_sboms.append(

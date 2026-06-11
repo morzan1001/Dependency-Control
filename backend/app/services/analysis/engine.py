@@ -12,6 +12,7 @@ from pymongo import UpdateOne
 
 from prometheus_client import Counter, Histogram
 
+from app.db.mongodb import open_gridfs_download_with_retry, primary_gridfs_bucket
 from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Project, Scan
 from app.models.waiver import Waiver
@@ -235,6 +236,29 @@ async def process_analyzer(
         return f"{analyzer_name}: Failed"
 
 
+# Marker substring of the system-error raised when a GridFS SBOM cannot be read. Used both
+# to build that error and to detect "the whole scan failed to load any SBOM".
+_SBOM_GRIDFS_LOAD_ERROR = "Failed to load SBOM from GridFS"
+
+
+def _all_sbom_loads_failed(sboms_to_process: List[Any], aggregated_findings: List[Any]) -> bool:
+    """True when every GridFS SBOM that should have been analysed failed to load.
+
+    In that case the scan ran no real analysis (only a system warning) and must NOT be
+    reported as a successful ``completed`` — otherwise a transient storage miss looks like
+    a clean, empty result.
+    """
+    gridfs_expected = sum(
+        1 for it in sboms_to_process if isinstance(it, dict) and it.get("type") == "gridfs_reference"
+    )
+    if gridfs_expected == 0:
+        return False
+    failures = sum(
+        1 for f in aggregated_findings if _SBOM_GRIDFS_LOAD_ERROR in (getattr(f, "description", "") or "")
+    )
+    return failures >= gridfs_expected
+
+
 async def _resolve_sbom(
     item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: ResultAggregator
 ) -> Optional[Dict[str, Any]]:
@@ -244,9 +268,9 @@ async def _resolve_sbom(
         try:
             if analysis_gridfs_operations_total:
                 analysis_gridfs_operations_total.labels(operation="download", status="attempt").inc()
-            stream = await fs.open_download_stream(ObjectId(gridfs_id))
+            stream = await open_gridfs_download_with_retry(fs, ObjectId(gridfs_id))
             content: bytes = await stream.read()
-            sbom = json.loads(content)
+            sbom: Dict[str, Any] = json.loads(content)
             del content
             if analysis_gridfs_operations_total:
                 analysis_gridfs_operations_total.labels(operation="download", status="success").inc()
@@ -255,7 +279,7 @@ async def _resolve_sbom(
             logger.exception("Failed to fetch SBOM from GridFS %s: %s", gridfs_id, gridfs_err)
             if analysis_gridfs_operations_total:
                 analysis_gridfs_operations_total.labels(operation="download", status="error").inc()
-            aggregator.aggregate("system", {"error": f"Failed to load SBOM from GridFS: {gridfs_err}"})
+            aggregator.aggregate("system", {"error": f"{_SBOM_GRIDFS_LOAD_ERROR}: {gridfs_err}"})
             return None
     result: Optional[Dict[str, Any]] = item
     return result
@@ -770,19 +794,24 @@ async def _finalize_scan_and_project(
     latest_run_summary: dict,
     scan_repo: ScanRepository,
     project_repo: ProjectRepository,
+    status: str = "completed",
+    error: Optional[str] = None,
 ) -> None:
-    """Persist completed status, ignored count, and update project stats."""
+    """Persist the final scan status, ignored count, and (on success) project stats."""
+    set_fields: Dict[str, Any] = {
+        "status": status,
+        "findings_count": total_findings_count,
+        "ignored_count": ignored_count,
+        "stats": stats.model_dump(),
+        "completed_at": datetime.now(timezone.utc),
+        "latest_run": latest_run_summary,
+    }
+    if error:
+        set_fields["error"] = error
     await scan_repo.update_raw(
         scan_id,
         {
-            "$set": {
-                "status": "completed",
-                "findings_count": total_findings_count,
-                "ignored_count": ignored_count,
-                "stats": stats.model_dump(),
-                "completed_at": datetime.now(timezone.utc),
-                "latest_run": latest_run_summary,
-            },
+            "$set": set_fields,
             "$unset": {
                 "findings_summary": "",
                 "received_results": "",
@@ -797,7 +826,9 @@ async def _finalize_scan_and_project(
             {"$set": {"latest_rescan_id": scan_id, "latest_run": latest_run_summary}},
         )
 
-    if project_id:
+    # A failed scan (e.g. SBOM could not be loaded) must NOT become the project's latest
+    # scan or overwrite its stats with this run's near-empty results.
+    if project_id and status != "failed":
         await project_repo.update_raw(
             project_id,
             {
@@ -920,7 +951,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
 
     project_license_policy, project_analyzer_settings = await _load_project_settings_overrides(project_id, project_repo)
 
-    fs = AsyncIOMotorGridFSBucket(db)
+    fs = primary_gridfs_bucket(db)
     sboms_to_process = _resolve_sboms_to_process(sboms, scan_type)
 
     for index, item in enumerate(sboms_to_process):
@@ -988,9 +1019,17 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
 
     stats = await calculate_comprehensive_stats(db, scan_id)
 
+    sbom_load_failed = _all_sbom_loads_failed(sboms_to_process, aggregated_findings)
+    final_status = "failed" if sbom_load_failed else "completed"
+    if sbom_load_failed:
+        logger.error(
+            "Scan %s: all SBOMs failed to load from GridFS — marking failed (was silently completing)",
+            scan_id,
+        )
+
     latest_run_summary = {
         "scan_id": scan_id,
-        "status": "completed",
+        "status": final_status,
         "findings_count": total_findings_count,
         "stats": stats.model_dump(),
         "completed_at": datetime.now(timezone.utc),
@@ -1012,22 +1051,25 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         latest_run_summary,
         scan_repo,
         project_repo,
+        status=final_status,
+        error="SBOM could not be loaded for analysis" if sbom_load_failed else None,
     )
 
     # Authoritative waiver re-apply + re-anchor + lapsed-flag computation. Runs BEFORE
     # notifications so webhooks/integrations report post-re-anchor stats. Skipped when the
     # project has no active waivers (nothing to re-anchor/lapse — avoids a redundant full
     # re-apply + stats recompute on every scan).
-    notify_stats = stats
-    if project_id and await _project_has_active_waivers(project_id, db):
-        from app.services.stats import recalculate_project_stats
-        recalced = await recalculate_project_stats(project_id, db)
-        if recalced is not None:
-            notify_stats = recalced
+    if not sbom_load_failed:
+        notify_stats = stats
+        if project_id and await _project_has_active_waivers(project_id, db):
+            from app.services.stats import recalculate_project_stats
+            recalced = await recalculate_project_stats(project_id, db)
+            if recalced is not None:
+                notify_stats = recalced
 
-    await _send_integrations_and_notifications(
-        project_id, scan_id, scan_doc, notify_stats, aggregated_findings, results_summary, db
-    )
+        await _send_integrations_and_notifications(
+            project_id, scan_id, scan_doc, notify_stats, aggregated_findings, results_summary, db
+        )
 
     del aggregated_findings
 

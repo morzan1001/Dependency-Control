@@ -5,11 +5,14 @@ Handles database connection lifecycle with proper type safety,
 connection pooling, and multi-pod compatibility.
 """
 
+import asyncio
 import logging
 from typing import Any, Optional
 
-from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase
+from bson import ObjectId
+from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from prometheus_client import Gauge
+from pymongo import ReadPreference
 
 from app.core.config import settings
 
@@ -31,6 +34,38 @@ DEFAULT_MIN_POOL_SIZE = 5
 DEFAULT_SERVER_SELECTION_TIMEOUT_MS = 30000  # 30 seconds
 DEFAULT_CONNECT_TIMEOUT_MS = 20000  # 20 seconds
 DEFAULT_SOCKET_TIMEOUT_MS = 30000  # 30 seconds
+
+
+def primary_gridfs_bucket(db: AsyncIOMotorDatabase) -> AsyncIOMotorGridFSBucket:
+    """GridFS bucket pinned to the PRIMARY.
+
+    The global client defaults to ``secondaryPreferred``; a freshly-written SBOM may not be
+    on a secondary yet (replication lag), so read-your-writes paths — analysis loading a
+    SBOM that ingest just uploaded — must read the primary or they hit a spurious
+    ``no file in gridfs`` and silently skip the whole analysis.
+    """
+    return AsyncIOMotorGridFSBucket(db.with_options(read_preference=ReadPreference.PRIMARY))
+
+
+async def open_gridfs_download_with_retry(
+    fs: AsyncIOMotorGridFSBucket, file_id: ObjectId, attempts: int = 4, base_delay: float = 0.25
+) -> Any:
+    """Open a GridFS download stream, retrying with exponential backoff.
+
+    Even reading the primary, a just-committed file can momentarily be unreadable under
+    load; a short bounded retry turns a transient miss into a success instead of a failed
+    scan. Re-raises the last error once ``attempts`` are exhausted.
+    """
+    last_err: Optional[Exception] = None
+    for attempt in range(attempts):
+        try:
+            return await fs.open_download_stream(file_id)
+        except Exception as err:  # gridfs NoFile etc. — bounded retry, then re-raise
+            last_err = err
+            if attempt < attempts - 1:
+                await asyncio.sleep(base_delay * (2**attempt))
+    assert last_err is not None
+    raise last_err
 
 
 class Database:
