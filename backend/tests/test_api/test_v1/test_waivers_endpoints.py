@@ -559,6 +559,13 @@ class TestOrphanedFilter:
         assert find_query.get("last_eval_scan_id") == {"$ne": None}
         assert find_query.get("last_match_count") == 0
 
+        # orphaned filter also excludes expired waivers (mirrors the is_active badge gate)
+        or_clause = find_query.get("$or")
+        assert or_clause is not None and len(or_clause) == 3
+        assert {"expiration_date": {"$exists": False}} in or_clause
+        assert {"expiration_date": None} in or_clause
+        assert "$gt" in or_clause[-1]["expiration_date"]
+
         # Without orphaned flag: both docs present, no orphan filter
         mock_repo3 = MagicMock()
         mock_repo3.count = AsyncMock(return_value=2)

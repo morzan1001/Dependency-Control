@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import re
 from typing import Annotated, Any, Dict, Optional
 
@@ -215,8 +216,19 @@ async def list_waivers(
             query["$or"] = search_or
 
     if orphaned:
-        query["last_eval_scan_id"] = {"$ne": None}
-        query["last_match_count"] = 0
+        # "orphaned" mirrors the UI badge: evaluated, suppressing 0 findings, and NOT expired
+        # (matches the badge's is_active gate). Combine via $and so an existing $or is preserved.
+        now = datetime.now(timezone.utc)
+        orphaned_clause: Dict[str, Any] = {
+            "last_eval_scan_id": {"$ne": None},
+            "last_match_count": 0,
+            "$or": [
+                {"expiration_date": {"$exists": False}},
+                {"expiration_date": None},
+                {"expiration_date": {"$gt": now}},
+            ],
+        }
+        query = {"$and": [query, orphaned_clause]} if query else orphaned_clause
 
     waiver_repo = WaiverRepository(db)
 
