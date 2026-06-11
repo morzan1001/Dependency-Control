@@ -18,6 +18,7 @@ from typing import Any, AsyncIterator, Dict, List, Literal, Optional
 from bson import ObjectId
 from fastapi import BackgroundTasks, HTTPException, Query
 from fastapi.responses import StreamingResponse
+from gridfs.errors import NoFile
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 from pydantic import BaseModel, Field
 
@@ -305,8 +306,10 @@ async def delete_report(
         bucket = AsyncIOMotorGridFSBucket(db)
         try:
             await bucket.delete(ObjectId(r.artifact_gridfs_id))
+        except NoFile:
+            pass  # already gone — nothing to clean up
         except Exception:
-            pass
+            logger.warning("Failed to delete GridFS artifact %s", r.artifact_gridfs_id, exc_info=True)
     await repo.delete(report_id)
 
 

@@ -1,6 +1,7 @@
 """MongoDB persistence for MCP API keys."""
 
 import hashlib
+import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
@@ -10,6 +11,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReadPreference
 
 from app.core.metrics import track_db_operation
+
+logger = logging.getLogger(__name__)
 
 _COL = "mcp_api_keys"
 
@@ -104,4 +107,4 @@ class MCPApiKeyRepository:
                     {"$set": {"last_used_at": datetime.now(timezone.utc)}},
                 )
         except Exception:
-            pass
+            logger.debug("Failed to update last_used_at for MCP key %s", key_id, exc_info=True)

@@ -10,6 +10,7 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, List, Literal, Optional
 
+from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, PERMISSION_ANALYTICS_GLOBAL
@@ -100,7 +101,12 @@ class ScopeResolver:
         try:
             await check_project_access(project_id, self.user, self.db, required_role="viewer")
             return True
+        except HTTPException:
+            return False  # legitimate 403/404 access denial
         except Exception:
+            logger.warning(
+                "check_project_access failed unexpectedly for project %s", project_id, exc_info=True
+            )
             return False
 
     async def _check_team_member(self, team_id: str) -> bool:
