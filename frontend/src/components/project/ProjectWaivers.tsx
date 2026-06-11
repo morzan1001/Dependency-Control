@@ -23,6 +23,8 @@ import {
     DialogTitle,
 } from "@/components/ui/dialog"
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
 import { ArrowUp, ArrowDown, Pencil, Trash2, Loader2 } from 'lucide-react'
 import { toast } from "sonner"
 import { useDebounce } from '@/hooks/use-debounce'
@@ -45,6 +47,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
         : false
 
     const [searchInput, setSearchInput] = useState('')
+    const [orphanedOnly, setOrphanedOnly] = useState(false)
     const [sortBy, setSortBy] = useState('created_at')
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -64,7 +67,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
         isFetchingNextPage,
         isLoading,
         isError,
-    } = useProjectWaivers(projectId, { search: debouncedSearch, sortBy, sortOrder })
+    } = useProjectWaivers(projectId, { search: debouncedSearch, sortBy, sortOrder, orphaned: orphanedOnly })
 
     const deleteWaiverMutation = useDeleteWaiver()
 
@@ -134,7 +137,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                         <CardTitle>Active Waivers</CardTitle>
                         <CardDescription>Manage exceptions for security findings.</CardDescription>
                     </div>
-                    <Skeleton className="h-10 w-[250px]" />
+                    <Skeleton className="h-10 w-[370px]" />
                 </CardHeader>
                 <CardContent>
                     <div className="space-y-2">
@@ -154,12 +157,22 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                     <CardTitle>Active Waivers</CardTitle>
                     <CardDescription>Manage exceptions for security findings.</CardDescription>
                 </div>
-                <div className="w-[250px]">
-                    <Input
-                        placeholder="Search waivers..."
-                        value={searchInput}
-                        onChange={(e) => setSearchInput(e.target.value)}
-                    />
+                <div className="flex items-center gap-3">
+                    <Label htmlFor="project-orphaned-only" className="flex items-center gap-2 text-sm cursor-pointer whitespace-nowrap">
+                        <Checkbox
+                            id="project-orphaned-only"
+                            checked={orphanedOnly}
+                            onCheckedChange={(checked) => setOrphanedOnly(checked === true)}
+                        />
+                        Only orphaned
+                    </Label>
+                    <div className="w-[250px]">
+                        <Input
+                            placeholder="Search waivers..."
+                            value={searchInput}
+                            onChange={(e) => setSearchInput(e.target.value)}
+                        />
+                    </div>
                 </div>
             </CardHeader>
             <CardContent>
@@ -208,6 +221,15 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                                         <Badge variant={waiver.status === 'false_positive' ? 'outline' : 'secondary'}>
                                             {waiver.status === 'false_positive' ? 'False Positive' : 'Accepted Risk'}
                                         </Badge>
+                                        {waiver.is_active && waiver.last_eval_scan_id != null && waiver.last_match_count === 0 && (
+                                            <Badge
+                                                variant="outline"
+                                                title="This waiver suppresses no finding in the latest scan — the code location is gone or the rule was renamed. Review or re-waive."
+                                                className="ml-1 text-[10px] border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-600 w-fit whitespace-nowrap"
+                                            >
+                                                Matches nothing
+                                            </Badge>
+                                        )}
                                     </TableCell>
                                     <TableCell><div className="max-w-[300px] truncate" title={waiver.reason}>{waiver.reason}</div></TableCell>
                                     <TableCell>
@@ -272,7 +294,11 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                             {allWaivers.length === 0 && !isLoading && !isError && (
                                 <TableRow>
                                     <TableCell colSpan={6} className="text-center text-muted-foreground">
-                                        {debouncedSearch ? 'No waivers match your search.' : 'No active waivers found.'}
+                                        {(() => {
+                                            if (debouncedSearch) return 'No waivers match your search.'
+                                            if (orphanedOnly) return 'No orphaned waivers found.'
+                                            return 'No active waivers found.'
+                                        })()}
                                     </TableCell>
                                 </TableRow>
                             )}

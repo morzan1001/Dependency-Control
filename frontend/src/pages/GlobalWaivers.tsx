@@ -18,6 +18,8 @@ import {
     DialogTitle,
 } from '@/components/ui/dialog'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
+import { Label } from '@/components/ui/label'
 import { ArrowUp, ArrowDown, Pencil, Plus, Trash2, Loader2 } from 'lucide-react'
 import { toast } from 'sonner'
 import { useDebounce } from '@/hooks/use-debounce'
@@ -29,6 +31,7 @@ export default function GlobalWaivers() {
     const queryClient = useQueryClient()
 
     const [searchInput, setSearchInput] = useState('')
+    const [orphanedOnly, setOrphanedOnly] = useState(false)
     const [sortBy, setSortBy] = useState('created_at')
     const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc')
     const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
@@ -47,7 +50,7 @@ export default function GlobalWaivers() {
         isFetchingNextPage,
         isLoading,
         isError,
-    } = useGlobalWaivers({ search: debouncedSearch, sortBy, sortOrder })
+    } = useGlobalWaivers({ search: debouncedSearch, sortBy, sortOrder, orphaned: orphanedOnly })
 
     const deleteWaiverMutation = useDeleteWaiver()
 
@@ -119,7 +122,7 @@ export default function GlobalWaivers() {
                         <div className="space-y-1">
                             <CardTitle>Waivers</CardTitle>
                         </div>
-                        <Skeleton className="h-10 w-[250px]" />
+                        <Skeleton className="h-10 w-[370px]" />
                     </CardHeader>
                     <CardContent>
                         <div className="space-y-2">
@@ -154,12 +157,22 @@ export default function GlobalWaivers() {
                         <CardTitle>Active Global Waivers</CardTitle>
                         <CardDescription>These waivers apply to all projects in the system.</CardDescription>
                     </div>
-                    <div className="w-[250px]">
-                        <Input
-                            placeholder="Search waivers..."
-                            value={searchInput}
-                            onChange={(e) => setSearchInput(e.target.value)}
-                        />
+                    <div className="flex items-center gap-3">
+                        <Label htmlFor="global-orphaned-only" className="flex items-center gap-2 text-sm cursor-pointer whitespace-nowrap">
+                            <Checkbox
+                                id="global-orphaned-only"
+                                checked={orphanedOnly}
+                                onCheckedChange={(checked) => setOrphanedOnly(checked === true)}
+                            />
+                            Only orphaned
+                        </Label>
+                        <div className="w-[250px]">
+                            <Input
+                                placeholder="Search waivers..."
+                                value={searchInput}
+                                onChange={(e) => setSearchInput(e.target.value)}
+                            />
+                        </div>
                     </div>
                 </CardHeader>
                 <CardContent>
@@ -211,6 +224,15 @@ export default function GlobalWaivers() {
                                             <Badge variant={waiver.status === 'false_positive' ? 'outline' : 'secondary'}>
                                                 {waiver.status === 'false_positive' ? 'False Positive' : 'Accepted Risk'}
                                             </Badge>
+                                            {waiver.is_active && waiver.last_eval_scan_id != null && waiver.last_match_count === 0 && (
+                                                <Badge
+                                                    variant="outline"
+                                                    title="This waiver suppresses no finding in the latest scan — the code location is gone or the rule was renamed. Review or re-waive."
+                                                    className="ml-1 text-[10px] border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-600 w-fit whitespace-nowrap"
+                                                >
+                                                    Matches nothing
+                                                </Badge>
+                                            )}
                                         </TableCell>
                                         <TableCell><div className="max-w-[250px] truncate" title={waiver.reason}>{waiver.reason}</div></TableCell>
                                         <TableCell>
@@ -271,7 +293,11 @@ export default function GlobalWaivers() {
                                 {allWaivers.length === 0 && !isLoading && !isError && (
                                     <TableRow>
                                         <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                                            {debouncedSearch ? 'No waivers match your search.' : 'No global waivers found.'}
+                                            {(() => {
+                                                if (debouncedSearch) return 'No waivers match your search.'
+                                                if (orphanedOnly) return 'No orphaned waivers found.'
+                                                return 'No global waivers found.'
+                                            })()}
                                         </TableCell>
                                     </TableRow>
                                 )}
