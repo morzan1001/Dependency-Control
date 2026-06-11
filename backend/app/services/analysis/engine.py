@@ -581,32 +581,6 @@ async def _run_reachability_enrichment(
         logger.warning(f"[reachability] Failed to enrich findings: {e}")
 
 
-async def _apply_waivers(
-    active_waivers: List[Waiver],
-    scan_id: str,
-    finding_repo: FindingRepository,
-) -> None:
-    """Apply all active waivers to findings for a scan."""
-    from app.services.stats import _build_waiver_query
-
-    for waiver in active_waivers:
-        if waiver.vulnerability_id:
-            await finding_repo.apply_vulnerability_waiver(
-                scan_id=scan_id,
-                vulnerability_id=waiver.vulnerability_id,
-                waived=True,
-                waiver_reason=waiver.reason,
-            )
-        else:
-            query = _build_waiver_query(waiver)
-            await finding_repo.apply_finding_waiver(
-                scan_id=scan_id,
-                query=query,
-                waived=True,
-                waiver_reason=waiver.reason,
-            )
-
-
 def _track_waiver_metrics(active_waivers: List[Waiver]) -> None:
     """Track Prometheus metrics for applied waivers."""
     if not analysis_waivers_applied_total:
@@ -776,7 +750,9 @@ async def _persist_findings_and_waivers(
         waiver_repo = WaiverRepository(db)
         active_waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
 
-    await _apply_waivers(active_waivers, scan_id, finding_repo)
+    from app.services.stats import _apply_waivers
+
+    await _apply_waivers(finding_repo, scan_id, active_waivers)
     from pymongo import ReadPreference
 
     findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
