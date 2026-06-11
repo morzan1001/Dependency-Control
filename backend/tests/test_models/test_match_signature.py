@@ -50,3 +50,15 @@ class TestMatchSignature:
                            rule_keys=["opengrep:Y", "semgrep:Z"])
         assert s.effective_rule_keys == {"opengrep:Y", "semgrep:Z"}
         assert "bearer:X" not in s.effective_rule_keys
+
+    def test_waiver_eval_outcome_fields_default_none(self):
+        from app.models.waiver import Waiver
+        w = Waiver(reason="r", created_by="u")
+        assert w.last_eval_scan_id is None
+        assert w.last_match_count is None
+
+    def test_waiver_accepts_eval_outcome_fields(self):
+        from app.models.waiver import Waiver
+        w = Waiver(reason="r", created_by="u", last_eval_scan_id="scan-1", last_match_count=0)
+        assert w.last_eval_scan_id == "scan-1"
+        assert w.last_match_count == 0
