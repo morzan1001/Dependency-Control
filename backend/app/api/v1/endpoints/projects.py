@@ -35,7 +35,6 @@ from app.core.worker import worker_manager
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 from app.models.system import SystemSettings
 from app.models.user import User
-from app.models.waiver import Waiver
 from app.repositories import (
     AnalysisResultRepository,
     CallgraphRepository,
@@ -70,7 +69,6 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
     RESP_AUTH_404_500,
 )
-from app.schemas.waiver import WaiverResponse
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
@@ -1703,19 +1701,3 @@ async def delete_project(
 
     # 8. Delete project
     await project_repo.delete(project_id)
-
-
-@router.get("/{project_id}/waivers", response_model=List[WaiverResponse], responses=RESP_AUTH_404)
-async def get_project_waivers(
-    project_id: str,
-    current_user: CurrentUserDep,
-    db: DatabaseDep,
-) -> List[Waiver]:
-    """
-    Get all waivers for a specific project.
-    """
-    await check_project_access(project_id, current_user, db, required_role="viewer")
-
-    waiver_repo = WaiverRepository(db)
-    waivers = await waiver_repo.find_by_project(project_id)
-    return [Waiver(**w) for w in waivers]
