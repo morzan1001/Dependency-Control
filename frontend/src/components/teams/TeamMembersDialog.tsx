@@ -53,14 +53,14 @@ export function TeamMembersDialog({ team, isOpen, onClose }: TeamMembersDialogPr
 
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col">
           <DialogHeader>
             <DialogTitle>Manage Members - {team?.name}</DialogTitle>
             <DialogDescription>
               Manage team members and their roles.
             </DialogDescription>
           </DialogHeader>
-          <div className="py-4">
+          <div className="py-4 flex-1 overflow-y-auto min-h-0">
             <Table>
               <TableHeader>
                 <TableRow>
