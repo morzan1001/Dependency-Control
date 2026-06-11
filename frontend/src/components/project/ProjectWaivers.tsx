@@ -63,6 +63,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
         hasNextPage,
         isFetchingNextPage,
         isLoading,
+        isError,
     } = useProjectWaivers(projectId, { search: debouncedSearch, sortBy, sortOrder })
 
     const deleteWaiverMutation = useDeleteWaiver()
@@ -189,24 +190,26 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                                 <TableRow key={waiver.id}>
                                     <TableCell className="font-mono">
                                         <div className="flex items-center gap-1.5">
-                                            {waiver.finding_id || "Any"}
-                                            {waiver.scope === 'file' && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Entire file</Badge>}
-                                            {waiver.scope === 'rule' && <Badge variant="default" className="text-[10px] px-1.5 py-0">All files</Badge>}
+                                            <span className="truncate max-w-[220px]" title={waiver.finding_id || "Any"}>{waiver.finding_id || "Any"}</span>
+                                            {waiver.scope === 'file' && <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">Entire file</Badge>}
+                                            {waiver.scope === 'rule' && <Badge variant="default" className="text-[10px] px-1.5 py-0 shrink-0">All files</Badge>}
                                         </div>
                                         {waiver.scope === 'rule' && waiver.rule_id && (
-                                            <span className="text-[11px] text-muted-foreground">Rule: {waiver.rule_id}</span>
+                                            <span className="block truncate max-w-[260px] text-[11px] text-muted-foreground" title={waiver.rule_id}>Rule: {waiver.rule_id}</span>
                                         )}
                                     </TableCell>
                                     <TableCell>
-                                        {waiver.package_name}
-                                        {waiver.package_version && <span className="text-muted-foreground ml-1">v{waiver.package_version}</span>}
+                                        <div className="max-w-[240px] truncate" title={waiver.package_name}>
+                                            {waiver.package_name}
+                                            {waiver.package_version && <span className="text-muted-foreground ml-1">v{waiver.package_version}</span>}
+                                        </div>
                                     </TableCell>
                                     <TableCell>
                                         <Badge variant={waiver.status === 'false_positive' ? 'outline' : 'secondary'}>
                                             {waiver.status === 'false_positive' ? 'False Positive' : 'Accepted Risk'}
                                         </Badge>
                                     </TableCell>
-                                    <TableCell className="max-w-[300px] truncate" title={waiver.reason}>{waiver.reason}</TableCell>
+                                    <TableCell><div className="max-w-[300px] truncate" title={waiver.reason}>{waiver.reason}</div></TableCell>
                                     <TableCell>
                                         <WaiverExpiryCell waiver={waiver} />
                                     </TableCell>
@@ -216,6 +219,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
+                                                    aria-label="Edit waiver"
                                                     onClick={() => {
                                                         setWaiverToEdit(waiver)
                                                         setEditDialogOpen(true)
@@ -228,6 +232,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
+                                                    aria-label="Delete waiver"
                                                     className="text-destructive hover:text-destructive hover:bg-destructive/10"
                                                     onClick={() => {
                                                         setWaiverToDelete(waiver)
@@ -257,10 +262,17 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                                     </TableCell>
                                 </TableRow>
                             )}
-                            {allWaivers.length === 0 && !isLoading && (
+                            {isError && !isLoading && (
+                                <TableRow>
+                                    <TableCell colSpan={6} className="text-center text-destructive">
+                                        Failed to load waivers. Please try again.
+                                    </TableCell>
+                                </TableRow>
+                            )}
+                            {allWaivers.length === 0 && !isLoading && !isError && (
                                 <TableRow>
                                     <TableCell colSpan={6} className="text-center text-muted-foreground">
-                                        No active waivers found.
+                                        {debouncedSearch ? 'No waivers match your search.' : 'No active waivers found.'}
                                     </TableCell>
                                 </TableRow>
                             )}
@@ -275,7 +287,7 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                         <DialogTitle>Delete Waiver</DialogTitle>
                         <DialogDescription>
                             Are you sure you want to delete this waiver for{' '}
-                            <strong>{waiverToDelete?.package_name}</strong>?
+                            <strong className="break-all">{waiverToDelete?.package_name}</strong>?
                             This action cannot be undone.
                         </DialogDescription>
                     </DialogHeader>

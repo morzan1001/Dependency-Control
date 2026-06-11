@@ -419,12 +419,13 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                                     <TableCell className="p-4 align-middle">
                                         <div className="flex flex-col gap-1">
                                             <TypeBadges finding={finding} />
-                                            {finding.waiver_lapsed && (
+                                            {finding.waiver_lapsed && !finding.waived && (
                                                 <Badge
                                                     variant="outline"
-                                                    className="text-[10px] border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-600 w-fit"
+                                                    title="Previously waived — code changed"
+                                                    className="text-[10px] border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-600 w-fit whitespace-nowrap"
                                                 >
-                                                    Previously waived — code changed
+                                                    Lapsed waiver
                                                 </Badge>
                                             )}
                                         </div>

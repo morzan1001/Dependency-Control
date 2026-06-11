@@ -178,6 +178,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                             initialReason={lapsedWaiver?.reason}
                             initialStatus={lapsedWaiver?.status}
                             initialExpiration={lapsedWaiver?.expiration_date}
+                            initialScope={lapsedWaiver?.scope}
                         />
                     ) : (
                       <div className="space-y-6 pt-2 pb-4">

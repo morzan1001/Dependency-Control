@@ -46,6 +46,7 @@ export default function GlobalWaivers() {
         hasNextPage,
         isFetchingNextPage,
         isLoading,
+        isError,
     } = useGlobalWaivers({ search: debouncedSearch, sortBy, sortOrder })
 
     const deleteWaiverMutation = useDeleteWaiver()
@@ -192,24 +193,26 @@ export default function GlobalWaivers() {
                                     <TableRow key={waiver.id}>
                                         <TableCell className="font-mono">
                                             <div className="flex items-center gap-1.5">
-                                                {waiver.finding_id || 'Any'}
-                                                {waiver.scope === 'file' && <Badge variant="secondary" className="text-[10px] px-1.5 py-0">Entire file</Badge>}
-                                                {waiver.scope === 'rule' && <Badge variant="default" className="text-[10px] px-1.5 py-0">All files</Badge>}
+                                                <span className="truncate max-w-[220px]" title={waiver.finding_id || 'Any'}>{waiver.finding_id || 'Any'}</span>
+                                                {waiver.scope === 'file' && <Badge variant="secondary" className="text-[10px] px-1.5 py-0 shrink-0">Entire file</Badge>}
+                                                {waiver.scope === 'rule' && <Badge variant="default" className="text-[10px] px-1.5 py-0 shrink-0">All files</Badge>}
                                             </div>
                                             {waiver.scope === 'rule' && waiver.rule_id && (
-                                                <span className="text-[11px] text-muted-foreground">Rule: {waiver.rule_id}</span>
+                                                <span className="block truncate max-w-[260px] text-[11px] text-muted-foreground" title={waiver.rule_id}>Rule: {waiver.rule_id}</span>
                                             )}
                                         </TableCell>
                                         <TableCell>
-                                            {waiver.package_name || 'Any'}
-                                            {waiver.package_version && <span className="text-muted-foreground ml-1">v{waiver.package_version}</span>}
+                                            <div className="max-w-[240px] truncate" title={waiver.package_name || 'Any'}>
+                                                {waiver.package_name || 'Any'}
+                                                {waiver.package_version && <span className="text-muted-foreground ml-1">v{waiver.package_version}</span>}
+                                            </div>
                                         </TableCell>
                                         <TableCell>
                                             <Badge variant={waiver.status === 'false_positive' ? 'outline' : 'secondary'}>
                                                 {waiver.status === 'false_positive' ? 'False Positive' : 'Accepted Risk'}
                                             </Badge>
                                         </TableCell>
-                                        <TableCell className="max-w-[250px] truncate" title={waiver.reason}>{waiver.reason}</TableCell>
+                                        <TableCell><div className="max-w-[250px] truncate" title={waiver.reason}>{waiver.reason}</div></TableCell>
                                         <TableCell>
                                             <WaiverExpiryCell waiver={waiver} />
                                         </TableCell>
@@ -219,6 +222,7 @@ export default function GlobalWaivers() {
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
+                                                    aria-label="Edit global waiver"
                                                     onClick={() => {
                                                         setWaiverToEdit(waiver)
                                                         setEditDialogOpen(true)
@@ -229,6 +233,7 @@ export default function GlobalWaivers() {
                                                 <Button
                                                     variant="ghost"
                                                     size="icon"
+                                                    aria-label="Delete global waiver"
                                                     className="text-destructive hover:text-destructive hover:bg-destructive/10"
                                                     onClick={() => {
                                                         setWaiverToDelete(waiver)
@@ -256,10 +261,17 @@ export default function GlobalWaivers() {
                                         </TableCell>
                                     </TableRow>
                                 )}
-                                {allWaivers.length === 0 && !isLoading && (
+                                {isError && !isLoading && (
+                                    <TableRow>
+                                        <TableCell colSpan={7} className="text-center text-destructive py-8">
+                                            Failed to load waivers. Please try again.
+                                        </TableCell>
+                                    </TableRow>
+                                )}
+                                {allWaivers.length === 0 && !isLoading && !isError && (
                                     <TableRow>
                                         <TableCell colSpan={7} className="text-center text-muted-foreground py-8">
-                                            No global waivers found.
+                                            {debouncedSearch ? 'No waivers match your search.' : 'No global waivers found.'}
                                         </TableCell>
                                     </TableRow>
                                 )}
@@ -275,7 +287,7 @@ export default function GlobalWaivers() {
                         <DialogTitle>Delete Global Waiver</DialogTitle>
                         <DialogDescription>
                             Are you sure you want to delete this global waiver
-                            {waiverToDelete?.package_name && <> for <strong>{waiverToDelete.package_name}</strong></>}?
+                            {waiverToDelete?.package_name && <> for <strong className="break-all">{waiverToDelete.package_name}</strong></>}?
                             This will affect all projects and cannot be undone.
                         </DialogDescription>
                     </DialogHeader>

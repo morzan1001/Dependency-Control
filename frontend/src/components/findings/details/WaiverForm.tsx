@@ -42,6 +42,7 @@ export function WaiverForm({
   initialReason,
   initialStatus,
   initialExpiration,
+  initialScope,
 }: {
   finding: Finding
   vulnId: string | null
@@ -51,10 +52,11 @@ export function WaiverForm({
   initialReason?: string
   initialStatus?: WaiverStatus
   initialExpiration?: string
+  initialScope?: WaiverScope
 }) {
   const [reason, setReason] = useState(initialReason ?? '')
   const [date, setDate] = useState(isoToDateInput(initialExpiration))
-  const [scope, setScope] = useState<WaiverScope>('finding')
+  const [scope, setScope] = useState<WaiverScope>(initialScope ?? 'finding')
   const [status, setStatus] = useState<WaiverStatus>(initialStatus ?? 'accepted_risk')
   const queryClient = useQueryClient()
 
@@ -96,9 +98,9 @@ export function WaiverForm({
   return (
     <form onSubmit={handleSubmit} className="space-y-4 py-4">
       {vulnId && (
-        <div className="bg-blue-50 dark:bg-blue-950/50 p-3 rounded-md border border-blue-100 dark:border-blue-800 text-sm text-blue-800 dark:text-blue-300 flex items-center gap-2">
-          <ShieldAlert className="h-4 w-4" />
-          Creating waiver specifically for <strong>{vulnId}</strong>
+        <div className="bg-blue-50 dark:bg-blue-950/50 p-3 rounded-md border border-blue-100 dark:border-blue-800 text-sm text-blue-800 dark:text-blue-300 flex items-start gap-2">
+          <ShieldAlert className="h-4 w-4 shrink-0 mt-0.5" />
+          <span className="min-w-0 break-all">Creating waiver specifically for <strong>{vulnId}</strong></span>
         </div>
       )}
       <div className="space-y-2">
@@ -126,7 +128,7 @@ export function WaiverForm({
               <RadioGroupItem value="file" id="scope-file" className="mt-0.5" />
               <div>
                 <Label htmlFor="scope-file" className="cursor-pointer font-normal">
-                  All occurrences in <strong>{finding.component}</strong>
+                  All occurrences in <strong className="break-all">{finding.component}</strong>
                 </Label>
                 <p className="text-xs text-muted-foreground">
                   Waives all findings of this rule in the same file.
@@ -141,7 +143,7 @@ export function WaiverForm({
                     All occurrences in project
                   </Label>
                   <p className="text-xs text-muted-foreground">
-                    Waives rule <code className="bg-muted px-1 py-0.5 rounded text-[11px]">{ruleId}</code> across all files.
+                    Waives rule <code className="bg-muted px-1 py-0.5 rounded text-[11px] break-all">{ruleId}</code> across all files.
                   </p>
                 </div>
               </div>

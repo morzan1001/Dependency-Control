@@ -112,8 +112,8 @@ export function EditWaiverDialog({ waiver, open, onOpenChange }: EditWaiverDialo
                 <DialogHeader>
                     <DialogTitle>Edit Waiver</DialogTitle>
                     <DialogDescription>
-                        Update the waiver for <strong>{waiver?.package_name}</strong>
-                        {waiver?.finding_id && <> ({waiver.finding_id})</>}
+                        Update the waiver for <strong className="break-all">{waiver?.package_name}</strong>
+                        {waiver?.finding_id && <> (<span className="break-all">{waiver.finding_id}</span>)</>}
                     </DialogDescription>
                 </DialogHeader>
                 {waiver && open && (
