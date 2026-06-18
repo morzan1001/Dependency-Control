@@ -331,6 +331,18 @@ class TestBuildEpssKevSummaryFindingId:
 # ---------------------------------------------------------------------------
 
 
+# Tests express intent in the DISPLAY vocabulary (confirmed/likely/unreachable/
+# unknown), but findings actually persist analysis_level in the none/import/symbol
+# vocabulary. Translate so the helper emits realistic persisted data and the
+# production code is exercised on what it really sees.
+_DISPLAY_TIER_TO_ANALYSIS_LEVEL = {
+    "confirmed": "symbol",
+    "likely": "import",
+    "unreachable": "none",
+    "unknown": "unknown",
+}
+
+
 def _make_reachable_finding(
     finding_id="CVE-2024-0001",
     component="pkg",
@@ -341,7 +353,8 @@ def _make_reachable_finding(
     reachable_functions=None,
 ):
     """Create a minimal FindingDict for reachability tests."""
-    reachability_data: dict = {"analysis_level": reachability_level}
+    analysis_level = _DISPLAY_TIER_TO_ANALYSIS_LEVEL.get(reachability_level, reachability_level)
+    reachability_data: dict = {"analysis_level": analysis_level}
     if reachable is not None:
         reachability_data["is_reachable"] = reachable
     if reachable_functions is not None:
@@ -786,6 +799,55 @@ def _kev_finding(_id, *, in_kev=False, kev_ransomware_use=False):
         "details": details,
         "waived": False,
     }
+
+
+class TestComprehensiveStatsReachabilityTiers:
+    """likely_reachable_count gated on reachability_level=='likely', but the
+    persisted level vocabulary is none/import/symbol, so it was permanently 0.
+    The tiers must be derived from (reachable, analysis_level): symbol->confirmed,
+    import->likely (improvement audit #18)."""
+
+    @pytest.mark.asyncio
+    async def test_import_level_reachable_counts_as_likely(self):
+        findings = [_w5_finding("i1", "HIGH", reachable=True, reachability_level="import")]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.reachability.likely_reachable_count == 1
+
+    @pytest.mark.asyncio
+    async def test_symbol_level_reachable_is_not_likely(self):
+        findings = [_w5_finding("s1", "HIGH", reachable=True, reachability_level="symbol")]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        # symbol-level is the stronger 'confirmed' tier, not 'likely'
+        assert stats.reachability.likely_reachable_count == 0
+
+
+class TestComprehensiveStatsEpssZero:
+    """A legitimate EPSS of 0.0 must be reported as 0.0, not dropped to None by a
+    truthiness guard (improvement audit #18)."""
+
+    @staticmethod
+    def _epss_finding(_id, epss):
+        return {
+            "_id": _id,
+            "finding_id": _id,
+            "scan_id": _W5_SCAN,
+            "type": "vulnerability",
+            "severity": "HIGH",
+            "component": "pkg",
+            "version": "1.0.0",
+            "details": {"epss_score": epss},
+            "waived": False,
+        }
+
+    @pytest.mark.asyncio
+    async def test_all_zero_epss_reports_zero_not_none(self):
+        findings = [self._epss_finding("z1", 0.0), self._epss_finding("z2", 0.0)]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.threat_intel.avg_epss_score == 0.0
+        assert stats.threat_intel.max_epss_score == 0.0
 
 
 class TestComprehensiveStatsKev:
