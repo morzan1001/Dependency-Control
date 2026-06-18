@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, cast
 
 from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
+    DETAILS_KEY_KEV_RANSOMWARE,
     HIGH_RISK_SCORE_THRESHOLD,
     REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
     SEVERITY_CALCULATED_RISK_SCORES,
@@ -275,8 +277,8 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                 "severity": 1,
                 "cvss_score": {"$ifNull": ["$details.cvss_score", None]},
                 "epss_score": {"$ifNull": ["$details.epss_score", None]},
-                "is_kev": {"$ifNull": ["$details.is_kev", False]},
-                "kev_ransomware": {"$ifNull": ["$details.kev_ransomware", False]},
+                "is_kev": {"$ifNull": [f"$details.{DETAILS_KEY_IN_KEV}", False]},
+                "kev_ransomware": {"$ifNull": [f"$details.{DETAILS_KEY_KEV_RANSOMWARE}", False]},
                 "reachable": {"$ifNull": ["$reachable", None]},
                 "reachability_level": {"$ifNull": ["$reachability_level", "unknown"]},
                 # Confidence is nested under details.reachability — pulled

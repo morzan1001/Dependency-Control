@@ -756,3 +756,49 @@ class TestComprehensiveStatsScale:
         stats = await calculate_comprehensive_stats(db, _W5_SCAN)
         # adjusted avg = (90 + 30) / 2 == 60.0
         assert stats.adjusted_risk_score == 60.0
+
+
+# ---------------------------------------------------------------------------
+# calculate_comprehensive_stats — KEV counts (improvement audit #1)
+#
+# The enrichment writer persists KEV state under details.in_kev /
+# details.kev_ransomware_use. The aggregation must read THOSE keys — it
+# previously read details.is_kev / details.kev_ransomware, which are never
+# written, so every project's kev_count silently collapsed to 0.
+# ---------------------------------------------------------------------------
+
+
+def _kev_finding(_id, *, in_kev=False, kev_ransomware_use=False):
+    """Build a finding doc with KEV state under the PERSISTED detail keys."""
+    details: dict = {}
+    if in_kev:
+        details["in_kev"] = True
+    if kev_ransomware_use:
+        details["kev_ransomware_use"] = True
+    return {
+        "_id": _id,
+        "finding_id": _id,
+        "scan_id": _W5_SCAN,
+        "type": "vulnerability",
+        "severity": "HIGH",
+        "component": "pkg",
+        "version": "1.0.0",
+        "details": details,
+        "waived": False,
+    }
+
+
+class TestComprehensiveStatsKev:
+    @pytest.mark.asyncio
+    async def test_kev_count_reads_persisted_in_kev_key(self):
+        """kev_count / kev_ransomware_count must reflect findings whose details
+        carry the persisted in_kev / kev_ransomware_use keys."""
+        findings = [
+            _kev_finding("k1", in_kev=True),
+            _kev_finding("k2", in_kev=True, kev_ransomware_use=True),
+            _kev_finding("n1"),  # not in KEV
+        ]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.threat_intel.kev_count == 2
+        assert stats.threat_intel.kev_ransomware_count == 1

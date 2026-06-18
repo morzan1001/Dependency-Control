@@ -74,7 +74,7 @@ def _finding(
     if epss_score is not None:
         details["epss_score"] = epss_score
     if is_kev:
-        details["is_kev"] = True
+        details["in_kev"] = True
     doc = {
         "_id": _id,
         "finding_id": _id,

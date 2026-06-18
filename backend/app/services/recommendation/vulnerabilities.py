@@ -8,7 +8,7 @@ from app.schemas.recommendation import (
     RecommendationType,
     VulnerabilityInfo,
 )
-from app.core.constants import OS_PACKAGE_TYPES
+from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, OS_PACKAGE_TYPES
 from app.services.recommendation.common import calculate_best_fix_version, get_attr, ModelOrDict
 
 
@@ -87,8 +87,8 @@ def _build_vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
         current_version=get_attr(f, "version", ""),
         fixed_version=details_dict.get("fixed_version"),
         epss_score=details_dict.get("epss_score"),
-        is_kev=details_dict.get("is_kev", False),
-        kev_ransomware=details_dict.get("kev_ransomware", False),
+        is_kev=details_dict.get(DETAILS_KEY_IN_KEV, False),
+        kev_ransomware=details_dict.get(DETAILS_KEY_KEV_RANSOMWARE, False),
         is_reachable=get_attr(f, "reachable"),
         reachability_level=get_attr(f, "reachability_level"),
         risk_score=details_dict.get("risk_score"),

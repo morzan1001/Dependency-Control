@@ -12,6 +12,7 @@ from pymongo import UpdateOne
 
 from prometheus_client import Counter, Histogram
 
+from app.core.constants import DETAILS_KEY_IN_KEV
 from app.db.mongodb import open_gridfs_download_with_retry, primary_gridfs_bucket
 from app.models.finding import Finding, FindingType, Severity
 from app.models.project import Project, Scan
@@ -508,7 +509,7 @@ async def _run_epss_kev_enrichment(
                     analysis_epss_scores.observe(float(epss_score))
                 except (ValueError, TypeError):
                     pass
-            if details.get("is_kev") and analysis_kev_vulnerabilities_total:
+            if details.get(DETAILS_KEY_IN_KEV) and analysis_kev_vulnerabilities_total:
                 analysis_kev_vulnerabilities_total.inc()
 
     except Exception as e:

@@ -31,9 +31,9 @@ def _make_finding(
         "details": {
             "fixed_version": fixed_version,
             "purl": purl or f"pkg:pypi/{component}@{version}",
-            "is_kev": is_kev,
+            "in_kev": is_kev,
             "epss_score": epss_score,
-            "kev_ransomware": kev_ransomware,
+            "kev_ransomware_use": kev_ransomware,
         },
         "reachable": reachable,
         "reachability_level": reachability_level,

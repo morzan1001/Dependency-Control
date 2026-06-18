@@ -6,6 +6,14 @@ Centralized constants used across the application to ensure consistency.
 
 from typing import Any, Dict, List, Optional
 
+# Canonical keys for KEV (CISA Known Exploited Vulnerabilities) state persisted
+# in a finding's ``details`` dict by the enrichment writer
+# (services/enrichment/service.py). Every reader of persisted finding details
+# MUST use these. Readers historically drifted to is_kev / kev / kev_ransomware,
+# which are never written — silently zeroing all KEV-driven stats and triage.
+DETAILS_KEY_IN_KEV = "in_kev"
+DETAILS_KEY_KEV_RANSOMWARE = "kev_ransomware_use"
+
 # Severity order for sorting (higher value = more severe)
 SEVERITY_ORDER: Dict[str, int] = {
     "CRITICAL": 5,

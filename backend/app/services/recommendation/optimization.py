@@ -1,7 +1,7 @@
 from collections import defaultdict
 from typing import Dict, List
 
-from app.core.constants import QUICK_WIN_SCORING_WEIGHTS
+from app.core.constants import DETAILS_KEY_IN_KEV, QUICK_WIN_SCORING_WEIGHTS
 from app.schemas.recommendation import (
     Priority,
     QuickWinEntry,
@@ -65,7 +65,7 @@ def identify_quick_wins(
         kev_count = 0
         for v in vulns:
             v_details = get_attr(v, "details", {})
-            if isinstance(v_details, dict) and v_details.get("is_kev"):
+            if isinstance(v_details, dict) and v_details.get(DETAILS_KEY_IN_KEV):
                 kev_count += 1
 
         is_direct = pkg in direct_deps
