@@ -446,11 +446,14 @@ def _match_symbols(vulnerable_symbols: List[str], used_symbols: List[str]) -> Li
             matched.append(used)
             continue
 
-        # Check if used symbol contains vulnerable symbol (method chaining)
-        # e.g., "_.template" contains "template"
+        # Qualified-call boundary match only (method chaining / dotted usage),
+        # e.g. "_.template" -> "template", "openssl.SSL_read" -> "SSL_read".
+        # A bare substring test ("get" in "getUser"/"forget"/"target") would
+        # spuriously promote findings to confirmed-reachable and boost risk, so
+        # we require a real symbol boundary, not any substring (audit #6).
         for vuln in vulnerable_symbols:
             vuln_l = vuln.lower()
-            if vuln_l in used_lower or used_lower.endswith("." + vuln_l):
+            if used_lower.endswith("." + vuln_l):
                 matched.append(used)
                 break
 

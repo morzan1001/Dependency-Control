@@ -62,7 +62,36 @@ class TestIsHighConfidenceReachable:
 from app.services.reachability_enrichment import (  # noqa: E402
     _enrich_finding_from_callgraphs,
     _enrich_single_finding,
+    _match_symbols,
 )
+
+
+class TestMatchSymbols:
+    """Symbol matching must be conservative: a spurious match promotes a finding
+    to 'confirmed reachable' and boosts its risk x1.1, so substring matching
+    ('get' in 'getUser'/'forget'/'target') is unacceptable (improvement audit #6)."""
+
+    def test_exact_match(self):
+        assert _match_symbols(["SSL_read"], ["SSL_read"]) == ["SSL_read"]
+
+    def test_case_insensitive_exact_match(self):
+        assert _match_symbols(["Foo"], ["foo"]) == ["foo"]
+
+    def test_qualified_call_boundary_matches(self):
+        # method chaining / qualified usage: "_.template" ends with ".template"
+        assert _match_symbols(["template"], ["_.template"]) == ["_.template"]
+        assert _match_symbols(["SSL_read"], ["openssl.SSL_read"]) == ["openssl.SSL_read"]
+
+    def test_substring_does_not_match(self):
+        assert _match_symbols(["get"], ["getUser", "forget", "target"]) == []
+
+    def test_prefix_substring_does_not_match(self):
+        assert _match_symbols(["open"], ["reopen"]) == []
+
+    def test_mixed_real_and_spurious(self):
+        # only the exact and qualified hits count; the substring noise is dropped
+        result = _match_symbols(["read"], ["read", "thread", "io.read", "already"])
+        assert result == ["read", "io.read"]
 
 
 class _FakeCallgraph:
