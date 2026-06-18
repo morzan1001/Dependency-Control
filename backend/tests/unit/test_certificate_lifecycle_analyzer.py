@@ -21,6 +21,7 @@ def _cert(
     not_before=None,
     not_after=None,
     sig_algo_ref=None,
+    subject_key_ref=None,
 ):
     return CryptoAsset(
         project_id="p",
@@ -33,6 +34,7 @@ def _cert(
         not_valid_before=not_before,
         not_valid_after=not_after,
         signature_algorithm_ref=sig_algo_ref,
+        subject_public_key_ref=subject_key_ref,
     )
 
 
@@ -204,7 +206,51 @@ async def test_weak_signature_resolved_via_ref(db):
 
 
 @pytest.mark.asyncio
-async def test_weak_key_rsa_short(db):
+async def test_weak_key_uses_subject_public_key(db):
+    """The weak-key verdict must judge the certificate's OWN subject public key."""
+    now = datetime.now(timezone.utc)
+    await CryptoAssetRepository(db).bulk_upsert(
+        "p",
+        "s",
+        [
+            _cert(not_after=now + timedelta(days=365), subject_key_ref="subjkey"),
+            _algo("subjkey", "RSA", CryptoPrimitive.PKE, key_size=1024),
+        ],
+    )
+    await CryptoPolicyRepository(db).upsert_system_policy(
+        CryptoPolicy(scope="system", version=1, rules=[_expiry_rule()])
+    )
+    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    weak = [f for f in result["findings"] if f["type"] == "crypto_cert_weak_key"]
+    assert len(weak) == 1
+
+
+@pytest.mark.asyncio
+async def test_weak_signing_key_does_not_flag_strong_subject_key(db):
+    """A weak SIGNING key (CA) with a strong subject key must NOT be flagged as a
+    weak certificate key — that was the bug: judging the cert from the CA's key."""
+    now = datetime.now(timezone.utc)
+    await CryptoAssetRepository(db).bulk_upsert(
+        "p",
+        "s",
+        [
+            _cert(not_after=now + timedelta(days=365), sig_algo_ref="rsa1024", subject_key_ref="rsa4096"),
+            _algo("rsa1024", "RSA", CryptoPrimitive.PKE, key_size=1024),
+            _algo("rsa4096", "RSA", CryptoPrimitive.PKE, key_size=4096),
+        ],
+    )
+    await CryptoPolicyRepository(db).upsert_system_policy(
+        CryptoPolicy(scope="system", version=1, rules=[_expiry_rule()])
+    )
+    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    weak = [f for f in result["findings"] if f["type"] == "crypto_cert_weak_key"]
+    assert len(weak) == 0
+
+
+@pytest.mark.asyncio
+async def test_no_subject_key_ref_does_not_assert_weak_key(db):
+    """Without a subject-key reference the analyzer must not assert a weak cert key
+    from the signing algorithm."""
     now = datetime.now(timezone.utc)
     await CryptoAssetRepository(db).bulk_upsert(
         "p",
@@ -217,14 +263,9 @@ async def test_weak_key_rsa_short(db):
     await CryptoPolicyRepository(db).upsert_system_policy(
         CryptoPolicy(scope="system", version=1, rules=[_expiry_rule()])
     )
-    result = await CertificateLifecycleAnalyzer().analyze(
-        sbom={},
-        project_id="p",
-        scan_id="s",
-        db=db,
-    )
+    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
     weak = [f for f in result["findings"] if f["type"] == "crypto_cert_weak_key"]
-    assert len(weak) == 1
+    assert len(weak) == 0
 
 
 @pytest.mark.asyncio

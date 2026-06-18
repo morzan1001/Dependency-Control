@@ -210,6 +210,7 @@ def _populate_certificate(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> No
     asset.not_valid_before = _parse_iso_date(props.get("notValidBefore"))
     asset.not_valid_after = _parse_iso_date(props.get("notValidAfter"))
     asset.signature_algorithm_ref = props.get("signatureAlgorithmRef")
+    asset.subject_public_key_ref = props.get("subjectPublicKeyRef")
     asset.certificate_format = props.get("certificateFormat")
 
 

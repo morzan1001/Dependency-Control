@@ -216,9 +216,13 @@ class CertificateLifecycleAnalyzer(Analyzer):
         rules: List[CryptoRule],
         algo_by_ref: Dict[str, CryptoAsset],
     ) -> List[Dict[str, Any]]:
-        if not cert.signature_algorithm_ref:
+        # Judge the certificate's OWN subject public key, not the CA's signing
+        # key (signature_algorithm_ref). Without a resolvable subject key we
+        # cannot substantiate a weak-key verdict, so we emit nothing rather than
+        # asserting one about a key the data doesn't represent.
+        if not cert.subject_public_key_ref:
             return []
-        algo = algo_by_ref.get(cert.signature_algorithm_ref)
+        algo = algo_by_ref.get(cert.subject_public_key_ref)
         if algo is None or algo.key_size_bits is None:
             return []
         prim = algo.primitive

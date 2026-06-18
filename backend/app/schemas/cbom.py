@@ -54,6 +54,7 @@ class ParsedCryptoAsset(BaseModel):
     not_valid_before: Optional[datetime] = None
     not_valid_after: Optional[datetime] = None
     signature_algorithm_ref: Optional[str] = None
+    subject_public_key_ref: Optional[str] = None
     certificate_format: Optional[str] = None
 
     # Protocol-only
