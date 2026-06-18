@@ -1182,8 +1182,16 @@ def _build_scan_findings_match(
             query["type"] = type_filter
 
     if severity:
-        query["severity"] = severity.upper()
-    if hide_info:
+        sev = severity.upper()
+        # An explicit severity filter must not be silently clobbered by
+        # hide_info. HIGH/CRITICAL/... already exclude INFO; only an explicit
+        # INFO + hide_info is contradictory, so resolve that to "match nothing"
+        # rather than letting one option override the other.
+        if hide_info and sev == "INFO":
+            query["severity"] = {"$in": []}
+        else:
+            query["severity"] = sev
+    elif hide_info:
         query["severity"] = {"$ne": "INFO"}
     if license_category:
         query["details.category"] = license_category
@@ -1261,6 +1269,8 @@ def _scan_findings_add_fields_stage() -> Dict[str, Any]:
             },
             # Map finding_id to id for frontend compatibility
             "id": "$finding_id",
+            # Deterministic scalar for sorting by scanner (scanners is a list).
+            "first_scanner": {"$arrayElemAt": ["$scanners", 0]},
             # Flatten dependency info
             "source_type": {"$arrayElemAt": ["$dependency_info.source_type", 0]},
             "source_target": {"$arrayElemAt": ["$dependency_info.source_target", 0]},
@@ -1274,12 +1284,38 @@ def _scan_findings_add_fields_stage() -> Dict[str, Any]:
     }
 
 
+# Maps the sort keys the API accepts (including UI/legacy aliases) to the real
+# document fields. "severity" is special-cased to severity_rank below. Anything
+# not listed falls back to severity, so an unrecognised sort_by can never yield
+# an unsorted (and therefore unstably-paginated) result.
+_SCAN_FINDINGS_SORT_FIELDS: Dict[str, str] = {
+    "severity": "severity",
+    "component": "component",
+    "type": "type",
+    "source_type": "source_type",
+    "finding_id": "finding_id",
+    "vuln_id": "finding_id",  # legacy/UI alias -> real field
+    "scanner": "first_scanner",  # UI alias -> computed scalar (see _scan_findings_add_fields_stage)
+}
+
+
 def _scan_findings_sort_stage(sort_by: str, sort_order: str) -> Dict[str, Any]:
-    """Compose the ``$sort`` stage, honouring the severity-rank shortcut."""
+    """Compose the ``$sort`` stage.
+
+    Every sort carries a unique ``finding_id`` tiebreaker so that ``$skip`` /
+    ``$limit`` pagination is stable — without it, rows with equal sort keys can
+    reorder between pages and be duplicated or skipped during infinite scroll.
+    Sort keys are normalised to real document fields; unknown keys fall back to
+    severity rather than producing an unsorted result.
+    """
     sort_dir = -1 if sort_order == "desc" else 1
-    if sort_by == "severity":
-        return {"$sort": {"severity_rank": sort_dir, "component": 1}}
-    return {"$sort": {sort_by: sort_dir}}
+    field = _SCAN_FINDINGS_SORT_FIELDS.get(sort_by, "severity")
+    if field == "severity":
+        return {"$sort": {"severity_rank": sort_dir, "component": 1, "finding_id": 1}}
+    sort_spec: Dict[str, Any] = {field: sort_dir}
+    if field != "finding_id":
+        sort_spec["finding_id"] = 1
+    return {"$sort": sort_spec}
 
 
 def _build_scan_findings_pipeline(
