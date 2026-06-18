@@ -22,7 +22,9 @@ from app.schemas.compliance import (
     ReportFramework,
     ResidualRisk,
 )
+from app.schemas.crypto_policy import CryptoRule
 from app.services.analytics.scopes import ResolvedScope
+from app.services.analyzers.crypto.matcher import asset_in_rule_scope
 
 
 @dataclass
@@ -112,15 +114,48 @@ def default_evaluator(
     )
 
 
+def _rules_for_control(
+    control: ControlDefinition,
+    policy_rules: List[dict],
+) -> List[CryptoRule]:
+    """Reconstruct the CryptoRule objects this control maps to, from the
+    effective-policy dumps. Rules absent from the policy (or unparseable) are
+    skipped."""
+    if not control.maps_to_rule_ids:
+        return []
+    wanted = set(control.maps_to_rule_ids)
+    rules: List[CryptoRule] = []
+    for raw in policy_rules:
+        if raw.get("rule_id") in wanted:
+            try:
+                rules.append(CryptoRule.model_validate(raw))
+            except Exception:  # pragma: no cover - defensive against malformed dumps
+                continue
+    return rules
+
+
 def _is_applicable(
     control: ControlDefinition,
     data: EvaluationInput,
 ) -> bool:
-    """Heuristic: if no assets exist for this framework's scope,
-    mark as NOT_APPLICABLE instead of PASSED. Currently we consider the
-    control applicable if there are any crypto_assets at all - more
-    sophisticated per-primitive filtering can be added later."""
-    return bool(data.crypto_assets)
+    """A control is applicable (eligible for PASSED) only when its subject is
+    actually present in the inventory: at least one crypto asset falls within the
+    scope of one of the control's mapped rules. Threshold criteria (e.g. minimum
+    key size) are ignored here — a COMPLIANT asset still makes the control
+    applicable so it can legitimately PASS.
+
+    Without this, a control whose primitive is absent (e.g. an RSA-key-size
+    control on an AES-only project) would report a false PASSED.
+
+    Falls back to inventory presence when the control's rules cannot be resolved
+    from the effective policy (e.g. finding-type-only controls), so controls are
+    never silently hidden."""
+    if not data.crypto_assets:
+        return False
+    rules = _rules_for_control(control, data.policy_rules)
+    if not rules:
+        return True  # cannot scope to a primitive -> preserve inventory-presence behavior
+    return any(asset_in_rule_scope(asset, rule) for asset in data.crypto_assets for rule in rules)
 
 
 def _extract_bom_refs(findings: List[dict]) -> List[str]:

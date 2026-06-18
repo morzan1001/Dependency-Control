@@ -4,7 +4,7 @@ from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
-from app.services.analyzers.crypto.matcher import rule_matches
+from app.services.analyzers.crypto.matcher import asset_in_rule_scope, rule_matches
 
 
 def _asset(**kw):
@@ -66,6 +66,35 @@ def test_primitive_match_required():
     rule_block = _rule(match_name_patterns=["SHA-1"], match_primitive=CryptoPrimitive.BLOCK_CIPHER)
     assert rule_matches(asset, rule_hash) is True
     assert rule_matches(asset, rule_block) is False
+
+
+class TestAssetInRuleScope:
+    """asset_in_rule_scope ignores threshold criteria (key size) so a COMPLIANT
+    asset still counts as 'within the rule's subject scope' — used for compliance
+    applicability (is the control's subject present?)."""
+
+    def test_compliant_rsa_key_is_in_scope_but_not_a_violation(self):
+        rule = _rule(match_name_patterns=["RSA"], match_primitive=CryptoPrimitive.PKE, match_min_key_size_bits=2048)
+        compliant = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
+        # rule_matches = violation predicate -> compliant key is NOT a violation
+        assert rule_matches(compliant, rule) is False
+        # scope predicate -> the RSA subject IS present, so the control applies
+        assert asset_in_rule_scope(compliant, rule) is True
+
+    def test_weak_rsa_key_is_in_scope(self):
+        rule = _rule(match_name_patterns=["RSA"], match_primitive=CryptoPrimitive.PKE, match_min_key_size_bits=2048)
+        weak = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=1024)
+        assert asset_in_rule_scope(weak, rule) is True
+
+    def test_unrelated_primitive_not_in_scope(self):
+        rule = _rule(match_name_patterns=["RSA"], match_primitive=CryptoPrimitive.PKE, match_min_key_size_bits=2048)
+        aes = _asset(name="AES", primitive=CryptoPrimitive.BLOCK_CIPHER, key_size_bits=256)
+        assert asset_in_rule_scope(aes, rule) is False
+
+    def test_name_mismatch_not_in_scope(self):
+        rule = _rule(match_name_patterns=["RSA"], match_primitive=CryptoPrimitive.PKE)
+        dsa = _asset(name="DSA", primitive=CryptoPrimitive.PKE)
+        assert asset_in_rule_scope(dsa, rule) is False
 
 
 @pytest.mark.parametrize(
