@@ -30,6 +30,7 @@ from app.core.constants import (
     REACHABILITY_LEVEL_SYMBOL,
     sort_by_severity,
 )
+from app.services.analyzers.purl_utils import get_purl_type
 from app.services.enrichment.scoring import (
     calculate_adjusted_risk_score,
     map_reachability_level_to_modifier,
@@ -37,6 +38,37 @@ from app.services.enrichment.scoring import (
 from app.services.vulnerable_symbols import get_symbols_for_finding
 
 logger = logging.getLogger(__name__)
+
+# purl ecosystem type -> the callgraph language(s) that can actually analyze it.
+# Only these ecosystems have callgraph support; for anything else (maven, cargo,
+# nuget, ...) a missing package is never treated as unreachable.
+_PURL_TYPE_TO_CALLGRAPH_LANGUAGES: Dict[str, frozenset] = {
+    "pypi": frozenset({"python"}),
+    "npm": frozenset({"javascript", "typescript"}),
+    "go": frozenset({"go"}),
+    "golang": frozenset({"go"}),
+}
+
+
+def _callgraphs_cover_finding_ecosystem(finding: Dict[str, Any], callgraph_languages: List[str]) -> bool:
+    """True only when an analyzed callgraph's language can cover this finding's
+    package ecosystem (derived from its purl).
+
+    Gates the x0.4 ``unreachable`` down-weight: absence from a wrong-language or
+    unsupported callgraph (or when the ecosystem is unknown) is not evidence of
+    unreachability and must be treated as unknown, not a definitive verdict.
+    """
+    details = finding.get("details") or {}
+    purl = details.get("purl")
+    if not purl:
+        return False
+    purl_type = get_purl_type(purl)
+    if not purl_type:
+        return False
+    expected = _PURL_TYPE_TO_CALLGRAPH_LANGUAGES.get(purl_type)
+    if not expected:
+        return False
+    return any(lang in expected for lang in callgraph_languages)
 
 
 def _apply_adjusted_risk_score(finding: Dict[str, Any], reachability: Mapping[str, Any]) -> None:
@@ -197,14 +229,32 @@ def _enrich_finding_from_callgraphs(
     languages = [cg.language or "unknown" for cg in callgraphs]
     if "details" not in finding:
         finding["details"] = {}
-    reachability = {
-        "is_reachable": False,
-        "confidence_score": REACHABILITY_CONFIDENCE_NOT_USED,
-        "analysis_level": REACHABILITY_LEVEL_IMPORT,
-        "matched_symbols": [],
-        "import_locations": [],
-        "message": f"Package '{component}' is not imported in any analyzed source file ({', '.join(languages)}).",
-    }
+    if _callgraphs_cover_finding_ecosystem(finding, languages):
+        # A callgraph of the finding's own ecosystem analyzed the code and the
+        # package isn't imported there -> genuinely unreachable (fail-closed x0.4).
+        reachability: Dict[str, Any] = {
+            "is_reachable": False,
+            "confidence_score": REACHABILITY_CONFIDENCE_NOT_USED,
+            "analysis_level": REACHABILITY_LEVEL_IMPORT,
+            "matched_symbols": [],
+            "import_locations": [],
+            "message": f"Package '{component}' is not imported in any analyzed source file ({', '.join(languages)}).",
+        }
+    else:
+        # No analyzed callgraph covers this package's ecosystem (wrong language,
+        # unsupported ecosystem, or unknown purl). Absence is NOT evidence of
+        # unreachability -> record unknown (identity modifier), never down-weight.
+        reachability = {
+            "is_reachable": None,
+            "confidence_score": 0.0,
+            "analysis_level": REACHABILITY_LEVEL_NONE,
+            "matched_symbols": [],
+            "import_locations": [],
+            "message": (
+                f"Package '{component}' not found in analyzed callgraph(s) ({', '.join(languages)}); "
+                "reachability unknown (its ecosystem was not analyzed)."
+            ),
+        }
     finding["details"]["reachability"] = reachability
     _apply_adjusted_risk_score(finding, reachability)
     return True

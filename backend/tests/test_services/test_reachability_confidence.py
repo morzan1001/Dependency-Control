@@ -115,15 +115,53 @@ def _vuln_finding(component="requests", risk_score=80.0, cve="CVE-2024-0001"):
 
 class TestReachabilityAdjustedScoreWiring:
     def test_unreachable_persists_reduced_adjusted_score(self):
-        """A package absent from every callgraph -> not reachable -> adjusted = base * 0.4."""
+        """A package absent from a callgraph THAT COVERS ITS ECOSYSTEM (pypi vs a
+        python callgraph) -> genuinely not reachable -> adjusted = base * 0.4."""
         finding = _vuln_finding(component="not-imported-pkg", risk_score=80.0)
-        cg = _FakeCallgraph(module_usage={"other": {}}, import_map={"a.py": ["other"]})
+        finding["details"]["purl"] = "pkg:pypi/not-imported-pkg@1.0.0"
+        cg = _FakeCallgraph(module_usage={"other": {}}, import_map={"a.py": ["other"]}, language="python")
         enriched = _enrich_finding_from_callgraphs(finding, [cg])
         assert enriched is True
         assert finding["details"]["reachability"]["is_reachable"] is False
         # 80 * 0.4 == 32.0
         assert finding["details"]["adjusted_risk_score"] == 32.0
         assert finding["details"]["adjusted_risk_score"] < finding["details"]["risk_score"]
+
+
+class TestReachabilityFailClosed:
+    """Absence of evidence is not evidence of unreachability. A package missing
+    from a callgraph that does NOT cover its ecosystem (or when the ecosystem is
+    unknown) must be recorded as unknown (identity modifier), never down-weighted
+    x0.4 (improvement audit #3)."""
+
+    def test_wrong_language_callgraph_does_not_downweight(self):
+        # pypi finding, but only a JS callgraph analyzed -> absence is meaningless.
+        finding = _vuln_finding(component="requests", risk_score=80.0)
+        finding["details"]["purl"] = "pkg:pypi/requests@2.31.0"
+        cg = _FakeCallgraph(module_usage={"lodash": {}}, import_map={"a.js": ["lodash"]}, language="javascript")
+        _enrich_finding_from_callgraphs(finding, [cg])
+        reach = finding["details"]["reachability"]
+        assert reach["is_reachable"] is None
+        assert finding["details"]["adjusted_risk_score"] == 80.0  # identity, no x0.4
+
+    def test_unknown_ecosystem_does_not_downweight(self):
+        # No purl -> can't tell if the callgraph covers it -> unknown, no penalty.
+        finding = _vuln_finding(component="mystery", risk_score=80.0)
+        cg = _FakeCallgraph(module_usage={"other": {}}, import_map={"a.py": ["other"]}, language="python")
+        _enrich_finding_from_callgraphs(finding, [cg])
+        reach = finding["details"]["reachability"]
+        assert reach["is_reachable"] is None
+        assert finding["details"]["adjusted_risk_score"] == 80.0
+
+    def test_covering_language_still_downweights(self):
+        # npm finding absent from a JS callgraph -> genuine unreachable -> x0.4.
+        finding = _vuln_finding(component="left-pad", risk_score=80.0)
+        finding["details"]["purl"] = "pkg:npm/left-pad@1.0.0"
+        cg = _FakeCallgraph(module_usage={"lodash": {}}, import_map={"a.js": ["lodash"]}, language="javascript")
+        _enrich_finding_from_callgraphs(finding, [cg])
+        reach = finding["details"]["reachability"]
+        assert reach["is_reachable"] is False
+        assert finding["details"]["adjusted_risk_score"] == 32.0
 
     def test_symbol_reachable_persists_boosted_adjusted_score(self):
         """A matched vulnerable symbol -> confirmed -> adjusted = base * 1.1."""
