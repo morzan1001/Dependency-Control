@@ -247,6 +247,75 @@ async def test_weak_signing_key_does_not_flag_strong_subject_key(db):
     assert len(weak) == 0
 
 
+def _weak_key_rule(min_bits=3072):
+    return CryptoRule(
+        rule_id="cnsa-rsa-min",
+        name="rsa-min",
+        description="",
+        finding_type=FindingType.CRYPTO_WEAK_KEY,
+        default_severity=Severity.HIGH,
+        source=CryptoPolicySource.CUSTOM,
+        match_primitive=CryptoPrimitive.PKE,
+        match_name_patterns=["RSA"],
+        match_min_key_size_bits=min_bits,
+    )
+
+
+def _weak_hash_rule(names=("SHA-224",)):
+    return CryptoRule(
+        rule_id="ban-sha224",
+        name="sha224",
+        description="",
+        finding_type=FindingType.CRYPTO_WEAK_ALGORITHM,
+        default_severity=Severity.HIGH,
+        source=CryptoPolicySource.CUSTOM,
+        match_primitive=CryptoPrimitive.HASH,
+        match_name_patterns=list(names),
+    )
+
+
+@pytest.mark.asyncio
+async def test_weak_key_honors_policy_min_size(db):
+    """A CNSA-style 3072-bit minimum must flag a 2048-bit subject key that the
+    static 2048 default would pass — i.e. the policy is honored (audit #10)."""
+    now = datetime.now(timezone.utc)
+    await CryptoAssetRepository(db).bulk_upsert(
+        "p",
+        "s",
+        [
+            _cert(not_after=now + timedelta(days=365), subject_key_ref="rsa2048"),
+            _algo("rsa2048", "RSA", CryptoPrimitive.PKE, key_size=2048),
+        ],
+    )
+    await CryptoPolicyRepository(db).upsert_system_policy(
+        CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), _weak_key_rule(min_bits=3072)])
+    )
+    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    weak = [f for f in result["findings"] if f["type"] == "crypto_cert_weak_key"]
+    assert len(weak) == 1
+
+
+@pytest.mark.asyncio
+async def test_weak_signature_honors_policy_hash_ban(db):
+    """A policy banning SHA-224 (not in the static MD5/SHA-1 set) must flag a
+    SHA-224 signature (audit #10)."""
+    now = datetime.now(timezone.utc)
+    await CryptoAssetRepository(db).bulk_upsert(
+        "p",
+        "s",
+        [
+            _cert(not_after=now + timedelta(days=365), sig_algo_ref="sha224"),
+            _algo("sha224", "SHA-224", CryptoPrimitive.HASH),
+        ],
+    )
+    await CryptoPolicyRepository(db).upsert_system_policy(
+        CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), _weak_hash_rule(["SHA-224"])])
+    )
+    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    weak = [f for f in result["findings"] if f["type"] == "crypto_cert_weak_signature"]
+    assert len(weak) == 1
+
+
 @pytest.mark.asyncio
 async def test_no_subject_key_ref_does_not_assert_weak_key(db):
     """Without a subject-key reference the analyzer must not assert a weak cert key

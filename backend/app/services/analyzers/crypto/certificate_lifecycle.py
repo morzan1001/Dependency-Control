@@ -22,12 +22,56 @@ from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 logger = logging.getLogger(__name__)
 
+# Static NIST baseline used only when the effective crypto policy defines no
+# corresponding rule (so cert checks still work on an empty policy).
 _WEAK_HASH_NAMES = {"MD5", "MD-5", "SHA-1", "SHA1"}
 
 _MIN_KEY_SIZES = {
     CryptoPrimitive.PKE: 2048,
     CryptoPrimitive.SIGNATURE: 2048,
 }
+
+
+def _coerce_primitive(prim: Any) -> Optional[CryptoPrimitive]:
+    if isinstance(prim, CryptoPrimitive):
+        return prim
+    if isinstance(prim, str):
+        try:
+            return CryptoPrimitive(prim)
+        except ValueError:
+            return None
+    return None
+
+
+def _weak_hash_names(rules: List[CryptoRule]) -> set:
+    """Disallowed hash names sourced from the effective policy (enabled,
+    hash-primitive rules). Falls back to the static NIST baseline only when the
+    policy defines no hash rules at all, so a configured framework (e.g. one that
+    bans SHA-224) is honored."""
+    names = {
+        pat.upper()
+        for rule in rules
+        if rule.enabled and _coerce_primitive(rule.match_primitive) == CryptoPrimitive.HASH
+        for pat in rule.match_name_patterns
+    }
+    return names or {n.upper() for n in _WEAK_HASH_NAMES}
+
+
+def _min_key_sizes(rules: List[CryptoRule]) -> Dict[CryptoPrimitive, int]:
+    """Minimum key sizes per primitive sourced from the policy (strictest rule
+    wins), with the static baseline filling in any primitive the policy does not
+    constrain — so a CNSA 2.0 / 3072-bit requirement actually takes effect."""
+    mins: Dict[CryptoPrimitive, int] = {}
+    for rule in rules:
+        if not rule.enabled or rule.match_min_key_size_bits is None:
+            continue
+        prim = _coerce_primitive(rule.match_primitive)
+        if prim is None:
+            continue
+        mins[prim] = max(mins.get(prim, 0), rule.match_min_key_size_bits)
+    for prim, size in _MIN_KEY_SIZES.items():
+        mins.setdefault(prim, size)
+    return mins
 
 
 class CertificateLifecycleAnalyzer(Analyzer):
@@ -187,14 +231,8 @@ class CertificateLifecycleAnalyzer(Analyzer):
         algo = algo_by_ref.get(cert.signature_algorithm_ref)
         if algo is None:
             return []
-        prim = algo.primitive
-        if isinstance(prim, str):
-            try:
-                prim = CryptoPrimitive(prim)
-            except ValueError:
-                prim = None
-        is_hash = prim == CryptoPrimitive.HASH
-        if is_hash and algo.name and algo.name.upper() in {n.upper() for n in _WEAK_HASH_NAMES}:
+        is_hash = _coerce_primitive(algo.primitive) == CryptoPrimitive.HASH
+        if is_hash and algo.name and algo.name.upper() in _weak_hash_names(rules):
             return [
                 _build(
                     cert,
@@ -225,15 +263,10 @@ class CertificateLifecycleAnalyzer(Analyzer):
         algo = algo_by_ref.get(cert.subject_public_key_ref)
         if algo is None or algo.key_size_bits is None:
             return []
-        prim = algo.primitive
-        if isinstance(prim, str):
-            try:
-                prim = CryptoPrimitive(prim)
-            except ValueError:
-                return []
+        prim = _coerce_primitive(algo.primitive)
         if prim is None:
             return []
-        min_size = _MIN_KEY_SIZES.get(prim)
+        min_size = _min_key_sizes(rules).get(prim)
         if min_size is None or algo.key_size_bits >= min_size:
             return []
         return [
