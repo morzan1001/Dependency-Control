@@ -126,21 +126,38 @@ class CryptoTrendService:
     ) -> List[TrendPoint]:
         match: Dict[str, Any] = dict(_METRIC_FILTER[metric])
         match["scan_created_at"] = {"$gte": range_start, "$lte": range_end}
+        # Waived/accepted findings reflect a risk decision, not current posture —
+        # exclude them from the trend (audit #11).
+        match["waived"] = {"$ne": True}
         if resolved.project_ids is not None:
             match["project_id"] = {"$in": resolved.project_ids}
+        trunc = {"$dateTrunc": {"date": "$scan_created_at", "unit": _dateTrunc_unit(bucket)}}
         pipeline = [
             {"$match": match},
+            # Count findings per (project, bucket, scan). Carry project/bucket as
+            # fields so later stages don't depend on composite-_id sub-paths.
             {
                 "$group": {
-                    "_id": {
-                        "$dateTrunc": {
-                            "date": "$scan_created_at",
-                            "unit": _dateTrunc_unit(bucket),
-                        }
-                    },
-                    "value": {"$sum": 1},
+                    "_id": {"project": "$project_id", "bucket": trunc, "scan": "$scan_id"},
+                    "project": {"$first": "$project_id"},
+                    "bucket": {"$first": trunc},
+                    "scan_created_at": {"$max": "$scan_created_at"},
+                    "cnt": {"$sum": 1},
                 }
             },
+            # Pick the LATEST scan per (project, bucket) so re-scans in the same
+            # bucket (e.g. CI + nightly) count one persistent issue once, not once
+            # per scan (audit #11).
+            {"$sort": {"scan_created_at": -1}},
+            {
+                "$group": {
+                    "_id": {"project": "$project", "bucket": "$bucket"},
+                    "bucket": {"$first": "$bucket"},
+                    "value": {"$first": "$cnt"},
+                }
+            },
+            # Sum the per-project latest-scan counts into one value per bucket.
+            {"$group": {"_id": "$bucket", "value": {"$sum": "$value"}}},
             {"$sort": {"_id": 1}},
         ]
         out: List[TrendPoint] = []

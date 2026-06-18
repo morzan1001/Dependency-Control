@@ -33,6 +33,67 @@ async def test_trend_returns_empty_points_on_no_data(db):
     assert series.scope == "project"
 
 
+def _crypto_finding(_id, scan_id, scan_created_at, *, project_id="p", waived=False, ftype="crypto_weak_key"):
+    return {
+        "_id": _id,
+        "finding_id": _id,
+        "type": ftype,
+        "project_id": project_id,
+        "scan_id": scan_id,
+        "scan_created_at": scan_created_at,
+        "waived": waived,
+        "component": "pkg",
+        "version": "1.0.0",
+        "severity": "HIGH",
+        "details": {},
+    }
+
+
+async def _seed_findings(db, findings):
+    for f in findings:
+        await db.findings.insert_one(f)
+
+
+@pytest.mark.asyncio
+async def test_trend_excludes_waived_findings(db):
+    """Waived/accepted crypto findings must not inflate the trend (audit #11)."""
+    now = datetime.now(timezone.utc)
+    ts = now - timedelta(days=2)
+    resolved = ResolvedScope(scope="project", scope_id="p", project_ids=["p"])
+    await _seed_findings(
+        db,
+        [
+            _crypto_finding("a1", "scanA", ts, waived=False),
+            _crypto_finding("a2", "scanA", ts, waived=False),
+            _crypto_finding("a3", "scanA", ts, waived=True),  # must be excluded
+        ],
+    )
+    points = await CryptoTrendService(db)._finding_buckets(
+        resolved, "total_crypto_findings", "day", now - timedelta(days=7), now
+    )
+    assert sum(p.value for p in points) == 2.0
+
+
+@pytest.mark.asyncio
+async def test_trend_dedups_rescans_in_same_bucket(db):
+    """Two scans of the same project in one bucket must not double-count the same
+    persistent issue — count the latest scan, not every scan (audit #11)."""
+    now = datetime.now(timezone.utc)
+    ts = now - timedelta(days=2)
+    resolved = ResolvedScope(scope="project", scope_id="p", project_ids=["p"])
+    await _seed_findings(
+        db,
+        [
+            _crypto_finding("s1", "scanA", ts),
+            _crypto_finding("s2", "scanB", ts),  # re-scan of the same issue
+        ],
+    )
+    points = await CryptoTrendService(db)._finding_buckets(
+        resolved, "total_crypto_findings", "day", now - timedelta(days=7), now
+    )
+    assert sum(p.value for p in points) == 1.0
+
+
 @pytest.mark.asyncio
 async def test_trend_rejects_excessive_range(db):
     resolved = ResolvedScope(scope="project", scope_id="p", project_ids=["p"])
