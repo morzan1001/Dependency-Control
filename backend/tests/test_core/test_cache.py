@@ -107,6 +107,22 @@ class TestCacheTTLExpectedValues:
         assert CacheTTL.NEGATIVE_RESULT == 3600
 
 
+class TestCacheKeysRecommendations:
+    """Recommendations key must isolate by scan AND caller scope so a new scan
+    invalidates the entry and users with different project access never share
+    cached cross-project data (audit #13)."""
+
+    def test_includes_all_components(self):
+        key = CacheKeys.recommendations("proj1", "scanA", "deadbeef")
+        assert "proj1" in key and "scanA" in key and "deadbeef" in key
+
+    def test_differs_by_scan(self):
+        assert CacheKeys.recommendations("p", "s1", "h") != CacheKeys.recommendations("p", "s2", "h")
+
+    def test_differs_by_scope(self):
+        assert CacheKeys.recommendations("p", "s", "h1") != CacheKeys.recommendations("p", "s", "h2")
+
+
 class TestCacheKeysKevCatalog:
     """Tests for CacheKeys.kev_catalog static method."""
 
