@@ -135,6 +135,59 @@ async def test_findings_delta_added_and_removed(db):
     assert len(removed) == 1 and removed[0].finding_type == "secret"
 
 
+async def _seed_added_removed(db):
+    await db["findings"].insert_many(
+        [
+            {
+                "_id": "fa1", "project_id": "p1", "scan_id": "sa", "finding_id": "fa1",
+                "type": "vulnerability", "severity": "CRITICAL", "component": "lib@1",
+                "description": "CVE-A", "details": {"cve_id": "CVE-A"},
+                "created_at": datetime.now(timezone.utc),
+            },
+            {
+                "_id": "fa2", "project_id": "p1", "scan_id": "sa", "finding_id": "fa2",
+                "type": "secret", "severity": "HIGH", "component": "src/x.py",
+                "description": "leaked", "details": {"pattern_hash": "h1"},
+                "created_at": datetime.now(timezone.utc),
+            },
+            {
+                "_id": "fb1", "project_id": "p1", "scan_id": "sb", "finding_id": "fb1",
+                "type": "vulnerability", "severity": "CRITICAL", "component": "lib@1",
+                "description": "CVE-A again", "details": {"cve_id": "CVE-A"},
+                "created_at": datetime.now(timezone.utc),
+            },
+            {
+                "_id": "fb2", "project_id": "p1", "scan_id": "sb", "finding_id": "fb2",
+                "type": "vulnerability", "severity": "MEDIUM", "component": "other@2",
+                "description": "CVE-NEW", "details": {"cve_id": "CVE-NEW"},
+                "created_at": datetime.now(timezone.utc),
+            },
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_breakdowns_decompose_full_totals_under_change_filter(db):
+    """by_severity/by_type must decompose the FULL added+removed totals, even when
+    the `change` filter scopes the paginated item list (audit #12)."""
+    await _seed_added_removed(db)
+    resp = await compute_findings_delta(
+        db, project_id="p1", from_scan="sa", to_scan="sb",
+        page=1, page_size=50, change="added", severity=None, finding_type=None,
+    )
+    # totals are independent of the change filter: 1 added, 1 removed
+    assert resp.totals.added == 1
+    assert resp.totals.removed == 1
+    # breakdowns reconcile with added + removed (= 2), not just the displayed 'added'
+    assert sum(resp.totals.by_severity.values()) == resp.totals.added + resp.totals.removed
+    assert resp.totals.by_severity.get("medium") == 1  # added CVE-NEW
+    assert resp.totals.by_severity.get("high") == 1  # removed secret
+    assert resp.totals.by_type.get("vulnerability") == 1
+    assert resp.totals.by_type.get("secret") == 1
+    # the paginated items remain scoped to the change filter
+    assert resp.items and all(i.change == "added" for i in resp.items)
+
+
 @pytest.mark.asyncio
 async def test_findings_delta_severity_filter(db):
     await db["findings"].insert_many(

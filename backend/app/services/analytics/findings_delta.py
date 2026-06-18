@@ -155,17 +155,23 @@ async def compute_findings_delta(
     removed_keys = from_map.keys() - to_map.keys()
     unchanged_count = len(to_map.keys() & from_map.keys())
 
-    items: List[FindingDeltaItem] = []
-    if change in (None, "all", "added"):
-        items.extend(_to_item(to_map[k], "added") for k in added_keys)
-    if change in (None, "all", "removed"):
-        items.extend(_to_item(from_map[k], "removed") for k in removed_keys)
+    added_items = [_to_item(to_map[k], "added") for k in added_keys]
+    removed_items = [_to_item(from_map[k], "removed") for k in removed_keys]
 
+    # Breakdowns decompose the FULL added+removed populations so they always
+    # reconcile with totals.added + totals.removed, independent of the `change`
+    # filter that only scopes the paginated item list (audit #12).
     by_severity: Dict[str, int] = {}
     by_type: Dict[str, int] = {}
-    for item in items:
+    for item in (*added_items, *removed_items):
         by_severity[item.severity] = by_severity.get(item.severity, 0) + 1
         by_type[item.finding_type] = by_type.get(item.finding_type, 0) + 1
+
+    items: List[FindingDeltaItem] = []
+    if change in (None, "all", "added"):
+        items.extend(added_items)
+    if change in (None, "all", "removed"):
+        items.extend(removed_items)
 
     # Stable sort: added before removed, then by severity (critical first), then title,
     # then finding_id as a final tiebreaker so pagination is deterministic regardless
