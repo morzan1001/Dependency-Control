@@ -1302,19 +1302,22 @@ _SCAN_FINDINGS_SORT_FIELDS: Dict[str, str] = {
 def _scan_findings_sort_stage(sort_by: str, sort_order: str) -> Dict[str, Any]:
     """Compose the ``$sort`` stage.
 
-    Every sort carries a unique ``finding_id`` tiebreaker so that ``$skip`` /
-    ``$limit`` pagination is stable — without it, rows with equal sort keys can
-    reorder between pages and be duplicated or skipped during infinite scroll.
-    Sort keys are normalised to real document fields; unknown keys fall back to
-    severity rather than producing an unsorted result.
+    Every sort ends with the UNIQUE document ``_id`` as the terminal tiebreaker
+    so that ``$skip`` / ``$limit`` pagination is stable — without a unique final
+    key, rows with equal sort values can reorder between pages and be duplicated
+    or skipped during infinite scroll. (``finding_id`` is the logical analyzer id
+    and is NOT unique within a scan — one CVE across N components yields N docs —
+    so it cannot be the stabiliser; ``_id`` is kept in the pipeline through the
+    sort for exactly this reason.) Sort keys are normalised to real document
+    fields; unknown keys fall back to severity rather than an unsorted result.
     """
     sort_dir = -1 if sort_order == "desc" else 1
     field = _SCAN_FINDINGS_SORT_FIELDS.get(sort_by, "severity")
     if field == "severity":
-        return {"$sort": {"severity_rank": sort_dir, "component": 1, "finding_id": 1}}
+        return {"$sort": {"severity_rank": sort_dir, "component": 1, "_id": 1}}
     sort_spec: Dict[str, Any] = {field: sort_dir}
-    if field != "finding_id":
-        sort_spec["finding_id"] = 1
+    if field != "_id":
+        sort_spec["_id"] = 1
     return {"$sort": sort_spec}
 
 
@@ -1331,13 +1334,15 @@ def _build_scan_findings_pipeline(
         {"$match": query},
         _scan_findings_lookup_stage(),
         _scan_findings_add_fields_stage(),
-        # Remove the temporary lookup array and exclude MongoDB _id
-        {"$project": {"dependency_info": 0, "_id": 0}},
+        # Drop only the temporary lookup array here. _id is kept through the
+        # $sort so it can serve as the unique terminal tiebreaker (MF3); it is
+        # excluded from the returned data inside the $facet below.
+        {"$project": {"dependency_info": 0}},
         _scan_findings_sort_stage(sort_by, sort_order),
         {
             "$facet": {
                 "metadata": [{"$count": "total"}],
-                "data": [{"$skip": skip}, {"$limit": limit}],
+                "data": [{"$skip": skip}, {"$limit": limit}, {"$project": {"_id": 0}}],
             }
         },
     ]
