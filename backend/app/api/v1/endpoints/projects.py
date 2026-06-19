@@ -1342,7 +1342,9 @@ def _build_scan_findings_pipeline(
         {
             "$facet": {
                 "metadata": [{"$count": "total"}],
-                "data": [{"$skip": skip}, {"$limit": limit}, {"$project": {"_id": 0}}],
+                # Exclude _id (kept only for the sort tiebreaker) and the
+                # first_scanner sort-helper (kept only for sorting) from output.
+                "data": [{"$skip": skip}, {"$limit": limit}, {"$project": {"_id": 0, "first_scanner": 0}}],
             }
         },
     ]

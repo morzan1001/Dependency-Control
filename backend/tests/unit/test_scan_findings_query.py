@@ -100,4 +100,7 @@ class TestScanFindingsPipelineKeepsId:
         # the data sub-pipeline of the $facet must exclude _id from the output
         facet = next(st["$facet"] for st in pipeline if "$facet" in st)
         data_stages = facet["data"]
-        assert any(st.get("$project", {}).get("_id") == 0 for st in data_stages)
+        data_project = next(st["$project"] for st in data_stages if "$project" in st)
+        assert data_project.get("_id") == 0
+        # the first_scanner sort-helper must not leak into the response (SC#10)
+        assert data_project.get("first_scanner") == 0

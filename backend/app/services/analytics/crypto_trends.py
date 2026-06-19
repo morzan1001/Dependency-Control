@@ -132,6 +132,12 @@ class CryptoTrendService:
         if resolved.project_ids is not None:
             match["project_id"] = {"$in": resolved.project_ids}
         trunc = {"$dateTrunc": {"date": "$scan_created_at", "unit": _dateTrunc_unit(bucket)}}
+        # NOTE (audit SC#1): within a bucket we count the LATEST scan per project,
+        # not filtered by scan status. A partial/failed latest scan could therefore
+        # under-report a bucket. This is accepted: failed scans typically write no
+        # crypto findings (so they can't pull a bucket to a lower nonzero value),
+        # and joining scan status here would couple the trend to the scans
+        # collection for a narrow edge case. Revisit if partial-scan skew is observed.
         pipeline = [
             {"$match": match},
             # Count findings per (project, bucket, scan). Carry project/bucket as
