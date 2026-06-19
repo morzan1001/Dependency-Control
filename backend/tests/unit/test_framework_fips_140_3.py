@@ -56,6 +56,30 @@ def test_fips_approved_algorithm_passes():
     assert disallowed_failed == []
 
 
+def test_fips_disallowed_category_not_applicable_without_matching_primitive():
+    """A hash-only project must report the asymmetric/symmetric disallowed-category
+    controls as NOT_APPLICABLE, not a false PASSED (audit MF4)."""
+    fw = Fips1403Framework()
+
+    class A:
+        name = "SHA-256"
+        asset_type = "algorithm"
+        primitive = "hash"
+
+    result = fw.evaluate(_eval_input(assets=[A()]))
+
+    def _status(c):
+        return c.status.value if hasattr(c.status, "value") else c.status
+
+    asym = next(c for c in result.controls if "asymmetric" in c.title.lower())
+    assert _status(asym) == "not_applicable"
+    sym = next(c for c in result.controls if "symmetric ciphers" in c.title.lower())
+    assert _status(sym) == "not_applicable"
+    # hash present, no disallowed hash name -> the hash control legitimately PASSES
+    hsh = next(c for c in result.controls if "hash functions" in c.title.lower())
+    assert _status(hsh) == "passed"
+
+
 def test_fips_control_count_reasonable():
     fw = Fips1403Framework()
     # 3 disallowed-category controls (hashes, ciphers, kdfs) + 1 RSA-min-2048.
