@@ -8,6 +8,8 @@ noise. ``is_high_confidence_reachable`` is the gate that lets call-sites
 opt into the conservative reading without losing the raw boolean.
 """
 
+import pytest
+
 from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD
 from app.services.reachability_enrichment import is_high_confidence_reachable
 
@@ -60,10 +62,81 @@ class TestIsHighConfidenceReachable:
 # ---------------------------------------------------------------------------
 
 from app.services.reachability_enrichment import (  # noqa: E402
+    _build_component_language_map,
+    _build_reachability_summary_for_pending,
     _enrich_finding_from_callgraphs,
     _enrich_single_finding,
     _match_symbols,
 )
+
+
+class TestPendingSummaryTiers:
+    """The persisted pending summary must map analysis_level (none/import/symbol)
+    onto the display tiers, not increment raw levels against confirmed/likely
+    buckets that never match (audit MF6)."""
+
+    @staticmethod
+    def _f(_id, reachable, level):
+        return {
+            "finding_id": _id, "component": _id, "version": "1", "severity": "HIGH",
+            "details": {"reachability": {"is_reachable": reachable, "analysis_level": level}},
+        }
+
+    def test_levels_bucketed_by_display_tier(self):
+        findings = [
+            self._f("a", True, "symbol"),
+            self._f("b", True, "import"),
+            self._f("c", False, "none"),
+        ]
+        cg = [{"language": "python", "module_usage": {}, "import_map": {}}]
+        summary = _build_reachability_summary_for_pending(findings, cg, 3)
+        levels = summary["reachability_levels"]
+        assert levels["confirmed"] == 1
+        assert levels["likely"] == 1
+        assert levels["unreachable"] == 1
+        assert levels["unknown"] == 0
+
+
+class TestEcosystemFromDependencyMap:
+    """Real vulnerability findings (OSV/Trivy/Grype) carry NO details.purl, so the
+    fail-closed ecosystem gate must derive the ecosystem from the scan's
+    dependencies (name -> type/purl), not from details.purl (audit MF1)."""
+
+    def test_downweight_without_purl_via_component_map(self):
+        # Real-shape finding: no details.purl. Ecosystem comes from the dep map.
+        finding = _vuln_finding(component="requests", risk_score=80.0)
+        assert "purl" not in finding["details"]
+        cg = _FakeCallgraph(module_usage={"other": {}}, import_map={"a.py": ["other"]}, language="python")
+        comp_langs = {"requests": frozenset({"python"})}
+        _enrich_finding_from_callgraphs(finding, [cg], comp_langs)
+        reach = finding["details"]["reachability"]
+        assert reach["is_reachable"] is False
+        assert finding["details"]["adjusted_risk_score"] == 32.0  # 80 * 0.4
+
+    def test_wrong_language_still_unknown_with_component_map(self):
+        finding = _vuln_finding(component="requests", risk_score=80.0)
+        cg = _FakeCallgraph(module_usage={"lodash": {}}, import_map={"a.js": ["lodash"]}, language="javascript")
+        comp_langs = {"requests": frozenset({"python"})}
+        _enrich_finding_from_callgraphs(finding, [cg], comp_langs)
+        assert finding["details"]["reachability"]["is_reachable"] is None
+        assert finding["details"]["adjusted_risk_score"] == 80.0
+
+    @pytest.mark.asyncio
+    async def test_build_component_language_map_from_deps(self):
+        from tests.mocks.fake_mongo import FakeDatabase
+
+        db = FakeDatabase()
+        await db.dependencies.insert_one({"scan_id": "s1", "name": "requests", "type": "pypi"})
+        await db.dependencies.insert_one({"scan_id": "s1", "name": "left-pad", "type": "npm"})
+        await db.dependencies.insert_one({"scan_id": "s1", "name": "mymod", "type": "go-module"})
+        await db.dependencies.insert_one({"scan_id": "s1", "name": "viapurl", "purl": "pkg:pypi/viapurl@1.0"})
+        await db.dependencies.insert_one({"scan_id": "s1", "name": "rpmpkg", "type": "rpm"})  # no callgraph lang
+        m = await _build_component_language_map(db, "s1")
+        assert m["requests"] == frozenset({"python"})
+        assert m["left-pad"] == frozenset({"javascript", "typescript"})
+        assert m["mymod"] == frozenset({"go"})
+        assert m["viapurl"] == frozenset({"python"})
+        assert "rpmpkg" not in m  # unsupported ecosystem omitted
 
 
 class TestMatchSymbols:

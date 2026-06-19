@@ -822,6 +822,21 @@ class TestComprehensiveStatsReachabilityTiers:
         # symbol-level is the stronger 'confirmed' tier, not 'likely'
         assert stats.reachability.likely_reachable_count == 0
 
+    @pytest.mark.asyncio
+    async def test_confirmed_vs_total_reachable_counts(self):
+        """confirmed_reachable_count = symbol-level; reachable_count = TOTAL
+        reachable (confirmed + likely). The confirmed accumulator must be wired
+        (audit MF2)."""
+        findings = [
+            _w5_finding("s1", "HIGH", reachable=True, reachability_level="symbol"),
+            _w5_finding("i1", "HIGH", reachable=True, reachability_level="import"),
+        ]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.reachability.confirmed_reachable_count == 1  # symbol only
+        assert stats.reachability.likely_reachable_count == 1  # import only
+        assert stats.reachability.reachable_count == 2  # total reachable
+
 
 class TestComprehensiveStatsEpssZero:
     """A legitimate EPSS of 0.0 must be reported as 0.0, not dropped to None by a

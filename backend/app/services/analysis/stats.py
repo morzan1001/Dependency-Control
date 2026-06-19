@@ -25,7 +25,7 @@ from app.models.stats import (
     Stats,
     ThreatIntelligenceStats,
 )
-from app.services.reachability_enrichment import is_high_confidence_reachable
+from app.services.reachability_enrichment import is_high_confidence_reachable, reachability_display_tier
 from app.services.analysis.types import (
     CallgraphInfo,
     Database,
@@ -177,27 +177,6 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> EPSSKEVSummary:
     return summary
 
 
-def _reachability_display_tier(is_reachable: Optional[bool], analysis_level: Optional[str]) -> str:
-    """Map persisted reachability onto the display vocabulary.
-
-    Findings persist ``is_reachable`` plus ``analysis_level`` in the
-    none/import/symbol vocabulary, but the UI buckets are
-    confirmed/likely/unreachable/unknown. A symbol-level reachable hit is
-    ``confirmed``; an import-level reachable hit is ``likely``; a definitive
-    not-reachable verdict is ``unreachable``; everything else (unknown
-    ecosystem, no analysis) is ``unknown``. Without this mapping the buckets
-    counted raw none/import/symbol values that never matched the bucket keys.
-    """
-    if is_reachable is False:
-        return "unreachable"
-    if is_reachable is True:
-        if analysis_level == REACHABILITY_LEVEL_SYMBOL:
-            return "confirmed"
-        if analysis_level == REACHABILITY_LEVEL_IMPORT:
-            return "likely"
-    return "unknown"
-
-
 def build_reachability_summary(
     findings: List[Dict[str, Any]],
     callgraphs: List[Dict[str, Any]],
@@ -247,7 +226,7 @@ def build_reachability_summary(
         reachable = reachability_data.get("is_reachable")
         # The persisted analysis_level is none/import/symbol; map it onto the
         # confirmed/likely/unreachable/unknown display vocabulary the buckets use.
-        tier = _reachability_display_tier(reachable, reachability_data.get("analysis_level"))
+        tier = reachability_display_tier(reachable, reachability_data.get("analysis_level"))
 
         vuln_info: VulnerabilityInfo = {
             "cve": finding.get("finding_id") or finding.get("id", ""),
@@ -696,6 +675,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
         stats.reachability = ReachabilityStats(
             analyzed_count=res.get("reachability_analyzed", 0),
             reachable_count=res.get("reachable_count", 0),
+            confirmed_reachable_count=res.get("confirmed_reachable", 0),
             likely_reachable_count=res.get("likely_reachable", 0),
             unreachable_count=res.get("unreachable_count", 0),
             unknown_count=res.get("total", 0) - res.get("reachability_analyzed", 0),

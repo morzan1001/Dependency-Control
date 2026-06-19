@@ -39,36 +39,79 @@ from app.services.vulnerable_symbols import get_symbols_for_finding
 
 logger = logging.getLogger(__name__)
 
-# purl ecosystem type -> the callgraph language(s) that can actually analyze it.
-# Only these ecosystems have callgraph support; for anything else (maven, cargo,
-# nuget, ...) a missing package is never treated as unreachable.
-_PURL_TYPE_TO_CALLGRAPH_LANGUAGES: Dict[str, frozenset] = {
+# Ecosystem identifier (a dependency's `type`, e.g. "pypi"/"npm"/"go-module", OR a
+# purl type) -> the callgraph language(s) that can actually analyze it. Anything
+# else (maven, cargo, nuget, rpm, deb, ...) has no callgraph support, so a missing
+# package in those ecosystems is never treated as unreachable.
+_ECOSYSTEM_TO_CALLGRAPH_LANGUAGES: Dict[str, frozenset] = {
     "pypi": frozenset({"python"}),
+    "python": frozenset({"python"}),
     "npm": frozenset({"javascript", "typescript"}),
     "go": frozenset({"go"}),
     "golang": frozenset({"go"}),
+    "go-module": frozenset({"go"}),
 }
 
 
-def _callgraphs_cover_finding_ecosystem(finding: Dict[str, Any], callgraph_languages: List[str]) -> bool:
+def _ecosystem_languages(ecosystem: Optional[str], purl: Optional[str]) -> frozenset:
+    """Callgraph language(s) that can analyze a package, derived from its
+    dependency ecosystem/type or (fallback) its purl. Empty when undeterminable
+    or unsupported."""
+    if ecosystem:
+        langs = _ECOSYSTEM_TO_CALLGRAPH_LANGUAGES.get(ecosystem.lower())
+        if langs:
+            return langs
+    if purl:
+        purl_type = get_purl_type(purl)
+        if purl_type:
+            return _ECOSYSTEM_TO_CALLGRAPH_LANGUAGES.get(purl_type, frozenset())
+    return frozenset()
+
+
+async def _build_component_language_map(db: AsyncIOMotorDatabase, scan_id: str) -> Dict[str, frozenset]:
+    """Map component name -> callgraph language(s) that could analyze it, derived
+    from the scan's dependencies (their ``type``/``purl``).
+
+    This is the reliable ecosystem signal: vulnerability findings themselves do
+    NOT carry a purl (the OSV/Trivy/Grype normalizers don't persist one), so the
+    fail-closed gate must look the package up in the dependency inventory instead.
+    """
+    out: Dict[str, frozenset] = {}
+    cursor = db.dependencies.find({"scan_id": scan_id}, {"name": 1, "type": 1, "purl": 1})
+    async for dep in cursor:
+        name = dep.get("name")
+        if not name:
+            continue
+        langs = _ecosystem_languages(dep.get("type"), dep.get("purl"))
+        if langs:
+            out[name] = out.get(name, frozenset()) | langs
+    return out
+
+
+def _callgraphs_cover_finding_ecosystem(
+    finding: Dict[str, Any],
+    callgraph_languages: List[str],
+    component_languages: Optional[Dict[str, frozenset]] = None,
+) -> bool:
     """True only when an analyzed callgraph's language can cover this finding's
-    package ecosystem (derived from its purl).
+    package ecosystem.
 
     Gates the x0.4 ``unreachable`` down-weight: absence from a wrong-language or
     unsupported callgraph (or when the ecosystem is unknown) is not evidence of
-    unreachability and must be treated as unknown, not a definitive verdict.
+    unreachability and must be treated as unknown, not a definitive verdict. The
+    ecosystem comes from the scan's dependency inventory (``component_languages``);
+    a purl on the finding itself is only a rare fallback.
     """
-    details = finding.get("details") or {}
-    purl = details.get("purl")
-    if not purl:
+    component = finding.get("component", "")
+    langs: frozenset = frozenset()
+    if component_languages and component in component_languages:
+        langs = component_languages[component]
+    if not langs:
+        purl = (finding.get("details") or {}).get("purl")
+        langs = _ecosystem_languages(None, purl)
+    if not langs:
         return False
-    purl_type = get_purl_type(purl)
-    if not purl_type:
-        return False
-    expected = _PURL_TYPE_TO_CALLGRAPH_LANGUAGES.get(purl_type)
-    if not expected:
-        return False
-    return any(lang in expected for lang in callgraph_languages)
+    return any(lang in langs for lang in callgraph_languages)
 
 
 def _apply_adjusted_risk_score(finding: Dict[str, Any], reachability: Mapping[str, Any]) -> None:
@@ -115,6 +158,21 @@ def is_high_confidence_reachable(reachability_data: Optional[Dict[str, Any]]) ->
     if confidence is None:
         return False
     return bool(confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD)
+
+
+def reachability_display_tier(is_reachable: Optional[bool], analysis_level: Optional[str]) -> str:
+    """Map persisted reachability (is_reachable + analysis_level in
+    none/import/symbol) onto the display vocabulary confirmed/likely/unreachable/
+    unknown. Shared by the comprehensive-stats summary and the persisted pending
+    summary so the two cannot drift (audit MF6)."""
+    if is_reachable is False:
+        return "unreachable"
+    if is_reachable is True:
+        if analysis_level == REACHABILITY_LEVEL_SYMBOL:
+            return "confirmed"
+        if analysis_level == REACHABILITY_LEVEL_IMPORT:
+            return "likely"
+    return "unknown"
 
 
 class ReachabilityResult(TypedDict, total=False):
@@ -205,6 +263,7 @@ def _is_package_in_callgraph(
 def _enrich_finding_from_callgraphs(
     finding: Dict[str, Any],
     callgraphs: List[Any],
+    component_languages: Optional[Dict[str, frozenset]] = None,
 ) -> bool:
     """
     Try each callgraph for a finding. Returns True if enriched.
@@ -229,7 +288,7 @@ def _enrich_finding_from_callgraphs(
     languages = [cg.language or "unknown" for cg in callgraphs]
     if "details" not in finding:
         finding["details"] = {}
-    if _callgraphs_cover_finding_ecosystem(finding, languages):
+    if _callgraphs_cover_finding_ecosystem(finding, languages, component_languages):
         # A callgraph of the finding's own ecosystem analyzed the code and the
         # package isn't imported there -> genuinely unreachable (fail-closed x0.4).
         reachability: Dict[str, Any] = {
@@ -301,12 +360,16 @@ async def enrich_findings_with_reachability(
     languages = [cg.language or "unknown" for cg in callgraphs]
     logger.debug(f"Found {len(callgraphs)} callgraph(s) for scan {scan_id}: {languages}")
 
+    # Reliable per-finding ecosystem (vuln findings don't carry a purl), used to
+    # gate the fail-closed unreachable down-weight to the analyzed languages.
+    component_languages = await _build_component_language_map(db, scan_id)
+
     enriched_count = 0
 
     for finding in findings:
         if finding.get("type") != "vulnerability":
             continue
-        if _enrich_finding_from_callgraphs(finding, callgraphs):
+        if _enrich_finding_from_callgraphs(finding, callgraphs, component_languages):
             enriched_count += 1
 
     return enriched_count
@@ -712,19 +775,21 @@ def _build_reachability_summary_for_pending(
     for finding in findings:
         reachability_data = finding.get("details", {}).get("reachability", {})
         reachable = reachability_data.get("is_reachable")
-        reachability_level = reachability_data.get("analysis_level", "unknown")
+        # Persisted analysis_level is none/import/symbol; map onto the display
+        # tiers the buckets use (confirmed/likely/unreachable/unknown).
+        tier = reachability_display_tier(reachable, reachability_data.get("analysis_level"))
 
         vuln_info = {
             "cve": finding.get("finding_id") or finding.get("id", ""),
             "component": finding.get("component", ""),
             "version": finding.get("version", ""),
             "severity": finding.get("severity", "unknown"),
-            "reachability_level": reachability_level,
+            "reachability_level": tier,
             "reachable_functions": reachability_data.get("matched_symbols", [])[:5],
         }
 
-        if reachability_level in summary["reachability_levels"]:
-            summary["reachability_levels"][reachability_level] += 1
+        if tier in summary["reachability_levels"]:
+            summary["reachability_levels"][tier] += 1
 
         if reachable is True:
             summary["reachable_vulnerabilities"].append(vuln_info)

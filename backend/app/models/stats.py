@@ -26,8 +26,15 @@ class ReachabilityStats(BaseModel):
     """
 
     analyzed_count: int = Field(0, description="Count of vulnerabilities analyzed for reachability")
-    reachable_count: int = Field(0, description="Count of confirmed reachable vulnerabilities")
-    likely_reachable_count: int = Field(0, description="Count of likely reachable vulnerabilities")
+    reachable_count: int = Field(
+        0, description="Count of reachable vulnerabilities (total = confirmed symbol-level + likely import-level)"
+    )
+    confirmed_reachable_count: int = Field(
+        0, description="Count of confirmed (symbol-level) reachable vulnerabilities — the strong subset of reachable_count"
+    )
+    likely_reachable_count: int = Field(
+        0, description="Count of likely (import-level) reachable vulnerabilities — the weaker subset of reachable_count"
+    )
     unreachable_count: int = Field(0, description="Count of unreachable vulnerabilities")
     unknown_count: int = Field(0, description="Count of vulnerabilities with unknown reachability")
     reachable_critical: int = Field(0, description="Critical vulns that are reachable")
