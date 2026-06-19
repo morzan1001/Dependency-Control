@@ -155,6 +155,13 @@ class TestMatchSymbols:
         assert _match_symbols(["template"], ["_.template"]) == ["_.template"]
         assert _match_symbols(["SSL_read"], ["openssl.SSL_read"]) == ["openssl.SSL_read"]
 
+    def test_qualified_vuln_matches_bare_used_symbol(self):
+        # Production callgraphs store bare last-segments (e.g. "Read"); an OSV vuln
+        # symbol may be qualified (e.g. "Conn.Read"). The last segment must match
+        # without reintroducing substring false positives (audit SC#7).
+        assert _match_symbols(["Conn.Read"], ["Read"]) == ["Read"]
+        assert _match_symbols(["pkg.forget"], ["get"]) == []  # not a boundary match
+
     def test_substring_does_not_match(self):
         assert _match_symbols(["get"], ["getUser", "forget", "target"]) == []
 

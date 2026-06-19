@@ -559,14 +559,15 @@ def _match_symbols(vulnerable_symbols: List[str], used_symbols: List[str]) -> Li
             matched.append(used)
             continue
 
-        # Qualified-call boundary match only (method chaining / dotted usage),
-        # e.g. "_.template" -> "template", "openssl.SSL_read" -> "SSL_read".
-        # A bare substring test ("get" in "getUser"/"forget"/"target") would
-        # spuriously promote findings to confirmed-reachable and boost risk, so
-        # we require a real symbol boundary, not any substring (audit #6).
+        # Qualified-call boundary match on EITHER side (method chaining / dotted
+        # usage), e.g. used "openssl.SSL_read" vs vuln "SSL_read", or vuln
+        # "Conn.Read" vs the bare used "Read" that production callgraphs actually
+        # store. A bare substring test ("get" in "getUser"/"forget") would
+        # spuriously promote findings, so we require a real symbol boundary, not
+        # any substring (audit #6 / SC#7).
         for vuln in vulnerable_symbols:
             vuln_l = vuln.lower()
-            if used_lower.endswith("." + vuln_l):
+            if used_lower.endswith("." + vuln_l) or vuln_l.endswith("." + used_lower):
                 matched.append(used)
                 break
 

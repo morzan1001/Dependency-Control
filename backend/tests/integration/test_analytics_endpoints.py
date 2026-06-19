@@ -1,3 +1,4 @@
+import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -152,6 +153,10 @@ async def test_recommendations_cached_on_second_call(client, db, owner_auth_head
     # Redis cache_service is a no-op in tests; back it with an in-memory store so
     # the cache actually persists between the two requests.
     class _MemCache:
+        """Mimics the real CacheService JSON round-trip (json.dumps/loads), so the
+        cache-hit path is exercised on JSON-coerced values like production, not the
+        original Python objects (audit SC#11)."""
+
         def __init__(self):
             self.store = {}
 
@@ -159,7 +164,7 @@ async def test_recommendations_cached_on_second_call(client, db, owner_auth_head
             return self.store.get(key)
 
         async def set(self, key, value, ttl_seconds=None):
-            self.store[key] = value
+            self.store[key] = json.loads(json.dumps(value, default=str))
             return True
 
     monkeypatch.setattr(rec_module, "cache_service", _MemCache())

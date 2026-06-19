@@ -69,7 +69,6 @@ export interface NestedVulnerability {
   resolved_cve?: string;
   github_advisory_url?: string;
   kev?: boolean;
-  kev_ransomware?: boolean;
   kev_due_date?: string;
   waived?: boolean;
   waiver_reason?: string;
@@ -85,7 +84,7 @@ export interface NestedVulnerability {
     [key: string]: string | string[] | number | boolean | null | undefined;
   };
   in_kev?: boolean;
-  kev_ransomware_use?: string;
+  kev_ransomware_use?: boolean;
   kev_date_added?: string;
   kev_required_action?: string;
   reachability?: ReachabilityInfo;
@@ -215,12 +214,11 @@ export interface FindingDetails {
   fixed_version?: string;
   github_advisory_url?: string;
   kev?: boolean;
-  kev_ransomware?: boolean;
   kev_due_date?: string;
   urls?: string[];
   references?: string[];
   in_kev?: boolean;
-  kev_ransomware_use?: string;
+  kev_ransomware_use?: boolean;
   kev_date_added?: string;
   kev_required_action?: string;
   exploit_maturity?: string;

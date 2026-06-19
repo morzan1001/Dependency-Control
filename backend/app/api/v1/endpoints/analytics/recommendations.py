@@ -76,7 +76,11 @@ async def get_project_recommendations(
 
     # Cache the (expensive) result per scan + caller scope. scan_id auto-
     # invalidates on a new scan; scope_hash isolates the cross-project signal so
-    # users with different project access never share an entry.
+    # users with different project access never share an entry. NOTE (audit SC#12):
+    # the cross-project recommendations fold in OTHER projects' latest scans, which
+    # are NOT in the key — a peer rescan can leave cross_project_* recommendations
+    # stale until the (short) TTL expires. Accepted: the cross-project signal is
+    # advisory and the TTL bounds the staleness.
     scope_hash = hashlib.md5(
         ",".join(sorted(user_project_ids)).encode(), usedforsecurity=False
     ).hexdigest()[:16]
@@ -223,5 +227,8 @@ async def get_project_recommendations(
         recommendations=[RecommendationResponse(**r.to_dict()) for r in recommendations],
         summary=summary,
     )
-    await cache_service.set(cache_key, response.model_dump(), ttl_seconds=CacheTTL.RECOMMENDATIONS)
+    # mode="json" so the cached payload uses JSON-native types — identical to what
+    # the Redis-backed cache_service stores (json.dumps), so a cache hit reconstructs
+    # the same shape as a cache miss regardless of enums/datetimes (audit SC#11).
+    await cache_service.set(cache_key, response.model_dump(mode="json"), ttl_seconds=CacheTTL.RECOMMENDATIONS)
     return response

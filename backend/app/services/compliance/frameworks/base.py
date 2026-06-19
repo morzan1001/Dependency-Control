@@ -7,6 +7,7 @@ evaluators and delegates everything else to the default evaluator here.
 """
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
@@ -25,6 +26,8 @@ from app.schemas.compliance import (
 from app.schemas.crypto_policy import CryptoRule
 from app.services.analytics.scopes import ResolvedScope
 from app.services.analyzers.crypto.matcher import asset_in_rule_scope
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -119,8 +122,8 @@ def _rules_for_control(
     policy_rules: List[dict],
 ) -> List[CryptoRule]:
     """Reconstruct the CryptoRule objects this control maps to, from the
-    effective-policy dumps. Rules absent from the policy (or unparseable) are
-    skipped."""
+    system-policy dumps in EvaluationInput.policy_rules. Rules absent from the
+    policy (or unparseable) are skipped."""
     if not control.maps_to_rule_ids:
         return []
     wanted = set(control.maps_to_rule_ids)
@@ -148,12 +151,22 @@ def _is_applicable(
     control on an AES-only project) would report a false PASSED.
 
     Falls back to inventory presence when the control's rules cannot be resolved
-    from the effective policy (e.g. finding-type-only controls), so controls are
+    from the system policy (e.g. finding-type-only controls), so controls are
     never silently hidden."""
     if not data.crypto_assets:
         return False
     rules = _rules_for_control(control, data.policy_rules)
     if not rules:
+        # A control that declares rule_ids but resolves none indicates policy
+        # drift (rule removed/renamed); warn rather than silently degrade to the
+        # any-asset fallback (audit SC#4).
+        if control.maps_to_rule_ids:
+            logger.warning(
+                "compliance: control %s maps to rule_ids %s but none resolve from the system "
+                "policy; falling back to inventory presence (possible policy drift)",
+                control.control_id,
+                control.maps_to_rule_ids,
+            )
         return True  # cannot scope to a primitive -> preserve inventory-presence behavior
     return any(asset_in_rule_scope(asset, rule) for asset in data.crypto_assets for rule in rules)
 

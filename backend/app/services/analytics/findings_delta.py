@@ -109,16 +109,23 @@ async def _fetch_scan_findings(
     return [doc async for doc in cursor]
 
 
+def _doc_severity(doc: dict) -> str:
+    # Normalise to lowercase so the envelope is consistent regardless of casing.
+    return (doc.get("severity") or "unknown").lower()
+
+
+def _doc_type(doc: dict) -> str:
+    return doc.get("type") or ""
+
+
 def _to_item(doc: dict, change: str) -> FindingDeltaItem:
     details = doc.get("details") or {}
     found_in = doc.get("found_in") or []
     return FindingDeltaItem(
         change=change,
         finding_id=str(doc.get("finding_id") or doc.get("_id") or ""),
-        finding_type=doc.get("type") or "",
-        # Normalise to lowercase so the envelope is consistent regardless of
-        # how the underlying storage cased the value.
-        severity=(doc.get("severity") or "unknown").lower(),
+        finding_type=_doc_type(doc),
+        severity=_doc_severity(doc),
         title=doc.get("description") or "",
         component=doc.get("component"),
         cve_id=details.get("cve_id"),
@@ -155,23 +162,28 @@ async def compute_findings_delta(
     removed_keys = from_map.keys() - to_map.keys()
     unchanged_count = len(to_map.keys() & from_map.keys())
 
-    added_items = [_to_item(to_map[k], "added") for k in added_keys]
-    removed_items = [_to_item(from_map[k], "removed") for k in removed_keys]
-
     # Breakdowns decompose the FULL added+removed populations so they always
     # reconcile with totals.added + totals.removed, independent of the `change`
-    # filter that only scopes the paginated item list (audit #12).
+    # filter that only scopes the paginated item list (audit #12). Count straight
+    # from the raw docs so we don't materialise up to MAX_FETCH Pydantic items just
+    # to bump two counters (audit SC#9).
     by_severity: Dict[str, int] = {}
     by_type: Dict[str, int] = {}
-    for item in (*added_items, *removed_items):
-        by_severity[item.severity] = by_severity.get(item.severity, 0) + 1
-        by_type[item.finding_type] = by_type.get(item.finding_type, 0) + 1
+    for k in added_keys:
+        doc = to_map[k]
+        by_severity[_doc_severity(doc)] = by_severity.get(_doc_severity(doc), 0) + 1
+        by_type[_doc_type(doc)] = by_type.get(_doc_type(doc), 0) + 1
+    for k in removed_keys:
+        doc = from_map[k]
+        by_severity[_doc_severity(doc)] = by_severity.get(_doc_severity(doc), 0) + 1
+        by_type[_doc_type(doc)] = by_type.get(_doc_type(doc), 0) + 1
 
+    # Build Pydantic items only for the change-filtered set that is actually returned.
     items: List[FindingDeltaItem] = []
     if change in (None, "all", "added"):
-        items.extend(added_items)
+        items.extend(_to_item(to_map[k], "added") for k in added_keys)
     if change in (None, "all", "removed"):
-        items.extend(removed_items)
+        items.extend(_to_item(from_map[k], "removed") for k in removed_keys)
 
     # Stable sort: added before removed, then by severity (critical first), then title,
     # then finding_id as a final tiebreaker so pagination is deterministic regardless
