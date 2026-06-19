@@ -18,6 +18,7 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoRule
 from app.services.analyzers.base import Analyzer
+from app.services.analyzers.crypto.matcher import rule_matches
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 logger = logging.getLogger(__name__)
@@ -43,18 +44,32 @@ def _coerce_primitive(prim: Any) -> Optional[CryptoPrimitive]:
     return None
 
 
-def _weak_hash_names(rules: List[CryptoRule]) -> set:
-    """Disallowed hash names sourced from the effective policy (enabled,
-    hash-primitive rules). Falls back to the static NIST baseline only when the
-    policy defines no hash rules at all, so a configured framework (e.g. one that
-    bans SHA-224) is honored."""
-    names = {
-        pat.upper()
-        for rule in rules
-        if rule.enabled and _coerce_primitive(rule.match_primitive) == CryptoPrimitive.HASH
-        for pat in rule.match_name_patterns
-    }
-    return names or {n.upper() for n in _WEAK_HASH_NAMES}
+def _rule_severity(rule: CryptoRule) -> Severity:
+    raw = rule.default_severity
+    try:
+        return Severity(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return Severity.MEDIUM
+
+
+def _matching_hash_rule(algo: CryptoAsset, rules: List[CryptoRule]) -> Optional[CryptoRule]:
+    """The first enabled hash-primitive policy rule that matches this algorithm,
+    using the canonical glob-aware matcher (so policy name globs like 'SHA-2*'
+    are honored, not just exact literals — audit MF5)."""
+    for rule in rules:
+        if not rule.enabled or _coerce_primitive(rule.match_primitive) != CryptoPrimitive.HASH:
+            continue
+        if rule_matches(algo, rule):
+            return rule
+    return None
+
+
+def _has_hash_rule(rules: List[CryptoRule]) -> bool:
+    return any(r.enabled and _coerce_primitive(r.match_primitive) == CryptoPrimitive.HASH for r in rules)
+
+
+def _is_static_weak_hash(algo: CryptoAsset) -> bool:
+    return bool(algo.name and algo.name.upper() in {n.upper() for n in _WEAK_HASH_NAMES})
 
 
 def _min_key_sizes(rules: List[CryptoRule]) -> Dict[CryptoPrimitive, int]:
@@ -231,21 +246,34 @@ class CertificateLifecycleAnalyzer(Analyzer):
         algo = algo_by_ref.get(cert.signature_algorithm_ref)
         if algo is None:
             return []
-        is_hash = _coerce_primitive(algo.primitive) == CryptoPrimitive.HASH
-        if is_hash and algo.name and algo.name.upper() in _weak_hash_names(rules):
-            return [
-                _build(
-                    cert,
-                    type_=FindingType.CRYPTO_CERT_WEAK_SIGNATURE,
-                    severity=Severity.HIGH,
-                    description=f"Certificate signed with weak hash algorithm: {algo.name}",
-                    details={
-                        "algorithm_name": algo.name,
-                        "related_algo_bom_ref": algo.bom_ref,
-                    },
-                )
-            ]
-        return []
+        if _coerce_primitive(algo.primitive) != CryptoPrimitive.HASH:
+            return []
+
+        # Policy-driven (glob-aware) match at the matching rule's own severity.
+        matched = _matching_hash_rule(algo, rules)
+        if matched is not None:
+            severity = _rule_severity(matched)
+            rule_id: Optional[str] = matched.rule_id
+        elif not _has_hash_rule(rules) and _is_static_weak_hash(algo):
+            # Fallback to the static NIST baseline only when the policy defines
+            # no hash rules at all.
+            severity = Severity.HIGH
+            rule_id = None
+        else:
+            return []
+
+        details: Dict[str, Any] = {"algorithm_name": algo.name, "related_algo_bom_ref": algo.bom_ref}
+        if rule_id:
+            details["rule_id"] = rule_id
+        return [
+            _build(
+                cert,
+                type_=FindingType.CRYPTO_CERT_WEAK_SIGNATURE,
+                severity=severity,
+                description=f"Certificate signed with weak hash algorithm: {algo.name}",
+                details=details,
+            )
+        ]
 
     def _check_weak_key(
         self,

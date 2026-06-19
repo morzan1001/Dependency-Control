@@ -296,6 +296,39 @@ async def test_weak_key_honors_policy_min_size(db):
 
 
 @pytest.mark.asyncio
+async def test_weak_signature_honors_glob_and_rule_severity(db):
+    """A policy hash rule with a GLOB pattern must match (canonical fnmatch
+    semantics, audit MF5), and the finding must use the RULE's severity, not a
+    hard-coded HIGH (audit SC#5)."""
+    now = datetime.now(timezone.utc)
+    await CryptoAssetRepository(db).bulk_upsert(
+        "p",
+        "s",
+        [
+            _cert(not_after=now + timedelta(days=365), sig_algo_ref="sha224"),
+            _algo("sha224", "SHA-224", CryptoPrimitive.HASH),
+        ],
+    )
+    glob_rule = CryptoRule(
+        rule_id="ban-sha2-short",
+        name="sha2-short",
+        description="",
+        finding_type=FindingType.CRYPTO_WEAK_ALGORITHM,
+        default_severity=Severity.MEDIUM,
+        source=CryptoPolicySource.CUSTOM,
+        match_primitive=CryptoPrimitive.HASH,
+        match_name_patterns=["SHA-2*"],
+    )
+    await CryptoPolicyRepository(db).upsert_system_policy(
+        CryptoPolicy(scope="system", version=1, rules=[_expiry_rule(), glob_rule])
+    )
+    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+    weak = [f for f in result["findings"] if f["type"] == "crypto_cert_weak_signature"]
+    assert len(weak) == 1
+    assert weak[0]["severity"] == "MEDIUM"  # rule severity, not hard-coded HIGH
+
+
+@pytest.mark.asyncio
 async def test_weak_signature_honors_policy_hash_ban(db):
     """A policy banning SHA-224 (not in the static MD5/SHA-1 set) must flag a
     SHA-224 signature (audit #10)."""
