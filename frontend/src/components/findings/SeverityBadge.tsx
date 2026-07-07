@@ -12,7 +12,6 @@ import {
   CircleAlert,
   type LucideIcon,
 } from 'lucide-react'
-import { getSeverityBgColor, getSeverityColor } from '@/lib/finding-utils'
 
 interface SeverityBadgeProps {
   severity: string
@@ -47,24 +46,4 @@ export function SeverityBadge({ severity, showIcon = true, className = '' }: Sev
       {severity}
     </Badge>
   )
-}
-
-/**
- * Compact version for tables and lists
- */
-export function SeverityBadgeCompact({ severity, className = '' }: { severity: string; className?: string }) {
-  const bgColor = getSeverityBgColor(severity)
-
-  return (
-    <Badge className={`${bgColor} text-white text-xs px-1.5 py-0 ${className}`}>
-      {severity}
-    </Badge>
-  )
-}
-
-/**
- * Inline text-only severity indicator
- */
-export function SeverityText({ severity, className = '' }: { severity: string; className?: string }) {
-  return <span className={`font-medium ${getSeverityColor(severity)} ${className}`}>{severity}</span>
 }

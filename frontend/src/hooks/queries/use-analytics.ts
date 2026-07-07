@@ -1,6 +1,5 @@
-import { useQuery, keepPreviousData } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import { analyticsApi } from '@/api/analytics';
-import { HotspotsQueryParams, VulnerabilitySearchOptions, AdvancedSearchOptions } from '@/types/analytics';
 import type { ApiError } from '@/api/client';
 
 export const analyticsKeys = {
@@ -10,10 +9,7 @@ export const analyticsKeys = {
     topDependencies: (limit: number, type?: string) => [...analyticsKeys.all, 'top-dependencies', { limit, type }] as const,
     dependencyTree: (projectId: string, scanId?: string) => [...analyticsKeys.all, 'dependency-tree', projectId, { scanId }] as const,
     impactAnalysis: (limit: number) => [...analyticsKeys.all, 'impact-analysis', { limit }] as const,
-    hotspots: (params: HotspotsQueryParams) => [...analyticsKeys.all, 'hotspots', params] as const,
     search: (query: string, version?: string) => [...analyticsKeys.all, 'search', { query, version }] as const,
-    advancedSearch: (query: string, options?: AdvancedSearchOptions) => [...analyticsKeys.all, 'search-advanced', { query, options }] as const,
-    vulnerabilitySearch: (query: string, options?: VulnerabilitySearchOptions) => [...analyticsKeys.all, 'search-vulnerabilities', { query, options }] as const,
     componentFindings: (component: string, version?: string) => [...analyticsKeys.all, 'component-findings', { component, version }] as const,
     dependencyMetadata: (component: string, version?: string, type?: string) => [...analyticsKeys.all, 'dependency-metadata', { component, version, type }] as const,
     dependencyTypes: () => [...analyticsKeys.all, 'dependency-types'] as const,
@@ -74,34 +70,6 @@ export const useImpactAnalysis = (limit: number = 20) => {
         queryFn: () => analyticsApi.getImpactAnalysis(limit),
         staleTime: 5 * 60 * 1000, // 5 minutes
         refetchOnWindowFocus: true,
-    });
-}
-
-export const useVulnerabilityHotspots = (params: HotspotsQueryParams) => {
-    return useQuery({
-        queryKey: analyticsKeys.hotspots(params),
-        queryFn: () => analyticsApi.getVulnerabilityHotspots(params),
-        staleTime: 5 * 60 * 1000, // 5 minutes
-        refetchOnWindowFocus: true,
-        placeholderData: keepPreviousData
-    });
-}
-
-export const useAdvancedSearch = (query: string, options?: AdvancedSearchOptions) => {
-    return useQuery({
-        queryKey: analyticsKeys.advancedSearch(query, options),
-        queryFn: () => analyticsApi.searchDependenciesAdvanced(query, options),
-        enabled: !!query,
-        placeholderData: keepPreviousData
-    });
-}
-
-export const useVulnerabilitySearch = (query: string, options?: VulnerabilitySearchOptions) => {
-    return useQuery({
-        queryKey: analyticsKeys.vulnerabilitySearch(query, options),
-        queryFn: () => analyticsApi.searchVulnerabilities(query, options),
-        enabled: !!query,
-        placeholderData: keepPreviousData
     });
 }
 

@@ -501,17 +501,3 @@ export function hasPermission(
     return requiredList.some((perm) => userPermissions.includes(perm));
   }
 }
-
-export function getMissingPermissions(
-  userPermissions: string[],
-  required: string | string[]
-): string[] {
-  const requiredList = Array.isArray(required) ? required : [required];
-  return requiredList.filter((perm) => !userPermissions.includes(perm));
-}
-
-export function getAllPermissionIds(): string[] {
-  return PERMISSION_GROUPS.flatMap((group) =>
-    group.permissions.map((p) => p.id)
-  );
-}

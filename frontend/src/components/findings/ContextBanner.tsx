@@ -43,23 +43,3 @@ export function ContextBanner({ icon: Icon, title, children, variant, action }: 
     </div>
   )
 }
-
-/**
- * Compact inline alert style
- */
-export function ContextAlert({ 
-  icon: Icon, 
-  children, 
-  variant 
-}: { 
-  icon: React.ElementType
-  children: React.ReactNode
-  variant: BannerVariant 
-}) {
-  return (
-    <div className={`inline-flex items-center gap-2 px-3 py-1.5 rounded-md text-sm ${variantStyles[variant]}`}>
-      <Icon className={`h-4 w-4 ${iconStyles[variant]}`} />
-      <span>{children}</span>
-    </div>
-  )
-}

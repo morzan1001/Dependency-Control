@@ -110,8 +110,6 @@ export function getExploitMaturityClass(maturity: string | null | undefined): st
   return '';
 }
 
-export { formatDate, formatDateTime } from './utils'
-
 export interface SourceInfo {
   icon: LucideIcon
   label: string
