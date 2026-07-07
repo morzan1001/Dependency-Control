@@ -263,6 +263,28 @@ def extract_finding_id(finding: Dict[str, Any]) -> str:
     return str(finding.get("_id") or finding.get("id") or "")
 
 
+def _classify(matching: List[Dict[str, Any]]) -> tuple[ControlStatus, List[str]]:
+    """Map a set of matched findings to a control status + evidence ids.
+
+    Empty -> PASSED. Any non-waived (active) finding -> FAILED. Otherwise every
+    matching finding is waived -> WAIVED. Evidence ids are collected only for
+    findings that actually carry an id/_id. Shared verbatim by the license-audit
+    and CVE-remediation-SLA frameworks.
+    """
+    if not matching:
+        return ControlStatus.PASSED, []
+    active = [f for f in matching if not f.get("waived")]
+    evidence_ids = [extract_finding_id(f) for f in matching if f.get("_id") or f.get("id")]
+    if active:
+        return ControlStatus.FAILED, evidence_ids
+    return ControlStatus.WAIVED, evidence_ids
+
+
+def _waiver_reason(f: Dict[str, Any]) -> str:
+    """Best-effort waiver-reason accessor ('' when absent/None)."""
+    return str(f.get("waiver_reason") or "")
+
+
 def build_summary(results: List[ControlResult]) -> Dict[str, int]:
     """Count controls by status bucket (shared across frameworks)."""
     counts = {"passed": 0, "failed": 0, "waived": 0, "not_applicable": 0, "total": len(results)}

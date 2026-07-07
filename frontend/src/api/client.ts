@@ -30,7 +30,7 @@ declare global {
   }
 }
 
-const getBaseUrl = () => {
+export const getBaseUrl = () => {
   if (window.__RUNTIME_CONFIG__?.VITE_API_URL) {
     return window.__RUNTIME_CONFIG__.VITE_API_URL;
   }
@@ -62,7 +62,7 @@ export const setLogoutCallback = (callback: () => void) => {
 let refreshPromise: Promise<string | null> | null = null;
 let isRefreshing = false;
 
-const refreshAccessToken = async (): Promise<string | null> => {
+export const refreshAccessToken = async (): Promise<string | null> => {
   const refreshToken = localStorage.getItem('refresh_token');
   if (!refreshToken) {
     return null;

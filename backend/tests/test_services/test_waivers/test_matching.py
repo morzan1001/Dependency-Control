@@ -75,6 +75,17 @@ class TestOrchestrator:
         assert res.waived == {"f1": "w1"}
         assert "w1" in res.reanchored  # new signature captured
 
+    def test_reanchor_captures_finding_line_as_distinct_copy(self):
+        # The reanchored signature must carry the finding's CURRENT line (80),
+        # and be a distinct copy so later mutation cannot alias the finding's sig.
+        f = mf("f1", anchor="newfp", kind="scanner_fp", ch="c1", line=80)
+        w = _W("w1", "false_positive", sig(anchor="oldfp", kind="scanner_fp", ch="c1", line=10))
+        res = apply_waivers_to_findings([f], [w])
+        new_sig = res.reanchored["w1"]
+        assert new_sig.last_line == 80
+        assert new_sig is not f.sig  # a copy, not an alias
+        assert new_sig == f.sig      # value-equal to the finding's signature
+
     def test_two_instances_one_waived_other_active(self):
         findings = [mf("f1", anchor="fpA", ch="c1"), mf("f2", anchor="fpB", ch="c1")]
         w = _W("w1", "false_positive", sig(anchor="fpA", ch="c1"))

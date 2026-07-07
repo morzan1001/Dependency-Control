@@ -8,15 +8,15 @@ from app.models.finding import FindingType, Severity
 from app.schemas.compliance import (
     ControlDefinition,
     ControlResult,
-    ControlStatus,
     FrameworkEvaluation,
     ReportFramework,
 )
 from app.services.compliance.frameworks.base import (
     EvaluationInput,
+    _classify,
+    _waiver_reason,
     build_residual_risks,
     build_summary,
-    extract_finding_id,
 )
 
 
@@ -142,17 +142,3 @@ def _is_overdue(
     if finding.get("status") == "fixed":
         return False
     return True
-
-
-def _classify(overdue: List[Dict[str, Any]]) -> tuple[ControlStatus, List[str]]:
-    if not overdue:
-        return ControlStatus.PASSED, []
-    active = [f for f in overdue if not f.get("waived")]
-    evidence_ids = [extract_finding_id(f) for f in overdue if f.get("_id") or f.get("id")]
-    if active:
-        return ControlStatus.FAILED, evidence_ids
-    return ControlStatus.WAIVED, evidence_ids
-
-
-def _waiver_reason(f: Dict[str, Any]) -> str:
-    return str(f.get("waiver_reason") or "")

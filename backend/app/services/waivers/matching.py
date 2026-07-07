@@ -215,7 +215,7 @@ def _bind_reanchor(app: WaiverApplication, claimed: set, w: Any, finding: MatchF
     claimed.add(finding.id)
     # capture the finding's current signature with its line as the waiver's new anchor
     assert finding.sig is not None  # invariant: only located findings are ever bound here
-    new_sig = finding.sig.model_copy(update={"last_line": finding.sig.last_line})
+    new_sig = finding.sig.model_copy()
     app.reanchored[w.id] = new_sig
 
 

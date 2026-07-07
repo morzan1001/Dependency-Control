@@ -1,31 +1,39 @@
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from typing import Literal
-
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.constants import PROJECT_ROLES, PROJECT_ROLE_VIEWER
 from app.core.notification_prefs import sanitize_notification_preferences
 from app.models.finding import FindingType, Severity
+from app.models.license import DeploymentModel, DistributionModel, LibraryUsage
 from app.models.project import Project, Scan
 
 
 class LicensePolicySchema(BaseModel):
-    """License compliance policy for a project. Controls how copyleft findings are evaluated."""
+    """License compliance policy for a project. Controls how copyleft findings are evaluated.
 
-    distribution_model: Literal["internal_only", "distributed", "open_source"] = Field(
-        "distributed",
+    Field types reuse the ``str``-enums defined in :mod:`app.models.license` so the
+    API contract and the license analyzer share a single source of truth.
+    ``use_enum_values``/``validate_default`` keep the JSON serialization and
+    validation contract identical to the previous inline ``Literal`` declarations
+    (values serialize to the same plain strings, invalid values are rejected).
+    """
+
+    model_config = ConfigDict(use_enum_values=True, validate_default=True)
+
+    distribution_model: DistributionModel = Field(
+        DistributionModel.DISTRIBUTED,
         description="How the project is distributed: internal_only (no external distribution), "
         "distributed (binary/source to third parties), open_source (project is open source)",
     )
-    deployment_model: Literal["network_facing", "cli_batch", "desktop", "embedded"] = Field(
-        "network_facing",
+    deployment_model: DeploymentModel = Field(
+        DeploymentModel.NETWORK_FACING,
         description="How the project is deployed: network_facing (SaaS/web/API), "
         "cli_batch (CLI/batch/daemon), desktop, embedded",
     )
-    library_usage: Literal["unmodified", "modified", "mixed"] = Field(
-        "mixed",
+    library_usage: LibraryUsage = Field(
+        LibraryUsage.MIXED,
         description="How dependencies are used: unmodified (as-is via public API), "
         "modified (forked/patched), mixed (some modified)",
     )

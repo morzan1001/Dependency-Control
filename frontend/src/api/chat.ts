@@ -1,53 +1,10 @@
-import { api } from '@/api/client';
+import { api, getBaseUrl, refreshAccessToken } from '@/api/client';
 import type {
   Conversation,
   ConversationDetailResponse,
   ConversationListResponse,
   ChatSSEEvent,
 } from '@/types/chat';
-
-const getBaseUrl = () => {
-  if (window.__RUNTIME_CONFIG__?.VITE_API_URL) {
-    return window.__RUNTIME_CONFIG__.VITE_API_URL;
-  }
-  return import.meta.env.VITE_API_URL || '/api/v1';
-};
-
-async function tryRefreshToken(): Promise<boolean> {
-  const refreshToken = localStorage.getItem('refresh_token');
-  if (!refreshToken) return false;
-
-  try {
-    const response = await fetch(`${getBaseUrl()}/login/refresh-token`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refresh_token: refreshToken }),
-    });
-
-    if (!response.ok) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('refresh_token');
-      return false;
-    }
-
-    const data = await response.json();
-    if (
-      !data ||
-      typeof data.access_token !== 'string' ||
-      typeof data.refresh_token !== 'string'
-    ) {
-      localStorage.removeItem('token');
-      localStorage.removeItem('refresh_token');
-      return false;
-    }
-
-    localStorage.setItem('token', data.access_token);
-    localStorage.setItem('refresh_token', data.refresh_token);
-    return true;
-  } catch {
-    return false;
-  }
-}
 
 function parseSseLine(line: string): ChatSSEEvent | null {
   if (!line.startsWith('data: ')) return null;
@@ -147,8 +104,14 @@ export const chatApi = {
     let response = await performSendMessageFetch(conversationId, content, images, signal);
 
     if (response.status === 401) {
-      const refreshed = await tryRefreshToken();
-      if (refreshed) {
+      let newToken: string | null = null;
+      try {
+        newToken = await refreshAccessToken();
+      } catch {
+        // Transient refresh failure (network/timeout/5xx): tokens survive but we
+        // cannot retry now. newToken stays null; fall through to error handling.
+      }
+      if (newToken) {
         response = await performSendMessageFetch(conversationId, content, images, signal);
       }
     }

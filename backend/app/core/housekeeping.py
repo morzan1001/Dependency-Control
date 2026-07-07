@@ -316,29 +316,52 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
         logger.exception("Scheduled re-scan check failed: %s", e)
 
 
-async def _reap_stale_metadata(db: Any) -> int:
+async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
     """Delete archive_metadata entries whose scan_id now lives in db.scans.
 
     These appear after a restore where the S3 delete and/or metadata delete
     failed: the scan is back in MongoDB but the metadata record still points
     at the (now-orphaned) S3 object. Removing the metadata reclassifies the
     S3 object as a true orphan that the next sweep will reap.
+
+    Batched to avoid an N+1 per-row ``find_one``: scan_ids are collected in
+    chunks, each chunk resolved with a single ``db.scans.find({'_id': {'$in': ...}})``
+    to find the restored set, then removed with one ``delete_many`` per chunk.
     """
+
+    async def _reap_batch(scan_ids: List[str]) -> int:
+        if not scan_ids:
+            return 0
+        # One query per batch: which of these scans are back in db.scans?
+        restored: List[str] = []
+        async for scan in db.scans.find({"_id": {"$in": scan_ids}}, {"_id": 1}):
+            sid = scan.get("_id")
+            if sid is not None:
+                restored.append(sid)
+        if not restored:
+            return 0
+        try:
+            result = await db.archive_metadata.delete_many({"scan_id": {"$in": restored}})
+            count: int = result.deleted_count
+            if count:
+                logger.info(f"Reaped {count} stale archive_metadata entries for restored scans {restored}")
+            return count
+        except Exception as e:
+            logger.warning(f"Failed to delete stale metadata for scans {restored}: {e}")
+            return 0
+
     deleted = 0
+    batch: List[str] = []
     async for meta in db.archive_metadata.find({}, {"_id": 1, "scan_id": 1}):
         scan_id = meta.get("scan_id")
         if not scan_id:
             continue
-        scan = await db.scans.find_one({"_id": scan_id}, {"_id": 1})
-        if scan is None:
-            continue
-        try:
-            result = await db.archive_metadata.delete_one({"_id": meta["_id"]})
-            if result.deleted_count:
-                deleted += 1
-                logger.info(f"Reaped stale archive_metadata for scan {scan_id} (scan exists in db.scans)")
-        except Exception as e:
-            logger.warning(f"Failed to delete stale metadata for scan {scan_id}: {e}")
+        batch.append(scan_id)
+        if len(batch) >= batch_size:
+            deleted += await _reap_batch(batch)
+            batch = []
+    if batch:
+        deleted += await _reap_batch(batch)
     return deleted
 
 

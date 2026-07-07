@@ -109,7 +109,7 @@ class ChatService:
 
         # Build context
         available_tools = self.tools.get_available_tool_definitions(user.permissions)
-        messages = build_messages(history, content, images or [], len(available_tools))
+        messages = build_messages(history, content, images or [])
 
         try:
             # Ollama interaction loop (tool calls may require multiple rounds).

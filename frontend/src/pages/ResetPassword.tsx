@@ -9,7 +9,6 @@ import { toast } from "sonner"
 import { getErrorMessage } from "@/lib/utils"
 
 export default function ResetPassword() {
-  const [isLoading, setIsLoading] = useState(false)
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [searchParams] = useSearchParams()
@@ -17,6 +16,7 @@ export default function ResetPassword() {
   
   const token = searchParams.get('token')
   const resetPasswordMutation = useResetPassword();
+  const isLoading = resetPasswordMutation.isPending
 
   const validatePassword = (password: string) => {
     if (password.length < 8) return "Password must be at least 8 characters long";
@@ -46,8 +46,7 @@ export default function ResetPassword() {
         return
     }
 
-    setIsLoading(true)
-resetPasswordMutation.mutate({ token, newPassword }, {
+    resetPasswordMutation.mutate({ token, newPassword }, {
          onSuccess: () => {
              toast.success("Password Reset Successful", {
                 description: "You can now login with your new password.",
@@ -58,9 +57,6 @@ resetPasswordMutation.mutate({ token, newPassword }, {
              toast.error("Reset Failed", {
                 description: getErrorMessage(err),
              })
-         },
-         onSettled: () => {
-             setIsLoading(false)
          }
     })
   }

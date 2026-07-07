@@ -474,7 +474,11 @@ async def test_reap_orphan_tolerates_list_failure(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_reap_stale_metadata_drops_entries_for_restored_scans(monkeypatch):
-    """Bug #8: archive_metadata entries whose scan_id lives in db.scans are stale and must be reaped."""
+    """Bug #8: archive_metadata entries whose scan_id lives in db.scans are stale and must be reaped.
+
+    Elegance #104: this is done in batches — one ``db.scans.find({'_id': {'$in': ...}})``
+    per batch plus a single ``delete_many`` for the restored scan_ids — not N+1 find_one calls.
+    """
     from app.core.housekeeping import _reap_stale_metadata
 
     db = MagicMock()
@@ -489,28 +493,93 @@ async def test_reap_stale_metadata_drops_entries_for_restored_scans(monkeypatch)
 
     db.archive_metadata.find = lambda *a, **kw: metadata_cursor()
 
-    async def scans_find_one(query, *_args, **_kwargs):
+    scans_find_queries: list[dict] = []
+
+    async def scans_find(query, *_args, **_kwargs):
+        scans_find_queries.append(query)
         # Only the restored scan exists in db.scans
-        if query.get("_id") == "scan-restored":
-            return {"_id": "scan-restored"}
-        return None
+        for sid in query["_id"]["$in"]:
+            if sid == "scan-restored":
+                yield {"_id": "scan-restored"}
 
-    db.scans.find_one = scans_find_one
+    # find_one must NOT be used anymore (would signal the N+1 regression)
+    db.scans.find_one = AsyncMock(side_effect=AssertionError("find_one must not be called: reap is batched"))
+    db.scans.find = lambda *a, **kw: scans_find(*a, **kw)
 
-    delete_calls: list[dict] = []
+    delete_many_calls: list[dict] = []
 
-    async def fake_delete_one(query):
-        delete_calls.append(query)
+    async def fake_delete_many(query):
+        delete_many_calls.append(query)
         result = MagicMock()
-        result.deleted_count = 1
+        # delete_many removes exactly the rows whose scan_id matches the restored set
+        result.deleted_count = len(query["scan_id"]["$in"])
         return result
 
-    db.archive_metadata.delete_one = fake_delete_one
+    db.archive_metadata.delete_many = fake_delete_many
 
     reaped = await _reap_stale_metadata(db)
 
     assert reaped == 1
-    assert delete_calls == [{"_id": "meta-stale"}]
+    # Exactly one batched scan lookup with both scan_ids
+    assert len(scans_find_queries) == 1
+    assert set(scans_find_queries[0]["_id"]["$in"]) == {"scan-restored", "scan-archived"}
+    # A single delete_many targeting only the restored scan_id
+    assert delete_many_calls == [{"scan_id": {"$in": ["scan-restored"]}}]
+
+
+@pytest.mark.asyncio
+async def test_reap_stale_metadata_batches_one_find_per_batch(monkeypatch):
+    """Elegance #104: reap runs one db.scans.find + one delete_many per batch, not per row.
+
+    With 5 metadata rows and batch_size=2 we expect 3 batches → 3 scans.find calls,
+    and delete_many invoked only for batches that contain a restored scan.
+    """
+    from app.core.housekeeping import _reap_stale_metadata
+
+    db = MagicMock()
+
+    # 5 metadata rows; scan-1 and scan-4 are restored (exist in db.scans), rest are not.
+    metas = [
+        {"_id": f"meta-{i}", "scan_id": f"scan-{i}"} for i in range(5)
+    ]
+    restored_scan_ids = {"scan-1", "scan-4"}
+
+    async def metadata_cursor(*_args, **_kwargs):
+        for m in metas:
+            yield m
+
+    db.archive_metadata.find = lambda *a, **kw: metadata_cursor()
+
+    scans_find_calls: list[list[str]] = []
+
+    async def scans_find(query, *_args, **_kwargs):
+        ids = query["_id"]["$in"]
+        scans_find_calls.append(list(ids))
+        for sid in ids:
+            if sid in restored_scan_ids:
+                yield {"_id": sid}
+
+    db.scans.find_one = AsyncMock(side_effect=AssertionError("find_one must not be called: reap is batched"))
+    db.scans.find = lambda *a, **kw: scans_find(*a, **kw)
+
+    delete_many_calls: list[list[str]] = []
+
+    async def fake_delete_many(query):
+        ids = query["scan_id"]["$in"]
+        delete_many_calls.append(list(ids))
+        result = MagicMock()
+        result.deleted_count = len(ids)
+        return result
+
+    db.archive_metadata.delete_many = fake_delete_many
+
+    reaped = await _reap_stale_metadata(db, batch_size=2)
+
+    # 5 rows / batch_size 2 → batches [scan-0,scan-1], [scan-2,scan-3], [scan-4]
+    assert reaped == 2
+    assert scans_find_calls == [["scan-0", "scan-1"], ["scan-2", "scan-3"], ["scan-4"]]
+    # delete_many only for batches that had a restored scan
+    assert delete_many_calls == [["scan-1"], ["scan-4"]]
 
 
 @pytest.mark.asyncio

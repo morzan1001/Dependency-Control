@@ -9,17 +9,16 @@ import { useNavigate, Link } from 'react-router-dom'
 import { getErrorMessage } from '@/lib/utils'
 
 export default function Signup() {
-  const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const navigate = useNavigate()
   const { login } = useAuth()
-  
+
   const signupMutation = useSignup();
   const loginMutation = useLogin();
+  const isLoading = signupMutation.isPending || loginMutation.isPending
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setIsLoading(true)
     setError(null)
 
     const formData = new FormData(event.currentTarget)
@@ -30,7 +29,6 @@ export default function Signup() {
 
     if (password !== confirmPassword) {
       setError("Passwords do not match")
-      setIsLoading(false)
       return
     }
 
@@ -41,17 +39,14 @@ export default function Signup() {
           onSuccess: (data) => {
             login(data.access_token, data.refresh_token)
             // The AuthContext will handle redirection/state
-            setIsLoading(false)
           },
           onError: () => {
              // If auto-login fails, redirect to login page
-             setIsLoading(false)
              navigate('/login', { state: { message: 'Account created successfully. Please login.' } })
           }
         })
       },
       onError: (err) => {
-        setIsLoading(false)
         setError(getErrorMessage(err))
       }
     })

@@ -115,7 +115,6 @@ def build_messages(
     history: List[Dict[str, Any]],
     new_message: str,
     new_images: List[str],
-    tool_definitions_count: int,
 ) -> List[Dict[str, Any]]:
     """
     Build the message list for Ollama, respecting the token budget.

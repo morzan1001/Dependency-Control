@@ -27,7 +27,7 @@ from app.services.analytics.scan_delta import (
     InvalidDeltaQuery,
     compute_scan_delta_dispatch,
 )
-from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver
+from app.services.analytics.scopes import ScopeResolver
 
 router = CustomAPIRouter()
 
@@ -53,13 +53,12 @@ async def get_scan_delta(
     finding_type: Optional[str] = Query(None, description="csv finding types"),
 ) -> ScanDeltaResponse:
     # 1. Project-level authorization (403 on non-membership).
-    try:
-        await ScopeResolver(db, current_user).resolve(
-            scope="project",
-            scope_id=project_id,
-        )
-    except ScopeResolutionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+    #    A ScopeResolutionError propagates to the app-level exception handler
+    #    registered in main.py, which returns the uniform 403 response.
+    await ScopeResolver(db, current_user).resolve(
+        scope="project",
+        scope_id=project_id,
+    )
 
     # 2. Cross-project scan guard — both scans MUST belong to project_id.
     #    Runs AFTER auth to avoid leaking scan existence to non-members.

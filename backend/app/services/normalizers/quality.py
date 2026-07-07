@@ -33,7 +33,7 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], 
         # Store scorecard data for component enrichment
         component_key = f"{component}@{version}" if version else component
 
-        # Store in aggregator's scorecard cache (use public method if available)
+        # Store in aggregator's scorecard cache via its public method
         scorecard_data = {
             "overall_score": overall,
             "failed_checks": failed_checks,
@@ -42,11 +42,7 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], 
             "checks": scorecard.get("checks") or [],
         }
 
-        # Use public property if available, otherwise fall back to private
-        if hasattr(aggregator, "scorecard_cache"):
-            aggregator.scorecard_cache[component_key] = scorecard_data
-        elif hasattr(aggregator, "_scorecard_cache"):
-            aggregator._scorecard_cache[component_key] = scorecard_data
+        aggregator.record_scorecard(component_key, scorecard_data)
 
         # Determine severity based on score and critical issues
         if overall < 3.0 or "Maintained" in critical_issues or "Vulnerabilities" in critical_issues:

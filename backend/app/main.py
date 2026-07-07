@@ -41,6 +41,7 @@ from app.api.v1.endpoints import (
 )
 from app.core.init_db import init_db
 from app.core.worker import worker_manager
+from app.services.analytics.scopes import ScopeResolutionError
 
 # Configure logging
 logging.basicConfig(
@@ -80,6 +81,19 @@ app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Add Prometheus Middleware for metrics collection
 app.add_middleware(PrometheusMiddleware)
+
+
+@app.exception_handler(ScopeResolutionError)
+async def scope_resolution_exception_handler(
+    request: Request, exc: ScopeResolutionError
+) -> JSONResponse:
+    """Map analytics scope-authorization failures to a uniform 403 response.
+
+    Centralises the ``try/except ScopeResolutionError -> HTTPException(403)``
+    boilerplate that was previously duplicated at every analytics endpoint
+    call site (crypto analytics, PQC migration, scan-delta).
+    """
+    return JSONResponse(status_code=403, content={"detail": str(exc)})
 
 
 @app.exception_handler(Exception)

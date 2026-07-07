@@ -155,6 +155,14 @@ class ResultAggregator:
         self._apply_deps_dev_flags(enrichment, metadata)
         self._apply_deps_dev_licenses(enrichment, metadata.get("licenses", []))
 
+    def record_scorecard(self, component_key: str, data: Dict[str, Any]) -> None:
+        """Record OpenSSF Scorecard data for a component, keyed by ``name@version``.
+
+        Caches scorecard details that are later applied to findings via
+        ``enrich_with_scorecard`` during finalization.
+        """
+        self._scorecard_cache[component_key] = data
+
     def enrich_from_license_scanner(self, name: str, version: str, license_info: Dict[str, Any]) -> None:
         """Enrich dependency with data from license compliance scanner."""
         enrichment = self._get_or_create_enrichment(name, version)

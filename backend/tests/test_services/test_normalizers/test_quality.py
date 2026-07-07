@@ -131,6 +131,44 @@ class TestNormalizeScorecard:
         self.agg.aggregate("deps_dev", result)
         assert "pkg@1.0" in self.agg._scorecard_cache
 
+    def test_record_scorecard_public_method(self):
+        """ResultAggregator exposes a public record_scorecard method that stores data."""
+        assert hasattr(ResultAggregator, "record_scorecard")
+        self.agg.record_scorecard("pkg@2.0", {"overall_score": 4.2})
+        assert self.agg._scorecard_cache["pkg@2.0"] == {"overall_score": 4.2}
+
+    def test_scorecard_recorded_end_to_end(self):
+        """normalize_scorecard must actually record scorecard data (no silent loss).
+
+        Reproduces audit finding eleg-quality-scorecard: previously quality.py
+        relied on a hasattr fallback dance targeting a public attribute that
+        never existed. This asserts the recorded payload is complete and keyed
+        by component@version so downstream enrichment can use it.
+        """
+        result = {
+            "scorecard_issues": [
+                {
+                    "component": "requests",
+                    "version": "2.31.0",
+                    "project_url": "https://github.com/psf/requests",
+                    "scorecard": {
+                        "overallScore": 2.5,
+                        "checks": [{"name": "Fuzzing", "score": 0}],
+                    },
+                    "failed_checks": [{"name": "Fuzzing", "score": 0}],
+                    "critical_issues": ["Maintained"],
+                }
+            ]
+        }
+        self.agg.aggregate("deps_dev", result)
+        cached = self.agg._scorecard_cache.get("requests@2.31.0")
+        assert cached is not None, "scorecard data was silently dropped"
+        assert cached["overall_score"] == 2.5
+        assert cached["project_url"] == "https://github.com/psf/requests"
+        assert cached["critical_issues"] == ["Maintained"]
+        assert cached["failed_checks"] == [{"name": "Fuzzing", "score": 0}]
+        assert cached["checks"] == [{"name": "Fuzzing", "score": 0}]
+
     def test_empty_scorecard_issues(self):
         self.agg.aggregate("deps_dev", {"scorecard_issues": []})
         assert len(self.agg.findings) == 0
