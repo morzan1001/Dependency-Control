@@ -37,7 +37,7 @@ from app.core.constants import (
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
-from app.repositories import ProjectRepository
+from app.repositories import ProjectRepository, ScanRepository
 
 # MongoDB aggregation pipeline operators
 MONGO_MATCH = "$match"
@@ -83,44 +83,13 @@ async def _resolve_active_scan_ids(
     For projects with deleted branches, queries for the latest completed scan
     on an active branch.
 
+    Thin wrapper over the canonical ``ScanRepository.get_latest_active_scan_ids``
+    (single source of truth for the "latest scan on a non-deleted branch" rule).
+
     Returns:
         Dict mapping project_id -> resolved scan_id
     """
-    result: Dict[str, str] = {}
-    projects_needing_lookup = []
-
-    for p in projects:
-        if not p.latest_scan_id:
-            continue
-        if p.deleted_branches:
-            projects_needing_lookup.append(p)
-        else:
-            result[p.id] = p.latest_scan_id
-
-    if not projects_needing_lookup:
-        return result
-
-    # For projects with deleted branches, find latest completed scan on active branch
-    or_conditions = [
-        {
-            "project_id": p.id,
-            "branch": {"$nin": p.deleted_branches},
-            "status": "completed",
-        }
-        for p in projects_needing_lookup
-    ]
-
-    pipeline: List[Dict[str, Any]] = [
-        {MONGO_MATCH: {"$or": or_conditions}},
-        {"$sort": {"created_at": -1}},
-        {MONGO_GROUP: {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
-    ]
-
-    cursor = db.scans.aggregate(pipeline)
-    async for doc in cursor:
-        result[doc["_id"]] = doc["scan_id"]
-
-    return result
+    return await ScanRepository(db).get_latest_active_scan_ids(projects)
 
 
 async def get_latest_scan_ids(project_ids: List[str], db: AsyncIOMotorDatabase) -> List[str]:

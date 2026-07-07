@@ -1,4 +1,5 @@
 import type { ToolCall } from '@/types/chat';
+import { advisoryUrl } from '@/lib/finding-utils';
 
 /**
  * A piece of text we know maps to a concrete entity in the app, so we can
@@ -150,7 +151,7 @@ export function linkifyAssistantMarkdown(
   const linkifyCves = (text: string): string =>
     text.replace(CVE_PATTERN, (cve) => {
       const upper = cve.toUpperCase();
-      return `[${upper}](https://nvd.nist.gov/vuln/detail/${upper})`;
+      return `[${upper}](${advisoryUrl(upper)})`;
     });
 
   const linkifyText = (segment: string): string => {

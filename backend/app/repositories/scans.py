@@ -22,6 +22,17 @@ _MINIMAL_PROJECTION = {
 }
 
 
+def _project_id_and_deleted(project: Any) -> tuple[Optional[str], List[str]]:
+    """Extract ``(project_id, deleted_branches)`` from a Project model or raw dict."""
+    if isinstance(project, dict):
+        pid = project.get("_id") or project.get("id")
+        deleted = project.get("deleted_branches") or []
+    else:
+        pid = getattr(project, "id", None) or getattr(project, "_id", None)
+        deleted = getattr(project, "deleted_branches", None) or []
+    return pid, list(deleted)
+
+
 class ScanRepository:
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
@@ -141,6 +152,74 @@ class ScanRepository:
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one(query, sort=[("created_at", -1)])
         return Scan(**data) if data else None
+
+    async def get_latest_active_scan(
+        self, project: Any, deleted_branches: Optional[List[str]] = None
+    ) -> Optional[Scan]:
+        """Canonical "latest active scan" selection.
+
+        Returns the most recently created *completed* scan for ``project`` whose
+        branch is NOT among the project's deleted branches. This is the single
+        source of truth for the "latest scan on a non-deleted branch" rule that
+        was previously copy-pasted across analytics, stats and housekeeping.
+
+        ``project`` may be a ``Project`` model or a raw project dict.
+        ``deleted_branches`` overrides the value read from ``project`` — used by
+        housekeeping, which computes the freshly-deleted branch set before it is
+        persisted onto the project document.
+        """
+        project_id, project_deleted = _project_id_and_deleted(project)
+        deleted = deleted_branches if deleted_branches is not None else project_deleted
+        query: Dict[str, Any] = {"project_id": project_id, "status": "completed"}
+        if deleted:
+            query["branch"] = {"$nin": deleted}
+        with track_db_operation(_COL, "find_one"):
+            data = await self.collection.find_one(query, sort=[("created_at", -1)])
+        return Scan(**data) if data else None
+
+    async def get_latest_active_scan_ids(self, projects: List[Any]) -> Dict[str, str]:
+        """Canonical bulk "latest active scan" selection.
+
+        Maps ``project_id -> latest active scan_id`` for each project that has a
+        ``latest_scan_id``. Projects with no deleted branches resolve to their
+        stored ``latest_scan_id`` directly; projects with deleted branches get
+        the most recently created completed scan on a non-deleted branch.
+        Projects that resolve to no scan are omitted from the result.
+
+        Each element of ``projects`` may be a ``Project`` model or a raw dict;
+        it must expose ``id``/``_id``, ``deleted_branches`` and ``latest_scan_id``.
+        """
+        result: Dict[str, str] = {}
+        needing: List[tuple] = []
+        for p in projects:
+            pid, deleted = _project_id_and_deleted(p)
+            latest_scan_id = (
+                p.get("latest_scan_id") if isinstance(p, dict) else getattr(p, "latest_scan_id", None)
+            )
+            if not latest_scan_id:
+                continue
+            if deleted:
+                needing.append((pid, deleted))
+            else:
+                result[pid] = latest_scan_id
+
+        if not needing:
+            return result
+
+        or_conditions = [
+            {"project_id": pid, "branch": {"$nin": deleted}, "status": "completed"}
+            for pid, deleted in needing
+        ]
+        pipeline: List[Dict[str, Any]] = [
+            {"$match": {"$or": or_conditions}},
+            {"$sort": {"created_at": -1}},
+            {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
+        ]
+        with track_db_operation(_COL, "aggregate"):
+            cursor = self.collection.aggregate(pipeline)
+            async for doc in cursor:
+                result[doc["_id"]] = doc["scan_id"]
+        return result
 
     async def iterate(
         self, query: Dict[str, Any], projection: Optional[Dict[str, int]] = None

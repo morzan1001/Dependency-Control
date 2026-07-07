@@ -55,15 +55,13 @@ import {
   Copy,
   Check,
 } from "lucide-react"
-import { getSeverityBgColor } from '@/lib/finding-utils'
+import { getSeverityBgColor, advisoryUrl, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
 
-// Severity order for sorting
-const severityOrder: Record<string, number> = {
-  'CRITICAL': 4,
-  'HIGH': 3,
-  'MEDIUM': 2,
-  'LOW': 1,
-  'UNKNOWN': 0,
+// Rank a severity for sorting; higher = more severe. Derived from the canonical
+// SEVERITY_ORDER (audit #188) so it can never drift from the shared palette.
+function severityRank(severity?: string): number {
+  const idx = SEVERITY_ORDER.indexOf((severity?.toUpperCase() ?? 'UNKNOWN') as Severity)
+  return idx === -1 ? 0 : SEVERITY_ORDER.length - idx
 }
 
 type SortField = 'id' | 'type' | 'severity' | 'project_name'
@@ -163,18 +161,6 @@ function getLicenseBadgeVariant(category?: string): 'default' | 'secondary' | 'd
   if (category === 'weak_copyleft') return 'secondary'
   if (category === 'strong_copyleft' || category === 'network_copyleft') return 'destructive'
   return 'outline'
-}
-
-/** Build the URL for a security advisory identifier */
-function getAdvisoryUrl(advisory: string): string | undefined {
-  if (advisory.startsWith('GHSA-')) return `https://github.com/advisories/${advisory}`
-  if (advisory.startsWith('CVE-')) return `https://nvd.nist.gov/vuln/detail/${advisory}`
-  return undefined
-}
-
-/** Determine whether an advisory identifier is linkable */
-function isLinkableAdvisory(advisory: string): boolean {
-  return advisory.startsWith('GHSA-') || advisory.startsWith('CVE-')
 }
 
 /** Scorecard display sub-component */
@@ -283,22 +269,25 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
               {metadata.deps_dev.known_advisories.length} Known Security {metadata.deps_dev.known_advisories.length === 1 ? "Advisory" : "Advisories"}
             </p>
             <div className="flex flex-wrap gap-1 mt-1">
-              {metadata.deps_dev.known_advisories.map((advisory) => (
-                <a
-                  key={advisory}
-                  href={getAdvisoryUrl(advisory)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={isLinkableAdvisory(advisory) ? 'cursor-pointer' : ''}
-                >
-                  <Badge variant="destructive" className="text-xs hover:opacity-80">
-                    {advisory}
-                    {isLinkableAdvisory(advisory) && (
-                      <ExternalLink className="h-2.5 w-2.5 ml-1" />
-                    )}
-                  </Badge>
-                </a>
-              ))}
+              {metadata.deps_dev.known_advisories.map((advisory) => {
+                const advisoryHref = advisoryUrl(advisory)
+                return (
+                  <a
+                    key={advisory}
+                    href={advisoryHref ?? undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={advisoryHref ? 'cursor-pointer' : ''}
+                  >
+                    <Badge variant="destructive" className="text-xs hover:opacity-80">
+                      {advisory}
+                      {advisoryHref && (
+                        <ExternalLink className="h-2.5 w-2.5 ml-1" />
+                      )}
+                    </Badge>
+                  </a>
+                )
+              })}
             </div>
           </div>
         </div>
@@ -548,9 +537,7 @@ export function AnalyticsDependencyModal({
           comparison = (a.type || '').localeCompare(b.type || '')
           break
         case 'severity': {
-          const sevA = severityOrder[a.severity?.toUpperCase() || 'UNKNOWN'] || 0
-          const sevB = severityOrder[b.severity?.toUpperCase() || 'UNKNOWN'] || 0
-          comparison = sevA - sevB
+          comparison = severityRank(a.severity) - severityRank(b.severity)
           break
         }
         case 'project_name':

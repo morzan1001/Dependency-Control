@@ -13,7 +13,7 @@ import { useWaiverById } from '@/hooks/queries/use-waivers'
 import { canCreateProjectWaiver } from '@/lib/project-roles'
 import { FindingTypeBadge } from './FindingTypeBadge'
 import { CollapsibleReferences } from './CollapsibleReferences'
-import { getSeverityBadgeVariant, getExploitMaturityClass } from '@/lib/finding-utils'
+import { getSeverityBadgeVariant, getExploitMaturityClass, advisoryUrl } from '@/lib/finding-utils'
 import { formatDate } from '@/lib/utils'
 import { ContextBannersSection } from './details/ContextBannersSection'
 import { OriginBadge } from './details/OriginBadge'
@@ -50,14 +50,8 @@ function MatchedSymbolsList({ symbols }: { symbols: string[] }) {
     )
 }
 
-function getAliasLink(alias: string): string | null {
-    if (alias.startsWith('CVE-')) return `https://nvd.nist.gov/vuln/detail/${alias}`;
-    if (alias.startsWith('GHSA-')) return `https://github.com/advisories/${alias}`;
-    return null;
-}
-
 function AliasLink({ alias }: { alias: string }) {
-    const link = getAliasLink(alias);
+    const link = advisoryUrl(alias);
 
     if (link) {
         return (
@@ -369,9 +363,9 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                     // Determine the best link for the vulnerability
                                                     let vulnLink = null;
                                                     if (isCve) {
-                                                        vulnLink = `https://nvd.nist.gov/vuln/detail/${vulnId}`;
+                                                        vulnLink = advisoryUrl(vulnId);
                                                     } else if (isGhsa) {
-                                                        vulnLink = githubAdvisoryUrl || `https://github.com/advisories/${vulnId}`;
+                                                        vulnLink = githubAdvisoryUrl || advisoryUrl(vulnId);
                                                     }
 
                                                     return (
@@ -397,7 +391,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 {/* Show resolved CVE if GHSA was resolved */}
                                                                 {isGhsa && resolvedCve && (
                                                                     <a
-                                                                        href={`https://nvd.nist.gov/vuln/detail/${resolvedCve}`}
+                                                                        href={advisoryUrl(resolvedCve) ?? undefined}
                                                                         target="_blank"
                                                                         rel="noopener noreferrer"
                                                                         className="inline-flex items-center gap-1"

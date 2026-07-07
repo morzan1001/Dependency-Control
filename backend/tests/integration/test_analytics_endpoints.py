@@ -131,6 +131,43 @@ async def test_cache_hit_on_second_call(client, db, owner_auth_headers_proj):
 
 
 @pytest.mark.asyncio
+async def test_recommendations_excludes_deleted_branch_scan(client, db, owner_auth_headers_proj):
+    """Regression (elegance #186): with no explicit scan_id, recommendations must be
+    built from the latest scan on a NON-deleted branch, never a newer scan whose
+    branch has been deleted.
+
+    Given an OLDER scan on an active branch and a NEWER scan on a deleted branch,
+    the endpoint must select the active-branch scan. Before the fix the endpoint
+    used an inline ``find_many`` with no deleted-branch exclusion and would pick the
+    newer deleted-branch scan.
+    """
+    await db.projects.update_one({"_id": "p"}, {"$set": {"deleted_branches": ["dead"]}})
+
+    now = datetime.now(timezone.utc)
+    # Older scan on an active branch — the one that MUST be selected.
+    await db.scans.insert_one(
+        {
+            "_id": "scan-active", "project_id": "p", "branch": "main", "status": "completed",
+            "created_at": now - timedelta(hours=1),
+        }
+    )
+    # Newer scan on a DELETED branch — must be ignored.
+    await db.scans.insert_one(
+        {
+            "_id": "scan-dead", "project_id": "p", "branch": "dead", "status": "completed",
+            "created_at": now,
+        }
+    )
+
+    resp = await client.get(
+        "/api/v1/analytics/projects/p/recommendations",
+        headers=owner_auth_headers_proj,
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["scan_id"] == "scan-active"
+
+
+@pytest.mark.asyncio
 async def test_recommendations_cached_on_second_call(client, db, owner_auth_headers_proj, monkeypatch):
     """The recommendations endpoint must serve the second identical request from
     cache instead of re-loading both scans and re-running the engine (audit #13)."""

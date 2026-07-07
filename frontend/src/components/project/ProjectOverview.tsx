@@ -13,6 +13,7 @@ import { PostProcessorResultCard } from '@/components/PostProcessorResults'
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { MAX_SCANS_FOR_CHARTS } from '@/lib/constants'
 import { formatDate } from '@/lib/utils'
+import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
 
 /** Accumulate threat intelligence stats from a scan into the accumulator */
 function accumulateThreatIntel(acc: ThreatIntelligenceStats, ti: ThreatIntelligenceStats) {
@@ -249,10 +250,10 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   const COLORS = ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#9333ea', '#0891b2', '#ea580c', '#4f46e5'];
 
   const pieData = [
-      { name: 'Critical', value: stats.critical || 0, color: '#ef4444' },
-      { name: 'High', value: stats.high || 0, color: '#f97316' },
-      { name: 'Medium', value: stats.medium || 0, color: '#eab308' },
-      { name: 'Low', value: stats.low || 0, color: '#3b82f6' },
+      { name: 'Critical', value: stats.critical || 0, color: SEVERITY_CHART_COLORS.CRITICAL },
+      { name: 'High', value: stats.high || 0, color: SEVERITY_CHART_COLORS.HIGH },
+      { name: 'Medium', value: stats.medium || 0, color: SEVERITY_CHART_COLORS.MEDIUM },
+      { name: 'Low', value: stats.low || 0, color: SEVERITY_CHART_COLORS.LOW },
   ].filter(d => d.value > 0);
 
   return (
@@ -431,10 +432,10 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
                                     itemStyle={{ color: 'hsl(var(--foreground))' }}
                                 />
                                 <Legend />
-                                <Bar dataKey="critical" stackId="a" fill="#ef4444" />
-                                <Bar dataKey="high" stackId="a" fill="#f97316" />
-                                <Bar dataKey="medium" stackId="a" fill="#eab308" />
-                                <Bar dataKey="low" stackId="a" fill="#3b82f6" />
+                                <Bar dataKey="critical" stackId="a" fill={SEVERITY_CHART_COLORS.CRITICAL} />
+                                <Bar dataKey="high" stackId="a" fill={SEVERITY_CHART_COLORS.HIGH} />
+                                <Bar dataKey="medium" stackId="a" fill={SEVERITY_CHART_COLORS.MEDIUM} />
+                                <Bar dataKey="low" stackId="a" fill={SEVERITY_CHART_COLORS.LOW} />
                             </BarChart>
                         </ResponsiveContainer>
                     </div>

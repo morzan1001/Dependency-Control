@@ -22,6 +22,7 @@ from app.repositories import (
     BroadcastRepository,
     DependencyRepository,
     ProjectRepository,
+    ScanRepository,
     TeamRepository,
     UserRepository,
 )
@@ -195,34 +196,21 @@ async def _build_advisory_scan_map(
     db: Any,
 ) -> Dict[str, Project]:
     """Build scan_id -> Project map for advisory broadcasts, handling deleted branches."""
-    scan_map: Dict[str, Project] = {}
-    projects_needing_lookup: list = []
-
-    async for p in project_repo.iterate({"latest_scan_id": {"$exists": True}}):
-        if not p or not p.latest_scan_id:
-            continue
-        if p.deleted_branches:
-            projects_needing_lookup.append(p)
-        else:
-            scan_map[p.latest_scan_id] = p
-
-    if projects_needing_lookup:
-        or_conditions = [
-            {"project_id": p.id, "branch": {"$nin": p.deleted_branches}, "status": "completed"}
-            for p in projects_needing_lookup
-        ]
-        pipeline: List[Dict[str, Any]] = [
-            {"$match": {"$or": or_conditions}},
-            {"$sort": {"created_at": -1}},
-            {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
-        ]
-        proj_map = {p.id: p for p in projects_needing_lookup}
-        async for doc in db.scans.aggregate(pipeline):
-            proj = proj_map.get(doc["_id"])
-            if proj:
-                scan_map[doc["scan_id"]] = proj
-
-    return scan_map
+    projects: List[Project] = [
+        p
+        async for p in project_repo.iterate({"latest_scan_id": {"$exists": True}})
+        if p and p.latest_scan_id
+    ]
+    # Canonical bulk "latest active scan" selection (elegance #186): maps each
+    # project to its latest completed scan on a non-deleted branch. This replaces a
+    # private copy of the same latest_scan_id fast-path + aggregation.
+    scan_ids = await ScanRepository(db).get_latest_active_scan_ids(projects)
+    proj_by_id = {p.id: p for p in projects}
+    return {
+        scan_id: proj_by_id[project_id]
+        for project_id, scan_id in scan_ids.items()
+        if project_id in proj_by_id
+    }
 
 
 def _match_package_rule(dep: Any, payload_packages: list) -> Any:

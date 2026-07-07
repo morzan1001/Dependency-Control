@@ -62,12 +62,10 @@ async def get_project_recommendations(
         if scan and scan.project_id != project_id:
             scan = None
     else:
-        scans = await scan_repo.find_many(
-            {"project_id": project_id, "status": "completed"},
-            limit=1,
-            sort=[("created_at", -1)],
-        )
-        scan = scans[0] if scans else None
+        # Canonical "latest active scan" selection (elegance #186): excludes scans
+        # on deleted branches. The previous inline find_many had no deleted-branch
+        # exclusion, so recommendations could be built from a deleted-branch scan.
+        scan = await scan_repo.get_latest_active_scan(project)
 
     if not scan:
         raise HTTPException(status_code=404, detail="No scan found for this project")

@@ -19,6 +19,7 @@ import { toast } from "sonner"
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { logger } from '@/lib/logger'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
+import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
@@ -184,12 +185,12 @@ export default function ScanDetails() {
   const stats = scan.stats || { critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0 };
   
   const severityData = [
-      { name: 'Critical', value: stats.critical || 0, color: '#ef4444' },
-      { name: 'High', value: stats.high || 0, color: '#f97316' },
-      { name: 'Medium', value: stats.medium || 0, color: '#eab308' },
-      { name: 'Low', value: stats.low || 0, color: '#3b82f6' },
-      { name: 'Info', value: stats.info || 0, color: '#60a5fa' },
-      { name: 'Unknown', value: stats.unknown || 0, color: '#9ca3af' },
+      { name: 'Critical', value: stats.critical || 0, color: SEVERITY_CHART_COLORS.CRITICAL },
+      { name: 'High', value: stats.high || 0, color: SEVERITY_CHART_COLORS.HIGH },
+      { name: 'Medium', value: stats.medium || 0, color: SEVERITY_CHART_COLORS.MEDIUM },
+      { name: 'Low', value: stats.low || 0, color: SEVERITY_CHART_COLORS.LOW },
+      { name: 'Info', value: stats.info || 0, color: SEVERITY_CHART_COLORS.INFO },
+      { name: 'Unknown', value: stats.unknown || 0, color: SEVERITY_CHART_COLORS.UNKNOWN },
   ].filter(d => d.value > 0);
 
   const categoryData = categoryStats ? [

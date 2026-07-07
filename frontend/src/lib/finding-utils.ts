@@ -2,6 +2,40 @@ import { Container, FileCode, HardDrive, Layers, type LucideIcon } from 'lucide-
 
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO' | 'UNKNOWN'
 
+/**
+ * Canonical CVE/GHSA advisory-URL mapping. Previously copy-pasted across the
+ * analytics components (VulnerabilitySearch, AnalyticsDependencyModal,
+ * RecommendationCard — audit #126). Returns null for identifiers that have no
+ * well-known public advisory page.
+ */
+export function advisoryUrl(id: string): string | null {
+  if (id?.startsWith('CVE-')) return `https://nvd.nist.gov/vuln/detail/${id}`
+  if (id?.startsWith('GHSA-')) return `https://github.com/advisories/${id}`
+  return null
+}
+
+/**
+ * Severity -> hex colour for charts (Recharts et al. cannot consume Tailwind
+ * token classes). Values mirror the light-mode severity design tokens defined
+ * in index.css / getSeverityColor so charts stay in sync with badges
+ * (audit #188 — previously several independent hex maps drifted from the tokens).
+ */
+export const SEVERITY_CHART_COLORS: Record<Severity, string> = {
+  CRITICAL: '#dc2626', // red-600 / --severity-critical
+  HIGH: '#f97316', // orange-500 / --severity-high
+  MEDIUM: '#eab308', // yellow-500 / --severity-medium
+  LOW: '#3b82f6', // blue-500 / --severity-low
+  INFO: '#6b7280', // gray-500 / --severity-info
+  UNKNOWN: '#9ca3af', // gray-400
+}
+
+/**
+ * Canonical severity ordering, most severe first. Replaces the ad-hoc order
+ * arrays / rank maps that were duplicated across analytics components
+ * (audit #188).
+ */
+export const SEVERITY_ORDER: Severity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO', 'UNKNOWN']
+
 export function getSeverityColor(severity: string): string {
   switch (severity?.toUpperCase()) {
     case 'CRITICAL':

@@ -9,6 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.stats import Stats
 from app.models.waiver import Waiver
+from app.repositories.scans import ScanRepository
 from app.services.analysis.stats import calculate_comprehensive_stats
 
 logger = logging.getLogger(__name__)
@@ -80,12 +81,12 @@ async def _resolve_active_scan_id(
     if not scan_doc or scan_doc.get("branch") not in deleted_branches:
         return scan_id
 
-    active_scan = await db.scans.find_one(
-        {"project_id": project_id, "branch": {"$nin": deleted_branches}, "status": "completed"},
-        sort=[("created_at", -1)],
-        projection={"_id": 1},
+    # Delegate the "latest scan on a non-deleted branch" selection to the
+    # canonical ScanRepository method (single source of truth).
+    active_scan = await ScanRepository(db).get_latest_active_scan(
+        {"_id": project_id, "deleted_branches": deleted_branches}
     )
-    return active_scan["_id"] if active_scan else None
+    return active_scan.id if active_scan else None
 
 
 def _resolve_finding_id_query(

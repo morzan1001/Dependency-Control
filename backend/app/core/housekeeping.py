@@ -24,6 +24,7 @@ from app.core.constants import (
 from app.core.s3 import delete_object, is_archive_enabled, list_objects
 from app.db.mongodb import get_database
 from app.models.project import Project, Scan
+from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.core.metrics import (
     archive_housekeeping_batch_total,
@@ -785,23 +786,18 @@ async def _resolve_latest_scan_after_branch_deletion(
     if not scan_doc or scan_doc.get("branch") not in deleted:
         return {}
 
-    project_id = project_data["_id"]
-    active_scan = await db.scans.find_one(
-        {
-            "project_id": project_id,
-            "branch": {"$nin": deleted},
-            "status": "completed",
-        },
-        sort=[("created_at", -1)],
-    )
+    # Delegate the "latest scan on a non-deleted branch" selection to the
+    # canonical ScanRepository method (single source of truth). ``deleted`` is
+    # the freshly-computed deleted-branch set, not yet persisted on the project.
+    active_scan = await ScanRepository(db).get_latest_active_scan(project_data, deleted_branches=deleted)
     if active_scan:
         updates: dict = {
-            "latest_scan_id": active_scan["_id"],
-            "last_scan_at": ensure_utc(active_scan.get("created_at")),
+            "latest_scan_id": active_scan.id,
+            "last_scan_at": ensure_utc(active_scan.created_at),
         }
-        if active_scan.get("stats"):
-            updates["stats"] = active_scan["stats"]
-        logger.info(f"Project {project_name}: updated latest_scan_id to active branch '{active_scan.get('branch')}'")
+        if active_scan.stats:
+            updates["stats"] = active_scan.stats.model_dump()
+        logger.info(f"Project {project_name}: updated latest_scan_id to active branch '{active_scan.branch}'")
         return updates
 
     logger.info(f"Project {project_name}: no active branch scans, cleared stats")

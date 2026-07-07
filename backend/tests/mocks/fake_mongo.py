@@ -678,10 +678,19 @@ class FakeCollection:
 
     # -- reads ------------------------------------------------------------
 
-    async def find_one(self, query, projection=None):
+    async def find_one(self, query, projection=None, sort=None):
         # Fast path for _id-only queries (common in repository code)
         if set(query.keys()) == {"_id"} and not isinstance(query["_id"], dict):
             return self._docs.get(query["_id"])
+        if sort:
+            # Mirror real Mongo: apply the sort, then return the first match.
+            matches = [doc for doc in self._docs.values() if _match_doc(doc, query)]
+            for key, direction in reversed(list(sort)):
+                matches.sort(
+                    key=lambda d, k=key: (d.get(k) is None, d.get(k)),
+                    reverse=direction < 0,
+                )
+            return matches[0] if matches else None
         for doc in self._docs.values():
             if _match_doc(doc, query):
                 return doc
