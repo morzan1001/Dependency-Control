@@ -33,7 +33,7 @@ export function extractErrorMessage(err: unknown): string {
   if (detail) {
     if (Array.isArray(detail)) {
       return detail
-        .map((validationErr: ValidationError) => validationErr.msg.replace("Value error, ", ""))
+        .map((validationErr: ValidationError) => (validationErr.msg ?? String(validationErr)).replace("Value error, ", ""))
         .join("\n");
     }
     if (typeof detail === "string") {
