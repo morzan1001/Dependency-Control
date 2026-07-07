@@ -56,9 +56,6 @@ def identify_quick_wins(
                     fixed_versions.append(fv)
         fixed_versions = list(set(fixed_versions))
 
-        if not fixed_versions:
-            continue
-
         # Calculate impact
         critical_count = len([v for v in vulns if get_attr(v, "severity") == "CRITICAL"])
         high_count = len([v for v in vulns if get_attr(v, "severity") == "HIGH"])
@@ -97,9 +94,6 @@ def identify_quick_wins(
     quick_wins.sort(key=lambda x: x.score, reverse=True)
 
     for qw in quick_wins[:5]:  # Top 5 quick wins
-        if qw.vuln_count < 2 and qw.kev_count == 0:
-            continue
-
         dep_type = "direct dependency" if qw.is_direct else "transitive dependency"
 
         recommendations.append(

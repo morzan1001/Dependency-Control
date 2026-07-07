@@ -112,16 +112,3 @@ class OllamaClient:
         finally:
             _active_requests -= 1
             chat_ollama_queue_depth.set(_active_requests)
-
-    async def health_check(self) -> bool:
-        """Check if Ollama is reachable and the model is loaded."""
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(5)) as client:
-                resp = await client.get(f"{self.base_url}/api/tags")
-                if resp.status_code != 200:
-                    return False
-                data = resp.json()
-                model_names = [m.get("name", "") for m in data.get("models", [])]
-                return any(self.model in name for name in model_names)
-        except Exception:
-            return False

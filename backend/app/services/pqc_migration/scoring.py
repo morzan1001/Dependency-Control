@@ -102,14 +102,14 @@ def _score_key_weakness(asset: Any, source_family: str) -> float:
         return 50.0
     if key_size < minimum:
         return 100.0
+    # key_size >= minimum is guaranteed by the early return above, so
+    # ratio is always >= 1.0 here.
     ratio = key_size / minimum
     if ratio >= 2.0:
         return 20.0
     if ratio >= 1.5:
         return 30.0
-    if ratio >= 1.0:
-        return 50.0
-    return 100.0
+    return 50.0
 
 
 def _score_deadline(source_family: str, timelines: List[Timeline], now: datetime) -> float:

@@ -143,6 +143,29 @@ def test_count_score_zero_for_non_positive():
     assert _score_count(-1) == 0.0
 
 
+# --- key-weakness ratio branch collapse (no unreachable trailing branch) ---
+
+
+def test_key_weakness_ratio_at_and_above_minimum():
+    """When key_size >= minimum the ratio is always >= 1.0, so the moderate
+    (>=1.5), safe (>=2.0), and at-minimum cases must be the only outcomes for
+    non-undersized keys. An at-minimum RSA key (ratio == 1.0) must score 50.0,
+    not fall through to the (previously unreachable) 100.0 branch."""
+    from app.services.pqc_migration.scoring import _score_key_weakness
+
+    at_min = _score_key_weakness(_A(key_size_bits=2048), "RSA")
+    just_above = _score_key_weakness(_A(key_size_bits=2049), "RSA")
+    mid = _score_key_weakness(_A(key_size_bits=3072), "RSA")  # ratio 1.5
+    strong = _score_key_weakness(_A(key_size_bits=4096), "RSA")  # ratio 2.0
+    undersized = _score_key_weakness(_A(key_size_bits=1024), "RSA")
+
+    assert at_min == 50.0
+    assert just_above == 50.0
+    assert mid == 30.0
+    assert strong == 20.0
+    assert undersized == 100.0
+
+
 # --- B4: exposure thresholds are exposed as named constants ---
 
 

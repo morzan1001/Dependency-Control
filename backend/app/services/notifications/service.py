@@ -81,40 +81,6 @@ class NotificationService:
                 if isinstance(result, Exception):
                     logger.error(f"Notification task failed: {result}")
 
-    async def notify_user(
-        self,
-        user: User,
-        event_type: str,
-        subject: str,
-        message: str,
-        db: Any = None,
-        html_message: Optional[str] = None,
-        slack_blocks: Optional[List[Dict[str, Any]]] = None,
-        mattermost_props: Optional[Dict[str, Any]] = None,
-    ) -> None:
-        """
-        Send a notification to a user based on their global preferences.
-        """
-        if not user.notification_preferences:
-            return
-
-        system_settings = None
-        if db is not None:
-            repo = SystemSettingsRepository(db)
-            system_settings = await repo.get()
-
-        await self._send_based_on_prefs(
-            user,
-            user.notification_preferences,
-            event_type,
-            subject,
-            message,
-            system_settings,
-            html_message=html_message,
-            slack_blocks=slack_blocks,
-            mattermost_props=mattermost_props,
-        )
-
     async def notify_users(
         self,
         users: List[User],

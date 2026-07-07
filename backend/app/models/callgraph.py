@@ -85,23 +85,3 @@ class Callgraph(CreatedAtModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     model_config = ConfigDict(populate_by_name=True)
-
-
-class ReachabilityResult(BaseModel):
-    """Result of reachability analysis for a vulnerability."""
-
-    status: str = "unknown"  # unknown, reachable, not_reachable, partially_reachable
-    confidence: str = "low"  # low, medium, high
-    analysis_type: str = "none"  # none, import, symbol, callgraph
-
-    # Evidence
-    import_paths: List[str] = []  # Files that import the vulnerable package
-    call_paths: List[List[str]] = []  # Call chains to vulnerable functions
-    used_symbols: List[str] = []  # Which symbols from the package are used
-
-    # Vulnerable function info
-    vulnerable_symbols: List[str] = []  # Known vulnerable functions
-    vulnerable_symbols_used: List[str] = []  # Subset that are actually used
-
-    # Additional context
-    message: str = ""  # Human-readable explanation

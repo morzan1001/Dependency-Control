@@ -29,7 +29,6 @@ from ._helpers import (
     _parse_major,
     _serialize_doc,
     _serialize_finding_for_llm,
-    _summary_severity_bucket,
     _truncate_if_too_large,
 )
 from .crypto_tools import (
@@ -70,7 +69,6 @@ __all__ = [
     "_parse_major",
     "_serialize_doc",
     "_serialize_finding_for_llm",
-    "_summary_severity_bucket",
     "_truncate_if_too_large",
     "TOOL_DEFINITIONS",
     "TOOL_PERMISSIONS",

@@ -1,4 +1,4 @@
-"""Tests for Callgraph, ImportEntry, CallEdge, ModuleUsage, and ReachabilityResult models."""
+"""Tests for Callgraph, ImportEntry, CallEdge, and ModuleUsage models."""
 
 import pytest
 from datetime import datetime, timezone
@@ -9,7 +9,6 @@ from app.models.callgraph import (
     CallEdge,
     ImportEntry,
     ModuleUsage,
-    ReachabilityResult,
 )
 
 
@@ -242,54 +241,3 @@ class TestCallgraphIdAlias:
         assert restored.pipeline_id == 42
         assert restored.branch == "main"
         assert restored.source_files_analyzed == 100
-
-
-class TestReachabilityResult:
-    """ReachabilityResult sub-model validation and defaults."""
-
-    def test_all_defaults(self):
-        """ReachabilityResult can be created with no arguments."""
-        r = ReachabilityResult()
-        assert r.status == "unknown"
-        assert r.confidence == "low"
-        assert r.analysis_type == "none"
-        assert r.import_paths == []
-        assert r.call_paths == []
-        assert r.used_symbols == []
-        assert r.vulnerable_symbols == []
-        assert r.vulnerable_symbols_used == []
-        assert r.message == ""
-
-    def test_fully_populated(self):
-        """ReachabilityResult accepts all fields."""
-        r = ReachabilityResult(
-            status="reachable",
-            confidence="high",
-            analysis_type="callgraph",
-            import_paths=["/app/main.py"],
-            call_paths=[["main.py:run", "requests:get"]],
-            used_symbols=["get", "post"],
-            vulnerable_symbols=["get"],
-            vulnerable_symbols_used=["get"],
-            message="Vulnerable function is directly called",
-        )
-        assert r.status == "reachable"
-        assert r.confidence == "high"
-        assert r.analysis_type == "callgraph"
-        assert len(r.import_paths) == 1
-        assert len(r.call_paths) == 1
-        assert r.vulnerable_symbols_used == ["get"]
-        assert r.message == "Vulnerable function is directly called"
-
-    def test_no_to_dict_method(self):
-        """ReachabilityResult does not have a legacy to_dict method."""
-        r = ReachabilityResult()
-        assert not hasattr(r, "to_dict")
-
-    def test_model_dump_produces_dict(self):
-        """model_dump() returns a plain dict with correct keys."""
-        r = ReachabilityResult(status="not_reachable", confidence="medium")
-        dumped = r.model_dump()
-        assert isinstance(dumped, dict)
-        assert dumped["status"] == "not_reachable"
-        assert dumped["confidence"] == "medium"

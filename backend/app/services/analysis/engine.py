@@ -38,14 +38,9 @@ from app.services.analysis.integrations import decorate_gitlab_mr
 from app.services.analysis.notifications import send_scan_notifications
 from app.services.analysis.types import Database
 
-logger = logging.getLogger(__name__)
-
-_BULK_CHUNK_SIZE = 500
-
-# Import metrics for detailed analysis tracking. app.core.metrics is imported
-# unconditionally across the app (main.py, http_utils.py, init_db.py, repositories,
-# ...) — the process cannot start if it is missing — so a defensive try/except shim
-# here would be unreachable dead code.
+# app.core.metrics is imported unconditionally across the app (main.py, init_db.py,
+# repositories, ...) — the process cannot start if it is missing — so a defensive
+# try/except shim here would be unreachable dead code.
 from app.core.metrics import (
     analysis_aggregation_duration_seconds,
     analysis_components_parsed_total,
@@ -65,6 +60,10 @@ from app.core.metrics import (
     analysis_waivers_applied_total,
     analysis_duration_seconds,
 )
+
+logger = logging.getLogger(__name__)
+
+_BULK_CHUNK_SIZE = 500
 
 # Post-processor analyzers run inside the engine (not registered in ``analyzers``); their
 # result rows must be cleaned up between runs and never treated as carried-over/external

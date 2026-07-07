@@ -23,12 +23,10 @@ class UserRepository(BaseRepository[User]):
         return self._to_model(data)
 
     async def get_raw_by_username(self, username: str) -> Optional[Dict[str, Any]]:
-        with track_db_operation(self.collection_name, "find_one"):
-            return await self.collection.find_one({"username": username})
+        return await self.find_one_raw({"username": username})
 
     async def get_raw_by_email(self, email: str) -> Optional[Dict[str, Any]]:
-        with track_db_operation(self.collection_name, "find_one"):
-            return await self.collection.find_one({"email": email})
+        return await self.find_one_raw({"email": email})
 
     async def get_raw_by_email_ci(self, email: str) -> Optional[Dict[str, Any]]:
         """Case-insensitive email lookup. Stored emails are not normalised and the unique
@@ -51,9 +49,7 @@ class UserRepository(BaseRepository[User]):
             return await cursor.to_list(None)
 
     async def exists_by_username(self, username: str) -> bool:
-        with track_db_operation(self.collection_name, "find_one"):
-            return await self.collection.find_one({"username": username}, {"_id": 1}) is not None
+        return await self.exists({"username": username})
 
     async def exists_by_email(self, email: str) -> bool:
-        with track_db_operation(self.collection_name, "find_one"):
-            return await self.collection.find_one({"email": email}, {"_id": 1}) is not None
+        return await self.exists({"email": email})

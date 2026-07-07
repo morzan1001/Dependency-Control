@@ -201,7 +201,6 @@ class Recommendation:
     affected_components: List[str]
     action: Dict[str, Any]  # Specific action details
     effort: str = Effort.MEDIUM  # Accepts Effort enum or string for compatibility
-    affected_projects: List[Dict[str, Any]] = field(default_factory=list)  # [{id, name}]
 
     def to_dict(self) -> Dict[str, Any]:
         # Handle both Effort enum and string values
@@ -215,5 +214,4 @@ class Recommendation:
             "affected_components": self.affected_components,
             "action": self.action,
             "effort": effort_value,
-            "affected_projects": self.affected_projects,
         }

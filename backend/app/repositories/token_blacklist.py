@@ -52,27 +52,3 @@ class TokenBlacklistRepository:
         primary = self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
         result = await primary.find_one({"_id": jti})
         return result is not None
-
-    async def remove_from_blacklist(self, jti: str) -> bool:
-        """
-        Remove a token from blacklist (rarely needed).
-
-        Args:
-            jti: JWT ID to remove
-
-        Returns:
-            True if token was removed, False if wasn't blacklisted
-        """
-        result = await self.collection.delete_one({"_id": jti})
-        return result.deleted_count > 0
-
-    async def cleanup_expired(self) -> int:
-        """
-        Manually cleanup expired tokens (TTL index does this automatically).
-
-        Returns:
-            Number of tokens removed
-        """
-        now = datetime.now()
-        result = await self.collection.delete_many({"expires_at": {"$lt": now}})
-        return result.deleted_count

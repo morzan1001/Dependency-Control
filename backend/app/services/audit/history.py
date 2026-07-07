@@ -6,8 +6,8 @@ Public functions:
       summary of crypto rule-set differences.
     - compute_license_policy_change_summary(old, new): pure, no I/O.
       Deterministic one-line summary of license-policy field changes.
-    - record_policy_change(...) / record_crypto_policy_change(...): persist a
-      crypto-policy audit entry with webhook + notification dispatch.
+    - record_policy_change(...): persist a crypto-policy audit entry with
+      webhook + notification dispatch.
     - record_license_policy_change(...): same, for license-policy changes.
 """
 
@@ -152,10 +152,6 @@ async def record_policy_change(
     except Exception:
         logger.exception("Policy audit notification failed (non-blocking)")
     return entry
-
-
-# Backward-compatible alias — same function, explicit crypto naming.
-record_crypto_policy_change = record_policy_change
 
 
 def _actor_id(actor: Any) -> Optional[str]:

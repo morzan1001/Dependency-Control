@@ -11,7 +11,6 @@ from datetime import datetime, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
-from app.core.config import settings
 from app.repositories.compliance_report import ComplianceReportRepository
 
 logger = logging.getLogger(__name__)
@@ -56,8 +55,3 @@ async def sweep_expired_compliance_reports(db: AsyncIOMotorDatabase) -> int:
     if deleted:
         logger.info("Compliance retention sweep deleted %d expired reports", deleted)
     return deleted
-
-
-def _configured_retention_days() -> int:
-    """Return the configured retention window in days from settings."""
-    return settings.COMPLIANCE_REPORT_RETENTION_DAYS

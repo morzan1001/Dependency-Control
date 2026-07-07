@@ -752,36 +752,3 @@ class TestAutoCreateUsesSystemAnalyzers:
                 )
 
         assert result.active_analyzers == custom_analyzers
-
-
-class TestCallgraphCleanup:
-    """Callgraph model: json_encoders removed, to_dict() removed."""
-
-    def test_reachability_result_uses_model_dump(self):
-        """ReachabilityResult should use model_dump() instead of to_dict()."""
-        from app.models.callgraph import ReachabilityResult
-
-        result = ReachabilityResult(
-            status="reachable",
-            confidence="high",
-            analysis_type="callgraph",
-            import_paths=["/app/main.py"],
-            used_symbols=["get", "post"],
-            vulnerable_symbols=["get"],
-            vulnerable_symbols_used=["get"],
-            message="Vulnerable function is directly called",
-        )
-
-        dumped = result.model_dump()
-        assert dumped["status"] == "reachable"
-        assert dumped["confidence"] == "high"
-        assert dumped["import_paths"] == ["/app/main.py"]
-        assert dumped["vulnerable_symbols_used"] == ["get"]
-        assert dumped["message"] == "Vulnerable function is directly called"
-
-    def test_reachability_result_no_to_dict(self):
-        """to_dict() should no longer exist on ReachabilityResult."""
-        from app.models.callgraph import ReachabilityResult
-
-        result = ReachabilityResult()
-        assert not hasattr(result, "to_dict")

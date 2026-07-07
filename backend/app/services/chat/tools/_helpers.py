@@ -133,12 +133,6 @@ def _serialize_finding_for_llm(doc: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _summary_severity_bucket(severity: Optional[str]) -> str:
-    if not severity:
-        return "unknown"
-    return severity.lower()
-
-
 def _parse_major(version: Optional[str]) -> Optional[int]:
     if not version or not isinstance(version, str):
         return None

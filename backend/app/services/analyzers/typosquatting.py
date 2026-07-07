@@ -10,7 +10,6 @@ from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import (
     ANALYZER_TIMEOUTS,
     TOP_PYPI_PACKAGES_URL,
-    TYPOSQUATTING_MAX_FALLBACK_PACKAGES,
     TYPOSQUATTING_SIMILARITY_THRESHOLD,
 )
 from app.models.finding import Severity
@@ -89,9 +88,6 @@ class TyposquattingAnalyzer(Analyzer):
 
     name = "typosquatting"
 
-    # In-memory fallback cache
-    _popular_packages_fallback: Dict[str, Set[str]] = {"pypi": set(), "npm": set()}
-
     async def _ensure_popular_packages(self) -> Dict[str, Set[str]]:
         """Load popular packages from Redis cache or fetch from APIs."""
 
@@ -122,12 +118,6 @@ class TyposquattingAnalyzer(Analyzer):
             # Cache npm packages
             await cache_service.set(npm_cache_key, list(result["npm"]), CacheTTL.POPULAR_PACKAGES)
 
-        # Update fallback with size limit to prevent memory issues
-        for registry in result:
-            if len(result[registry]) > TYPOSQUATTING_MAX_FALLBACK_PACKAGES:
-                # Keep only a subset if too large
-                result[registry] = set(list(result[registry])[:TYPOSQUATTING_MAX_FALLBACK_PACKAGES])
-        self._popular_packages_fallback = result
         return result
 
     async def _fetch_pypi_packages(self) -> Set[str]:

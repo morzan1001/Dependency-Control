@@ -1,14 +1,14 @@
 """
 CryptoPolicyResolver — merges system default with project override.
 
-Cache is per-instance; one resolver lives for the duration of a scan analysis
-run. The cache key includes the system version, override version, and the
-system-wide enforcement mode, so any write or admin-toggle implicitly
-invalidates the cached effective policy.
+A resolver is constructed per call and reads the current system policy,
+system settings, and (unless global enforcement is active) the project
+override on every resolve(), so the returned effective policy always
+reflects the latest persisted state.
 """
 
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -30,7 +30,6 @@ class CryptoPolicyResolver:
     def __init__(self, db: AsyncIOMotorDatabase):
         self._repo = CryptoPolicyRepository(db)
         self._settings_repo = SystemSettingsRepository(db)
-        self._cache: dict[Tuple[str, int, Optional[int], bool], EffectivePolicy] = {}
 
     async def resolve(self, project_id: str) -> EffectivePolicy:
         system = await self._repo.get_system_policy()
@@ -42,21 +41,16 @@ class CryptoPolicyResolver:
 
         override = None if override_locked else await self._repo.get_project_policy(project_id)
         override_version = override.version if override else None
-        cache_key = (project_id, system.version, override_version, override_locked)
-        if cache_key in self._cache:
-            return self._cache[cache_key]
 
         rules_by_id = {r.rule_id: r for r in system.rules}
         if override is not None:
             for r in override.rules:
                 rules_by_id[r.rule_id] = r
 
-        effective = EffectivePolicy(
+        return EffectivePolicy(
             rules=list(rules_by_id.values()),
             system_rules=list(system.rules),
             system_version=system.version,
             override_version=override_version,
             override_locked=override_locked,
         )
-        self._cache[cache_key] = effective
-        return effective
