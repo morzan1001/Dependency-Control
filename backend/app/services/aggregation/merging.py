@@ -110,7 +110,7 @@ def _merge_vuln_fix_and_cvss(tv: Dict[str, Any], source_entry: VulnerabilityEntr
 
 
 def _merge_vuln_references(tv: Dict[str, Any], source_entry: VulnerabilityEntry) -> None:
-    """Union references from both entries, including legacy details.urls fields."""
+    """Union references from both entries, including any details.urls fields."""
     tv_refs = set(tv.get("references", []) or [])
     sv_refs = set(source_entry.get("references", []) or [])
     tv_urls = set(tv.get("details", {}).get("urls", []) or [])

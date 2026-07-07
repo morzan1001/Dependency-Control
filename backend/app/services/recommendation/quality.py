@@ -13,8 +13,8 @@ def process_quality(findings: List[ModelOrDict]) -> List[Recommendation]:
 
     recommendations = []
     severity_counts: Dict[str, int] = defaultdict(int)
-    components_by_issue: Dict[str, List[Any]] = defaultdict(list)  # issue_type -> [components]
-    low_score_packages: List[Any] = []  # Packages with very low scores
+    components_by_issue: Dict[str, List[Any]] = defaultdict(list)
+    low_score_packages: List[Any] = []
     unmaintained_packages: List[Any] = []
 
     for f in findings:
@@ -32,7 +32,6 @@ def process_quality(findings: List[ModelOrDict]) -> List[Recommendation]:
         failed_checks = details.get("failed_checks", []) if isinstance(details, dict) else []
         project_url = details.get("project_url", "") if isinstance(details, dict) else ""
 
-        # Track packages with very low scores
         if overall_score < SCORECARD_LOW_THRESHOLD:
             low_score_packages.append(
                 {
@@ -44,7 +43,6 @@ def process_quality(findings: List[ModelOrDict]) -> List[Recommendation]:
                 }
             )
 
-        # Track by issue type
         if "Maintained" in critical_issues:
             unmaintained_packages.append(
                 {
@@ -58,12 +56,10 @@ def process_quality(findings: List[ModelOrDict]) -> List[Recommendation]:
         for issue in critical_issues:
             components_by_issue[issue].append(component)
 
-        # Also categorize by failed checks
         for check in failed_checks:
             check_name = check.get("name", "") if isinstance(check, dict) else check
             components_by_issue[f"check:{check_name}"].append(component)
 
-    # 1. Generate recommendation for unmaintained packages (highest priority)
     if unmaintained_packages:
         recommendations.append(
             Recommendation(
@@ -101,7 +97,6 @@ def process_quality(findings: List[ModelOrDict]) -> List[Recommendation]:
             )
         )
 
-    # 2. Generate recommendation for packages with critical security issues
     vuln_packages = components_by_issue.get("Vulnerabilities", [])
     if vuln_packages:
         recommendations.append(
@@ -130,8 +125,8 @@ def process_quality(findings: List[ModelOrDict]) -> List[Recommendation]:
             )
         )
 
-    # 3. Generate recommendation for low-score packages (general quality concern)
-    if low_score_packages and not unmaintained_packages:  # Don't duplicate if already covered
+    # Skip when unmaintained packages already cover these.
+    if low_score_packages and not unmaintained_packages:
         recommendations.append(
             Recommendation(
                 type=RecommendationType.SUPPLY_CHAIN_RISK,
@@ -168,7 +163,6 @@ def process_quality(findings: List[ModelOrDict]) -> List[Recommendation]:
             )
         )
 
-    # 4. Generate recommendations for specific check failures
     code_review_issues = components_by_issue.get("check:Code-Review", [])
     if code_review_issues:
         recommendations.append(

@@ -11,7 +11,6 @@ from app.core.metrics import chat_ollama_requests_total, chat_ollama_queue_depth
 
 logger = logging.getLogger(__name__)
 
-# Track concurrent requests
 _active_requests = 0
 
 
@@ -31,15 +30,7 @@ class OllamaClient:
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]] = None,
     ) -> AsyncIterator[Dict[str, Any]]:
-        """
-        Stream a chat completion from Ollama.
-
-        Yields dicts with keys:
-        - {"type": "token", "content": "..."} for text tokens
-        - {"type": "tool_call", "function": {"name": "...", "arguments": {...}}} for tool calls
-        - {"type": "done", "total_tokens": N, "eval_rate": N} on completion
-        - {"type": "error", "message": "..."} on failure
-        """
+        """Stream a chat completion, yielding token / tool_call / done / error dicts keyed by "type"."""
         global _active_requests
 
         payload: Dict[str, Any] = {
@@ -90,7 +81,6 @@ class OllamaClient:
 
                         message = chunk.get("message", {})
 
-                        # Tool calls
                         if message.get("tool_calls"):
                             for tc in message["tool_calls"]:
                                 yield {
@@ -98,7 +88,6 @@ class OllamaClient:
                                     "function": tc.get("function", {}),
                                 }
 
-                        # Text content
                         content = message.get("content", "")
                         if content:
                             yield {"type": "token", "content": content}

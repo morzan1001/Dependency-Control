@@ -1,15 +1,10 @@
-"""
-Type definitions for the analysis module.
-
-Provides type-safe definitions for data structures used in analysis.
-"""
+"""Type definitions for the analysis module."""
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional, TypedDict
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-# Type alias for the database connection
 Database = AsyncIOMotorDatabase
 
 
@@ -98,9 +93,7 @@ class VulnerabilityInfo(TypedDict, total=False):
     severity: str
     reachability_level: str
     reachable_functions: List[str]
-    # B9: True only when the underlying confidence_score cleared the
-    # REACHABILITY_HIGH_CONFIDENCE_THRESHOLD. UIs can use this to mark
-    # findings that are reachable on solid evidence vs. heuristic ones.
+    # True only when confidence_score cleared REACHABILITY_HIGH_CONFIDENCE_THRESHOLD.
     is_high_confidence: bool
 
 

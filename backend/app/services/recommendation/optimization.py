@@ -15,18 +15,9 @@ def identify_quick_wins(
     vuln_findings: List[ModelOrDict],
     dependencies: List[ModelOrDict],
 ) -> List[Recommendation]:
-    """
-    Identify quick wins - updates that fix many issues with minimal effort.
-
-    Quick wins are:
-    - Direct dependencies (easy to update)
-    - Have a fixed version available
-    - Fix multiple vulnerabilities
-    - Or fix critical/KEV vulnerabilities
-    """
+    """Identify quick wins - single updates that fix many or critical/KEV vulnerabilities."""
     recommendations = []
 
-    # Group vulnerabilities by package
     vulns_by_package: Dict[str, List[ModelOrDict]] = defaultdict(list)
     for f in vuln_findings:
         component = get_attr(f, "component", "")
@@ -34,19 +25,16 @@ def identify_quick_wins(
         if component and isinstance(details, dict) and details.get("fixed_version"):
             vulns_by_package[component].append(f)
 
-    # Create a set of direct dependencies
     direct_deps = set()
     for dep in dependencies:
         if get_attr(dep, "direct", False):
             direct_deps.add(get_attr(dep, "name", ""))
 
-    # Find packages where one update fixes multiple issues
     quick_wins = []
     for pkg, vulns in vulns_by_package.items():
         if len(vulns) < 2:
             continue
 
-        # Get all fixed versions
         fixed_versions: List[str] = []
         for v in vulns:
             v_details = get_attr(v, "details", {})
@@ -56,7 +44,6 @@ def identify_quick_wins(
                     fixed_versions.append(fv)
         fixed_versions = list(set(fixed_versions))
 
-        # Calculate impact
         critical_count = len([v for v in vulns if get_attr(v, "severity") == "CRITICAL"])
         high_count = len([v for v in vulns if get_attr(v, "severity") == "HIGH"])
         kev_count = 0
@@ -67,7 +54,6 @@ def identify_quick_wins(
 
         is_direct = pkg in direct_deps
 
-        # Score the quick win
         score = (
             len(vulns) * QUICK_WIN_SCORING_WEIGHTS["base_per_vuln"]
             + critical_count * QUICK_WIN_SCORING_WEIGHTS["critical"]
@@ -90,10 +76,9 @@ def identify_quick_wins(
             )
         )
 
-    # Sort by score and take top quick wins
     quick_wins.sort(key=lambda x: x.score, reverse=True)
 
-    for qw in quick_wins[:5]:  # Top 5 quick wins
+    for qw in quick_wins[:5]:
         dep_type = "direct dependency" if qw.is_direct else "transitive dependency"
 
         recommendations.append(

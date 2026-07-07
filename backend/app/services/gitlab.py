@@ -28,22 +28,14 @@ from app.repositories import TeamRepository, UserRepository
 
 logger = logging.getLogger(__name__)
 
-# Default timeout for GitLab API requests
 _GITLAB_API_TIMEOUT = 10.0
 
 
 class GitLabService:
     def __init__(self, gitlab_instance: GitLabInstance):
-        """
-        Initialize GitLab service for a specific instance.
-
-        Args:
-            gitlab_instance: The GitLabInstance model (not SystemSettings)
-        """
         self.instance = gitlab_instance
         self.base_url = gitlab_instance.url.rstrip("/")
         self.api_url = f"{self.base_url}/api/v4"
-        # Cache key prefix using instance ID (more reliable than URL hash)
         self._cache_key_prefix = f"instance:{gitlab_instance.id}"
 
     def _get_cache_key(self, suffix: str) -> str:
@@ -51,34 +43,16 @@ class GitLabService:
         return f"gitlab:{self._cache_key_prefix}:{suffix}"
 
     def _get_auth_headers(self) -> Dict[str, str]:
-        """Build authentication headers using instance token."""
         if not self.instance.access_token:
             raise ValueError(f"No access token configured for GitLab instance '{self.instance.name}'")
         return {"PRIVATE-TOKEN": self.instance.access_token}
 
     @asynccontextmanager
     async def _api_client(self) -> AsyncIterator[InstrumentedAsyncClient]:
-        """
-        Async context manager for authenticated GitLab API client.
-
-        Usage:
-            async with self._api_client() as client:
-                response = await client.get(url)
-        """
         async with InstrumentedAsyncClient("GitLab API", timeout=_GITLAB_API_TIMEOUT) as client:
             yield client
 
     async def _api_get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Optional[httpx.Response]:
-        """
-        Make an authenticated GET request to the GitLab API.
-
-        Args:
-            endpoint: API endpoint (e.g., "/projects/123")
-            params: Optional query parameters
-
-        Returns:
-            Response object if successful, None if no token configured or request failed
-        """
         if not self.instance.access_token:
             return None
 
@@ -94,16 +68,6 @@ class GitLabService:
             return None
 
     async def _api_post(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None) -> Optional[httpx.Response]:
-        """
-        Make an authenticated POST request to the GitLab API.
-
-        Args:
-            endpoint: API endpoint (e.g., "/projects/123/notes")
-            json_data: JSON body data
-
-        Returns:
-            Response object if successful, None if no token configured or request failed
-        """
         if not self.instance.access_token:
             return None
 
@@ -119,16 +83,6 @@ class GitLabService:
             return None
 
     async def _api_put(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None) -> Optional[httpx.Response]:
-        """
-        Make an authenticated PUT request to the GitLab API.
-
-        Args:
-            endpoint: API endpoint
-            json_data: JSON body data
-
-        Returns:
-            Response object if successful, None if no token configured or request failed
-        """
         if not self.instance.access_token:
             return None
 
@@ -149,23 +103,10 @@ class GitLabService:
         params: Optional[Dict[str, Any]] = None,
         max_pages: Optional[int] = 10,
     ) -> Optional[List[Dict[str, Any]]]:
-        """
-        Make paginated GET requests to the GitLab API.
+        """Paginated GET; returns all items or None on failure.
 
-        Automatically fetches all pages up to max_pages.
-
-        Args:
-            endpoint: API endpoint
-            params: Optional query parameters
-            max_pages: Maximum number of pages to fetch (default 10, ~1000 items).
-                Pass ``None`` to fetch ALL pages with no cap (used for membership
-                fetches so large groups are not silently truncated — Finding 17).
-
-        Returns:
-            Combined list of all items from all pages, or None on failure.
-
-        If a finite ``max_pages`` cap is hit while GitLab still reports more pages,
-        a WARNING is logged so operators know the result was truncated.
+        ``max_pages=None`` fetches all pages uncapped; a hit finite cap logs a
+        truncation WARNING.
         """
         if not self.instance.access_token:
             return None
@@ -208,14 +149,13 @@ class GitLabService:
         """True when GitLab signals there are no further pages to fetch."""
         if total_pages and page >= int(total_pages):
             return True
-        # A short page means we've reached the end.
         return len(items) < per_page
 
     @staticmethod
     def _cap_reached(
         endpoint: str, page: int, max_pages: Optional[int], per_page: int, total_pages: Optional[str]
     ) -> bool:
-        """True (and logs a WARNING) when a finite cap is hit while more pages remain (Finding 17)."""
+        """True (and logs a WARNING) when a finite cap is hit while more pages remain."""
         if max_pages is None or page < max_pages:
             return False
         logger.warning(
@@ -229,13 +169,9 @@ class GitLabService:
         return True
 
     async def _get_jwks_uri(self) -> Optional[str]:
-        """
-        Fetches the JWKS URI from the OpenID Connect discovery document.
-        Uses Redis cache for multi-pod compatibility.
-        """
+        """Resolve the JWKS URI from the OIDC discovery document, Redis-cached."""
         cache_key = self._get_cache_key("jwks_uri")
 
-        # Check Redis cache first
         cached_uri = await cache_service.get(cache_key)
         if cached_uri:
             result: str = cached_uri
@@ -243,13 +179,11 @@ class GitLabService:
 
         async with InstrumentedAsyncClient("GitLab OIDC", timeout=10.0) as client:
             try:
-                # Try OpenID Connect discovery endpoint first
                 response = await client.get(f"{self.base_url}/.well-known/openid-configuration")
                 if response.status_code == 200:
                     config = response.json()
                     jwks_uri: str | None = config.get("jwks_uri")
                     if jwks_uri:
-                        # Cache in Redis for all pods
                         await cache_service.set(cache_key, jwks_uri, ttl_seconds=GITLAB_JWKS_URI_CACHE_TTL)
                     return jwks_uri
             except Exception as e:
@@ -303,13 +237,9 @@ class GitLabService:
             return {}
 
     async def get_jwks(self) -> Optional[dict]:
-        """
-        Fetches and caches the JWKS from GitLab.
-        Uses Redis cache for multi-pod compatibility in Kubernetes.
-        """
+        """Fetch and Redis-cache the JWKS from GitLab, retrying on transient failure."""
         cache_key = self._get_cache_key("jwks")
 
-        # Check Redis cache first
         cached_jwks = await cache_service.get(cache_key)
         if cached_jwks:
             result_jwks: dict[Any, Any] = cached_jwks
@@ -335,19 +265,13 @@ class GitLabService:
         await cache_service.delete(cache_key)
 
     async def validate_oidc_token(self, token: str) -> Optional[OIDCPayload]:
-        """
-        Validates a GitLab OIDC token (JWT).
-
-        Handles key rotation by refreshing JWKS cache if key is not found.
-        """
+        """Validate a GitLab OIDC JWT, refreshing JWKS on key rotation."""
         return await _validate_oidc_token(
             token=token,
             get_jwks=self.get_jwks,
             invalidate_cache=self._invalidate_jwks_cache,
             issuer=self.base_url,
-            # `or None` is intentional: normalizes "" -> None so the fail-closed
-            # audience guard in _validate_oidc_token rejects unconfigured instances
-            # (Finding 7 / W1.1). Do not remove.
+            # `or None` normalizes "" -> None so unconfigured instances fail the audience check closed.
             audience=self.instance.oidc_audience or None,
             payload_model=OIDCPayload,
             provider_name="GitLab",
@@ -387,11 +311,7 @@ class GitLabService:
         return False
 
     async def get_merge_request_notes(self, project_id: int, mr_iid: int) -> List[GitLabNote]:
-        """
-        Fetches all notes (comments) from a merge request.
-
-        Uses pagination to fetch all notes (not just first page).
-        """
+        """Fetch all notes (comments) from a merge request."""
         notes = await self._api_get_paginated(f"/projects/{project_id}/merge_requests/{mr_iid}/notes")
         return [GitLabNote(**n) for n in notes] if notes else []
 
@@ -408,31 +328,22 @@ class GitLabService:
         return False
 
     async def get_project_members(self, project_id: int) -> Optional[List[GitLabMember]]:
-        """
-        Fetches all project members using the system-configured gitlab_access_token.
-
-        Uses pagination to fetch all members (not just first page).
-        """
+        """Fetch all project members (including group-inherited) via the system token."""
         if not self.instance.access_token:
             logger.warning("Cannot fetch project members: No system GitLab Access Token configured.")
             return None
 
-        # /members/all includes inherited members (from groups). No page cap
-        # (max_pages=None) so large projects are not silently truncated (Finding 17).
+        # /members/all includes inherited members; uncapped so large projects aren't truncated.
         members = await self._api_get_paginated(f"/projects/{project_id}/members/all", max_pages=None)
         return [GitLabMember(**m) for m in members] if members else None
 
     async def get_group_members(self, group_id: int) -> Optional[List[GitLabMember]]:
-        """
-        Fetches all group members using the system-configured gitlab_access_token.
-
-        Uses pagination to fetch all members (not just first page).
-        """
+        """Fetch all group members via the system token."""
         if not self.instance.access_token:
             logger.warning("Cannot fetch group members: No system GitLab Access Token configured.")
             return None
 
-        # No page cap (max_pages=None) so large groups are not silently truncated (Finding 17).
+        # Uncapped so large groups aren't silently truncated.
         members = await self._api_get_paginated(f"/groups/{group_id}/members/all", max_pages=None)
         return [GitLabMember(**m) for m in members] if members else None
 
@@ -475,10 +386,8 @@ class GitLabService:
         group_id = namespace.id
         group_path = namespace.full_path
 
-        # Apply team_sync_depth to determine team granularity.
-        # depth=1: "mo/edge/k8s/app" -> team "mo" (top-level only)
-        # depth=2: "mo/edge/k8s/app" -> team "mo/edge"
-        # depth=0: full path (legacy behavior)
+        # team_sync_depth sets team granularity: depth=1 "mo/edge/k8s" -> "mo",
+        # depth=2 -> "mo/edge", depth=0 -> full path.
         depth = getattr(self.instance, "team_sync_depth", 1)
         if depth <= 0:
             return group_id, group_path
@@ -508,19 +417,16 @@ class GitLabService:
     ) -> List[TeamMember]:
         """Resolve each GitLab member to an EXISTING local user and map to TeamMember.
 
-        Members resolved here are always tagged ``source="gitlab"`` (Finding 16) so the
-        merge in ``_upsert_team_with_members`` can distinguish them from manually-added
-        members and refresh only the gitlab-sourced subset. Members without a local
-        account are skipped — sync never creates users (see ``_find_user``).
+        Tagged ``source="gitlab"`` so the merge in ``_upsert_team_with_members`` refreshes
+        only the gitlab-sourced subset. Members without a local account are skipped — sync
+        never creates users (see ``_find_user``).
         """
         team_members: List[TeamMember] = []
         for member in gitlab_members:
             user = await self._find_user(member, user_repo)
             if not user:
-                # Member has no Dependency Control account yet (never logged in) or is a
-                # GitLab service account / bot (e.g. group_<id>_bot_<hash>). Sync NEVER
-                # creates users — a real member is added once they log in (which creates
-                # their account via OIDC) and the next sync runs.
+                # No local account yet, or a GitLab service account/bot. Sync never creates
+                # users; a real member is added on their next sync after logging in via OIDC.
                 logger.debug(
                     "Skipping GitLab member with no local account (username=%s, access_level=%s).",
                     member.username,
@@ -539,20 +445,14 @@ class GitLabService:
     ) -> Optional[Dict[str, Any]]:
         """Resolve a GitLab member to an EXISTING local user (by email, else username).
 
-        Returns None when the member has no Dependency Control account. Sync NEVER creates
-        users: doing so pulled GitLab service accounts / bots (e.g. ``group_<id>_bot_<hash>``)
-        into Dependency Control even though they never signed in. A real user is added to the
-        team the next time the sync runs after they have logged in (which creates their
-        account via OIDC).
+        Returns None when the member has no local account; sync never creates users.
         """
         if member.email:
-            # Case-insensitive: GitLab may return the member email in a different case than
-            # the address stored at OIDC login; an exact match would silently drop a real member.
+            # Case-insensitive: OIDC-login email may differ in case, and an exact match
+            # would silently drop a real member.
             return await user_repo.get_raw_by_email_ci(member.email)
         if member.username:
-            # Best-effort fallback for email-less members. Accepted trade-off: a collision-
-            # suffixed DC username (alice -> alice1) won't match, and a same-handle account from
-            # another auth provider could match — email is the reliable key and the primary path.
+            # Best-effort fallback for email-less members; email is the reliable key.
             return await user_repo.get_raw_by_username(member.username)
         return None
 
@@ -561,22 +461,16 @@ class GitLabService:
         existing_members: List[Dict[str, Any]],
         gitlab_members: List[TeamMember],
     ) -> List[Dict[str, Any]]:
-        """Merge freshly-fetched GitLab members into the existing member list (Finding 16).
+        """Merge freshly-fetched GitLab members into the existing member list.
 
-        Rules:
-        * Existing ``source == "manual"`` members are KEPT (never dropped by sync).
-        * The existing ``source == "gitlab"`` subset is discarded and REPLACED by the
-          freshly-fetched ``gitlab_members`` (so departed GitLab members disappear).
-        * If a user is both a manual member and present in the GitLab subset, the
-          gitlab-sourced entry WINS (its role/source) and the user is not duplicated.
+        Manual members are kept; the gitlab-sourced subset is replaced by
+        ``gitlab_members`` (departed members disappear); on overlap the gitlab entry wins.
         """
         merged: Dict[str, Dict[str, Any]] = {}
-        # Start with the manually-added members; legacy/untagged members are treated
-        # as manual (the model default) so pre-existing members are preserved.
+        # Untagged members default to manual so pre-existing members are preserved.
         for raw in existing_members:
             if raw.get("source", "manual") != "gitlab":
                 merged[raw["user_id"]] = {**raw, "source": "manual"}
-        # Overlay the fresh gitlab subset; gitlab entry wins for a synced user.
         for gm in gitlab_members:
             merged[gm.user_id] = gm.model_dump()
         return list(merged.values())
@@ -593,8 +487,7 @@ class GitLabService:
     ) -> Optional[str]:
         now = datetime.now(timezone.utc)
         if existing_team:
-            # MERGE rather than REPLACE (Finding 16): keep manually-added members and
-            # refresh only the gitlab-sourced subset with the freshly-fetched members.
+            # Merge, not replace: keep manual members, refresh only the gitlab-sourced subset.
             merged_members = self._merge_team_members(existing_team.get("members") or [], team_members)
             update_data: dict = {
                 "members": merged_members,
@@ -650,11 +543,8 @@ class GitLabService:
                     f"Failed to fetch members for group '{team_name}' (group_id={group_id}) "
                     f"while syncing project_id={gitlab_project_id}. Skipping member sync."
                 )
-                # Match ONLY by the (instance, group) composite key. A name-based
-                # fallback is unsafe: two GitLab instances owning a group with the
-                # same path produce the same team_name and would collide cross-tenant
-                # (Finding 8). Legacy synced teams are reconciled by the one-time
-                # backfill in init_db, not at runtime.
+                # Match ONLY by the (instance, group) composite key. A name-based fallback
+                # is unsafe: two instances owning a same-path group would collide cross-tenant.
                 team = await team_repo.get_raw_by_gitlab_group(instance_id, group_id)
                 if team:
                     return str(team["_id"])
@@ -664,8 +554,7 @@ class GitLabService:
                 )
                 return None
 
-            # Match ONLY by the (instance, group) composite key (Finding 8). See the
-            # comment in the no-members branch above for why the name fallback is gone.
+            # Match ONLY by the (instance, group) composite key (see no-members branch above).
             existing_team = await team_repo.get_raw_by_gitlab_group(instance_id, group_id)
             team_members = await self._build_team_members(members, user_repo)
             return await self._upsert_team_with_members(

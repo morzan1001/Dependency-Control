@@ -1,10 +1,4 @@
-"""
-ISO/IEC 19790 compliance framework — algorithm-level.
-
-Wraps FIPS 140-3 (the two standards are technically aligned via ISO 19790:2012
-Annex D <-> FIPS 140-3 mapping). Exposes the same controls but with ISO-style
-identifiers and name.
-"""
+"""ISO/IEC 19790 algorithm-level framework; wraps FIPS 140-3 with ISO identifiers."""
 
 from functools import cached_property
 from typing import List, Optional
@@ -34,10 +28,7 @@ class Iso19790Framework:
 
     @cached_property
     def controls(self) -> List[ControlDefinition]:
-        # Rebuild the disallowed-category controls with the ISO prefix so
-        # the closure-captured control_id matches the framework. Reusing
-        # the FIPS controls would carry FIPS-140-3-* identifiers into the
-        # ISO report (the closure captures the original prefix).
+        # rebuild with ISO prefix so closure-captured control_ids match this framework
         out = build_disallowed_algorithm_controls(self._fips.data, control_id_prefix="ISO-19790")
         out.append(
             ControlDefinition(

@@ -14,14 +14,10 @@ def analyze_regressions(
     current_findings: List[ModelOrDict],
     previous_findings: List[ModelOrDict],
 ) -> List[Recommendation]:
-    """
-    Detect regressions - vulnerabilities that were fixed but have returned.
-    """
+    """Detect regressions - vulnerabilities that were fixed but have returned."""
     recommendations = []
 
-    # Create sets of finding identifiers
     def finding_key(f: ModelOrDict) -> str:
-        """Create a unique key for a finding."""
         if get_attr(f, "type") == "vulnerability":
             details = get_attr(f, "details", {})
             cve = details.get("cve_id") or details.get("id") or get_attr(f, "id")
@@ -30,22 +26,18 @@ def analyze_regressions(
         else:
             return f"{get_attr(f, 'type')}:{get_attr(f, 'component')}:{get_attr(f, 'id')}"
 
-    # Build sets for comparison
     previous_keys = {finding_key(f) for f in previous_findings}
 
-    # Find new findings (not in previous scan)
     new_findings = []
     for f in current_findings:
         key = finding_key(f)
         if key not in previous_keys:
             new_findings.append(f)
 
-    # Categorize new findings
     new_vulns = [f for f in new_findings if get_attr(f, "type") == "vulnerability"]
     new_critical = [f for f in new_vulns if get_attr(f, "severity") == "CRITICAL"]
     new_high = [f for f in new_vulns if get_attr(f, "severity") == "HIGH"]
 
-    # Count overall change
     finding_delta = len(current_findings) - len(previous_findings)
 
     if new_critical or new_high:
@@ -140,16 +132,12 @@ def _count_recurring_by_severity(recurring: List[Dict[str, Any]], severity: str)
 def analyze_recurring_issues(
     scan_history: List[ModelOrDict],
 ) -> List[Recommendation]:
-    """
-    Identify issues that keep appearing across multiple scans.
-    These are candidates for waivers or architectural fixes.
-    """
+    """Identify issues that keep appearing across multiple scans."""
     if not scan_history:
         return []
 
     finding_frequency = _build_finding_frequency(scan_history)
 
-    # Find truly recurring issues (appear in N+ scans)
     recurring = [
         {"cve": cve, **data} for cve, data in finding_frequency.items() if data["count"] >= RECURRING_ISSUE_THRESHOLD
     ]
@@ -157,7 +145,6 @@ def analyze_recurring_issues(
     if not recurring:
         return []
 
-    # Sort by frequency and severity
     recurring.sort(
         key=lambda x: (
             x["count"],

@@ -194,9 +194,8 @@ def _is_signature_waiver(waiver: Any) -> bool:
 def _safe_match_signature(raw: dict, context: str) -> Optional[Any]:
     """Build a MatchSignature from a stored dict, returning None (and logging) if malformed.
 
-    Legacy data can carry a `match` sub-document that no longer satisfies the current
-    schema. Skipping the malformed one keeps the recalc reset+reapply from aborting and
-    leaving findings transiently un-waived (Finding 4).
+    Skipping a malformed sub-document keeps the recalc reset+reapply from aborting and
+    leaving findings transiently un-waived.
     """
     from pydantic import ValidationError
 
@@ -311,20 +310,10 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
 
 
 async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -> Optional[Stats]:
-    """
-    Recalculates statistics for a project based on its latest scan and active waivers.
-    This should be called whenever waivers are added, updated, or removed.
+    """Recalculate a project's stats from its latest scan and active waivers.
 
-    WARNING: This function resets ALL waivers for the scan and re-applies them.
-    This is a CRITICAL operation protected by distributed locking to prevent
-    race conditions when multiple pods modify waivers concurrently.
-
-    Args:
-        project_id: The ID of the project to recalculate stats for
-        db: Database connection
-
-    Returns:
-        The calculated Stats object, or None if project not found
+    Resets ALL waivers for the scan and re-applies them under a distributed lock to
+    prevent races when pods modify waivers concurrently. Returns None if project not found.
     """
     from app.repositories import (
         DistributedLocksRepository,
@@ -398,11 +387,8 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         await _apply_waivers(finding_repo, scan_id, legacy)
         await _apply_waivers_signature(finding_repo, waiver_repo, scan_id, loc_waivers)
 
-        # 3. Compute the authoritative full Stats (severity counts, avg risk_score,
-        #    adjusted_risk_score, threat_intel, reachability, prioritized) from the
-        #    single canonical pipeline. This replaces the old partial $sum pipeline
-        #    so recalc no longer clobbers the comprehensive stats. calculate_comprehensive_stats
-        #    reads from PRIMARY for read-after-write consistency.
+        # 3. Compute the authoritative full Stats from the single canonical pipeline.
+        #    calculate_comprehensive_stats reads from PRIMARY for read-after-write consistency.
         stats = await calculate_comprehensive_stats(db, scan_id)
 
         # 4. Calculate ignored count (read from PRIMARY after waiver writes)
@@ -429,16 +415,7 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
 
 
 async def recalculate_all_projects(db: AsyncIOMotorDatabase) -> int:
-    """
-    Recalculates statistics for ALL projects.
-    Use with caution, as this can be resource intensive.
-
-    Args:
-        db: Database connection
-
-    Returns:
-        Number of projects recalculated
-    """
+    """Recalculate stats for ALL projects; returns the number processed. Resource intensive."""
     logger.info("Starting global stats recalculation")
     count = 0
     async for project in db.projects.find({}, {"_id": 1}):

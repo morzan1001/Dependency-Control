@@ -23,8 +23,7 @@ def evaluate_license(
     purl: str,
     policy: LicensePolicy,
 ) -> Optional[Dict[str, Any]]:
-    """Return an issue dict if the license is problematic under `policy`, else None.
-    Severity reductions add ``context_reason`` and ``effective_severity`` for auditability."""
+    """Return an issue dict if the license is problematic under `policy`, else None."""
 
     if license_info.category in (
         LicenseCategory.PERMISSIVE,
@@ -199,8 +198,7 @@ def evaluate_network_copyleft(
     purl: str,
     policy: LicensePolicy,
 ) -> Optional[Dict[str, Any]]:
-    """Network copyleft (AGPL, SSPL): obligations trigger on network interaction.
-    CLI/batch/desktop/embedded deployments are not affected."""
+    """Network copyleft (AGPL, SSPL): obligations trigger on network interaction; CLI/desktop/embedded are exempt."""
     if policy.deployment_model in (
         DeploymentModel.CLI_BATCH,
         DeploymentModel.DESKTOP,
@@ -301,8 +299,7 @@ def evaluate_network_copyleft(
 
 
 def apply_transitive_adjustment(issue: Dict[str, Any], is_transitive: bool) -> None:
-    """Downgrade one severity level for transitive deps — direct deps may
-    abstract away copyleft obligations and dynamic linking may not trigger them."""
+    """Downgrade one severity level for transitive deps, whose copyleft obligations may be abstracted away."""
     if not is_transitive:
         return
 
@@ -349,11 +346,7 @@ def create_issue(
     context_reason: Optional[str] = None,
     effective_severity: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Create a license issue with full context.
-
-    `context_reason` documents why the severity was adjusted; `effective_severity`
-    records the unadjusted severity for audit purposes.
-    """
+    """Create a license issue dict."""
     issue: Dict[str, Any] = {
         "component": component,
         "version": version,

@@ -75,7 +75,7 @@ class NotificationService:
             )
 
         if tasks:
-            # Use return_exceptions=True to prevent one failure from stopping other notifications
+            # return_exceptions so one failure doesn't cancel the others.
             results = await asyncio.gather(*tasks, return_exceptions=True)
             for result in results:
                 if isinstance(result, Exception):
@@ -93,9 +93,7 @@ class NotificationService:
         slack_blocks: Optional[List[Dict[str, Any]]] = None,
         mattermost_props: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """
-        Send a notification to multiple users.
-        """
+        """Send a notification to multiple users."""
         system_settings = None
         if db is not None:
             repo = SystemSettingsRepository(db)
@@ -103,7 +101,6 @@ class NotificationService:
 
         tasks = []
         for user in users:
-            # If forced_channels is set use it, otherwise use user prefs for event
             prefs = {event_type: forced_channels} if forced_channels else (user.notification_preferences or {})
 
             tasks.append(
@@ -139,19 +136,13 @@ class NotificationService:
         slack_blocks: Optional[List[Dict[str, Any]]] = None,
         mattermost_props: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """
-        Send notifications to all active users whose ``permissions`` list contains
-        any of the given permission(s).
-
-        Used for system-scope events (e.g. crypto policy changes) that should
-        reach admins and global analytics viewers regardless of project membership.
-        """
+        """Notify all active users whose permissions include any of the given permission(s)."""
         perms = [permission] if isinstance(permission, str) else list(permission)
         if not perms:
             return
 
         cursor = db.users.find({"permissions": {"$in": perms}, "is_active": True})
-        # Bounded fetch — there are O(admins) in practice; keep a safe ceiling.
+        # Bounded fetch: safe ceiling on the admin-scale result set.
         user_docs = await cursor.to_list(length=1000)
         if not user_docs:
             return
@@ -181,18 +172,13 @@ class NotificationService:
         slack_blocks: Optional[List[Dict[str, Any]]] = None,
         mattermost_props: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """
-        Send notifications to project members.
-        """
-        # Fetch System Settings
+        """Send notifications to project members."""
         repo = SystemSettingsRepository(db)
         system_settings = await repo.get()
 
-        # 1. Identify all target users and their project-specific overrides
-        # Map: user_id -> specific_prefs (or None if no override)
+        # user_id -> project-specific prefs (or None if no override)
         targets: Dict[str, Optional[Dict[str, List[str]]]] = {}
 
-        # 1. Project Members (admins get notified by default)
         if project.members:
             for member in project.members:
                 m_prefs = member.notification_preferences if member.notification_preferences else None
@@ -202,16 +188,15 @@ class NotificationService:
 
                 targets[member.user_id] = m_prefs
 
-        # 1c. Team Members
         if project.team_id:
             team_data = await db.teams.find_one({"_id": project.team_id})
             if team_data:
                 for tm in team_data.get("members", []):
                     uid = tm["user_id"]
                     if uid not in targets:
-                        targets[uid] = None  # No project specific override possible for implicit team members
+                        # implicit team members have no project-specific override
+                        targets[uid] = None
 
-        # 2. Bulk Fetch Users
         user_ids = list(targets.keys())
         if not user_ids:
             return
@@ -220,15 +205,12 @@ class NotificationService:
         users_list = await users_cursor.to_list(length=len(user_ids))
         users_map = {str(u["_id"]): User(**u) for u in users_list}
 
-        # 3. Determine Enforced Settings
         enforced_prefs = None
         if project.enforce_notification_settings and project.members:
-            # Use first admin member's prefs as enforced settings
             admin_member = next((m for m in project.members if m.role == "admin" and m.notification_preferences), None)
             if admin_member:
                 enforced_prefs = admin_member.notification_preferences
 
-        # 4. Iterate and Send
         tasks = []
         for user_id, specific_prefs in targets.items():
             user = users_map.get(user_id)
@@ -239,7 +221,6 @@ class NotificationService:
             if forced_channels:
                 effective_prefs = {event_type: forced_channels}
             else:
-                # Determine effective preferences
                 effective_prefs = user.notification_preferences or {}
 
                 if enforced_prefs:
@@ -247,7 +228,6 @@ class NotificationService:
                 elif specific_prefs:
                     effective_prefs = specific_prefs
 
-            # If effective_prefs is None or empty at this point, checking keys will happen in _send_based_on_prefs
             if not effective_prefs:
                 continue
 
@@ -285,12 +265,7 @@ async def safe_notify_project_event(
     html_message: Optional[str] = None,
     context: str = "notify",
 ) -> None:
-    """Look up the project and dispatch the event to its members.
-
-    Best-effort: a missing project, missing repository, or any provider error
-    is logged but never raised. Mirrors webhook_service.safe_trigger_webhooks
-    so callers can fire-and-forget alongside webhook dispatch.
-    """
+    """Look up the project and dispatch the event to its members; errors are logged, never raised."""
     if not project_id:
         return
     try:

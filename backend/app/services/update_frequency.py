@@ -69,8 +69,8 @@ def classify_version_change(old_version: str, new_version: str) -> str:
     if old_v == new_v:
         return "none"
 
-    old_major, old_minor, old_patch = _release_tuple(old_v)
-    new_major, new_minor, new_patch = _release_tuple(new_v)
+    old_major, old_minor, _ = _release_tuple(old_v)
+    new_major, new_minor, _ = _release_tuple(new_v)
 
     if new_major != old_major:
         return "major"
@@ -445,12 +445,9 @@ async def _load_completed_scans(
     ``hard_limit``) and ``max_scans`` is ignored.
     """
     fetch_limit = hard_limit if since is not None else max_scans
-    # Filter status in the query so the limit counts only completed scans.
-    # Filtering after the limit (the previous behaviour) shrank or emptied the
-    # window whenever the newest ``fetch_limit`` scans were failed/processing —
-    # exactly when a CI pipeline is broken — hiding a long completed history.
-    # ``find_many`` returns Scan models, so project the fields Scan requires
-    # (project_id, branch) alongside the ones we read, then adapt to dicts.
+    # Filter status in the query so the limit counts only completed scans; filtering after
+    # the limit would empty the window when the newest scans are failed/processing.
+    # find_many returns Scan models, so project the fields Scan requires (project_id, branch).
     scans = await scan_repo.find_many(
         {"project_id": project_id, "status": "completed"},
         sort=[("created_at", -1)],

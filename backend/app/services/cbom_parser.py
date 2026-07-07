@@ -1,15 +1,4 @@
-"""
-CBOM Parser
-
-Parses CycloneDX 1.6 `cryptographic-asset` components into ParsedCryptoAsset.
-
-Two entry points:
-- parse_cbom(raw_payload): full CBOM payload (used by /ingest/cbom endpoint)
-- parse_crypto_components(components): component list only (used by sbom_parser
-  when it detects cryptographic-asset types inside a regular SBOM)
-
-Fail-soft: unparseable items are skipped and counted, never crash the caller.
-"""
+"""Parse CycloneDX 1.6 ``cryptographic-asset`` components into ParsedCryptoAsset. Fail-soft: unparseable items are skipped and counted."""
 
 import hashlib
 import logging
@@ -148,11 +137,9 @@ _KEY_SIZE_PROPERTY_NAMES = (
 def _resolve_key_size_bits(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> Optional[int]:
     """Best-effort key-size extraction.
 
-    parameterSetIdentifier is a string in CycloneDX 1.6 (e.g. "P-256",
-    "ML-KEM-1024", "1024"); treat it as a key size only when it's a pure
-    positive integer. Otherwise fall back to well-known custom properties so
-    producers can carry the bit length explicitly. Anything we can't parse
-    leaves key_size_bits as None and the analyzer simply skips that asset.
+    parameterSetIdentifier is a CycloneDX 1.6 string (e.g. "P-256", "1024"); treat it as a
+    key size only when it's a pure positive integer, else fall back to known custom properties.
+    Unparseable leaves key_size_bits None and the analyzer skips the asset.
     """
     asset_label = asset.bom_ref or asset.name or "<unknown>"
 

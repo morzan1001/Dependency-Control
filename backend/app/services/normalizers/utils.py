@@ -1,9 +1,4 @@
-"""
-Shared utility functions for normalizers.
-
-These helpers provide consistent error handling and data normalization
-across all scanner result normalizers.
-"""
+"""Shared helpers for normalizing scanner result data."""
 
 import re
 from typing import Any, Dict, List, Optional, Tuple
@@ -16,33 +11,16 @@ def safe_severity(
     value: Optional[str],
     default: Severity = Severity.UNKNOWN,
 ) -> Severity:
-    """
-    Safely parse a severity string to Severity enum.
-
-    Handles various formats from different scanners and returns
-    a valid Severity enum value, never raises ValueError.
-
-    Args:
-        value: Raw severity string from scanner output
-        default: Fallback severity if parsing fails
-
-    Returns:
-        Valid Severity enum value
-    """
+    """Parse a scanner severity string to a Severity enum, never raising."""
     if not value:
         return default
 
-    # Normalize to uppercase
     normalized = value.strip().upper()
-
-    # Apply aliases
     normalized = SEVERITY_ALIASES.get(normalized, normalized)
 
-    # Try to parse as Severity enum
     try:
         return Severity(normalized)
     except ValueError:
-        # Check if it's a valid enum member name
         try:
             return Severity[normalized]
         except KeyError:
@@ -50,44 +28,22 @@ def safe_severity(
 
 
 def normalize_list(value: str | List[str] | None) -> List[str]:
-    """
-    Normalize a value that could be a string or list to always be a list.
-
-    Args:
-        value: String, list of strings, or None
-
-    Returns:
-        List of strings (empty list if input is None/empty)
-    """
+    """Coerce a string, list, or None into a list of non-empty strings."""
     if not value:
         return []
     if isinstance(value, list):
-        return [v for v in value if v]  # Filter out None/empty values
+        return [v for v in value if v]
     return [value]
 
 
 def normalize_cwe_list(cwe: str | List[str] | None) -> List[str]:
-    """
-    Normalize CWE references to a list of CWE IDs (just the numbers).
-
-    Handles various formats from different scanners:
-    - "327" -> "327"
-    - "CWE-327" -> "327"
-    - "CWE-327: Use of a Broken or Risky Cryptographic Algorithm" -> "327"
-
-    Args:
-        cwe: CWE reference(s) in various formats
-
-    Returns:
-        List of CWE ID numbers as strings
-    """
+    """Extract bare CWE number strings from any scanner CWE format (e.g. "CWE-327" -> "327")."""
     if not cwe:
         return []
 
     cwe_list = normalize_list(cwe)
     result = []
 
-    # Regex to extract CWE number from various formats
     cwe_pattern = re.compile(r"(?:CWE-)?(\d+)", re.IGNORECASE)
 
     for item in cwe_list:
@@ -104,19 +60,7 @@ def safe_get(
     key: str,
     default: Any = "",
 ) -> Any:
-    """
-    Safely get a value from a dict with a default fallback.
-
-    Unlike dict.get(), this also handles None values by returning the default.
-
-    Args:
-        data: Dictionary to get value from
-        key: Key to look up
-        default: Value to return if key is missing or value is None
-
-    Returns:
-        Value from dict or default
-    """
+    """Like dict.get but returns default when the value is None, not just missing."""
     value = data.get(key)
     return value if value is not None else default
 
@@ -126,18 +70,7 @@ def build_finding_id(
     *parts: Any,
     separator: str = "-",
 ) -> str:
-    """
-    Build a unique finding ID from parts, handling None/empty values safely.
-
-    Args:
-        prefix: ID prefix (e.g., "MALWARE", "CVE", "SAST")
-        *parts: Variable parts to include in the ID
-        separator: Separator between parts
-
-    Returns:
-        Finding ID string like "PREFIX-part1-part2"
-    """
-    # Filter out None and empty values, convert to strings
+    """Build a finding ID like "PREFIX-part1-part2", skipping None/empty parts."""
     valid_parts = [str(p) for p in parts if p]
 
     if not valid_parts:
@@ -147,7 +80,6 @@ def build_finding_id(
 
 
 def _find_v3_score(cvss_data: Dict[str, Any], source_priority: List[str]) -> Tuple[Optional[float], Optional[str]]:
-    """Search for a CVSS V3 score across sources in priority order."""
     for source in source_priority:
         data = cvss_data.get(source)
         if not data or "V3Score" not in data:
@@ -162,31 +94,17 @@ def extract_cvss(
     cvss_data: Dict[str, Any],
     prefer_v3: bool = True,
 ) -> Tuple[Optional[float], Optional[str]]:
-    """
-    Extract CVSS score and vector from various scanner formats.
-
-    Handles Trivy and Grype CVSS structures with preference for CVSS v3.
-
-    Args:
-        cvss_data: CVSS data from scanner output
-        prefer_v3: Whether to prefer CVSS v3 over v2
-
-    Returns:
-        Tuple of (score, vector) or (None, None) if not available
-    """
+    """Extract a (score, vector) CVSS pair from Trivy/Grype data, preferring v3."""
     if not cvss_data:
         return None, None
 
-    # Priority order for sources
     source_priority = ["nvd", "redhat", "ghsa", "bitnami"]
 
-    # Check V3 first (preferred) across all sources
     if prefer_v3:
         v3_result = _find_v3_score(cvss_data, source_priority)
         if v3_result[0] is not None:
             return v3_result
 
-    # Fall back to V2
     for source in source_priority:
         if source not in cvss_data:
             continue
@@ -202,18 +120,7 @@ def extract_cvss(
 def extract_grype_cvss(
     cvss_list: List[Dict[str, Any]],
 ) -> Tuple[Optional[float], Optional[str]]:
-    """
-    Extract best CVSS score from Grype's CVSS list format.
-
-    Grype returns CVSS as a list of objects with version info.
-    We prefer the highest version (3.1 > 3.0 > 2.0).
-
-    Args:
-        cvss_list: List of CVSS objects from Grype
-
-    Returns:
-        Tuple of (score, vector) or (None, None) if not available
-    """
+    """Pick the highest-version CVSS (score, vector) from Grype's CVSS list."""
     if not cvss_list:
         return None, None
 
@@ -221,7 +128,6 @@ def extract_grype_cvss(
     best_version: Tuple[int, ...] = (0, 0)
 
     def _parse_cvss_version(v: str) -> Tuple[int, ...]:
-        """Parse CVSS version string to numeric tuple for correct comparison."""
         try:
             return tuple(int(p) for p in v.split("."))
         except (ValueError, AttributeError):
@@ -236,7 +142,6 @@ def extract_grype_cvss(
     if not best_cvss:
         return None, None
 
-    # Safely extract score - handle None case
     metrics = best_cvss.get("metrics", {})
     base_score = metrics.get("baseScore") if metrics else None
 
@@ -247,20 +152,7 @@ def extract_grype_cvss(
 
 
 def prefer_cve_as_primary_id(vuln_id: str, aliases: List[str]) -> Tuple[str, List[str]]:
-    """
-    Prefer a CVE ID as the primary vulnerability identifier.
-
-    If the current ID is not a CVE (e.g., GHSA, GO, PYSEC) but a CVE exists
-    in the aliases list, swap them: make the CVE the primary ID and preserve
-    the original ID in aliases.
-
-    Args:
-        vuln_id: Current vulnerability identifier
-        aliases: List of known aliases for this vulnerability
-
-    Returns:
-        Tuple of (primary_id, updated_aliases)
-    """
+    """Swap a non-CVE primary id with a CVE from aliases, keeping the original as an alias."""
     cve_alias = next((a for a in aliases if a.startswith("CVE-")), None)
     if cve_alias and vuln_id and not vuln_id.startswith("CVE-"):
         if vuln_id not in aliases:

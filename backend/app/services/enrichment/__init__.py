@@ -10,15 +10,7 @@ async def enrich_vulnerability_findings(
     findings: List[Dict[str, Any]],
     github_token: Optional[str] = None,
 ) -> None:
-    """Enrich findings in place using the shared enrichment service.
-
-    The service's HTTP client is a process-lifetime singleton and is
-    intentionally NOT closed here: this function runs concurrently (worker
-    pool + request-time analytics both share ``vulnerability_enrichment_service``),
-    so closing the client at the end of one run would tear it out from under
-    other in-flight runs, causing "client has been closed" errors that the
-    providers silently swallow into missing EPSS/KEV data.
-    """
+    """Enrich findings in place; the shared HTTP client is process-lifetime and must not be closed here (concurrent runs share it)."""
     if github_token:
         vulnerability_enrichment_service.set_github_token(github_token)
     await vulnerability_enrichment_service.enrich_findings(findings)

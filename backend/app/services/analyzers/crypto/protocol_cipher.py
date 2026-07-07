@@ -1,10 +1,5 @@
-"""
-ProtocolCipherSuiteAnalyzer
-
-Matches cipher-suite strings in PROTOCOL crypto assets against the IANA catalog.
-Emits one finding per weak suite, plus optional amplification findings when a
-project rule specifies `match_cipher_weaknesses`.
-"""
+"""Matches cipher-suite strings in protocol assets against the IANA catalog, emitting
+one finding per weak suite plus optional amplification findings for match_cipher_weaknesses rules."""
 
 import logging
 import uuid
@@ -62,9 +57,7 @@ class ProtocolCipherSuiteAnalyzer(Analyzer):
         if db is None or project_id is None or scan_id is None:
             return {"findings": []}
 
-        # Load (and on first call, fetch + Redis-cache) the IANA catalog
-        # lazily — this mirrors the OSV / deps_dev analyzers which also
-        # fetch their upstream data on-demand rather than at __init__ time.
+        # Load the IANA catalog lazily (first call fetches and Redis-caches it).
         self._catalog = await load_iana_catalog()
 
         try:

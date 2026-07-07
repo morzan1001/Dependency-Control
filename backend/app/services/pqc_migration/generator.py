@@ -1,8 +1,4 @@
-"""
-PQC migration plan generator. Turns a list of quantum-vulnerable crypto
-assets into a priority-ranked migration plan with NIST-standardised
-PQC replacements.
-"""
+"""Turns quantum-vulnerable crypto assets into a priority-ranked PQC migration plan."""
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
@@ -134,17 +130,9 @@ class PQCMigrationPlanGenerator:
         self,
         resolved: ResolvedScope,
     ) -> List[CryptoAsset]:
-        """Return all quantum-vulnerable assets across the resolved project IDs.
-
-        Picks the most recent completed/partial scan per project and filters
-        to assets with a quantum-vulnerable primitive and a known mapping.
-        """
+        """Quantum-vulnerable assets from the latest scan of each resolved project."""
         out: List[CryptoAsset] = []
-        # resolved.project_ids is None for global scope, meaning "all
-        # projects" (ScopeResolver._resolve_global). Coercing None to [] would
-        # silently yield an all-clear plan for admins, so enumerate every
-        # project that has a usable scan instead. An explicit empty list still
-        # means "no projects".
+        # None project_ids means global scope (all projects); an explicit [] means none.
         if resolved.project_ids is None:
             project_ids = await self._all_project_ids()
         else:
@@ -174,25 +162,14 @@ class PQCMigrationPlanGenerator:
         return filtered
 
     async def _all_project_ids(self) -> List[str]:
-        """Distinct project ids that have at least one usable scan.
-
-        Mirrors the "all projects" semantics of engine/analytics scan-id
-        selection (a None project filter means unrestricted) so global-scope
-        migration plans cover every project instead of returning nothing.
-        """
+        """Distinct project ids that have at least one completed/partial scan."""
         return await self.db.scans.distinct(
             "project_id",
             {"status": {"$in": ["completed", "partial"]}},
         )
 
     async def _latest_scan_for_project(self, project_id: str) -> Optional[dict]:
-        """Most recent completed/partial scan for a project, or None.
-
-        Pushes the status filter and the sort into MongoDB so the driver
-        only fetches one document; previously the code pulled up to 1000
-        scans per project and filtered in memory, which silently dropped
-        older scans on high-volume projects and wasted bandwidth.
-        """
+        """Most recent completed/partial scan for a project, or None."""
         cursor = (
             self.db.scans.find(
                 {

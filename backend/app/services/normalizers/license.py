@@ -8,16 +8,13 @@ if TYPE_CHECKING:
 
 
 def normalize_license(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
-    """Normalize license compliance findings."""
     for item in result.get("license_issues") or []:
-        # Safely parse severity with fallback
         severity = safe_severity(item.get("severity"), default=Severity.MEDIUM)
 
         component = item.get("component")
         version = item.get("version")
         license_name = safe_get(item, "license", "UNKNOWN")
 
-        # Enrich dependency with license data (aggregation)
         if component and version:
             aggregator.enrich_from_license_scanner(component, version, item)
 

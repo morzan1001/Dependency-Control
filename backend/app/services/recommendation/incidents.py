@@ -128,10 +128,7 @@ def _classify_vuln_finding(
 
 
 def detect_known_exploits(vuln_findings: List[ModelOrDict]) -> List[Recommendation]:
-    """
-    Detect vulnerabilities with known exploits (KEV, ransomware, high EPSS).
-    These require immediate action.
-    """
+    """Detect vulnerabilities with known exploits (KEV, ransomware, high EPSS)."""
     recommendations = []
 
     kev_vulns: List[ModelOrDict] = []

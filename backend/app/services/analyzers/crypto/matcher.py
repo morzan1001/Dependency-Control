@@ -1,9 +1,4 @@
-"""
-CryptoRule → CryptoAsset matcher.
-
-Pure function, no I/O. AND semantics: every criterion set on the rule must
-match the asset. Glob matching is case-insensitive.
-"""
+"""CryptoRule -> CryptoAsset matcher. AND semantics; glob matching is case-insensitive."""
 
 from fnmatch import fnmatchcase
 from typing import Any, List, Optional
@@ -20,8 +15,7 @@ _QUANTUM_VULNERABLE_PRIMITIVES = {
 
 
 def rule_matches(asset: CryptoAsset, rule: CryptoRule) -> bool:
-    """True when the asset VIOLATES the rule: it is within the rule's subject
-    scope AND fails any threshold criterion (e.g. key size below the minimum)."""
+    """True when the asset violates the rule: in scope AND below a threshold criterion."""
     if not asset_in_rule_scope(asset, rule):
         return False
 
@@ -35,15 +29,8 @@ def rule_matches(asset: CryptoAsset, rule: CryptoRule) -> bool:
 
 
 def asset_in_rule_scope(asset: CryptoAsset, rule: CryptoRule) -> bool:
-    """True when the asset falls within the rule's SUBJECT scope (primitive /
-    name / curve / protocol / quantum class), IGNORING threshold criteria such
-    as ``match_min_key_size_bits``.
-
-    ``rule_matches`` answers "is this asset a violation?" — a compliant RSA-4096
-    key returns False there via the key-size gate. Compliance applicability
-    instead needs "is the kind of crypto this rule governs present at all?", so a
-    compliant key must still count. This scope-only predicate provides that.
-    """
+    """True when the asset is within the rule's subject scope (primitive/name/curve/
+    protocol/quantum class), ignoring threshold criteria; used for compliance applicability."""
     if rule.match_primitive is not None:
         if _coerce_primitive(asset.primitive) != _coerce_primitive(rule.match_primitive):
             return False
@@ -61,9 +48,8 @@ def asset_in_rule_scope(asset: CryptoAsset, rule: CryptoRule) -> bool:
             return False
 
     if rule.quantum_vulnerable is True:
-        # CryptoRule's validator guarantees match_name_patterns is non-empty
-        # when quantum_vulnerable=True, so the pattern match was already
-        # enforced above. We only need the primitive gate here.
+        # match_name_patterns is validator-guaranteed non-empty here, so only the
+        # primitive gate remains.
         if _coerce_primitive(asset.primitive) not in _QUANTUM_VULNERABLE_PRIMITIVES:
             return False
 

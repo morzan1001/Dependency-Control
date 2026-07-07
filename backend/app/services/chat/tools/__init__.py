@@ -1,14 +1,9 @@
-"""Chat tool definitions and execution dispatch.
-
-External collaborators are re-exported here so ``unittest.mock.patch`` can
-target ``app.services.chat.tools.<NAME>``; crypto tool functions resolve them
-lazily through this package's namespace.
-"""
+"""Chat tool definitions and execution dispatch."""
 
 import logging
 
-# These re-exports must be defined BEFORE the crypto_tools import so the
-# patched references stay reachable via the package namespace at call time.
+# Re-exports must precede the crypto_tools import so crypto tools resolve them
+# lazily via this package namespace (kept patchable by unittest.mock.patch).
 from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.schemas.compliance import ReportFramework

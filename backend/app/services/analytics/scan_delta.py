@@ -23,8 +23,7 @@ class InvalidDeltaQuery(ValueError):
     """Raised when scan-delta query parameters are mutually inconsistent."""
 
 
-# Public API accepts severities case-insensitively; we lower-case them in
-# the response envelope. The actual Severity enum stores UPPERCASE values.
+# Severities accepted case-insensitively; the Severity enum stores UPPERCASE.
 _VALID_SEVERITIES = {s.value.lower() for s in Severity}
 _VALID_FINDING_TYPES = {t.value for t in FindingType}
 _VALID_CHANGES_BY_CATEGORY = {
@@ -44,9 +43,7 @@ def _reject_unknown(
     *,
     case_insensitive: bool = False,
 ) -> None:
-    """Raise if any value is outside ``allowed``. Preserves user-typed
-    casing in the error so a ``?severity=CRITICLA`` typo is echoed back
-    verbatim, while still matching against the lowercase canonical set."""
+    """Raise if any value is outside ``allowed``, echoing user-typed casing in the error."""
     if case_insensitive:
         unknown = [v for v in values if v.lower() not in allowed]
     else:
@@ -77,9 +74,6 @@ def _validate_query(
     if category != "findings" and (severity or finding_type):
         raise InvalidDeltaQuery("severity and finding_type are only valid with category=findings")
     if severity:
-        # Severity values are matched case-insensitively; the service
-        # normalises to uppercase before querying Mongo (Severity enum is
-        # stored UPPERCASE).
         _reject_unknown(severity, _VALID_SEVERITIES, "severity", case_insensitive=True)
     if finding_type:
         _reject_unknown(finding_type, _VALID_FINDING_TYPES, "finding_type")

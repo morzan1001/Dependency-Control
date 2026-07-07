@@ -1,9 +1,4 @@
-"""
-CertificateLifecycleAnalyzer
-
-One class, seven check methods. Each check is independent and fail-soft:
-a failure in one check does not block the others.
-"""
+"""Certificate lifecycle checks; each check is independent and fail-soft."""
 
 import logging
 import uuid
@@ -23,8 +18,7 @@ from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 logger = logging.getLogger(__name__)
 
-# Static NIST baseline used only when the effective crypto policy defines no
-# corresponding rule (so cert checks still work on an empty policy).
+# Static NIST baseline used only when the effective policy defines no matching rule.
 _WEAK_HASH_NAMES = {"MD5", "MD-5", "SHA-1", "SHA1"}
 
 _MIN_KEY_SIZES = {
@@ -53,9 +47,7 @@ def _rule_severity(rule: CryptoRule) -> Severity:
 
 
 def _matching_hash_rule(algo: CryptoAsset, rules: List[CryptoRule]) -> Optional[CryptoRule]:
-    """The first enabled hash-primitive policy rule that matches this algorithm,
-    using the canonical glob-aware matcher (so policy name globs like 'SHA-2*'
-    are honored, not just exact literals — audit MF5)."""
+    """First enabled hash-primitive rule matching this algorithm via glob-aware matcher."""
     for rule in rules:
         if not rule.enabled or _coerce_primitive(rule.match_primitive) != CryptoPrimitive.HASH:
             continue
@@ -73,9 +65,7 @@ def _is_static_weak_hash(algo: CryptoAsset) -> bool:
 
 
 def _min_key_sizes(rules: List[CryptoRule]) -> Dict[CryptoPrimitive, int]:
-    """Minimum key sizes per primitive sourced from the policy (strictest rule
-    wins), with the static baseline filling in any primitive the policy does not
-    constrain — so a CNSA 2.0 / 3072-bit requirement actually takes effect."""
+    """Per-primitive minimum key sizes: strictest policy rule wins, static baseline fills gaps."""
     mins: Dict[CryptoPrimitive, int] = {}
     for rule in rules:
         if not rule.enabled or rule.match_min_key_size_bits is None:
@@ -158,7 +148,7 @@ class CertificateLifecycleAnalyzer(Analyzer):
         if cert.not_valid_after is None:
             return []
         na = _ensure_aware(cert.not_valid_after)
-        delta = now - na  # positive when expired
+        delta = now - na
         if delta.total_seconds() <= 0:
             return []
         days_expired = int(delta.total_seconds() // 86400)
@@ -249,14 +239,11 @@ class CertificateLifecycleAnalyzer(Analyzer):
         if _coerce_primitive(algo.primitive) != CryptoPrimitive.HASH:
             return []
 
-        # Policy-driven (glob-aware) match at the matching rule's own severity.
         matched = _matching_hash_rule(algo, rules)
         if matched is not None:
             severity = _rule_severity(matched)
             rule_id: Optional[str] = matched.rule_id
         elif not _has_hash_rule(rules) and _is_static_weak_hash(algo):
-            # Fallback to the static NIST baseline only when the policy defines
-            # no hash rules at all.
             severity = Severity.HIGH
             rule_id = None
         else:
@@ -282,10 +269,7 @@ class CertificateLifecycleAnalyzer(Analyzer):
         rules: List[CryptoRule],
         algo_by_ref: Dict[str, CryptoAsset],
     ) -> List[Dict[str, Any]]:
-        # Judge the certificate's OWN subject public key, not the CA's signing
-        # key (signature_algorithm_ref). Without a resolvable subject key we
-        # cannot substantiate a weak-key verdict, so we emit nothing rather than
-        # asserting one about a key the data doesn't represent.
+        # Judge the cert's own subject public key, not the CA's signing key.
         if not cert.subject_public_key_ref:
             return []
         algo = algo_by_ref.get(cert.subject_public_key_ref)

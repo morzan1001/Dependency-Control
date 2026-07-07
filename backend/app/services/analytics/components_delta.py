@@ -1,10 +1,6 @@
-"""
-Components-delta computation: matches SBOM components across two scans by
-purl with the version stripped, so that a version bump appears as
-``version_changed`` rather than added+removed. License changes on an
-otherwise-stable component appear as ``license_changed``. A component that
-changed both version and license is emitted as a single ``version_changed``
-entry with both transitions populated.
+"""Components-delta: match SBOM components across two scans by version-stripped purl,
+so a version bump reads as ``version_changed`` (with both transitions) rather than
+added+removed, and a license-only change reads as ``license_changed``.
 """
 
 from __future__ import annotations
@@ -31,15 +27,12 @@ def component_identity_key(comp: Dict) -> Tuple[str, str]:
     """
     purl = comp.get("purl")
     if purl and purl.startswith("pkg:"):
-        # pkg:<type>/<namespace>/<name>@<version>?qualifiers#subpath
+        # purl: pkg:<type>/<namespace>/<name>@<version>?qualifiers#subpath
         body = purl[4:]
-        # Strip qualifiers/subpath first so a '@' inside them can't be mistaken
-        # for the version separator.
+        # Strip qualifiers/subpath first so a '@' inside them isn't read as the version separator.
         body = body.split("?", 1)[0].split("#", 1)[0]
-        # The version separator is the '@' in the final path segment (after the
-        # last '/'). Splitting on the first '@' would wrongly consume the scope
-        # '@' of unencoded npm packages like ``pkg:npm/@scope/name@1.2.3``,
-        # collapsing every scoped package to the same ("npm", "") identity.
+        # Version '@' lives in the final path segment; splitting on the first '@' would
+        # eat the npm scope '@' of pkg:npm/@scope/name@1.2.3 and collapse all scoped packages.
         slash = body.rfind("/")
         name_seg = body[slash + 1 :]
         at = name_seg.rfind("@")
@@ -98,12 +91,7 @@ async def compute_components_delta(
     page_size: int,
     change: Optional[str],
 ) -> ScanDeltaResponse:
-    """Compute the delta between two scans' components.
-
-    Fetches dependency documents for both scans, matches them via the
-    semantic identity key, and produces an envelope summarising
-    added/removed/changed/unchanged counts plus a paginated item list.
-    """
+    """Compute the delta between two scans' components as a paginated envelope."""
     from_docs = await _fetch_components(db, project_id, from_scan)
     to_docs = await _fetch_components(db, project_id, to_scan)
 
@@ -137,8 +125,7 @@ async def compute_components_delta(
         items.extend(version_changed)
         items.extend(license_changed)
 
-    # Sort by (change, name) with purl as a final tiebreaker so pagination is
-    # deterministic regardless of set-iteration order.
+    # Sort with purl tiebreaker so pagination is deterministic across set-iteration order.
     items.sort(key=lambda i: (i.change, i.name, i.purl or ""))
 
     paged, total_pages = paginate(items, page, page_size)

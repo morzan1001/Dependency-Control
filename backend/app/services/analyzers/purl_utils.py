@@ -1,11 +1,4 @@
-"""
-PURL (Package URL) Utilities
-
-Provides centralized parsing and handling of Package URLs (PURLs).
-See: https://github.com/package-url/purl-spec
-
-Format: pkg:type/namespace/name@version?qualifiers#subpath
-"""
+"""PURL parsing. Format: pkg:type/namespace/name@version?qualifiers#subpath. See package-url/purl-spec."""
 
 from typing import Dict, NamedTuple, Optional
 from urllib.parse import unquote
@@ -52,7 +45,6 @@ class ParsedPURL(NamedTuple):
         return self.name
 
 
-# Mapping from PURL types to deps.dev/registry system names
 PURL_TYPE_TO_SYSTEM = {
     "pypi": "pypi",
     "npm": "npm",
@@ -72,19 +64,11 @@ PURL_TYPE_TO_SYSTEM = {
 
 
 def parse_purl(purl: str) -> Optional[ParsedPURL]:
-    """
-    Parse a PURL string into its components.
-
-    Args:
-        purl: Package URL string (e.g., "pkg:pypi/requests@2.31.0")
-
-    Returns:
-        ParsedPURL namedtuple or None if parsing fails
-    """
+    """Parse a PURL string into its components, or None if parsing fails."""
     if not purl or not purl.startswith("pkg:"):
         return None
 
-    # Validate total length to prevent DoS
+    # Bound total length to prevent DoS.
     if len(purl) > MAX_PURL_LENGTH:
         return None
 
@@ -121,7 +105,7 @@ def parse_purl(purl: str) -> Optional[ParsedPURL]:
         if "/" in rest:
             parts = rest.rsplit("/", 1)
             if len(parts) != 2:
-                return None  # Unexpected rsplit result
+                return None
             if purl_type in ("npm",) and rest.startswith("@"):
                 split_parts = rest.split("/", 1)
                 if len(split_parts) != 2:
@@ -134,11 +118,10 @@ def parse_purl(purl: str) -> Optional[ParsedPURL]:
                 namespace = parts[0]
                 name = parts[1]
 
-        # Unquote and validate component lengths
         final_namespace = unquote(namespace) if namespace else None
         final_name = unquote(name)
 
-        # Validate lengths after unquoting (URL decoding can expand strings)
+        # Validate lengths after unquoting, since URL decoding can expand strings.
         if len(final_name) > MAX_NAME_LENGTH:
             return None
         if final_namespace and len(final_namespace) > MAX_NAMESPACE_LENGTH:
@@ -165,7 +148,6 @@ def get_purl_type(purl: str) -> Optional[str]:
         return None
 
     try:
-        # pkg:type/... - extract type before first /
         type_part = purl[4:].split("/")[0].lower()
         return type_part
     except (IndexError, AttributeError):
@@ -173,60 +155,39 @@ def get_purl_type(purl: str) -> Optional[str]:
 
 
 def is_purl_type(purl: str, expected_type: str | tuple[str, ...]) -> bool:
-    """
-    Check if PURL matches expected type(s).
-
-    Args:
-        purl: Package URL
-        expected_type: Single type or tuple of types (e.g., "npm" or ("go", "golang"))
-
-    Returns:
-        True if PURL type matches
-    """
+    """Check if a PURL matches the expected type(s)."""
     purl_type = get_purl_type(purl)
     if isinstance(expected_type, tuple):
         return purl_type in expected_type
     return purl_type == expected_type
 
 
-# Convenience functions (backwards compatibility)
 def is_pypi(purl: str) -> bool:
-    """Check if PURL is a PyPI package."""
     return is_purl_type(purl, "pypi")
 
 
 def is_npm(purl: str) -> bool:
-    """Check if PURL is an npm package."""
     return is_purl_type(purl, "npm")
 
 
 def is_maven(purl: str) -> bool:
-    """Check if PURL is a Maven package."""
     return is_purl_type(purl, "maven")
 
 
 def is_go(purl: str) -> bool:
-    """Check if PURL is a Go package."""
     return is_purl_type(purl, ("go", "golang"))
 
 
 def is_cargo(purl: str) -> bool:
-    """Check if PURL is a Cargo (Rust) package."""
     return is_purl_type(purl, "cargo")
 
 
 def is_nuget(purl: str) -> bool:
-    """Check if PURL is a NuGet package."""
     return is_purl_type(purl, "nuget")
 
 
 def normalize_hash_algorithm(alg: str) -> str:
-    """
-    Normalize a hash algorithm name for consistent comparison.
-
-    Converts to lowercase and removes hyphens.
-    Example: "SHA-256" -> "sha256", "SHA512" -> "sha512"
-    """
+    """Normalize a hash algorithm name (lowercase, no hyphens): "SHA-256" -> "sha256"."""
     if not alg:
         return ""
     return alg.lower().replace("-", "")

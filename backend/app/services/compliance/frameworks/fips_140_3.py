@@ -1,10 +1,4 @@
-"""
-FIPS 140-3 — algorithm-level conformance only.
-
-This framework does NOT check module-level CMVP certification. The title-page
-disclaimer communicates that caveat. Controls check whether any detected
-algorithm appears in the disallowed set from NIST SP 800-140C/D/F.
-"""
+"""FIPS 140-3 algorithm-level conformance; no module-level CMVP certification check."""
 
 from functools import cached_property
 from pathlib import Path
@@ -39,12 +33,7 @@ class Fips1403Framework:
 
     @cached_property
     def data(self) -> Dict[str, Dict[str, List[str]]]:
-        """Public, read-only view of the FIPS approved-functions YAML.
-
-        Exposed so derived frameworks (e.g. ISO 19790) can build their
-        own controls from the same source data without reaching into a
-        private attribute.
-        """
+        """FIPS approved-functions YAML; exposed so derived frameworks (ISO 19790) reuse it."""
         with _DATA_PATH.open() as f:
             loaded = yaml.safe_load(f) or {}
         return loaded if isinstance(loaded, dict) else {}
@@ -63,11 +52,6 @@ class Fips1403Framework:
                 maps_to_finding_types=[FindingType.CRYPTO_WEAK_KEY],
             )
         )
-        # NOTE: A prior FIPS-140-3-ECDSA-APPROVED-CURVES control was removed
-        # here — with an empty maps_to_rule_ids it would either match nothing
-        # (always NOT_APPLICABLE) or, if broadened, double-count every weak-
-        # algorithm finding globally. Disallowed-category controls above
-        # already cover non-approved ECDSA curves via weak_algorithm findings.
         return out
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
@@ -79,10 +63,7 @@ def build_disallowed_algorithm_controls(
     *,
     control_id_prefix: str,
 ) -> List[ControlDefinition]:
-    """Build the disallowed-category controls shared by FIPS 140-3 and the
-    derived ISO 19790 framework. The control_id_prefix lets the caller
-    choose between e.g. ``FIPS-140-3-`` and ``ISO-19790-`` so reports
-    don't accidentally surface a foreign framework's identifiers."""
+    """Disallowed-category controls shared by FIPS 140-3 and ISO 19790; control_id_prefix scopes the identifiers."""
     disallowed: Dict[str, List[str]] = data.get("disallowed") or {}
     out: List[ControlDefinition] = []
     for category, algos in disallowed.items():
@@ -112,9 +93,7 @@ def build_disallowed_algorithm_controls(
     return out
 
 
-# Disallowed-category -> the crypto primitives whose presence makes the control
-# applicable. A control can only legitimately PASS when the project actually
-# contains an asset of the category it governs; otherwise it is NOT_APPLICABLE.
+# Disallowed category -> primitives whose presence makes the control applicable.
 _CATEGORY_PRIMITIVES: Dict[str, frozenset] = {
     "hash_functions": frozenset({"hash"}),
     "symmetric_ciphers": frozenset({"block-cipher", "stream-cipher"}),
@@ -138,10 +117,7 @@ def _make_disallowed_evaluator(
     title: str,
     control_id: str,
 ) -> Callable[[EvaluationInput], ControlResult]:
-    """Return a custom evaluator that walks crypto_assets and flags direct
-    use of any algorithm name in the disallowed list. The control_id is
-    captured by closure so derived frameworks (ISO 19790) emit the right
-    identifier instead of inheriting FIPS' prefix."""
+    """Custom evaluator flagging direct use of a disallowed algorithm name; control_id captured for derived frameworks."""
     norm_disallowed = {a.upper() for a in algos}
     relevant_primitives = _CATEGORY_PRIMITIVES.get(category, frozenset())
 
@@ -157,8 +133,7 @@ def _make_disallowed_evaluator(
                 bom_ref = getattr(asset, "bom_ref", None) or (asset.get("bom_ref") if isinstance(asset, dict) else None)
                 if bom_ref:
                     hits_bom_refs.append(bom_ref)
-        # The control is only applicable when an asset of this category exists;
-        # PASSED on any-crypto-asset would be a false attestation (audit MF4).
+        # only applicable when an asset of this category exists
         category_present = any(
             _asset_primitive_value(asset) in relevant_primitives for asset in data.crypto_assets
         )

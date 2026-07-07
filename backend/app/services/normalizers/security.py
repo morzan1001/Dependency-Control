@@ -8,10 +8,7 @@ if TYPE_CHECKING:
 
 
 def normalize_malware(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
-    """
-    Normalize malware findings from the OpenSourceMalware.com API (os_malware scanner).
-    Note: OpenSSF malware data comes through OSV scanner and is handled by _normalize_osv_malware.
-    """
+    """os_malware scanner findings; OpenSSF malware arrives via OSV, handled elsewhere."""
     for item in result.get("malware_issues") or []:
         malware_info = item.get("malware_info") or {}
         threats = malware_info.get("threats") or []
@@ -51,7 +48,6 @@ def normalize_malware(aggregator: "ResultAggregator", result: Dict[str, Any], so
 def normalize_hash_verification(
     aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
 ) -> None:
-    """Normalize hash verification results into findings."""
     for item in result.get("hash_issues") or []:
         component = safe_get(item, "component", "unknown")
         algorithm = safe_get(item, "algorithm", "unknown")
@@ -60,7 +56,7 @@ def normalize_hash_verification(
         aggregator.add_finding(
             Finding(
                 id=build_finding_id("HASH", component, algorithm),
-                type=FindingType.MALWARE,  # Hash mismatch is a serious supply chain issue
+                type=FindingType.MALWARE,
                 severity=Severity.CRITICAL,
                 component=component,
                 version=version,

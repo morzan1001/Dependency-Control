@@ -46,18 +46,13 @@ class ReleaseInfo:
     published_at: datetime
 
 
-# History is keyed by ``(system, name)`` so packages that share a bare name
-# across ecosystems (e.g. npm "foo" and PyPI "foo") never collide. A plain
-# ``str`` key is still accepted for backward compatibility with callers/tests
-# that pre-date ecosystem-aware keying; such a key is treated as name-only
-# (unknown system).
+# Keyed by ``(system, name)`` so same-named packages across ecosystems don't collide.
+# A plain ``str`` key is treated as name-only (unknown system).
 HistoryKey = Union[str, Tuple[str, str]]
 ReleaseHistory = Dict[HistoryKey, List[ReleaseInfo]]
 
-# An observation is ``(name, version, scan_date)`` or, ecosystem-aware,
-# ``(system, name, version, scan_date)``. The 4-tuple form lets adoption-latency
-# matching disambiguate same-named packages across ecosystems; the 3-tuple form
-# falls back to name-only matching.
+# ``(name, version, scan_date)`` or ecosystem-aware ``(system, name, version, scan_date)``:
+# the 4-tuple disambiguates same-named packages across ecosystems, the 3-tuple matches name-only.
 Observation = Union[Tuple[str, str, datetime], Tuple[str, str, str, datetime]]
 
 
@@ -132,12 +127,9 @@ def compute_adoption_latencies(
 ) -> List[int]:
     """Days between upstream publish and first observed scan, per package/version.
 
-    History and observations are keyed by ``(system, name)`` so same-named
-    packages in different ecosystems don't conflate. An ecosystem-aware
-    observation (with a ``system``) matches its exact ``(system, name, version)``
-    release; a name-only observation falls back to name+version matching for
-    backward compatibility. Observations whose version is missing from the
-    history are skipped.
+    An ecosystem-aware observation matches its exact ``(system, name, version)`` release;
+    a name-only observation matches on name+version. Observations whose version is missing
+    from the history are skipped.
     """
     exact_lookup: Dict[Tuple[str, str, str], datetime] = {}
     name_lookup: Dict[Tuple[str, str], datetime] = {}
@@ -146,9 +138,7 @@ def compute_adoption_latencies(
         for r in releases:
             if system is not None:
                 exact_lookup[(system, name, r.version)] = r.published_at
-            # Name-only fallback for callers that don't supply a system. On a
-            # cross-ecosystem name collision the last write wins — the same
-            # behaviour name-keyed callers had before ecosystem-aware keying.
+            # Name-only fallback for system-less callers; last write wins on a name collision.
             name_lookup[(name, r.version)] = r.published_at
 
     latencies: List[int] = []

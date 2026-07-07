@@ -1,25 +1,4 @@
-"""
-Loader for the IANA TLS cipher-suite catalog.
-
-Follows the same pattern every other external-data analyzer uses
-(OSV, deps.dev, EPSS, GHSA): fetch from the upstream URL on demand,
-cache the parsed result in Redis, fall back to a bundled YAML
-snapshot when the network is unreachable or Redis is unavailable.
-
-Usage:
-    from app.services.analyzers.crypto.catalogs.loader import (
-        CipherSuiteEntry,
-        CURRENT_IANA_CATALOG_VERSION,
-        load_iana_catalog,
-    )
-
-    catalog = await load_iana_catalog()  # Dict[name, CipherSuiteEntry]
-
-Update cadence: IANA publishes new cipher suites rarely (on the order
-of once a year).  The Redis TTL below is one week; fresh deployments
-and pods joining the cluster hit iana.org once until the first cache
-populates, then reuse the shared entry.
-"""
+"""Loader for the IANA TLS cipher-suite catalog with Redis cache and bundled YAML fallback."""
 
 from __future__ import annotations
 
@@ -44,9 +23,9 @@ CURRENT_IANA_CATALOG_VERSION = 1
 _CATALOG_FALLBACK_PATH = Path(__file__).parent / "iana_tls_cipher_suites.yaml"
 _IANA_CSV_URL = "https://www.iana.org/assignments/tls-parameters/tls-parameters-4.csv"
 _IANA_CSV_TIMEOUT = 15.0
-_IANA_CSV_MAX_BYTES = 5 * 1024 * 1024  # 5 MiB — registry is ~200 KiB today
+_IANA_CSV_MAX_BYTES = 5 * 1024 * 1024
 _IANA_CACHE_KEY = "iana:tls_cipher_suites:v1"
-_IANA_CACHE_TTL_SECONDS = 7 * 24 * 3600  # 7 days
+_IANA_CACHE_TTL_SECONDS = 7 * 24 * 3600
 
 _SUITE_PATTERN = re.compile(r"^TLS_")
 
@@ -71,22 +50,12 @@ class CipherSuiteEntry:
     weaknesses: List[str] = field(default_factory=list)
 
 
-# In-process memoization to avoid re-hitting Redis inside a hot analysis
-# loop. Reset via ``reset_iana_cache_for_tests``; expires naturally when
-# the pod is replaced.
 _IN_PROCESS_CACHE: Optional[Dict[str, CipherSuiteEntry]] = None
 _IN_PROCESS_LOCK = asyncio.Lock()
 
 
 async def load_iana_catalog() -> Dict[str, CipherSuiteEntry]:
-    """Return the current IANA TLS cipher-suite catalog.
-
-    Resolution order:
-      1. In-process memoized copy (fast path on the same pod).
-      2. Redis cache (shared across pods, 7-day TTL).
-      3. Live fetch from iana.org + Redis write-through.
-      4. Bundled YAML snapshot (offline / boot-before-internet fallback).
-    """
+    """Return the IANA TLS cipher-suite catalog: in-process, then Redis, then live fetch, then bundled YAML."""
     global _IN_PROCESS_CACHE
     if _IN_PROCESS_CACHE is not None:
         return _IN_PROCESS_CACHE
@@ -119,15 +88,9 @@ async def load_iana_catalog() -> Dict[str, CipherSuiteEntry]:
 
 
 def reset_iana_cache_for_tests() -> None:
-    """Clear the in-process memoized catalog. Tests should call this in
-    teardown when they inject a patched fetch/cache."""
+    """Clear the in-process memoized catalog."""
     global _IN_PROCESS_CACHE
     _IN_PROCESS_CACHE = None
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
 
 
 async def _read_from_redis() -> Optional[List[Dict[str, Any]]]:
@@ -149,11 +112,7 @@ async def _write_to_redis(suites: List[Dict[str, Any]]) -> None:
 
 
 async def _fetch_from_iana() -> Optional[List[Dict[str, Any]]]:
-    """Fetch the CSV from iana.org and parse into suite dicts.
-
-    Returns None on any network / parsing error — callers use the
-    bundled fallback when this happens.
-    """
+    """Fetch and parse the IANA CSV into suite dicts; None on any network/parsing error."""
     try:
         async with httpx.AsyncClient(timeout=_IANA_CSV_TIMEOUT) as client:
             resp = await client.get(_IANA_CSV_URL)
@@ -250,7 +209,6 @@ def _derive_weaknesses(name: str) -> List[str]:
     if "EXPORT" in upper:
         tags.append("export-grade")
 
-    # No forward secrecy: no ephemeral exchange
     if not any(kex in upper for kex in ("ECDHE", "DHE", "ECCPWD")):
         if "_WITH_" in upper:
             tags.append("no-forward-secrecy")

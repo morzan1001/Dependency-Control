@@ -1,10 +1,4 @@
-"""
-Common framework machinery.
-
-`ComplianceFramework` is a Protocol-style interface. Concrete implementations
-live in sibling modules; each defines its control list + optional custom
-evaluators and delegates everything else to the default evaluator here.
-"""
+"""Common framework machinery: the ComplianceFramework protocol and default evaluator."""
 
 import hashlib
 import logging
@@ -32,19 +26,15 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class EvaluationInput:
-    """Data bag passed into framework.evaluate()."""
-
     resolved: ResolvedScope
     scope_description: str
     crypto_assets: List[CryptoAsset]
-    findings: List[dict]  # persisted finding docs (kept dict for flexibility)
+    findings: List[dict]
     policy_rules: List[dict]  # CryptoRule dumps from the effective policy
     policy_version: Optional[int]
     iana_catalog_version: Optional[int]
     scan_ids: List[str]
-    # Populated by engine._gather_inputs for meta-frameworks that need to run
-    # their own queries (e.g. PQC migration plan delegates to a generator).
-    # Typed precisely so consumers (notably PQC) don't need runtime casts.
+    # Set for meta-frameworks that run their own DB queries (e.g. PQC).
     db: Optional[AsyncIOMotorDatabase[Any]] = None
 
 
@@ -58,7 +48,7 @@ class ComplianceFramework(Protocol):
     source_url: str
 
     @property
-    def disclaimer(self) -> Optional[str]:  # shown on report cover (e.g. FIPS)
+    def disclaimer(self) -> Optional[str]:  # shown on report cover
         ...
 
     @property
@@ -71,15 +61,7 @@ def default_evaluator(
     control: ControlDefinition,
     data: EvaluationInput,
 ) -> ControlResult:
-    """Default rule-based evaluator.
-
-    Control is FAILED if any non-waived finding exists whose type is in
-    `maps_to_finding_types` AND whose rule_id is in `maps_to_rule_ids`
-    (if that list is non-empty).
-
-    If all matching findings are waived -> WAIVED. If no crypto assets of the
-    relevant primitive/asset-type exist -> NOT_APPLICABLE. Otherwise PASSED.
-    """
+    """FAILED if any active matching finding, WAIVED if all matched are waived, NOT_APPLICABLE if the subject is absent, else PASSED."""
     matching = [f for f in data.findings if _finding_matches_control(f, control)]
 
     waived_findings = [f for f in matching if f.get("waived")]
@@ -108,14 +90,7 @@ def default_evaluator(
 
 
 def _finding_rule_ids(finding: dict) -> set:
-    """All rule_ids a finding attributes itself to.
-
-    The crypto analyzer dedups to one finding per asset and promotes the
-    strictest rule to ``details.rule_id``, recording every matched rule under
-    ``details.matched_rules`` so cross-framework agreement is preserved. Collect
-    both so a finding led by another framework's rule still counts toward a
-    control that maps to any of the matched rules.
-    """
+    """All rule_ids a finding attributes itself to (lead details.rule_id plus details.matched_rules)."""
     details = finding.get("details") or {}
     ids: set = set()
     if lead_id := details.get("rule_id"):
@@ -139,9 +114,7 @@ def _rules_for_control(
     control: ControlDefinition,
     policy_rules: List[dict],
 ) -> List[CryptoRule]:
-    """Reconstruct the CryptoRule objects this control maps to, from the
-    system-policy dumps in EvaluationInput.policy_rules. Rules absent from the
-    policy (or unparseable) are skipped."""
+    """Reconstruct the CryptoRule objects this control maps to from policy_rules dumps; skip absent/unparseable rules."""
     if not control.maps_to_rule_ids:
         return []
     wanted = set(control.maps_to_rule_ids)
@@ -150,7 +123,7 @@ def _rules_for_control(
         if raw.get("rule_id") in wanted:
             try:
                 rules.append(CryptoRule.model_validate(raw))
-            except Exception:  # pragma: no cover - defensive against malformed dumps
+            except Exception:  # pragma: no cover
                 continue
     return rules
 
@@ -159,25 +132,13 @@ def _is_applicable(
     control: ControlDefinition,
     data: EvaluationInput,
 ) -> bool:
-    """A control is applicable (eligible for PASSED) only when its subject is
-    actually present in the inventory: at least one crypto asset falls within the
-    scope of one of the control's mapped rules. Threshold criteria (e.g. minimum
-    key size) are ignored here — a COMPLIANT asset still makes the control
-    applicable so it can legitimately PASS.
-
-    Without this, a control whose primitive is absent (e.g. an RSA-key-size
-    control on an AES-only project) would report a false PASSED.
-
-    Falls back to inventory presence when the control's rules cannot be resolved
-    from the system policy (e.g. finding-type-only controls), so controls are
-    never silently hidden."""
+    """Applicable (eligible for PASSED) only when at least one crypto asset falls within a mapped rule's scope; falls back to inventory presence when the rules can't be resolved."""
     if not data.crypto_assets:
         return False
     rules = _rules_for_control(control, data.policy_rules)
     if not rules:
-        # A control that declares rule_ids but resolves none indicates policy
-        # drift (rule removed/renamed); warn rather than silently degrade to the
-        # any-asset fallback (audit SC#4).
+        # Declared rule_ids resolve to none -> possible policy drift; warn rather
+        # than silently degrade to the any-asset fallback.
         if control.maps_to_rule_ids:
             logger.warning(
                 "compliance: control %s maps to rule_ids %s but none resolve from the system "
@@ -185,14 +146,11 @@ def _is_applicable(
                 control.control_id,
                 control.maps_to_rule_ids,
             )
-        return True  # cannot scope to a primitive -> preserve inventory-presence behavior
+        return True  # cannot scope to a primitive; fall back to inventory presence
     enabled_rules = [rule for rule in rules if rule.enabled]
     if not enabled_rules:
-        # Every backing rule resolves but is disabled in the policy, so the
-        # crypto analyzer never evaluates them and no finding can ever exist for
-        # this control. Reporting PASSED would be a false attestation -> treat
-        # the control as NOT_APPLICABLE (audit finding: disabled CNSA 2.0 / BSI
-        # rules shipped always-green reports).
+        # Every backing rule is disabled, so no finding can ever exist; PASSED
+        # would be a false attestation -> NOT_APPLICABLE.
         logger.info(
             "compliance: control %s is backed only by disabled rules %s; reporting "
             "NOT_APPLICABLE rather than PASSED",
@@ -216,8 +174,7 @@ def evaluate_framework(
     framework: ComplianceFramework,
     data: EvaluationInput,
 ) -> FrameworkEvaluation:
-    """Shared entry point: run every control and build the top-level
-    FrameworkEvaluation. Framework modules call this from their `evaluate`."""
+    """Run every control and build the FrameworkEvaluation."""
     control_results: List[ControlResult] = []
     for control in framework.controls:
         if control.custom_evaluator is not None:
@@ -243,34 +200,19 @@ def evaluate_framework(
 
 
 def status_value(status: Any) -> str:
-    """Return the plain-string form of a ControlStatus / Severity / etc.
-
-    Centralises the ``x.value if hasattr(x, 'value') else x`` pattern that
-    otherwise gets repeated across every framework and renderer.  Accepts
-    enums, plain strings, or None (returns empty string).
-    """
+    """Plain-string form of a ControlStatus/Severity/enum ('' for None)."""
     if status is None:
         return ""
     return status.value if hasattr(status, "value") else str(status)
 
 
 def extract_finding_id(finding: Dict[str, Any]) -> str:
-    """Best-effort finding ID accessor with _id/id fallback.
-
-    Findings sourced from MongoDB carry ``_id``; in-memory test dicts
-    sometimes carry ``id``. Returns '' when neither is present.
-    """
+    """Finding ID from _id or id ('' when neither is present)."""
     return str(finding.get("_id") or finding.get("id") or "")
 
 
 def _classify(matching: List[Dict[str, Any]]) -> tuple[ControlStatus, List[str]]:
-    """Map a set of matched findings to a control status + evidence ids.
-
-    Empty -> PASSED. Any non-waived (active) finding -> FAILED. Otherwise every
-    matching finding is waived -> WAIVED. Evidence ids are collected only for
-    findings that actually carry an id/_id. Shared verbatim by the license-audit
-    and CVE-remediation-SLA frameworks.
-    """
+    """Map matched findings to (status, evidence_ids): empty -> PASSED, any active -> FAILED, else WAIVED."""
     if not matching:
         return ControlStatus.PASSED, []
     active = [f for f in matching if not f.get("waived")]
@@ -286,7 +228,7 @@ def _waiver_reason(f: Dict[str, Any]) -> str:
 
 
 def build_summary(results: List[ControlResult]) -> Dict[str, int]:
-    """Count controls by status bucket (shared across frameworks)."""
+    """Count controls by status bucket."""
     counts = {"passed": 0, "failed": 0, "waived": 0, "not_applicable": 0, "total": len(results)}
     for r in results:
         key = status_value(r.status)

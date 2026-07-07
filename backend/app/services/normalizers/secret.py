@@ -10,7 +10,6 @@ if TYPE_CHECKING:
 
 
 def _extract_file_path(finding: Dict[str, Any]) -> str:
-    """Extract file path from TruffleHog source metadata."""
     source_metadata = finding.get("SourceMetadata") or {}
     data = source_metadata.get("Data") or {}
 
@@ -26,18 +25,12 @@ def _extract_file_path(finding: Dict[str, Any]) -> str:
 
 
 def normalize_trufflehog(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
-    """Normalize TruffleHog secret scan results."""
-    # TruffleHog structure: {"findings": [TruffleHogFinding objects]}
     for finding in result.get("findings") or []:
         file_path = _extract_file_path(finding)
-        # TruffleHog v3 emits DetectorType as a numeric enum ordinal (e.g. "2")
-        # and the human-readable name in DetectorName. Prefer DetectorName so the
-        # leaked credential type (AWS key vs Slack token) stays recoverable, and
-        # only fall back to the ordinal if the name is missing.
+        # Prefer DetectorName; DetectorType is a numeric ordinal that loses the credential type.
         detector = finding.get("DetectorName") or finding.get("DetectorType") or "Generic Secret"
 
-        # Create a unique ID based on detector, file path, and a non-cryptographic hash of the
-        # secret (avoids storing the raw value in the finding key).
+        # Hash the secret so the raw value never lands in the finding key.
         raw_secret = finding.get("Raw") or ""
         secret_hash = hashlib.md5(raw_secret.encode(), usedforsecurity=False).hexdigest() if raw_secret else "nohash"
 
@@ -56,7 +49,7 @@ def normalize_trufflehog(aggregator: "ResultAggregator", result: Dict[str, Any],
                 type=FindingType.SECRET,
                 severity=Severity.CRITICAL,
                 component=file_path,
-                version="",  # No version for secrets in files
+                version="",  # secrets live in files, not packages
                 description=f"Secret detected: {detector}",
                 scanners=["trufflehog"],
                 details=secret_details,

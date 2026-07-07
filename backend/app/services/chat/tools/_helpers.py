@@ -7,18 +7,12 @@ from app.core.config import settings
 
 
 def _waiver_is_active(waiver: Dict[str, Any], now: Optional[datetime] = None) -> bool:
-    """Return True if the waiver's ``expiration_date`` is absent, null, or in the future.
-
-    Mirrors ``WaiverRepository._non_expired_filter`` so that read-side tools
-    (status checks, listings) report the same active-set as the apply path
-    (``find_active_for_project`` -> ``_apply_waivers``).
-    """
+    """True if expiration_date is absent, null, or in the future; mirrors WaiverRepository._non_expired_filter."""
     expiration: Optional[datetime] = waiver.get("expiration_date")
     if expiration is None:
         return True
     reference = now or datetime.now(timezone.utc)
-    # expiration_date may have been stored timezone-naive in older records;
-    # normalize to UTC so the comparison never raises.
+    # expiration_date may be tz-naive in the DB; normalize to UTC before comparing.
     if expiration.tzinfo is None:
         expiration = expiration.replace(tzinfo=timezone.utc)
     return bool(expiration > reference)
@@ -73,12 +67,7 @@ def _clamp_limit(raw: Any, default: int, maximum: int = MAX_TOOL_LIMIT) -> int:
 
 
 def _ensure_list(value: Any) -> Optional[List[Any]]:
-    """Coerce LLM-supplied scalar to a single-element list.
-
-    Some models send array-typed parameters as a bare string (e.g.
-    ``severity="critical"`` instead of ``severity=["critical"]``). This wraps
-    them so downstream Mongo ``$in`` queries don't misbehave.
-    """
+    """Coerce an LLM-supplied scalar to a single-element list for Mongo ``$in`` queries."""
     if value is None:
         return None
     if isinstance(value, list):
@@ -114,8 +103,7 @@ def _flatten_primary_vuln(out: Dict[str, Any], vulns: List[Dict[str, Any]]) -> N
 
 
 def _serialize_finding_for_llm(doc: Dict[str, Any]) -> Dict[str, Any]:
-    """Compact LLM projection: flattens `details` and the first CVE from
-    `details.vulnerabilities` so CVE ID + fix + EPSS sit at the top level."""
+    """Compact LLM projection: flattens `details` and the first CVE to the top level."""
     if not doc:
         return {}
     out: Dict[str, Any] = {}
@@ -145,8 +133,7 @@ def _parse_major(version: Optional[str]) -> Optional[int]:
 
 
 def _compare_versions(a: str, b: str) -> int:
-    """Naive numeric-tuple comparison (-1/0/1) with lexicographic fallback —
-    good enough to pick the 'largest' fix_version, not a full semver."""
+    """Naive numeric-tuple comparison (-1/0/1) to pick the 'largest' fix_version, not full semver."""
 
     def parts(v: str) -> List[Any]:
         out: List[Any] = []
@@ -185,12 +172,7 @@ def _breaking_risk(current: Optional[str], target: Optional[str]) -> str:
 
 
 def _inject_urls(node: Any) -> None:
-    """Walk a tool result tree and set a 'url' deep-link field on any dict that
-    has enough identifiers, longest-path wins:
-      - project_id + scan_id + id → scan details with finding drawer open
-      - project_id + scan_id → scan details
-      - project_id only → project details
-    """
+    """Set a 'url' deep-link on any dict in the result tree, most-specific id path wins."""
     base = settings.FRONTEND_BASE_URL.rstrip("/")
     if isinstance(node, list):
         for item in node:
@@ -212,9 +194,7 @@ def _inject_urls(node: Any) -> None:
 
 
 def _truncate_if_too_large(result: Dict[str, Any]) -> Dict[str, Any]:
-    """Truncate the largest list in `result` so JSON stays under
-    MAX_TOOL_RESULT_BYTES, preventing a single tool result from blowing the
-    LLM's context window."""
+    """Truncate the largest list in `result` so its JSON stays under MAX_TOOL_RESULT_BYTES."""
     import json as _json
 
     try:

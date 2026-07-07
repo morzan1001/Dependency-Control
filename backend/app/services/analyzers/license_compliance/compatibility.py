@@ -15,9 +15,7 @@ from .normalizer import (
     parse_spdx_expression,
 )
 
-# Restrictiveness ordering used to pick the least-restrictive OR alternative,
-# mirroring analyzer._track_expression_stats / _evaluate_expression so both
-# passes agree on which alternative a dual-licensed component resolves to.
+# Restrictiveness ranking for choosing the least-restrictive OR alternative.
 _CATEGORY_RANK: Dict[LicenseCategory, int] = {
     LicenseCategory.PERMISSIVE: 0,
     LicenseCategory.PUBLIC_DOMAIN: 0,
@@ -29,12 +27,7 @@ _CATEGORY_RANK: Dict[LicenseCategory, int] = {
 
 
 def _least_restrictive_group(or_groups: List[List[str]]) -> List[str]:
-    """Pick the OR-alternative with the lowest restrictiveness.
-
-    Within an alternative, AND-connected licenses all apply, so the group's
-    rank is its most-restrictive member. Across alternatives, the consumer may
-    choose freely, so we keep the least-restrictive group.
-    """
+    """Pick the OR-alternative with the lowest restrictiveness (ranked by its most-restrictive AND-member)."""
     best_rank: Optional[int] = None
     best_group: List[str] = []
     for group in or_groups:
@@ -50,12 +43,7 @@ def _least_restrictive_group(or_groups: List[List[str]]) -> List[str]:
 
 
 def _resolve_component_license_ids(comp: Dict[str, Any]) -> List[str]:
-    """Return the license IDs that actually apply to a component.
-
-    SPDX OR-expressions are resolved to a single chosen alternative (the least
-    restrictive), matching analyzer._analyze_component. Without an OR-expression
-    the component's flat license list applies (AND / comma / multiple entries).
-    """
+    """Return the license IDs that apply, resolving OR-expressions to the least-restrictive alternative."""
     spdx_expr = has_spdx_expression(comp)
     if spdx_expr:
         or_groups = parse_spdx_expression(spdx_expr)
@@ -65,9 +53,7 @@ def _resolve_component_license_ids(comp: Dict[str, Any]) -> List[str]:
 
 def check_pair_conflict(a: Dict[str, Any], b: Dict[str, Any], seen: set) -> Optional[Dict[str, Any]]:
     """Check if two component-license entries conflict. Returns an issue dict or None."""
-    # Licenses drawn from the same component never conflict with each other
-    # (e.g. AND-combined licenses in one package are a packaging reality, not a
-    # cross-component incompatibility).
+    # Licenses from the same component are a packaging reality, not a cross-component conflict.
     if a.get("component_id") is not None and a.get("component_id") == b.get("component_id"):
         return None
 

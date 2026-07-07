@@ -1,11 +1,4 @@
-"""
-Recommendation Engine for Security Findings
-
-Analyzes vulnerabilities, secrets, SAST, IAC, and other findings
-to generate actionable remediation recommendations.
-
-Type-safe implementation using Pydantic models for findings and dependencies.
-"""
+"""Generate actionable remediation recommendations from all finding types."""
 
 import logging
 from collections import defaultdict
@@ -41,12 +34,7 @@ def _safe_extend(
     generator: Callable[[], List[Recommendation]],
     module_name: str,
 ) -> None:
-    """
-    Safely extend recommendations list with error handling.
-
-    Catches exceptions from individual recommendation generators
-    to prevent one failing module from stopping the entire process.
-    """
+    """Extend recommendations from ``generator``, swallowing its exceptions so one module can't abort the rest."""
     try:
         result = generator()
         if result:
@@ -59,15 +47,10 @@ def _safe_extend(
 def _deduplicate_recommendations(
     recommendations: List[Recommendation],
 ) -> List[Recommendation]:
-    """
-    Remove duplicate recommendations based on type and affected components.
-
-    Keeps the recommendation with the highest score when duplicates are found.
-    """
+    """Drop duplicates keyed on (type, component, title, action), keeping the highest-scoring."""
     seen: Dict[Tuple[str, str, str, str], Recommendation] = {}
 
     for rec in recommendations:
-        # Find first valid (non-empty, non-None) component for the key
         primary_component = ""
         for comp in rec.affected_components:
             if comp and isinstance(comp, str) and comp.strip():
@@ -95,7 +78,6 @@ def _deduplicate_recommendations(
         if key not in seen:
             seen[key] = rec
         else:
-            # Keep the one with higher score
             existing_score = common.calculate_score(seen[key])
             new_score = common.calculate_score(rec)
             if new_score > existing_score:
@@ -105,13 +87,9 @@ def _deduplicate_recommendations(
 
 
 class RecommendationEngine:
-    """
-    Generates remediation recommendations based on all finding types.
-    Delegates analysis to specialized modules in app.services.recommendation.
-    """
+    """Generates remediation recommendations, delegating to modules in app.services.recommendation."""
 
     def __init__(self) -> None:
-        # Configuration from constants (instance vars for compatibility)
         self.outdated_threshold_days = OUTDATED_DEPENDENCY_THRESHOLD_DAYS
         self.max_dependency_depth = MAX_DEPENDENCY_DEPTH
 
@@ -162,21 +140,7 @@ class RecommendationEngine:
         scan_history: Optional[Sequence[Dict[str, Any]]] = None,
         cross_project_data: Optional[Dict[str, Any]] = None,
     ) -> List[Recommendation]:
-        """
-        Generate remediation recommendations based on ALL finding types.
-
-        Args:
-            findings: List of all findings (FindingRecord models or dicts)
-            dependencies: List of dependencies (Dependency models or dicts)
-            source_target: The source target (e.g., Docker image name)
-            previous_scan_findings: Findings from previous scan for regression analysis
-            scan_history: History of scans for recurring issue analysis
-            cross_project_data: Data from other projects for cross-project analysis
-
-        Returns:
-            List of prioritized recommendations
-        """
-        # Use empty lists if None
+        """Generate prioritized remediation recommendations across all finding types."""
         findings_list: List[ModelOrDict] = list(findings) if findings else []
         dependencies_list: List[ModelOrDict] = list(dependencies) if dependencies else []
         previous_findings_list: Optional[List[ModelOrDict]] = (

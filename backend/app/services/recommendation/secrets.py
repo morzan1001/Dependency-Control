@@ -10,7 +10,6 @@ def process_secrets(findings: List[ModelOrDict]) -> List[Recommendation]:
     if not findings:
         return []
 
-    # Group secrets by type/detector
     secrets_by_type = defaultdict(list)
     for f in findings:
         details = get_attr(f, "details", {})
@@ -23,7 +22,6 @@ def process_secrets(findings: List[ModelOrDict]) -> List[Recommendation]:
 
     recommendations = []
 
-    # Count severities
     severity_counts: Dict[str, int] = defaultdict(int)
     files_affected = set()
 
@@ -33,13 +31,11 @@ def process_secrets(findings: List[ModelOrDict]) -> List[Recommendation]:
         if component:
             files_affected.add(component)
 
-    # Determine priority
     if severity_counts.get("CRITICAL", 0) > 0 or severity_counts.get("HIGH", 0) > 0:
-        priority = Priority.CRITICAL  # Secrets are always critical
+        priority = Priority.CRITICAL
     else:
         priority = Priority.HIGH
 
-    # Create main recommendation
     secret_types = list(secrets_by_type.keys())[:5]
 
     recommendations.append(

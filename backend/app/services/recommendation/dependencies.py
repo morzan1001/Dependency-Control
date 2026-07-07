@@ -17,11 +17,7 @@ from app.core.constants import (
 def analyze_outdated_dependencies(
     dependencies: List[ModelOrDict],
 ) -> List[Recommendation]:
-    """
-    Identify dependencies that appear to be outdated based on scanner data.
-    Checks for:
-    - Dependencies marked as outdated by the scanner (having a latest_version)
-    """
+    """Identify dependencies the scanner marks outdated (having a latest_version)."""
     recommendations = []
 
     outdated_deps: List[Dict[str, Any]] = []
@@ -116,13 +112,9 @@ def analyze_outdated_dependencies(
 def analyze_version_fragmentation(
     dependencies: List[ModelOrDict],
 ) -> List[Recommendation]:
-    """
-    Detect when multiple versions of the same package exist in the dependency tree.
-    This can lead to bundle bloat and unexpected behavior.
-    """
+    """Detect multiple versions of the same package in the dependency tree."""
     recommendations = []
 
-    # Group dependencies by name (normalize to lowercase)
     deps_by_name: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
     for dep in dependencies:
         name = str(get_attr(dep, "name", "")).lower()
@@ -136,7 +128,6 @@ def analyze_version_fragmentation(
                 }
             )
 
-    # Find packages with multiple versions
     fragmented: List[Dict[str, Any]] = []
     for name, versions in deps_by_name.items():
         unique_versions = {v["version"] for v in versions}
@@ -150,19 +141,15 @@ def analyze_version_fragmentation(
                 }
             )
 
-    # Sort by impact (more versions = worse)
     fragmented.sort(key=lambda x: x["count"], reverse=True)
 
-    # Only report if there are significant fragmentation issues (N+ versions)
     significant_fragmented = [f for f in fragmented if f["count"] >= SIGNIFICANT_FRAGMENTATION_THRESHOLD]
 
     if significant_fragmented:
-        # High priority if many packages have multiple versions
         priority = (
             Priority.MEDIUM if len(significant_fragmented) > SIGNIFICANT_FRAGMENTATION_THRESHOLD else Priority.LOW
         )
 
-        # Limit to top 15 most fragmented
         top_fragmented = significant_fragmented[:15]
 
         recommendations.append(
@@ -194,7 +181,7 @@ def analyze_version_fragmentation(
                     "packages": [
                         {
                             "name": f["name"],
-                            "versions": f["versions"][:5],  # Limit displayed versions
+                            "versions": f["versions"][:5],
                             "version_count": f["count"],
                             "suggestion": f"Pin to {max(f['versions'], key=lambda v: parse_version_tuple(v))}",
                         }
@@ -288,7 +275,6 @@ def analyze_end_of_life(eol_findings: List[ModelOrDict]) -> List[Recommendation]
         else:
             affected_packages.append(f"{pkg}@{version}")
 
-    # Check severity based on how long ago EOL was
     critical_count = len([f for f in eol_findings if get_attr(f, "severity") == "CRITICAL"])
     high_count = len([f for f in eol_findings if get_attr(f, "severity") == "HIGH"])
 

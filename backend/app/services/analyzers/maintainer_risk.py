@@ -1,16 +1,4 @@
-"""
-Maintainer Risk Analyzer
-
-Analyzes package maintainer activity and health indicators to identify
-potential supply chain risks from abandoned or under-maintained packages.
-
-Risk Indicators:
-- No recent releases (stale packages)
-- Single maintainer (bus factor)
-- Maintainer email from free providers (less accountability)
-- Recent maintainer changes (potential account takeover)
-- Low GitHub/GitLab activity
-"""
+"""Analyzes package maintainer activity to flag supply-chain risk from abandoned or under-maintained packages."""
 
 import asyncio
 import logging
@@ -52,11 +40,8 @@ def correlate_maintainer_risks(
 ) -> List[Dict[str, Any]]:
     """Filter raw maintainer signals against corroborating evidence.
 
-    Drops staleness when the source repo is still active. Drops the
-    free-email signal only when we have positive evidence of multiple
-    maintainers — ``None`` for ``maintainer_count`` means "couldn't check"
-    and keeps the precautionary signal. ``github_active`` is tri-state
-    (True/False/None) for the same reason.
+    Drops staleness when the source repo is still active. Drops the free-email signal only
+    with positive evidence of multiple maintainers; ``None`` (couldn't check) keeps the signal.
     """
     if not risks:
         return []
@@ -89,7 +74,6 @@ class MaintainerRiskAnalyzer(Analyzer):
         except (ValueError, TypeError):
             return None
 
-    # Free email providers (lower accountability)
     FREE_EMAIL_PROVIDERS = {
         "gmail.com",
         "yahoo.com",
@@ -107,19 +91,15 @@ class MaintainerRiskAnalyzer(Analyzer):
         settings: Optional[Dict[str, Any]] = None,
         parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """
-        Analyze maintainer health for packages in the SBOM.
-        """
+        """Analyze maintainer health for packages in the SBOM."""
         components = self._get_components(sbom, parsed_components)
         issues = []
         checked_count = 0
 
-        # Extract GitHub token from settings for authenticated API access
         github_token = settings.get("github_token") if settings else None
         timeout = ANALYZER_TIMEOUTS.get("maintainer_risk", ANALYZER_TIMEOUTS["default"])
         batch_size = ANALYZER_BATCH_SIZES.get("maintainer_risk", 10)
 
-        # Configurable stale-package thresholds (defaults preserve existing behavior)
         settings = settings or {}
         self._stale_after_days = int(settings.get("stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS))
         self._warn_after_days = int(settings.get("warn_after_days", STALE_PACKAGE_WARNING_DAYS))
@@ -136,7 +116,7 @@ class MaintainerRiskAnalyzer(Analyzer):
                         if result.get("risks"):
                             issues.append(result)
 
-                # Small delay between batches to respect rate limits
+                # Small delay between batches to respect rate limits.
                 if i + batch_size < len(components):
                     await asyncio.sleep(0.5)
 
@@ -263,7 +243,6 @@ class MaintainerRiskAnalyzer(Analyzer):
         risk_types = [r.get("type", "") for r in risks]
         risk_count = len(risks)
 
-        # Prioritize most critical risk types in message
         if "archived_repo" in risk_types:
             return f"{name}@{version}: Repository is archived - no longer maintained"
         if "stale_package" in risk_types:
@@ -273,7 +252,6 @@ class MaintainerRiskAnalyzer(Analyzer):
         if "single_maintainer" in risk_types:
             return f"{name}@{version}: Single maintainer (bus factor risk)"
 
-        # Generic message for other risks
         return f"{name}@{version} has {risk_count} maintainer risk{'s' if risk_count > 1 else ''}"
 
     async def _check_pypi(self, client: InstrumentedAsyncClient, name: str) -> Optional[Dict[str, Any]]:
@@ -287,7 +265,6 @@ class MaintainerRiskAnalyzer(Analyzer):
             info = data.get("info", {})
             releases = data.get("releases", {})
 
-            # Find latest release date
             latest_release_date = None
             for ver, files in releases.items():
                 for f in files:
@@ -329,10 +306,8 @@ class MaintainerRiskAnalyzer(Analyzer):
 
             data = response.json()
 
-            # Get maintainers
             maintainers = data.get("maintainers", [])
 
-            # Find latest release date
             time_info = data.get("time", {})
             latest_release_date = self._parse_iso_datetime(time_info.get("modified"))
 
@@ -360,10 +335,7 @@ class MaintainerRiskAnalyzer(Analyzer):
     async def _check_github(
         self, client: InstrumentedAsyncClient, repo: str, github_token: Optional[str] = None
     ) -> Optional[Dict[str, Any]]:
-        """Fetch repository health from GitHub API.
-
-        If a GitHub token is provided, uses authenticated requests for higher rate limits.
-        """
+        """Fetch repository health from GitHub API, authenticating when a token is provided."""
         try:
             headers = {
                 "Accept": "application/vnd.github+json",
@@ -381,7 +353,6 @@ class MaintainerRiskAnalyzer(Analyzer):
 
             data = response.json()
 
-            # Parse dates
             pushed_at = self._parse_iso_datetime(data.get("pushed_at"))
 
             return {
@@ -406,7 +377,6 @@ class MaintainerRiskAnalyzer(Analyzer):
         """Assess maintainer risks based on registry info."""
         risks = []
 
-        # Check for stale packages
         days_since_release = info.get("days_since_release")
         stale_after = getattr(self, "_stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS)
         warn_after = getattr(self, "_warn_after_days", STALE_PACKAGE_WARNING_DAYS)
@@ -430,7 +400,6 @@ class MaintainerRiskAnalyzer(Analyzer):
                     }
                 )
 
-        # Check maintainer email (PyPI)
         email = info.get("maintainer_email") or info.get("author_email")
         if email:
             domain = email.split("@")[-1].lower() if "@" in email else ""
@@ -444,7 +413,6 @@ class MaintainerRiskAnalyzer(Analyzer):
                     }
                 )
 
-        # Check single maintainer (npm)
         if registry == "npm" and info.get("maintainer_count", 0) == 1:
             risks.append(
                 {
@@ -458,8 +426,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         return risks
 
     def _infer_github_active(self, gh_info: Optional[Dict[str, Any]]) -> Optional[bool]:
-        """True if the GitHub repo shows recent activity, False if archived
-        or stale, None when GitHub data is unavailable."""
+        """True if the repo shows recent activity, False if archived/stale, None if data is unavailable."""
         if not gh_info:
             return None
         if gh_info.get("archived"):
@@ -474,7 +441,6 @@ class MaintainerRiskAnalyzer(Analyzer):
         """Assess risks from GitHub repository info."""
         risks = []
 
-        # Archived repository
         if gh_info.get("archived"):
             risks.append(
                 {
@@ -485,7 +451,6 @@ class MaintainerRiskAnalyzer(Analyzer):
                 }
             )
 
-        # No recent activity
         days_since_push = gh_info.get("days_since_push")
         if days_since_push and days_since_push > getattr(self, "_stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS):
             risks.append(
@@ -497,7 +462,6 @@ class MaintainerRiskAnalyzer(Analyzer):
                 }
             )
 
-        # High open issues with no activity
         if gh_info.get("open_issues", 0) > 100 and days_since_push and days_since_push > 180:
             risks.append(
                 {
@@ -515,7 +479,6 @@ class MaintainerRiskAnalyzer(Analyzer):
         if not url:
             return None
 
-        # Handle various GitHub URL formats
         patterns = [
             r"github\.com[/:]([^/]+)/([^/\.]+)",
             r"github\.com[/:]([^/]+)/([^/]+)\.git",

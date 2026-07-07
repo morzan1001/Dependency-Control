@@ -1,8 +1,4 @@
-"""
-Notification handling for completed scans.
-
-Sends notifications and triggers webhooks when scans complete.
-"""
+"""Notification handling and webhook triggers for completed scans."""
 
 import logging
 from typing import Any, Dict, List
@@ -47,12 +43,7 @@ def _extract_vulnerability_info(vuln: Dict[str, Any], finding: Dict[str, Any]) -
 def _categorize_vulnerabilities(
     vulnerability_findings: List[Dict[str, Any]],
 ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
-    """
-    Categorize vulnerabilities into KEV, high EPSS, and critical/high severity.
-
-    Returns:
-        Tuple of (kev_vulns, high_epss_vulns, critical_vulns)
-    """
+    """Categorize vulnerabilities into (kev_vulns, high_epss_vulns, critical_vulns)."""
     kev_vulns: List[Dict[str, Any]] = []
     high_epss_vulns: List[Dict[str, Any]] = []
     critical_vulns: List[Dict[str, Any]] = []
@@ -98,13 +89,7 @@ def _build_vulnerability_message(
     top_vulns: List[Dict[str, Any]],
     scan_link: str,
 ) -> tuple[str, str]:
-    """
-    Build subject and message for vulnerability notification.
-
-    Returns:
-        Tuple of (subject, message)
-    """
-    # Build subject
+    """Build (subject, message) for a vulnerability notification."""
     subject = "[SECURITY ALERT] "
     if kev_vulns:
         subject += f"{len(kev_vulns)} KEV Vulnerabilities in {project_name}"
@@ -113,7 +98,6 @@ def _build_vulnerability_message(
     else:
         subject += f"Critical Vulnerabilities in {project_name}"
 
-    # Build message
     message = f"Security scan detected critical vulnerabilities in {project_name}.\n\n"
 
     if kev_vulns:
@@ -124,7 +108,6 @@ def _build_vulnerability_message(
         )
     message += f"\nTotal critical/high vulnerabilities: {len(critical_vulns)}\n"
 
-    # Add top vulnerabilities details
     if top_vulns:
         message += "\nTop Priority Vulnerabilities:\n"
         for i, vuln in enumerate(top_vulns, 1):
@@ -142,22 +125,11 @@ async def send_scan_notifications(
     results_summary: List[str],
     db: Database,
 ) -> None:
-    """
-    Send notifications and trigger webhooks for completed scan.
+    """Send notifications and trigger webhooks for a completed scan.
 
-    Each notification type is handled independently to prevent one failure
-    from blocking others.
-
-    Args:
-        scan_id: The scan ID
-        project: The project model
-        aggregated_findings: List of Finding objects from the aggregator
-        results_summary: List of analyzer result strings
-        db: Database connection
+    Each notification type is handled independently so one failure does not block others.
     """
-    # Send analysis_completed notification
     try:
-        # Count severities for template
         severity_counts: Dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
         for f in aggregated_findings:
             sev = f.severity if hasattr(f, "severity") else "UNKNOWN"
@@ -208,7 +180,6 @@ async def send_scan_notifications(
     except Exception as e:
         logger.exception("Failed to send analysis_completed notification: %s", e)
 
-    # Trigger scan_completed webhook
     try:
         scan = await db.scans.find_one({"_id": scan_id})
         if scan:
@@ -224,29 +195,25 @@ async def send_scan_notifications(
     except Exception as e:
         logger.exception("Failed to trigger scan_completed webhook: %s", e)
 
-    # Check for critical vulnerabilities and send vulnerability_found notification
     try:
-        # Convert Finding objects to dicts for processing
         vulnerability_findings = [f.model_dump() for f in aggregated_findings if f.type == "vulnerability"]
 
         if not vulnerability_findings:
             return
 
-        # Categorize vulnerabilities
         kev_vulns, high_epss_vulns, critical_vulns = _categorize_vulnerabilities(vulnerability_findings)
 
-        # Send notification if there are significant vulnerabilities
         has_significant_vulns = kev_vulns or high_epss_vulns or critical_vulns
         if not has_significant_vulns:
             return
 
-        # Sort and get top 10 most critical vulnerabilities
+        # Order: KEV first, then higher EPSS, then more severe.
         top_vulns = sorted(
             critical_vulns,
             key=lambda x: (
-                not x.get("in_kev", False),  # KEV first
-                -(x.get("epss_score") or 0),  # Then by EPSS
-                -get_severity_value(x.get("severity")),  # Then most severe first
+                not x.get("in_kev", False),
+                -(x.get("epss_score") or 0),
+                -get_severity_value(x.get("severity")),
             ),
         )[:10]
 
@@ -305,7 +272,6 @@ async def send_scan_notifications(
             f"{len(critical_vulns)} critical/high"
         )
 
-        # Trigger vulnerability_found webhook
         try:
             await webhook_service.trigger_vulnerability_found(
                 db=db,

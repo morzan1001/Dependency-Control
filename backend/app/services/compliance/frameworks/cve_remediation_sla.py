@@ -48,11 +48,7 @@ class CveRemediationSlaFramework:
         self,
         sla_days_by_severity: Optional[Dict[Severity, int]] = None,
     ) -> None:
-        """``sla_days_by_severity`` overrides any subset of ``DEFAULT_SLA_DAYS``.
-
-        Values must be strictly positive; a zero/negative window would
-        instantly mark every finding as overdue.
-        """
+        """sla_days_by_severity overrides a subset of DEFAULT_SLA_DAYS; values must be > 0."""
         merged: Dict[Severity, int] = dict(DEFAULT_SLA_DAYS)
         if sla_days_by_severity:
             for sev, days in sla_days_by_severity.items():
@@ -65,10 +61,7 @@ class CveRemediationSlaFramework:
         raise RuntimeError("CveRemediationSlaFramework is async-only; callers must dispatch via evaluate_async()")
 
     async def evaluate_async(self, data: EvaluationInput) -> FrameworkEvaluation:
-        # The framework is purely computational, but the engine's dispatcher
-        # always awaits this call — yielding once keeps the coroutine signature
-        # honest and lets other tasks make progress when many frameworks run in
-        # the same scope.
+        # yield once so sibling framework tasks can progress
         await asyncio.sleep(0)
         findings = data.findings or []
         now = datetime.now(timezone.utc)
@@ -138,7 +131,6 @@ def _is_overdue(
     age = now - first_seen
     if age < timedelta(days=sla_days):
         return False
-    # Not yet fixed — finding still open
     if finding.get("status") == "fixed":
         return False
     return True

@@ -1,9 +1,4 @@
-"""Framework-evaluation modules.
-
-Each framework exports a class implementing `ComplianceFramework`. The
-framework key maps to the class via `FRAMEWORK_REGISTRY`, populated at the
-bottom of this file after all imports resolve.
-"""
+"""Framework-evaluation modules, keyed into FRAMEWORK_REGISTRY."""
 
 from app.schemas.compliance import ReportFramework
 from app.services.compliance.frameworks.base import (
@@ -21,14 +16,12 @@ from app.services.compliance.frameworks.license_audit import LicenseAuditFramewo
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
 
 FRAMEWORK_REGISTRY: "dict[ReportFramework, ComplianceFramework]" = {
-    # Crypto / CBOM frameworks
     ReportFramework.NIST_SP_800_131A: NistSp800_131aFramework(),
     ReportFramework.BSI_TR_02102: BsiTr02102Framework(),
     ReportFramework.CNSA_2_0: Cnsa20Framework(),
     ReportFramework.FIPS_140_3: Fips1403Framework(),
     ReportFramework.ISO_19790: Iso19790Framework(),
     ReportFramework.PQC_MIGRATION_PLAN: PQCMigrationPlanFramework(),
-    # SBOM frameworks
     ReportFramework.LICENSE_AUDIT: LicenseAuditFramework(),
     ReportFramework.CVE_REMEDIATION_SLA: CveRemediationSlaFramework(),
 }

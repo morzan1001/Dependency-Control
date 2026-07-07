@@ -26,9 +26,7 @@ from app.services.chat.tools import ChatToolRegistry
 
 logger = logging.getLogger(__name__)
 
-# How long each cold-start keepalive slice waits before emitting a warm-up
-# info event. Module-level so it can be tuned/patched (e.g. in tests) without
-# changing behavior in production.
+# Seconds between cold-start keepalive info events; module-level so tests can patch it.
 _WARMUP_SLICE_SECONDS = 10.0
 
 
@@ -68,16 +66,7 @@ class ChatService:
         content: str,
         images: Optional[List[str]] = None,
     ) -> AsyncIterator[str]:
-        """
-        Process a user message and stream the response as SSE events.
-
-        Yields SSE-formatted strings:
-        - data: {"type": "token", "content": "..."}
-        - data: {"type": "tool_call_start", "tool_name": "..."}
-        - data: {"type": "tool_call_end", "tool_name": "...", "result": {...}}
-        - data: {"type": "done"}
-        - data: {"type": "error", "message": "..."}
-        """
+        """Process a user message and stream the response as SSE event strings."""
         start_time = time.time()
         first_token_recorded = False
         total_tool_calls = 0
@@ -86,14 +75,9 @@ class ChatService:
         assistant_saved = False
         client_notified_of_error = False
 
-        # Load history BEFORE persisting the new user message. get_recent_messages
-        # sorts by created_at (descending, then reversed), so it would otherwise
-        # return the message we just saved — and build_messages appends `content`
-        # itself. Loading first keeps the current turn (and its images) from
-        # appearing twice in the prompt.
+        # Load history before persisting the new message so the current turn isn't replayed twice.
         history = await self.repo.get_recent_messages(conversation_id, limit=settings.CHAT_MAX_HISTORY_MESSAGES)
 
-        # Save user message
         await self.repo.add_message(
             conversation_id,
             role="user",
@@ -101,20 +85,15 @@ class ChatService:
             images=images or [],
         )
 
-        # Auto-generate title from first message
         conv = await self.repo.get_conversation(conversation_id, user_id=str(user.id))
         if conv and conv.get("message_count", 0) == 1:
             title = content[:80] + ("..." if len(content) > 80 else "")
             await self.repo.update_conversation_title(conversation_id, str(user.id), title)
 
-        # Build context
         available_tools = self.tools.get_available_tool_definitions(user.permissions)
         messages = build_messages(history, content, images or [])
 
         try:
-            # Ollama interaction loop (tool calls may require multiple rounds).
-            # Admin can tune this via SystemSettings.chat_max_tool_rounds at
-            # runtime; otherwise the startup default from config.py applies.
             system_doc = await self.db["system_settings"].find_one({"_id": "current"})
             max_rounds = (system_doc or {}).get("chat_max_tool_rounds") or settings.CHAT_MAX_TOOL_ROUNDS
             rounds_used = 0
@@ -125,23 +104,11 @@ class ChatService:
                 stream_iter = self.ollama.chat_stream(messages, tools=available_tools).__aiter__()
                 while True:
                     try:
-                        # First chunk only: if Ollama doesn't produce output
-                        # quickly, the model is probably being loaded into VRAM
-                        # (first request after idle = 30-60s on L4). Surface
-                        # that as an SSE info event so the UI isn't silent.
                         if not first_token_recorded and total_tool_calls == 0:
-                            # Cold-start warmup: the model has to be loaded
-                            # into VRAM on the first request after idle (T4
-                            # + gemma4 ≈ 60–90 s). We need to emit periodic
-                            # keepalive info events so (a) the UI isn't
-                            # silent, and (b) upstream SSE proxies (Pomerium/
-                            # Traefik) don't idle-timeout and drop the
-                            # connection. CRITICAL: asyncio.wait_for cancels
-                            # its inner coroutine on timeout, which would
-                            # tear down the httpx stream and make ollama
-                            # abort the load. Use asyncio.shield + a single
-                            # persistent task so the fetch keeps running
-                            # across keepalive slices.
+                            # Cold start can take 60-90s to load the model; emit keepalive info
+                            # events so the UI and upstream SSE proxies don't idle-timeout.
+                            # shield + one persistent task keeps the fetch alive across slices,
+                            # since asyncio.wait_for would cancel it and abort the load on timeout.
                             pending = asyncio.ensure_future(stream_iter.__anext__())
                             try:
                                 waited = 0.0
@@ -166,14 +133,8 @@ class ChatService:
                                             msg = f"Still warming up ({int(waited)}s) — hang tight."
                                         yield ("data: " + json.dumps({"type": "info", "message": msg}) + "\n\n")
                             finally:
-                                # If we leave the warm-up wait without having consumed
-                                # the first chunk (e.g. the SSE client disconnected and
-                                # Starlette threw GeneratorExit at the yield above),
-                                # asyncio.shield kept `pending` alive — so it would keep
-                                # driving the httpx stream and pin Ollama/GPU. Cancel it
-                                # and reap it to avoid the leak + "exception never
-                                # retrieved" noise. A normally-consumed chunk leaves
-                                # `pending` done, so this is a no-op on the happy path.
+                                # Cancel the shielded fetch if we exit before consuming the
+                                # chunk (e.g. client disconnect), else it keeps pinning Ollama/GPU.
                                 if not pending.done():
                                     pending.cancel()
                                     await asyncio.gather(pending, return_exceptions=True)
@@ -200,7 +161,6 @@ class ChatService:
 
                         yield f"data: {json.dumps({'type': 'tool_call_start', 'tool_name': tool_name})}\n\n"
 
-                        # Execute the tool with user authorization
                         result = await self.tools.execute_tool(tool_name, tool_args, user, self.db)
 
                         all_tool_calls.append(
@@ -214,10 +174,8 @@ class ChatService:
 
                         yield f"data: {json.dumps({'type': 'tool_call_end', 'tool_name': tool_name, 'arguments': tool_args, 'result': result}, default=str)}\n\n"
 
-                        # Add tool result to messages for next Ollama round
                         messages.append({"role": "assistant", "content": "", "tool_calls": [{"function": fn}]})
                         messages.append(build_tool_result_message(tool_name, result))
-                        # Re-trim after appending tool-call pair to stay within token budget
                         messages = trim_to_token_budget(messages, settings.CHAT_MAX_TOKEN_BUDGET)
 
                     elif chunk_type == "done":
@@ -233,14 +191,10 @@ class ChatService:
                         client_notified_of_error = True
                         return
 
-                # If no tool calls were made in this round, we're done
                 if round_tool_calls == 0:
                     break
 
-            # If we hit the max-rounds cap without ever producing text,
-            # the model got stuck in a tool-call loop. Synthesise an honest
-            # fallback message so the user sees something instead of a blank
-            # turn full of tool calls.
+            # Model stuck looping tool calls with no text: give the user an honest fallback.
             if not full_response and rounds_used >= max_rounds and all_tool_calls:
                 fallback = (
                     "_I gathered data from "
@@ -253,7 +207,6 @@ class ChatService:
                 yield f"data: {json.dumps({'type': 'token', 'content': fallback})}\n\n"
                 chat_messages_total.labels(status="max_rounds_exhausted").inc()
 
-            # Save assistant response (happy path)
             await self.repo.add_message(
                 conversation_id,
                 role="assistant",
@@ -263,7 +216,6 @@ class ChatService:
             )
             assistant_saved = True
 
-            # Record metrics
             duration = time.time() - start_time
             chat_response_duration_seconds.observe(duration)
             chat_tool_calls_per_message.observe(total_tool_calls)
@@ -274,9 +226,7 @@ class ChatService:
         finally:
             if not assistant_saved:
                 if full_response or all_tool_calls:
-                    # Partial content was streamed — persist it with an interrupted marker
-                    # regardless of whether an error was also notified, so the UI stays
-                    # consistent on reload.
+                    # Persist partial content with an interrupted marker so reloads stay consistent.
                     interrupted_content = (
                         full_response + "\n\n_[stream interrupted]_" if full_response else "_[stream interrupted]_"
                     )
@@ -289,8 +239,7 @@ class ChatService:
                     )
                     chat_messages_total.labels(status="interrupted").inc()
                 elif not client_notified_of_error:
-                    # Nothing streamed and no error event sent to client — save a minimal
-                    # marker so the conversation doesn't have a dangling user turn.
+                    # Nothing streamed and no error sent: save a marker so no user turn dangles.
                     await self.repo.add_message(
                         conversation_id,
                         role="assistant",
@@ -299,5 +248,3 @@ class ChatService:
                         token_count=0,
                     )
                     chat_messages_total.labels(status="interrupted").inc()
-                # else: error was already delivered to client and nothing was streamed
-                # — nothing to save; the client decides how to handle the error.

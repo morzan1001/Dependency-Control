@@ -1,9 +1,6 @@
 """Redis sliding-window rate limiter for chat requests.
 
-Precedence note: Callers should read rate-limit values from the admin-tunable
-SystemSettings (MongoDB) at request time, not from the startup-time
-settings.CHAT_RATE_LIMIT_PER_MINUTE / _PER_HOUR. The settings values are
-startup defaults; SystemSettings values are the runtime source of truth.
+Callers should pass the runtime SystemSettings (MongoDB) values, not the startup config defaults.
 """
 
 import time
@@ -14,9 +11,7 @@ from app.core.metrics import chat_rate_limit_remaining, chat_rate_limited_total
 
 
 class ChatRateLimiter:
-    # Atomic Lua script: removes expired entries, checks count, and conditionally
-    # adds the new entry — all in a single Redis round-trip to avoid TOCTOU races
-    # where two concurrent requests both observe count < max and both get admitted.
+    # Single-round-trip Lua script to avoid TOCTOU races admitting two concurrent requests.
     _WINDOW_LUA = """
 -- KEYS[1] = window sorted set key
 -- ARGV[1] = now (unix seconds, float)
@@ -54,29 +49,21 @@ return {1, max_reqs - count - 1}
         self.prefix = prefix
 
     async def check_rate_limit(self, user_id: str, per_minute: int, per_hour: int) -> tuple[bool, int]:
-        """
-        Check if user is within rate limits.
+        """Return (allowed, retry_after_seconds).
 
-        Uses a Lua script evaluated atomically on Redis to avoid TOCTOU races.
-        The minute window is checked-and-incremented first; if the hour window
-        then denies, the minute slot was already consumed — this is an acceptable
-        minor accounting asymmetry given the hour limit is the rarer trigger.
-
-        Returns:
-            (allowed, retry_after_seconds)
+        The minute window is consumed before the hour window is checked, so an hour-limit
+        denial still spends a minute slot — an acceptable asymmetry as the hour limit rarely triggers.
         """
         now = time.time()
         member = f"{user_id}:{now}"
 
         minute_key = f"{self.prefix}{user_id}:minute"
-        # redis.asyncio.Redis.eval() is typed with an over-broad Awaitable | str
-        # union by the stubs; at runtime it returns the Lua script's result.
+        # eval() stubs type the result as Awaitable | str; at runtime it is the script result.
         result = await self.redis.eval(self._WINDOW_LUA, 1, minute_key, str(now), "60", str(per_minute), member)  # type: ignore[misc]
         allowed, retry_or_remaining = int(result[0]), int(result[1])
         if not allowed:
             chat_rate_limited_total.inc()
             return False, retry_or_remaining
-        # Update remaining metric
         chat_rate_limit_remaining.labels(user_id=user_id, window="minute").set(retry_or_remaining)
 
         hour_key = f"{self.prefix}{user_id}:hour"

@@ -1,10 +1,4 @@
-"""Normalizer for crypto rule analyzer output.
-
-The CryptoRuleAnalyzer already emits findings in the canonical
-``Finding`` shape, so the normalizer just rehydrates each dict into a
-``Finding`` and routes it through the aggregator the same way the
-other analyzers do.
-"""
+"""Rehydrate pre-shaped crypto analyzer dicts into Finding objects."""
 
 import logging
 from typing import Any, Dict, Optional, TYPE_CHECKING
@@ -26,9 +20,7 @@ def normalize_crypto(
         try:
             finding = Finding(**item)
         except Exception as exc:
-            # A malformed crypto finding shouldn't take down the whole scan,
-            # but it must not vanish silently — analyzer output drift would
-            # otherwise be invisible until users notice missing findings.
+            # Log rather than drop silently so analyzer output drift stays visible.
             logger.warning(
                 "normalize_crypto: dropping unparseable finding (%s) — id=%s, type=%s",
                 exc,

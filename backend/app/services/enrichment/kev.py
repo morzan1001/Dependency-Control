@@ -30,7 +30,6 @@ class KEVProvider:
         timeout = ANALYZER_TIMEOUTS.get("kev", ANALYZER_TIMEOUTS["default"])
 
         async def fetch_kev_catalog() -> Optional[Dict[str, Any]]:
-            """Fetch KEV catalog from CISA API with retry logic."""
             last_error = None
 
             for attempt in range(self._max_retries):
@@ -45,7 +44,6 @@ class KEVProvider:
                     for vuln in vulnerabilities:
                         cve = vuln.get("cveID", "")
                         if cve:
-                            # Handle potential None value for ransomware field
                             ransomware_value = vuln.get("knownRansomwareCampaignUse") or ""
                             kev_entry = KEVEntry(
                                 cve=cve,
@@ -80,7 +78,7 @@ class KEVProvider:
                             f"(attempt {attempt + 1}/{self._max_retries})"
                         )
                     else:
-                        # Client error (4xx) - don't retry
+                        # 4xx won't be fixed by retrying.
                         logger.warning(f"KEV catalog client error: {e}")
                         return None
                 except Exception as e:
@@ -93,7 +91,6 @@ class KEVProvider:
             logger.error(f"KEV catalog fetch failed after {self._max_retries} attempts: {last_error}")
             return None
 
-        # Use distributed lock to prevent multiple pods fetching simultaneously
         cached = await cache_service.get_or_fetch_with_lock(
             key=cache_key,
             fetch_fn=fetch_kev_catalog,

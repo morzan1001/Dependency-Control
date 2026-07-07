@@ -37,10 +37,6 @@ from app.services.analysis.stats import (
 from app.services.analysis.integrations import decorate_gitlab_mr
 from app.services.analysis.notifications import send_scan_notifications
 from app.services.analysis.types import Database
-
-# app.core.metrics is imported unconditionally across the app (main.py, init_db.py,
-# repositories, ...) — the process cannot start if it is missing — so a defensive
-# try/except shim here would be unreachable dead code.
 from app.core.metrics import (
     analysis_aggregation_duration_seconds,
     analysis_components_parsed_total,
@@ -65,9 +61,7 @@ logger = logging.getLogger(__name__)
 
 _BULK_CHUNK_SIZE = 500
 
-# Post-processor analyzers run inside the engine (not registered in ``analyzers``); their
-# result rows must be cleaned up between runs and never treated as carried-over/external
-# results the way real external scanner rows (SAST, secrets, ...) are.
+# Run inside the engine (not registered in ``analyzers``); regenerated per run, never carried over.
 _POST_PROCESSOR_ANALYZERS = frozenset({"epss_kev", "reachability"})
 
 
@@ -94,21 +88,16 @@ async def _get_github_instance_token(db: Database) -> Optional[str]:
 
 
 async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"], db: Database) -> None:
-    """
-    Copies analysis results from the original scan to the re-scan for analyzers
-    that are NOT part of the internal SBOM analysis (e.g. Secret Scanning, SAST).
-    """
+    """Copy non-SBOM analyzer results (e.g. Secret Scanning, SAST) from the original scan to a rescan."""
     if not (scan_doc and scan_doc.is_rescan and scan_doc.original_scan_id):
         return
 
     original_scan_id = scan_doc.original_scan_id
     logger.info(f"Rescan detected. Carrying over external results from {original_scan_id} to {scan_id}")
 
-    # Internal SBOM analyzers AND engine post-processors (epss_kev/reachability) are
-    # regenerated on every run, so they must never be carried over onto a rescan.
+    # Internal analyzers and post-processors are regenerated per run, never carried over.
     excluded_names = list(analyzers.keys()) + list(_POST_PROCESSOR_ANALYZERS)
 
-    # Find results from the original scan that are NOT internal analyzers
     from app.repositories import AnalysisResultRepository
 
     result_repo = AnalysisResultRepository(db)
@@ -123,7 +112,6 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"],
     if not old_results:
         return
 
-    # Bulk upsert all external results in a single operation
     bulk_ops = []
     for old_result in old_results:
         new_result = old_result.model_dump(by_alias=True).copy()
@@ -164,15 +152,12 @@ async def process_analyzer(
 ) -> str:
     analyzer_start_time = time.time()
     try:
-        # Track analyzer execution
         if analysis_scans_total:
             analysis_scans_total.labels(analyzer=analyzer_name).inc()
 
-        # Crypto analyzers need project_id, scan_id, and db to read crypto assets from DB
+        # Crypto analyzers read crypto assets from the DB, so they need project_id/scan_id/db.
         if is_crypto_analyzer(analyzer_name):
-            # Crypto analyzers subclass Analyzer and extend .analyze() with
-            # keyword-only parameters; Liskov-compatible but mypy only sees the
-            # base signature.
+            # mypy only sees the base .analyze() signature; crypto subclasses add kw-only params.
             result = await analyzer.analyze(  # type: ignore[call-arg]
                 sbom,
                 settings=settings,
@@ -184,12 +169,10 @@ async def process_analyzer(
         else:
             result = await analyzer.analyze(sbom, settings=settings, parsed_components=parsed_components)
 
-        # Track duration
         if analysis_duration_seconds:
             duration = time.time() - analyzer_start_time
             analysis_duration_seconds.labels(analyzer=analyzer_name).observe(duration)
 
-        # Store raw result via repository
         result_repo = AnalysisResultRepository(db)
         await result_repo.create_raw(
             {
@@ -201,14 +184,12 @@ async def process_analyzer(
             }
         )
 
-        # Extract source name from SBOM metadata
         source: str = fallback_source
         if sbom.get("metadata") and sbom["metadata"].get("component"):
             source = str(sbom["metadata"]["component"].get("name", fallback_source))
         elif sbom.get("serialNumber"):
             source = str(sbom.get("serialNumber"))
 
-        # Aggregate result
         aggregator.aggregate(analyzer_name, result, source=source)
 
         logger.info(f"Analysis {analyzer_name} completed for {scan_id}")
@@ -218,23 +199,17 @@ async def process_analyzer(
         # Track errors
         if analysis_errors_total:
             analysis_errors_total.labels(analyzer=analyzer_name).inc()
-        # Report failure to aggregator so it appears in findings
+        # Surface the failure as a finding.
         aggregator.aggregate(analyzer_name, {"error": str(e)}, source=f"System: {analyzer_name}")
         return f"{analyzer_name}: Failed"
 
 
-# Marker substring of the system-error raised when a GridFS SBOM cannot be read. Used both
-# to build that error and to detect "the whole scan failed to load any SBOM".
+# Marker substring of the system-error raised (and matched) when a GridFS SBOM cannot be read.
 _SBOM_GRIDFS_LOAD_ERROR = "Failed to load SBOM from GridFS"
 
 
 def _all_sbom_loads_failed(sboms_to_process: List[Any], aggregated_findings: List[Any]) -> bool:
-    """True when every GridFS SBOM that should have been analysed failed to load.
-
-    In that case the scan ran no real analysis (only a system warning) and must NOT be
-    reported as a successful ``completed`` — otherwise a transient storage miss looks like
-    a clean, empty result.
-    """
+    """True when every GridFS SBOM failed to load, so the scan must not be reported as completed."""
     gridfs_expected = sum(
         1 for it in sboms_to_process if isinstance(it, dict) and it.get("type") == "gridfs_reference"
     )
@@ -370,8 +345,7 @@ async def _process_sbom(
 ) -> List[str]:
     """Process a single SBOM: resolve, parse, run analyzers. Returns results summary."""
     current_sbom = await _resolve_sbom(item, fs, aggregator)
-    # CBOM-only scans synthesise an empty {} so the analyzer loop fires;
-    # only bail when resolution itself failed (returned None).
+    # CBOM-only scans synthesise an empty {}; only bail when resolution itself failed (None).
     if current_sbom is None:
         return []
 
@@ -640,9 +614,7 @@ async def _aggregate_external_results(
     """Fetch external analyzer results and aggregate them."""
     external_results = await result_repo.find_by_scan(scan_id, limit=10000)
     for res in external_results:
-        # epss_kev/reachability rows are engine post-processor outputs, not external
-        # scanner results — aggregating them is a no-op that only inflates results_summary
-        # with spurious "<name>: Success" lines, so skip them here.
+        # Skip post-processor rows: they are engine outputs, not external scanner results.
         if res.analyzer_name not in analyzers and res.analyzer_name not in _POST_PROCESSOR_ANALYZERS:
             try:
                 aggregator.aggregate(res.analyzer_name, res.result)
@@ -670,12 +642,10 @@ async def _aggregate_external_results(
 
 
 def _cleanup_analyzer_names(active_analyzers: List[str]) -> List[str]:
-    """Analyzer result-row names to purge before a (re)run.
+    """Analyzer result-row names to purge before a (re)run: internal, post-processor, and crypto.
 
-    Includes internal SBOM analyzers, engine post-processors (epss_kev/reachability), and
-    every crypto analyzer. Post-processor and crypto rows are regenerated on each applicable
-    run and can be present independently of active_analyzers (crypto analyzers auto-added by
-    an embedded CBOM), so they must be deleted explicitly or stale rows accumulate.
+    Crypto/post-processor rows are regenerated per run and can exist independently of
+    active_analyzers (crypto auto-added by an embedded CBOM), so they must be purged explicitly.
     """
     internal_analyzers = [name for name in active_analyzers if name in analyzers]
     return list(set(internal_analyzers) | set(_POST_PROCESSOR_ANALYZERS) | set(CRYPTO_ANALYZERS))
@@ -703,9 +673,7 @@ def _prepare_finding_records(
     return findings_to_insert, vulnerability_findings
 
 
-# Upper bound on persisted findings_summary entries. A compact vulnerability-only
-# summary of ~500 entries stays comfortably under Mongo's 16MB document limit while
-# giving recurring-vulnerability trend analysis enough history to work with.
+# Bounds persisted findings_summary so the scan doc stays under Mongo's 16MB limit.
 _FINDINGS_SUMMARY_LIMIT = 500
 
 
@@ -713,13 +681,7 @@ def _build_findings_summary(
     vulnerability_findings: List[Dict[str, Any]],
     limit: int = _FINDINGS_SUMMARY_LIMIT,
 ) -> List[Dict[str, Any]]:
-    """Build a compact, bounded, vulnerability-only summary to persist on the scan.
-
-    This is read back across scan history by recommendation.trends._build_finding_frequency
-    to detect recurring vulnerabilities. Only the fields that analysis needs are kept
-    (and each entry stays a valid ``Finding``), with ``details`` trimmed to the CVE id so
-    the whole list stays well under Mongo's 16MB document limit.
-    """
+    """Compact, bounded, vulnerability-only summary; details trimmed to the CVE id to bound size."""
     summary: List[Dict[str, Any]] = []
     for record in vulnerability_findings[:limit]:
         details = record.get("details") or {}
@@ -812,12 +774,9 @@ async def _should_update_project_latest_scan(
     scan_repo: ScanRepository,
     project_repo: ProjectRepository,
 ) -> bool:
-    """True unless a strictly-newer scan is already the project's latest.
+    """True unless a strictly-newer scan (by created_at) is already the project's latest.
 
-    Guards against a late / out-of-order scan completion (a re-aggregated week-old scan,
-    or two concurrent pipeline scans finishing out of creation order) clobbering the
-    project's latest_scan_id/stats with stale data. "Newest" is defined by created_at,
-    consistent with stats._resolve_active_scan_id.
+    Guards against a late/out-of-order scan clobbering latest_scan_id/stats with stale data.
     """
     project_doc = await project_repo.get_by_id_strong(project_id)
     current_latest_id = getattr(project_doc, "latest_scan_id", None) if project_doc else None
@@ -862,8 +821,6 @@ async def _finalize_scan_and_project(
         "stats": stats.model_dump(),
         "completed_at": datetime.now(timezone.utc),
         "latest_run": latest_run_summary,
-        # Persist a compact, bounded vulnerability-only summary instead of $unsetting it,
-        # so recurring-vulnerability trend analysis can read it across scan history.
         "findings_summary": findings_summary or [],
     }
     if error:
@@ -874,11 +831,8 @@ async def _finalize_scan_and_project(
     }
 
     if status == "completed" and external_load_start is not None:
-        # Atomic completion guard: only mark completed (and $unset last_result_at) if no
-        # scanner result arrived after external loading began. This closes the TOCTOU
-        # window between _check_race_condition's read and this write, where a late result
-        # would otherwise be $unset and silently dropped (register_result only re-triggers
-        # on an already-'completed' scan). If the guard fails, reschedule for re-aggregation.
+        # Atomic completion guard: only complete if no scanner result arrived after loading
+        # began, closing the TOCTOU window where a late result would be $unset and lost.
         updated = await scan_repo.collection.find_one_and_update(
             {
                 "_id": scan_id,
@@ -912,9 +866,7 @@ async def _finalize_scan_and_project(
             {"$set": {"latest_rescan_id": scan_id, "latest_run": latest_run_summary}},
         )
 
-    # A failed scan (e.g. SBOM could not be loaded) must NOT become the project's latest
-    # scan or overwrite its stats with this run's near-empty results. Nor may an
-    # out-of-order/late scan overwrite a newer scan's stats (see helper).
+    # A failed or out-of-order scan must not become the project's latest or overwrite its stats.
     if (
         project_id
         and status != "failed"
@@ -936,13 +888,10 @@ async def _finalize_scan_and_project(
 async def _filter_out_waived_findings(
     aggregated_findings: List[Any], scan_id: str, db: Database
 ) -> List[Any]:
-    """Drop findings that were waived in this scan so notifications/webhooks match stats.
+    """Drop findings waived in this scan so notifications/webhooks match the waiver-aware stats.
 
-    Waivers are applied only as DB updates (_persist_findings_and_waivers -> _apply_waivers);
-    the in-memory Finding objects never get waived=True. Sending the raw list to notifications
-    re-alerts on waived vulnerabilities on every scan (emails/webhooks) while the waiver-aware
-    stats show 0 — a contradiction and permanent alert fatigue. Re-read the persisted waived
-    finding_ids and exclude them before notifying.
+    Waivers are applied only as DB updates; in-memory Finding objects are never marked waived,
+    so re-read the persisted waived finding_ids and exclude them before notifying.
     """
     from pymongo import ReadPreference
 
@@ -1013,24 +962,12 @@ def _release_memory_to_os() -> None:
 
 
 async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyzers: List[str], db: Database) -> bool:
-    """
-    Orchestrates the analysis process for a given SBOM scan.
-
-    Args:
-        scan_id: The ID of the scan to analyze
-        sboms: List of SBOM documents or GridFS references
-        active_analyzers: List of analyzer names to run
-        db: Database connection
-
-    Returns:
-        True if analysis completed successfully, False if rescheduled due to race condition
-    """
+    """Orchestrate analysis for an SBOM scan; returns False if rescheduled due to a race condition."""
     logger.info(f"Starting analysis for scan {scan_id}")
     aggregation_start_time = time.time()
     aggregator = ResultAggregator()
     results_summary: List[str] = []
 
-    # Initialize repositories for consistent data access
     scan_repo = ScanRepository(db)
     result_repo = AnalysisResultRepository(db)
     finding_repo = FindingRepository(db)
@@ -1054,7 +991,6 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     if scan_type == "cbom":
         active_analyzers = list(set(active_analyzers) | CRYPTO_ANALYZERS)
 
-    # 0. Cleanup previous results for internal analyzers, engine post-processors, and crypto.
     cleanup_names = _cleanup_analyzer_names(active_analyzers)
     if cleanup_names:
         await result_repo.delete_many({"scan_id": scan_id, "analyzer_name": {"$in": cleanup_names}})
@@ -1089,11 +1025,9 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         )
         results_summary.extend(sbom_results)
 
-    # 1. Fetch and aggregate external results
     external_load_start = datetime.now(timezone.utc)
     await _aggregate_external_results(aggregator, result_repo, scan_id, results_summary)
 
-    # 2. Collect findings and enrichments, then free aggregator
     aggregated_findings = aggregator.get_findings()
     _track_findings_metrics(aggregated_findings)
     dependency_enrichments = aggregator.get_dependency_enrichments()
@@ -1102,19 +1036,16 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     await _enrich_dependencies(dependency_enrichments, scan_id, db)
     del dependency_enrichments
 
-    # 3. Prepare finding records
     scan_created_at: Optional[datetime] = getattr(scan_doc, "created_at", None)
     findings_to_insert, vulnerability_findings = _prepare_finding_records(
         aggregated_findings, scan_id, project_id, scan_created_at
     )
     total_findings_count = len(findings_to_insert)
 
-    # 4. Resolve GitHub token for enrichment
     github_token = system_settings.github_token
     if not github_token:
         github_token = await _get_github_instance_token(db)
 
-    # 5. Enrich vulnerability findings
     await _run_vuln_enrichments(
         active_analyzers,
         vulnerability_findings,
@@ -1129,7 +1060,6 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         results_summary,
     )
 
-    # 6. Insert findings and apply waivers
     ignored_count, active_waivers = await _persist_findings_and_waivers(
         findings_to_insert, scan_id, project_id, finding_repo, db
     )
@@ -1175,16 +1105,13 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         findings_summary=_build_findings_summary(vulnerability_findings),
     )
     if not finalized:
-        # A late scanner result raced completion; the scan was rescheduled for
-        # re-aggregation. Do not notify with this run's stale, incomplete results.
+        # Rescheduled after a late scanner result raced completion; skip notifying on stale results.
         del aggregated_findings
         _release_memory_to_os()
         return False
 
-    # Authoritative waiver re-apply + re-anchor + lapsed-flag computation. Runs BEFORE
-    # notifications so webhooks/integrations report post-re-anchor stats. Skipped when the
-    # project has no active waivers (nothing to re-anchor/lapse — avoids a redundant full
-    # re-apply + stats recompute on every scan).
+    # Re-apply/re-anchor waivers before notifying so webhooks report post-re-anchor stats;
+    # skipped when the project has no active waivers.
     if not sbom_load_failed:
         notify_stats = stats
         if project_id and await _project_has_active_waivers(project_id, db):

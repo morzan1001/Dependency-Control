@@ -1,13 +1,4 @@
-"""
-SBOM Parser Module
-
-Provides unified parsing for multiple SBOM formats:
-- CycloneDX (1.4, 1.5, 1.6)
-- SPDX (2.2, 2.3)
-- Syft JSON (native format)
-
-Normalizes all formats to a common internal representation.
-"""
+"""Unified parsing of CycloneDX, SPDX, and Syft JSON SBOMs into a common representation."""
 
 import logging
 import re
@@ -58,9 +49,7 @@ def extract_license_from_url(url: str) -> Optional[str]:
 
 
 class SBOMParser:
-    """
-    Universal SBOM parser that handles multiple formats and normalizes output.
-    """
+    """Universal SBOM parser that handles multiple formats and normalizes output."""
 
     def __init__(self) -> None:
         self.format_handlers = {
@@ -325,38 +314,24 @@ class SBOMParser:
         layer_digest: Optional[str],
         global_source_type: Optional[str],
     ) -> Optional[str]:
-        """
-        Determine the most likely source of a component.
-
-        Returns:
-            - "image": OS package from container base image
-            - "application": Application dependency from source code
-            - "file": From a specific file
-            - None: Unknown
-        """
+        """Determine a component's likely source: image, application, file, or None."""
         purl_type = get_purl_type(purl)
         effective_type = (purl_type or pkg_type or "").lower()
 
-        # OS packages with layer info are definitely from the container image
         if effective_type in OS_PACKAGE_TYPES:
             if layer_digest or global_source_type == SOURCE_TYPE_IMAGE:
                 return SOURCE_TYPE_IMAGE
 
-        # Application packages are typically from source code, not the base image
         if effective_type in APP_PACKAGE_TYPES:
-            # Even without location hints, app packages are usually from the app
             return SOURCE_TYPE_APPLICATION
 
-        # If we have layer info, it's from the image
         if layer_digest:
             return SOURCE_TYPE_IMAGE
 
-        # Fallback to global source type
         return global_source_type
 
     def _construct_purl(self, pkg_type: str, name: str, version: str, group: Optional[str] = None) -> str:
         """Construct a PURL from component metadata."""
-        # Normalize type to PURL namespace
         type_mapping = {
             "library": "generic",
             "application": "generic",
@@ -369,7 +344,6 @@ class SBOMParser:
         }
         purl_type = type_mapping.get(pkg_type, pkg_type)
 
-        # Construct PURL: pkg:type/namespace/name@version
         if group:
             return f"pkg:{purl_type}/{group}/{name}@{version}"
         else:

@@ -1,15 +1,4 @@
-"""
-Policy audit history service.
-
-Public functions:
-    - compute_change_summary(old, new): pure, no I/O. Deterministic one-line
-      summary of crypto rule-set differences.
-    - compute_license_policy_change_summary(old, new): pure, no I/O.
-      Deterministic one-line summary of license-policy field changes.
-    - record_policy_change(...): persist a crypto-policy audit entry with
-      webhook + notification dispatch.
-    - record_license_policy_change(...): same, for license-policy changes.
-"""
+"""Policy audit history: change summaries and persistence for crypto/license policy edits."""
 
 import logging
 from datetime import datetime, timezone
@@ -30,8 +19,7 @@ logger = logging.getLogger(__name__)
 
 _NO_CHANGES_SUMMARY = "No effective changes"
 
-# Fields compared when detecting "modified" rules. Not exhaustive — only the
-# fields users actually adjust.
+# Fields compared to detect a modified rule; not exhaustive.
 _COMPARED_FIELDS: Tuple[str, ...] = (
     "enabled",
     "default_severity",
@@ -105,10 +93,7 @@ async def record_policy_change(
     comment: Optional[str],
     reverted_from_version: Optional[int] = None,
 ) -> PolicyAuditEntry:
-    """Persist an audit entry, fire webhook + notifications.
-
-    Best-effort: webhook/notification failures are logged but do not raise.
-    """
+    """Persist an audit entry and fire webhook + notifications (best-effort)."""
     summary = compute_change_summary(old_policy, new_policy)
     entry = PolicyAuditEntry(
         policy_scope=policy_scope,
@@ -127,22 +112,13 @@ async def record_policy_change(
         await PolicyAuditRepository(db).insert(entry)
     except Exception:
         logger.exception("Policy audit persistence failed (non-blocking)")
-    # Analytics outputs (hotspots, trends, PQC migration plans) are derived
-    # from the effective crypto policy. A policy change silently invalidates
-    # everything the TTL cache currently holds, so flush it here. Failure
-    # must never block the caller — we never want a cache bug to prevent a
-    # valid policy write.
+    # A policy change invalidates cached analytics derived from it; flush the TTL cache.
     try:
         from app.services.analytics.cache import get_analytics_cache
 
         get_analytics_cache().clear()
     except Exception:
         logger.exception("Analytics cache invalidation failed (non-blocking)")
-    # Defensive: _dispatch_webhook delegates to safe_trigger_webhooks
-    # internally, but the surrounding payload construction (entry attribute
-    # access, action.value) could still raise on an unexpected entry shape.
-    # Belt-and-braces: keep the outer try so audit recording never fails
-    # because of a downstream issue.
     try:
         await _dispatch_webhook(db, entry, event_type=WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED)
     except Exception:
@@ -213,16 +189,7 @@ async def _notify_relevant_users(
     subject_noun: str = "crypto policy",
     event_type: str = "crypto_policy_changed",
 ) -> None:
-    """Create in-app notifications for users affected by the policy change.
-
-    Skipped for SEED (system-initiated, no info value).
-
-    For system-scope changes: notifies users holding ``system:manage`` or
-    ``analytics:global`` permissions. For project-scope changes: notifies all
-    members of the project. Relies on the notification service's own error
-    handling — this function is wrapped by ``record_policy_change`` in a
-    best-effort try/except.
-    """
+    """Notify users affected by a policy change; system-scope hits system:manage/analytics:global holders, project-scope hits members. Skipped for SEED."""
     if entry.action == PolicyAuditAction.SEED or entry.action == "seed":
         return
 
@@ -257,13 +224,7 @@ async def _notify_relevant_users(
         )
 
 
-# ---------------------------------------------------------------------------
-# License policy
-# ---------------------------------------------------------------------------
-
-# Fields compared when detecting a license-policy change. Every value
-# persisted to ``project.license_policy`` or
-# ``project.analyzer_settings["license_compliance"]`` is scalar.
+# Fields compared to detect a license-policy change; all values are scalar.
 _LICENSE_COMPARED_FIELDS: Tuple[str, ...] = (
     "distribution_model",
     "deployment_model",
@@ -316,16 +277,7 @@ async def record_license_policy_change(
     actor: Any,
     comment: Optional[str] = None,
 ) -> Optional[PolicyAuditEntry]:
-    """Persist a license-policy audit entry, fire webhook + notifications.
-
-    Returns the entry that was written, or ``None`` if no effective change
-    was detected (caller passed identical old/new dicts).
-
-    Best-effort: webhook/notification failures are logged but do not raise.
-    License policy has no explicit ``version`` column on the project doc —
-    this function derives the next version from the count of existing
-    audit entries for the same project.
-    """
+    """Persist a license-policy audit entry (best-effort); returns None if no effective change. Version derives from existing entry count since the project doc has no version column."""
     summary = compute_license_policy_change_summary(old_policy, new_policy)
     if summary == _NO_CHANGES_SUMMARY:
         return None

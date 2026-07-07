@@ -31,19 +31,16 @@ class GHSAProvider:
         self._retry_delay = retry_delay if retry_delay is not None else settings.ENRICHMENT_RETRY_DELAY
 
     def set_token(self, token: Optional[str]) -> None:
-        """Set the GitHub Personal Access Token for authenticated API requests."""
         self._github_token = token
         if token:
             logger.info("GitHub token configured - using authenticated API access")
 
     def _get_concurrency_limit(self) -> int:
-        """Get concurrency limit based on authentication status."""
         if self._github_token:
             return GHSA_CONCURRENT_REQUESTS_AUTHENTICATED
         return GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED
 
     def _get_github_headers(self) -> Dict[str, str]:
-        """Get headers for GitHub API requests, including auth if available."""
         headers = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
@@ -53,19 +50,11 @@ class GHSAProvider:
         return headers
 
     async def fetch_ghsa_advisory(self, client: InstrumentedAsyncClient, ghsa_id: str) -> Optional[GHSAData]:
-        """
-        Fetch a single GitHub Security Advisory by its GHSA ID.
-
-        Uses the GitHub Advisory Database API. If a GitHub token is configured,
-        authenticated requests are made for higher rate limits.
-
-        Uses distributed lock to prevent multiple pods fetching same advisory.
-        """
+        """Fetch a single GHSA advisory, using a distributed lock so multiple pods don't fetch the same one."""
         cache_key = CacheKeys.ghsa(ghsa_id)
         timeout = ANALYZER_TIMEOUTS.get("ghsa", ANALYZER_TIMEOUTS["default"])
 
         async def fetch_from_github() -> Optional[Dict]:
-            """Fetch GHSA advisory from GitHub API with retry logic."""
             last_error = None
 
             for attempt in range(self._max_retries):
@@ -157,7 +146,6 @@ class GHSAProvider:
             logger.error(f"GHSA {ghsa_id} fetch failed after {self._max_retries} attempts: {last_error}")
             return None
 
-        # Distributed lock prevents multiple pods fetching the same advisory.
         cached = await cache_service.get_or_fetch_with_lock(
             key=cache_key,
             fetch_fn=fetch_from_github,
@@ -169,10 +157,7 @@ class GHSAProvider:
         return None
 
     async def resolve_ghsa_to_cve(self, client: InstrumentedAsyncClient, ghsa_ids: List[str]) -> Dict[str, GHSAData]:
-        """Resolve GHSA IDs to CVEs and advisory metadata. Returns {ghsa_id: GHSAData}.
-
-        Uses Redis cache and a semaphore-bounded concurrent fetch.
-        """
+        """Resolve GHSA IDs to CVEs and advisory metadata (Redis-cached, semaphore-bounded fetch)."""
         if not ghsa_ids:
             return {}
 
@@ -191,7 +176,6 @@ class GHSAProvider:
         if missing_ghsas:
             logger.debug(f"Fetching {len(missing_ghsas)} GHSA advisories (cache miss)")
 
-            # Concurrency cap depends on whether we have a GitHub token.
             concurrency = self._get_concurrency_limit()
             semaphore = asyncio.Semaphore(concurrency)
 

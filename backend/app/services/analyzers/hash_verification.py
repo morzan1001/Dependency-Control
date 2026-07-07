@@ -1,14 +1,4 @@
-"""
-Hash Verification Analyzer
-
-Verifies package integrity by comparing SBOM hashes against known-good hashes
-from package registries (PyPI, npm, Maven Central, etc.).
-
-Detects:
-- Tampered packages (hash mismatch)
-- Potentially compromised packages
-- Supply chain attacks where package content was modified
-"""
+"""Verifies package integrity by comparing SBOM hashes against registry hashes (PyPI, npm)."""
 
 import asyncio
 import base64
@@ -31,11 +21,10 @@ logger = logging.getLogger(__name__)
 class HashVerificationAnalyzer(Analyzer):
     name = "hash_verification"
 
-    # Registry APIs for hash verification
+    # Maven Central omitted: its checksums are served as separate files, not inline.
     REGISTRY_APIS = {
         "pypi": f"{PYPI_API_URL}/{{package}}/{{version}}/json",
         "npm": f"{NPM_REGISTRY_URL}/{{package}}/{{version}}",
-        # Maven Central uses a different approach (checksums as separate files)
     }
 
     async def analyze(
@@ -44,12 +33,7 @@ class HashVerificationAnalyzer(Analyzer):
         settings: Optional[Dict[str, Any]] = None,
         parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """
-        Analyze packages by verifying their hashes against official registries.
-
-        If SBOM contains hashes: verifies them against registry
-        If SBOM has no hashes: fetches hashes from registry for enrichment
-        """
+        """Verify component hashes against registries; fetch registry hashes when the SBOM has none."""
         components = self._get_components(sbom, parsed_components)
         issues = []
         verified_count = 0
@@ -73,14 +57,13 @@ class HashVerificationAnalyzer(Analyzer):
                 elif result.get("mismatch"):
                     issues.append(result)
                 elif result.get("fetched_hashes"):
-                    # We fetched hashes from registry (no hash in SBOM)
                     no_hash_in_sbom_count += 1
                     key = f"{result['component']}@{result['version']}"
                     fetched_hashes[key] = result["fetched_hashes"]
 
         return {
             "hash_issues": issues,
-            "fetched_hashes": fetched_hashes,  # For enrichment
+            "fetched_hashes": fetched_hashes,
             "summary": {
                 "verified_count": verified_count,
                 "unverifiable_count": unverifiable_count,
@@ -208,9 +191,8 @@ class HashVerificationAnalyzer(Analyzer):
         if registry_hashes_flat is None or not registry_hashes_flat:
             return None
 
-        # A registry value may be a single digest (npm: one dist per version)
-        # or a list of digests (PyPI: one entry per released file). Normalize
-        # both into a set so _compare_hashes accepts any legitimate file hash.
+        # A registry value may be a single digest (npm) or a list (PyPI, one per file);
+        # normalize both into a set so any legitimate file hash matches.
         registry_hashes: Dict[str, set] = {}
         for k, v in registry_hashes_flat.items():
             registry_hashes[k] = set(v) if isinstance(v, (list, tuple, set)) else {v}
@@ -230,10 +212,8 @@ class HashVerificationAnalyzer(Analyzer):
     ) -> Optional[Dict[str, List[str]]]:
         """Fetch PyPI registry hashes; empty dict = negative cache, None = transient error.
 
-        A released version ships one entry per file in ``data['urls']`` (sdist
-        plus one wheel per platform), each with its own digest. Collect EVERY
-        file's digest per algorithm so an SBOM built on any platform verifies
-        against the matching wheel rather than only the first ``urls`` entry.
+        Collect every file's digest per algorithm (sdist plus each platform wheel) so an
+        SBOM built on any platform verifies against the matching wheel.
         """
         try:
             url = self.REGISTRY_APIS["pypi"].format(package=name, version=version)

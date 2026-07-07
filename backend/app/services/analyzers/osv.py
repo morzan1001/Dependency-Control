@@ -52,10 +52,9 @@ class OSVAnalyzer(Analyzer):
     name = "osv"
     api_url = OSV_BATCH_API_URL
 
-    # Bounded retry on HTTP 429 so a throttled chunk isn't silently dropped
-    # (its components would otherwise be left uncached and absent from results).
+    # Bounded retry on HTTP 429 so a throttled chunk isn't silently dropped.
     max_retries: int = 3
-    retry_base_delay: float = 5.0  # seconds; doubles each attempt (exponential backoff)
+    retry_base_delay: float = 5.0  # seconds, doubles each attempt
 
     async def analyze(
         self,
@@ -298,37 +297,30 @@ class OSVAnalyzer(Analyzer):
 
     def _extract_severity(self, vuln: Dict[str, Any]) -> str:
         """Extract severity from OSV vulnerability data."""
-        # Check database_specific first (e.g., GitHub advisories)
         db_sev = self._severity_from_map(vuln.get("database_specific", {}).get("severity"))
         if db_sev:
             return db_sev
 
-        # Check severity array (CVSS scores)
         cvss_sev = self._severity_from_cvss_array(vuln.get("severity", []))
         if cvss_sev:
             return cvss_sev
 
-        # Check affected entries for severity
         for affected in vuln.get("affected", []):
             eco_sev = self._severity_from_map(affected.get("ecosystem_specific", {}).get("severity"))
             if eco_sev:
                 return eco_sev
 
-        # Default to MEDIUM if no severity found
         return Severity.MEDIUM.value
 
     def _parse_cvss_score(self, score: str) -> Optional[float]:
         """Parse CVSS score from numeric value or vector string."""
         try:
-            # Try direct numeric conversion first
             return float(score)
         except ValueError:
             pass
 
-        # Try to extract base score from CVSS vector
         if "/" in score:
             parts = score.split("/")
-            # Check last part for numeric score
             try:
                 return float(parts[-1])
             except ValueError:

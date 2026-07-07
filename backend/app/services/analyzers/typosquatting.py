@@ -79,19 +79,12 @@ def _build_typosquat_issue(
 
 
 class TyposquattingAnalyzer(Analyzer):
-    """
-    Analyzer that detects potential typosquatting attacks by comparing
-    package names against a list of popular packages.
-
-    Uses Redis cache for the popular packages list across all pods.
-    """
+    """Detects typosquatting by comparing package names against a Redis-cached list of popular packages."""
 
     name = "typosquatting"
 
     async def _ensure_popular_packages(self) -> Dict[str, Set[str]]:
         """Load popular packages from Redis cache or fetch from APIs."""
-
-        # Try Redis cache first
         pypi_cache_key = CacheKeys.popular_packages("pypi")
         npm_cache_key = CacheKeys.popular_packages("npm")
 
@@ -102,20 +95,17 @@ class TyposquattingAnalyzer(Analyzer):
 
         result: Dict[str, set] = {"pypi": set(), "npm": set()}
 
-        # Load PyPI packages
         if pypi_packages:
             result["pypi"] = set(pypi_packages)
             logger.debug(f"Loaded {len(result['pypi'])} PyPI packages from Redis cache")
         else:
             result["pypi"] = await self._fetch_pypi_packages()
 
-        # Load npm packages (we use static list)
         if npm_packages:
             result["npm"] = set(npm_packages)
             logger.debug(f"Loaded {len(result['npm'])} npm packages from Redis cache")
         else:
             result["npm"] = self._get_static_npm()
-            # Cache npm packages
             await cache_service.set(npm_cache_key, list(result["npm"]), CacheTTL.POPULAR_PACKAGES)
 
         return result
@@ -131,7 +121,6 @@ class TyposquattingAnalyzer(Analyzer):
                 if resp.status_code == 200:
                     data = resp.json()
                     packages = {row["project"].lower() for row in data.get("rows", [])[:5000]}
-                    # Cache in Redis
                     await cache_service.set(cache_key, list(packages), CacheTTL.POPULAR_PACKAGES)
                     logger.info(f"Loaded {len(packages)} popular PyPI packages (cached in Redis)")
                     return packages
@@ -142,7 +131,6 @@ class TyposquattingAnalyzer(Analyzer):
         except Exception as e:
             logger.debug(f"Failed to fetch PyPI top packages: {type(e).__name__}")
 
-        # Fallback to static list
         packages = self._get_static_pypi()
         await cache_service.set(cache_key, list(packages), CacheTTL.POPULAR_PACKAGES)
         return packages
@@ -289,15 +277,10 @@ class TyposquattingAnalyzer(Analyzer):
         return None
 
     def _is_suspicious(self, name: str, popular: str) -> bool:
-        """Check if a package name is suspiciously similar to a popular package.
+        """Whether ``name`` is a suspicious near-match of ``popular``.
 
-        Note: Length difference check is already done in analyze() before calling this.
-
-        Prefix relationships are only considered legitimate when the prefix
-        is followed by a separator (``-``/``_``/``.``). Otherwise an
-        attacker could bypass the check by appending letters — ``expresss``
-        starts with ``express`` but is exactly the typosquat we want to
-        flag, while ``react-dom`` is a real sub-package.
+        A prefix is legitimate only when followed by a separator (``-``/``_``/``.``):
+        ``react-dom`` is a real sub-package, but ``expresss`` is a typosquat to flag.
         """
         if name == popular:
             return False

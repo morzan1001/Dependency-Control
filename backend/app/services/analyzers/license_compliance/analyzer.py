@@ -26,7 +26,6 @@ class LicenseAnalyzer(Analyzer):
     name = "license_compliance"
 
     LICENSE_DATABASE: Dict[str, LicenseInfo] = LICENSE_DATABASE
-    _CATEGORY_STAT_KEY: Dict[LicenseCategory, str] = CATEGORY_STAT_KEY
 
     async def analyze(
         self,
@@ -34,20 +33,12 @@ class LicenseAnalyzer(Analyzer):
         settings: Optional[Dict[str, Any]] = None,
         parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """Analyze SBOM components for license compliance issues.
-
-        Settings can include:
-        - allow_strong_copyleft: bool - Allow GPL-style licenses (default: False)
-        - allow_network_copyleft: bool - Allow AGPL/SSPL (default: False)
-        - ignore_dev_dependencies: bool - Skip devDependencies (default: True)
-        - ignore_transitive: bool - Only check direct deps (default: False)
-        """
+        """Analyze SBOM components for license compliance issues."""
         settings = settings or {}
         ignore_dev = settings.get("ignore_dev_dependencies", True)
         ignore_transitive = settings.get("ignore_transitive", False)
 
-        # Precedence: settings (merged from analyzer_settings.license_compliance) >
-        # legacy top-level "license_policy" key.
+        # Nested license_policy takes precedence over top-level policy keys.
         policy_raw = settings.get("license_policy", {})
         if not policy_raw and any(k in settings for k in ("distribution_model", "deployment_model", "library_usage")):
             policy_raw = settings
@@ -106,11 +97,7 @@ class LicenseAnalyzer(Analyzer):
             stats["skipped"] += 1
             return
 
-        # Directness is a TOP-LEVEL field on ParsedDependency (schemas/sbom.py).
-        # `properties` is a Dict[str, str] of raw CycloneDX property strings and
-        # never carries a 'direct' key, so reading it always yielded True.
-        # Default to direct (True) when unknown so unknown deps are never silently
-        # skipped or downgraded.
+        # Default to direct when unknown so unknown deps are never skipped or downgraded.
         is_transitive = not component.get("direct", True)
         if ignore_transitive and is_transitive:
             stats["skipped"] += 1
@@ -120,7 +107,6 @@ class LicenseAnalyzer(Analyzer):
         comp_version = component.get("version", "unknown")
         comp_purl = component.get("purl", "")
 
-        # Check for SPDX OR expressions — use expression-aware evaluation
         spdx_expr = normalizer.has_spdx_expression(component)
         if spdx_expr:
             or_groups = normalizer.parse_spdx_expression(spdx_expr)
@@ -208,16 +194,11 @@ class LicenseAnalyzer(Analyzer):
         or_groups: List[List[str]],
         policy: LicensePolicy,
     ) -> Optional[Dict[str, Any]]:
-        """Evaluate an SPDX expression by choosing the least restrictive OR-alternative.
-
-        For OR: pick the alternative with the lowest severity (user can choose).
-        For AND within an alternative: pick the highest severity (all apply).
-        """
+        """Evaluate an SPDX expression: lowest-severity OR-alternative, highest-severity AND-member."""
         best_issue: Optional[Dict[str, Any]] = None
         best_severity_rank = 999
 
         for and_group in or_groups:
-            # AND-connected: highest severity wins.
             worst_issue: Optional[Dict[str, Any]] = None
             worst_rank = -1
 

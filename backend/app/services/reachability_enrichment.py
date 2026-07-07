@@ -1,16 +1,4 @@
-"""
-Reachability Enrichment Service
-
-Analyzes whether vulnerable code paths are actually reachable
-in a project based on call graph data.
-
-Two-level approach:
-1. Import-based: Is the vulnerable package imported? (reliable)
-2. Symbol-based: Are vulnerable functions used? (heuristic, extracted from CVE descriptions)
-
-This service enriches vulnerability findings with reachability
-information, helping teams prioritize truly exploitable issues.
-"""
+"""Enrich vulnerability findings with call-graph reachability: import-based (reliable) and symbol-based (heuristic)."""
 
 import logging
 import uuid
@@ -120,14 +108,10 @@ def _callgraphs_cover_finding_ecosystem(
 
 
 def _apply_adjusted_risk_score(finding: Dict[str, Any], reachability: Mapping[str, Any]) -> None:
-    """Persist a reachability-adjusted risk score on the finding (W5 / Finding 13).
+    """Apply the reachability modifier to ``details.risk_score`` and store ``adjusted_risk_score``.
 
-    Takes the per-finding base composite ``details.risk_score`` and applies the
-    reachability modifier, mapping the enrichment vocabulary
-    (``none``/``import``/``symbol`` + ``is_reachable``) onto the modifier
-    vocabulary (``confirmed``/``unreachable``/identity). Only a symbol-level
-    reachable hit boosts (x1.1); a not-reachable verdict de-prioritises (x0.4);
-    everything weaker is identity. No base risk_score -> nothing to adjust.
+    Symbol-level reachable boosts (x1.1); not-reachable de-prioritises (x0.4); else
+    identity. No base risk_score -> nothing to adjust.
     """
     details = finding.setdefault("details", {})
     base = details.get("risk_score")
@@ -168,8 +152,7 @@ def is_high_confidence_reachable(reachability_data: Optional[Dict[str, Any]]) ->
 def reachability_display_tier(is_reachable: Optional[bool], analysis_level: Optional[str]) -> str:
     """Map persisted reachability (is_reachable + analysis_level in
     none/import/symbol) onto the display vocabulary confirmed/likely/unreachable/
-    unknown. Shared by the comprehensive-stats summary and the persisted pending
-    summary so the two cannot drift (audit MF6)."""
+    unknown. Shared by the comprehensive-stats and persisted-pending summaries so they cannot drift."""
     if is_reachable is False:
         return "unreachable"
     if is_reachable is True:
@@ -330,25 +313,13 @@ async def enrich_findings_with_reachability(
     db: AsyncIOMotorDatabase,
     scan_id: Optional[str] = None,
 ) -> int:
-    """
-    Enrich vulnerability findings with reachability analysis.
+    """Enrich vulnerability findings (modified in-place) with reachability; return count enriched.
 
-    Supports multiple callgraphs (one per language). For each finding,
-    the matching callgraph is used (i.e. the one where the package is imported).
-
-    Args:
-        findings: List of finding dicts (will be modified in-place)
-        project_id: Project ID to fetch callgraph for
-        db: Database connection
-        scan_id: Scan ID to find the matching callgraph (preferred)
-
-    Returns:
-        Number of findings enriched
+    Uses the per-language callgraph where each finding's package is imported.
     """
     if not findings:
         return 0
 
-    # Determine scan_id from findings if not provided
     if not scan_id and findings:
         scan_id = findings[0].get("scan_id")
 
@@ -365,8 +336,7 @@ async def enrich_findings_with_reachability(
     languages = [cg.language or "unknown" for cg in callgraphs]
     logger.debug(f"Found {len(callgraphs)} callgraph(s) for scan {scan_id}: {languages}")
 
-    # Reliable per-finding ecosystem (vuln findings don't carry a purl), used to
-    # gate the fail-closed unreachable down-weight to the analyzed languages.
+    # Per-finding ecosystem gates the unreachable down-weight to the analyzed languages.
     component_languages = await _build_component_language_map(db, scan_id)
 
     enriched_count = 0
@@ -387,16 +357,7 @@ def _analyze_reachability(
     import_map: Dict[str, List[str]],
     language: str,
 ) -> ReachabilityResult:
-    """
-    Analyze reachability for a single finding.
-
-    Two-level analysis:
-    1. Import-based: Is the package imported anywhere?
-    2. Symbol-based: Are vulnerable functions (extracted from CVE text) used?
-
-    Returns:
-        ReachabilityResult with analysis details
-    """
+    """Analyze reachability for one finding: import-based, then symbol-based."""
     result: ReachabilityResult = {
         "is_reachable": False,
         "confidence_score": 0.0,
@@ -406,16 +367,11 @@ def _analyze_reachability(
         "message": "",
     }
 
-    # Normalize component name for lookup
     normalized = _normalize_component(component, language)
-
     usage = module_usage.get(normalized) or module_usage.get(component)
-
-    # Also check import_map for package presence
     package_in_imports = _check_package_in_imports(normalized, import_map)
 
     if not usage and not package_in_imports:
-        # Package not found in imports - not reachable
         result["is_reachable"] = False
         result["confidence_score"] = REACHABILITY_CONFIDENCE_NOT_USED
         result["analysis_level"] = REACHABILITY_LEVEL_IMPORT
@@ -532,13 +488,9 @@ def _check_package_in_imports(package: str, import_map: Dict[str, List[str]]) ->
                 files_importing.append(file_path)
                 break
 
-            # Boundary-anchored subpath / submodule match only. A bare
-            # ``package_lower in imp_lower`` substring test spuriously matches
-            # unrelated packages (npm "ms" -> "forms"/"aws-sdk/clients/sms",
-            # Python "requests" -> "requests_oauthlib"), inflating reachability.
-            # Require a real path ("/") or module (".") boundary, mirroring the
-            # symbol-boundary fix in ``_match_symbols`` (audit #6 / SC#7).
-            # Direct equality is already handled above.
+            # Boundary-anchored subpath/submodule match only: a bare substring test
+            # spuriously matches unrelated packages (npm "ms" -> "forms"), inflating
+            # reachability. Require a real path ("/") or module (".") boundary.
             if imp_lower.startswith(package_lower + "/") or imp_lower.startswith(package_lower + "."):
                 files_importing.append(file_path)
                 break
@@ -565,12 +517,9 @@ def _match_symbols(vulnerable_symbols: List[str], used_symbols: List[str]) -> Li
             matched.append(used)
             continue
 
-        # Qualified-call boundary match on EITHER side (method chaining / dotted
-        # usage), e.g. used "openssl.SSL_read" vs vuln "SSL_read", or vuln
-        # "Conn.Read" vs the bare used "Read" that production callgraphs actually
-        # store. A bare substring test ("get" in "getUser"/"forget") would
-        # spuriously promote findings, so we require a real symbol boundary, not
-        # any substring (audit #6 / SC#7).
+        # Qualified-call boundary match on either side (dotted usage), e.g. used
+        # "openssl.SSL_read" vs vuln "SSL_read". Require a real symbol boundary, not
+        # any substring, so "get" in "getUser" doesn't spuriously promote findings.
         for vuln in vulnerable_symbols:
             vuln_l = vuln.lower()
             if used_lower.endswith("." + vuln_l) or vuln_l.endswith("." + used_lower):
@@ -610,26 +559,15 @@ async def run_pending_reachability_for_scan(
     project_id: str,
     db: AsyncIOMotorDatabase,
 ) -> Dict[str, Any]:
-    """
-    Run pending reachability analysis for a specific scan.
+    """Run pending reachability for a scan after its callgraph is uploaded.
 
-    This is called after a callgraph is uploaded and linked to a scan.
-    Simple and direct - no complex matching logic needed since we have the scan_id.
-
-    Args:
-        scan_id: The scan ID to process
-        project_id: Project ID for the scan
-        db: Database connection
-
-    Returns:
-        Dict with results: {"findings_enriched": int, "error": str or None}
+    Returns ``{"findings_enriched": int, "error": str | None}``.
     """
     result: Dict[str, Any] = {
         "findings_enriched": 0,
         "error": None,
     }
 
-    # Use repositories for consistent data access
     from app.repositories import (
         ScanRepository,
         FindingRepository,
@@ -642,7 +580,6 @@ async def run_pending_reachability_for_scan(
     callgraph_repo = CallgraphRepository(db)
     result_repo = AnalysisResultRepository(db)
 
-    # Check if this scan has pending reachability
     scan = await scan_repo.get_by_id(scan_id)
     if not scan:
         logger.debug(f"Scan {scan_id} not found")
@@ -653,12 +590,10 @@ async def run_pending_reachability_for_scan(
         return result
 
     try:
-        # Fetch vulnerability findings for this scan
         findings = await finding_repo.find_many({"scan_id": scan_id, "type": "vulnerability"}, limit=10000)
 
         if not findings:
             logger.debug(f"No vulnerability findings for scan {scan_id}")
-            # Clear pending status even if no findings
             await scan_repo.update_raw(
                 scan_id,
                 {
@@ -670,10 +605,8 @@ async def run_pending_reachability_for_scan(
             )
             return result
 
-        # Convert to dicts for enrichment (enrichment modifies dicts in place)
         findings_dicts = [f.model_dump(by_alias=True) for f in findings]
 
-        # Run reachability enrichment - callgraph lookup uses scan_id
         enriched_count = await enrich_findings_with_reachability(
             findings=findings_dicts,
             project_id=project_id,
@@ -681,11 +614,8 @@ async def run_pending_reachability_for_scan(
             scan_id=scan_id,
         )
 
-        # Update findings in database with reachability data. Collect UpdateOne
-        # operations and flush them in chunked, unordered bulk_write round-trips
-        # instead of one sequential update per finding: a 10k-finding scan would
-        # otherwise fire 10k serial Mongo calls inline in the callgraph-upload
-        # request. Mirrors the analysis engine's dependency bulk-update pattern.
+        # Chunked unordered bulk_write instead of one update per finding, so a 10k-finding
+        # scan doesn't fire 10k serial Mongo calls inline in the callgraph-upload request.
         bulk_ops: List[UpdateOne] = []
         for finding_dict in findings_dicts:
             details = finding_dict.get("details", {})
@@ -698,9 +628,7 @@ async def run_pending_reachability_for_scan(
                 "reachable_functions": reachability_data.get("matched_symbols", []),
                 "details.reachability": reachability_data,
             }
-            # Persist the reachability-adjusted risk score (W5 / Finding 13)
-            # when enrichment computed one (i.e. the finding had a base
-            # details.risk_score to adjust).
+            # Persist the reachability-adjusted risk score when enrichment computed one.
             if "adjusted_risk_score" in details:
                 update_fields["details.adjusted_risk_score"] = details["adjusted_risk_score"]
             bulk_ops.append(UpdateOne({"_id": finding_dict["_id"]}, {"$set": update_fields}))
@@ -708,9 +636,7 @@ async def run_pending_reachability_for_scan(
         for i in range(0, len(bulk_ops), _BULK_CHUNK_SIZE):
             await finding_repo.collection.bulk_write(bulk_ops[i : i + _BULK_CHUNK_SIZE], ordered=False)
 
-        # Store reachability summary in analysis_results for raw data view. Reuse
-        # the canonical builder from analysis/stats so the pending path and the
-        # inline analysis path cannot drift (e.g. the high-confidence flag).
+        # Reuse the canonical builder so the pending and inline paths cannot drift.
         # Lazy import to avoid the stats -> reachability_enrichment import cycle.
         callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
         if callgraphs:
@@ -731,7 +657,6 @@ async def run_pending_reachability_for_scan(
                 }
             )
 
-        # Clear pending status via repository
         await scan_repo.update_raw(
             scan_id,
             {

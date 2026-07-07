@@ -156,11 +156,7 @@ class ResultAggregator:
         self._apply_deps_dev_licenses(enrichment, metadata.get("licenses", []))
 
     def record_scorecard(self, component_key: str, data: Dict[str, Any]) -> None:
-        """Record OpenSSF Scorecard data for a component, keyed by ``name@version``.
-
-        Caches scorecard details that are later applied to findings via
-        ``enrich_with_scorecard`` during finalization.
-        """
+        """Cache OpenSSF Scorecard data (keyed by ``name@version``) applied to findings during finalization."""
         self._scorecard_cache[component_key] = data
 
     def enrich_from_license_scanner(self, name: str, version: str, license_info: Dict[str, Any]) -> None:
@@ -171,7 +167,6 @@ class ResultAggregator:
 
         spdx_id = license_info.get("license")
         if spdx_id:
-            # License scanner provides detailed analysis - use as primary
             enrichment.primary_license = spdx_id
             enrichment.license_category = license_info.get("category")
             enrichment.licenses.append(
@@ -197,7 +192,6 @@ class ResultAggregator:
         if not result:
             return
 
-        # Check for scanner errors
         if "error" in result:
             self.add_finding(
                 Finding(
@@ -327,8 +321,7 @@ class ResultAggregator:
         for group in sast_groups.values():
             if not group:
                 continue
-            # Single-item groups still go through merge_sast_findings to ensure
-            # a consistent sast_findings list structure on all SAST findings.
+            # Single-item groups still pass through so every SAST finding gets a consistent sast_findings list.
             merged_f = merge_sast_findings(group)
             if merged_f:
                 final_findings.append(merged_f)

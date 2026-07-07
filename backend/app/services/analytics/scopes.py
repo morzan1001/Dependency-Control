@@ -75,10 +75,7 @@ class ScopeResolver:
         return ResolvedScope(scope="global", scope_id=None, project_ids=None)
 
     async def _resolve_user(self) -> ResolvedScope:
-        # Super-users with PROJECT_READ_ALL see every project under the user
-        # scope. This matches the long-standing SBOM-analytics semantics so
-        # migrating SBOM endpoints to ScopeResolver causes no behaviour
-        # change for those callers.
+        # Super-users with PROJECT_READ_ALL see every project under the user scope.
         from app.core.permissions import Permissions, has_permission
 
         perms = getattr(self.user, "permissions", None)

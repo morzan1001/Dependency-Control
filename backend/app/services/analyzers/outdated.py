@@ -49,13 +49,10 @@ def is_version_withdrawn(versions_info: List[Any], target_version: str) -> bool:
 
 
 class OutdatedAnalyzer(Analyzer):
-    """Outdated / ahead-of-default / yanked detection via deps.dev (cached).
+    """Outdated / ahead-of-default / yanked detection via deps.dev.
 
-    Each deps.dev package document is fetched at most once per scan and cached
-    under a single key (``CacheKeys.latest_version``). The document carries both
-    the default (latest) version and the ``isWithdrawn`` flags, so the outdated,
-    ahead-of-default, and yanked classifications are all derived from that one
-    fetch rather than issuing a separate HTTP round-trip per classification.
+    Each package document is fetched at most once per scan; its default version and
+    isWithdrawn flags drive all three classifications from that single fetch.
     """
 
     name = "outdated_packages"
@@ -72,11 +69,8 @@ class OutdatedAnalyzer(Analyzer):
         ahead: List[Dict[str, Any]] = []
         yanked: List[Dict[str, Any]] = []
 
-        # Resolve the deps.dev document (default version + withdrawn versions) for
-        # every distinct package, then classify every component against it. Keying
-        # the result by package (not package+version) means multiple installed
-        # versions of the same package are each classified against the shared
-        # latest-version value instead of collapsing into a single entry.
+        # Resolve one deps.dev document per distinct package, then classify every component
+        # against it (keyed by package so multiple installed versions each get classified).
         package_infos = await self._resolve_package_infos(components)
 
         for component in components:
@@ -109,12 +103,10 @@ class OutdatedAnalyzer(Analyzer):
     ) -> Dict[str, Dict[str, Any]]:
         """Return ``{cache_key: {"default": str|None, "withdrawn": [str, ...]}}``.
 
-        Warm entries come from a single batched ``mget``; misses are fetched
-        concurrently (in batches) with a distributed lock, so each package
-        document is requested at most once even on a cold cache.
+        Warm entries come from a batched ``mget``; misses are fetched concurrently with a
+        distributed lock, so each package document is requested at most once.
         """
-        # Unique cache key -> (system, deps_dev_name). Deduping by key ensures a
-        # package that appears at several versions is only fetched once.
+        # Dedupe by cache key so a package at several versions is fetched only once.
         key_targets: Dict[str, Tuple[str, str]] = {}
         skipped_count = 0
 
@@ -154,10 +146,8 @@ class OutdatedAnalyzer(Analyzer):
     def _normalize_cached_info(value: Any) -> Optional[Dict[str, Any]]:
         """Coerce a cached value into a package-info dict.
 
-        Returns ``None`` only when the key is absent (needs fetching). A negative
-        cache entry is represented as an empty dict. A bare string is tolerated
-        for backward compatibility with cache entries written before the payload
-        carried withdrawn-version data.
+        ``None`` means the key is absent (needs fetching); an empty dict is a negative cache.
+        A bare string is a legacy cache entry holding just the version.
         """
         if value is None:
             return None

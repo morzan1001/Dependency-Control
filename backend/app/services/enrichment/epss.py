@@ -23,14 +23,12 @@ class EPSSProvider:
         self._timeout = ANALYZER_TIMEOUTS.get("epss", ANALYZER_TIMEOUTS["default"])
 
     async def fetch_epss_batch(self, client: InstrumentedAsyncClient, cves: List[str]) -> Dict[str, EPSSData]:
-        """Fetch EPSS scores for a batch of CVEs with retry logic."""
         if not cves:
             return {}
 
         last_error = None
         for attempt in range(self._max_retries):
             try:
-                # EPSS API accepts comma-separated CVE list
                 cve_param = ",".join(cves)
                 response = await client.get(f"{EPSS_API_URL}?cve={cve_param}", timeout=self._timeout)
                 response.raise_for_status()
@@ -41,7 +39,6 @@ class EPSSProvider:
                 for entry in data.get("data", []):
                     cve = entry.get("cve", "")
                     if cve:
-                        # Handle potential None values from API
                         epss_val = entry.get("epss")
                         percentile_val = entry.get("percentile")
                         results[cve] = EPSSData(
@@ -51,7 +48,6 @@ class EPSSProvider:
                             date=entry.get("date") or "",
                         )
 
-                # Log if some CVEs weren't found (not an error, just info)
                 if len(results) < len(cves):
                     missing = set(cves) - set(results.keys())
                     if missing:
@@ -67,15 +63,15 @@ class EPSSProvider:
                 logger.warning(f"EPSS API connection error (attempt {attempt + 1}/{self._max_retries})")
             except httpx.HTTPStatusError as e:
                 last_error = f"HTTP {e.response.status_code}"
-                if e.response.status_code == 429:  # Rate limited
+                if e.response.status_code == 429:
                     external_api_rate_limit_hits_total.labels(service="EPSS API").inc()
-                    wait_time = self._retry_delay * (2**attempt)  # Exponential backoff
+                    wait_time = self._retry_delay * (2**attempt)
                     logger.warning(f"EPSS API rate limited, waiting {wait_time}s")
                     await asyncio.sleep(wait_time)
-                elif e.response.status_code >= 500:  # Server error
+                elif e.response.status_code >= 500:
                     logger.warning(f"EPSS API server error {e.response.status_code} (attempt {attempt + 1})")
                 else:
-                    # Client error (4xx except 429) - don't retry
+                    # 4xx other than 429 won't be fixed by retrying.
                     logger.warning(f"EPSS API client error: {e}")
                     return {}
             except Exception as e:
@@ -91,12 +87,10 @@ class EPSSProvider:
     async def _fetch_and_cache_batches(
         self, client: InstrumentedAsyncClient, missing_cves: List[str], result: Dict[str, EPSSData]
     ) -> None:
-        """Fetch missing EPSS data in batches from API and cache results."""
         for i in range(0, len(missing_cves), self._batch_size):
             batch = missing_cves[i : i + self._batch_size]
             batch_results = await self.fetch_epss_batch(client, batch)
 
-            # Cache each result individually in Redis
             cache_mapping = {}
             for cve, data in batch_results.items():
                 cache_mapping[CacheKeys.epss(cve)] = data.model_dump()

@@ -1,12 +1,4 @@
-"""
-ComplianceReportEngine — orchestrates report generation.
-
-Workflow (idempotent, fail-safe):
-    pending -> generating -> (completed | failed)
-
-Renderers are invoked in-memory; artifact bytes go to GridFS. Metadata
-persists even if the artifact is later pruned.
-"""
+"""Orchestrates compliance report generation: pending -> generating -> completed|failed."""
 
 import logging
 from datetime import datetime, timedelta, timezone
@@ -39,17 +31,6 @@ _FINDINGS_LIMIT = 20000
 
 
 class ComplianceReportEngine:
-    """Thin orchestrator. Renderers + frameworks live elsewhere.
-
-    `_gather_inputs` is responsible for:
-        1. Loading crypto_assets / findings / policy rules for the resolved scope.
-        2. Returning an `EvaluationInput` for the framework to evaluate.
-
-    The framework evaluation itself happens in `generate()` after `_gather_inputs`,
-    so unit tests can mock each seam (scope resolver, inputs, framework, render,
-    store) independently.
-    """
-
     async def generate(
         self,
         *,
@@ -127,11 +108,8 @@ class ComplianceReportEngine:
         system = await policy_repo.get_system_policy()
         policy_version = getattr(system, "version", None) if system else None
         policy_rules = [r.model_dump() for r in system.rules] if system else []
-        # The License Audit framework reads its allow_strong_copyleft /
-        # allow_network_copyleft toggles from policy_rules[0] (see
-        # license_audit._extract_license_policy). Resolve the project's license
-        # policy and place it there so those toggles are honored; harmless to the
-        # crypto frameworks, which key their rules by rule_id (absent here).
+        # License Audit reads its toggles from policy_rules[0]; prepend the
+        # project license policy there. Crypto frameworks key by rule_id and ignore it.
         license_policy = await self._resolve_license_policy(db, resolved, framework)
         if license_policy is not None:
             policy_rules = [license_policy, *policy_rules]
@@ -159,9 +137,7 @@ class ComplianceReportEngine:
             {"$sort": {"created_at": -1}},
             {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
         ]
-        # The aggregation already emits the project id (_id) alongside the latest
-        # scan id; return both so _collect_crypto_assets needn't re-query each
-        # scan for its project_id (N+1).
+        # Return (project_id, scan_id) pairs so callers avoid re-querying each scan's project.
         return [(row["_id"], row["scan_id"]) async for row in db.scans.aggregate(pipeline)]
 
     async def _collect_crypto_assets(
@@ -209,20 +185,7 @@ class ComplianceReportEngine:
         return results
 
     def _finding_type_filter(self, framework: Optional[ComplianceFramework]) -> Any:
-        """Findings-query `type` clause for the framework being evaluated.
-
-        Each framework only consumes one family of findings:
-          * CVE Remediation SLA -> ``vulnerability``
-          * License Audit        -> ``license``
-          * crypto / CBOM        -> ``crypto_*``
-        Loading only the relevant family keeps peak memory bounded and, more
-        importantly, ensures the SBOM frameworks actually see their findings
-        (they matched nothing when the engine hard-coded ``^crypto_``).
-
-        When the framework is unknown (the chat summary path calls
-        ``_gather_inputs`` without one) load the union of every consumed type so
-        no framework silently evaluates against an empty finding set.
-        """
+        """Findings-query `type` clause per framework; unknown framework loads the union."""
         key = getattr(framework, "key", None)
         if key == ReportFramework.CVE_REMEDIATION_SLA:
             return "vulnerability"
@@ -238,13 +201,10 @@ class ComplianceReportEngine:
         resolved: ResolvedScope,
         framework: Optional[ComplianceFramework],
     ) -> Optional[Dict[str, Any]]:
-        """Resolve the effective project license policy for the License Audit
-        framework (or the unknown/chat path). Returns ``None`` unless the scope
-        is a single project with a policy that carries the license toggles."""
+        """Effective project license policy; None unless scope is a single project carrying the toggles."""
         key = getattr(framework, "key", None)
         if key not in (ReportFramework.LICENSE_AUDIT, None):
             return None
-        # A single, unambiguous project policy only exists for project scope.
         project_ids = resolved.project_ids
         if resolved.scope != "project" or not project_ids or len(project_ids) != 1:
             return None
@@ -258,10 +218,7 @@ class ComplianceReportEngine:
 
     @staticmethod
     def _effective_license_policy(project_doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Mirror the license analyzer's precedence: analyzer_settings
-        .license_compliance (or its nested ``license_policy``) over the legacy
-        top-level ``project.license_policy``. Only a dict carrying one of the
-        recognised license keys qualifies."""
+        """Precedence: analyzer_settings.license_compliance (or its nested license_policy) over top-level project.license_policy."""
         license_keys = ("allow_strong_copyleft", "allow_network_copyleft", "distribution_model")
 
         def _matches(candidate: Any) -> bool:

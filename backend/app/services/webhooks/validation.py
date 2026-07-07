@@ -77,15 +77,7 @@ def validate_webhook_url_optional(url: Optional[str]) -> Optional[str]:
 
 
 async def _resolve_and_vet(url: str) -> Optional[str]:
-    """Resolve the host once, reject if any resolved IP is in a blocked range.
-
-    Returns the first vetted-safe IP literal to connect to, or ``None`` only when
-    the target genuinely does not need pinning (empty or loopback host). Raises
-    ``ValueError`` if any resolved address is in a blocked range, if the host
-    cannot be resolved, or if a non-loopback host resolves to entries that yield
-    no usable IP address (fail-closed: never silently fall back to an unpinned,
-    re-resolving connection).
-    """
+    """Resolve the host and return the first vetted-safe IP to pin to; None only for pin-exempt (empty/loopback) hosts. Raises (fail-closed) if any resolved IP is blocked or none is usable."""
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
     if not host or host in WEBHOOK_LOOPBACK_HOSTS:
@@ -115,36 +107,18 @@ async def _resolve_and_vet(url: str) -> Optional[str]:
         if safe_ip is None:
             safe_ip = str(resolved)
     if safe_ip is None:
-        # getaddrinfo returned entries but none parsed as a usable IP. Fail
-        # closed instead of returning None (which build_pinned_transport treats
-        # as "no pinning needed" and would connect via an unpinned transport
-        # that re-resolves the hostname, reopening the DNS-rebinding window).
+        # Fail closed: no usable IP means we cannot pin, so refuse rather than connect unpinned.
         raise ValueError(f"Refusing webhook delivery: host '{host}' resolved to no usable IP address")
     return safe_ip
 
 
 async def assert_safe_webhook_target(url: str) -> Optional[str]:
-    """Resolve the host, reject delivery if any IP is blocked, and return the
-    vetted-safe IP the delivery connection should be pinned to.
-
-    IMPORTANT: knowing the safe IP is not, on its own, defense against DNS
-    rebinding. Because httpx re-resolves the hostname independently at connect
-    time, the delivery client MUST pin the connection to the returned address
-    (use :func:`build_pinned_transport`) — otherwise an attacker controlling
-    authoritative DNS with a short TTL can return a public IP here and an
-    internal/metadata IP at connect time (TOCTOU).
-    """
+    """Return the vetted-safe IP the caller MUST pin to (httpx re-resolves at connect, so the IP alone is not DNS-rebinding-safe — use build_pinned_transport)."""
     return await _resolve_and_vet(url)
 
 
 class _PinnedIPTransport(httpx.AsyncHTTPTransport):
-    """httpx transport that forces every connection for ``hostname`` to the
-    pre-vetted ``ip``, closing the DNS-rebinding window.
-
-    The original hostname is preserved for the ``Host`` header (already set on
-    the request at build time) and for TLS SNI / certificate validation via the
-    ``sni_hostname`` request extension, so only the TCP connect target changes.
-    """
+    """httpx transport that pins every connection for ``hostname`` to the pre-vetted ``ip`` (only the TCP target changes; hostname stays for Host header and TLS SNI)."""
 
     def __init__(self, hostname: str, ip: str, **kwargs: Any) -> None:
         super().__init__(**kwargs)
@@ -166,22 +140,12 @@ class _PinnedIPTransport(httpx.AsyncHTTPTransport):
 
 
 async def build_pinned_transport(url: str, **transport_kwargs: Any) -> httpx.AsyncHTTPTransport:
-    """Resolve and vet ``url``'s host once, then return an httpx transport that
-    pins the delivery connection to the vetted IP (defeating DNS rebinding).
-
-    Raises ``ValueError`` if the host resolves to a blocked address. For
-    loopback/unpinnable targets a plain transport is returned. Adopt via
-    ``InstrumentedAsyncClient(..., transport=await build_pinned_transport(url))``
-    in place of a bare ``assert_safe_webhook_target`` check.
-    """
+    """Return an httpx transport pinned to ``url``'s vetted IP (defeats DNS rebinding); raises if the host resolves to a blocked address; plain transport for loopback/unpinnable targets."""
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
     safe_ip = await _resolve_and_vet(url)
     if safe_ip is None:
-        # Only reached for empty/loopback hosts, which _resolve_and_vet has
-        # already deemed pin-exempt. A non-loopback host that resolves to no
-        # usable IP now raises inside _resolve_and_vet (fail-closed) rather than
-        # reaching this unpinned fallback.
+        # Reached only for empty/loopback hosts (pin-exempt).
         return httpx.AsyncHTTPTransport(**transport_kwargs)
     return _PinnedIPTransport(host, safe_ip, **transport_kwargs)
 

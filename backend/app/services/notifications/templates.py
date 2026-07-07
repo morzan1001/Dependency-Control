@@ -5,7 +5,6 @@ from jinja2 import Environment, FileSystemLoader
 
 APP_NAME = "Dependency Control"
 
-# Setup Jinja2 environment
 current_dir = os.path.dirname(os.path.abspath(__file__))
 template_dir = os.path.join(current_dir, "../../templates/email")
 env = Environment(loader=FileSystemLoader(template_dir), autoescape=True)

@@ -30,10 +30,7 @@ def build_filename(
     requested_at: datetime,
     extension: str,
 ) -> str:
-    """Construct a descriptive, filesystem-safe filename.
-
-    Example: "nist-sp-800-131a_project-p1_20260420T100000Z.pdf"
-    """
+    """Construct a filesystem-safe filename, e.g. nist-sp-800-131a_project-p1_20260420T100000Z.pdf."""
     scope_part = f"{scope}" + (f"-{scope_id}" if scope_id else "")
     import re
 

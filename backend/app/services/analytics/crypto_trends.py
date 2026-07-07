@@ -126,22 +126,17 @@ class CryptoTrendService:
     ) -> List[TrendPoint]:
         match: Dict[str, Any] = dict(_METRIC_FILTER[metric])
         match["scan_created_at"] = {"$gte": range_start, "$lte": range_end}
-        # Waived/accepted findings reflect a risk decision, not current posture —
-        # exclude them from the trend (audit #11).
+        # Exclude waived/accepted findings (a risk decision, not current posture).
         match["waived"] = {"$ne": True}
         if resolved.project_ids is not None:
             match["project_id"] = {"$in": resolved.project_ids}
         trunc = {"$dateTrunc": {"date": "$scan_created_at", "unit": _dateTrunc_unit(bucket)}}
-        # NOTE (audit SC#1): within a bucket we count the LATEST scan per project,
-        # not filtered by scan status. A partial/failed latest scan could therefore
-        # under-report a bucket. This is accepted: failed scans typically write no
-        # crypto findings (so they can't pull a bucket to a lower nonzero value),
-        # and joining scan status here would couple the trend to the scans
-        # collection for a narrow edge case. Revisit if partial-scan skew is observed.
+        # Per bucket we count the latest scan per project regardless of scan status;
+        # a partial/failed latest scan may under-report, accepted since failed scans
+        # typically write no crypto findings.
         pipeline = [
             {"$match": match},
-            # Count findings per (project, bucket, scan). Carry project/bucket as
-            # fields so later stages don't depend on composite-_id sub-paths.
+            # Carry project/bucket as fields so later stages don't depend on composite-_id sub-paths.
             {
                 "$group": {
                     "_id": {"project": "$project_id", "bucket": trunc, "scan": "$scan_id"},
@@ -151,9 +146,8 @@ class CryptoTrendService:
                     "cnt": {"$sum": 1},
                 }
             },
-            # Pick the LATEST scan per (project, bucket) so re-scans in the same
-            # bucket (e.g. CI + nightly) count one persistent issue once, not once
-            # per scan (audit #11).
+            # Pick the latest scan per (project, bucket) so re-scans in one bucket
+            # (e.g. CI + nightly) count a persistent issue once, not per scan.
             {"$sort": {"scan_created_at": -1}},
             {
                 "$group": {
@@ -241,13 +235,10 @@ class CryptoTrendService:
         rs = range_start.isoformat()
         re = range_end.isoformat()
         fingerprint = hashlib.sha256(f"{rs}|{re}".encode()).hexdigest()[:16]
-        # Include a fingerprint of the resolved project set so that two callers
-        # sharing (scope, scope_id) but resolving to DIFFERENT projects never
-        # collide. This matters for scope="user", where scope_id is always None
-        # yet each user resolves to their own project_ids (see ScopeResolver.
-        # _resolve_user) — without this the shared process cache would leak one
-        # user's series to another (tenant-isolation breach). None (global scope,
-        # all projects) gets a distinct sentinel so it can't alias an empty set.
+        # Fingerprint the resolved project set so two callers sharing (scope, scope_id)
+        # but resolving to different projects never collide (tenant isolation for
+        # scope="user", where scope_id is always None). None (global) gets a distinct
+        # sentinel so it can't alias an empty set.
         if resolved.project_ids is None:
             projects_fp = "*"
         else:

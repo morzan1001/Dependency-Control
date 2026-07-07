@@ -108,16 +108,8 @@ def has_spdx_expression(component: Dict[str, Any]) -> Optional[str]:
 
 
 def parse_spdx_expression(expr: str) -> List[List[str]]:
-    """Parse an SPDX expression into OR-groups of AND-connected licenses.
-
-    Examples:
-        "MIT OR Apache-2.0"              → [["MIT"], ["Apache-2.0"]]
-        "GPL-2.0 AND Classpath"          → [["GPL-2.0", "Classpath"]]
-        "MIT OR (GPL-2.0 AND Classpath)" → [["MIT"], ["GPL-2.0", "Classpath"]]
-    """
-    # WITH modifies the preceding license but doesn't add a new one.
-    # Bound the whitespace match to spaces/tabs (SPDX expressions are single-line)
-    # so the substitution is linear in input length — no backtracking on \s+.
+    """Parse an SPDX expression into OR-groups of AND-connected licenses."""
+    # WITH modifies the preceding license; strip it. Match only spaces/tabs to avoid \s+ backtracking.
     expr = re.sub(r"[ \t]+WITH[ \t]+\S+", "", expr)
 
     # OR has the lowest precedence in SPDX.

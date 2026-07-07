@@ -21,7 +21,6 @@ def process_licenses(findings: List[ModelOrDict]) -> List[Recommendation]:
     if not findings:
         return []
 
-    # Group by license type
     by_license = defaultdict(list)
     for f in findings:
         details = get_attr(f, "details", {})
@@ -39,7 +38,6 @@ def process_licenses(findings: List[ModelOrDict]) -> List[Recommendation]:
         severity_counts[get_attr(f, "severity", "UNKNOWN")] += 1
         components.add(get_attr(f, "component", "unknown"))
 
-    # Determine priority based on findings severity
     if severity_counts.get("CRITICAL", 0) > 0:
         priority = Priority.CRITICAL
     elif severity_counts.get("HIGH", 0) > 0:
@@ -47,7 +45,7 @@ def process_licenses(findings: List[ModelOrDict]) -> List[Recommendation]:
     elif severity_counts.get("MEDIUM", 0) > 0 or severity_counts.get("LOW", 0) > 0:
         priority = Priority.MEDIUM
     else:
-        # All findings are INFO-only (e.g. copyleft reduced by project context)
+        # All findings are INFO-only.
         priority = Priority.LOW
 
     problematic_licenses = list(by_license.keys())[:10]
@@ -141,12 +139,7 @@ def detect_license_drift(
     current_findings: List[ModelOrDict],
     previous_findings: List[ModelOrDict],
 ) -> List[Recommendation]:
-    """Detect license changes between scans.
-
-    Flags components whose license changed to a more restrictive category
-    (e.g. MIT → GPL) — a supply-chain risk that often goes unnoticed during
-    routine dependency updates.
-    """
+    """Flag components whose license changed to a more restrictive category (e.g. MIT → GPL)."""
     if not previous_findings or not current_findings:
         return []
 
@@ -161,7 +154,6 @@ def detect_license_drift(
     if not drifted:
         return []
 
-    # Determine priority based on how restrictive the drift is
     has_copyleft_drift = any(_CATEGORY_RANK.get(d["current_category"], 0) >= 2 for d in drifted)
 
     return [

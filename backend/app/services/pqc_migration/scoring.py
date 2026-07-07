@@ -1,7 +1,4 @@
-"""
-Priority scoring for PQC migration items. Returns 0..100 per asset.
-Higher = migrate sooner. Status bucket thresholds: 80 / 50 / 25.
-"""
+"""Priority scoring for PQC migration items: 0..100 per asset, higher = migrate sooner."""
 
 import math
 from datetime import datetime
@@ -15,22 +12,13 @@ KEY_WEAKNESS_WEIGHT = 0.30
 DEADLINE_WEIGHT = 0.25
 COUNT_WEIGHT = 0.10
 
-# --- Exposure calibration ---
-# These map the "where is this asset deployed?" signal onto a 0..100 scale
-# that feeds into the priority_score weighted sum. Higher number = more
-# exposed = migrate sooner. Calibrated so that a public-facing X.509
-# certificate (the worst case) saturates at 100 while a well-isolated
-# binary embedding lands well below the default.
-EXPOSURE_CERTIFICATE = 100.0  # public-facing X.509 / TLS material
-EXPOSURE_RELATED_MATERIAL = 60.0  # certificate-adjacent material (e.g. CSR, chain)
-EXPOSURE_SOURCE = 50.0  # crypto referenced from source code
+# Exposure scores on a 0..100 scale (higher = more exposed = migrate sooner).
+EXPOSURE_CERTIFICATE = 100.0
+EXPOSURE_RELATED_MATERIAL = 60.0
+EXPOSURE_SOURCE = 50.0
 EXPOSURE_DEFAULT = 45.0  # unclassified asset — assume moderate exposure
-EXPOSURE_BINARY = 30.0  # crypto embedded in compiled binary (harder to reach)
+EXPOSURE_BINARY = 30.0
 
-# --- Count calibration ---
-# A single instance of a vulnerable asset is already meaningful (one weak
-# cert in production matters). We give it a non-zero baseline and scale
-# logarithmically from there, capping at 100 for very large clusters.
 _COUNT_BASELINE = 50.0
 _COUNT_LOG_MULTIPLIER = 25.0
 
@@ -102,8 +90,6 @@ def _score_key_weakness(asset: Any, source_family: str) -> float:
         return 50.0
     if key_size < minimum:
         return 100.0
-    # key_size >= minimum is guaranteed by the early return above, so
-    # ratio is always >= 1.0 here.
     ratio = key_size / minimum
     if ratio >= 2.0:
         return 20.0
@@ -129,13 +115,7 @@ def _score_deadline(source_family: str, timelines: List[Timeline], now: datetime
 
 
 def _score_count(count: int) -> float:
-    """Translate an asset's occurrence count into a 0..100 contribution.
-
-    Single-instance findings are not zeroed out — one production-exposed
-    weak certificate is still a real risk. The score scales logarithmically
-    from a baseline so clusters of 100+ identical assets cap at 100 instead
-    of running away.
-    """
+    """Log-scaled 0..100 contribution from an asset's occurrence count."""
     if count <= 0:
         return 0.0
     raw = _COUNT_BASELINE + math.log10(count) * _COUNT_LOG_MULTIPLIER

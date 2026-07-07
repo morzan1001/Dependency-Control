@@ -1,9 +1,4 @@
-"""
-CryptoRuleAnalyzer — single class, multiple registrations (one per FindingType).
-
-Returns `{"findings": [finding_dict, ...]}` consistent with other analyzers.
-Extends the base Analyzer contract with extra kwargs project_id, scan_id, db.
-"""
+"""Crypto policy rule analyzer, registered once per FindingType."""
 
 import logging
 import uuid
@@ -56,12 +51,8 @@ class CryptoRuleAnalyzer(Analyzer):
                 matched_rules = [r for r in rules if rule_matches(asset, r)]
                 if not matched_rules:
                     continue
-                # Multiple frameworks may match the same asset (e.g. SHA-1
-                # is flagged by both BSI TR-02102 and NIST SP 800-131A).
-                # Emit one finding per (asset, finding_type), keep the
-                # strictest severity, and record every matched rule in
-                # details so the audit trail and compliance evaluators
-                # still see the cross-framework agreement.
+                # One finding per asset at the strictest matched severity; all
+                # matched rules recorded in details for cross-framework attribution.
                 findings.append(_build_finding_dedup(asset, matched_rules))
             return {"findings": findings}
         except Exception as e:
@@ -72,20 +63,9 @@ class CryptoRuleAnalyzer(Analyzer):
 _SEVERITY_RANK = {"CRITICAL": 5, "HIGH": 4, "MEDIUM": 3, "LOW": 2, "INFO": 1, "UNKNOWN": 0}
 
 
-def _build_finding(asset: CryptoAsset, rule: CryptoRule) -> Dict[str, Any]:
-    return _build_finding_dedup(asset, [rule])
-
-
 def _build_finding_dedup(asset: CryptoAsset, rules: List[CryptoRule]) -> Dict[str, Any]:
-    """Build one finding for an asset that matched ``rules``.
-
-    The lead rule (the one whose attributes are projected onto the
-    top-level Finding fields) is the strictest by default_severity.
-    Every other matched rule still appears under
-    ``details.matched_rules`` so compliance evaluators and audit views
-    can attribute the finding to multiple frameworks without inflating
-    findings_count or severity_mix counts.
-    """
+    # Lead rule (strictest by default_severity) drives top-level fields; the rest
+    # are recorded under details.matched_rules.
     lead = max(rules, key=lambda r: _SEVERITY_RANK.get(_severity_str(r.default_severity), 0))
     severity = _severity_str(lead.default_severity)
     ft = lead.finding_type.value if hasattr(lead.finding_type, "value") else lead.finding_type

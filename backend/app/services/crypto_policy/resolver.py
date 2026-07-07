@@ -1,11 +1,4 @@
-"""
-CryptoPolicyResolver — merges system default with project override.
-
-A resolver is constructed per call and reads the current system policy,
-system settings, and (unless global enforcement is active) the project
-override on every resolve(), so the returned effective policy always
-reflects the latest persisted state.
-"""
+"""Merges the system default crypto policy with a project override."""
 
 from dataclasses import dataclass
 from typing import List, Optional
@@ -19,11 +12,11 @@ from app.schemas.crypto_policy import CryptoRule
 
 @dataclass
 class EffectivePolicy:
-    rules: List[CryptoRule]  # merged: system overlaid with override
-    system_rules: List[CryptoRule]  # raw system baseline (for UI diffing)
+    rules: List[CryptoRule]
+    system_rules: List[CryptoRule]
     system_version: int
     override_version: Optional[int]
-    override_locked: bool = False  # True when system enforces global policy (project override ignored)
+    override_locked: bool = False  # system enforces global policy; project override ignored
 
 
 class CryptoPolicyResolver:

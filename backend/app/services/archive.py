@@ -1,10 +1,4 @@
-"""Archive Service — streaming NDJSON bundles to S3 with chunked AES-GCM encryption.
-
-archive_scan() and restore_scan() guard against concurrent operations on the
-same scan_id via DistributedLocksRepository. The bundle is streamed end-to-end
-through gzip and (optionally) chunked AES-GCM into an S3 multipart upload —
-no full bundle is ever buffered in memory.
-"""
+"""Archive scans as streaming NDJSON bundles to S3 with gzip and optional chunked AES-GCM, lock-guarded per scan_id."""
 
 import asyncio
 import json
@@ -50,10 +44,8 @@ logger = logging.getLogger(__name__)
 
 _ARCHIVE_LOCK_TTL_SECONDS = 600
 
-# The only collections a bundle is allowed to restore into. Marker names in the
-# NDJSON stream are attacker-influenceable (the sha256 footer is a plain digest,
-# not an HMAC), so any name outside this set must abort the restore rather than
-# let restore write into an arbitrary MongoDB collection (users, api_keys, ...).
+# Collections a bundle may restore into. Marker names are attacker-influenceable (footer
+# is a plain sha256, not an HMAC), so any name outside this set must abort the restore.
 _RESTORABLE_COLLECTIONS = frozenset(
     {
         "findings",
@@ -68,20 +60,12 @@ _RESTORABLE_COLLECTIONS = frozenset(
 
 
 class _ArchiveSourceReadError(Exception):
-    """A source document could not be read intact while building the archive bundle.
-
-    Raised (rather than silently skipped) so the S3 upload aborts and the scan is
-    treated as an archive failure — housekeeping only deletes scans that archived
-    successfully, so this prevents permanent data loss on a transient read error.
-    """
+    """A source document could not be read intact; raised to abort the S3 upload so
+    housekeeping (which only deletes successfully-archived scans) can't lose data."""
 
 
 def _sanitize_for_log(value: Any, max_len: int = 200) -> str:
-    """Render a value for safe logging.
-
-    Strips CR/LF (log-injection mitigation per S5145) and bounds length so a
-    hostile or oversized value cannot forge log lines or balloon log volume.
-    """
+    """Strip CR/LF and bound length so a hostile value can't forge log lines or balloon volume."""
     s = str(value)
     s = s.replace("\r", " ").replace("\n", " ").replace("\t", " ")
     if len(s) > max_len:
@@ -129,11 +113,8 @@ async def _stream_gridfs_sboms(db: Any, scan_doc: Dict[str, Any]) -> AsyncIterat
                 "data": json.loads(content),
             }
         except Exception as e:
-            # Do NOT swallow-and-continue: a dropped SBOM would make the archive
-            # report success while missing data, and housekeeping would then
-            # delete the source scan + its GridFS files, losing the SBOM forever.
-            # Re-raise so upload_stream aborts and the scan is skipped by
-            # housekeeping (recorded as an INTEGRITY archive failure).
+            # Re-raise rather than skip: a dropped SBOM would archive as success while
+            # missing data, then housekeeping would delete the source and lose it forever.
             logger.error(
                 "Failed to load GridFS file; aborting archive to avoid data loss",
                 extra={"gridfs_id": _sanitize_for_log(gid), "error": _sanitize_for_log(e)},
@@ -239,7 +220,7 @@ async def _save_archive_metadata(
     total: int,
     stats: BundleStats,
 ) -> Optional[ArchiveMetadata]:
-    """Persist ArchiveMetadata. On unique-key collision, deletes the S3 orphan and returns None."""
+    """Persist ArchiveMetadata; on unique-key collision delete the S3 orphan and return None."""
     sbom_filenames = [
         ref["filename"] for ref in scan_doc.get("sbom_refs", []) if isinstance(ref, dict) and ref.get("filename")
     ]
@@ -264,8 +245,7 @@ async def _save_archive_metadata(
         await repo.create(metadata)
         return metadata
     except DuplicateKeyError as e:
-        # Expected race: another worker beat us to the metadata insert.
-        # The other worker's S3 upload is the authoritative one; clean up ours.
+        # Another worker won the metadata insert; its upload is authoritative, clean up ours.
         logger.info(
             "Lost archive race, cleaning up our S3 orphan",
             extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
@@ -296,11 +276,9 @@ async def _load_scan_for_archive(
     repo: ArchiveMetadataRepository,
     scan_id: str,
 ) -> Tuple[Optional[ArchiveMetadata], Optional[Dict[str, Any]]]:
-    """Look up the scan for archival.
+    """Look up the scan for archival, returning (existing_metadata, scan_doc).
 
-    Returns (existing_metadata, scan_doc). Exactly one of the two is non-None
-    on the happy path; both None means the scan was not found and metrics
-    have already been recorded. The caller short-circuits on either outcome.
+    Exactly one is non-None on the happy path; both None means not-found (metrics recorded).
     """
     existing = await repo.find_by_scan_id(scan_id)
     if existing:
@@ -329,11 +307,7 @@ async def _upload_archive_bundle(
     scan_id: str,
     s3_key: str,
 ) -> Optional[Tuple[int, BundleStats]]:
-    """Build and upload the archive bundle to S3.
-
-    Returns (total_bytes, stats) on success, None on upload failure (metrics
-    are recorded for the failure case).
-    """
+    """Build and upload the archive bundle; returns (total_bytes, stats) or None on failure (metrics recorded)."""
     stats = BundleStats()
     bytes_counter: Dict[str, int] = {"total": 0}
     payload, content_type = _build_archive_payload(db, scan_doc, scan_id, stats, bytes_counter)
@@ -363,13 +337,9 @@ async def archive_scan(
     db: AsyncIOMotorDatabase,  # type: ignore[type-arg]
     scan_id: str,
 ) -> Optional[ArchiveMetadata]:
-    """Archive one scan and all its related data to S3.
+    """Archive one scan and its related data to S3 under a distributed lock on archive:{scan_id}.
 
-    Streams collection data through gzip + (optional) AES-GCM into an S3
-    multipart upload. Guarded by a distributed lock on archive:{scan_id}.
-
-    Returns ArchiveMetadata on success; None on lock-held, not-found, or
-    upload failure (S3 upload is aborted on failure).
+    Returns ArchiveMetadata on success; None on lock-held, not-found, or upload failure.
     """
     if not is_archive_enabled():
         logger.warning("Archive requested but S3 is not configured.")
@@ -437,13 +407,9 @@ async def archive_scan(
 async def _open_restore_stream(metadata: ArchiveMetadata) -> AsyncIterator[bytes]:
     """Yield a decompressed (and, if encrypted, decrypted) byte stream for the bundle.
 
-    Whether the bundle is encrypted is decided by sniffing the ENCRYPTION_MAGIC
-    prefix, NOT by the current ``is_encryption_enabled()`` flag. The flag reflects
-    today's config, but each bundle was written under whatever config existed at
-    archive time (there is no per-bundle marker on ArchiveMetadata). Branching on
-    the live flag bricks restore for any bundle whose encryption state differs
-    from the current setting (plain gzip piped through decrypt -> "Invalid
-    encryption magic"; encrypted bytes piped through gzip -> gzip error).
+    Encryption is detected by sniffing the ENCRYPTION_MAGIC prefix, not the live
+    ``is_encryption_enabled()`` flag, since each bundle was written under whatever config
+    existed at archive time and there is no per-bundle marker.
     """
     s3_chunks = download_stream(metadata.s3_key, bucket=metadata.s3_bucket)
 
@@ -495,10 +461,8 @@ async def _handle_header_event(
 ) -> None:
     """Insert the scan doc from a header event.
 
-    Version validation lives solely in ``read_bundle_frames``, which raises
-    ``ValueError('Unsupported bundle version')`` before ever yielding a header
-    with a mismatched version (mapped to VERSION_MISMATCH in _replay_bundle). A
-    second check here could never fire, so it is intentionally absent.
+    Version validation lives in ``read_bundle_frames``, which raises before yielding a
+    header with a mismatched version, so no version check is needed here.
     """
     scan_data = data.get("scan")
     if scan_data:
@@ -516,10 +480,8 @@ async def _handle_doc_event(
 ) -> None:
     coll = event["collection"]
     if coll not in _RESTORABLE_COLLECTIONS:
-        # Marker names come from bundle content, which is not authenticated (the
-        # footer is a plain sha256, not an HMAC). Refuse anything outside the
-        # known set so a crafted marker cannot write into arbitrary collections
-        # (users, api_keys, projects, ...). ValueError -> INTEGRITY in _replay_bundle.
+        # Marker names come from unauthenticated bundle content (footer is a plain sha256,
+        # not an HMAC); refuse unknown names so a crafted marker can't write into arbitrary collections.
         raise ValueError(f"Unexpected collection in bundle: {_sanitize_for_log(coll)}")
     if coll == "gridfs_sboms":
         gridfs_entries.append(event["data"])
@@ -592,9 +554,8 @@ async def _restore_gridfs(
     for entry in gridfs_entries:
         try:
             grid_id = ObjectId(entry["gridfs_id"])
-            # Delete first to make this retry-safe: a previous failed restore may
-            # have left this GridFS file uploaded, and upload_from_stream_with_id
-            # rejects duplicates.
+            # Delete first for retry-safety: upload_from_stream_with_id rejects duplicates
+            # a prior failed restore may have left behind.
             try:
                 await fs.delete(grid_id)
             except Exception:
@@ -625,10 +586,8 @@ async def _restore_gridfs(
 async def _rollback_partial_restore(db: Any, scan_id: str) -> None:
     """Best-effort cleanup of partial MongoDB state after a restore failure.
 
-    The header event in _replay_bundle inserts the scan doc before any
-    collections are processed, so a mid-stream failure can leave the scan
-    plus partial findings/etc. behind. This makes a retry hit the
-    ALREADY_EXISTS guard and never recover. Sweep what we touched.
+    _replay_bundle inserts the scan doc before collections, so a mid-stream failure can
+    leave partial state that makes a retry hit the ALREADY_EXISTS guard and never recover.
     """
     try:
         await db.scans.delete_one({"_id": scan_id})
@@ -653,12 +612,7 @@ async def _load_restore_metadata(
     repo: ArchiveMetadataRepository,
     scan_id: str,
 ) -> Optional[ArchiveMetadata]:
-    """Look up metadata for restore and reject if scan already exists.
-
-    Returns the metadata on success, None if metadata is missing or the scan
-    is already present in MongoDB. Failure metrics are recorded for both
-    short-circuit paths.
-    """
+    """Return restore metadata, or None (metrics recorded) if it's missing or the scan already exists."""
     metadata = await repo.find_by_scan_id(scan_id)
     if not metadata:
         logger.error(
@@ -689,14 +643,9 @@ async def _finalize_restore_cleanup(
 ) -> None:
     """Delete the S3 object and metadata record after a successful restore.
 
-    Either deletion failing is logged but does not roll back the restore —
-    the orphan reaper's two-pass cleanup will sweep up any remnants. S3 is
-    deleted first; if it fails the object becomes an orphan that the
-    housekeeping reaper picks up after ARCHIVE_ORPHAN_MIN_AGE_HOURS. Either
-    way, the metadata MUST be removed — the scan is already back in MongoDB,
-    so leaving the metadata creates a "zombie" that the reaper won't touch
-    (because it still has metadata) and blocks future re-archival via the
-    existing-metadata short-circuit in archive_scan.
+    Either deletion failing is logged but does not roll back — the orphan reaper sweeps
+    remnants. The metadata MUST be removed: the scan is back in MongoDB, so stale metadata
+    would block future re-archival via archive_scan's existing-metadata short-circuit.
     """
     try:
         await delete_object(metadata.s3_key, bucket=metadata.s3_bucket)
@@ -712,8 +661,6 @@ async def _finalize_restore_cleanup(
     try:
         await repo.delete_by_scan_id(scan_id)
     except Exception as e:
-        # Stale metadata that points at a scan now living in db.scans will
-        # be reaped by the housekeeping orphan reaper's second pass.
         logger.warning(
             "Metadata delete failed after restore; orphan reaper will retry",
             extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
@@ -769,13 +716,10 @@ async def restore_scan(
     db: AsyncIOMotorDatabase,  # type: ignore[type-arg]
     scan_id: str,
 ) -> Optional[ArchiveRestoreResponse]:
-    """Restore an archived scan back to MongoDB.
+    """Restore an archived scan back to MongoDB under a distributed lock on restore:{scan_id}.
 
-    Guarded by a distributed lock on restore:{scan_id}. Aborts if the scan
-    already exists in MongoDB (avoids partial state). On success, attempts
-    to delete both the S3 archive and the metadata record; either deletion
-    failing is logged but does not roll back the restore — the orphan
-    reaper's two-pass cleanup will sweep up any remnants.
+    Aborts if the scan already exists. On success, deletes the S3 archive and metadata;
+    either deletion failing is logged but the orphan reaper sweeps remnants.
     """
     if not is_archive_enabled():
         return None

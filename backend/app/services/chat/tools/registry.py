@@ -56,11 +56,9 @@ _ERR_NO_SCAN_DATA = "No scan data available"
 _FIELD_VULN_ID = "details.vulnerabilities.id"
 _FIELD_EPSS_SCORE = "details.epss_score"
 
-# Upper bound on candidate findings pulled before ranking in Python. `severity`
-# is stored as a STRING, so MongoDB's own sort orders it lexicographically
-# (e.g. "MEDIUM" > "HIGH" > "CRITICAL") — using sort+limit server-side silently
-# drops the highest-severity findings. We therefore pull a bounded candidate set
-# and rank in-process against `_SEVERITY_RANK` before slicing to the caller's limit.
+# `severity` is stored as a string, so a server-side sort orders it
+# lexicographically and drops the highest severities; pull a bounded candidate
+# set and rank in-process against `_SEVERITY_RANK` before slicing to the limit.
 _FINDING_RANK_FETCH_CAP = 1000
 
 
@@ -72,13 +70,7 @@ def _finding_detail_number(finding: Dict[str, Any], field: str) -> float:
 
 
 def _rank_findings(findings: List[Dict[str, Any]]) -> None:
-    """Sort findings in place by severity (numeric rank, desc), then by
-    details.epss_score and details.cvss_score (desc) as tiebreakers.
-
-    Replaces the incorrect `sort=[("severity", -1), ...]` on the string field,
-    which MongoDB compared byte-wise (UNKNOWN > NEGLIGIBLE > MEDIUM > LOW > INFO >
-    HIGH > CRITICAL), pushing CRITICAL/HIGH below the limit cutoff.
-    """
+    """Sort findings in place by severity rank desc, then details.epss_score and details.cvss_score desc."""
     findings.sort(
         key=lambda f: (
             _SEVERITY_RANK.get((f.get("severity") or "").upper(), 0),
@@ -124,8 +116,7 @@ class ChatToolRegistry:
             chat_tool_duration_seconds.labels(tool_name=tool_name).observe(duration)
             if isinstance(result, dict):
                 _inject_urls(result)
-            # Cap JSON size — large tool dumps blow the LLM's context budget and
-            # make it loop on the same tool trying to re-read data already there.
+            # Cap JSON size so a large dump can't blow the LLM's context budget.
             return _truncate_if_too_large(result) if isinstance(result, dict) else result
         except Exception as e:
             duration = time.time() - start
@@ -508,9 +499,8 @@ class ChatToolRegistry:
                     resp["lapsed"] = True
                     resp["lapsed_waiver_id"] = finding.get("lapsed_waiver_id")
                 return resp
-            # Fallback: no finding doc for this id in the latest scan (finding fixed/moved/renamed).
-            # A waiver row may still exist, but its existence does NOT mean anything is suppressed —
-            # report it as present-but-not-suppressing rather than waived:true.
+            # No finding doc for this id in the latest scan: an existing waiver row
+            # suppresses nothing, so report it as present-but-not-suppressing.
             now = datetime.now(timezone.utc)
             waiver = await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": args["project_id"]}) \
                 or await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": None})
@@ -1350,9 +1340,8 @@ class ChatToolRegistry:
                     framework=args.get("framework"),
                     limit=_clamp_limit(args.get("limit"), 10, 50),
                 )
-            # No project_id: the underlying repo query would be unfiltered and
-            # leak every scope's reports org-wide. Mirror the HTTP endpoint's
-            # _build_visibility_filter and restrict to the caller's visibility.
+            # No project_id: restrict to the caller's visibility, else the repo
+            # query is unfiltered and leaks every scope's reports org-wide.
             from app.services.chat import tools as _pkg
 
             authorized_project_ids = await self._get_authorized_project_ids(user_project_query, db)
@@ -1375,9 +1364,7 @@ class ChatToolRegistry:
 
         if tool_name == "list_policy_audit_entries":
             project_id = args.get("project_id")
-            # System-scope audit is admin-only, mirroring the HTTP endpoint's
-            # _require_admin (system:manage) gate. Without this, any chat/MCP
-            # user could read the full system crypto-policy change history.
+            # System-scope audit is admin-only (system:manage).
             if args.get("policy_scope") == "system":
                 if not has_permission(user.permissions, Permissions.SYSTEM_MANAGE):
                     return {"error": _ERR_ACCESS_DENIED}
@@ -1412,16 +1399,11 @@ class ChatToolRegistry:
     async def _get_authorized_project(
         self, project_id: str, user_project_query: Dict[str, Any], db: AsyncIOMotorDatabase
     ) -> Optional[Dict[str, Any]]:
-        """Fetch a project only if user has access.
+        """Fetch a project only if the user has access.
 
-        Contract: `user_project_query` MUST come from build_user_project_query —
-        the single source of truth for authorization. It returns {} only for
-        users with PROJECT_READ_ALL permission. Any caller bypassing that helper
-        MUST enforce equivalent checks; otherwise an empty dict here is a
-        security bypass.
-
-        Using $and (rather than .update()) avoids a silent authorization bypass
-        if user_project_query ever contained an `_id` key.
+        `user_project_query` MUST come from build_user_project_query (returns {}
+        only for PROJECT_READ_ALL users). $and, not .update(), avoids a silent
+        authorization bypass if that query ever carried an `_id` key.
         """
         if not user_project_query:
             return await db["projects"].find_one({"_id": project_id})
@@ -1433,14 +1415,7 @@ class ChatToolRegistry:
         authorized_project_ids: List[str],
         team_repo: TeamRepository,
     ) -> Dict[str, Any]:
-        """Build the ``$or`` visibility filter for compliance reports, mirroring
-        ``compliance_reports._build_visibility_filter``:
-
-        - scope=user iff the caller is the requester (or holds system:manage),
-        - scope=project iff the project is in the caller's authorized set,
-        - scope=team iff the team is in the caller's team membership,
-        - scope=global iff the caller holds analytics:global or system:manage.
-        """
+        """Build the ``$or`` visibility filter for compliance reports, mirroring compliance_reports._build_visibility_filter."""
         perms = getattr(user, "permissions", []) or []
         is_super = has_permission(perms, Permissions.SYSTEM_MANAGE)
         user_id = str(user.id)

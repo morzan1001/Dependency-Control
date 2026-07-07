@@ -1,9 +1,4 @@
-"""
-Statistics calculation for SBOM analysis.
-
-Provides functions to calculate comprehensive statistics including
-EPSS/KEV enrichment and reachability analysis data.
-"""
+"""Statistics calculation for SBOM analysis (EPSS/KEV and reachability)."""
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, cast
@@ -46,7 +41,6 @@ def _format_datetime(value: Optional[Any]) -> Optional[str]:
         return None
     if hasattr(value, "isoformat"):
         return cast(str, value.isoformat())
-    # If it's already a string, return as-is (unless empty)
     if isinstance(value, str):
         return value if value else None
     return str(value)
@@ -108,15 +102,7 @@ def _process_finding_risk(
 
 
 def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> EPSSKEVSummary:
-    """
-    Build a summary of EPSS/KEV enrichment for raw data view.
-
-    Args:
-        findings: List of vulnerability findings that were enriched
-
-    Returns:
-        Summary dict with statistics and details
-    """
+    """Build a summary of EPSS/KEV enrichment for the raw data view."""
     epss_scores_counts: EPSSScoreCounts = {"high": 0, "medium": 0, "low": 0}
 
     exploit_maturity_counts: ExploitMaturityCounts = {
@@ -161,7 +147,6 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> EPSSKEVSummary:
 
         _process_finding_risk(finding, details, epss_score, maturity, risk_scores, summary)
 
-    # Calculate averages
     if epss_scores:
         summary["avg_epss_score"] = round(sum(epss_scores) / len(epss_scores), 4)
         summary["max_epss_score"] = round(max(epss_scores), 4)
@@ -170,7 +155,6 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> EPSSKEVSummary:
         summary["avg_risk_score"] = round(sum(risk_scores) / len(risk_scores), 1)
         summary["max_risk_score"] = round(max(risk_scores), 1)
 
-    # Sort high-risk CVEs by risk score
     summary["high_risk_cves"].sort(key=lambda x: x["risk_score"], reverse=True)
     summary["high_risk_cves"] = summary["high_risk_cves"][:20]
 
@@ -182,17 +166,7 @@ def build_reachability_summary(
     callgraphs: List[Dict[str, Any]],
     enriched_count: int,
 ) -> ReachabilitySummary:
-    """
-    Build a summary of reachability analysis for raw data view.
-
-    Args:
-        findings: List of vulnerability findings that were analyzed
-        callgraphs: List of callgraph documents used for analysis (one per language)
-        enriched_count: Number of findings that were enriched
-
-    Returns:
-        Summary dict with statistics and details
-    """
+    """Build a summary of reachability analysis for the raw data view."""
     reachability_levels: ReachabilityLevelCounts = {
         "confirmed": 0,
         "likely": 0,
@@ -224,8 +198,7 @@ def build_reachability_summary(
     for finding in findings:
         reachability_data = finding.get("details", {}).get("reachability", {})
         reachable = reachability_data.get("is_reachable")
-        # The persisted analysis_level is none/import/symbol; map it onto the
-        # confirmed/likely/unreachable/unknown display vocabulary the buckets use.
+        # Map persisted none/import/symbol level onto the confirmed/likely/unreachable/unknown buckets.
         tier = reachability_display_tier(reachable, reachability_data.get("analysis_level"))
 
         vuln_info: VulnerabilityInfo = {
@@ -247,7 +220,6 @@ def build_reachability_summary(
         elif reachable is False:
             summary["unreachable_vulnerabilities"].append(vuln_info)
 
-    # Sort by severity (most severe first)
     summary["reachable_vulnerabilities"] = sort_by_severity(
         summary["reachable_vulnerabilities"], key="severity", reverse=True
     )
@@ -255,7 +227,6 @@ def build_reachability_summary(
         summary["unreachable_vulnerabilities"], key="severity", reverse=True
     )
 
-    # Limit lists to top 30
     summary["reachable_vulnerabilities"] = summary["reachable_vulnerabilities"][:30]
     summary["unreachable_vulnerabilities"] = summary["unreachable_vulnerabilities"][:30]
 
@@ -263,17 +234,7 @@ def build_reachability_summary(
 
 
 async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
-    """
-    Calculate comprehensive statistics including EPSS/KEV and Reachability data.
-
-    Args:
-        db: Database connection
-        scan_id: The scan ID to calculate stats for
-
-    Returns:
-        Stats object with all fields populated
-    """
-    # Comprehensive aggregation pipeline
+    """Calculate comprehensive statistics including EPSS/KEV and reachability data."""
     pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": scan_id, "waived": False}},
         {
@@ -286,15 +247,11 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                 "kev_ransomware": {"$ifNull": [f"$details.{DETAILS_KEY_KEV_RANSOMWARE}", False]},
                 "reachable": {"$ifNull": ["$reachable", None]},
                 "reachability_level": {"$ifNull": ["$reachability_level", "unknown"]},
-                # Confidence is nested under details.reachability — pulled
-                # up here so the group stage can gate counts on it (B9).
+                # Pulled up from details.reachability so the group stage can gate counts on it.
                 "reachability_confidence": {"$ifNull": ["$details.reachability.confidence_score", None]},
                 "risk_score": {"$ifNull": ["$details.risk_score", None]},
                 "adjusted_risk_score": {"$ifNull": ["$details.adjusted_risk_score", None]},
-                # 0-100 fallback for findings without enrichment. Derived from the
-                # SAME CVSS contribution calculate_risk_score uses —
-                # (representative_cvss/10)*40 — so enriched (details.risk_score)
-                # and non-enriched findings sit on one comparable 0-100 scale.
+                # 0-100 fallback for unenriched findings, on the same scale as details.risk_score.
                 "calculated_score": {
                     "$switch": {
                         "branches": [
@@ -320,21 +277,12 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                 "info": {"$sum": {"$cond": [{"$eq": ["$severity", "INFO"]}, 1, 0]}},
                 "unknown": {"$sum": {"$cond": [{"$eq": ["$severity", "UNKNOWN"]}, 1, 0]}},
                 "total": {"$sum": 1},
-                # Vulnerability-only total: reachability is a vulnerability-only
-                # concept, so the "unknown reachability" count must be measured
-                # against vulnerabilities, not every finding type (license, SAST,
-                # secret, EOL...). Without this, non-vuln findings inflate
-                # unknown_count.
+                # Reachability is vulnerability-only, so unknown_count is measured against vulns only.
                 "vuln_total": {"$sum": {"$cond": [{"$eq": ["$type", "vulnerability"]}, 1, 0]}},
-                # Base risk score (0-100): average of the per-finding composite
-                # details.risk_score, with a 0-100 calculated fallback for
-                # findings lacking enrichment. NOTE: no longer averages the raw
-                # cvss_score (0-10) — that was the scale inconsistency (W5/F12).
+                # Base risk score (0-100): avg of details.risk_score with the 0-100 calculated fallback.
                 "avg_risk_score": {"$avg": {"$ifNull": ["$risk_score", "$calculated_score"]}},
                 "max_risk_score": {"$max": {"$ifNull": ["$risk_score", "$calculated_score"]}},
-                # Adjusted risk score (0-100): reachability-adjusted per-finding
-                # details.adjusted_risk_score, falling back to the base
-                # details.risk_score, then to the 0-100 calculated fallback.
+                # Reachability-adjusted score, falling back to base risk_score then calculated_score.
                 "avg_adjusted_risk_score": {
                     "$avg": {"$ifNull": ["$adjusted_risk_score", {"$ifNull": ["$risk_score", "$calculated_score"]}]}
                 },
@@ -373,11 +321,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                 "reachability_analyzed": {"$sum": {"$cond": [{"$ne": ["$reachable", None]}, 1, 0]}},
                 "reachable_count": {"$sum": {"$cond": [{"$eq": ["$reachable", True]}, 1, 0]}},
                 "unreachable_count": {"$sum": {"$cond": [{"$eq": ["$reachable", False]}, 1, 0]}},
-                # Tiers derived from (reachable, analysis_level): the persisted
-                # reachability_level vocabulary is none/import/symbol, so gating on
-                # "confirmed"/"likely" string literals always yielded 0. A
-                # symbol-level reachable hit is the strong "confirmed" tier; an
-                # import-level reachable hit is the weaker "likely" tier.
+                # Symbol-level reachable = confirmed tier; import-level reachable = likely tier.
                 "confirmed_reachable": {
                     "$sum": {
                         "$cond": [
@@ -435,8 +379,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                         ]
                     }
                 },
-                # B9: counts gated by confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD.
-                # Drives prioritisation; raw `reachable_*` fields above are kept for transparency.
+                # Counts gated by confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD.
                 "reachable_count_high_confidence": {
                     "$sum": {
                         "$cond": [
@@ -650,23 +593,19 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
     if stats_result:
         res = stats_result[0]
 
-        # Traditional severity counts
         stats.critical = res.get("critical", 0)
         stats.high = res.get("high", 0)
         stats.medium = res.get("medium", 0)
         stats.low = res.get("low", 0)
         stats.info = res.get("info", 0)
         stats.unknown = res.get("unknown", 0)
-        # Use average risk scores (not sum)
         stats.risk_score = round(res.get("avg_risk_score", 0.0), 1)
         stats.adjusted_risk_score = round(res.get("avg_adjusted_risk_score", 0.0), 1)
 
-        # Calculate EPSS statistics
         epss_scores: List[float] = [s for s in res.get("epss_scores", []) if s is not None]
         avg_epss: Optional[float] = sum(epss_scores) / len(epss_scores) if epss_scores else None
         max_epss: Optional[float] = max(epss_scores) if epss_scores else None
 
-        # Threat Intelligence Stats
         stats.threat_intel = ThreatIntelligenceStats(
             kev_count=res.get("kev_count", 0),
             kev_ransomware_count=res.get("kev_ransomware_count", 0),
@@ -678,7 +617,6 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
             active_exploitation_count=res.get("active_exploitation_count", 0),
         )
 
-        # Reachability Stats
         stats.reachability = ReachabilityStats(
             analyzed_count=res.get("reachability_analyzed", 0),
             reachable_count=res.get("reachable_count", 0),
@@ -693,7 +631,6 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
             reachable_high_high_confidence=res.get("reachable_high_high_confidence", 0),
         )
 
-        # Prioritized Counts
         stats.prioritized = PrioritizedCounts(
             total=res.get("total", 0),
             critical=res.get("critical", 0),

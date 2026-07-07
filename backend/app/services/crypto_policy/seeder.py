@@ -1,10 +1,4 @@
-"""
-Crypto-policy seeder.
-
-Loads YAML seed files from ./seed/*.yaml and upserts the system policy if the
-stored version is lower than CURRENT_SEED_VERSION. Project overrides are never
-touched by this function.
-"""
+"""Seeds the system crypto policy from ./seed/*.yaml; project overrides are untouched."""
 
 import logging
 from pathlib import Path

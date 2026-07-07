@@ -11,7 +11,6 @@ from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
 
-# Import metrics for notification tracking
 notifications_sent_total: Optional[Counter] = None
 notifications_failed_total: Optional[Counter] = None
 
@@ -24,16 +23,14 @@ except ImportError:
 class MattermostProvider(NotificationProvider):
     def __init__(self) -> None:
         self._bot_user_id: Optional[str] = None
-        # Lock to prevent concurrent bot ID fetches within the same pod
+        # Prevents concurrent bot ID fetches within the same pod.
         self._bot_id_lock = asyncio.Lock()
 
     async def _get_bot_user_id(self, client: InstrumentedAsyncClient, base_url: str, headers: dict) -> Optional[str]:
         if self._bot_user_id:
             return self._bot_user_id
 
-        # Use lock to prevent concurrent fetches
         async with self._bot_id_lock:
-            # Double-check after acquiring lock
             if self._bot_user_id:
                 return self._bot_user_id
 
@@ -53,7 +50,6 @@ class MattermostProvider(NotificationProvider):
     async def _get_user_id_by_username(
         self, client: InstrumentedAsyncClient, username: str, base_url: str, headers: dict
     ) -> Optional[str]:
-        # Remove @ if present
         username = username.lstrip("@")
         try:
             response = await client.get(f"{base_url}/api/v4/users/username/{username}", headers=headers)
@@ -90,10 +86,8 @@ class MattermostProvider(NotificationProvider):
     async def _get_channel_id_by_name(
         self, client: InstrumentedAsyncClient, channel_name: str, base_url: str, headers: dict
     ) -> Optional[str]:
-        # Remove # if present
         channel_name = channel_name.lstrip("#")
 
-        # First, get teams the bot is in
         try:
             response = await client.get(f"{base_url}/api/v4/users/me/teams", headers=headers)
             if response.status_code != 200:
@@ -103,7 +97,6 @@ class MattermostProvider(NotificationProvider):
             teams = response.json()
             for team in teams:
                 team_id = team["id"]
-                # Try to find channel in this team
                 chan_response = await client.get(
                     f"{base_url}/api/v4/teams/{team_id}/channels/name/{channel_name}",
                     headers=headers,
@@ -127,7 +120,6 @@ class MattermostProvider(NotificationProvider):
         system_settings: Optional[SystemSettings] = None,
         **kwargs: Any,
     ) -> bool:
-        # Determine configuration
         mattermost_url = system_settings.mattermost_url if system_settings else None
         mattermost_token = system_settings.mattermost_bot_token if system_settings else None
 
@@ -147,7 +139,6 @@ class MattermostProvider(NotificationProvider):
             ) as client:
                 channel_id = destination
 
-                # If destination looks like a username, try to resolve it to a DM channel
                 if destination.startswith("@"):
                     user_id = await self._get_user_id_by_username(client, destination, base_url, headers)
                     if not user_id:
@@ -164,9 +155,7 @@ class MattermostProvider(NotificationProvider):
                         return False
 
                     channel_id = dm_channel_id
-                # If it looks like a channel name (starts with # or no special chars and not a UUID)
                 elif destination.startswith("#"):
-                    # Channel name with # prefix - must be resolved
                     resolved_id = await self._get_channel_id_by_name(client, destination, base_url, headers)
                     if not resolved_id:
                         logger.error(f"Cannot send Mattermost message: Channel {destination} not found")
@@ -175,12 +164,11 @@ class MattermostProvider(NotificationProvider):
                         return False
                     channel_id = resolved_id
                 elif destination.count("-") != 4:
-                    # Not a UUID (UUIDs have exactly 4 dashes) - try to resolve as channel name
+                    # UUIDs have exactly 4 dashes; anything else is treated as a channel name.
                     resolved_id = await self._get_channel_id_by_name(client, destination, base_url, headers)
                     if resolved_id:
                         channel_id = resolved_id
 
-                # Build rich attachment payload
                 from app.services.notifications.mattermost_formatter import build_generic_props
 
                 props = kwargs.get("props")

@@ -1,9 +1,4 @@
-"""
-NIST SP 800-131A Rev.3 compliance framework.
-
-Controls auto-derived from the Phase-1 seed file
-`backend/app/services/crypto_policy/seed/nist_sp_800_131a.yaml`.
-"""
+"""NIST SP 800-131A Rev.3 framework; controls auto-derived from the seed file."""
 
 from functools import cached_property
 from pathlib import Path
@@ -44,11 +39,7 @@ def _derive_controls_from_seed(
     *,
     control_id_prefix: str,
 ) -> List[ControlDefinition]:
-    """Turn a seed-rule file into ControlDefinitions.
-
-    Each seed rule -> one control. `control_id` is `<prefix>-<rule_id>`.
-    `maps_to_rule_ids=[rule_id]`, `maps_to_finding_types=[finding_type]`.
-    """
+    """Turn a seed-rule file into ControlDefinitions, one control per rule."""
     with yaml_path.open() as f:
         doc = yaml.safe_load(f) or {}
     controls: List[ControlDefinition] = []

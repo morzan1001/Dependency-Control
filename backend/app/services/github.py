@@ -17,7 +17,6 @@ from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
 logger = logging.getLogger(__name__)
 
-# Well-known JWKS endpoint for github.com
 _GITHUB_COM_JWKS_URI = "https://token.actions.githubusercontent.com/.well-known/jwks"
 
 
@@ -25,11 +24,7 @@ _GITHUB_API_TIMEOUT = 10.0
 
 
 class GitHubService:
-    """
-    GitHub service for OIDC token validation and API operations.
-
-    Supports both github.com and GitHub Enterprise Server instances.
-    """
+    """OIDC token validation and API operations for github.com and GHES instances."""
 
     def __init__(self, github_instance: GitHubInstance):
         self.instance = github_instance
@@ -83,11 +78,7 @@ class GitHubService:
         params: Optional[Dict[str, Any]] = None,
         max_pages: int = 10,
     ) -> Optional[List[Dict[str, Any]]]:
-        """Paginated GET using GitHub's Link header pagination.
-
-        Returns:
-            Combined list of all items from all pages, or None on failure
-        """
+        """Paginated GET via GitHub's Link header; returns all items or None on failure."""
         if not self.instance.access_token:
             return None
 
@@ -115,7 +106,6 @@ class GitHubService:
 
                     all_items.extend(items)
 
-                    # Check Link header for next page
                     link_header = response.headers.get("link", "")
                     if 'rel="next"' not in link_header:
                         break
@@ -136,11 +126,7 @@ class GitHubService:
         return [b["name"] for b in branches]
 
     async def _get_jwks_uri(self) -> Optional[str]:
-        """
-        Fetches the JWKS URI from the OpenID Connect discovery document.
-        For github.com, uses the well-known endpoint directly.
-        For GHES, discovers via .well-known/openid-configuration.
-        """
+        """Resolve the JWKS URI: well-known endpoint for github.com, OIDC discovery for GHES."""
         cache_key = self._get_cache_key("jwks_uri")
 
         cached_uri = await cache_service.get(cache_key)
@@ -148,12 +134,10 @@ class GitHubService:
             result: str = cached_uri
             return result
 
-        # Fast path for github.com
         if "token.actions.githubusercontent.com" in self.base_url:
             await cache_service.set(cache_key, _GITHUB_COM_JWKS_URI, ttl_seconds=GITHUB_JWKS_URI_CACHE_TTL)
             return _GITHUB_COM_JWKS_URI
 
-        # GHES: Try OpenID discovery
         async with InstrumentedAsyncClient("GitHub OIDC", timeout=10.0) as client:
             try:
                 response = await client.get(f"{self.base_url}/.well-known/openid-configuration")
@@ -166,16 +150,12 @@ class GitHubService:
             except Exception as e:
                 logger.warning(f"Error fetching GitHub OIDC discovery: {e}")
 
-        # Fallback: try .well-known/jwks directly
         fallback_uri = f"{self.base_url}/.well-known/jwks"
         await cache_service.set(cache_key, fallback_uri, ttl_seconds=GITHUB_JWKS_URI_CACHE_TTL)
         return fallback_uri
 
     async def get_jwks(self) -> Optional[dict]:
-        """
-        Fetches and caches the JWKS from GitHub.
-        Uses Redis cache for multi-pod compatibility in Kubernetes.
-        """
+        """Fetch and Redis-cache the JWKS from GitHub."""
         cache_key = self._get_cache_key("jwks")
 
         cached_jwks = await cache_service.get(cache_key)
@@ -205,19 +185,13 @@ class GitHubService:
         await cache_service.delete(cache_key)
 
     async def validate_oidc_token(self, token: str) -> Optional[GitHubOIDCPayload]:
-        """
-        Validates a GitHub Actions OIDC token (JWT).
-
-        Handles key rotation by refreshing JWKS cache if key is not found.
-        """
+        """Validate a GitHub Actions OIDC JWT, refreshing JWKS on key rotation."""
         return await _validate_oidc_token(
             token=token,
             get_jwks=self.get_jwks,
             invalidate_cache=self._invalidate_jwks_cache,
             issuer=self.base_url,
-            # `or None` is intentional: normalizes "" -> None so the fail-closed
-            # audience guard in _validate_oidc_token rejects unconfigured instances
-            # (Finding 7 / W1.1). Do not remove.
+            # `or None` normalizes "" -> None so unconfigured instances fail the audience check closed.
             audience=self.instance.oidc_audience or None,
             payload_model=GitHubOIDCPayload,
             provider_name="GitHub",
