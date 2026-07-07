@@ -1,11 +1,5 @@
-"""
-Schema Exports
+"""Centralized export of schema models used across the application."""
 
-Centralized export of all Pydantic models, TypedDicts, and dataclasses
-used across the application.
-"""
-
-# Analytics schemas (Pydantic)
 from app.schemas.analytics import (
     AnalyticsSummary,
     DependencyMetadata,

@@ -24,10 +24,7 @@ async def slack_callback(
     db: DatabaseDep,
     state: Optional[str] = None,
 ) -> RedirectResponse:
-    """
-    Callback endpoint for Slack OAuth.
-    Exchanges the code for an access token and refresh token.
-    """
+    """Slack OAuth callback: exchange the code for access and refresh tokens."""
     repo = SystemSettingsRepository(db)
     system_settings = await repo.get()
 

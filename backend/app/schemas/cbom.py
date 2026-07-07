@@ -1,9 +1,4 @@
-"""
-CBOM Schema Definitions
-
-Normalized in-memory representation produced by cbom_parser.py.
-Mirrors Pydantic conventions of schemas/sbom.py.
-"""
+"""Normalized in-memory CBOM representation produced by the CBOM parser."""
 
 from datetime import datetime
 from enum import Enum

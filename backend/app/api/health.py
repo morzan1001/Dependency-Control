@@ -11,36 +11,24 @@ from app.db.mongodb import db
 
 router = APIRouter()
 
-# Track when the application started
 _startup_time = time.time()
 
 
 def get_uptime_seconds() -> float:
-    """Get the application uptime in seconds."""
     return time.time() - _startup_time
 
 
 def get_max_uptime_seconds() -> int:
-    """
-    Get the maximum allowed uptime before the pod should restart.
-    Default: 24 hours (86400 seconds). Set to 0 to disable.
-    """
+    """Max uptime before the pod should restart; 0 disables."""
     return getattr(settings, "MAX_POD_UPTIME_SECONDS", 86400)
 
 
 @router.get("/live", summary="Liveness Probe", response_model=None)
 async def liveness() -> Dict[str, Any] | JSONResponse:
-    """
-    Liveness probe to check if the application process is running.
-
-    Returns unhealthy after MAX_POD_UPTIME_SECONDS to trigger a graceful restart.
-    This helps manage memory growth by ensuring pods are periodically recycled.
-    The PodDisruptionBudget ensures pods restart one at a time.
-    """
+    """Liveness probe; reports unhealthy past max uptime to recycle pods for memory."""
     uptime = get_uptime_seconds()
     max_uptime = get_max_uptime_seconds()
 
-    # Check if we've exceeded the max uptime (0 = disabled)
     if max_uptime > 0 and uptime > max_uptime:
         uptime_hours = uptime / 3600
         return JSONResponse(
@@ -58,20 +46,12 @@ async def liveness() -> Dict[str, Any] | JSONResponse:
 
 @router.get("/ready", summary="Readiness Probe", response_model=None)
 async def readiness() -> Dict[str, Any] | JSONResponse:
-    """
-    Detailed readiness probe.
-    Checks:
-    1. MongoDB connectivity (ping)
-    2. Worker status (background tasks execution status)
-    3. Redis cache availability (optional - service can run without it)
-    """
+    """Readiness probe checking MongoDB, workers, and (optional) Redis cache."""
     components = {"database": "unknown", "workers": "unknown", "cache": "unknown"}
     is_ready = True
 
-    # 1. Check MongoDB
     try:
         if db.client:
-            # The 'ping' command is cheap and effective
             await db.client.admin.command("ping")
             components["database"] = "connected"
         else:
@@ -81,30 +61,24 @@ async def readiness() -> Dict[str, Any] | JSONResponse:
         components["database"] = f"error: {str(e)}"
         is_ready = False
 
-    # 2. Check Workers
-    # Checks if workers are configured and if at least one is running (not cancelled/done)
     active_workers = [t for t in worker_manager.workers if not t.done()]
     if active_workers:
         components["workers"] = f"operational ({len(active_workers)}/{worker_manager.num_workers} active)"
     else:
         components["workers"] = "stopped"
-        # Failing readiness might not be desired just because workers are down if read-only API access is allowed.
-        # Usually for a monolithic pod, if part is broken, it is restarted or traffic is not sent.
-        # Let's mark it as not ready if workers are completely dead to be safe.
+        # Fail readiness only if workers are configured but all are dead.
         if worker_manager.num_workers > 0:
             is_ready = False
 
-    # 3. Check Redis Cache (optional - degraded but functional without it)
+    # Cache is optional; its failure degrades but does not fail readiness.
     try:
         cache_health = await cache_service.health_check()
         if cache_health.get("status") == "healthy":
             components["cache"] = "connected"
         else:
             components["cache"] = "unavailable (degraded mode)"
-            # Cache is optional - don't fail readiness
     except Exception as e:
         components["cache"] = f"unavailable: {str(e)}"
-        # Cache is optional - service can run without it
 
     if is_ready:
         return {"status": "ready", "components": components}
@@ -117,12 +91,7 @@ async def readiness() -> Dict[str, Any] | JSONResponse:
 
 @router.get("/cache", summary="Cache Health & Statistics")
 async def cache_health() -> Dict[str, Any]:
-    """
-    Get detailed cache health status and statistics.
-
-    Returns:
-        Cache connection status, memory usage, key count, and hit rate.
-    """
+    """Cache health status and statistics."""
     try:
         health = await cache_service.health_check()
         return health

@@ -1,6 +1,4 @@
-"""
-REST endpoints for crypto analytics (hotspots, trends).
-"""
+"""REST endpoints for crypto analytics (hotspots, trends)."""
 
 from datetime import datetime
 from typing import Literal, Optional

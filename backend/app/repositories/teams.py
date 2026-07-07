@@ -14,8 +14,6 @@ _COL = "teams"
 
 
 class TeamRepository:
-    """Repository for team database operations."""
-
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self.collection = db.teams
@@ -28,12 +26,10 @@ class TeamRepository:
         return None
 
     async def get_raw_by_id(self, team_id: str) -> Optional[Dict[str, Any]]:
-        """Get raw team document by ID."""
         return await self.collection.find_one({"_id": team_id})
 
-    # WARNING (Finding 8): do NOT use name-based lookup to match synced GitLab teams.
-    # Team names are not unique across GitLab instances and caused a cross-tenant
-    # collision. Use get_raw_by_gitlab_group (instance-scoped composite key) instead.
+    # Don't match synced GitLab teams by name — names aren't unique across instances
+    # (cross-tenant collision); use get_raw_by_gitlab_group instead.
     async def get_by_name(self, name: str) -> Optional[Team]:
         data = await self.collection.find_one({"name": name})
         if data:
@@ -41,7 +37,6 @@ class TeamRepository:
         return None
 
     async def get_raw_by_gitlab_group(self, gitlab_instance_id: str, gitlab_group_id: int) -> Optional[Dict[str, Any]]:
-        """Get raw team document by GitLab instance + group ID."""
         return await self.collection.find_one(
             {"gitlab_instance_id": gitlab_instance_id, "gitlab_group_id": gitlab_group_id}
         )
@@ -55,7 +50,6 @@ class TeamRepository:
         return await self.get_by_id(team_id)
 
     async def update_raw(self, team_id: str, update_ops: Dict[str, Any]) -> None:
-        """Update team with raw MongoDB operations."""
         await self.collection.update_one({"_id": team_id}, update_ops)
 
     async def delete(self, team_id: str) -> bool:
@@ -70,7 +64,6 @@ class TeamRepository:
         sort_by: str = "name",
         sort_order: int = 1,
     ) -> List[Team]:
-        """Find multiple teams with pagination. Returns Pydantic models."""
         cursor = self.collection.find(query).sort(sort_by, sort_order).skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
         return [Team(**doc) for doc in docs]
@@ -79,7 +72,6 @@ class TeamRepository:
         return await self.collection.count_documents(query or {})
 
     async def find_by_member(self, user_id: str) -> List[Team]:
-        """Find teams where user is a member. Returns Pydantic models."""
         cursor = self.collection.find({_MEMBERS_USER_ID: user_id})
         docs = await cursor.to_list(None)
         return [Team(**doc) for doc in docs]
@@ -91,18 +83,15 @@ class TeamRepository:
         await self.collection.update_one({"_id": team_id}, {"$pull": {"members": {"user_id": user_id}}})
 
     async def update_member_role(self, team_id: str, user_id: str, role: str) -> None:
-        """Update a member's role in team."""
         await self.collection.update_one(
             {"_id": team_id, _MEMBERS_USER_ID: user_id},
             {"$set": {"members.$.role": role}},
         )
 
     async def set_members(self, team_id: str, members: List[Dict[str, Any]], updated_at: datetime) -> None:
-        """Replace all members in team."""
         await self.collection.update_one({"_id": team_id}, {"$set": {"members": members, "updated_at": updated_at}})
 
     async def is_member(self, team_id: str, user_id: str) -> bool:
-        """Check if user is a member of team."""
         result = await self.collection.find_one({"_id": team_id, _MEMBERS_USER_ID: user_id}, {"_id": 1})
         return result is not None
 

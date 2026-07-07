@@ -1,9 +1,4 @@
-"""
-API v1 Helper Functions
-
-Shared helper functions extracted from endpoint modules for better
-code organization and reusability.
-"""
+"""Shared helper functions for API v1 endpoints."""
 
 from app.api.v1.helpers.analytics import (
     build_findings_severity_map,

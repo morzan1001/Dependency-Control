@@ -1,13 +1,4 @@
-"""
-Ingest API Endpoints - Refactored Version
-
-This module handles ingestion of scan results from various security tools:
-- SBOM (Software Bill of Materials)
-- TruffleHog (Secret scanning)
-- OpenGrep (SAST)
-- KICS (IaC scanning)
-- Bearer (Data security)
-"""
+"""Ingest endpoints for scan results from security tools (SBOM, TruffleHog, OpenGrep, KICS, Bearer)."""
 
 import json
 import logging
@@ -62,20 +53,15 @@ async def ingest_trufflehog(
     project: ProjectIngestDep,
     db: DatabaseDep,
 ) -> SecretScanResponse:
-    """
-    Ingest TruffleHog secret scan results.
-    Returns a summary of findings and pipeline failure status.
-    """
+    """Ingest TruffleHog secret scan results; returns findings summary and pipeline failure status."""
     manager = ScanManager(db, project)
     ctx = await manager.find_or_create_scan(data)
 
-    # Prepare result dict
     result_dict = {"findings": [f.model_dump() for f in data.findings]}
 
-    # Process findings
     response = await process_findings_ingest(manager, "trufflehog", result_dict, ctx.scan_id)
 
-    # TruffleHog returns failure status if secrets found
+    # Any secret found fails the pipeline.
     failed = response["findings_count"] > 0
 
     return SecretScanResponse(
@@ -98,14 +84,10 @@ async def ingest_opengrep(
     project: ProjectIngestDep,
     db: DatabaseDep,
 ) -> FindingsIngestResponse:
-    """
-    Ingest OpenGrep SAST scan results.
-    Returns a summary of findings.
-    """
+    """Ingest OpenGrep SAST scan results; returns a findings summary."""
     manager = ScanManager(db, project)
     ctx = await manager.find_or_create_scan(data)
 
-    # Prepare result dict
     result_dict = {"findings": [f.model_dump() for f in data.findings]}
 
     response = await process_findings_ingest(manager, "opengrep", result_dict, ctx.scan_id)
@@ -123,9 +105,7 @@ async def ingest_kics(
     project: ProjectIngestDep,
     db: DatabaseDep,
 ) -> FindingsIngestResponse:
-    """
-    Ingest KICS IaC scan results.
-    """
+    """Ingest KICS IaC scan results."""
     manager = ScanManager(db, project)
     ctx = await manager.find_or_create_scan(data)
 
@@ -147,9 +127,7 @@ async def ingest_bearer(
     project: ProjectIngestDep,
     db: DatabaseDep,
 ) -> FindingsIngestResponse:
-    """
-    Ingest Bearer SAST/Data Security scan results.
-    """
+    """Ingest Bearer SAST/Data Security scan results."""
     manager = ScanManager(db, project)
     ctx = await manager.find_or_create_scan(data)
 
@@ -254,10 +232,7 @@ async def _parse_and_store_sbom_deps(
     dep_repo: "DependencyRepository",
     old_deps_deleted: bool,
 ) -> tuple[int, bool]:
-    """Parse one SBOM, ensure old deps are deleted once, insert new deps in chunks.
-
-    Returns (deps_inserted, old_deps_deleted_after).
-    """
+    """Parse one SBOM, delete old deps once, insert new deps in chunks; returns (deps_inserted, old_deps_deleted_after)."""
     parsed_sbom = parse_sbom(sbom)
     logger.info(
         f"Parsed SBOM: format={parsed_sbom.format.value}, "
@@ -283,13 +258,7 @@ async def _process_sboms(
     scan_id: str,
     dep_repo: "DependencyRepository",
 ) -> tuple[List[Dict[str, Any]], List[str], int, int, int]:
-    """Process all SBOMs: upload to GridFS and extract dependencies.
-
-    Dependencies are inserted in chunks to limit peak memory usage.
-
-    Returns:
-        Tuple of (sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted)
-    """
+    """Upload all SBOMs to GridFS and extract dependencies (chunked); returns (sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted)."""
     sbom_refs: List[Dict[str, Any]] = []
     warnings: List[str] = []
     sboms_processed = 0
@@ -332,12 +301,7 @@ async def ingest_sbom(
     project: ProjectIngestDep,
     db: DatabaseDep,
 ) -> SBOMIngestResponse:
-    """
-    Upload an SBOM for analysis.
-
-    Requires a valid **API Key** in the `X-API-Key` header or **OIDC Token** (GitLab/GitHub Actions) in the `Job-Token` header.
-    The analysis will be queued and processed by background workers.
-    """
+    """Upload an SBOM for analysis; the analysis is queued and processed by background workers."""
     manager = ScanManager(db, project)
     dep_repo = DependencyRepository(db)
 
@@ -347,7 +311,6 @@ async def ingest_sbom(
     pipeline_url = manager.build_pipeline_url(data)
     scan_id = _generate_scan_id(str(project.id), data.pipeline_id, data.commit_hash)
 
-    # Initialize GridFS and process all SBOMs (dependencies inserted in chunks)
     fs = AsyncIOMotorGridFSBucket(db)
     try:
         sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted = await _process_sboms(
@@ -360,7 +323,6 @@ async def ingest_sbom(
             detail="Failed to store dependencies. Please try again.",
         )
 
-    # Fail if ALL SBOMs failed to process
     if sboms_failed > 0 and sboms_processed == 0:
         raise HTTPException(
             status_code=400,
@@ -396,25 +358,22 @@ async def ingest_sbom(
         },
     }
 
-    # Add new SBOM refs (append to existing, or initialize if new)
     if sbom_refs:
         scan_update["$push"] = {"sbom_refs": {"$each": sbom_refs}}
     else:
         scan_update["$setOnInsert"]["sbom_refs"] = []
 
-    # Atomic upsert
     await db.scans.update_one({"_id": scan_id}, scan_update, upsert=True)
 
-    # If scan was completed, reset to pending for re-analysis
+    # Reset a completed scan to pending so re-ingest re-analyses it.
     await db.scans.update_one(
         {"_id": scan_id, "status": "completed"},
         {"$set": {"status": "pending", "retry_count": 0}},
     )
 
-    # Register SBOM result and trigger analysis
     await manager.register_result(scan_id, "sbom", trigger_analysis=True)
 
-    # Fire sbom.ingested webhook (best-effort; never blocks ingest)
+    # Fire ingest webhook (best-effort).
     await webhook_service.safe_trigger_webhooks(
         db,
         WEBHOOK_EVENT_SBOM_INGESTED,
@@ -441,7 +400,6 @@ async def ingest_sbom(
         context="sbom_ingest",
     )
 
-    # Build response message
     message = "Analysis queued successfully"
     if sboms_failed > 0:
         message = f"Analysis queued with warnings: {sboms_failed} SBOM(s) failed"
@@ -466,10 +424,7 @@ async def ingest_sbom(
 async def get_project_config(
     project: ProjectIngestDep,
 ) -> ProjectConfigResponse:
-    """
-    Get project configuration for CI/CD pipelines.
-    Returns active analyzers and other settings.
-    """
+    """Get project configuration (active analyzers and settings) for CI/CD pipelines."""
     return ProjectConfigResponse(
         active_analyzers=project.active_analyzers,
         retention_days=project.retention_days,

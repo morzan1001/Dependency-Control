@@ -1,8 +1,4 @@
-"""
-Callgraph Ingest Schema
-
-Schemas for parsing and validating callgraph data from various tools.
-"""
+"""Schemas for parsing and validating callgraph data from various tools."""
 
 from typing import Any, Dict, List, Optional
 
@@ -12,29 +8,23 @@ from pydantic import BaseModel
 class CallgraphUploadRequest(BaseModel):
     """Request body for callgraph upload endpoint."""
 
-    # Format detection
     format: str = "auto"  # auto, madge, pyan, go-callvis, generic
 
-    # Language (required if format is generic or auto-detection fails)
+    # Required if format is generic or auto-detection fails.
     language: Optional[str] = None  # javascript, typescript, python, go, java
 
-    # Pipeline context (for exact matching with SBOM scans)
-    # pipeline_id is the PRIMARY key - ensures callgraph matches exact CI/CD run
-    pipeline_id: Optional[int] = None  # GitLab CI pipeline ID (preferred)
-    branch: Optional[str] = None  # Git branch (fallback if no pipeline_id)
-    commit_hash: Optional[str] = None  # Specific commit (optional, for traceability)
+    # pipeline_id is the primary key for matching a callgraph to a CI/CD run.
+    pipeline_id: Optional[int] = None
+    branch: Optional[str] = None  # fallback when no pipeline_id
+    commit_hash: Optional[str] = None
 
-    # Tool info
     tool: Optional[str] = None
     tool_version: Optional[str] = None
 
-    # The actual callgraph data (format depends on 'format' field)
-    data: Dict[str, Any]
+    data: Dict[str, Any]  # shape depends on the 'format' field
 
-    # Optional: link to a specific scan
     scan_id: Optional[str] = None
 
-    # Optional: metadata
     source_files_count: Optional[int] = None
     analysis_duration_ms: Optional[int] = None
 
@@ -46,12 +36,10 @@ class CallgraphUploadResponse(BaseModel):
     message: str
     project_id: str
 
-    # Stats
     imports_parsed: int = 0
     calls_parsed: int = 0
     modules_detected: int = 0
 
-    # Warnings
     warnings: List[str] = []
 
 

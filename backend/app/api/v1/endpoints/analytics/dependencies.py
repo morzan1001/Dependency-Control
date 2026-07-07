@@ -101,7 +101,6 @@ async def get_dependency_tree(
     direct_deps = [build_node(d) for d in dependencies if get_attr(d, "direct", False)]
     transitive_deps = [build_node(d) for d in dependencies if not get_attr(d, "direct", False)]
 
-    # Sort most-problematic-first.
     direct_deps.sort(key=lambda x: x.findings_count, reverse=True)
     transitive_deps.sort(key=lambda x: x.findings_count, reverse=True)
 
@@ -185,8 +184,7 @@ async def get_dependency_metadata_endpoint(
     version: Annotated[Optional[str], Query(description="Specific version")] = None,
     type: Annotated[Optional[str], Query(description="Package type")] = None,
 ) -> Optional[DependencyMetadata]:
-    """Aggregated dependency-specific metadata across accessible projects
-    (excludes project-specific data like Docker layers)."""
+    """Aggregated dependency metadata across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
     project_ids = await get_user_project_ids(current_user, db)

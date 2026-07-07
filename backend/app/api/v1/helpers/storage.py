@@ -1,8 +1,4 @@
-"""
-Storage Helper Functions
-
-Shared utilities for GridFS and file storage operations.
-"""
+"""Shared utilities for GridFS and file storage operations."""
 
 import json
 import logging
@@ -20,16 +16,7 @@ async def load_from_gridfs(
     db: AsyncIOMotorDatabase,
     file_id: str,
 ) -> Optional[Dict[str, Any]]:
-    """
-    Load and parse JSON content from GridFS.
-
-    Args:
-        db: Database instance
-        file_id: GridFS file ID as string
-
-    Returns:
-        Parsed JSON content or None if loading fails
-    """
+    """Load and parse JSON content from GridFS, or None if loading fails."""
     try:
         fs = primary_gridfs_bucket(db)
         grid_out = await open_gridfs_download_with_retry(fs, ObjectId(file_id))
@@ -45,16 +32,7 @@ async def resolve_sbom_refs(
     db: AsyncIOMotorDatabase,
     sbom_items: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
-    """
-    Resolve SBOM references from GridFS or inline data.
-
-    Args:
-        db: Database instance
-        sbom_items: List of SBOM items (refs or inline data)
-
-    Returns:
-        List of resolved SBOMs with metadata
-    """
+    """Resolve SBOM references from GridFS or inline data into resolved SBOMs."""
     if not sbom_items:
         return []
 
@@ -89,7 +67,6 @@ async def resolve_sbom_refs(
                         }
                     )
         else:
-            # Invalid SBOM reference format
             logger.warning(f"Invalid SBOM reference format at index {index}: {type(item)}")
 
     return resolved_sboms
@@ -99,16 +76,7 @@ async def delete_gridfs_files(
     db: AsyncIOMotorDatabase,
     file_ids: List[str],
 ) -> int:
-    """
-    Delete multiple files from GridFS.
-
-    Args:
-        db: Database instance
-        file_ids: List of GridFS file IDs to delete
-
-    Returns:
-        Number of successfully deleted files
-    """
+    """Delete multiple files from GridFS, returning the count deleted."""
     if not file_ids:
         return 0
 

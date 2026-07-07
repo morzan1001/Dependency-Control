@@ -42,9 +42,7 @@ async def create_team(
     current_user: Annotated[User, Depends(deps.PermissionChecker("team:create"))],
     db: DatabaseDep,
 ) -> Dict[str, Any]:
-    """
-    Create a new team. The creator becomes an admin.
-    """
+    """Create a new team. The creator becomes an admin."""
     team_repo = TeamRepository(db)
 
     team = Team(
@@ -55,7 +53,6 @@ async def create_team(
 
     await team_repo.create(team)
 
-    # Enrich with username for response
     team_dict = team.model_dump()
     team_dict["members"][0]["username"] = current_user.username
 
@@ -70,9 +67,7 @@ async def read_teams(
     sort_by: str = "name",
     sort_order: str = "asc",
 ) -> List[Dict[str, Any]]:
-    """
-    List teams.
-    """
+    """List teams."""
     team_repo = TeamRepository(db)
 
     query: Dict[str, Any] = {}
@@ -104,9 +99,7 @@ async def read_team(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Dict[str, Any]:
-    """
-    Get team details.
-    """
+    """Get team details."""
     team_repo = TeamRepository(db)
 
     await check_team_access(team_id, current_user, db)
@@ -126,9 +119,7 @@ async def update_team(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> TeamResponse:
-    """
-    Update team details. Requires 'admin' role.
-    """
+    """Update team details. Requires 'admin' role."""
     await get_team_with_access(team_id, current_user, db)
 
     team_repo = TeamRepository(db)
@@ -147,29 +138,21 @@ async def delete_team(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> None:
-    """
-    Delete a team. Requires 'admin' role.
-
-    Performs cascade cleanup:
-    - Sets team_id=null on all projects assigned to this team
-    - Projects remain accessible to their direct members
-    """
+    """Delete a team (admin role); unassigns it from projects and removes team webhooks."""
     from app.repositories import ProjectRepository
 
     if not has_permission(current_user.permissions, "team:delete"):
         await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
 
-    # Sanitize for logs to prevent CRLF log injection (S5145); team_id is a path parameter.
+    # Sanitize for logs to prevent CRLF log injection.
     safe_team_id = team_id.replace("\n", "_").replace("\r", "_")
 
-    # CASCADE: Unassign team from all projects
     project_repo = ProjectRepository(db)
     updated_count = await project_repo.update_many({"team_id": team_id}, {"team_id": None})
 
     if updated_count > 0:
         logger.info("Team %s deleted: unassigned from %d project(s)", safe_team_id, updated_count)
 
-    # CASCADE: Delete all team webhooks
     webhook_result = await db.webhooks.delete_many({"team_id": team_id})
     if webhook_result.deleted_count > 0:
         logger.info("Team %s deleted: removed %d webhook(s)", safe_team_id, webhook_result.deleted_count)
@@ -186,9 +169,7 @@ async def add_team_member(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> TeamResponse:
-    """
-    Add a member to the team. Requires 'admin' role.
-    """
+    """Add a member to the team. Requires 'admin' role."""
     team_repo = TeamRepository(db)
     user_repo = UserRepository(db)
 
@@ -200,7 +181,6 @@ async def add_team_member(
 
     user_id = str(user_to_add["_id"])
 
-    # Check if already member
     if find_member_in_team(team, user_id) is not None:
         raise HTTPException(status_code=400, detail="User already in team")
 
@@ -225,20 +205,16 @@ async def update_team_member(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> TeamResponse:
-    """
-    Update a member's role. Requires 'admin' role.
-    """
+    """Update a member's role. Requires 'admin' role."""
     team_repo = TeamRepository(db)
 
     team = await get_team_with_access(team_id, current_user, db)
 
-    # Check if target user is in team
     member_index = find_member_in_team(team, user_id)
     if member_index is None:
         raise HTTPException(status_code=404, detail="User not in team")
 
-    # Prevent modifying the last admin
-    # If target is admin, check if they are the last admin
+    # Modifying an admin member requires admin access.
     if team.members[member_index].role == TEAM_ROLE_ADMIN:
         await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
 
@@ -262,13 +238,10 @@ async def remove_team_member(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> TeamResponse:
-    """
-    Remove a member from the team. Requires 'admin' role.
-    """
+    """Remove a member from the team. Requires 'admin' role."""
     team_repo = TeamRepository(db)
     team = await get_team_with_access(team_id, current_user, db)
 
-    # Check if target user is in team
     target_role = get_member_role(team, user_id)
     if target_role is None:
         raise HTTPException(status_code=404, detail="User not in team")

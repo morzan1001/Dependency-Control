@@ -1,6 +1,4 @@
-"""
-CryptoPolicyRepository — MongoDB access for the `crypto_policies` collection.
-"""
+"""MongoDB access for the crypto_policies collection."""
 
 from datetime import datetime, timezone
 

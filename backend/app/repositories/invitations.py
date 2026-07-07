@@ -10,8 +10,6 @@ from app.models.invitation import ProjectInvitation, SystemInvitation
 
 
 class InvitationRepository:
-    """Repository for invitation database operations."""
-
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self.project_invitations = db.invitations
@@ -26,7 +24,6 @@ class InvitationRepository:
 
     # Project Invitations
     async def get_project_invitation(self, invitation_id: str) -> Optional[Dict[str, Any]]:
-        """Get project invitation by ID."""
         return await self.project_invitations.find_one({"_id": invitation_id})
 
     async def get_project_invitation_by_token(self, token: str) -> Optional[Dict[str, Any]]:
@@ -37,7 +34,6 @@ class InvitationRepository:
         return invitation
 
     async def delete_project_invitation(self, invitation_id: str) -> bool:
-        """Delete project invitation by ID."""
         result = await self.project_invitations.delete_one({"_id": invitation_id})
         return result.deleted_count > 0
 
@@ -56,11 +52,9 @@ class InvitationRepository:
 
     # System Invitations
     async def get_system_invitation(self, invitation_id: str) -> Optional[Dict[str, Any]]:
-        """Get system invitation by ID."""
         return await self.system_invitations.find_one({"_id": invitation_id})
 
     async def get_system_invitation_by_token(self, token: str) -> Optional[Dict[str, Any]]:
-        """Get active system invitation by token (non-used, non-expired)."""
         return await self._system_primary.find_one(
             {
                 "token": token,
@@ -70,7 +64,6 @@ class InvitationRepository:
         )
 
     async def get_system_invitation_by_email(self, email: str) -> Optional[Dict[str, Any]]:
-        """Get active system invitation by email (non-used, non-expired)."""
         return await self._system_primary.find_one(
             {
                 "email": email,
@@ -84,11 +77,9 @@ class InvitationRepository:
         return invitation
 
     async def update_system_invitation(self, invitation_id: str, update_data: Dict[str, Any]) -> None:
-        """Update system invitation by ID."""
         await self.system_invitations.update_one({"_id": invitation_id}, {"$set": update_data})
 
     async def delete_system_invitation(self, invitation_id: str) -> bool:
-        """Delete system invitation by ID."""
         result = await self.system_invitations.delete_one({"_id": invitation_id})
         return result.deleted_count > 0
 
@@ -97,7 +88,6 @@ class InvitationRepository:
         skip: int = 0,
         limit: int = 100,
     ) -> List[Dict[str, Any]]:
-        """Find all active (non-used, non-expired) system invitations."""
         query = {
             "is_used": False,
             "expires_at": {"$gt": datetime.now(timezone.utc)},
@@ -106,5 +96,4 @@ class InvitationRepository:
         return await cursor.to_list(limit)
 
     async def mark_system_invitation_used(self, invitation_id: str) -> None:
-        """Mark system invitation as used."""
         await self.system_invitations.update_one({"_id": invitation_id}, {"$set": {"is_used": True}})

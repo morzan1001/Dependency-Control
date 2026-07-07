@@ -1,8 +1,4 @@
-"""
-Archive API Endpoints
-
-Provides endpoints for listing, downloading, restoring, and managing archived scan data.
-"""
+"""Endpoints for listing, downloading, restoring, and managing archived scan data."""
 
 import logging
 import math
@@ -149,12 +145,7 @@ async def restore_archive(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> ArchiveRestoreResponse:
-    """Restore an archived scan from S3 back into MongoDB.
-
-    Returns 404 if no archive exists for this project, 409 if the scan
-    already exists in MongoDB (likely from a concurrent restore), 500 on
-    other failures.
-    """
+    """Restore an archived scan from S3 back into MongoDB (404 if absent, 409 if already present, 500 otherwise)."""
     _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_RESTORE)
     await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_ADMIN)
 
@@ -168,13 +159,8 @@ async def restore_archive(
 
     result = await restore_scan(db, scan_id)
     if not result:
-        # restore_scan returns None for several failure modes (lock-held,
-        # scan-already-exists, integrity, S3 error). Distinguish the most
-        # actionable one for the API: scan already exists → 409.
-        # Best-effort 409 vs 500 disambiguation. There is a small TOCTOU
-        # window: by the time we check db.scans here, restore_scan has
-        # already released its lock, so a concurrent inserter could have
-        # added the scan. Acceptable: 409 is informational, not contract.
+        # restore_scan returns None for several failures; if the scan now exists
+        # it was a concurrent restore → 409 (best-effort, small TOCTOU window).
         existing_scan = await db.scans.find_one({"_id": scan_id})
         if existing_scan:
             raise HTTPException(status_code=409, detail="Scan already exists in MongoDB")
@@ -320,11 +306,6 @@ async def unpin_scan(
     return ScanPinResponse(scan_id=scan_id, pinned=False)
 
 
-# ---------------------------------------------------------------------------
-# Admin endpoints (registered under /api/v1/archives)
-# ---------------------------------------------------------------------------
-
-
 @admin_router.get(
     "/all",
     summary="List all archives across all projects (admin)",
@@ -362,7 +343,6 @@ async def list_all_archives(
         project_id=project_id,
     )
 
-    # Batch-lookup project names
     unique_project_ids = list({a.project_id for a in archives})
     project_names: dict = {}
     if unique_project_ids:

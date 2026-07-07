@@ -1,9 +1,4 @@
-"""
-Callgraph Model for Reachability Analysis
-
-Stores call graph data uploaded from CI/CD pipelines for analyzing
-whether vulnerable code paths are actually reachable in the project.
-"""
+"""Call graph data uploaded from CI/CD pipelines for reachability analysis."""
 
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
@@ -17,31 +12,31 @@ from app.models.types import MongoDocument
 class ImportEntry(BaseModel):
     """Represents an import statement in source code."""
 
-    module: str  # The imported module/package name
-    file: str  # Source file path
-    line: int  # Line number
-    imported_symbols: List[str] = []  # Specific symbols imported (e.g., ['get', 'set'])
+    module: str
+    file: str
+    line: int
+    imported_symbols: List[str] = []  # e.g. ['get', 'set']
     is_dynamic: bool = False  # Dynamic import (require(), import())
 
 
 class CallEdge(BaseModel):
     """Represents a function call relationship."""
 
-    caller: str  # Fully qualified caller name (file:function)
-    callee: str  # Fully qualified callee name (module:function)
-    file: str  # Source file where call occurs
-    line: int  # Line number of the call
+    caller: str  # fully qualified: file:function
+    callee: str  # fully qualified: module:function
+    file: str
+    line: int
     call_type: str = "direct"  # direct, callback, async, conditional
 
 
 class ModuleUsage(BaseModel):
     """Aggregated usage information for a module/package."""
 
-    module: str  # Package/module name
-    import_count: int = 0  # Number of files importing this module
-    call_count: int = 0  # Number of function calls into this module
-    import_locations: List[str] = []  # Files that import this module
-    used_symbols: List[str] = []  # Functions/classes used from this module
+    module: str
+    import_count: int = 0  # number of files importing this module
+    call_count: int = 0  # number of calls into this module
+    import_locations: List[str] = []
+    used_symbols: List[str] = []
     is_direct_dependency: bool = True  # vs transitive
 
 
@@ -53,8 +48,8 @@ class Callgraph(MongoDocument, CreatedAtModel):
     # Pipeline context - crucial for matching callgraph to correct scans
     # pipeline_id is the PRIMARY key for matching (unique per CI/CD run)
     pipeline_id: Optional[int] = None  # GitLab CI pipeline ID (unique)
-    branch: Optional[str] = None  # Git branch (for reference/fallback)
-    commit_hash: Optional[str] = None  # Specific commit
+    branch: Optional[str] = None  # for reference/fallback
+    commit_hash: Optional[str] = None
 
     # Link to specific scan if applicable
     scan_id: Optional[str] = None

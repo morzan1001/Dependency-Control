@@ -1,9 +1,4 @@
-"""
-Policy audit endpoints — list / detail / revert / prune.
-
-System scope: admin only.
-Project scope: member for reads, owner/admin for writes.
-"""
+"""Policy audit endpoints (list/detail/revert/prune); system scope is admin-only, project scope is member-read/admin-write."""
 
 import logging
 from datetime import datetime, timedelta, timezone
@@ -36,9 +31,6 @@ from app.services.audit.history import record_policy_change
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter(tags=["policy-audit"])
-
-
-# ---------- SYSTEM SCOPE ----------
 
 
 @router.get("/crypto-policies/system/audit", responses=RESP_403)
@@ -123,9 +115,6 @@ async def prune_system_audit(
     return {"deleted": deleted}
 
 
-# ---------- PROJECT SCOPE ----------
-
-
 @router.get("/projects/{project_id}/crypto-policy/audit")
 async def list_project_audit(
     project_id: str,
@@ -169,8 +158,7 @@ async def revert_project_policy(
     db: DatabaseDep,
     body: dict = Body(...),
 ) -> dict[str, Any]:
-    # Note: "owner" isn't a project role — PROJECT_ROLES = viewer|editor|admin.
-    # The previous string crashed check_project_access with ValueError.
+    # 'owner' is not a project role; PROJECT_ROLES = viewer|editor|admin.
     await check_project_access(project_id, current_user, db, required_role="admin")
     target_raw = body.get("target_version")
     if target_raw is None:
@@ -196,7 +184,6 @@ async def prune_project_audit(
     db: DatabaseDep,
     before: str = Query(...),
 ) -> dict[str, Any]:
-    # Same "owner" -> "admin" normalisation as revert_project_policy above.
     await check_project_access(project_id, current_user, db, required_role="admin")
     cutoff = _parse_datetime(before)
     _enforce_min_prune_cutoff(cutoff)
@@ -206,9 +193,6 @@ async def prune_project_audit(
         cutoff=cutoff,
     )
     return {"deleted": deleted}
-
-
-# ---------- LICENSE POLICY AUDIT (PROJECT SCOPE ONLY) ----------
 
 
 @router.get("/projects/{project_id}/license-policy/audit")
@@ -251,41 +235,24 @@ async def get_project_license_audit_entry(
     return entry.model_dump(by_alias=True)
 
 
-# NOTE: revert/prune for license-policy audit is intentionally deferred:
-#   * revert would need to overwrite project.license_policy and/or
-#     project.analyzer_settings['license_compliance'] — a merge with other
-#     analyzer settings is non-trivial (stomping peer settings would be a bug).
-#   * prune reuses the min-cutoff guard from crypto; when revert ships we'll
-#     add the matching DELETE endpoint with policy_type='license'.
-
-
-# ---------- HELPERS ----------
+# revert/prune for license-policy audit omitted: overwriting license settings would need a non-trivial merge with peer analyzer settings.
 
 
 def _parse_datetime(value: str) -> datetime:
     """Parse an ISO-8601 datetime string, tolerating space-encoded '+' from URLs."""
-    # When '+00:00' is embedded in a raw URL, the '+' becomes a space in the
-    # query string. Restore it before parsing.
+    # A raw-URL '+00:00' arrives with the '+' as a space; restore it before parsing.
     value = value.replace(" ", "+")
     return datetime.fromisoformat(value)
 
 
 def _min_prune_days() -> int:
-    """Return the configured minimum prune age in days from settings."""
     return settings.POLICY_AUDIT_MIN_PRUNE_DAYS
 
 
 def _enforce_min_prune_cutoff(cutoff: datetime) -> None:
-    """Reject prune requests that would delete recent audit history.
-
-    ``cutoff`` is the boundary passed as ``?before=``; entries older than
-    it are deleted. The cutoff itself must be at least
-    ``_min_prune_days`` in the past so recent forensic evidence is never
-    destroyed by an overly-aggressive prune.
-    """
+    """Reject prune requests whose cutoff is too recent, preserving forensic history."""
     days = _min_prune_days()
-    # Use UTC and normalise the cutoff in case the client sends a naive
-    # timestamp (rare but permitted by datetime.fromisoformat).
+    # Normalise a possibly-naive client timestamp to UTC.
     now = datetime.now(timezone.utc)
     if cutoff.tzinfo is None:
         cutoff = cutoff.replace(tzinfo=timezone.utc)

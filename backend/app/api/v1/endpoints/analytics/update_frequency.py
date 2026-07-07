@@ -90,11 +90,7 @@ async def get_project_update_frequency(
     max_scans: Annotated[int, Query(ge=2, le=500)] = 20,
     window_days: Annotated[Optional[int], Query(ge=1, le=3650)] = None,
 ) -> UpdateFrequencyMetrics:
-    """Update-frequency metrics from version diffs across consecutive scans.
-
-    With ``window_days`` set, all completed scans inside that window are
-    analysed. Without it, the most recent ``max_scans`` are used.
-    """
+    """Update-frequency metrics from version diffs; window_days scopes by time, else max_scans."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
     project_repo = ProjectRepository(db)
@@ -186,9 +182,8 @@ async def get_update_frequency_comparison(
     dep_repo = DependencyRepository(db)
     analysis_repo = AnalysisResultRepository(db)
 
-    # Comparison only consumes the team-velocity fields — skip the deps.dev
-    # release-history fetcher, which would otherwise issue a per-package
-    # round-trip for every project and dominate the total latency.
+    # No release-history fetcher: comparison only needs team-velocity fields, and
+    # per-package deps.dev round-trips per project would dominate latency.
     comparison = await compute_update_frequency_comparison(
         projects=projects_raw,
         scan_repo=scan_repo,

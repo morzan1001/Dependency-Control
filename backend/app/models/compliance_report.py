@@ -1,8 +1,4 @@
-"""
-ComplianceReport — one document per report job (pending → generating →
-completed/failed). Artifact lives in GridFS; metadata persists after the
-artifact expires.
-"""
+"""One document per compliance-report job; artifact lives in GridFS, metadata persists after it expires."""
 
 from datetime import datetime
 from typing import Any, Dict, Literal, Optional

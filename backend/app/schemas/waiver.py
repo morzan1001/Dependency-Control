@@ -65,8 +65,6 @@ class WaiverUpdate(BaseModel):
 
 
 class WaiverResponse(WaiverCreate):
-    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    # PyObjectId handles ObjectId to string conversion
     id: PyObjectId = Field(validation_alias="_id")
     created_by: str
     created_at: datetime

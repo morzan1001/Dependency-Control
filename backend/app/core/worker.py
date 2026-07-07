@@ -311,7 +311,6 @@ class AnalysisWorkerManager:
                 # Track this scan as actively processing (for graceful shutdown)
                 self._active_scans.add(scan_id)
 
-                # Fetch project config (for active analyzers)
                 project = await db.projects.find_one({"_id": scan["project_id"]})
                 if not project:
                     logger.error(f"Project for scan {scan_id} not found, skipping.")

@@ -1,6 +1,4 @@
-"""
-Database module for MongoDB connection management.
-"""
+"""Database module for MongoDB connection management."""
 
 from app.db.mongodb import (
     close_mongo_connection,

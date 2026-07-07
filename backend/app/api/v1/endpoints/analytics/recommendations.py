@@ -40,8 +40,7 @@ async def get_project_recommendations(
     db: DatabaseDep,
     scan_id: Optional[str] = None,
 ) -> RecommendationsResponse:
-    """Generate remediation recommendations for a project's findings,
-    prioritized by impact and effort."""
+    """Generate remediation recommendations for a project's findings."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
     project_repo = ProjectRepository(db)
@@ -62,9 +61,7 @@ async def get_project_recommendations(
         if scan and scan.project_id != project_id:
             scan = None
     else:
-        # Canonical "latest active scan" selection (elegance #186): excludes scans
-        # on deleted branches. The previous inline find_many had no deleted-branch
-        # exclusion, so recommendations could be built from a deleted-branch scan.
+        # Excludes scans on deleted branches.
         scan = await scan_repo.get_latest_active_scan(project)
 
     if not scan:
@@ -72,13 +69,8 @@ async def get_project_recommendations(
 
     scan_id = scan.id
 
-    # Cache the (expensive) result per scan + caller scope. scan_id auto-
-    # invalidates on a new scan; scope_hash isolates the cross-project signal so
-    # users with different project access never share an entry. NOTE (audit SC#12):
-    # the cross-project recommendations fold in OTHER projects' latest scans, which
-    # are NOT in the key — a peer rescan can leave cross_project_* recommendations
-    # stale until the (short) TTL expires. Accepted: the cross-project signal is
-    # advisory and the TTL bounds the staleness.
+    # Cache per scan + caller scope so users with different project access never
+    # share an entry; cross-project signal isn't in the key and may be TTL-stale.
     scope_hash = hashlib.md5(
         ",".join(sorted(user_project_ids)).encode(), usedforsecurity=False
     ).hexdigest()[:16]
@@ -225,8 +217,6 @@ async def get_project_recommendations(
         recommendations=[RecommendationResponse(**r.to_dict()) for r in recommendations],
         summary=summary,
     )
-    # mode="json" so the cached payload uses JSON-native types — identical to what
-    # the Redis-backed cache_service stores (json.dumps), so a cache hit reconstructs
-    # the same shape as a cache miss regardless of enums/datetimes (audit SC#11).
+    # mode="json" so a cache hit reconstructs the same shape as a miss (enums/datetimes).
     await cache_service.set(cache_key, response.model_dump(mode="json"), ttl_seconds=CacheTTL.RECOMMENDATIONS)
     return response

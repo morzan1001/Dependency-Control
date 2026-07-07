@@ -28,14 +28,10 @@ from app.services.stats import _build_waiver_query, recalculate_all_projects, re
 
 
 def _invalidate_analytics_cache() -> None:
-    """Flush the analytics TTL cache. Hotspots, trends and PQC plans all
-    derive their counts from finding `waived` flags, so any waiver mutation
-    can silently change those outputs until the TTL expires. The cache is
-    best-effort by design — failure here must never prevent a waiver write.
-    """
+    """Best-effort flush of the analytics TTL cache; waiver mutations change waived-derived counts."""
     try:
         get_analytics_cache().clear()
-    except Exception:  # pragma: no cover — defensive; clear() has no I/O
+    except Exception:  # pragma: no cover
         pass
 
 
@@ -47,25 +43,7 @@ _MSG_NO_MATCHING_FINDING = (
 
 
 async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> Optional[dict]:
-    """Reject finding-scope project waivers whose criteria do not match any
-    finding in the project's latest scan.
-
-    Without this check, a typo in finding_id (e.g. missing the QUALITY: prefix)
-    or finding_type produces a stored waiver that will never be applied — a
-    "zombie waiver". The user assumes findings are silenced; the scanner keeps
-    re-reporting them. This helper closes that gap at write time.
-
-    Returns the matched finding doc (with ``match``, ``type``, ``component``
-    fields) so the caller can snapshot the finding's MatchSignature onto the
-    new waiver.  Returns None for all skipped cases (see below).
-
-    Skipped for:
-      - Global waivers (project_id is None) — no single project to validate against.
-      - rule/file scope — preventive waivers that may match future findings only.
-      - vulnerability_id-targeted waivers — applied via apply_vulnerability_waiver,
-        which matches by vulnerability_id, so finding_id format is irrelevant.
-      - Projects without a latest scan — nothing to validate against yet.
-    """
+    """Reject finding-scope project waivers matching no finding in the latest scan; return the matched finding doc, or None when validation is skipped."""
     if not waiver_in.project_id:
         return None
     if waiver_in.scope != "finding":
@@ -105,22 +83,16 @@ async def create_waiver(
     db: DatabaseDep,
     current_user: CurrentUserDep,
 ) -> Waiver:
-    """
-    Create a new waiver/exception for a vulnerability.
-    """
+    """Create a new waiver/exception for a vulnerability."""
     if waiver_in.project_id:
-        # Check if user has access to the project (editor or admin)
         await check_project_access(waiver_in.project_id, current_user, db, required_role=PROJECT_ROLE_EDITOR)
     else:
-        # Global waiver requires waiver:manage permission
         if not has_permission(current_user.permissions, Permissions.WAIVER_MANAGE):
             raise HTTPException(status_code=403, detail="Only admins can create global waivers")
 
-    # Reject zombie waivers (no current finding matches) early, before we
-    # consume a write and trigger stats recalculation.
+    # Reject zombie waivers early, before consuming a write and recalculating stats.
     matched_finding = await _ensure_waiver_matches_finding(waiver_in, db)
 
-    # Auto-populate rule_id for rule-scope waivers
     if waiver_in.scope == "rule" and not waiver_in.rule_id and waiver_in.finding_id and waiver_in.package_name:
         from app.services.stats import _extract_rule_prefix
 
@@ -140,7 +112,6 @@ async def create_waiver(
     await waiver_repo.create(waiver)
     _invalidate_analytics_cache()
 
-    # Trigger stats recalculation
     if waiver.project_id:
         background_tasks.add_task(recalculate_project_stats, waiver.project_id, db)
     else:
@@ -164,12 +135,9 @@ async def list_waivers(
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=500, description="Number of items to return")] = 50,
 ) -> Dict[str, Any]:
-    """
-    List waivers with pagination.
-    """
+    """List waivers with pagination."""
     query: Dict[str, Any] = {}
 
-    # Permission check logic
     has_read_all = has_permission(current_user.permissions, Permissions.WAIVER_READ_ALL)
     has_read_own = has_permission(current_user.permissions, Permissions.WAIVER_READ)
 
@@ -177,19 +145,15 @@ async def list_waivers(
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     if global_only:
-        # Only return global waivers (requires waiver:manage or waiver:read_all)
         if not (has_read_all or has_permission(current_user.permissions, Permissions.WAIVER_MANAGE)):
             raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
         query["project_id"] = None
     elif project_id:
-        # Check access to specific project
         await check_project_access(project_id, current_user, db, required_role=PROJECT_ROLE_VIEWER)
         query["project_id"] = project_id
     elif not has_read_all:
-        # User can only see waivers from their projects + global waivers
         accessible_project_ids = await get_user_project_ids(current_user, db)
 
-        # Query: Global waivers (project_id=None) OR waivers in accessible projects
         query["$or"] = [
             {"project_id": None},
             {"project_id": {"$in": accessible_project_ids}},
@@ -203,21 +167,19 @@ async def list_waivers(
 
     if search:
         search_query = {"$regex": re.escape(search), "$options": "i"}
-        # Need to combine with existing $or if present
         search_or = [
             {"package_name": search_query},
             {"reason": search_query},
             {"finding_id": search_query},
         ]
         if "$or" in query:
-            # Wrap existing query with $and to combine with search
+            # $and-wrap so an existing $or is preserved.
             query = {"$and": [query, {"$or": search_or}]}
         else:
             query["$or"] = search_or
 
     if orphaned:
-        # "orphaned" mirrors the UI badge: evaluated, suppressing 0 findings, and NOT expired
-        # (matches the badge's is_active gate). Combine via $and so an existing $or is preserved.
+        # Mirror the UI badge: evaluated, suppressing 0 findings, and not expired.
         now = datetime.now(timezone.utc)
         orphaned_clause: Dict[str, Any] = {
             "last_eval_scan_id": {"$ne": None},
@@ -232,13 +194,8 @@ async def list_waivers(
 
     waiver_repo = WaiverRepository(db)
 
-    # Get total count
     total = await waiver_repo.count(query)
-
-    # Sort direction
     sort_direction = parse_sort_direction(sort_order)
-
-    # Fetch paginated results
     waivers = await waiver_repo.find_many(query, skip=skip, limit=limit, sort_by=sort_by, sort_order=sort_direction)
 
     items = [Waiver(**w).model_dump() for w in waivers]
@@ -251,12 +208,7 @@ async def get_waiver(
     db: DatabaseDep,
     current_user: CurrentUserDep,
 ) -> Waiver:
-    """
-    Retrieve a single waiver by ID.
-
-    For project waivers: requires viewer role on the project or waiver:read permission.
-    For global waivers: requires waiver:read or waiver:manage permission.
-    """
+    """Retrieve a single waiver by ID."""
     has_read_all = has_permission(current_user.permissions, Permissions.WAIVER_READ_ALL)
     has_read_own = has_permission(current_user.permissions, Permissions.WAIVER_READ)
 
@@ -285,12 +237,7 @@ async def update_waiver(
     db: DatabaseDep,
     current_user: CurrentUserDep,
 ) -> Waiver:
-    """
-    Update a waiver (reason, status, expiration_date).
-
-    For project waivers: requires editor role on the project.
-    For global waivers: requires waiver:manage permission.
-    """
+    """Update a waiver (reason, status, expiration_date)."""
     waiver_repo = WaiverRepository(db)
     waiver = await waiver_repo.get_by_id(waiver_id)
     if not waiver:
@@ -311,10 +258,7 @@ async def update_waiver(
         raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
     _invalidate_analytics_cache()
 
-    # Trigger stats recalculation when any field that gates waiver application
-    # changes. Active state is driven by expiration_date (see
-    # WaiverRepository._non_expired_filter), so expiring/extending a waiver
-    # changes the set of active waivers and must re-run recalculation.
+    # Recalculate when a field that gates waiver application (status/expiration) changes.
     if {"status", "expiration_date"} & update_data.keys():
         if updated.project_id:
             background_tasks.add_task(recalculate_project_stats, updated.project_id, db)
@@ -331,12 +275,7 @@ async def delete_waiver(
     db: DatabaseDep,
     current_user: CurrentUserDep,
 ) -> None:
-    """
-    Delete a waiver.
-
-    For project waivers: requires waiver:delete permission or admin role on the project.
-    For global waivers: requires waiver:manage or waiver:delete permission.
-    """
+    """Delete a waiver."""
     waiver_repo = WaiverRepository(db)
     waiver = await waiver_repo.get_by_id(waiver_id)
     if not waiver:
@@ -352,7 +291,6 @@ async def delete_waiver(
     await waiver_repo.delete(waiver_id)
     _invalidate_analytics_cache()
 
-    # Trigger stats recalculation
     if waiver.project_id:
         background_tasks.add_task(recalculate_project_stats, waiver.project_id, db)
     else:

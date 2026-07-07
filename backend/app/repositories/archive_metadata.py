@@ -8,8 +8,6 @@ from app.repositories.base import BaseRepository
 
 
 class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
-    """Repository for archive metadata database operations."""
-
     collection_name = "archive_metadata"
     model_class = ArchiveMetadata
 
@@ -20,7 +18,6 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
     ) -> Dict[str, Any]:
-        """Build a MongoDB filter query from optional parameters."""
         query: Dict[str, Any] = {}
         if project_id:
             query["project_id"] = project_id
@@ -44,7 +41,6 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
         date_from: Optional[datetime] = None,
         date_to: Optional[datetime] = None,
     ) -> List[ArchiveMetadata]:
-        """Find archives for a project, sorted by archived_at descending."""
         query = self._build_filter_query(
             project_id=project_id,
             branch=branch,
@@ -75,16 +71,13 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
         return await self.count(query)
 
     async def find_by_scan_id(self, scan_id: str) -> Optional[ArchiveMetadata]:
-        """Find archive metadata by scan ID."""
         return await self.find_one({"scan_id": scan_id})
 
     async def delete_by_scan_id(self, scan_id: str) -> bool:
-        """Delete archive metadata by scan ID."""
         result = await self.collection.delete_one({"scan_id": scan_id})
         return result.deleted_count > 0
 
     async def get_distinct_branches(self, project_id: str) -> List[str]:
-        """Get all unique branch names for a project's archives."""
         branches: List[str] = await self.collection.distinct(
             "branch", {"project_id": project_id, "branch": {"$ne": None}}
         )
@@ -99,7 +92,6 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
         date_to: Optional[datetime] = None,
         project_id: Optional[str] = None,
     ) -> List[ArchiveMetadata]:
-        """Find archives across all projects (admin), sorted by archived_at descending."""
         query = self._build_filter_query(
             project_id=project_id,
             branch=branch,
@@ -121,7 +113,6 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
         date_to: Optional[datetime] = None,
         project_id: Optional[str] = None,
     ) -> int:
-        """Count archives across all projects (admin)."""
         query = self._build_filter_query(
             project_id=project_id,
             branch=branch,

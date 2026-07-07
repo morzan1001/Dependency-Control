@@ -1,9 +1,4 @@
-"""
-Analytics Schema Definitions
-
-Pydantic models and TypedDicts for analytics API endpoints.
-These define the response and request structures for analytics operations.
-"""
+"""Pydantic models and TypedDicts for analytics API endpoints."""
 
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
@@ -59,7 +54,6 @@ class DependencyTreeNode(BaseModel):
     findings_count: int
     findings_severity: Optional[SeverityBreakdown] = None
     children: List["DependencyTreeNode"] = []
-    # Source/Origin info
     source_type: Optional[str] = None
     source_target: Optional[str] = None
     layer_digest: Optional[str] = None
@@ -77,23 +71,19 @@ class ImpactAnalysisResult(BaseModel):
     recommended_version: Optional[str] = None
     fix_impact_score: float
     affected_project_names: List[str]
-    # EPSS/KEV enrichment
-    max_epss_score: Optional[float] = None  # Highest EPSS score
-    epss_percentile: Optional[float] = None  # Percentile of max EPSS
-    has_kev: bool = False  # Any vuln in CISA KEV
-    kev_count: int = 0  # Number of KEV vulns
-    kev_ransomware_use: bool = False  # Used in ransomware campaigns
+    max_epss_score: Optional[float] = None
+    epss_percentile: Optional[float] = None
+    has_kev: bool = False
+    kev_count: int = 0
+    kev_ransomware_use: bool = False
     kev_due_date: Optional[str] = None  # Earliest CISA remediation deadline
-    days_until_due: Optional[int] = None  # Days until deadline (negative = overdue)
-    exploit_maturity: str = "unknown"  # Highest exploit maturity level
-    max_risk_score: Optional[float] = None  # Highest combined risk score
-    # Days since first seen
+    days_until_due: Optional[int] = None  # negative when overdue
+    exploit_maturity: str = "unknown"
+    max_risk_score: Optional[float] = None
     days_known: Optional[int] = None
-    # Fix availability
     has_fix: bool = False
     fix_versions: List[str] = []
-    # Priority reasoning
-    priority_reasons: List[str] = []  # Human-readable reasons for priority
+    priority_reasons: List[str] = []
 
 
 class VulnerabilityHotspot(BaseModel):
@@ -106,24 +96,19 @@ class VulnerabilityHotspot(BaseModel):
     severity_breakdown: SeverityBreakdown
     affected_projects: List[str]
     first_seen: str
-    # EPSS/KEV enrichment
     max_epss_score: Optional[float] = None
     epss_percentile: Optional[float] = None
     has_kev: bool = False
     kev_count: int = 0
-    kev_ransomware_use: bool = False  # Used in ransomware campaigns
+    kev_ransomware_use: bool = False
     kev_due_date: Optional[str] = None  # Earliest CISA remediation deadline
-    days_until_due: Optional[int] = None  # Days until deadline (negative = overdue)
+    days_until_due: Optional[int] = None  # negative when overdue
     exploit_maturity: str = "unknown"
     max_risk_score: Optional[float] = None
-    # Days known
     days_known: Optional[int] = None
-    # Fix availability
     has_fix: bool = False
     fix_versions: List[str] = []
-    # Top CVEs for display
     top_cves: List[str] = []
-    # Priority reasoning
     priority_reasons: List[str] = []
 
 
@@ -153,7 +138,6 @@ class DependencyMetadata(BaseModel):
     type: str
     purl: Optional[str] = None
 
-    # Package metadata (dependency-specific, not project-specific)
     description: Optional[str] = None
     author: Optional[str] = None
     publisher: Optional[str] = None
@@ -162,62 +146,51 @@ class DependencyMetadata(BaseModel):
     download_url: Optional[str] = None
     group: Optional[str] = None
 
-    # License info
     license: Optional[str] = None
     license_url: Optional[str] = None
     license_category: Optional[str] = None
     license_risks: List[str] = []
     license_obligations: List[str] = []
 
-    # deps.dev enrichment data
     deps_dev: Optional[Dict[str, Any]] = None
 
-    # Aggregated info across projects
     project_count: int = 0
     affected_projects: List[Dict[str, Any]] = []  # [{id, name, direct}]
     total_vulnerability_count: int = 0
     total_finding_count: int = 0
 
-    # Enrichment sources
     enrichment_sources: List[str] = []
 
 
 class VulnerabilitySearchResult(BaseModel):
     """Result of a vulnerability/CVE search."""
 
-    # Vulnerability identification
-    vulnerability_id: str  # CVE-2021-44228, GHSA-xxx, etc.
-    aliases: List[str] = []  # Alternative IDs (CVE <-> GHSA)
+    vulnerability_id: str  # e.g. CVE-2021-44228, GHSA-xxx
+    aliases: List[str] = []
 
-    # Severity & scoring
     severity: str
     cvss_score: Optional[float] = None
     epss_score: Optional[float] = None
     epss_percentile: Optional[float] = None
 
-    # KEV information
     in_kev: bool = False
     kev_ransomware: bool = False
     kev_due_date: Optional[str] = None
 
-    # Affected component
     component: str
     version: str
     component_type: Optional[str] = None
     purl: Optional[str] = None
 
-    # Project information
     project_id: str
     project_name: str
     scan_id: Optional[str] = None
 
-    # Finding details
     finding_id: str
     finding_type: str
     description: Optional[str] = None
     fixed_version: Optional[str] = None
 
-    # Status
     waived: bool = False
     waiver_reason: Optional[str] = None
 
@@ -243,13 +216,11 @@ class DependencySearchResult(BaseModel):
     license_url: Optional[str] = None
     direct: bool = False
     purl: Optional[str] = None
-    # Source/Origin info
     source_type: Optional[str] = None
     source_target: Optional[str] = None
     layer_digest: Optional[str] = None
     found_by: Optional[str] = None
     locations: List[str] = []
-    # Extended SBOM fields
     cpes: List[str] = []
     description: Optional[str] = None
     author: Optional[str] = None
@@ -346,19 +317,16 @@ class UpdateFrequencyMetrics(BaseModel):
     first_scan_date: str
     last_scan_date: str
 
-    # Frequency
     total_updates: int
     updates_per_scan: float
     updates_per_month: float
 
-    # Granularity
     patch_updates: int
     minor_updates: int
     major_updates: int
     unknown_updates: int
     granularity_ratio: Dict[str, float]  # {"patch": 0.6, "minor": 0.3, "major": 0.1}
 
-    # Scan cadence
     avg_days_between_scans: float
 
     # Coverage — share of ever-outdated packages that were resolved.
@@ -402,12 +370,7 @@ class ProjectUpdateSummary(BaseModel):
 
 
 class UpdateFrequencyComparison(BaseModel):
-    """Cross-project comparison of update frequency metrics.
-
-    ``best_per_ecosystem`` / ``worst_per_ecosystem`` are the fair view
-    when projects span multiple registries; the global ``best_project`` /
-    ``worst_project`` are kept for backward compatibility.
-    """
+    """Cross-project comparison of update frequency metrics."""
 
     projects: List[ProjectUpdateSummary]
     team_avg_updates_per_month: float
@@ -418,9 +381,7 @@ class UpdateFrequencyComparison(BaseModel):
     worst_per_ecosystem: Dict[str, str] = {}
 
 
-# ---------------------------------------------------------------------------
-# Crypto analytics schemas (Phase 2 — analytics foundations)
-# ---------------------------------------------------------------------------
+# Crypto analytics schemas
 
 
 class HotspotEntry(BaseModel):

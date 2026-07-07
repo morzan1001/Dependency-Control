@@ -1,6 +1,4 @@
-"""
-Admin + project-scoped crypto policy endpoints.
-"""
+"""Admin + project-scoped crypto policy endpoints."""
 
 from typing import Annotated, Any
 
@@ -23,7 +21,6 @@ from app.services.crypto_policy.seeder import seed_crypto_policies
 
 router = CustomAPIRouter(tags=["crypto-policies"])
 
-# Admin dependency — requires system:manage permission
 AdminUserDep = Annotated[User, Depends(PermissionChecker(Permissions.SYSTEM_MANAGE))]
 
 

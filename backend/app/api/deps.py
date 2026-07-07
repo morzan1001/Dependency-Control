@@ -29,7 +29,6 @@ _MSG_INVALID_API_KEY = "Invalid API Key"
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token")
 
-# Import metrics for token validation tracking
 auth_token_validations_total: Optional[Counter] = None
 
 try:
@@ -42,13 +41,7 @@ async def get_system_settings(
     db: AsyncIOMotorDatabase = Depends(get_database),
     auto_init: bool = False,
 ) -> SystemSettings:
-    """
-    Get system settings from database.
-
-    Args:
-        db: Database connection
-        auto_init: If True, creates default settings in DB if not found
-    """
+    """Get system settings; create defaults in DB when auto_init is True."""
     repo = SystemSettingsRepository(db)
     return await repo.get(auto_init=auto_init)
 
@@ -129,7 +122,7 @@ async def get_current_user(
 
     user_obj = User(**user)
 
-    # If token has restricted permissions (e.g. only setup_2fa), override user permissions
+    # A single-scope setup_2fa token grants only that permission.
     if token_data.permissions and "auth:setup_2fa" in token_data.permissions and len(token_data.permissions) == 1:
         user_obj.permissions = token_data.permissions
 
@@ -145,12 +138,7 @@ async def get_current_active_user(
 
 
 class PermissionChecker:
-    """
-    FastAPI dependency for permission-based access control.
-
-    Checks if the current user has any of the required permissions.
-    No wildcard ("*") support - admins must have all permissions explicitly.
-    """
+    """Permission dependency requiring ANY of the given permissions (no wildcard support)."""
 
     def __init__(self, required_permissions: str | List[str]):
         self.required_permissions = (
@@ -160,7 +148,6 @@ class PermissionChecker:
     def __call__(self, current_user: User = Depends(get_current_active_user)) -> User:
         from app.core.permissions import has_permission
 
-        # Check if user has ANY of the required permissions
         if has_permission(current_user.permissions, self.required_permissions):
             return current_user
 
@@ -190,17 +177,11 @@ async def _should_overwrite_team_id_from_sync(
     team_repo: TeamRepository,
     team_source: Optional[str] = None,
 ) -> bool:
-    """Decide whether a GitLab sync may overwrite project.team_id.
+    """Whether GitLab sync may overwrite project.team_id.
 
-    Provenance gate (Finding 18): when ``team_source == "manual"`` the assignment was
-    made deliberately by a user and must NEVER be reverted by sync — even when the
-    target team is itself GitLab-synced (the old team-based inference wrongly reverted
-    a manual reassignment to another synced team).
-
-    For legacy projects (``team_source`` is None/unknown) we fall back to the prior
-    behaviour: overwrite when the project has no team, the referenced team no longer
-    exists, or the current team itself came from GitLab sync (has gitlab_group_id);
-    preserve only a manual (non-synced) team.
+    A manual team_source is never reverted by sync. For legacy projects
+    (team_source unknown), overwrite only when there is no team, the team is
+    missing, or the current team itself came from GitLab sync.
     """
     if team_source == "manual":
         return False
@@ -219,10 +200,7 @@ async def _gitlab_team_sync_update(
     gitlab_service: "GitLabService",
     db: AsyncIOMotorDatabase,
 ) -> dict:
-    """Compute the team_id update (if any) that GitLab sync should apply to an existing project.
-
-    Returns a dict to merge into the project update, or an empty dict to skip.
-    """
+    """Return the team_id update GitLab sync should merge, or an empty dict to skip."""
     gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
     team_id = await gitlab_service.sync_team_from_gitlab(
         db,
@@ -234,8 +212,7 @@ async def _gitlab_team_sync_update(
         return {}
     team_repo = TeamRepository(db)
     if await _should_overwrite_team_id_from_sync(project.team_id, team_repo, project.team_source):
-        # Stamp gitlab provenance so a later manual reassignment is distinguishable
-        # and not reverted on the next sync (Finding 18).
+        # Stamp gitlab provenance so a later manual reassignment is not reverted on sync.
         return {"team_id": team_id, "team_source": "gitlab"}
     logger.info(
         f"Keeping manual team assignment for project {project.id} ({gitlab_project_path}); "
@@ -289,7 +266,6 @@ async def _handle_gitlab_oidc(
     gitlab_project_path = payload.project_path
     instance_id = str(gitlab_instance.id)
 
-    # Find existing project
     project_data = await project_repo.get_raw_by_gitlab_composite_key(instance_id, gitlab_project_id)
 
     if project_data:
@@ -309,7 +285,6 @@ async def _handle_gitlab_oidc(
             extra_updates=extra_updates,
         )
 
-    # Auto-create
     if not gitlab_instance.auto_create_projects:
         raise HTTPException(
             status_code=404,
@@ -338,7 +313,7 @@ async def _handle_gitlab_oidc(
         )
         if team_id:
             new_project.team_id = team_id
-            new_project.team_source = "gitlab"  # provenance for the sync-set team (Finding 18)
+            new_project.team_source = "gitlab"
 
     project, created = await project_repo.find_or_create_by_gitlab_key(instance_id, gitlab_project_id, new_project)
     if created:
@@ -369,7 +344,6 @@ async def _handle_github_oidc(
     repo_id = gh_payload.repository_id
     repo_path = gh_payload.repository
 
-    # Find existing project
     project_data = await project_repo.get_raw_by_github_composite_key(instance_id, repo_id)
     if project_data:
         return await _sync_project_name(
@@ -379,7 +353,6 @@ async def _handle_github_oidc(
             path_field="github_repository_path",
         )
 
-    # Auto-create
     if not github_instance.auto_create_projects:
         raise HTTPException(
             status_code=404,
@@ -494,6 +467,5 @@ async def get_project_for_ingest(
     raise HTTPException(status_code=401, detail="Missing authentication credentials")
 
 
-# Annotated type aliases for FastAPI dependency injection
 DatabaseDep = Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)]
 CurrentUserDep = Annotated[User, Depends(get_current_active_user)]

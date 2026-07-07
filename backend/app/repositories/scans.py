@@ -117,10 +117,7 @@ class ScanRepository:
         limit: Optional[int] = None,
         projection: Optional[Dict[str, int]] = None,
     ) -> List[Scan]:
-        # Defensive floor: ScanRepository does not inherit BaseRepository so the
-        # base-layer floor does not apply here.  pymongo .limit(0) means "no limit"
-        # (unbounded load); None is also unbounded via to_list(None).
-        # Any positive caller-supplied value passes through unchanged.
+        # limit=0 means unbounded in pymongo; floor to 1. None stays unbounded via to_list(None).
         safe_limit: Optional[int] = max(limit, 1) if limit is not None else None
         cursor = self.collection.find(query, projection)
         if sort:
@@ -156,18 +153,7 @@ class ScanRepository:
     async def get_latest_active_scan(
         self, project: Any, deleted_branches: Optional[List[str]] = None
     ) -> Optional[Scan]:
-        """Canonical "latest active scan" selection.
-
-        Returns the most recently created *completed* scan for ``project`` whose
-        branch is NOT among the project's deleted branches. This is the single
-        source of truth for the "latest scan on a non-deleted branch" rule that
-        was previously copy-pasted across analytics, stats and housekeeping.
-
-        ``project`` may be a ``Project`` model or a raw project dict.
-        ``deleted_branches`` overrides the value read from ``project`` — used by
-        housekeeping, which computes the freshly-deleted branch set before it is
-        persisted onto the project document.
-        """
+        """Most recent completed scan for project on a non-deleted branch. project may be a model or raw dict; deleted_branches overrides the project's value (housekeeping passes the freshly-computed set before it is persisted)."""
         project_id, project_deleted = _project_id_and_deleted(project)
         deleted = deleted_branches if deleted_branches is not None else project_deleted
         query: Dict[str, Any] = {"project_id": project_id, "status": "completed"}
@@ -178,17 +164,7 @@ class ScanRepository:
         return Scan(**data) if data else None
 
     async def get_latest_active_scan_ids(self, projects: List[Any]) -> Dict[str, str]:
-        """Canonical bulk "latest active scan" selection.
-
-        Maps ``project_id -> latest active scan_id`` for each project that has a
-        ``latest_scan_id``. Projects with no deleted branches resolve to their
-        stored ``latest_scan_id`` directly; projects with deleted branches get
-        the most recently created completed scan on a non-deleted branch.
-        Projects that resolve to no scan are omitted from the result.
-
-        Each element of ``projects`` may be a ``Project`` model or a raw dict;
-        it must expose ``id``/``_id``, ``deleted_branches`` and ``latest_scan_id``.
-        """
+        """Maps project_id -> latest active scan_id: stored latest_scan_id when no deleted branches, else the most recent completed scan on a non-deleted branch; projects resolving to no scan are omitted. Each project may be a model or dict exposing id, deleted_branches, latest_scan_id."""
         result: Dict[str, str] = {}
         needing: List[tuple] = []
         for p in projects:

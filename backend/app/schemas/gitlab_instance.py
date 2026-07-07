@@ -12,16 +12,9 @@ from app.schemas._oidc_audience import (
 class GitLabInstanceBase(BaseModel):
     """Base schema for GitLab instance.
 
-    SECURITY (Finding 7 / W1.1): ``oidc_audience`` is hard-required on
-    create/update. OIDC tokens are verified with mandatory, fail-closed
-    audience checking, so an instance without an audience could never
-    authenticate a token anyway. Creating/updating an instance with an
-    empty/missing audience is rejected with HTTP 422. The configured audience
-    must match the CI pipeline's requested ``aud`` (GitLab ``id_tokens[].aud``).
-
-    Note: the audience field and its blank-check live on the Create/Update
-    schemas, NOT here — the Response schema must still serialize legacy
-    instances whose audience is null (see ``GitLabInstanceResponse``).
+    The oidc_audience field and its blank-check live on the Create/Update
+    schemas, not here, so the Response schema can serialize instances whose
+    audience is null.
     """
 
     name: str = Field(..., description="Human-readable name (e.g. 'GitLab.com', 'Internal GitLab')")
@@ -84,10 +77,8 @@ class GitLabInstanceUpdate(BaseModel):
 class GitLabInstanceResponse(GitLabInstanceBase):
     """Schema for GitLab instance response (without access_token)."""
 
-    # Responses must be able to represent legacy instances created before
-    # oidc_audience became required, so admins can see (and fix) them. There is
-    # deliberately NO blank-check validator here — the create/update validation
-    # enforces the requirement; the response reflects stored state verbatim.
+    # No blank-check here: the response reflects stored state verbatim so
+    # admins can see and fix instances whose audience is null.
     oidc_audience: Optional[str] = Field(
         None, description="Expected 'aud' claim for OIDC tokens. Null means not yet configured (will 403 on ingest)."
     )
@@ -97,7 +88,6 @@ class GitLabInstanceResponse(GitLabInstanceBase):
     created_by: str = Field(..., description="User ID who created this instance")
     last_modified_at: Optional[datetime] = Field(None, description="Last modification timestamp")
 
-    # Additional info (not in base)
     token_configured: bool = Field(
         False, description="Whether an access token is configured (without exposing the token)"
     )

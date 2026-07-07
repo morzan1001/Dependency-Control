@@ -1,25 +1,4 @@
-"""MCP (Model Context Protocol) endpoint.
-
-External LLM clients authenticate with an MCP API key and call our
-chat tool registry over JSON-RPC 2.0. Protocol revision implemented:
-2025-03-26 (Streamable HTTP). We only support the subset of the
-protocol that makes sense for our tool surface:
-
-  - initialize / initialized  (required handshake)
-  - ping                      (keep-alive for long-lived clients)
-  - tools/list                (discovery)
-  - tools/call                (execution)
-
-Each request is authenticated by the `Authorization: Bearer <token>`
-header. The token is resolved to a user; every tool call then runs
-with that user's permissions and project scope via the existing
-ChatToolRegistry — we get authorization for free.
-
-Responses are plain `application/json` (single JSON-RPC envelope).
-SSE streaming is not needed here: our tools return within seconds
-and the MCP spec explicitly allows plain-JSON responses when the
-server does not need to push notifications.
-"""
+"""MCP JSON-RPC 2.0 endpoint (protocol 2025-03-26); external LLM clients authenticate with an MCP API key and call the chat tool registry under the key owner's permissions."""
 
 from __future__ import annotations
 
@@ -47,7 +26,6 @@ SERVER_NAME = "dependency-control"
 SERVER_VERSION = "1.0"
 MCP_PROTOCOL_VERSION = "2025-03-26"
 
-# JSON-RPC error codes (standard + MCP-specific).
 _PARSE_ERROR = -32700
 _INVALID_REQUEST = -32600
 _METHOD_NOT_FOUND = -32601
@@ -77,10 +55,7 @@ class _RpcError(Exception):
 
 
 async def _resolve_user_from_token(authorization: str, db: "AsyncIOMotorDatabase[Any]") -> tuple[User, Dict[str, Any]]:
-    """Validate Bearer token and return the (user, key_doc) pair.
-
-    Raises HTTPException on any failure so FastAPI serialises it correctly.
-    """
+    """Validate Bearer token and return the (user, key_doc) pair; raises HTTPException on failure."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -107,7 +82,6 @@ async def _resolve_user_from_token(authorization: str, db: "AsyncIOMotorDatabase
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Token owner no longer has MCP access",
         )
-    # Best-effort last-used timestamp
     await key_repo.touch_last_used(key_doc["_id"])
     return user, key_doc
 
@@ -133,12 +107,7 @@ async def _handle_tool_call(
     user: User,
     db: "AsyncIOMotorDatabase[Any]",
 ) -> Dict[str, Any]:
-    """Execute a tool call and format the result for MCP.
-
-    Protocol-level problems (bad params, unknown tool) are raised as
-    _RpcError so the caller emits a JSON-RPC error object. Tool-execution
-    problems are returned as a normal result with isError=true, per spec.
-    """
+    """Execute a tool call for MCP; protocol errors raise _RpcError, execution errors return isError=true."""
     name = params.get("name")
     if not isinstance(name, str) or not name:
         raise _RpcError(_INVALID_PARAMS, "Missing 'name' in tools/call params")
@@ -161,8 +130,7 @@ async def _handle_tool_call(
 
 async def _dispatch(method: str, params: Dict[str, Any], user: User, db: "AsyncIOMotorDatabase[Any]") -> Any:
     if method == "initialize":
-        # The client sends its protocolVersion + clientInfo; we echo the
-        # protocol version we implement and advertise only 'tools'.
+        # Echo our protocol version and advertise only 'tools'.
         return {
             "protocolVersion": MCP_PROTOCOL_VERSION,
             "capabilities": {"tools": {"listChanged": False}},
@@ -175,8 +143,6 @@ async def _dispatch(method: str, params: Dict[str, Any], user: User, db: "AsyncI
         }
 
     if method == "initialized" or method == "notifications/initialized":
-        # Client confirming the handshake. No-op, no response expected for
-        # notifications — caller handles the "no id" case.
         return None
 
     if method == "ping":
@@ -186,7 +152,6 @@ async def _dispatch(method: str, params: Dict[str, Any], user: User, db: "AsyncI
         registry = ChatToolRegistry()
         available = registry.get_available_tool_names(user.permissions)
         payload = _tools_list_payload()
-        # Filter to the tools this user can actually call.
         payload["tools"] = [t for t in payload["tools"] if t["name"] in available]
         return payload
 
@@ -221,7 +186,7 @@ async def mcp_rpc(
             content=_rpc_error(_PARSE_ERROR, "Invalid JSON"),
         )
 
-    # Batch requests: spec allows a JSON array of requests; handle uniformly.
+    # Spec allows a JSON array of batched requests; handle uniformly.
     batched = isinstance(payload, list)
     requests = payload if batched else [payload]
 
@@ -254,14 +219,12 @@ async def mcp_rpc(
                 responses.append(_rpc_error(_INTERNAL_ERROR, "Internal server error", request_id))
             continue
 
-        # Notifications (no id) expect no response.
         if request_id is None:
             continue
 
         responses.append(_rpc_result(result, request_id))
 
-    # Notifications (no id) expect no response per JSON-RPC. If every item
-    # was a notification, return 202 Accepted regardless of batching.
+    # Notifications (no id) get no response; 202 if every item was a notification.
     if not responses:
         return JSONResponse(status_code=status.HTTP_202_ACCEPTED, content=None)
     if batched:

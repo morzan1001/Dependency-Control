@@ -17,13 +17,7 @@ class ThreatIntelligenceStats(BaseModel):
 
 
 class ReachabilityStats(BaseModel):
-    """Statistics from reachability analysis.
-
-    The ``*_high_confidence`` fields gate the reachable count by
-    ``confidence_score >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD``. UIs
-    should prefer these for headline numbers; the raw counts remain for
-    transparency.
-    """
+    """Reachability analysis statistics; prefer the ``*_high_confidence`` fields for headline numbers."""
 
     analyzed_count: int = Field(0, description="Count of vulnerabilities analyzed for reachability")
     reachable_count: int = Field(

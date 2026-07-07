@@ -22,20 +22,7 @@ def _create_token(
     expire: datetime,
     extra_claims: Optional[dict] = None,
 ) -> str:
-    """
-    Create a JWT token with the given parameters.
-
-    Includes JTI (JWT ID) for token blacklisting on logout.
-
-    Args:
-        subject: The subject of the token (user ID or email)
-        token_type: Type identifier (access, refresh, email_verification, password_reset)
-        expire: Expiration datetime
-        extra_claims: Additional claims to include in the token
-
-    Returns:
-        Encoded JWT string
-    """
+    """Create a JWT with a jti claim (for blacklisting on logout) and optional extra claims."""
     import uuid
 
     to_encode = {
@@ -43,7 +30,7 @@ def _create_token(
         "iat": datetime.now(timezone.utc),
         "sub": str(subject),
         "type": token_type,
-        "jti": str(uuid.uuid4()),  # JWT ID for blacklisting
+        "jti": str(uuid.uuid4()),
     }
     if extra_claims:
         to_encode.update(extra_claims)
@@ -52,16 +39,7 @@ def _create_token(
 
 
 def _verify_token(token: str, expected_type: str) -> Optional[str]:
-    """
-    Verify a JWT token and return the subject if valid.
-
-    Args:
-        token: The JWT token string
-        expected_type: Expected token type to validate
-
-    Returns:
-        The subject (sub claim) if valid, None otherwise
-    """
+    """Verify a JWT of the expected type, returning its subject (sub claim) or None if invalid."""
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
         if payload.get("type") != expected_type:

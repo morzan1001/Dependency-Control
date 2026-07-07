@@ -11,8 +11,7 @@ from app.models.types import MongoDocument
 class TeamMember(BaseModel):
     user_id: str
     role: str = TEAM_ROLE_MEMBER
-    # Provenance of the membership (Finding 16). Defaults to "manual" so that
-    # existing/manually-added members are preserved by the GitLab merge-sync —
+    # Defaults to "manual" so manually-added members survive GitLab merge-sync;
     # only the "gitlab"-sourced subset is replaced on each sync.
     source: Literal["gitlab", "manual"] = "manual"
 

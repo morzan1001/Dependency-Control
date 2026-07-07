@@ -73,7 +73,6 @@ from app.api.v1.helpers.responses import (
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
-# MongoDB aggregation pipeline operator
 MONGO_GROUP = "$group"
 
 _MSG_PROJECT_NOT_FOUND = "Project not found"
@@ -89,22 +88,17 @@ async def get_dashboard_stats(
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
-    # Filter projects user has access to
     query = await build_user_project_query(current_user, team_repo)
 
-    # Use aggregation for performance instead of fetching all projects
+    # Aggregate rather than fetch all projects, for performance.
     pipeline: List[Dict[str, Any]] = [
         {"$match": query},
         {
             "$project": {
                 "name": 1,
                 "stats": 1,
-                # Prefer the persisted 0-100 stats.risk_score. When absent, fall
-                # back to the SAME 0-100 definition as calculate_comprehensive_stats:
-                # a severity-weighted AVERAGE of the per-severity composite anchors
-                # (CRITICAL=40, HIGH=30, MEDIUM=16, LOW=4 — (cvss/10)*40), not the
-                # old 0-10 severity-weighted SUM. Divide by total finding count so
-                # the fallback stays on the per-finding 0-100 scale (W5/F12).
+                # Prefer persisted stats.risk_score; else the same severity-weighted
+                # average of per-severity anchors used by calculate_comprehensive_stats.
                 "calculated_risk": {
                     "$ifNull": [
                         "$stats.risk_score",
@@ -208,7 +202,6 @@ async def get_dashboard_stats(
     if total_projects > 0:
         avg_risk = round(total_risk_score / total_projects, 1)
 
-    # Convert to RiskyProject models (handles ObjectId to string conversion)
     top_risky_converted = [
         RiskyProject(
             id=str(p.get("id", "")),
@@ -239,19 +232,12 @@ async def create_project(
     db: DatabaseDep,
     settings: Annotated[SystemSettings, Depends(deps.get_system_settings)],
 ) -> ProjectApiKeyResponse:
-    """
-    Create a new project and return the initial API Key.
-
-    **Important**: The API Key is only returned once. Save it securely.
-    """
+    """Create a new project and return the initial API Key, which is only returned once."""
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
-    # Check Project Limit
     if settings.project_limit_per_user > 0:
-        # Users with system:manage permission are exempt from limits
         if not has_permission(current_user.permissions, Permissions.SYSTEM_MANAGE):
-            # Count projects owned by the user
             current_count = await project_repo.count(
                 {"members": {"$elemMatch": {"user_id": str(current_user.id), "role": "admin"}}}
             )
@@ -261,13 +247,11 @@ async def create_project(
                     detail=f"Project limit reached. You can only create {settings.project_limit_per_user} projects.",
                 )
 
-    # If team_id is provided, check if user is member of that team
     if project_in.team_id:
         is_member = await team_repo.is_member(project_in.team_id, str(current_user.id))
         if not is_member:
             raise HTTPException(status_code=403, detail="You are not a member of the specified team")
 
-    # Generate API Key
     project_id = str(uuid.uuid4())
     api_key, api_key_hash = generate_project_api_key(project_id)
 
@@ -275,7 +259,7 @@ async def create_project(
         id=project_id,
         name=project_in.name,
         team_id=project_in.team_id,
-        # A team chosen by the creating user is a manual assignment (Finding 18).
+        # A user-chosen team is a manual assignment.
         team_source="manual" if project_in.team_id else None,
         api_key_hash=api_key_hash,
         active_analyzers=project_in.active_analyzers,
@@ -283,7 +267,7 @@ async def create_project(
         members=[ProjectMember(user_id=str(current_user.id), role="admin")],
     )
 
-    # api_key_hash is excluded from dict() by default in the model, so we must add it manually
+    # api_key_hash is excluded from the model dump by default; add it back manually.
     project_data = project.model_dump(by_alias=True)
     project_data["api_key_hash"] = api_key_hash
 
@@ -302,17 +286,12 @@ async def rotate_api_key(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> ProjectApiKeyResponse:
-    """
-    Invalidate the old API Key and generate a new one.
-
-    Requires 'admin' role on the project.
-    """
+    """Invalidate the old API Key and generate a new one. Requires 'admin' role."""
     project_repo = ProjectRepository(db)
 
-    # Single gate: project:update holders pass via the write-superuser branch.
+    # project:update holders pass via the write-superuser branch.
     await check_project_access(project_id, current_user, db, required_role="admin")
 
-    # Generate new key
     api_key, api_key_hash = generate_project_api_key(project_id)
 
     await project_repo.update(project_id, {"api_key_hash": api_key_hash})
@@ -341,21 +320,17 @@ async def read_projects(
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
-    # Check permission
     if not has_permission(current_user.permissions, [Permissions.PROJECT_READ, Permissions.PROJECT_READ_ALL]):
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
-    # Build search query
     search_query: Dict[str, Any] = {}
     if search:
         search_query["name"] = {"$regex": re.escape(search), "$options": "i"}
     if team_id:
         search_query["team_id"] = team_id
 
-    # Build permission query
     permission_query = await build_user_project_query(current_user, team_repo)
 
-    # Combine queries
     if search_query and permission_query:
         final_query = {"$and": [search_query, permission_query]}
     elif permission_query:
@@ -375,17 +350,14 @@ async def read_projects(
         sort_order=direction,
     )
 
-    # Enrich with team names
     team_ids = [p.team_id for p in projects if p.team_id]
     team_name_map = {}
     if team_ids:
         teams = await team_repo.find_many({"_id": {"$in": team_ids}}, limit=len(team_ids))
         team_name_map = {t.id: t.name for t in teams}
 
-    # Create ProjectWithTeam instances
     enriched_projects = []
     for p in projects:
-        # Use model_validate to create ProjectWithTeam from Project
         p_data = p.model_dump()
         p_data["team_name"] = team_name_map.get(p.team_id) if p.team_id else None
         enriched_projects.append(ProjectWithTeam(**p_data))
@@ -407,19 +379,14 @@ async def read_all_scans(
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> List[Dict[str, Any]]:
-    """
-    Retrieve scans for all projects the user has access to.
-    Supports pagination and sorting.
-    """
+    """Retrieve scans for all projects the user has access to, with pagination and sorting."""
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
     scan_repo = ScanRepository(db)
 
-    # Check permission
     if not has_permission(current_user.permissions, [Permissions.PROJECT_READ, Permissions.PROJECT_READ_ALL]):
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
-    # 1. Get accessible project IDs
     permission_query = await build_user_project_query(current_user, team_repo)
     projects = await project_repo.find_many_minimal(permission_query)
 
@@ -432,7 +399,6 @@ async def read_all_scans(
     direction = parse_sort_direction(sort_order)
     sort_field = get_sort_field("scans", sort_by)
 
-    # 2. Get recent scans for these projects
     pipeline: List[Dict[str, Any]] = [
         {"$match": {"project_id": {"$in": project_ids}}},
         {"$sort": {sort_field: direction}},
@@ -483,15 +449,12 @@ async def read_project(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Project:
-    """
-    Get a specific project by ID.
-    """
+    """Get a specific project by ID."""
     project_repo = ProjectRepository(db)
 
-    # Optimized fetch with aggregation to avoid N+1 queries
+    # Single aggregation to avoid N+1 team/user lookups.
     pipeline: List[Dict[str, Any]] = [
         {"$match": {"_id": project_id}},
-        # Lookup Team
         {
             "$lookup": {
                 "from": "teams",
@@ -501,7 +464,6 @@ async def read_project(
             }
         },
         {"$unwind": {"path": "$team_data", "preserveNullAndEmptyArrays": True}},
-        # Lookup Users (for project members)
         {
             "$lookup": {
                 "from": "users",
@@ -513,7 +475,6 @@ async def read_project(
                 "as": "project_users",
             }
         },
-        # Lookup Users (for team members)
         {
             "$lookup": {
                 "from": "users",
@@ -533,24 +494,21 @@ async def read_project(
 
     data = result[0]
 
-    # Map users and enrich members
     p_users = {str(u["_id"]): u["username"] for u in data.get("project_users", [])}
     t_users = {str(u["_id"]): u["username"] for u in data.get("team_users", [])}
 
     for m in data.get("members", []):
         m["username"] = p_users.get(m["user_id"])
 
-    # Merge team members
     _merge_team_members(data, t_users)
 
-    # Construct Project object
     data.pop("team_data", None)
     data.pop("project_users", None)
     data.pop("team_users", None)
 
     project = Project(**data)
 
-    # Verify Access (Logic from check_project_access but using loaded data)
+    # Inline access check against the already-loaded data.
     if not has_permission(current_user.permissions, Permissions.PROJECT_READ_ALL):
         is_member = any(m.user_id == str(current_user.id) for m in project.members)
 
@@ -568,11 +526,7 @@ async def _load_project_for_update(
     current_user: User,
     db: Any,
 ) -> Project:
-    """Load the project for an update request and verify the caller can edit it.
-
-    Routes through the single gate; project:update holders pass via the
-    write-superuser branch (no inline bypass needed).
-    """
+    """Load the project for an update and verify the caller can edit it."""
     return await check_project_access(project_id, current_user, db, required_role="admin")
 
 
@@ -649,10 +603,7 @@ async def update_project(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Project:
-    """
-    Update project details (name, team, active analyzers).
-    Requires 'admin' role on the project.
-    """
+    """Update project details (name, team, active analyzers). Requires 'admin' role."""
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
@@ -660,15 +611,12 @@ async def update_project(
     await _assert_can_transfer_team(project, project_in, current_user, team_repo)
 
     update_data = dict(project_in.model_dump(exclude_unset=True))
-    # A team transfer/assignment via the API is a deliberate manual action, so stamp
-    # provenance — this prevents GitLab sync from reverting it (Finding 18).
-    # Only stamp when the team actually changes; echoing the current team_id on an
-    # unrelated edit must NOT flip a sync-assigned project to "manual" (W9).
+    # Stamp manual provenance only when the team actually changes, so an unrelated
+    # edit can't flip a sync-assigned project to "manual".
     if "team_id" in update_data and update_data["team_id"] != project.team_id:
         update_data["team_source"] = "manual"
     await _assert_gitlab_mr_token_present(project, update_data, db)
 
-    # Apply system settings enforcement
     system_settings = await deps.get_system_settings(db)
     update_data = apply_system_settings_enforcement(
         update_data,
@@ -691,12 +639,7 @@ async def update_project(
 
 
 def _resolve_license_policy(project: Project) -> Optional[Dict[str, Any]]:
-    """Return the current license policy for a project, merging legacy and new shapes.
-
-    ``project.analyzer_settings['license_compliance']`` is the canonical
-    location since Phase 2 refactors; ``project.license_policy`` is the
-    legacy top-level field. We prefer the canonical one when both are set.
-    """
+    """Return the project's license policy, preferring analyzer_settings['license_compliance'] over the legacy top-level field."""
     settings = (
         (project.analyzer_settings or {}).get("license_compliance")
         if getattr(project, "analyzer_settings", None)
@@ -730,7 +673,6 @@ async def read_project_branches(
     project = await project_repo.get_by_id(project_id)
     deleted_set = set(project.deleted_branches) if project else set()
 
-    # Get last scan date per branch
     pipeline: List[Dict[str, Any]] = [
         {"$match": {"project_id": project_id}},
         {MONGO_GROUP: {"_id": "$branch", "last_scan_at": {"$max": "$created_at"}}},
@@ -793,9 +735,7 @@ async def read_project_scans(
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> List[Scan]:
-    """
-    Get scans for a project.
-    """
+    """Get scans for a project."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
     scan_repo = ScanRepository(db)
@@ -836,30 +776,21 @@ async def trigger_rescan(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Scan:
-    """
-    Manually trigger a re-scan for a specific scan.
-    This creates a new scan entry with the same SBOMs but runs the analysis again.
-    """
-    # Check permissions (Editor or Admin required)
+    """Manually trigger a re-scan: a new scan entry with the same SBOMs, re-analysed."""
     await check_project_access(project_id, current_user, db, required_role="editor")
 
     scan_repo = ScanRepository(db)
 
-    # Find the scan
     scan = await scan_repo.find_one({"_id": scan_id, "project_id": project_id})
     if not scan:
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
 
-    # Ensure scan has SBOMs
     if not scan.get("sbom_refs"):
         raise HTTPException(status_code=400, detail="Cannot re-scan: No SBOMs found in the source scan.")
 
-    # Determine original scan ID
-    # If the source scan is already a re-scan, trace back to find the original
-    # This maintains proper scan lineage for history tracking
+    # Trace back to the original scan so lineage stays intact.
     original_scan_id = scan.get("original_scan_id") or scan_id
 
-    # Create new scan document
     new_scan = Scan(
         project_id=project_id,
         branch=scan.get("branch", "unknown"),
@@ -897,11 +828,9 @@ async def trigger_rescan(
         },
     )
 
-    # Trigger analysis worker
     if worker_manager:
         await worker_manager.add_job(new_scan.id)
     else:
-        # Should not happen in normal operation
         raise HTTPException(status_code=500, detail="Worker manager not available")
 
     return new_scan
@@ -918,23 +847,17 @@ async def read_scan_history(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> List[Scan]:
-    """
-    Get the history of a scan (including re-scans).
-    Returns the original scan and all subsequent re-scans, sorted by date.
-    """
+    """Get a scan's history (original plus all re-scans), sorted by date."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
     scan_repo = ScanRepository(db)
 
-    # 1. Get the requested scan to find the root
     scan = await scan_repo.find_one({"_id": scan_id, "project_id": project_id})
     if not scan:
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
 
-    # Determine the root ID
     root_id = scan.get("original_scan_id") or scan_id
 
-    # 2. Find all scans that are either the root OR have this root as original_scan_id
     history = await scan_repo.find_many(
         {
             "project_id": project_id,
@@ -958,9 +881,7 @@ async def update_notification_settings(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Project:
-    """
-    Update notification preferences for the current user in this project.
-    """
+    """Update notification preferences for the current user in this project."""
     project = await check_project_access(project_id, current_user, db)
 
     is_admin = any(m.user_id == str(current_user.id) and m.role == "admin" for m in project.members)
@@ -968,7 +889,6 @@ async def update_notification_settings(
 
     update_data: Dict[str, Any] = {}
 
-    # Handle enforcement setting (Admin only)
     if settings.enforce_notification_settings is not None:
         if is_admin or has_update_perm:
             update_data["enforce_notification_settings"] = settings.enforce_notification_settings
@@ -976,11 +896,7 @@ async def update_notification_settings(
     project_repo = ProjectRepository(db)
 
     if is_admin:
-        # Persist any enforcement change AND the admin's own per-project
-        # preferences. Previously this branch wrote only update_data
-        # (enforcement), silently discarding the admin's submitted
-        # notification_preferences (and no-op'ing entirely when no enforcement
-        # change was included).
+        # Persist enforcement changes and the admin's own per-project preferences.
         if update_data:
             await project_repo.update(project_id, update_data)
         for i, member in enumerate(project.members):
@@ -992,22 +908,18 @@ async def update_notification_settings(
                 )
                 break
     else:
-        # If settings are enforced, regular members cannot update their preferences
         if project.enforce_notification_settings and not has_update_perm:
             raise HTTPException(
                 status_code=403,
                 detail="Notification settings are enforced by the project admin",
             )
 
-        # Check if member
         member_found = False
         for i, member in enumerate(project.members):
             if member.user_id == str(current_user.id):
-                # Update specific member in the array
                 if update_data:
                     await project_repo.update(project_id, update_data)
 
-                # Also update member preferences
                 await project_repo.update_member(
                     project_id,
                     str(current_user.id),
@@ -1017,19 +929,16 @@ async def update_notification_settings(
                 break
 
         if not member_found:
-            # Occurs if superuser is not a member
+            # A superuser who is not a member can still update enforcement, not preferences.
             if has_update_perm:
-                # Just update the project settings (enforcement) if provided
                 if update_data:
                     await project_repo.update(project_id, update_data)
             else:
-                # Superusers must be members to set preferences.
                 raise HTTPException(
                     status_code=400,
                     detail="You must be a member or admin to set notification preferences",
                 )
 
-    # Return updated project
     updated_project = await project_repo.get_by_id(project_id)
     if updated_project:
         return updated_project
@@ -1048,12 +957,7 @@ async def invite_user(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Dict[str, Any]:
-    """
-    Add an existing user to the project by their email address.
-
-    The user must already have an account. If the user does not exist,
-    a 404 error is returned — use system invitations to create new accounts.
-    """
+    """Add an existing user to the project by email (404 if no account exists; use system invitations for new users)."""
     project = await check_project_access(project_id, current_user, db, required_role="admin")
 
     user_repo = UserRepository(db)
@@ -1065,14 +969,12 @@ async def invite_user(
 
     member = ProjectMember(user_id=str(user_to_add["_id"]), role=invite_in.role)
 
-    # Check if already member
     for m in project.members:
         if m.user_id == member.user_id:
             raise HTTPException(status_code=400, detail="User already a member")
 
     await project_repo.add_member(project_id, member.model_dump())
 
-    # Send notification email
     try:
         system_config = await deps.get_system_settings(db)
         send_project_member_added_email(
@@ -1121,11 +1023,7 @@ async def read_scan(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Scan:
-    """
-    Get details of a specific scan.
-    Note: SBOMs are stored in GridFS and not returned here for performance reasons.
-    Use /scans/{scan_id}/sboms endpoint to fetch raw SBOM data.
-    """
+    """Get details of a specific scan; SBOMs are excluded (fetch them via /scans/{scan_id}/sboms)."""
     scan_repo = ScanRepository(db)
 
     scan_data = await scan_repo.get_by_id(scan_id)
@@ -1147,11 +1045,7 @@ async def read_scan_sboms(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> List[Dict[str, Any]]:
-    """
-    Get raw SBOM data for a specific scan.
-    SBOMs are stored in GridFS and resolved on demand.
-    Returns a list of SBOM objects with metadata.
-    """
+    """Get raw SBOM data for a scan, resolved from GridFS on demand."""
     scan_repo = ScanRepository(db)
 
     scan_data = await scan_repo.get_by_id(scan_id)
@@ -1160,7 +1054,6 @@ async def read_scan_sboms(
 
     await check_project_access(scan_data.project_id, current_user, db)
 
-    # Get SBOM refs from GridFS (legacy 'sboms' field removed)
     sbom_refs = scan_data.sbom_refs or []
 
     if not sbom_refs:
@@ -1180,11 +1073,7 @@ def _build_scan_findings_match(
     hide_info: Optional[bool] = None,
     waived: Optional[bool] = None,
 ) -> Dict[str, Any]:
-    """Compose the ``$match`` stage for the scan-findings aggregation.
-
-    Extracted so we can unit-test filter combinations (``waived`` in
-    particular) without standing up MongoDB or the surrounding pipeline.
-    """
+    """Compose the $match stage for the scan-findings aggregation."""
     query: Dict[str, Any] = {"scan_id": scan_id}
 
     if type:
@@ -1197,10 +1086,7 @@ def _build_scan_findings_match(
 
     if severity:
         sev = severity.upper()
-        # An explicit severity filter must not be silently clobbered by
-        # hide_info. HIGH/CRITICAL/... already exclude INFO; only an explicit
-        # INFO + hide_info is contradictory, so resolve that to "match nothing"
-        # rather than letting one option override the other.
+        # An explicit INFO filter combined with hide_info is contradictory: match nothing.
         if hide_info and sev == "INFO":
             query["severity"] = {"$in": []}
         else:
@@ -1210,9 +1096,7 @@ def _build_scan_findings_match(
     if license_category:
         query["details.category"] = license_category
     if waived is not None:
-        # Explicit True/False — the UI uses this to split active vs waived
-        # findings into two lists. Default (None) keeps the old behaviour and
-        # returns both, so non-UI callers aren't affected.
+        # Explicit True/False splits active vs waived; None returns both.
         query["waived"] = waived
     if search:
         escaped_search = re.escape(search)
@@ -1281,11 +1165,10 @@ def _scan_findings_add_fields_stage() -> Dict[str, Any]:
                     "default": 0,
                 }
             },
-            # Map finding_id to id for frontend compatibility
+            # Map finding_id to id for frontend compatibility.
             "id": "$finding_id",
             # Deterministic scalar for sorting by scanner (scanners is a list).
             "first_scanner": {"$arrayElemAt": ["$scanners", 0]},
-            # Flatten dependency info
             "source_type": {"$arrayElemAt": ["$dependency_info.source_type", 0]},
             "source_target": {"$arrayElemAt": ["$dependency_info.source_target", 0]},
             "layer_digest": {"$arrayElemAt": ["$dependency_info.layer_digest", 0]},
@@ -1298,33 +1181,21 @@ def _scan_findings_add_fields_stage() -> Dict[str, Any]:
     }
 
 
-# Maps the sort keys the API accepts (including UI/legacy aliases) to the real
-# document fields. "severity" is special-cased to severity_rank below. Anything
-# not listed falls back to severity, so an unrecognised sort_by can never yield
-# an unsorted (and therefore unstably-paginated) result.
+# Sort keys the API accepts mapped to real document fields; unlisted keys fall back
+# to severity so an unrecognised sort_by can't yield an unstably-paginated result.
 _SCAN_FINDINGS_SORT_FIELDS: Dict[str, str] = {
     "severity": "severity",
     "component": "component",
     "type": "type",
     "source_type": "source_type",
     "finding_id": "finding_id",
-    "vuln_id": "finding_id",  # legacy/UI alias -> real field
-    "scanner": "first_scanner",  # UI alias -> computed scalar (see _scan_findings_add_fields_stage)
+    "vuln_id": "finding_id",  # UI alias -> real field
+    "scanner": "first_scanner",  # UI alias -> computed scalar
 }
 
 
 def _scan_findings_sort_stage(sort_by: str, sort_order: str) -> Dict[str, Any]:
-    """Compose the ``$sort`` stage.
-
-    Every sort ends with the UNIQUE document ``_id`` as the terminal tiebreaker
-    so that ``$skip`` / ``$limit`` pagination is stable — without a unique final
-    key, rows with equal sort values can reorder between pages and be duplicated
-    or skipped during infinite scroll. (``finding_id`` is the logical analyzer id
-    and is NOT unique within a scan — one CVE across N components yields N docs —
-    so it cannot be the stabiliser; ``_id`` is kept in the pipeline through the
-    sort for exactly this reason.) Sort keys are normalised to real document
-    fields; unknown keys fall back to severity rather than an unsorted result.
-    """
+    """Compose the $sort stage, always ending with the unique _id tiebreaker so skip/limit pagination is stable (finding_id is not unique within a scan)."""
     sort_dir = -1 if sort_order == "desc" else 1
     field = _SCAN_FINDINGS_SORT_FIELDS.get(sort_by, "severity")
     if field == "severity":
@@ -1348,16 +1219,13 @@ def _build_scan_findings_pipeline(
         {"$match": query},
         _scan_findings_lookup_stage(),
         _scan_findings_add_fields_stage(),
-        # Drop only the temporary lookup array here. _id is kept through the
-        # $sort so it can serve as the unique terminal tiebreaker (MF3); it is
-        # excluded from the returned data inside the $facet below.
+        # Keep _id through the $sort as the unique tiebreaker; it's dropped from output in the $facet below.
         {"$project": {"dependency_info": 0}},
         _scan_findings_sort_stage(sort_by, sort_order),
         {
             "$facet": {
                 "metadata": [{"$count": "total"}],
-                # Exclude _id (kept only for the sort tiebreaker) and the
-                # first_scanner sort-helper (kept only for sorting) from output.
+                # Drop the _id tiebreaker and first_scanner sort-helper from the output.
                 "data": [{"$skip": skip}, {"$limit": limit}, {"$project": {"_id": 0, "first_scanner": 0}}],
             }
         },
@@ -1399,9 +1267,7 @@ async def read_scan_findings(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     skip: Annotated[int, Query(ge=0)] = 0,
-    # Cap at 500 (not 100): the frontend FindingsTable.tsx requests up to limit=200
-    # (deep-link + per-component drilldowns); 500 covers that with headroom. The other
-    # listing endpoints stay at le=100 since the frontend never requests >100 from them.
+    # Cap at 500 (higher than the 100 used elsewhere) for deep-link and per-component drilldowns.
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
     sort_by: str = "severity",  # severity, type, component
     sort_order: str = "desc",  # asc, desc
@@ -1413,9 +1279,7 @@ async def read_scan_findings(
     hide_info: Optional[bool] = None,  # Hide INFO severity findings
     waived: Optional[bool] = None,  # True: only waived; False: only active; None: both
 ) -> Dict[str, Any]:
-    """
-    Get paginated findings for a scan.
-    """
+    """Get paginated findings for a scan."""
     await _resolve_scan_for_findings(scan_id, current_user, db)
 
     query = _build_scan_findings_match(
@@ -1449,13 +1313,10 @@ async def get_scan_stats(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Dict[str, Any]:
-    """
-    Get finding statistics by category for a scan.
-    """
+    """Get finding statistics by category for a scan."""
     scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)
 
-    # Check access
     scan = await scan_repo.get_minimal_by_id(scan_id)
     if not scan:
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
@@ -1537,10 +1398,7 @@ async def update_project_member(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Project:
-    """
-    Update the role of a project member.
-    Requires 'admin' role on the project.
-    """
+    """Update the role of a project member. Requires 'admin' role."""
     project = await check_project_access(project_id, current_user, db, required_role="admin")
 
     member_index = _find_project_member_index(project, user_id)
@@ -1568,13 +1426,9 @@ async def remove_project_member(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Project:
-    """
-    Remove a user from the project.
-    Requires 'admin' role on the project.
-    """
+    """Remove a user from the project. Requires 'admin' role."""
     project = await check_project_access(project_id, current_user, db, required_role="admin")
 
-    # Check if target user is a member
     member_exists = False
     for member in project.members:
         if member.user_id == user_id:
@@ -1584,7 +1438,7 @@ async def remove_project_member(
     if not member_exists:
         raise HTTPException(status_code=404, detail="User is not a member of this project")
 
-    # Prevent removing the last admin (count both direct and team admins)
+    # Block removing the last admin, counting both direct and team admins.
     member_role = next((m.role for m in project.members if m.user_id == user_id), None)
     if member_role == "admin":
         direct_admin_count = sum(1 for m in project.members if m.role == "admin")
@@ -1640,12 +1494,8 @@ async def export_project_csv(
         ]
     )
 
-    # Read findings from the findings collection rather than scan.findings_summary.
-    # findings_summary is a compact, vulnerability-only projection capped at 500
-    # entries and without details.fixed_version, so exporting from it silently
-    # drops non-vulnerability findings, truncates large scans, and blanks the
-    # "Fixed Version" column. The findings collection is the complete, accurate
-    # source; stream it so memory stays bounded for large scans.
+    # Stream from the complete findings collection, not the capped vulnerability-only
+    # findings_summary, so no findings are dropped and memory stays bounded.
     finding_repo = FindingRepository(db)
     async for f_dict in finding_repo.iterate_raw(
         {"scan_id": scan.id},
@@ -1694,8 +1544,6 @@ async def export_project_sbom(
     if not scan:
         raise HTTPException(status_code=404, detail="No completed scans found for this project")
 
-    # Get SBOM from GridFS via sbom_refs
-    # Legacy fallback removed - all SBOMs are stored in GridFS
     if not scan.sbom_refs or len(scan.sbom_refs) == 0:
         raise HTTPException(status_code=404, detail="No SBOM data found for this scan")
 
@@ -1721,14 +1569,7 @@ async def delete_project(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> None:
-    """
-    Delete a project and all associated data (scans, results).
-
-    Authorization is delegated entirely to the single gate at admin level:
-    project admins (direct or team-derived) pass, and global write superusers
-    (project:update / project:delete) pass via the write-superuser branch.
-    project:read_all alone is read-only and does NOT grant delete.
-    """
+    """Delete a project and all associated data (scans, results). Requires 'admin' role."""
     await check_project_access(project_id, current_user, db, required_role="admin")
 
     project_repo = ProjectRepository(db)
@@ -1740,7 +1581,7 @@ async def delete_project(
     invitation_repo = InvitationRepository(db)
     callgraph_repo = CallgraphRepository(db)
 
-    # 1. Collect all scan IDs and GridFS file IDs by streaming (avoids loading all scans at once)
+    # Stream scans to collect IDs and GridFS files without loading them all at once.
     scan_ids = []
     gridfs_ids = []
     async for scan in scan_repo.iterate({"project_id": project_id}, {"_id": 1, "sbom_refs": 1}):
@@ -1750,26 +1591,14 @@ async def delete_project(
             if file_id:
                 gridfs_ids.append(file_id)
 
-    # 2. Delete scan-related data
     if scan_ids:
         await analysis_repo.delete_many({"scan_id": {"$in": scan_ids}})
         await finding_repo.delete_many({"scan_id": {"$in": scan_ids}})
         await dep_repo.delete_many({"scan_id": {"$in": scan_ids}})
 
-    # 3. Delete scans
     await scan_repo.delete_many({"project_id": project_id})
-
-    # 4. Delete GridFS files
     await delete_gridfs_files(db, gridfs_ids)
-
-    # 5. Delete waivers
     await waiver_repo.delete_many({"project_id": project_id})
-
-    # 6. Delete project invitations
     await invitation_repo.delete_project_invitations_by_project(project_id)
-
-    # 7. Delete callgraphs
     await callgraph_repo.delete_by_project(project_id)
-
-    # 8. Delete project
     await project_repo.delete(project_id)

@@ -74,7 +74,6 @@ class CryptoRule(BaseModel):
         description="Maximum allowed validity period (days); emit CRYPTO_CERT_VALIDITY_TOO_LONG if exceeded",
     )
 
-    # Cipher-suite weakness matching (Phase 2)
     match_cipher_weaknesses: List[str] = Field(
         default_factory=list,
         description="Match if any of these weakness tags appear in the parsed cipher-suite entry",
@@ -88,11 +87,8 @@ class CryptoRule(BaseModel):
 
     @model_validator(mode="after")
     def _quantum_vulnerable_requires_name_patterns(self) -> "CryptoRule":
-        # Without name patterns the matcher would tag every PKE/SIGNATURE/KEM
-        # asset as quantum-vulnerable — including post-quantum primitives
-        # (ML-KEM, ML-DSA, SLH-DSA) which are themselves KEM/SIGNATURE.
-        # Forcing patterns means rule authors must enumerate the classical
-        # algorithms they actually want to flag.
+        # Without name patterns every PKE/SIGNATURE/KEM asset would match,
+        # including post-quantum primitives (ML-KEM, ML-DSA, SLH-DSA).
         if self.quantum_vulnerable is True and not self.match_name_patterns:
             raise ValueError(
                 "quantum_vulnerable=True requires match_name_patterns to be set "

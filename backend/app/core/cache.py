@@ -1,7 +1,6 @@
 """Async Redis-backed cache for cross-pod deduplication of external API calls.
 
-Use this for results that have calendar-time cost or upstream rate limits;
-for in-process memoization of cheap MongoDB aggregations use
+For in-process memoization of cheap MongoDB aggregations use
 ``app.services.analytics.cache.TTLCache`` instead.
 """
 
@@ -27,9 +26,8 @@ T = TypeVar("T")
 REDIS_CONNECTION_LOST_MSG = "Redis connection lost, disabling cache temporarily"
 REDIS_OPERATION_TIMEOUT_SECONDS = 5.0
 
-# Atomic compare-and-delete: only release the lock if we still own it (value
-# matches our holder token). Prevents a slow fetch from deleting a lock that
-# expired and was re-acquired by another pod.
+# Atomic compare-and-delete: release the lock only if the value still matches our
+# token, so a slow fetch can't delete a lock re-acquired by another pod.
 _UNLOCK_LUA = (
     "if redis.call('get', KEYS[1]) == ARGV[1] then "
     "return redis.call('del', KEYS[1]) else return 0 end"
@@ -89,13 +87,11 @@ class CacheTTL:
     # Update frequency analysis (changes only on new scan completion)
     UPDATE_FREQUENCY = 30 * 60  # 30 minutes
 
-    # Project recommendations. Keyed by scan_id (auto-invalidates on new scan);
-    # the TTL only bounds staleness of the cross-project signal woven in.
+    # Keyed by scan_id (auto-invalidates on new scan); TTL only bounds staleness
+    # of the cross-project signal woven in.
     RECOMMENDATIONS = 10 * 60  # 10 minutes
 
-    # Per-package release history (publishedAt for each version) — drives
-    # upstream-cadence metrics. Long TTL: full version histories almost
-    # never change retroactively; new releases just append.
+    # Long TTL: version histories almost never change retroactively; new releases append.
     RELEASE_HISTORY = 24 * 3600  # 24 hours
 
 
@@ -162,19 +158,13 @@ class CacheKeys:
 
     @staticmethod
     def recommendations(project_id: str, scan_id: str, scope_hash: str) -> str:
-        """Cache key for a project's recommendations.
-
-        Includes ``scan_id`` so a new scan naturally invalidates the entry, and
-        ``scope_hash`` (a digest of the caller's accessible project ids) because
-        the recommendations fold in cross-project data and must not leak across
-        users with different project access.
-        """
+        # scope_hash (digest of caller's accessible project ids) prevents cross-project
+        # recommendation data leaking across users with different project access.
         return f"recommendations:{project_id}:{scan_id}:{scope_hash}"
 
 
 class CacheService:
-    """Distributed cache service using Redis — all pods share the same store
-    so duplicate external API calls stay deduplicated horizontally."""
+    """Distributed Redis cache shared across pods for horizontal dedup of external API calls."""
 
     RECONNECT_INTERVAL_SECONDS = 30
 
@@ -186,8 +176,7 @@ class CacheService:
         self._unavailable_since: float = 0
 
     async def get_client(self) -> redis.Redis:
-        """Get or create the Redis client. Locked to avoid races when several
-        coroutines hit the first call simultaneously."""
+        """Get or create the Redis client, locked against concurrent first-call races."""
         if self._client is not None and self._pool is not None:
             return self._client
 
@@ -425,11 +414,8 @@ class CacheService:
         lock_ttl_seconds: int = 30,
         max_wait_seconds: float = 5.0,
     ) -> Optional[Any]:
-        """Cache-through with a distributed lock so only one pod fetches on miss
-        while peers wait for the result. Prevents cache-stampede on multi-pod deploys.
-
-        Flow: check cache → try lock → if locked: fetch+cache+release; else wait+retry cache.
-        """
+        """Cache-through with a distributed lock so only one pod fetches on miss while
+        peers wait, preventing cache-stampede on multi-pod deploys."""
         cached = await self.get(key)
         if cached is not None:
             return cached
@@ -507,11 +493,7 @@ class CacheService:
                 return None
 
     async def _release_lock(self, client: "redis.Redis", full_lock_key: str, token: str) -> None:
-        """Release the stampede lock only if we still hold it (value == token).
-
-        Uses an atomic compare-and-delete so a fetch that outlived ``lock_ttl_seconds``
-        does not delete a lock that expired and was re-acquired by another pod.
-        """
+        """Release the stampede lock only if we still hold it (value == token)."""
         try:
             await client.eval(_UNLOCK_LUA, 1, full_lock_key, token)
         except Exception as e:

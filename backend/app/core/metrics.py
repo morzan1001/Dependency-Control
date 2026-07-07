@@ -1,10 +1,4 @@
-"""
-Prometheus Metrics Collection for Dependency Control Backend
-
-This module provides comprehensive metrics for monitoring the backend in a
-multi-pod Kubernetes environment. All metrics are designed to work correctly
-when multiple backend containers run simultaneously.
-"""
+"""Prometheus metrics for monitoring the backend across a multi-pod Kubernetes deployment."""
 
 import logging
 import re
@@ -535,30 +529,19 @@ def update_uptime() -> None:
 
 
 async def metrics_endpoint(_request: Request) -> Response:
-    """
-    Prometheus metrics endpoint.
-
-    This endpoint should only be accessible internally within the Kubernetes
-    cluster, not through the Ingress. The ServiceMonitor will scrape this.
-    """
+    """Prometheus metrics endpoint; expose internally to the cluster only, never via Ingress."""
     update_uptime()
     metrics_output = generate_latest(REGISTRY)
     return Response(content=metrics_output, media_type=CONTENT_TYPE_LATEST)
 
 
 class PrometheusMiddleware:
-    """
-    Pure-ASGI middleware to automatically collect HTTP request metrics.
+    """Pure-ASGI middleware collecting HTTP request metrics.
 
-    Implemented as a raw ASGI app (not Starlette's BaseHTTPMiddleware) because
-    BaseHTTPMiddleware wraps each request in an anyio task group that buffers
-    the response body, which is incompatible with long-lived StreamingResponse
-    generators (e.g. the chat SSE endpoint) and surfaces as
-    `RuntimeError("No response returned.")` whenever the stream is slow or
-    the client disconnects.
-
-    We tap into the ASGI send channel so we can observe the response status
-    without touching the body, which keeps streaming responses intact.
+    Raw ASGI (not BaseHTTPMiddleware) because the latter buffers the response body in an
+    anyio task group, breaking long-lived StreamingResponse generators (e.g. chat SSE) with
+    `RuntimeError("No response returned.")`. We tap the send channel to read status without
+    touching the body, keeping streaming intact.
     """
 
     def __init__(self, app: ASGIApp) -> None:
@@ -618,22 +601,11 @@ class PrometheusMiddleware:
             http_requests_in_progress.labels(method=method, endpoint=endpoint).dec()
 
     def _normalize_path(self, path: str) -> str:
-        """
-        Normalize URL paths to prevent cardinality explosion.
+        """Replace UUIDs, ObjectIds, and numeric IDs with {id} to prevent metric-label cardinality explosion."""
+        # Patterns are anchored to whole segments with a trailing (?=/|$): otherwise /\d+
+        # would replace only the leading digit run of a mixed-alphanumeric segment,
+        # producing a unique never-repeated label and defeating cardinality protection.
 
-        Replaces UUIDs and numeric IDs with placeholders.
-        Examples:
-          /api/v1/projects/123 -> /api/v1/projects/{id}
-          /api/v1/users/550e8400-e29b-41d4-a716-446655440000 -> /api/v1/users/{id}
-        """
-        # All patterns are anchored to whole path segments with a trailing
-        # (?=/|$) boundary so a rule only fires when it matches an entire
-        # segment. Without it, /\d+ would replace only the leading digit run of
-        # a mixed-alphanumeric segment (e.g. a urlsafe token starting with a
-        # digit), producing a unique never-repeated label and defeating the
-        # cardinality protection this function exists to provide.
-
-        # Replace UUIDs
         path = re.sub(
             r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=/|$)",
             _ID_PLACEHOLDER,
@@ -645,7 +617,6 @@ class PrometheusMiddleware:
         # id starting with a digit isn't partially consumed by the numeric rule.
         path = re.sub(r"/[0-9a-f]{24}(?=/|$)", _ID_PLACEHOLDER, path, flags=re.IGNORECASE)
 
-        # Replace numeric IDs
         path = re.sub(r"/\d+(?=/|$)", _ID_PLACEHOLDER, path)
 
         return path
@@ -671,29 +642,13 @@ def track_db_operation(collection: str, operation: str) -> AbstractContextManage
 
 
 async def update_db_stats(database: Any) -> None:
-    """
-    Update database statistics gauge metrics.
-
-    This function queries the database for collection counts and updates
-    the corresponding Prometheus gauge metrics. Should be called during
-    startup and periodically to keep metrics current.
-
-    Uses estimated_document_count() which is O(1) as it reads from collection
-    metadata instead of scanning all documents. This is much faster for large
-    collections like findings.
-
-    Args:
-        database: The Motor async database instance
-    """
+    """Update collection-count gauges using estimated_document_count() (O(1), reads metadata)."""
     try:
-        # Use estimated_document_count for O(1) performance
-        # This reads from collection metadata, not actual documents
         users_count = await database["users"].estimated_document_count()
         projects_count = await database["projects"].estimated_document_count()
         scans_count = await database["scans"].estimated_document_count()
         findings_count = await database["findings"].estimated_document_count()
 
-        # Update gauge metrics
         db_users_total.set(users_count)
         db_projects_total.set(projects_count)
         db_scans_total.set(scans_count)

@@ -11,13 +11,11 @@ from app.models.project import Project, Scan
 
 
 class LicensePolicySchema(BaseModel):
-    """License compliance policy for a project. Controls how copyleft findings are evaluated.
+    """License compliance policy controlling how copyleft findings are evaluated.
 
-    Field types reuse the ``str``-enums defined in :mod:`app.models.license` so the
-    API contract and the license analyzer share a single source of truth.
-    ``use_enum_values``/``validate_default`` keep the JSON serialization and
-    validation contract identical to the previous inline ``Literal`` declarations
-    (values serialize to the same plain strings, invalid values are rejected).
+    Field types reuse the ``str``-enums from :mod:`app.models.license` so the API
+    contract and the license analyzer share one source of truth;
+    ``use_enum_values``/``validate_default`` serialize values as plain strings.
     """
 
     model_config = ConfigDict(use_enum_values=True, validate_default=True)

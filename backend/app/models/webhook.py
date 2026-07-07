@@ -16,28 +16,7 @@ from app.services.webhooks.validation import (
 
 
 class Webhook(MongoDocument, CreatedAtModel):
-    """
-    Webhook configuration for event notifications.
-
-    Supports three scopes:
-        - Project webhooks: project_id is set, team_id is None
-        - Team webhooks: team_id is set, project_id is None
-        - Global webhooks: both project_id and team_id are None
-
-    Attributes:
-        id: Unique identifier (MongoDB _id)
-        project_id: Associated project ID, None for team/global webhooks
-        team_id: Associated team ID, None for project/global webhooks
-        url: Target URL for webhook delivery
-        events: List of event types to subscribe to
-        secret: Optional secret for HMAC signature verification (not returned in API responses)
-        headers: Optional custom headers to include in requests
-        is_active: Whether the webhook is enabled
-        webhook_type: Type of webhook (generic or teams) for payload formatting
-        created_at: Creation timestamp
-        last_triggered_at: Last successful delivery timestamp
-        last_failure_at: Last failed delivery timestamp
-    """
+    """Webhook configuration for event notifications, scoped to a project, a team, or globally (both IDs None)."""
 
     project_id: Optional[str] = None
     team_id: Optional[str] = None
@@ -59,7 +38,6 @@ class Webhook(MongoDocument, CreatedAtModel):
     @field_validator("events")
     @classmethod
     def _validate_events(cls, v: List[str]) -> List[str]:
-        """Validate that all events are valid and list is not empty."""
         return validate_webhook_events(v, allow_empty=False)
 
     @field_validator("url")

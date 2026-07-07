@@ -1,9 +1,4 @@
-"""
-Auth Helper Functions
-
-Helper functions for authentication endpoints, extracted for better
-code organization and reusability.
-"""
+"""Helper functions for authentication endpoints."""
 
 import os
 from typing import Optional
@@ -33,17 +28,8 @@ async def send_verification_email(
     email: str,
     system_settings: Optional[SystemSettings] = None,
 ) -> None:
-    """
-    Send a verification email to the user.
-
-    Args:
-        background_tasks: FastAPI background tasks for async email sending
-        email: Destination email address
-        system_settings: Optional system settings for email provider configuration
-    """
-    # Gate on the EFFECTIVE SMTP host the email provider actually uses to send
-    # (DB system settings), not the env var. Otherwise a DB-configured SMTP host
-    # is silently ignored when env SMTP_HOST is unset. Mirrors EmailProvider.send.
+    """Send a verification email to the user."""
+    # Gate on the DB-configured SMTP host the provider actually sends with, matching EmailProvider.send.
     if not (system_settings and system_settings.smtp_host):
         return
 
@@ -69,18 +55,8 @@ async def send_password_reset_email(
     username: str,
     system_settings: Optional[SystemSettings] = None,
 ) -> None:
-    """
-    Send a password reset email to the user.
-
-    Args:
-        background_tasks: FastAPI background tasks for async email sending
-        email: Destination email address
-        username: Username for personalization
-        system_settings: Optional system settings for email provider configuration
-    """
-    # Gate on the EFFECTIVE SMTP host the email provider actually uses to send
-    # (DB system settings), not the env var. Otherwise a DB-configured SMTP host
-    # is silently ignored when env SMTP_HOST is unset. Mirrors EmailProvider.send.
+    """Send a password reset email to the user."""
+    # Gate on the DB-configured SMTP host the provider actually sends with, matching EmailProvider.send.
     if not (system_settings and system_settings.smtp_host):
         return
 
@@ -112,19 +88,8 @@ async def send_system_invitation_email(
     inviter_name: str,
     system_settings: Optional[SystemSettings] = None,
 ) -> None:
-    """
-    Send a system invitation email to a new user.
-
-    Args:
-        background_tasks: FastAPI background tasks for async email sending
-        email: Destination email address
-        invitation_link: Full URL for accepting the invitation
-        inviter_name: Name of the user who sent the invitation
-        system_settings: Optional system settings for email provider configuration
-    """
-    # Gate on the EFFECTIVE SMTP host the email provider actually uses to send
-    # (DB system settings), not the env var. Otherwise a DB-configured SMTP host
-    # is silently ignored when env SMTP_HOST is unset. Mirrors EmailProvider.send.
+    """Send a system invitation email to a new user."""
+    # Gate on the DB-configured SMTP host the provider actually sends with, matching EmailProvider.send.
     if not (system_settings and system_settings.smtp_host):
         return
 
@@ -156,9 +121,7 @@ def send_project_member_added_email(
     system_settings: Optional[SystemSettings] = None,
 ) -> None:
     """Send a notification email when a user is added to a project."""
-    # Gate on the EFFECTIVE SMTP host the email provider actually uses to send
-    # (DB system settings), not the env var. Otherwise a DB-configured SMTP host
-    # is silently ignored when env SMTP_HOST is unset. Mirrors EmailProvider.send.
+    # Gate on the DB-configured SMTP host the provider actually sends with, matching EmailProvider.send.
     if not (system_settings and system_settings.smtp_host):
         return
 

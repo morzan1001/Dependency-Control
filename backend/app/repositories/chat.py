@@ -103,7 +103,6 @@ class ChatRepository:
             return await cursor.to_list(length=limit)
 
     async def get_recent_messages(self, conversation_id: str, limit: int = 20) -> List[Dict[str, Any]]:
-        """Get the most recent N messages for context building."""
         with track_db_operation(_MSG_COL, "find"):
             cursor = self.messages.find(
                 {"conversation_id": conversation_id},

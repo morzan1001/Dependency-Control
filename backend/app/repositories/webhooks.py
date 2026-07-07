@@ -41,7 +41,6 @@ class WebhookRepository(BaseRepository[Webhook]):
         sort_by: str = "created_at",
         sort_order: int = -1,
     ) -> List[Webhook]:
-        """Find global webhooks (both project_id and team_id are None)."""
         cursor = (
             self.collection.find({"project_id": None, "team_id": None})
             .sort(sort_by, sort_order)
@@ -74,5 +73,4 @@ class WebhookRepository(BaseRepository[Webhook]):
         return await self.collection.count_documents({"team_id": team_id})
 
     async def count_global(self) -> int:
-        """Count global webhooks (both project_id and team_id are None)."""
         return await self.collection.count_documents({"project_id": None, "team_id": None})

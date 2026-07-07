@@ -47,21 +47,17 @@ async def get_broadcast_history(
         User, Depends(deps.PermissionChecker([Permissions.NOTIFICATIONS_BROADCAST, Permissions.SYSTEM_MANAGE]))
     ],
 ) -> List[BroadcastHistoryItem]:
-    """
-    Get history of sent broadcasts
-    """
+    """Get history of sent broadcasts."""
     broadcast_repo = BroadcastRepository(db)
     user_repo = UserRepository(db)
     history = await broadcast_repo.get_history(limit=50)
 
-    # Resolve creator user IDs to usernames
     creator_ids = list({h.created_by for h in history if h.created_by})
     creators_map: dict[str, str] = {}
     if creator_ids:
         creator_users = await user_repo.find_many({"_id": {"$in": creator_ids}}, limit=len(creator_ids))
         creators_map = {str(u.id): u.username for u in creator_users}
 
-    # Resolve team IDs to team names
     all_team_ids: list[str] = []
     for h in history:
         if h.teams:
@@ -97,9 +93,7 @@ async def suggest_packages(
     ],
     q: Annotated[str, Query(min_length=2, description="Search query for package name")],
 ) -> List[str]:
-    """
-    Suggest package names for advisories based on existing dependencies.
-    """
+    """Suggest package names for advisories based on existing dependencies."""
     dep_repo = DependencyRepository(db)
 
     pipeline: List[Dict[str, Any]] = [
@@ -201,9 +195,6 @@ async def _build_advisory_scan_map(
         async for p in project_repo.iterate({"latest_scan_id": {"$exists": True}})
         if p and p.latest_scan_id
     ]
-    # Canonical bulk "latest active scan" selection (elegance #186): maps each
-    # project to its latest completed scan on a non-deleted branch. This replaces a
-    # private copy of the same latest_scan_id fast-path + aggregation.
     scan_ids = await ScanRepository(db).get_latest_active_scan_ids(projects)
     proj_by_id = {p.id: p for p in projects}
     return {
@@ -434,10 +425,7 @@ async def broadcast_message(
         User, Depends(deps.PermissionChecker([Permissions.NOTIFICATIONS_BROADCAST, Permissions.SYSTEM_MANAGE]))
     ],
 ) -> BroadcastResult:
-    """
-    Send a broadcast message to all users, specific teams, or admins of projects affecting a specific dependency.
-    """
-    # Initialize repositories
+    """Send a broadcast to all users, specific teams, or admins of projects affected by a dependency."""
     user_repo = UserRepository(db)
     team_repo = TeamRepository(db)
     project_repo = ProjectRepository(db)
@@ -449,10 +437,8 @@ async def broadcast_message(
 
     frontend_url = settings.FRONTEND_BASE_URL.rstrip("/")
 
-    # Determine forced channels
     forced_channels = payload.channels if payload.channels else None
 
-    # Validate target_type
     valid_target_types: List[str] = ["global", "teams", "advisory"]
     if payload.target_type not in valid_target_types:
         raise HTTPException(
@@ -460,8 +446,7 @@ async def broadcast_message(
             detail=f"Invalid target_type. Must be one of: {', '.join(valid_target_types)}",
         )
 
-    # Convert Markdown to HTML for the message body
-    # Escape raw HTML in the input first to prevent XSS via embedded tags
+    # Escape raw HTML before Markdown to prevent XSS via embedded tags.
     safe_message = html.escape(payload.message)
     message_html_content = markdown.markdown(safe_message)
 
@@ -499,7 +484,6 @@ async def broadcast_message(
         affected_projects_map: Dict[str, Project] = {}
         project_findings: Dict[str, List[str]] = {}
 
-        # Build match query for affected dependencies
         package_names = [pkg.name for pkg in payload.packages]
         match_query: Dict[str, Any] = {
             "scan_id": {"$in": list(scan_map.keys())},
@@ -509,7 +493,6 @@ async def broadcast_message(
         if len(unique_types) == 1:
             match_query["type"] = next(iter(unique_types))
 
-        # Stream dependencies and find affected projects
         dep_count = 0
         async for dep in dep_repo.iterate(match_query):
             dep_count += 1
@@ -519,7 +502,6 @@ async def broadcast_message(
 
         project_count = len(affected_projects_map)
 
-        # Group affected projects by admin members and notify
         unique_user_count = await _notify_advisory_admins(
             affected_projects_map,
             project_findings,
@@ -532,7 +514,6 @@ async def broadcast_message(
             forced_channels,
         )
 
-    # 5. Save History
     if not payload.dry_run:
         history_entry = Broadcast(
             type=payload.type,

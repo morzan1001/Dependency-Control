@@ -1,8 +1,4 @@
-"""
-Project Helper Functions
-
-Shared helper functions for project-related operations.
-"""
+"""Shared helper functions for project-related operations."""
 
 import secrets
 from typing import Any, Dict, Optional, Tuple
@@ -30,24 +26,10 @@ async def build_user_project_query(
     user: User,
     team_repo: TeamRepository,
 ) -> Dict[str, Any]:
-    """
-    Build a MongoDB query to filter projects the user has access to.
-
-    This includes projects where:
-    - User is a direct member of the project
-    - User is a member of the project's team
-
-    Args:
-        user: The current user
-        team_repo: TeamRepository instance for team lookups
-
-    Returns:
-        MongoDB query dict. Empty dict if user has read_all permission.
-    """
+    """Build a MongoDB query for projects the user can access (empty dict if read_all)."""
     if has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
         return {}
 
-    # Find teams user is member of
     user_teams = await team_repo.find_by_member(str(user.id))
     team_ids = [t.id for t in user_teams]
 
@@ -59,12 +41,11 @@ async def build_user_project_query(
     }
 
 
-# Roles that constitute a WRITE-level request. ``None``/``viewer`` are READ.
+# Roles that constitute a WRITE-level request; None/viewer are READ.
 _WRITE_ROLES = frozenset({PROJECT_ROLE_EDITOR, PROJECT_ROLE_ADMIN})
 
-# Global permissions that act as a WRITE ("manage any project") superuser.
-# project:delete is included so a delete-capable global admin satisfies the
-# admin-level gate guarding delete paths even without project:update.
+# Global "manage any project" write-superuser permissions; project:delete is
+# included so a delete-capable admin passes the delete gate without project:update.
 _WRITE_SUPERUSER_PERMISSIONS = [Permissions.PROJECT_UPDATE, Permissions.PROJECT_DELETE]
 
 
@@ -79,10 +60,7 @@ def _is_write_request(required_role: Optional[str]) -> bool:
 
 
 def _max_role(role_a: Optional[str], role_b: Optional[str]) -> Optional[str]:
-    """Return the higher of two project roles by ``PROJECT_ROLES`` order.
-
-    Either argument may be ``None`` (absent). Never downgrades a present role.
-    """
+    """Return the higher of two project roles (by PROJECT_ROLES order); either may be None."""
     if role_a is None:
         return role_b
     if role_b is None:
@@ -103,10 +81,7 @@ async def _team_derived_role(
     user_id: str,
     team_repo: TeamRepository,
 ) -> Optional[str]:
-    """Return the project role derived from team membership, or ``None``.
-
-    Team admins map to project admin; other team members map to project viewer.
-    """
+    """Return the project role from team membership: team admin -> admin, else viewer; None if not a team member."""
     if not project.team_id:
         return None
     team = await team_repo.get_raw_by_id(project.team_id)
@@ -123,13 +98,7 @@ async def _resolve_effective_role(
     user: User,
     team_repo: TeamRepository,
 ) -> tuple[bool, Optional[str]]:
-    """Compute membership and the effective project role for ``user``.
-
-    Effective role = MAX(direct member role, team-derived role) so a higher
-    direct role is never downgraded by team membership (and vice versa).
-
-    Returns ``(is_member, effective_role)``.
-    """
+    """Return (is_member, effective_role) where effective_role = MAX(direct, team-derived)."""
     user_id = str(user.id)
     direct_role = _direct_member_role(project, user_id)
     team_role = await _team_derived_role(project, user_id, team_repo)
@@ -145,36 +114,11 @@ async def check_project_access(
 ) -> Project:
     """Resolve project access and return the project, or raise 403/404.
 
-    This is the single resource gate for project authorization. It composes two
-    layers — global string permissions and project roles — into one rule:
-
-    * ``required_role`` of ``None`` or ``"viewer"`` is a READ request;
-      ``"editor"``/``"admin"`` is a WRITE request.
-    * **project:read_all** is a READ-ONLY superuser: it grants READ access to
-      any project but does NOT satisfy a WRITE ``required_role``. A read_all
-      holder requesting write falls through to the write-superuser / membership
-      checks.
-    * **project:update** (and **project:delete**) is the WRITE superuser
-      ("manage any project"), applied UNIFORMLY across every write path. A
-      holder bypasses membership for write requests. project:update is
-      admin-preset-only.
-    * **Effective project role = MAX(direct member role, team-derived role)** —
-      a higher direct role is never downgraded by team membership. Team admins
-      map to project admin; other team members map to project viewer.
-    * **Read feature-gate:** a project member must additionally hold
-      ``project:read`` (or ``project:read_all``); otherwise access is denied.
-
-    Args:
-        project_id: The project ID to check access for.
-        user: The current user.
-        db: Database instance.
-        required_role: Optional minimum project role required.
-
-    Returns:
-        The Project object if access is granted.
-
-    Raises:
-        HTTPException: 404 if project not found, 403 if access denied.
+    The single resource gate composing global permissions and project roles:
+    None/viewer required_role is READ, editor/admin is WRITE; project:read_all is a
+    READ-ONLY superuser (does not satisfy WRITE); project:update/project:delete is the
+    WRITE superuser bypassing membership; effective role = MAX(direct, team-derived);
+    members must also hold project:read (or read_all).
     """
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
@@ -185,14 +129,9 @@ async def check_project_access(
 
     write_request = _is_write_request(required_role)
 
-    # WRITE superuser ("manage any project"): project:update / project:delete
-    # bypass membership for ANY request (write implies read), applied uniformly
-    # across all write paths.
     if is_write_superuser(user):
         return project
 
-    # READ-ONLY superuser: read_all grants READ access only. It must NOT satisfy
-    # a write request — fall through to membership for those.
     if not write_request and has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
         return project
 
@@ -201,7 +140,6 @@ async def check_project_access(
     if not is_member:
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
-    # Read feature-gate: members still need project:read (or read_all).
     if Permissions.PROJECT_READ not in user.permissions and Permissions.PROJECT_READ_ALL not in user.permissions:
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
@@ -214,17 +152,7 @@ async def check_project_access(
 
 
 def generate_project_api_key(project_id: str) -> Tuple[str, str]:
-    """
-    Generate a new API key for a project.
-
-    Args:
-        project_id: The project ID to generate a key for
-
-    Returns:
-        Tuple of (api_key, api_key_hash)
-        - api_key: The full API key in format "project_id.secret"
-        - api_key_hash: The hashed secret for storage
-    """
+    """Generate a project API key, returning (api_key "project_id.secret", api_key_hash)."""
     secret = secrets.token_urlsafe(32)
     api_key = f"{project_id}.{secret}"
     api_key_hash = security.get_password_hash(secret)
@@ -236,19 +164,7 @@ def apply_system_settings_enforcement(
     retention_mode: str,
     rescan_mode: str,
 ) -> Dict[str, Any]:
-    """
-    Apply system settings enforcement to project update data.
-
-    Removes fields that are globally enforced and cannot be changed per-project.
-
-    Args:
-        update_data: Dictionary of fields to update
-        retention_mode: "global" or "per_project"
-        rescan_mode: "global" or "per_project"
-
-    Returns:
-        Updated data dictionary with enforced fields removed
-    """
+    """Strip globally-enforced fields from project update data when their mode is "global"."""
     result = update_data.copy()
 
     if retention_mode == "global":

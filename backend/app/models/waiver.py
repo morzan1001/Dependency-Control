@@ -12,12 +12,7 @@ from app.models.types import PyObjectId
 
 
 def is_waiver_active(expiration_date: Optional[datetime], now: Optional[datetime] = None) -> bool:
-    """Return True if a waiver with the given expiration_date is still active.
-
-    Mirrors ``WaiverRepository._non_expired_filter`` so server-side reads,
-    Pydantic responses and the apply path share one rule. Tolerates
-    timezone-naive expiration_dates (treats them as UTC).
-    """
+    """Return True if the waiver is still active. Mirrors WaiverRepository._non_expired_filter; treats naive datetimes as UTC."""
     if expiration_date is None:
         return True
     reference = now or datetime.now(timezone.utc)

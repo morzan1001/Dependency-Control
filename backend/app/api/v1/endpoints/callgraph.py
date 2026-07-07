@@ -1,9 +1,4 @@
-"""
-Callgraph API Endpoints
-
-Provides endpoints for uploading and querying call graph data
-for reachability analysis.
-"""
+"""Endpoints for uploading and querying call graph data for reachability analysis."""
 
 import logging
 import uuid
@@ -118,18 +113,7 @@ async def upload_callgraph(
     db: DatabaseDep,
     current_user: CurrentUserDep,
 ) -> CallgraphUploadResponse:
-    """
-    Upload call graph data for a project.
-
-    Supports multiple formats:
-    - **madge**: JavaScript/TypeScript dependency graph
-    - **pyan**: Python call graph
-    - **go-callvis**: Go call graph
-    - **generic**: Universal format for any language
-
-    The callgraph is used for reachability analysis to determine
-    if vulnerable code paths are actually used in the project.
-    """
+    """Upload call graph data (madge, pyan, go-callvis, or generic format) for reachability analysis."""
     await check_callgraph_access(project_id, current_user, db, require_write=True)
 
     callgraph_repo = CallgraphRepository(db)
@@ -183,7 +167,6 @@ async def upload_callgraph(
         f"{len(imports)} imports, {len(calls)} calls, {len(module_usage)} modules"
     )
 
-    # Check for pending reachability analysis on this scan
     if scan_id:
         try:
             reachability_result = await run_pending_reachability_for_scan(
@@ -218,11 +201,7 @@ async def get_callgraph(
     current_user: CurrentUserDep,
     language: Optional[str] = None,
 ) -> CallgraphResponse:
-    """
-    Get the current callgraph for a project.
-
-    Optionally filter by language (e.g. ?language=python).
-    """
+    """Get the current callgraph for a project, optionally filtered by language."""
     await check_callgraph_access(project_id, current_user, db)
 
     callgraph_repo = CallgraphRepository(db)
@@ -244,12 +223,7 @@ async def get_module_usage(
     current_user: CurrentUserDep,
     language: Optional[str] = None,
 ) -> ModuleUsageResponse:
-    """
-    Get module usage summary from the callgraph.
-
-    Returns a list of external modules used in the project,
-    with import counts and locations. Optionally filter by language.
-    """
+    """Get external module usage (import counts and locations) from the callgraph, optionally filtered by language."""
     await check_callgraph_access(project_id, current_user, db)
 
     callgraph_repo = CallgraphRepository(db)
@@ -262,7 +236,6 @@ async def get_module_usage(
 
     module_usage = callgraph.module_usage or {}
 
-    # Sort by import count
     sorted_modules = sorted(
         module_usage.items(),
         key=lambda x: getattr(x[1], "import_count", 0) + getattr(x[1], "call_count", 0),
@@ -282,9 +255,7 @@ async def delete_callgraph(
     db: DatabaseDep,
     current_user: CurrentUserDep,
 ) -> DeleteCallgraphResponse:
-    """
-    Delete the callgraph for a project.
-    """
+    """Delete the callgraph for a project."""
     await check_callgraph_access(project_id, current_user, db, require_write=True)
 
     callgraph_repo = CallgraphRepository(db)

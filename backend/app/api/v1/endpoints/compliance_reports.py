@@ -1,15 +1,4 @@
-"""Compliance report REST endpoints.
-
-Endpoints:
-    POST   /compliance/reports          -> create a report job (202)
-    GET    /compliance/reports          -> list reports (filter + paginate)
-    GET    /compliance/reports/{id}     -> report metadata
-    GET    /compliance/reports/{id}/download -> stream the GridFS artifact
-    DELETE /compliance/reports/{id}     -> delete report + artifact
-
-Report generation is done in a FastAPI BackgroundTask, which hands off to
-`ComplianceReportEngine`. A best-effort webhook is fired after completion.
-"""
+"""Compliance report REST endpoints; generation runs in a BackgroundTask with a best-effort webhook on completion."""
 
 import logging
 from datetime import datetime, timezone
@@ -108,16 +97,7 @@ async def create_report(
 
 
 async def _user_can_see_report(db: AsyncIOMotorDatabase, user: User, report: ComplianceReport) -> bool:
-    """Authoritative scope check: a user may see a report iff the
-    ScopeResolver for the report's (scope, scope_id) resolves successfully
-    for that user. ScopeResolver already enforces project/team membership
-    and the analytics:global capability for the global scope.
-
-    Special case for scope='user': ScopeResolver._resolve_user ignores
-    scope_id (it always returns the *caller's* projects), so it would
-    happily resolve another user's report. Gate explicitly on the
-    requester id (with system:manage as an admin escape hatch).
-    """
+    """True iff the ScopeResolver resolves the report's scope for this user; scope='user' is gated on requester id (ScopeResolver ignores scope_id there) with system:manage as an admin escape."""
     if report.scope == "user":
         if report.requested_by == str(user.id):
             return True
@@ -128,24 +108,12 @@ async def _user_can_see_report(db: AsyncIOMotorDatabase, user: User, report: Com
         await ScopeResolver(db, user).resolve(scope=report.scope, scope_id=report.scope_id)
         return True
     except Exception:
-        # Includes ScopeResolutionError (PermissionError) and any other
-        # failure (e.g. missing project) — both must hide the report.
+        # Any resolution failure (permission or missing project) must hide the report.
         return False
 
 
 async def _build_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> Dict[str, Any]:
-    """Build the ``$or`` filter that captures every scope a user may see.
-
-    Pushed into the repo query so list pagination is honest: skip/limit
-    run on already-filtered results, every page returns up to ``limit``
-    accessible reports, and clients can paginate without seeing
-    inexplicable shrinks. The filter matches:
-
-    - scope=user iff the caller is the requester (or holds system:manage).
-    - scope=project iff the project_id is in the caller's accessible set.
-    - scope=team iff the team_id is in the caller's team membership.
-    - scope=global iff the caller holds analytics:global or system:manage.
-    """
+    """Build the $or filter capturing every scope a user may see, so list pagination runs on already-filtered results."""
     from app.core.permissions import Permissions, has_permission
     from app.repositories.teams import TeamRepository
 
@@ -250,8 +218,7 @@ async def download_report(
 
     bucket = AsyncIOMotorGridFSBucket(db)
     try:
-        # artifact_gridfs_id is persisted as a string (json-friendly);
-        # GridFS APIs need an ObjectId.
+        # artifact_gridfs_id is stored as a string; GridFS needs an ObjectId.
         stream = await bucket.open_download_stream(ObjectId(r.artifact_gridfs_id))
     except Exception:
         raise HTTPException(status_code=410, detail="Artifact storage error")
@@ -264,8 +231,7 @@ async def download_report(
                     break
                 yield chunk
         finally:
-            # motor's AgnosticGridOut.close() returns a coroutine at runtime
-            # though the stub claims None; await defensively.
+            # motor's AgnosticGridOut.close() returns a coroutine at runtime though the stub claims None.
             close_result: Any = stream.close()  # type: ignore[func-returns-value]
             if close_result is not None:
                 await close_result

@@ -43,7 +43,6 @@ from app.core.init_db import init_db
 from app.core.worker import worker_manager
 from app.services.analytics.scopes import ScopeResolutionError
 
-# Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -76,10 +75,7 @@ Source Code: [GitHub Repository](https://github.com/morzan1001/Dependency-Contro
     openapi_url=f"{settings.API_V1_STR}/openapi.json",
 )
 
-# Add GZip Middleware for response compression
 app.add_middleware(GZipMiddleware, minimum_size=1000)
-
-# Add Prometheus Middleware for metrics collection
 app.add_middleware(PrometheusMiddleware)
 
 
@@ -87,12 +83,7 @@ app.add_middleware(PrometheusMiddleware)
 async def scope_resolution_exception_handler(
     request: Request, exc: ScopeResolutionError
 ) -> JSONResponse:
-    """Map analytics scope-authorization failures to a uniform 403 response.
-
-    Centralises the ``try/except ScopeResolutionError -> HTTPException(403)``
-    boilerplate that was previously duplicated at every analytics endpoint
-    call site (crypto analytics, PQC migration, scan-delta).
-    """
+    """Map analytics scope-authorization failures to a uniform 403 response."""
     return JSONResponse(status_code=403, content={"detail": str(exc)})
 
 
@@ -113,9 +104,9 @@ async def startup_event() -> None:
     for i in range(max_retries):
         try:
             await connect_to_mongo()
-            await init_db()  # Creates indexes, seeds data, initial admin user
+            await init_db()
 
-            # WeasyPrint health-check: non-fatal, PDF reports depend on it
+            # PDF compliance reports depend on WeasyPrint; missing it is non-fatal.
             try:
                 import weasyprint  # noqa: F401
 
@@ -126,7 +117,6 @@ async def startup_event() -> None:
                     e,
                 )
 
-            # Initialize S3 bucket for archive storage (if configured)
             from app.core.s3 import ensure_bucket_exists, is_archive_enabled
 
             if is_archive_enabled():
@@ -159,7 +149,7 @@ async def shutdown_event() -> None:
     await close_mongo_connection()
 
 
-# Prometheus metrics endpoint (internal only, not exposed via Ingress)
+# Internal only, not exposed via Ingress.
 app.get("/metrics", include_in_schema=False)(metrics_endpoint)
 
 app.include_router(health.router, prefix="/health", tags=["health"])

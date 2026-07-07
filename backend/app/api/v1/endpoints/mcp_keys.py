@@ -54,9 +54,7 @@ async def create_mcp_key(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> MCPKeyCreateResponse:
-    """Issue a new MCP API token bound to the current user. The plaintext
-    token is returned in this single response — store it immediately; the
-    server never shows it again."""
+    """Issue a new MCP API token bound to the current user; the plaintext token is returned once and never shown again."""
     _check_mcp_access(current_user)
     repo = MCPApiKeyRepository(db)
     doc, plaintext = await repo.create(

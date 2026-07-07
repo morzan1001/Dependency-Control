@@ -29,10 +29,7 @@ class UserRepository(BaseRepository[User]):
         return await self.find_one_raw({"email": email})
 
     async def get_raw_by_email_ci(self, email: str) -> Optional[Dict[str, Any]]:
-        """Case-insensitive email lookup. Stored emails are not normalised and the unique
-        index is not collated, so an exact match can silently fail to resolve a real user
-        whose address differs only in case (e.g. GitLab returns ``Alice@Corp.com`` while the
-        login stored ``alice@corp.com``)."""
+        """Case-insensitive email lookup; stored emails aren't normalised and the index isn't collated, so an exact match can miss a user differing only in case."""
         with track_db_operation(self.collection_name, "find_one"):
             return await self.collection.find_one(
                 {"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}}

@@ -7,12 +7,7 @@ from app.models.types import MongoDocument
 
 
 class ArchiveMetadata(MongoDocument):
-    """
-    Tracks archived scan data in S3.
-
-    Stored in the 'archive_metadata' MongoDB collection.
-    Serves as the index for what is archived and where.
-    """
+    """Index of archived scan data in S3, stored in the 'archive_metadata' collection."""
 
     project_id: str
     scan_id: str

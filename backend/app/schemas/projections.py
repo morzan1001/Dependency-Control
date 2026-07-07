@@ -65,22 +65,9 @@ class ScanMinimal(BaseModel):
 class CallgraphMinimal(BaseModel):
     """Callgraph with minimal fields.
 
-    ``import_map`` ({file: [modules]}) is NOT a persisted field: the callgraph
-    writer stores the raw ``imports`` list (List[ImportEntry]) and the
-    aggregated ``module_usage`` map, but never an ``import_map`` key. It is
-    therefore *derived* below so that reachability's import-based fallback
-    (``_check_package_in_imports``) and the ``total_imports`` reachability stat
-    operate on real data rather than an always-empty phantom field.
-
-    Derivation is end-to-end live under the ACTUAL minimal DB projection in
-    ``repositories/callgraphs.py`` (``{_id, module_usage, import_map, language}``)
-    without requiring any projection change: ``module_usage`` is projected and
-    each ``ModuleUsage`` carries ``module`` + ``import_locations`` (the files
-    importing it), which is exactly enough to reconstruct
-    ``{file: [module, ...]}``. When the full document is loaded instead (raw
-    ``imports`` present), that richer source is preferred. ``import_map`` always
-    resolves to a dict (never None) so ``len(cg.get("import_map", {}))`` in the
-    summary builders cannot raise on the serialized projection.
+    ``import_map`` ({file: [modules]}) is not persisted; it is derived below
+    from the raw ``imports`` list, or from the aggregated ``module_usage`` map
+    when only the minimal projection is loaded. It always resolves to a dict.
     """
 
     id: PyObjectId = Field(validation_alias="_id", serialization_alias="_id")
@@ -93,12 +80,10 @@ class CallgraphMinimal(BaseModel):
 
     @model_validator(mode="after")
     def _derive_import_map(self) -> "CallgraphMinimal":
-        # Honor an explicitly supplied import_map; do not overwrite it.
         if self.import_map:
             return self
-        # Preferred source: the raw imports list (present on full documents).
-        # Fallback: the aggregated module_usage map, which IS included in the
-        # minimal projection, so the minimal-projection path stays live.
+        # Prefer the raw imports list; fall back to the module_usage map, which
+        # the minimal projection includes.
         self.import_map = _import_map_from_imports(self.imports) or _import_map_from_module_usage(
             self.module_usage
         )

@@ -56,8 +56,7 @@ async def get_pqc_migration_plan(
     )
     cache.set(cache_key, resp)
 
-    # Fire webhook out-of-band so a slow webhook endpoint cannot block the
-    # API response. Failures are swallowed inside `_fire_pqc_webhook`.
+    # Fire webhook out-of-band so a slow endpoint cannot block the API response.
     background_tasks.add_task(_fire_pqc_webhook, db, resp, resolved)
 
     return resp
@@ -68,12 +67,7 @@ async def _fire_pqc_webhook(
     resp: MigrationPlanResponse,
     resolved: ResolvedScope,
 ) -> None:
-    """Best-effort webhook dispatch for the PQC migration plan.
-
-    Modeled after ``compliance_reports._run_and_webhook`` — any exception is
-    logged but never re-raised, because the plan has already been delivered
-    to the caller by the time this background task runs.
-    """
+    """Best-effort webhook dispatch for the PQC migration plan; exceptions are logged, never raised."""
     from app.services.webhooks import webhook_service
 
     payload = {

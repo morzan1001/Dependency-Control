@@ -1,16 +1,10 @@
-"""
-Shared Constants
-
-Centralized constants used across the application to ensure consistency.
-"""
+"""Shared constants used across the application."""
 
 from typing import Any, Dict, List, Optional
 
-# Canonical keys for KEV (CISA Known Exploited Vulnerabilities) state persisted
-# in a finding's ``details`` dict by the enrichment writer
-# (services/enrichment/service.py). Every reader of persisted finding details
-# MUST use these. Readers historically drifted to is_kev / kev / kev_ransomware,
-# which are never written — silently zeroing all KEV-driven stats and triage.
+# Canonical keys for KEV (CISA Known Exploited Vulnerabilities) state persisted in a
+# finding's ``details`` dict by the enrichment writer. Every reader of persisted
+# finding details MUST use these exact keys.
 DETAILS_KEY_IN_KEV = "in_kev"
 DETAILS_KEY_KEV_RANSOMWARE = "kev_ransomware_use"
 
@@ -34,14 +28,7 @@ def get_severity_value(severity: Optional[str]) -> int:
 
 
 def sort_by_severity(items: list, key: str = "severity", reverse: bool = True) -> list:
-    """
-    Sort a list of dicts by severity.
-
-    Args:
-        items: List of dicts with severity field
-        key: The key containing severity value
-        reverse: If True, most severe first (default)
-    """
+    """Sort a list of dicts (or objects) by severity, most severe first by default."""
     return sorted(
         items,
         key=lambda x: get_severity_value(x.get(key) if isinstance(x, dict) else getattr(x, key, None)),
@@ -55,9 +42,7 @@ EPSS_MEDIUM_THRESHOLD: float = 0.01  # >= 1% - Moderate exploitation risk
 EPSS_LOW_THRESHOLD: float = 0.0  # < 1% - Low exploitation risk
 
 
-# SPDX license identifiers — defined once so they can be referenced from
-# both LICENSE_URL_PATTERNS (URL-based detection) and LICENSE_ALIASES
-# (display-name normalisation) without typo risk or ID drift.
+# SPDX identifiers defined once, shared by LICENSE_URL_PATTERNS and LICENSE_ALIASES.
 SPDX_GPL_3_0 = "GPL-3.0"
 SPDX_GPL_3_0_OR_LATER = "GPL-3.0-or-later"
 SPDX_GPL_2_0 = "GPL-2.0"
@@ -421,17 +406,10 @@ EXPLOIT_MATURITY_BOOST: Dict[str, float] = {
 # Used to prevent memory issues with large datasets
 ANALYTICS_MAX_QUERY_LIMIT: int = 100000
 
-# NOTE: the /impact and /hotspots $group stages do NOT cap their per-group
-# arrays with a post-$group $slice. A $slice after $group can't shrink an
-# accumulator Mongo has already materialized, and capping enrichment-input
-# arrays in MATCH order would silently drop high-EPSS/KEV CVEs and change the
-# enrichment output. Those pipelines instead keep the mongod working set small
-# by (1) $project-slimming the per-finding $details blob to only the
-# fix-version fields BEFORE the $group, (2) replacing raw severity arrays with
-# scalar $sum/$cond counts, (3) accumulating CVE/finding ids and slimmed
-# details with $addToSet so they collapse to the DISTINCT set per
-# (component, version), and (4) allowDiskUse=True for spill. See
-# app/api/v1/endpoints/analytics/risk.py.
+# The /impact and /hotspots $group stages must not cap per-group arrays with a
+# post-$group $slice: it can't shrink a materialized accumulator, and capping in
+# MATCH order would drop high-EPSS/KEV CVEs. They keep the working set small via
+# pre-$group $project slimming, scalar $sum/$cond counts, $addToSet, and allowDiskUse.
 
 # Permission required to query analytics at global scope (all projects)
 PERMISSION_ANALYTICS_GLOBAL: str = "analytics:global"
@@ -624,7 +602,6 @@ NAME_TO_EOL_MAPPING: Dict[str, str] = {
 }
 
 # Severity aliases for normalizing different scanner output formats
-# Used by safe_severity() in normalizers/utils.py
 SEVERITY_ALIASES: Dict[str, str] = {
     "MODERATE": "MEDIUM",
     "WARNING": "MEDIUM",
@@ -697,9 +674,6 @@ SMTP_TIMEOUT_SECONDS: int = 60
 # Slack token expiry buffer in seconds (refresh 5 minutes before expiry)
 SLACK_TOKEN_EXPIRY_BUFFER_SECONDS: int = 300
 
-# HTTP timeout for notification providers is now in settings.py
-# Use settings.NOTIFICATION_HTTP_TIMEOUT_SECONDS
-
 # Groups of packages that often provide similar/duplicate functionality
 SIMILAR_PACKAGE_GROUPS: List[Dict[str, Any]] = [
     {
@@ -763,7 +737,6 @@ TOTP_VALID_WINDOW: int = 1  # Accept codes from 1 interval before/after current
 OIDC_HTTP_TIMEOUT_SECONDS: float = 30.0
 
 # Webhook configuration
-# WEBHOOK_TIMEOUT_SECONDS and WEBHOOK_MAX_RETRIES are now in settings.py
 WEBHOOK_LIST_LIMIT: int = 100
 WEBHOOK_BACKOFF_BASE: int = 2  # Exponential backoff base (2^n seconds)
 
@@ -778,10 +751,8 @@ WEBHOOK_EVENT_LICENSE_POLICY_CHANGED = "license_policy.changed"
 WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED = "compliance_report.generated"
 WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED = "pqc_migration_plan.generated"
 
-# Backward-compat aliases: old snake_case event names -> new dot-notation names.
-# Existing webhook subscriptions in MongoDB may still store the old names in
-# their `events` field; the dispatcher and validation layer treat both forms as
-# equivalent so we do not require a DB migration.
+# snake_case event names still stored by existing webhook subscriptions in MongoDB;
+# the dispatcher and validation treat both forms as equivalent (no DB migration needed).
 WEBHOOK_EVENT_ALIASES: dict[str, str] = {
     "scan_completed": WEBHOOK_EVENT_SCAN_COMPLETED,
     "vulnerability_found": WEBHOOK_EVENT_VULNERABILITY_FOUND,
@@ -800,13 +771,8 @@ WEBHOOK_VALID_EVENTS = [
     WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED,
 ]
 
-# Validation accepts both canonical dot-notation and legacy snake_case names
-# (for backward-compatibility with existing webhook subscriptions). The
-# matcher normalizes both sides when dispatching events.
+# Accepts both canonical dot-notation and snake_case names; the matcher normalizes both.
 WEBHOOK_ACCEPTED_EVENT_NAMES = [*WEBHOOK_VALID_EVENTS, *WEBHOOK_EVENT_ALIASES.keys()]
-
-# Webhook permissions - Use Permissions class from app.core.permissions instead
-# from app.core.permissions import Permissions (Permissions.WEBHOOK_CREATE, etc.)
 
 # Webhook HTTP headers
 WEBHOOK_HEADER_CONTENT_TYPE = "Content-Type"
@@ -943,13 +909,9 @@ CVSS_SEVERITY_SCORES: Dict[str, float] = {
     "UNKNOWN": 0.0,
 }
 
-# Per-severity fallback risk score (0-100) for findings WITHOUT EPSS/KEV
-# enrichment. Derived from the SAME CVSS contribution that
-# ``calculate_risk_score`` uses — ``(representative_cvss / 10) * 40`` — so that
-# enriched (details.risk_score) and non-enriched (fallback) findings are on one
-# comparable 0-100 scale. This deliberately is NOT a severity-dominant scale
-# (e.g. CRITICAL=90); keeping it at the composite's CVSS anchor prevents
-# non-enriched findings from outranking enriched ones.
+# Per-severity fallback risk score (0-100) for findings without EPSS/KEV enrichment.
+# Uses the same CVSS contribution as calculate_risk_score ((cvss/10)*40) so enriched
+# and non-enriched findings share one comparable scale and neither outranks the other.
 SEVERITY_CALCULATED_RISK_SCORES: Dict[str, float] = {
     sev: round((cvss / 10.0) * 40.0, 1) for sev, cvss in CVSS_SEVERITY_SCORES.items()
 }

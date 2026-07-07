@@ -1,9 +1,4 @@
-"""
-CryptoAsset MongoDB model.
-
-Stored in collection `crypto_assets`. One document per detected cryptographic
-component (algorithm, certificate, protocol, related-crypto-material) per scan.
-"""
+"""CryptoAsset model (collection `crypto_assets`): one document per detected cryptographic component per scan."""
 
 from datetime import datetime, timezone
 from typing import Dict, List, Optional

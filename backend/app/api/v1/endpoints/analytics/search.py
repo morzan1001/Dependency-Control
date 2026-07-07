@@ -141,7 +141,7 @@ async def search_dependencies_advanced(
         "name": "name",
         "version": "version",
         "type": "type",
-        "project_name": "project_id",  # close enough — sorts by project_id, not name.
+        "project_name": "project_id",  # sorts by project_id, not name
         "license": "license",
         "direct": "direct",
     }
@@ -199,8 +199,7 @@ def _get_description(vuln: dict, finding: Any) -> str | None:
 
 
 def _aggregate_kev_status(details: Dict[str, Any], nested_vulns: List[Dict[str, Any]]) -> tuple[bool, bool, Any]:
-    """Return (in_kev_status, kev_ransomware, kev_due_date) merged from finding details
-    and nested vulnerabilities."""
+    """Return (in_kev_status, kev_ransomware, kev_due_date) merged across nested vulns."""
     in_kev_status = details.get(DETAILS_KEY_IN_KEV, False)
     kev_ransomware = details.get(DETAILS_KEY_KEV_RANSOMWARE, False)
     kev_due_date = details.get("kev_due_date")
@@ -399,10 +398,7 @@ async def search_vulnerabilities(
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> VulnerabilitySearchResponse:
-    """Search for vulnerabilities/CVEs across accessible projects.
-
-    Searches finding id, aliases, nested vulnerability ids, and description text.
-    """
+    """Search vulnerabilities across accessible projects by id, aliases, nested ids, and description."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
     accessible_project_ids = await get_user_project_ids(current_user, db)

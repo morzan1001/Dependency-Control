@@ -8,14 +8,7 @@ from app.models.types import MongoDocument
 
 
 class GitHubInstance(MongoDocument, CreatedAtModel):
-    """
-    Represents a configured GitHub instance (github.com or GitHub Enterprise Server).
-
-    Each instance has its own:
-    - OIDC issuer URL for token validation
-    - Configuration flags (auto-create)
-    - Unique identifier for project references
-    """
+    """A configured GitHub instance (github.com or GitHub Enterprise Server)."""
 
     # Identity
     name: str = Field(..., description="Human-readable name (e.g. 'GitHub.com', 'GitHub Enterprise')")
@@ -28,11 +21,8 @@ class GitHubInstance(MongoDocument, CreatedAtModel):
     is_active: bool = Field(True, description="Whether this instance is currently active")
 
     # Authentication
-    # SECURITY (Finding 7 / W1.1): oidc_audience is effectively REQUIRED. The
-    # create/update API schemas reject empty/missing values (422), and OIDC
-    # token validation fails closed when it is unset (403 on ingest). The stored
-    # field stays Optional ONLY so legacy DB documents written before this change
-    # still hydrate (and remain visible/fixable) rather than crashing on read.
+    # oidc_audience is effectively required (enforced by API schemas and fail-closed
+    # OIDC validation); stored Optional only so legacy documents still hydrate.
     oidc_audience: Optional[str] = Field(None, description="Expected 'aud' claim for OIDC tokens from this instance")
     access_token: Optional[str] = Field(
         None,

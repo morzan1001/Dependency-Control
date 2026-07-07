@@ -8,15 +8,7 @@ from app.models.types import MongoDocument
 
 
 class GitLabInstance(MongoDocument, CreatedAtModel):
-    """
-    Represents a configured GitLab instance.
-
-    Each instance has its own:
-    - URL and OIDC issuer
-    - Access token for API operations
-    - Configuration flags (auto-create, team sync)
-    - Unique identifier for project references
-    """
+    """A configured GitLab instance."""
 
     # Identity
     name: str = Field(..., description="Human-readable name (e.g. 'GitLab.com', 'Internal GitLab')")
@@ -31,11 +23,8 @@ class GitLabInstance(MongoDocument, CreatedAtModel):
         exclude=True,  # Never expose in API responses
         description="Personal or Group Access Token with 'api' scope for GitLab API operations",
     )
-    # SECURITY (Finding 7 / W1.1): oidc_audience is effectively REQUIRED. The
-    # create/update API schemas reject empty/missing values (422), and OIDC
-    # token validation fails closed when it is unset (403 on ingest). The stored
-    # field stays Optional ONLY so legacy DB documents written before this change
-    # still hydrate (and remain visible/fixable) rather than crashing on read.
+    # oidc_audience is effectively required (enforced by API schemas and fail-closed
+    # OIDC validation); stored Optional only so legacy documents still hydrate.
     oidc_audience: Optional[str] = Field(None, description="Expected 'aud' claim for OIDC tokens from this instance")
 
     # Features

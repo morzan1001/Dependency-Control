@@ -7,15 +7,7 @@ from app.models.types import MongoDocument
 
 
 class Dependency(MongoDocument):
-    """
-    Represents a flattened dependency for efficient searching and analytics.
-    This is a 'derived' record from the raw SBOM.
-
-    Supports data from:
-    - CycloneDX (1.4, 1.5, 1.6)
-    - SPDX (2.2, 2.3)
-    - Syft JSON (native format)
-    """
+    """Flattened dependency derived from the raw SBOM (CycloneDX, SPDX, Syft JSON) for search and analytics."""
 
     project_id: str = Field(..., description="Reference to the project")
     scan_id: str = Field(..., description="Reference to the scan where this was found")

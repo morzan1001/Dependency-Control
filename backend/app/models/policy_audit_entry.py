@@ -1,8 +1,4 @@
-"""
-PolicyAuditEntry — persisted audit entry for crypto-policy changes.
-One document per save (including SEED), keyed on (policy_scope, project_id,
-version). Snapshot is the full post-change CryptoPolicy dump.
-"""
+"""Persisted audit entry for policy changes; one document per save keyed on (policy_scope, project_id, version)."""
 
 from datetime import datetime, timezone
 from typing import Any, Dict, Literal, Optional

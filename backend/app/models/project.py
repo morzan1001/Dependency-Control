@@ -35,8 +35,8 @@ class Project(MongoDocument, CreatedAtModel):
     name: str
     owner_id: Optional[str] = None  # Deprecated: use team/member admins instead
     team_id: Optional[str] = None
-    # Provenance of how team_id was last set (Finding 18). "manual" assignments are
-    # never reverted by GitLab sync; "gitlab"/None may be overwritten by sync.
+    # "manual" team_id assignments are never reverted by GitLab sync;
+    # "gitlab"/None may be overwritten by sync.
     team_source: Optional[Literal["gitlab", "manual"]] = None
     members: List[ProjectMember] = Field(default_factory=list)
     api_key_hash: Optional[str] = Field(None, exclude=True)
@@ -72,7 +72,7 @@ class Project(MongoDocument, CreatedAtModel):
         None, description="GitHub repository path (owner/repo). For display purposes."
     )
 
-    # License Policy (deprecated — use analyzer_settings["license_compliance"] instead, kept for backward compat)
+    # Deprecated: use analyzer_settings["license_compliance"] instead.
     license_policy: Optional[Dict[str, Any]] = Field(
         None,
         description="License compliance policy. Controls severity of copyleft findings based on project context.",
@@ -135,10 +135,7 @@ class Scan(MongoDocument, CreatedAtModel):
     reachability_pending: Optional[bool] = None
     reachability_pending_since: Optional[datetime] = None
 
-    # Housekeeping protection: pinned scans are exempt from retention cleanup
-    # (housekeeping filters on "pinned": {"$ne": True}) and are set by the scan
-    # pin endpoints and archive restore. Must be part of the model so scan API
-    # responses carry the flag through to the UI.
+    # Pinned scans are exempt from retention cleanup (housekeeping filters "pinned": {"$ne": True}).
     pinned: bool = False
 
     # Re-scan metadata

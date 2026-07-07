@@ -1,9 +1,4 @@
-"""
-Callgraph Helper Functions
-
-Helper functions for callgraph endpoints, extracted for better
-code organization and reusability.
-"""
+"""Helper functions for callgraph endpoints."""
 
 from typing import Any, Dict, List
 
@@ -34,20 +29,10 @@ async def check_callgraph_access(
     db: AsyncIOMotorDatabase,
     require_write: bool = False,
 ) -> Dict[str, Any]:
-    """
-    Verify user has access to the project's callgraph.
+    """Verify user has access to the project's callgraph and return the project document.
 
-    Args:
-        project_id: The project ID
-        user: The current user
-        db: Database connection
-        require_write: If True, require write permission (for upload/delete)
-
-    Returns:
-        The project document if access is granted
-
-    Raises:
-        HTTPException: 404 if project not found, 403 if access denied
+    require_write=True demands write permission (for upload/delete).
+    Raises 404 if the project is not found, 403 if access is denied.
     """
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
@@ -58,18 +43,15 @@ async def check_callgraph_access(
 
     user_id = str(user.id)
 
-    # Check global permissions
     if _has_global_permission(user, require_write):
         return project
 
-    # Check team membership
     team_id = project.get("team_id")
     if team_id:
         team = await team_repo.get_raw_by_id(team_id)
         if team and _is_member(team.get("members", []), user_id):
             return project
 
-    # Check direct project membership
     if _is_member(project.get("members", []), user_id):
         return project
 
@@ -77,30 +59,23 @@ async def check_callgraph_access(
 
 
 def normalize_module_name(module: str, _language: str) -> str:
-    """
-    Normalize a module/package name for consistent matching.
+    """Normalize a module/package name for consistent matching.
 
-    Examples:
-    - "./utils" -> relative path (keep as-is for now)
-    - "lodash" -> "lodash"
-    - "@org/pkg" -> "@org/pkg"
-    - "lodash/get" -> "lodash"
+    Relative paths are kept as-is; scoped packages keep ``@org/pkg``; regular
+    packages are reduced to their base name (``lodash/get`` -> ``lodash``).
     """
     if not module:
         return module
 
-    # Remove relative path prefixes for external module detection
     if module.startswith("./") or module.startswith("../"):
-        return module  # Keep relative paths as-is
+        return module
 
-    # For scoped packages (@org/pkg), keep full name
     if module.startswith("@"):
         parts = module.split("/")
         if len(parts) >= 2:
             return f"{parts[0]}/{parts[1]}"
         return module
 
-    # For regular packages, extract base package name
     if "/" in module:
         return module.split("/")[0]
 
@@ -128,15 +103,7 @@ def _get_or_create_module_usage(module_usage: Dict[str, ModuleUsage], base_modul
 def parse_madge_format(
     data: Dict[str, Any], language: str
 ) -> tuple[List[ImportEntry], List[CallEdge], Dict[str, ModuleUsage]]:
-    """
-    Parse madge JSON output format.
-
-    Madge format:
-    {
-        "src/index.js": ["./utils", "lodash", "axios"],
-        "src/utils.js": ["lodash/get", "./helpers"]
-    }
-    """
+    """Parse madge JSON output ({file: [dependencies]}); returns no call edges."""
     imports = []
     module_usage: Dict[str, ModuleUsage] = {}
 
@@ -148,18 +115,16 @@ def parse_madge_format(
             if not isinstance(dep, str):
                 continue
 
-            # Create import entry
             imports.append(
                 ImportEntry(
                     module=dep,
                     file=file_path,
-                    line=0,  # Madge doesn't provide line numbers
+                    line=0,  # madge provides no line numbers
                     imported_symbols=[],
                     is_dynamic=False,
                 )
             )
 
-            # Aggregate module usage (only for external modules)
             if _is_external_module(dep):
                 base_module = normalize_module_name(dep, language)
                 usage = _get_or_create_module_usage(module_usage, base_module)
@@ -167,7 +132,6 @@ def parse_madge_format(
                 if file_path not in usage.import_locations:
                     usage.import_locations.append(file_path)
 
-    # Madge doesn't provide call edges, only imports
     return imports, [], module_usage
 
 
@@ -202,7 +166,6 @@ def _track_module_import(
     file_path = source_info.get("file", "")
     import_key = (module, file_path)
 
-    # Create import entry if not already seen
     if import_key not in seen_imports:
         seen_imports.add(import_key)
         imports.append(
@@ -215,14 +178,12 @@ def _track_module_import(
             )
         )
 
-        # Update module usage
         base_module = normalize_module_name(module, language)
         usage = _get_or_create_module_usage(module_usage, base_module)
         usage.import_count += 1
         if file_path and file_path not in usage.import_locations:
             usage.import_locations.append(file_path)
 
-    # Always track the symbol
     base_module = normalize_module_name(module, language)
     if base_module in module_usage and symbol not in module_usage[base_module].used_symbols:
         module_usage[base_module].used_symbols.append(symbol)
@@ -231,15 +192,7 @@ def _track_module_import(
 def parse_pyan_format(
     data: Dict[str, Any], language: str
 ) -> tuple[List[ImportEntry], List[CallEdge], Dict[str, ModuleUsage]]:
-    """
-    Parse pyan JSON output format.
-
-    Pyan format:
-    {
-        "nodes": [{"name": "module.func", "type": "function", "file": "...", "line": 10}],
-        "edges": [{"source": "module.func", "target": "other.func", "type": "calls|uses"}]
-    }
-    """
+    """Parse pyan JSON output (nodes + calls/uses edges)."""
     imports: List[ImportEntry] = []
     calls: List[CallEdge] = []
     module_usage: Dict[str, ModuleUsage] = {}
@@ -247,7 +200,6 @@ def parse_pyan_format(
     nodes = data.get("nodes", [])
     edges = data.get("edges", [])
 
-    # Build node lookup
     node_info: Dict[str, Dict[str, Any]] = {}
     for node in nodes:
         name = node.get("name", "")
@@ -257,10 +209,8 @@ def parse_pyan_format(
             "type": node.get("type", ""),
         }
 
-    # Track seen imports to avoid duplicates
     seen_imports: set[tuple[str, str]] = set()
 
-    # Process edges
     for edge in edges:
         source = edge.get("source", "")
         target = edge.get("target", "")
@@ -288,14 +238,11 @@ def parse_pyan_format(
 def parse_generic_format(
     data: Dict[str, Any], language: str
 ) -> tuple[List[ImportEntry], List[CallEdge], Dict[str, ModuleUsage]]:
-    """
-    Parse generic callgraph format.
-    """
+    """Parse the generic callgraph format."""
     imports = []
     calls = []
     module_usage: Dict[str, ModuleUsage] = {}
 
-    # Parse imports
     for imp in data.get("imports", []):
         imports.append(
             ImportEntry(
@@ -307,7 +254,6 @@ def parse_generic_format(
             )
         )
 
-        # Aggregate
         module = imp.get("module", "")
         if module and not module.startswith("./") and not module.startswith("../"):
             base_module = normalize_module_name(module, language)
@@ -327,7 +273,6 @@ def parse_generic_format(
                 if sym not in module_usage[base_module].used_symbols:
                     module_usage[base_module].used_symbols.append(sym)
 
-    # Parse calls
     for call in data.get("calls", []):
         calls.append(
             CallEdge(
@@ -339,7 +284,6 @@ def parse_generic_format(
             )
         )
 
-        # Aggregate
         module = call.get("callee_module", "")
         if module:
             base_module = normalize_module_name(module, language)
@@ -361,21 +305,16 @@ def parse_generic_format(
 
 def detect_format(data: Dict[str, Any]) -> str:
     """Auto-detect callgraph format from data structure."""
-
-    # Check for pyan/go-callvis format (has nodes and edges)
     if "nodes" in data and "edges" in data:
-        # Check if it's pyan or go-callvis
         nodes = data.get("nodes", [])
         if nodes and isinstance(nodes[0], dict):
             if "package" in nodes[0]:
                 return "go-callvis"
             return "pyan"
 
-    # Check for generic format
     if "imports" in data or "calls" in data:
         return "generic"
 
-    # Check for madge format (dict of file -> dependencies)
     if all(isinstance(v, list) for v in data.values() if v):
         return "madge"
 

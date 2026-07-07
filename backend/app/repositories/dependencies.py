@@ -26,8 +26,7 @@ class DependencyRepository(BaseRepository[Dependency]):
         query: Optional[Dict[str, Any]] = None,
         projection: Optional[Dict[str, int]] = None,
     ) -> List[Dict[str, Any]]:
-        """Returns raw dicts. Use iterate() for large result sets to avoid loading
-        everything into memory at once."""
+        """Returns raw dicts unbounded; use iterate() for large result sets."""
         cursor = self.collection.find(query or {}, projection)
         return await cursor.to_list(None)
 

@@ -1,9 +1,4 @@
-"""
-Pydantic models for GitLab API responses and OIDC token payloads.
-
-These models represent data returned by the GitLab REST API and OIDC tokens.
-All use extra="ignore" to silently discard fields we don't use.
-"""
+"""Pydantic models for GitLab API responses and OIDC token payloads (extra="ignore" discards unused fields)."""
 
 from typing import Optional
 

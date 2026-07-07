@@ -30,7 +30,7 @@ class FindingType(str, Enum):
     CRYPTO_WEAK_ALGORITHM = "crypto_weak_algorithm"
     CRYPTO_WEAK_KEY = "crypto_weak_key"
     CRYPTO_QUANTUM_VULNERABLE = "crypto_quantum_vulnerable"
-    # Phase 2: Certificate lifecycle findings
+    # Certificate lifecycle findings
     CRYPTO_CERT_EXPIRED = "crypto_cert_expired"
     CRYPTO_CERT_EXPIRING_SOON = "crypto_cert_expiring_soon"
     CRYPTO_CERT_NOT_YET_VALID = "crypto_cert_not_yet_valid"
@@ -38,9 +38,9 @@ class FindingType(str, Enum):
     CRYPTO_CERT_WEAK_KEY = "crypto_cert_weak_key"
     CRYPTO_CERT_SELF_SIGNED = "crypto_cert_self_signed"
     CRYPTO_CERT_VALIDITY_TOO_LONG = "crypto_cert_validity_too_long"
-    # Phase 2: Protocol weakness
+    # Protocol weakness
     CRYPTO_WEAK_PROTOCOL = "crypto_weak_protocol"
-    # Phase 3: Key management hygiene (crypto-misuse SAST rules)
+    # Key management hygiene (crypto-misuse SAST rules)
     CRYPTO_KEY_MANAGEMENT = "crypto_key_management"
     OTHER = "other"
 

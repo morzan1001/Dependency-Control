@@ -61,9 +61,7 @@ class BaseRepository[T: BaseModel]:
         sort_order: int = 1,
         projection: Optional[Dict[str, int]] = None,
     ) -> List[T]:
-        # Defensive floor: pymongo .limit(0) means "no limit" (unbounded load).
-        # Callers coming through the API already have ge=1 enforced; this guard
-        # protects any direct repo call that might slip through with limit<=0.
+        # pymongo .limit(0) means unbounded; floor to 1 to avoid loading the whole collection.
         safe_limit = max(limit, 1)
         with track_db_operation(self.collection_name, "find"):
             cursor = self.collection.find(query, projection)
@@ -136,7 +134,6 @@ class BaseRepository[T: BaseModel]:
         return await self.get_by_id(id)
 
     async def update_raw(self, id: str, update_ops: Dict[str, Any]) -> None:
-        """Update a document with raw MongoDB operators (e.g., $set, $push)."""
         with track_db_operation(self.collection_name, "update_one"):
             await self.collection.update_one({"_id": id}, update_ops)
 
@@ -165,13 +162,7 @@ class BaseRepository[T: BaseModel]:
         limit: Optional[int] = None,
         allow_disk_use: bool = False,
     ) -> List[Dict[str, Any]]:
-        """Run an aggregation pipeline. Prefer ``$limit`` inside the pipeline over `limit`.
-
-        ``allow_disk_use=True`` lets mongod spill large ``$group``/``$sort``
-        working sets to disk instead of failing the 100MB in-memory limit. Keep
-        it ``False`` by default; only enable it for multi-scan analytics
-        aggregations whose group cardinality is genuinely unbounded.
-        """
+        """allow_disk_use lets mongod spill large $group/$sort sets to disk past the 100MB limit."""
         with track_db_operation(self.collection_name, "aggregate"):
             cursor = (
                 self.collection.aggregate(pipeline, allowDiskUse=True)

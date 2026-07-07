@@ -1,6 +1,4 @@
-"""
-CryptoAssetRepository — MongoDB access for the `crypto_assets` collection.
-"""
+"""MongoDB access for the crypto_assets collection."""
 
 from typing import Any, Dict, List, Optional
 
