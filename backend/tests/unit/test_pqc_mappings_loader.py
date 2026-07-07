@@ -34,6 +34,19 @@ def test_family_alias_normalises():
     assert normalise_family("Kyber", m) == "Kyber"
 
 
+def test_family_alias_normalises_case_insensitively():
+    """CBOM tools emit inconsistent casing for the same family. Alias
+    resolution must be case-insensitive like the canonical fallback, or a
+    quantum-vulnerable asset (e.g. ``diffie-hellman``) silently misses the
+    alias, misses the canonical set (DH != DIFFIE-HELLMAN), and is dropped
+    from the migration plan by ``generator._filter_vulnerable``."""
+    m = load_mappings()
+    assert normalise_family("diffie-hellman", m) == "DH"
+    assert normalise_family("DIFFIE-HELLMAN", m) == "DH"
+    assert normalise_family("EC-dsa", m) == "ECDSA"
+    assert normalise_family("ECDSA", m) == "ECDSA"
+
+
 def test_clear_mappings_cache_forces_reload():
     """``load_mappings`` is ``@lru_cache(maxsize=1)``. Without an explicit
     cache-clear, tests that patch the YAML or _MAPPINGS_PATH would keep

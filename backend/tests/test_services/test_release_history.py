@@ -251,8 +251,8 @@ class TestAggregateUpstreamMetrics:
         import asyncio
 
         result = asyncio.run(fetcher.fetch([("pypi", "pkg-a")]))
-        assert "pkg-a" in result
-        assert len(result["pkg-a"]) == 1
+        assert ("pypi", "pkg-a") in result
+        assert len(result[("pypi", "pkg-a")]) == 1
         assert cache_hits  # cache was consulted
 
     def test_adoption_latency_uses_observation_input(self):
@@ -302,8 +302,8 @@ class TestDepsDevFetcherIntegration:
         fetcher = DepsDevReleaseHistoryFetcher(cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch)
         result = asyncio.run(fetcher.fetch([("pypi", "pkg-a")]))
 
-        assert len(result["pkg-a"]) == 2
-        assert {r.version for r in result["pkg-a"]} == {"1.0.0", "1.1.0"}
+        assert len(result[("pypi", "pkg-a")]) == 2
+        assert {r.version for r in result[("pypi", "pkg-a")]} == {"1.0.0", "1.1.0"}
         assert len(fetched_urls) == 1
         assert "pkg-a" in fetched_urls[0]
         assert "releases:pypi:pkg-a" in cache_writes
@@ -329,9 +329,9 @@ class TestDepsDevFetcherIntegration:
         result = asyncio.run(fetcher.fetch([("pypi", "pkg-broken")]))
         # No history surfaces for the failed package; the orchestrator will
         # treat it as "no upstream data" rather than crash.
-        assert "pkg-broken" not in result
+        assert ("pypi", "pkg-broken") not in result
 
-    def test_multi_package_fetch_keys_results_by_package_name(self):
+    def test_multi_package_fetch_keys_results_by_system_and_name(self):
         import asyncio
         from app.services.release_history import DepsDevReleaseHistoryFetcher
 
@@ -356,9 +356,9 @@ class TestDepsDevFetcherIntegration:
 
         fetcher = DepsDevReleaseHistoryFetcher(cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch)
         result = asyncio.run(fetcher.fetch([("pypi", "first"), ("pypi", "second")]))
-        assert "first" in result and "second" in result
-        assert {r.version for r in result["first"]} == {"1.0"}
-        assert {r.version for r in result["second"]} == {"2.0"}
+        assert ("pypi", "first") in result and ("pypi", "second") in result
+        assert {r.version for r in result[("pypi", "first")]} == {"1.0"}
+        assert {r.version for r in result[("pypi", "second")]} == {"2.0"}
         assert len(urls_seen) == 2
 
     def test_cache_hit_skips_http(self):
@@ -378,5 +378,85 @@ class TestDepsDevFetcherIntegration:
 
         fetcher = DepsDevReleaseHistoryFetcher(cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch)
         result = asyncio.run(fetcher.fetch([("pypi", "warm")]))
-        assert len(result["warm"]) == 1
-        assert result["warm"][0].version == "5.0.0"
+        assert len(result[("pypi", "warm")]) == 1
+        assert result[("pypi", "warm")][0].version == "5.0.0"
+
+
+class TestEcosystemKeyingNoConflation:
+    """Regression tests for finding #1: history/observations were keyed by the
+    bare package name, so a package named "foo" in two ecosystems (e.g. npm and
+    PyPI) collided — one ecosystem's history silently overwrote the other, and
+    adoption-latency matching conflated their versions. Keying by ``(system,
+    name)`` fixes both."""
+
+    def test_fetch_keeps_same_name_across_ecosystems_separate(self):
+        # Two packages share the bare name "foo" but live in different
+        # ecosystems. Pre-fix, the name-keyed result dict dropped one of them.
+        import asyncio
+        from app.services.release_history import DepsDevReleaseHistoryFetcher
+
+        async def cache_get(_key):  # noqa: ANN001
+            return None
+
+        async def cache_set(*_a, **_k):  # noqa: ANN001
+            return None
+
+        async def http_fetch(url):  # noqa: ANN001
+            # deps.dev URL embeds the system, so key the payload off it.
+            if "/npm/" in url:
+                return {"versions": [{"versionKey": {"version": "9.9.9"}, "publishedAt": "2024-01-01T00:00:00Z"}]}
+            return {"versions": [{"versionKey": {"version": "1.0.0"}, "publishedAt": "2024-02-01T00:00:00Z"}]}
+
+        fetcher = DepsDevReleaseHistoryFetcher(cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch)
+        result = asyncio.run(fetcher.fetch([("npm", "foo"), ("pypi", "foo")]))
+
+        # Both ecosystems survive as distinct entries.
+        assert ("npm", "foo") in result
+        assert ("pypi", "foo") in result
+        assert {r.version for r in result[("npm", "foo")]} == {"9.9.9"}
+        assert {r.version for r in result[("pypi", "foo")]} == {"1.0.0"}
+
+    def test_aggregate_counts_both_ecosystems_of_same_name(self):
+        # Cadence aggregation iterates history values; with (system, name) keys
+        # both same-named packages contribute instead of one clobbering the other.
+        history = {
+            ("npm", "foo"): [_ri(days_ago=30), _ri(days_ago=10)],
+            ("pypi", "foo"): [_ri(days_ago=200)],
+        }
+        result = aggregate_upstream_metrics(history, observations=[], ref=_REF)
+        # npm foo: 2 releases in last year; pypi foo: 1. Median across both = 1.5.
+        assert result.upstream_releases_last_12m_median is not None
+        assert abs(result.upstream_releases_last_12m_median - 1.5) < 0.01
+
+    def test_adoption_latency_disambiguates_by_system(self):
+        # Same name+version in two ecosystems, published on different dates.
+        # A system-aware (4-tuple) observation must match the RIGHT ecosystem.
+        history = {
+            ("npm", "foo"): [ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=50))],
+            ("pypi", "foo"): [ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=10))],
+        }
+        observations = [
+            ("npm", "foo", "1.0.0", _REF),   # latency vs npm publish = 50
+            ("pypi", "foo", "1.0.0", _REF),  # latency vs pypi publish = 10
+        ]
+        latencies = compute_adoption_latencies(history, observations)
+        assert sorted(latencies) == [10, 50]
+
+    def test_name_only_history_and_observations_still_work(self):
+        # Backward compatibility: legacy name-keyed history + 3-tuple
+        # observations (what the update_frequency caller passes today) must keep
+        # working unchanged, so no cross-file integration break is introduced.
+        history = {
+            "pkg-a": [ReleaseInfo(version="1.1.0", published_at=_REF - timedelta(days=30))],
+        }
+        observations = [("pkg-a", "1.1.0", _REF - timedelta(days=5))]
+        assert compute_adoption_latencies(history, observations) == [25]
+
+    def test_system_observation_falls_back_to_name_keyed_history(self):
+        # A system-aware observation against legacy name-keyed history (no
+        # system) still matches via the name+version fallback.
+        history = {
+            "pkg-a": [ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=40))],
+        }
+        observations = [("pypi", "pkg-a", "1.0.0", _REF - timedelta(days=10))]
+        assert compute_adoption_latencies(history, observations) == [30]

@@ -370,14 +370,15 @@ export default function Broadcasts() {
                         </div>
                         <div className="w-32 space-y-2">
                             <Label className="text-xs">Type (Optional)</Label>
-                            <Select 
-                                value={pkg.type || ""} 
-                                onValueChange={(val) => updatePackage(index, 'type', val)}
+                            <Select
+                                value={pkg.type || "any"}
+                                onValueChange={(val) => updatePackage(index, 'type', val === "any" ? "" : val)}
                             >
                                 <SelectTrigger>
                                     <SelectValue placeholder="Any" />
                                 </SelectTrigger>
                                 <SelectContent>
+                                    <SelectItem value="any">Any</SelectItem>
                                     <SelectItem value="maven">Maven</SelectItem>
                                     <SelectItem value="npm">NPM</SelectItem>
                                     <SelectItem value="pip">Pip</SelectItem>

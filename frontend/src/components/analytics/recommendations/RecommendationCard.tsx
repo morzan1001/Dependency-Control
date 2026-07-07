@@ -646,8 +646,9 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
               </div>
             )}
 
-            {/* CVEs */}
-            {recommendation.action.cves && recommendation.action.cves.length > 0 && (
+            {/* CVEs (skip when the action type already renders its own CVE list) */}
+            {!['address_recurring', 'fix_cross_project_vuln'].includes(recommendation.action.type) &&
+              recommendation.action.cves && recommendation.action.cves.length > 0 && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium">Related Vulnerabilities</h5>
                 <div className="flex flex-wrap gap-1">

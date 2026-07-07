@@ -18,6 +18,25 @@ def test_identity_with_namespace():
     )
 
 
+def test_identity_unencoded_npm_scope_does_not_collapse():
+    # SBOM generators that emit the scope '@' unencoded must not collapse every
+    # scoped package to the same identity by splitting on the first '@'.
+    core = component_identity_key({"purl": "pkg:npm/@angular/core@1.2.3"})
+    router = component_identity_key({"purl": "pkg:npm/@angular/router@1.2.3"})
+    assert core == ("npm:@angular", "core")
+    assert router == ("npm:@angular", "router")
+    assert core != router
+
+
+def test_identity_unencoded_npm_scope_without_version():
+    # No version present: the only '@' is the scope, which must be preserved.
+    assert component_identity_key({"purl": "pkg:npm/@angular/core"}) == ("npm:@angular", "core")
+
+
+def test_identity_strips_qualifiers_and_subpath():
+    assert component_identity_key({"purl": "pkg:npm/react@17.0.2?foo=bar#sub"}) == ("npm", "react")
+
+
 def test_identity_without_purl_uses_name_and_type():
     assert component_identity_key({"name": "react", "type": "npm"}) == ("npm", "react")
 

@@ -68,8 +68,34 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
     }
   };
 
-  const scanList = scans || []
+  const scanList = useMemo(() => scans || [], [scans])
   const hasMore = scanList.length === limit
+
+  // Compute the Delta comparison partner for each scan explicitly: the
+  // chronologically previous *completed* scan of the SAME branch. The previous
+  // approach paired adjacent rows of the current sort order, which compared
+  // unrelated scans whenever the table was sorted by branch/status/findings, or
+  // whenever multiple branches were interleaved under the default sort.
+  const deltaPartners = useMemo(() => {
+    const partners = new Map<string, Scan>()
+    const byBranch = new Map<string, Scan[]>()
+    for (const scan of scanList) {
+      const group = byBranch.get(scan.branch)
+      if (group) group.push(scan)
+      else byBranch.set(scan.branch, [scan])
+    }
+    for (const group of byBranch.values()) {
+      const chronological = [...group].sort(
+        (a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime()
+      )
+      let prevCompleted: Scan | undefined
+      for (const scan of chronological) {
+        if (prevCompleted) partners.set(scan.id, prevCompleted)
+        if (getEffectiveScanData(scan).status === 'completed') prevCompleted = scan
+      }
+    }
+    return partners
+  }, [scanList])
 
   return (
     <Card>
@@ -167,8 +193,8 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                       <TableCell />
                   </TableRow>
               ))}
-              {!isLoading && scanList.map((scan, idx) => {
-                const prevScan = sortOrder === "desc" ? scanList[idx + 1] : scanList[idx - 1];
+              {!isLoading && scanList.map((scan) => {
+                const prevScan = deltaPartners.get(scan.id);
                 return (
                 <TableRow
                   key={scan.id}

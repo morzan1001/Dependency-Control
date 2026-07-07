@@ -1,6 +1,6 @@
 import { User, UserUpdate } from '@/types/user';
 import { getErrorMessage } from '@/lib/utils';
-import { useProjects } from '@/hooks/queries/use-projects';
+import { useProjectsDropdown } from '@/hooks/queries/use-projects';
 import { useTeams } from '@/hooks/queries/use-teams';
 import {
   useUpdateUser,
@@ -65,7 +65,9 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
   const [resetLink, setResetLink] = useState<string | null>(null);
 
-  const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useProjects('', 1, 100);
+  // Fetch every project (paging past the first page) so a user's membership
+  // is not silently truncated to the first 100 projects in large orgs.
+  const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useProjectsDropdown();
 
   const projects = projectsData?.items || [];
 

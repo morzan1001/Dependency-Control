@@ -6,14 +6,27 @@ GitHubService and GitLabService to avoid code duplication.
 """
 
 import logging
+import time
 from typing import Any, Callable, Awaitable, Dict, Optional, Type, TypeVar
 
 from jose import jwt
 from pydantic import BaseModel
 
+from app.core.cache import cache_service
+
 T = TypeVar("T", bound=BaseModel)
 
 logger = logging.getLogger(__name__)
+
+# Cooldown (seconds) between *forced* JWKS cache invalidations for a given
+# provider. JWKS signing-key rotation is rare, so once we have force-refreshed
+# the cache we refuse to do so again for this window. The `kid` that drives a
+# forced refresh comes from the UNVERIFIED header of an unauthenticated ingest
+# request, so without this throttle an attacker can loop requests bearing random
+# `kid` values to repeatedly bust the shared Redis JWKS cache and hammer the
+# upstream (GitLab/GitHub) JWKS endpoint into rate-limiting — a DoS that also
+# makes legitimate CI token validation fail intermittently.
+JWKS_FORCED_REFRESH_COOLDOWN_SECONDS = 60
 
 
 async def find_jwks_key(
@@ -43,7 +56,32 @@ async def find_jwks_key(
                 matching_key: Dict[str, Any] = k
                 return matching_key
 
-    # Key not found - try refreshing cache (key rotation scenario)
+    # Key not found in the cached JWKS. This *may* be a legitimate key rotation,
+    # but the kid comes from the unverified JWT header of an unauthenticated
+    # request, so we must not let an unknown kid force an unbounded number of
+    # cache invalidations + upstream refetches. Rate-limit the forced refresh
+    # across all pods via a shared Redis cooldown key; unknown kids that arrive
+    # inside the cooldown fail fast without touching the cache or upstream.
+    cooldown_key = f"jwks:forced_refresh_cooldown:{provider_name}"
+    if await cache_service.get(cooldown_key):
+        logger.warning(
+            "%s key %s not in cache; forced JWKS refresh skipped (cooldown active, "
+            "%ss). Failing fast to avoid unauthenticated cache-busting.",
+            provider_name,
+            kid,
+            JWKS_FORCED_REFRESH_COOLDOWN_SECONDS,
+        )
+        return None
+
+    # Mark the cooldown BEFORE refreshing so concurrent / subsequent unknown-kid
+    # requests within the window fail fast instead of piling on more refetches.
+    await cache_service.set(
+        cooldown_key,
+        time.time(),
+        ttl_seconds=JWKS_FORCED_REFRESH_COOLDOWN_SECONDS,
+    )
+
+    # Try refreshing cache (key rotation scenario)
     logger.info(f"{provider_name} key {kid} not in cache, refreshing JWKS...")
     await invalidate_cache()
     jwks = await get_jwks()

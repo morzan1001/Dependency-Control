@@ -98,6 +98,12 @@ def normalise_family(name: Optional[str], mappings: PQCMappings) -> str:
         return ""
     if name in mappings.family_aliases:
         return mappings.family_aliases[name]
+    # Aliases may be authored in a single canonical casing while CBOM tools
+    # emit the same family with arbitrary casing; match case-insensitively so
+    # the fallback stays consistent with the canonical lookup below.
+    upper_aliases = {k.upper(): v for k, v in mappings.family_aliases.items()}
+    if name.upper() in upper_aliases:
+        return upper_aliases[name.upper()]
     canonical = {m.source_family for m in mappings.mappings}
     if name in canonical:
         return name

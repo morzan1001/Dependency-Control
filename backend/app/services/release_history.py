@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from statistics import median
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Tuple, Union
 from urllib.parse import quote
 
 from packaging.version import InvalidVersion, Version
@@ -46,8 +46,39 @@ class ReleaseInfo:
     published_at: datetime
 
 
-ReleaseHistory = Dict[str, List[ReleaseInfo]]
-Observation = Tuple[str, str, datetime]
+# History is keyed by ``(system, name)`` so packages that share a bare name
+# across ecosystems (e.g. npm "foo" and PyPI "foo") never collide. A plain
+# ``str`` key is still accepted for backward compatibility with callers/tests
+# that pre-date ecosystem-aware keying; such a key is treated as name-only
+# (unknown system).
+HistoryKey = Union[str, Tuple[str, str]]
+ReleaseHistory = Dict[HistoryKey, List[ReleaseInfo]]
+
+# An observation is ``(name, version, scan_date)`` or, ecosystem-aware,
+# ``(system, name, version, scan_date)``. The 4-tuple form lets adoption-latency
+# matching disambiguate same-named packages across ecosystems; the 3-tuple form
+# falls back to name-only matching.
+Observation = Union[Tuple[str, str, datetime], Tuple[str, str, str, datetime]]
+
+
+def _split_history_key(key: HistoryKey) -> Tuple[Optional[str], str]:
+    """Normalise a history key into ``(system, name)``; ``system`` is None for bare-name keys."""
+    if isinstance(key, tuple):
+        system, name = key
+        return system, name
+    return None, key
+
+
+def _split_observation(obs: Observation) -> Tuple[Optional[str], str, str, datetime]:
+    """Normalise an observation into ``(system, name, version, scan_date)``.
+
+    ``system`` is None for the 3-tuple ``(name, version, scan_date)`` form.
+    """
+    if len(obs) == 4:
+        system, name, version, scan_date = obs  # type: ignore[misc]
+        return system, name, version, scan_date
+    name, version, scan_date = obs  # type: ignore[misc]
+    return None, name, version, scan_date
 
 
 @dataclass(frozen=True)
@@ -99,18 +130,38 @@ def compute_adoption_latencies(
     history: ReleaseHistory,
     observations: Sequence[Observation],
 ) -> List[int]:
-    """Days between upstream publish and first observed scan, per (pkg, version).
+    """Days between upstream publish and first observed scan, per package/version.
 
-    Observations whose version is missing from the history are skipped.
+    History and observations are keyed by ``(system, name)`` so same-named
+    packages in different ecosystems don't conflate. An ecosystem-aware
+    observation (with a ``system``) matches its exact ``(system, name, version)``
+    release; a name-only observation falls back to name+version matching for
+    backward compatibility. Observations whose version is missing from the
+    history are skipped.
     """
-    publish_lookup: Dict[Tuple[str, str], datetime] = {
-        (pkg, r.version): r.published_at for pkg, releases in history.items() for r in releases
-    }
-    return [
-        (scan_date - publish_lookup[(pkg, version)]).days
-        for pkg, version, scan_date in observations
-        if (pkg, version) in publish_lookup
-    ]
+    exact_lookup: Dict[Tuple[str, str, str], datetime] = {}
+    name_lookup: Dict[Tuple[str, str], datetime] = {}
+    for key, releases in history.items():
+        system, name = _split_history_key(key)
+        for r in releases:
+            if system is not None:
+                exact_lookup[(system, name, r.version)] = r.published_at
+            # Name-only fallback for callers that don't supply a system. On a
+            # cross-ecosystem name collision the last write wins — the same
+            # behaviour name-keyed callers had before ecosystem-aware keying.
+            name_lookup[(name, r.version)] = r.published_at
+
+    latencies: List[int] = []
+    for obs in observations:
+        system, name, version, scan_date = _split_observation(obs)
+        published_at: Optional[datetime] = None
+        if system is not None:
+            published_at = exact_lookup.get((system, name, version))
+        if published_at is None:
+            published_at = name_lookup.get((name, version))
+        if published_at is not None:
+            latencies.append((scan_date - published_at).days)
+    return latencies
 
 
 def aggregate_upstream_metrics(
@@ -197,12 +248,14 @@ class DepsDevReleaseHistoryFetcher:
 
         semaphore = asyncio.Semaphore(_FETCH_CONCURRENCY)
 
-        async def _bounded(system: str, name: str) -> Tuple[str, Optional[List[ReleaseInfo]]]:
+        async def _bounded(system: str, name: str) -> Tuple[Tuple[str, str], Optional[List[ReleaseInfo]]]:
             async with semaphore:
-                return name, await self._load_one(system, name)
+                # Key by (system, name): two packages sharing a bare name across
+                # ecosystems must not overwrite each other in the result dict.
+                return (system, name), await self._load_one(system, name)
 
         pairs = await asyncio.gather(*(_bounded(s, n) for s, n in packages))
-        return {name: releases for name, releases in pairs if releases is not None}
+        return {key: releases for key, releases in pairs if releases is not None}
 
     async def _load_one(self, system: str, name: str) -> Optional[List[ReleaseInfo]]:
         key = self._cache_key_builder(system, name)

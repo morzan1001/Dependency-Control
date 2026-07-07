@@ -26,7 +26,7 @@ class TrivyAnalyzer(CLIAnalyzer):
         "failed to apply layers",
         "connection refused",
         "connection reset",
-        "EOF",
+        "eof",
         "context deadline exceeded",
         "unavailable",
         "i/o timeout",

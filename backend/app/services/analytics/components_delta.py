@@ -32,8 +32,19 @@ def component_identity_key(comp: Dict) -> Tuple[str, str]:
     purl = comp.get("purl")
     if purl and purl.startswith("pkg:"):
         # pkg:<type>/<namespace>/<name>@<version>?qualifiers#subpath
-        body = purl[4:].split("@", 1)[0]  # drop version
+        body = purl[4:]
+        # Strip qualifiers/subpath first so a '@' inside them can't be mistaken
+        # for the version separator.
         body = body.split("?", 1)[0].split("#", 1)[0]
+        # The version separator is the '@' in the final path segment (after the
+        # last '/'). Splitting on the first '@' would wrongly consume the scope
+        # '@' of unencoded npm packages like ``pkg:npm/@scope/name@1.2.3``,
+        # collapsing every scoped package to the same ("npm", "") identity.
+        slash = body.rfind("/")
+        name_seg = body[slash + 1 :]
+        at = name_seg.rfind("@")
+        if at != -1:
+            body = body[: slash + 1] + name_seg[:at]
         segments = body.split("/")
         if len(segments) == 1:
             return (segments[0], "")

@@ -36,7 +36,7 @@ from app.schemas.gitlab_instance import (
     GitLabInstanceResponse,
     GitLabInstanceUpdate,
 )
-from app.services.oidc_utils import validate_oidc_token
+from app.services.oidc_utils import find_jwks_key, validate_oidc_token
 
 ISSUER = "https://gitlab.example.com"
 KID = "test-signing-key"
@@ -157,6 +157,88 @@ class TestOIDCAudienceFailClosed:
         result = _validate(token, audience="dependency-control", jwks=jwks)
 
         assert result is None
+
+
+class _FakeCooldownCache:
+    """In-memory stand-in for the Redis-backed ``cache_service`` used by
+    ``find_jwks_key`` to rate-limit forced JWKS refreshes. TTL is ignored
+    (tests run well inside any realistic cooldown window)."""
+
+    def __init__(self):
+        self.store = {}
+
+    async def get(self, key):
+        return self.store.get(key)
+
+    async def set(self, key, value, ttl_seconds=None):
+        self.store[key] = value
+        return True
+
+
+class TestJwksForcedRefreshCooldown:
+    """Finding 1 (bug/low): an unknown ``kid`` must not be able to force an
+    unbounded number of JWKS cache invalidations + upstream refetches. Once a
+    forced refresh has happened, further unknown-kid lookups within the cooldown
+    fail fast without invalidating the cache or refetching."""
+
+    _KNOWN_KEY = {"kid": "known", "kty": "RSA", "n": "n", "e": "AQAB"}
+
+    def test_unknown_kid_forces_refresh_only_once_within_cooldown(self):
+        """Reproduces the cache-busting DoS: repeated unknown kids should trigger
+        at most ONE forced refresh per provider within the cooldown window."""
+        jwks_without_target = {"keys": [self._KNOWN_KEY]}
+        get_jwks = AsyncMock(return_value=jwks_without_target)
+        invalidate = AsyncMock()
+        fake_cache = _FakeCooldownCache()
+
+        with patch("app.services.oidc_utils.cache_service", fake_cache):
+            # First attacker request with an unknown kid: one forced refresh.
+            r1 = asyncio.run(find_jwks_key("attacker-kid-1", get_jwks, invalidate, "GitLab"))
+            assert r1 is None
+            assert invalidate.await_count == 1
+            # Initial lookup + one refetch after invalidate == 2 get_jwks calls.
+            assert get_jwks.await_count == 2
+
+            # Second attacker request (different unknown kid) inside the cooldown:
+            # must fail fast — NO extra invalidate, NO forced refetch.
+            r2 = asyncio.run(find_jwks_key("attacker-kid-2", get_jwks, invalidate, "GitLab"))
+            assert r2 is None
+            assert invalidate.await_count == 1  # unchanged: no second invalidation
+            # Only the initial lookup ran (2 + 1), no post-invalidate refetch.
+            assert get_jwks.await_count == 3
+
+    def test_legitimate_rotation_still_refreshes_when_cooldown_clear(self):
+        """Regression guard: with the cooldown clear, a genuine key rotation is
+        still resolved by invalidating and refetching the JWKS."""
+        rotated_key = {"kid": "rotated", "kty": "RSA", "n": "n2", "e": "AQAB"}
+        jwks_old = {"keys": [self._KNOWN_KEY]}
+        jwks_new = {"keys": [self._KNOWN_KEY, rotated_key]}
+        get_jwks = AsyncMock(side_effect=[jwks_old, jwks_new])
+        invalidate = AsyncMock()
+        fake_cache = _FakeCooldownCache()
+
+        with patch("app.services.oidc_utils.cache_service", fake_cache):
+            result = asyncio.run(find_jwks_key("rotated", get_jwks, invalidate, "GitHub"))
+
+        assert result == rotated_key
+        invalidate.assert_awaited_once()
+        assert get_jwks.await_count == 2
+
+    def test_cooldown_is_per_provider(self):
+        """A cooldown set by traffic to one provider must not throttle a
+        different provider's legitimate forced refresh."""
+        jwks_without_target = {"keys": [self._KNOWN_KEY]}
+        get_jwks = AsyncMock(return_value=jwks_without_target)
+        invalidate = AsyncMock()
+        fake_cache = _FakeCooldownCache()
+
+        with patch("app.services.oidc_utils.cache_service", fake_cache):
+            # Trip the cooldown for GitLab.
+            asyncio.run(find_jwks_key("x", get_jwks, invalidate, "GitLab"))
+            assert invalidate.await_count == 1
+            # GitHub is a different key -> still allowed to force one refresh.
+            asyncio.run(find_jwks_key("y", get_jwks, invalidate, "GitHub"))
+            assert invalidate.await_count == 2
 
 
 class TestGitLabInstanceSchemaRequiresAudience:

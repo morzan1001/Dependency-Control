@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { useSystemSettings, useUpdateSystemSettings, useAppConfig } from "@/hooks/queries/use-system"
+import { useSystemSettings, useUpdateSystemSettings, useAppConfig, systemKeys } from "@/hooks/queries/use-system"
 import { useGlobalWebhooks, useCreateGlobalWebhook, useDeleteWebhook } from "@/hooks/queries/use-webhooks"
 import { SystemSettings as SystemSettingsType } from "@/types/system"
 import { useAuth } from "@/context/useAuth"
@@ -22,6 +22,18 @@ function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsTyp
   const { data: appConfig } = useAppConfig();
   const chatEnabled = appConfig?.chat_enabled ?? false;
   const [formData, setFormData] = useState<Partial<SystemSettingsType>>(settings)
+  // Keep the local form snapshot in sync with the server settings. React
+  // Query's structural sharing only hands us a new `settings` reference when
+  // the data actually changed (e.g. after the Slack OAuth round-trip refetch),
+  // so this re-syncs fresh tokens into formData without a stale Save clobbering
+  // them, while leaving in-progress edits untouched when nothing changed. This
+  // render-phase adjustment (rather than an effect) is React's recommended way
+  // to reset state derived from a prop.
+  const [prevSettings, setPrevSettings] = useState(settings)
+  if (settings !== prevSettings) {
+    setPrevSettings(settings)
+    setFormData(settings)
+  }
   const [slackAuthMode, setSlackAuthMode] = useState(() => {
     if (settings.slack_bot_token && !settings.slack_client_id) {
        return "manual"
@@ -43,7 +55,7 @@ function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsTyp
         params.delete('slack_connected')
         return params
       })
-      queryClient.invalidateQueries({ queryKey: ['systemSettings'] })
+      queryClient.invalidateQueries({ queryKey: systemKeys.settings() })
     }
   }, [searchParams, setSearchParams, queryClient])
 

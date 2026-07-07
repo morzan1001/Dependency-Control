@@ -94,7 +94,7 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
               {dependencies.map((dep) => (
                 <TableRow 
                   key={dep.name} 
-                  className="cursor-pointer hover:bg-muted"
+                  className="group cursor-pointer hover:bg-muted"
                   onClick={() => handleRowClick(dep)}
                 >
                   <TableCell>
