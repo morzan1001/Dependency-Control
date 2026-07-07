@@ -72,8 +72,7 @@ export const useProjectBranches = (id: string) => {
 export const useProjectsDropdown = () => {
   return useQuery({
     queryKey: projectKeys.dropdown(),
-    // Fetch every project (paging past DROPDOWN_PAGE_SIZE) so dropdowns are not
-    // silently truncated to the newest page. Sorted by name for stable ordering.
+    // Page through all projects so dropdowns are not truncated to the first page.
     queryFn: async () => {
       const first = await projectApi.getAll(undefined, 0, DROPDOWN_PAGE_SIZE, 'name', 'asc');
       const items = [...first.items];

@@ -13,16 +13,9 @@ interface ErrorWithResponse {
   message?: string;
 }
 
-/**
- * Extract a human-readable message from an unknown error.
- *
- * Behavior is kept identical to `getErrorMessage` in `lib/utils.ts` so that the
- * same-shaped backend error renders the same string regardless of which page
- * raised it: FastAPI validation arrays are joined and the `Value error, `
- * prefix is stripped, string details pass through, and the fallback text
- * matches. The one addition over `getErrorMessage` is that non-string,
- * non-array (object) details are serialized rather than dropped.
- */
+// Human-readable message from an unknown error: joins FastAPI validation arrays
+// (stripping the "Value error, " prefix), passes string details through, and
+// serializes object details.
 export function extractErrorMessage(err: unknown): string {
   if (typeof err !== "object" || err === null) {
     return "An unknown error occurred";

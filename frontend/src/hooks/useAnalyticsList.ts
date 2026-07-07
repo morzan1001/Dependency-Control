@@ -1,17 +1,3 @@
-/**
- * useAnalyticsList — shared scaffolding for analytics list views.
- *
- * Bundles the three boilerplate pieces every analytics panel needs:
- *   1. TanStack useQuery with a typed query key
- *   2. Normalised `isLoading` / `isEmpty` flags
- *   3. A refetch handle + error exposure
- *
- * Consumers still render their own domain-specific table/cards; this
- * hook only owns the data-loading shape so HotspotTable,
- * VulnerabilityHotspots, PQCMigrationPanel etc. don't each reinvent
- * their own `isLoading` / `items.length === 0` dance.
- */
-
 import { useQuery, type QueryKey, type UseQueryOptions } from "@tanstack/react-query";
 
 export interface AnalyticsListResult<TResponse, TItem> {
@@ -27,10 +13,7 @@ export interface AnalyticsListResult<TResponse, TItem> {
 export interface UseAnalyticsListArgs<TResponse, TItem> {
   queryKey: QueryKey;
   queryFn: () => Promise<TResponse>;
-  /** Extract the list items from the response. Required so the hook can
-   *  compute `isEmpty` without coupling to a specific response shape. */
   selectItems: (response: TResponse) => TItem[];
-  /** Forwarded to TanStack useQuery (e.g. enabled, refetchInterval). */
   options?: Omit<
     UseQueryOptions<TResponse, Error, TResponse, QueryKey>,
     "queryKey" | "queryFn"

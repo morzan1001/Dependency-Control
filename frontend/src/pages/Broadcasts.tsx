@@ -28,7 +28,7 @@ import { formatDistanceToNow } from "date-fns"
 
 export default function Broadcasts() {
   const { mutateAsync: sendBroadcast, isPending } = useBroadcast()
-  const { data: teams } = useTeams() // For team selection
+  const { data: teams } = useTeams()
   const { data: history, refetch: refetchHistory, isLoading: isLoadingHistory } = useBroadcastHistory()
   const { data: availableChannels } = useNotificationChannels()
 
@@ -48,9 +48,7 @@ export default function Broadcasts() {
   const [isCalculating, setIsCalculating] = useState(false)
   const [channels, setChannels] = useState<NotificationChannel[]>(["email"])
 
-  // Reset impact counters when any input the impact depends on changes.
-  // Adjust state during render rather than via useEffect — see
-  // https://react.dev/learn/you-might-not-need-an-effect#resetting-all-state-when-a-prop-changes
+  // Reset impact counters during render when their inputs change, avoiding an effect.
   const [lastImpactInputs, setLastImpactInputs] = useState({
     activeTab,
     announcementTarget,
@@ -89,7 +87,7 @@ export default function Broadcasts() {
     const newPackages = [...packages]
     newPackages[index] = { ...newPackages[index], [field]: value }
     setPackages(newPackages)
-    setImpactCount(null) // invalidate calculation
+    setImpactCount(null)
   }
 
   const calculateImpact = async () => {
@@ -120,7 +118,7 @@ export default function Broadcasts() {
             channels: [],
             dry_run: true
          })
-         setImpactCount(result.recipient_count) // usually 0 for advisory unless logic changes
+         setImpactCount(result.recipient_count)
          setImpactProjectCount(result.project_count || 0)
       }
     } catch {
@@ -230,7 +228,6 @@ export default function Broadcasts() {
         </Card>
         )}
 
-        {/* ANNOUNCEMENT TAB */}
         <TabsContent value="announcement" className="space-y-4">
           <Card>
             <CardHeader>
@@ -330,7 +327,6 @@ export default function Broadcasts() {
           </Card>
         </TabsContent>
 
-        {/* SECURITY ADVISORY TAB */}
         <TabsContent value="advisory" className="space-y-4">
           <Card>
             <CardHeader>

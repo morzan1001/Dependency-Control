@@ -2,24 +2,15 @@ import { Container, FileCode, HardDrive, Layers, type LucideIcon } from 'lucide-
 
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO' | 'UNKNOWN'
 
-/**
- * Canonical CVE/GHSA advisory-URL mapping. Previously copy-pasted across the
- * analytics components (VulnerabilitySearch, AnalyticsDependencyModal,
- * RecommendationCard — audit #126). Returns null for identifiers that have no
- * well-known public advisory page.
- */
+// Maps a CVE/GHSA id to its public advisory URL, or null if unknown.
 export function advisoryUrl(id: string): string | null {
   if (id?.startsWith('CVE-')) return `https://nvd.nist.gov/vuln/detail/${id}`
   if (id?.startsWith('GHSA-')) return `https://github.com/advisories/${id}`
   return null
 }
 
-/**
- * Severity -> hex colour for charts (Recharts et al. cannot consume Tailwind
- * token classes). Values mirror the light-mode severity design tokens defined
- * in index.css / getSeverityColor so charts stay in sync with badges
- * (audit #188 — previously several independent hex maps drifted from the tokens).
- */
+// Severity hex colours for charts (Recharts can't use Tailwind token classes);
+// values mirror the light-mode severity tokens in index.css.
 export const SEVERITY_CHART_COLORS: Record<Severity, string> = {
   CRITICAL: '#dc2626', // red-600 / --severity-critical
   HIGH: '#f97316', // orange-500 / --severity-high
@@ -29,11 +20,7 @@ export const SEVERITY_CHART_COLORS: Record<Severity, string> = {
   UNKNOWN: '#9ca3af', // gray-400
 }
 
-/**
- * Canonical severity ordering, most severe first. Replaces the ad-hoc order
- * arrays / rank maps that were duplicated across analytics components
- * (audit #188).
- */
+// Canonical severity ordering, most severe first.
 export const SEVERITY_ORDER: Severity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO', 'UNKNOWN']
 
 export function getSeverityColor(severity: string): string {
@@ -93,11 +80,7 @@ export function getScoreColor(score: number): string {
   return 'text-success'
 }
 
-/**
- * Color class for a combined risk score on the backend's 0-100 scale
- * (CVSS impact + EPSS + KEV + reachability, per calculate_risk_score).
- * Distinct from getScoreColor, which is the inverted 0-10 OpenSSF scorecard.
- */
+// Colour for the backend 0-100 risk score (distinct from getScoreColor's 0-10 scorecard scale).
 export function getRiskColorClass(score: number): string {
   if (score >= 70) return 'text-severity-critical'
   if (score >= 40) return 'text-severity-high'
@@ -134,9 +117,8 @@ export function formatEpssScore(
   return `${(epss * 100).toFixed(decimals)}%`
 }
 
-// Maps the backend exploit_maturity values (unknown/low/medium/high/active/
-// weaponized — see backend scoring.calculate_exploit_maturity) to a text color
-// class. weaponized/active are real-world exploited (KEV/ransomware) → critical.
+// Maps backend exploit_maturity to a text colour class; weaponized/active are
+// real-world exploited (KEV) so they render as critical.
 export function getExploitMaturityClass(maturity: string | null | undefined): string {
   if (maturity === 'weaponized' || maturity === 'active') return 'text-severity-critical font-medium';
   if (maturity === 'high') return 'text-severity-high';

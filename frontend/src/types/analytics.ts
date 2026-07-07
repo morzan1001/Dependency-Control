@@ -428,8 +428,6 @@ export interface AdvancedSearchOptions {
     limit?: number;
 }
 
-// --- Update Frequency Analysis ---
-
 export interface DependencyUpdateEvent {
     package_name: string;
     package_type: string;

@@ -5,20 +5,10 @@ interface ScrollContainerResult {
   parentRef: RefObject<HTMLDivElement | null>
   scrollContainer: HTMLElement | null
   tableOffsetRef: RefObject<number>
-  /** Scroll the container so the table top is at the viewport top. */
   scrollToTable: () => void
 }
 
-/**
- * Hook to find and track the main scroll container for virtualized tables.
- * Uses `closest('main')` from the component's position in the DOM,
- * which is more robust than global `document.querySelector('main')`.
- *
- * Returns the scroll container element and a ref-based table offset.
- * The offset is stored in a ref so the scroll observer always reads the
- * latest value without needing to re-subscribe (TanStack Virtual does NOT
- * re-subscribe when observeElementOffset changes).
- */
+// Offset lives in a ref because TanStack Virtual does not re-subscribe when observeElementOffset changes.
 export function useScrollContainer(): ScrollContainerResult {
   const parentRef = useRef<HTMLDivElement>(null)
   const [scrollContainer, setScrollContainer] = useState<HTMLElement | null>(null)
@@ -46,12 +36,10 @@ export function useScrollContainer(): ScrollContainerResult {
 
     updateOffset()
 
-    // Watch for layout changes above the table (async content loading, cards resizing, etc.)
-    // ResizeObserver on the container's scrollable content area catches height changes.
+    // Recompute the offset when layout above the table changes height.
     const resizeObserver = new ResizeObserver(() => {
       requestAnimationFrame(updateOffset)
     })
-    // Observe the direct child of the scroll container (the content wrapper)
     const contentWrapper = container.firstElementChild
     if (contentWrapper) {
       resizeObserver.observe(contentWrapper)
@@ -74,11 +62,6 @@ export function useScrollContainer(): ScrollContainerResult {
   return { parentRef, scrollContainer, tableOffsetRef, scrollToTable }
 }
 
-/**
- * Creates a virtual scroll observer function for use with @tanstack/react-virtual.
- * Handles the scroll offset calculation relative to the table position
- * and properly tracks isScrolling state for the virtualizer.
- */
 export function createScrollObserver(
   scrollContainer: HTMLElement | null,
   tableOffsetRef: RefObject<number>
@@ -100,7 +83,7 @@ export function createScrollObserver(
     }
 
     scrollContainer.addEventListener('scroll', onScroll, { passive: true })
-    reportOffset(false) // Initial position, not scrolling
+    reportOffset(false)
 
     return () => {
       scrollContainer.removeEventListener('scroll', onScroll)

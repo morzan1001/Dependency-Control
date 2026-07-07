@@ -47,19 +47,9 @@ export default function ProjectDetails() {
   const activeBranchNames = useMemo(() => branches?.filter(b => b.is_active).map(b => b.name) || [], [branches])
   const deletedBranchNames = useMemo(() => branches?.filter(b => !b.is_active).map(b => b.name) || [], [branches])
 
-  // Initialize the selected branches exactly once, and only after BOTH the
-  // project and branches queries have settled. `useProject` and
-  // `useProjectBranches` are independent parallel requests: if we initialized
-  // as soon as branches resolved, a branches-before-project race would leave
-  // `project` undefined and fall through to selecting every active branch,
-  // producing timing-dependent Overview aggregates. Gating on
-  // `branchesSuccess && !isLoadingProject` guarantees `project.default_branch`
-  // is available when present. A `hasInitializedBranches` flag (rather than
-  // `selectedBranches.length === 0`) means an intentionally empty selection —
-  // e.g. unchecking every branch or toggling "Select All Active" off — is
-  // preserved instead of snapping back. Setting state during render is safe:
-  // the flag short-circuits on the next render, so there is no loop.
-  // See https://react.dev/learn/you-might-not-need-an-effect#initializing-the-application
+  // Initialize selected branches once, after both queries settle — else a branches-before-project
+  // race would select all active branches. The flag (not length===0) preserves an intentionally
+  // empty selection and short-circuits next render, so this render-phase set doesn't loop.
   if (branchesSuccess && !isLoadingProject && !hasInitializedBranches) {
     setHasInitializedBranches(true)
     if (project?.default_branch && activeBranchNames.includes(project.default_branch)) {

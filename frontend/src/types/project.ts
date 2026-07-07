@@ -24,7 +24,7 @@ export type RetentionAction = 'delete' | 'archive' | 'none';
 export interface Project {
   id: string;
   name: string;
-  owner_id?: string; // Deprecated: access is controlled via team/member admins
+  owner_id?: string; // access is controlled via team/member admins
   team_id?: string;
   team_name?: string;
   members?: ProjectMember[];

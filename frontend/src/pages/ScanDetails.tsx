@@ -15,7 +15,6 @@ import { Badge } from '@/components/ui/badge'
 import { CodeBlock } from '@/components/ui/code-block'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
 import { toast } from "sonner"
-// PostProcessorResultCard removed - now showing raw JSON in Raw Data tab
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { logger } from '@/lib/logger'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
@@ -29,7 +28,6 @@ interface ScanHistoryItem {
   created_at: string;
 }
 
-/** Renders an SCM link (branch, commit, etc.) with an optional external link, or plain text if no URL is available. */
 function ScmLink({ href, children }: { href: string | undefined | null; children: React.ReactNode }) {
   if (href) {
     return (
@@ -42,7 +40,6 @@ function ScmLink({ href, children }: { href: string | undefined | null; children
   return <>{children}</>
 }
 
-/** Renders the SBOM tool name extraction logic */
 function extractSbomToolName(sbom: SbomResponse['sbom']): string {
   if (!sbom?.metadata?.tools) return ''
   try {
@@ -58,7 +55,6 @@ function extractSbomToolName(sbom: SbomResponse['sbom']): string {
   return ''
 }
 
-/** Resolves the display name for an SBOM */
 function resolveSbomName(sbomResponse: SbomResponse): string {
   const fallback = sbomResponse.filename || `SBOM #${sbomResponse.index + 1}`
   const sbom = sbomResponse.sbom
@@ -81,7 +77,6 @@ export default function ScanDetails() {
   const sbomParam = searchParams.get('sbom');
   const severityFilter = searchParams.get('severity') || undefined;
 
-  // Compliance tab filters
   const [complianceLicenseCategory, setComplianceLicenseCategory] = useState<string | undefined>(undefined);
   const [complianceHideInfo, setComplianceHideInfo] = useState(false);
 
@@ -103,7 +98,6 @@ export default function ScanDetails() {
   const scrollToSbom = useCallback((index: number) => {
     const sbomElement = sbomRefs.current[index]
     if (sbomElement) {
-      // Get the scrollable container (look for overflow-y-auto class or nearest scrollable parent)
       let scrollContainer = sbomElement.parentElement
       while (scrollContainer && scrollContainer !== document.body) {
         const overflowY = globalThis.getComputedStyle(scrollContainer).overflowY
@@ -113,14 +107,12 @@ export default function ScanDetails() {
         scrollContainer = scrollContainer.parentElement
       }
 
-      // If we found a scroll container, scroll within it
       if (scrollContainer && scrollContainer !== document.body) {
         const containerRect = scrollContainer.getBoundingClientRect()
         const elementRect = sbomElement.getBoundingClientRect()
         const scrollOffset = elementRect.top - containerRect.top + scrollContainer.scrollTop - 20
         scrollContainer.scrollTo({ top: scrollOffset, behavior: 'smooth' })
       } else {
-        // Fallback to regular scrollIntoView if no scrollable container found
         sbomElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }
 
@@ -567,7 +559,6 @@ export default function ScanDetails() {
                 </div>
             ) : (
                 <div className="space-y-8">
-                    {/* Post-Processor Results (EPSS/KEV, Reachability) - RAW JSON */}
                     {scanResults?.some(r => isPostProcessorResult(r.analyzer_name)) && (
                         <div className="space-y-4">
                             <h3 className="text-lg font-medium">Post-Processor Results</h3>
@@ -591,7 +582,6 @@ export default function ScanDetails() {
                         </div>
                     )}
 
-                    {/* Analysis Results (non-post-processor) */}
                     {scanResults?.some(r => !isPostProcessorResult(r.analyzer_name)) && (
                         <div className="space-y-4">
                             <h3 className="text-lg font-medium">Scanner Results</h3>
@@ -615,7 +605,6 @@ export default function ScanDetails() {
                         </div>
                     )}
 
-                    {/* Raw SBOMs */}
                     <div className="space-y-4">
                         <h3 className="text-lg font-medium flex items-center gap-2">
                             <FileJson className="h-5 w-5" />

@@ -4,8 +4,6 @@ import { githubInstancesApi } from '@/api/github-instances';
 import { GitLabInstanceList } from '@/types/gitlab';
 import { GitHubInstanceList } from '@/types/github';
 
-// --- Query Keys ---
-
 function createInstanceKeys(prefix: string) {
   return {
     all: [prefix] as const,
@@ -15,8 +13,6 @@ function createInstanceKeys(prefix: string) {
 
 export const gitlabInstanceKeys = createInstanceKeys('gitlab-instances');
 export const githubInstanceKeys = createInstanceKeys('github-instances');
-
-// --- Hook Factory ---
 
 interface InstanceApi<TList> {
   list: (params?: { page?: number; size?: number; active_only?: boolean }) => Promise<TList>;
@@ -35,13 +31,9 @@ function createInstanceHooks<TList>(
   return { useInstances };
 }
 
-// --- GitLab Hooks ---
-
 const gitlab = createInstanceHooks<GitLabInstanceList>(gitlabInstancesApi, gitlabInstanceKeys);
 
 export const useGitLabInstances = gitlab.useInstances;
-
-// --- GitHub Hooks ---
 
 const github = createInstanceHooks<GitHubInstanceList>(githubInstancesApi, githubInstanceKeys);
 

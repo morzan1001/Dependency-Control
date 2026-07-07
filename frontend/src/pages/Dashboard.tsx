@@ -64,7 +64,6 @@ export default function Dashboard() {
   const projectList = projectsData?.items || []
   const totalPages = projectsData?.pages || 0
 
-  // Virtual Scroll Setup
   const { parentRef, scrollContainer, tableOffsetRef } = useScrollContainer()
 
   const scrollObserver = useMemo(
@@ -116,7 +115,6 @@ export default function Dashboard() {
     }
   ]
 
-  // Chart Data
   const chartData = dashboardStats?.top_risky_projects || []
 
   return (
@@ -126,7 +124,6 @@ export default function Dashboard() {
         <p className="text-muted-foreground">Overview of your security posture.</p>
       </div>
 
-      {/* Stats Grid */}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         {isLoadingStats ? (
           DASHBOARD_STATS_SKELETON_IDS.map((id) => (
@@ -164,7 +161,6 @@ export default function Dashboard() {
       </div>
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
-        {/* Chart Section */}
         <Card className="col-span-4">
             <CardHeader>
             <CardTitle>Top 5 Riskiest Projects</CardTitle>
@@ -220,7 +216,6 @@ export default function Dashboard() {
             </CardContent>
         </Card>
 
-        {/* Recent Activity */}
         <Card className="col-span-3">
             <CardHeader>
                 <CardTitle>Recent Activity</CardTitle>
@@ -262,7 +257,6 @@ export default function Dashboard() {
         </Card>
       </div>
 
-      {/* Projects Table */}
       <Card>
         <CardHeader>
           <CardTitle>Projects</CardTitle>

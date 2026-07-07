@@ -4,7 +4,7 @@ function normalizeBaseUrl(url?: string | null): string | null {
   if (!url) return null
   let trimmed = url.trim()
   if (!trimmed) return null
-  // Trim trailing slashes without a regex (avoids the S5852 super-linear hotspot).
+  // Trim trailing slashes without a regex to avoid super-linear backtracking.
   while (trimmed.endsWith('/')) {
     trimmed = trimmed.slice(0, -1)
   }

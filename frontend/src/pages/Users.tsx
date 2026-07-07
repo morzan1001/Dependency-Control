@@ -36,10 +36,8 @@ export default function UsersPage() {
     !debouncedSearch || invite.email.toLowerCase().includes(debouncedSearch.toLowerCase())
   ) || [];
 
-  // Pending invitations are a small, global (non-paginated) list. Keep them
-  // out of the paginated user array: merging them in duplicated the rows on
-  // every server-side page and corrupted UserTable's `length >= limit`
-  // has-next heuristic (phantom Next button). Show them once, on page 1.
+  // Invitations are a global non-paginated list; kept separate from the paginated
+  // users so they don't skew UserTable's `length >= limit` has-next check. Shown only on page 1.
   const invitationUsers: User[] = filteredInvitations.map(invite => ({
     id: invite.id,
     email: invite.email,

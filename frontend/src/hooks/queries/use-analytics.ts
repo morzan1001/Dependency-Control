@@ -22,8 +22,8 @@ export const useDashboardStats = () => {
     return useQuery<Awaited<ReturnType<typeof analyticsApi.getDashboardStats>>, ApiError>({
         queryKey: analyticsKeys.dashboardStats(),
         queryFn: analyticsApi.getDashboardStats,
-        staleTime: 2 * 60 * 1000, // 2 minutes - stats are expensive to compute
-        refetchOnWindowFocus: true, // Refetch when tab regains focus (if stale)
+        staleTime: 2 * 60 * 1000, // stats are expensive to compute
+        refetchOnWindowFocus: true,
         retry: 2,
     });
 }
@@ -40,7 +40,7 @@ export const useAnalyticsSummary = () => {
     return useQuery({
         queryKey: analyticsKeys.summary(),
         queryFn: analyticsApi.getSummary,
-        staleTime: 5 * 60 * 1000, // 5 minutes
+        staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: true,
     });
 }
@@ -49,7 +49,7 @@ export const useTopDependencies = (limit: number = 20, type?: string) => {
     return useQuery({
         queryKey: analyticsKeys.topDependencies(limit, type),
         queryFn: () => analyticsApi.getTopDependencies(limit, type),
-        staleTime: 5 * 60 * 1000, // 5 minutes
+        staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: true,
     });
 }
@@ -59,7 +59,7 @@ export const useDependencyTree = (projectId: string, scanId?: string) => {
         queryKey: analyticsKeys.dependencyTree(projectId, scanId),
         queryFn: () => analyticsApi.getDependencyTree(projectId, scanId),
         enabled: !!projectId,
-        staleTime: 5 * 60 * 1000, // 5 minutes
+        staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: true,
     });
 }
@@ -68,7 +68,7 @@ export const useImpactAnalysis = (limit: number = 20) => {
     return useQuery({
         queryKey: analyticsKeys.impactAnalysis(limit),
         queryFn: () => analyticsApi.getImpactAnalysis(limit),
-        staleTime: 5 * 60 * 1000, // 5 minutes
+        staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: true,
     });
 }
@@ -93,7 +93,7 @@ export const useDependencyTypes = () => {
     return useQuery({
         queryKey: analyticsKeys.dependencyTypes(),
         queryFn: analyticsApi.getDependencyTypes,
-        staleTime: 30 * 60 * 1000, // 30 minutes - types almost never change
+        staleTime: 30 * 60 * 1000, // types almost never change
         refetchOnWindowFocus: true,
     });
 }
@@ -103,7 +103,7 @@ export const useProjectRecommendations = (projectId: string, scanId?: string) =>
         queryKey: analyticsKeys.recommendations(projectId, scanId),
         queryFn: () => analyticsApi.getProjectRecommendations(projectId, scanId),
         enabled: !!projectId,
-        staleTime: 5 * 60 * 1000, // 5 minutes
+        staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: true,
     });
 }

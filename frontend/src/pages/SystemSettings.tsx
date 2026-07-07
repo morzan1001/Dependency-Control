@@ -17,18 +17,12 @@ import {
   CryptoPolicySettingsTab,
 } from "@/components/settings"
 
-// Inner component that handles the form state
 function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsType }>) {
   const { data: appConfig } = useAppConfig();
   const chatEnabled = appConfig?.chat_enabled ?? false;
   const [formData, setFormData] = useState<Partial<SystemSettingsType>>(settings)
-  // Keep the local form snapshot in sync with the server settings. React
-  // Query's structural sharing only hands us a new `settings` reference when
-  // the data actually changed (e.g. after the Slack OAuth round-trip refetch),
-  // so this re-syncs fresh tokens into formData without a stale Save clobbering
-  // them, while leaving in-progress edits untouched when nothing changed. This
-  // render-phase adjustment (rather than an effect) is React's recommended way
-  // to reset state derived from a prop.
+  // Re-sync formData when the server settings reference changes (e.g. Slack OAuth refetch),
+  // without clobbering in-progress edits while nothing changed.
   const [prevSettings, setPrevSettings] = useState(settings)
   if (settings !== prevSettings) {
     setPrevSettings(settings)

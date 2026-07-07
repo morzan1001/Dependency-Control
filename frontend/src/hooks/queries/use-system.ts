@@ -10,15 +10,12 @@ export const systemKeys = {
   notificationChannels: () => [...systemKeys.all, 'notificationChannels'] as const,
 };
 
-/**
- * Full system settings - only for the admin settings page.
- * Requires 'system:manage' permission.
- */
+// Full system settings; requires 'system:manage' permission.
 export const useSystemSettings = () => {
   return useQuery({
     queryKey: systemKeys.settings(),
     queryFn: systemApi.getSettings,
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 5 * 60 * 1000,
   });
 };
 
@@ -28,30 +25,23 @@ export const useUpdateSystemSettings = () => {
     mutationFn: (data: Partial<SystemSettings>) => systemApi.updateSettings(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: systemKeys.settings() });
-      // Also invalidate app config since some values might have changed
+      // App config derives from these settings, so refresh it too.
       queryClient.invalidateQueries({ queryKey: systemKeys.appConfig() });
     },
   });
 };
 
 interface UseAppConfigOptions {
-  /** Set to false to disable the query until needed (e.g., dialog is open) */
   enabled?: boolean;
 }
 
-/**
- * Lightweight app configuration for authenticated users.
- * Use this for components that only need config data (limits, retention, etc.).
- * Does NOT expose secrets like API keys or passwords.
- * 
- * @param options.enabled - Set to false to defer loading until needed (default: true)
- */
+// Lightweight, non-secret app config for authenticated users.
 export const useAppConfig = (options: UseAppConfigOptions = {}) => {
   const { enabled = true } = options;
   return useQuery({
     queryKey: systemKeys.appConfig(),
     queryFn: systemApi.getAppConfig,
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 5 * 60 * 1000,
     enabled,
   });
 };
@@ -60,7 +50,7 @@ export const usePublicConfig = () => {
   return useQuery({
     queryKey: systemKeys.publicConfig(),
     queryFn: systemApi.getPublicConfig,
-    staleTime: 10 * 60 * 1000, // 10 minutes - rarely changes
+    staleTime: 10 * 60 * 1000, // rarely changes
   });
 };
 
@@ -68,6 +58,6 @@ export const useNotificationChannels = () => {
   return useQuery({
     queryKey: systemKeys.notificationChannels(),
     queryFn: systemApi.getNotificationChannels,
-    staleTime: 5 * 60 * 1000, // 5 minutes
+    staleTime: 5 * 60 * 1000,
   });
 };

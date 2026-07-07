@@ -1,10 +1,4 @@
-/**
- * Team Role Utilities
- *
- * Pure functions that mirror the backend's check_team_access() logic
- * to determine what actions a user can perform on a team.
- * Roles: member, admin (owner role was removed).
- */
+// Mirrors the backend's check_team_access() so the UI gates match the API. Roles: member, admin.
 
 import { Team } from '@/types/team';
 

@@ -1,10 +1,4 @@
-/**
- * Schema-driven settings definitions per analyzer.
- *
- * Each analyzer can declare a list of configurable fields. The AnalyzerSettingsDialog
- * renders these schemas as form controls. To make a new analyzer configurable:
- * add an entry to ANALYZER_SETTINGS_SCHEMAS keyed by analyzer ID.
- */
+// Per-analyzer configurable field schemas rendered by AnalyzerSettingsDialog.
 
 export type AnalyzerSettingFieldType = 'select' | 'switch' | 'number' | 'slider';
 
@@ -14,15 +8,11 @@ export interface AnalyzerSettingSelectOption {
 }
 
 export interface AnalyzerSettingField {
-  /** Backend setting key (sent in analyzer_settings[analyzer_id][key]) */
+  /** Backend setting key, sent as analyzer_settings[analyzer_id][key] */
   key: string;
-  /** Field type — controls which input is rendered */
   type: AnalyzerSettingFieldType;
-  /** UI label */
   label: string;
-  /** Optional helper text shown below the field */
   description?: string;
-  /** Default value (used when project has no value set) */
   default: string | number | boolean;
   /** For 'select' type */
   options?: AnalyzerSettingSelectOption[];
@@ -33,11 +23,8 @@ export interface AnalyzerSettingField {
 }
 
 export interface AnalyzerSettingsSchema {
-  /** Title shown at the top of the dialog */
   title: string;
-  /** Description shown below the title */
   description: string;
-  /** Fields rendered in order */
   fields: AnalyzerSettingField[];
 }
 

@@ -92,16 +92,13 @@ export const refreshAccessToken = async (): Promise<string | null> => {
     .catch((err) => {
       logger.error('Token refresh failed', err instanceof Error ? err.message : 'Unknown error');
       const status = axios.isAxiosError(err) ? err.response?.status : undefined;
-      // A 4xx means the refresh token itself is invalid/expired: the tokens are
-      // dead, so clear them and signal the caller to log out (return null).
+      // 4xx: refresh token is dead — clear tokens and signal logout via null.
       if (status !== undefined && status >= 400 && status < 500) {
         localStorage.removeItem('token');
         localStorage.removeItem('refresh_token');
         return null;
       }
-      // Network error, timeout, or 5xx: transient failure. The refresh token may
-      // still be valid, so keep both tokens and re-throw so the caller does NOT
-      // force a logout; a later request can retry with the intact refresh token.
+      // Transient failure (network/timeout/5xx): keep tokens and re-throw so no forced logout.
       throw err;
     })
     .finally(() => {
@@ -112,10 +109,7 @@ export const refreshAccessToken = async (): Promise<string | null> => {
   return refreshPromise;
 };
 
-/**
- * Build URLSearchParams from an object, skipping null/undefined/empty values.
- * Arrays are joined with commas.
- */
+// Build URLSearchParams, skipping null/undefined/empty values; arrays joined with commas.
 export function buildQueryParams(obj: Record<string, string | number | boolean | string[] | undefined | null>): URLSearchParams {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(obj)) {
@@ -129,10 +123,7 @@ export function buildQueryParams(obj: Record<string, string | number | boolean |
   return params;
 }
 
-/**
- * Generic CRUD API factory for SCM instance resources.
- * Eliminates duplication between GitHub/GitLab instance APIs.
- */
+// Generic CRUD API factory for SCM instance resources.
 export function createInstanceApi<
   TInstance,
   TCreate,
@@ -200,9 +191,7 @@ api.interceptors.response.use(
             return api(originalRequest);
           }
         } catch {
-          // Transient refresh failure (network/timeout/5xx): the tokens are still
-          // intact. Reject the original request without forcing a logout so a later
-          // attempt can retry with the surviving refresh token.
+          // Transient refresh failure: keep tokens, reject without forcing logout.
           throw error;
         }
       }

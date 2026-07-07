@@ -57,14 +57,9 @@ export const ANALYTICS_PERMISSIONS = [
   Permissions.ANALYTICS_SEARCH,
 ] as const;
 
-// Permissions that grant access to at least one tab on the Analytics page.
-// Must stay in sync with the per-tab checks in pages/Analytics.tsx: any of
-// these renders a usable tab, so any of them must pass the /analytics route
-// gate. Notably this includes analytics:recommendations (Recommendations +
-// Update Frequency tabs) and excludes analytics:dependencies, which the
-// Analytics page never checks — granting it alone would only yield an empty
-// page. (Distinct from the ANALYTICS_PERMISSIONS constant above, which has the
-// same drift and is reconciled separately.)
+// Permissions that gate the /analytics route: any one grants a usable tab.
+// Must stay in sync with the per-tab checks in pages/Analytics.tsx (includes
+// analytics:recommendations, excludes analytics:dependencies which no tab checks).
 export const ANALYTICS_ROUTE_PERMISSIONS = [
   'analytics:read',
   'analytics:summary',

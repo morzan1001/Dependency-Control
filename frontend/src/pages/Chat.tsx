@@ -91,9 +91,7 @@ export default function Chat() {
     error,
   } = useChatStream(activeConversationId, onMessageComplete);
 
-  // Drop the optimistic user message once the persisted version is back
-  // from the server (so we don't render it twice). On error, also drop it
-  // a moment after the stream ends so the UI doesn't hang on a pending bubble.
+  // Drop the optimistic user message once the persisted one arrives, so it isn't rendered twice.
   useEffect(() => {
     if (isStreaming || !pendingUserMessage) return;
     const lastMsg = conversationDetail?.messages?.[conversationDetail.messages.length - 1];
@@ -105,7 +103,6 @@ export default function Chat() {
       clearPendingUserMessage();
       return;
     }
-    // Fallback — clear after a short grace period if nothing matched.
     const t = setTimeout(clearPendingUserMessage, 1500);
     return () => clearTimeout(t);
   }, [isStreaming, pendingUserMessage, conversationDetail?.messages, clearPendingUserMessage]);
@@ -166,7 +163,6 @@ export default function Chat() {
   return (
     <TooltipProvider delayDuration={200}>
     <div className="flex h-[calc(100vh-4rem)] flex-col">
-      {/* Page header */}
       <header className="flex items-center justify-between gap-4 border-b bg-background px-6 py-4">
         <div className="flex items-center gap-3 overflow-hidden">
           <MessagesSquare className="h-5 w-5 shrink-0 text-primary" />
@@ -212,7 +208,6 @@ export default function Chat() {
         </div>
       </header>
 
-      {/* Messages area */}
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl space-y-4 px-4 py-6">
           {showEmptyState && !pendingUserMessage ? (
@@ -257,7 +252,6 @@ export default function Chat() {
         </div>
       </div>
 
-      {/* Stop button floats above input while streaming */}
       {isStreaming && (
         <div className="mx-auto flex max-w-3xl justify-center pb-2">
           <Button onClick={abort} variant="outline" size="sm">

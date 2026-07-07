@@ -90,7 +90,6 @@ export default function DashboardLayout() {
 
   return (
     <div className="flex h-screen bg-background">
-      {/* Sidebar */}
       <aside className="w-64 border-r bg-card flex flex-col">
         <div className="p-6 flex items-center gap-3">
           <img src="/logo.png" alt="Logo" className="h-8 w-auto object-contain" />
@@ -139,9 +138,7 @@ export default function DashboardLayout() {
         </div>
       </aside>
 
-      {/* Main Content — Suspense lives HERE (around the Outlet) so a lazy route's
-          chunk load only shows a loader in the content area; the header/sidebar
-          chrome stays mounted instead of the whole app tearing down (audit SC#14). */}
+      {/* Suspense wraps only the Outlet so a lazy route's chunk load keeps the sidebar chrome mounted. */}
       <main className="flex-1 overflow-y-auto overflow-x-hidden">
         <div className="p-8">
           <Suspense

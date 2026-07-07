@@ -30,7 +30,7 @@ export const useRecentScans = () => {
     return useQuery({
         queryKey: scanKeys.recent(),
         queryFn: scanApi.getRecent,
-        staleTime: 60 * 1000 // 1 minute
+        staleTime: 60 * 1000
     });
 }
 
@@ -104,9 +104,7 @@ export const useTriggerRescan = () => {
     return useMutation({
         mutationFn: ({ projectId, scanId }: { projectId: string, scanId: string }) => scanApi.triggerRescan(projectId, scanId),
         onSuccess: (_, variables) => {
-             // Invalidate list of scans for the project
              queryClient.invalidateQueries({ queryKey: scanKeys.project(variables.projectId) });
-             // Optionally invalidate scan detail if it redirects to new scan
         }
     })
 }

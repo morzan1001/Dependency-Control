@@ -35,9 +35,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return checkPermission(permissions, permission)
   }, [permissions])
 
-  // Keep the latest logout in a ref so the mount-only init effect can register
-  // a stable logout callback without re-running when `navigate` (and therefore
-  // `logout`) changes identity on every route navigation.
+  // Ref keeps the latest logout so the mount-only init effect stays stable across navigation.
   const logoutRef = useRef(logout)
   useEffect(() => {
     logoutRef.current = logout
@@ -69,9 +67,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     initAuth()
-    // Run once on mount only. logout is accessed via logoutRef to avoid
-    // re-running (and re-firing getMe / clobbering isAuthenticated) on every
-    // client-side navigation, which changes navigate/logout identity.
+    // Mount-only: logout is read via logoutRef so navigation identity changes don't re-fire getMe.
   }, [])
 
   const login = useCallback((accessToken: string, refreshToken: string, skipNavigation = false) => {
@@ -83,7 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const perms = decoded.permissions || []
       setPermissions(perms)
 
-      // Check if this is a limited token for 2FA setup
+      // Limited token issued for 2FA setup only.
       if (perms.length === 1 && perms[0] === 'auth:setup_2fa') {
         setIsAuthenticated(true)
         if (!skipNavigation) {

@@ -8,9 +8,7 @@ import ResendVerification from './pages/ResendVerification'
 import Setup2FA from './pages/Setup2FA'
 import AcceptInvite from './pages/AcceptInvite'
 import LoginCallback from './pages/LoginCallback'
-// Authenticated app pages are code-split so chart-heavy (Recharts) and
-// markdown-heavy (react-markdown) routes don't ship in the initial bundle; the
-// lightweight auth pages above stay eager on the first-paint path.
+// Authenticated pages are code-split to keep chart/markdown deps out of the initial bundle.
 const Dashboard = lazy(() => import('./pages/Dashboard'))
 const UsersPage = lazy(() => import('./pages/Users'))
 const TeamsPage = lazy(() => import('./pages/Teams'))
@@ -40,7 +38,6 @@ import { lazy, Suspense, useState, useEffect } from 'react'
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: (error: Error) => {
-      // Check for server errors (5xx) using error response structure
       const axiosError = error as { response?: { status?: number } }
       if (axiosError.response?.status && axiosError.response.status >= 500) {
         toast.error("Server Error", { description: "Something went wrong on the server." })
@@ -49,7 +46,7 @@ const queryClient = new QueryClient({
   }),
   mutationCache: new MutationCache({
     onError: (_error: Error) => {
-      // Mutations handle their own error display
+      // Mutations handle their own error display.
     }
   }),
   defaultOptions: {
@@ -64,7 +61,6 @@ function Force2FAGuard({ children }: { children: React.ReactNode }) {
   const { permissions } = useAuth();
   const location = useLocation();
 
-  // Check for limited token first
   if (permissions.length === 1 && permissions[0] === 'auth:setup_2fa') {
       if (location.pathname === '/setup-2fa') {
           return <>{children}</>;
@@ -72,7 +68,6 @@ function Force2FAGuard({ children }: { children: React.ReactNode }) {
       return <Navigate to="/setup-2fa" replace />;
   }
 
-  // If we are on setup page but have full permissions, redirect to dashboard
   if (location.pathname === '/setup-2fa' && !(permissions.length === 1 && permissions[0] === 'auth:setup_2fa')) {
       return <Navigate to="/dashboard" replace />;
   }
@@ -220,7 +215,6 @@ function AppRoutes() {
             <Chat />
           </RequirePermission>
         } />
-        {/* Add other routes here */}
       </Route>
     </Routes>
     </Suspense>

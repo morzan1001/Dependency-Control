@@ -56,7 +56,6 @@ export default function AcceptInvite() {
 
     acceptMutation.mutate({ token, username, password }, {
        onSuccess: () => {
-         // Auto-login
          loginMutation.mutate({ username, password }, {
              onSuccess: (data) => {
                  login(data.access_token, data.refresh_token)

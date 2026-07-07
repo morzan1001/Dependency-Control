@@ -34,14 +34,11 @@ export default function Signup() {
 
     signupMutation.mutate({ username, email, password }, {
       onSuccess: () => {
-        // Auto-login after signup
         loginMutation.mutate({ username, password }, {
           onSuccess: (data) => {
             login(data.access_token, data.refresh_token)
-            // The AuthContext will handle redirection/state
           },
           onError: () => {
-             // If auto-login fails, redirect to login page
              navigate('/login', { state: { message: 'Account created successfully. Please login.' } })
           }
         })

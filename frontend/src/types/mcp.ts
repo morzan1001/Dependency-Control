@@ -9,8 +9,7 @@ export interface MCPApiKey {
 }
 
 export interface MCPApiKeyCreateResponse extends MCPApiKey {
-  /** Plaintext token — server returns it once. Show it to the user
-   *  immediately and discard from memory after they copy it. */
+  /** Plaintext token; the server returns it only once. */
   token: string;
 }
 

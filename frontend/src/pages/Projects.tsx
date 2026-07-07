@@ -47,9 +47,8 @@ export default function ProjectsPage() {
   const { data: appConfig } = useAppConfig();
 
   const isLimitReached = () => {
-      // Users with system:manage permission are exempt from project limits
       if (hasPermission('system:manage')) return false;
-      // 0 means unlimited
+      // 0 / unset means unlimited
       if (!appConfig?.project_limit_per_user) return false;
       if (projectsData?.total !== undefined) {
          return projectsData.total >= appConfig.project_limit_per_user;

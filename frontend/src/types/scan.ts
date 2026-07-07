@@ -369,8 +369,6 @@ export interface SbomData {
   [key: string]: string | number | boolean | null | undefined | Array<{ name: string; version?: string; type?: string; purl?: string }>;
 }
 
-// --- SBOM Document types (raw CycloneDX/SPDX documents from API) ---
-
 export interface SbomToolComponent {
   name: string;
 }
@@ -402,8 +400,6 @@ export interface SbomResponse {
   sbom: SbomDocument | null;
   error?: string;
 }
-
-// --- Scan query/response types ---
 
 export interface ScanFindingsParams {
   skip?: number;

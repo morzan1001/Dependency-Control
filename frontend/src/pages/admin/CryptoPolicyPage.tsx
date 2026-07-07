@@ -39,5 +39,3 @@ export function CryptoPolicyPage() {
     </div>
   );
 }
-
-export default CryptoPolicyPage;

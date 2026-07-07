@@ -108,8 +108,7 @@ export const chatApi = {
       try {
         newToken = await refreshAccessToken();
       } catch {
-        // Transient refresh failure (network/timeout/5xx): tokens survive but we
-        // cannot retry now. newToken stays null; fall through to error handling.
+        // Transient refresh failure: keep tokens, fall through to error handling.
       }
       if (newToken) {
         response = await performSendMessageFetch(conversationId, content, images, signal);

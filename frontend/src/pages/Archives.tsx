@@ -231,7 +231,6 @@ export default function ArchivesPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {/* Filters */}
           <div className="flex flex-wrap items-end gap-3 mb-4">
             <div>
               <label htmlFor="admin-branch-filter" className="text-xs font-medium text-muted-foreground mb-1 block">Branch</label>

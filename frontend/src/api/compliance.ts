@@ -37,11 +37,7 @@ export async function deleteReport(id: string): Promise<void> {
   await api.delete(`/compliance/reports/${id}`);
 }
 
-/**
- * Extract a filename from a Content-Disposition header value, if present.
- * Handles both the RFC 5987 `filename*=UTF-8''...` and the plain
- * `filename="..."` forms. Returns undefined when nothing usable is found.
- */
+// Extract a filename from a Content-Disposition header, handling RFC 5987 and plain forms.
 function filenameFromContentDisposition(header: string | undefined): string | undefined {
   if (!header) return undefined;
   const utf8Match = /filename\*=(?:UTF-8'')?([^;]+)/i.exec(header);
@@ -56,15 +52,7 @@ function filenameFromContentDisposition(header: string | undefined): string | un
   return plainMatch?.[1]?.trim() || undefined;
 }
 
-/**
- * Download a completed compliance report artifact.
- *
- * The download endpoint authenticates exclusively via the Authorization
- * header (OAuth2 bearer) — a plain anchor navigation sends no header and
- * always 401s. Fetch the artifact through the authenticated axios client
- * (which also resolves the runtime-configured API base URL) as a blob and
- * trigger the save via a transient object URL.
- */
+// Download via the authenticated axios client; the endpoint requires the bearer header (a plain anchor 401s).
 export async function downloadReport(id: string, filename?: string): Promise<void> {
   const response = await api.get<Blob>(`/compliance/reports/${id}/download`, {
     responseType: "blob",
