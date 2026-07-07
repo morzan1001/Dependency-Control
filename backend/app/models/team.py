@@ -1,4 +1,3 @@
-import uuid
 from datetime import datetime, timezone
 from typing import List, Literal, Optional
 
@@ -6,7 +5,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.constants import TEAM_ROLE_MEMBER, TEAM_ROLES
 from app.models.base import CreatedAtModel
-from app.models.types import PyObjectId
+from app.models.types import MongoDocument
 
 
 class TeamMember(BaseModel):
@@ -25,12 +24,7 @@ class TeamMember(BaseModel):
         return v
 
 
-class Team(CreatedAtModel):
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
+class Team(MongoDocument, CreatedAtModel):
     name: str
     description: Optional[str] = None
     gitlab_instance_id: Optional[str] = None
@@ -38,4 +32,4 @@ class Team(CreatedAtModel):
     members: List[TeamMember] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)

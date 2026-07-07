@@ -1,22 +1,16 @@
 import logging
-import uuid
 from datetime import datetime
 from typing import Any, Optional
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import ConfigDict, EmailStr, Field, field_validator
 
 from app.core.notification_prefs import sanitize_notification_preferences
-from app.models.types import PyObjectId
+from app.models.types import MongoDocument
 
 logger = logging.getLogger(__name__)
 
 
-class User(BaseModel):
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
+class User(MongoDocument):
     username: str
     email: EmailStr
     hashed_password: Optional[str] = None
@@ -40,4 +34,4 @@ class User(BaseModel):
     def validate_notification_preferences(cls, v: Any) -> dict[str, list[str]]:
         return sanitize_notification_preferences(v)
 
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)

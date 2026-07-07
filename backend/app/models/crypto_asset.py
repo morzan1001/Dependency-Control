@@ -5,22 +5,16 @@ Stored in collection `crypto_assets`. One document per detected cryptographic
 component (algorithm, certificate, protocol, related-crypto-material) per scan.
 """
 
-import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from pydantic import Field
 
-from app.models.types import MongoDocument, PyObjectId
+from app.models.types import MongoDocument
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 
 
 class CryptoAsset(MongoDocument):
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
     project_id: str = Field(..., description="Reference to the project")
     scan_id: str = Field(..., description="Reference to the scan where this was found")
 

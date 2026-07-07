@@ -1,4 +1,3 @@
-import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
 
@@ -9,7 +8,7 @@ from app.core.notification_prefs import sanitize_notification_preferences
 from app.models.base import CreatedAtModel
 from app.models.finding import Finding
 from app.models.stats import Stats
-from app.models.types import PyObjectId
+from app.models.types import MongoDocument
 
 
 class ProjectMember(BaseModel):
@@ -32,12 +31,7 @@ class ProjectMember(BaseModel):
         return sanitize_notification_preferences(v)
 
 
-class Project(CreatedAtModel):
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
+class Project(MongoDocument, CreatedAtModel):
     name: str
     owner_id: Optional[str] = None  # Deprecated: use team/member admins instead
     team_id: Optional[str] = None
@@ -98,15 +92,10 @@ class Project(CreatedAtModel):
     rescan_enabled: Optional[bool] = None  # If None, use system default
     rescan_interval: Optional[int] = None  # Hours. If None, use system default
 
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
-class Scan(CreatedAtModel):
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
+class Scan(MongoDocument, CreatedAtModel):
     project_id: str
     branch: str
     commit_hash: Optional[str] = None
@@ -164,17 +153,12 @@ class Scan(CreatedAtModel):
     last_result_at: Optional[datetime] = None  # When the last scanner result was received
     received_results: List[str] = Field(default_factory=list)  # List of analyzer names that have submitted results
 
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
-class AnalysisResult(CreatedAtModel):
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
+class AnalysisResult(MongoDocument, CreatedAtModel):
     scan_id: str
     analyzer_name: str
     result: Dict[str, Any]
 
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)

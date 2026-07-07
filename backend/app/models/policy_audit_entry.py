@@ -4,22 +4,16 @@ One document per save (including SEED), keyed on (policy_scope, project_id,
 version). Snapshot is the full post-change CryptoPolicy dump.
 """
 
-import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, Literal, Optional
 
 from pydantic import Field
 
-from app.models.types import MongoDocument, PyObjectId
+from app.models.types import MongoDocument
 from app.schemas.policy_audit import PolicyAuditAction
 
 
 class PolicyAuditEntry(MongoDocument):
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
     policy_type: Literal["crypto", "license"] = Field(
         default="crypto",
         description=(

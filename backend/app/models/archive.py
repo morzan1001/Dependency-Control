@@ -1,13 +1,12 @@
-import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
-from app.models.types import PyObjectId
+from app.models.types import MongoDocument
 
 
-class ArchiveMetadata(BaseModel):
+class ArchiveMetadata(MongoDocument):
     """
     Tracks archived scan data in S3.
 
@@ -15,11 +14,6 @@ class ArchiveMetadata(BaseModel):
     Serves as the index for what is archived and where.
     """
 
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
     project_id: str
     scan_id: str
     s3_key: str  # e.g. "{project_id}/{scan_id}.json.gz"
@@ -57,4 +51,4 @@ class ArchiveMetadata(BaseModel):
         ]
     )
 
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)

@@ -1,14 +1,13 @@
-import uuid
 from datetime import datetime
 from typing import Optional
 
 from pydantic import ConfigDict, Field
 
 from app.models.base import CreatedAtModel
-from app.models.types import PyObjectId
+from app.models.types import MongoDocument
 
 
-class GitLabInstance(CreatedAtModel):
+class GitLabInstance(MongoDocument, CreatedAtModel):
     """
     Represents a configured GitLab instance.
 
@@ -18,12 +17,6 @@ class GitLabInstance(CreatedAtModel):
     - Configuration flags (auto-create, team sync)
     - Unique identifier for project references
     """
-
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
 
     # Identity
     name: str = Field(..., description="Human-readable name (e.g. 'GitLab.com', 'Internal GitLab')")
@@ -62,4 +55,4 @@ class GitLabInstance(CreatedAtModel):
     created_by: str = Field(..., description="User ID of the admin who created this instance")
     last_modified_at: Optional[datetime] = None
 
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)

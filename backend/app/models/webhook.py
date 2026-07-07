@@ -2,21 +2,20 @@
 Webhook model for MongoDB storage.
 """
 
-import uuid
 from datetime import datetime
 from typing import Dict, List, Literal, Optional
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import ConfigDict, field_validator
 
 from app.models.base import CreatedAtModel
-from app.models.types import PyObjectId
+from app.models.types import MongoDocument
 from app.services.webhooks.validation import (
     validate_webhook_events,
     validate_webhook_url,
 )
 
 
-class Webhook(CreatedAtModel):
+class Webhook(MongoDocument, CreatedAtModel):
     """
     Webhook configuration for event notifications.
 
@@ -40,11 +39,6 @@ class Webhook(CreatedAtModel):
         last_failure_at: Last failed delivery timestamp
     """
 
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
     project_id: Optional[str] = None
     team_id: Optional[str] = None
     url: str
@@ -73,4 +67,4 @@ class Webhook(CreatedAtModel):
     def _validate_url(cls, v: str) -> str:
         return validate_webhook_url(v)
 
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)

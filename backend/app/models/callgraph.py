@@ -5,14 +5,13 @@ Stores call graph data uploaded from CI/CD pipelines for analyzing
 whether vulnerable code paths are actually reachable in the project.
 """
 
-import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, Field
 
 from app.models.base import CreatedAtModel
-from app.models.types import PyObjectId
+from app.models.types import MongoDocument
 
 
 class ImportEntry(BaseModel):
@@ -46,14 +45,9 @@ class ModuleUsage(BaseModel):
     is_direct_dependency: bool = True  # vs transitive
 
 
-class Callgraph(CreatedAtModel):
+class Callgraph(MongoDocument, CreatedAtModel):
     """Complete call graph data for a project."""
 
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
     project_id: str
 
     # Pipeline context - crucial for matching callgraph to correct scans
@@ -83,5 +77,3 @@ class Callgraph(CreatedAtModel):
     total_calls: int = 0
     analysis_duration_ms: Optional[int] = None
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    model_config = ConfigDict(populate_by_name=True)

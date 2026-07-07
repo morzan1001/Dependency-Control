@@ -529,7 +529,7 @@ class TestGitLabInstanceAccessTokenPersistence:
         mock_collection = MagicMock()
         mock_collection.insert_one = AsyncMock()
         mock_db = MagicMock()
-        mock_db.gitlab_instances = mock_collection
+        mock_db.__getitem__.return_value = mock_collection
 
         repo = GitLabInstanceRepository(mock_db)
         instance = GitLabInstance(
@@ -560,7 +560,7 @@ class TestGitLabInstanceAccessTokenPersistence:
         mock_collection = MagicMock()
         mock_collection.insert_one = AsyncMock()
         mock_db = MagicMock()
-        mock_db.gitlab_instances = mock_collection
+        mock_db.__getitem__.return_value = mock_collection
 
         repo = GitLabInstanceRepository(mock_db)
         instance = GitLabInstance(
@@ -752,3 +752,104 @@ class TestAutoCreateUsesSystemAnalyzers:
                 )
 
         assert result.active_analyzers == custom_analyzers
+
+
+class TestMongoDocumentIdConsolidation:
+    """Elegance #119: the uuid ``_id`` field is centralised in MongoDocument.
+
+    Persisted models inherit it instead of copy-pasting the declaration.
+    These tests guard that the consolidation preserves the exact public
+    contract (MongoDocument subtype, no locally-redeclared ``id``,
+    auto-generated uuid, and the ``_id`` alias round-trip).
+    """
+
+    _CASES = {
+        "app.models.archive:ArchiveMetadata": {
+            "project_id": "p1",
+            "scan_id": "s1",
+            "s3_key": "p1/s1.json.gz",
+            "s3_bucket": "bucket",
+        },
+        "app.models.broadcast:Broadcast": {
+            "type": "general",
+            "target_type": "global",
+            "subject": "s",
+            "message": "m",
+            "created_by": "u1",
+        },
+        "app.models.callgraph:Callgraph": {
+            "project_id": "p1",
+            "language": "python",
+            "tool": "pyan",
+        },
+        "app.models.dependency:Dependency": {
+            "project_id": "p1",
+            "scan_id": "s1",
+            "name": "requests",
+            "version": "2.31.0",
+        },
+        "app.models.invitation:SystemInvitation": {
+            "email": "a@b.com",
+            "token": "t",
+            "invited_by": "u1",
+            "expires_at": datetime.now(timezone.utc),
+        },
+        "app.models.gitlab_instance:GitLabInstance": {
+            "name": "GL",
+            "url": "https://gitlab.com",
+            "created_by": "admin",
+        },
+        "app.models.project:Scan": {"project_id": "p1", "branch": "main"},
+        "app.models.project:AnalysisResult": {
+            "scan_id": "s1",
+            "analyzer_name": "trivy",
+            "result": {},
+        },
+        "app.models.team:Team": {"name": "DevOps"},
+        "app.models.user:User": {"username": "alice", "email": "alice@example.com"},
+        "app.models.webhook:Webhook": {
+            "url": "https://example.com/hook",
+            "events": ["scan_completed"],
+        },
+    }
+
+    def _load(self, dotted: str):
+        import importlib
+
+        module_path, cls_name = dotted.rsplit(":", 1)
+        return getattr(importlib.import_module(module_path), cls_name)
+
+    @pytest.mark.parametrize("dotted", sorted(_CASES))
+    def test_inherits_mongo_document_without_local_id(self, dotted: str):
+        from app.models.types import MongoDocument
+
+        cls = self._load(dotted)
+        # Extends the shared base ...
+        assert issubclass(cls, MongoDocument)
+        # ... and does NOT copy-paste its own ``id`` field.
+        assert "id" not in getattr(cls, "__annotations__", {})
+
+    @pytest.mark.parametrize("dotted", sorted(_CASES))
+    def test_auto_id_and_alias_roundtrip(self, dotted: str):
+        cls = self._load(dotted)
+        kwargs = self._CASES[dotted]
+
+        instance = cls(**kwargs)
+        # Auto-generated uuid string id
+        assert isinstance(instance.id, str) and len(instance.id) > 0
+
+        # Serializes with the _id alias
+        dumped = instance.model_dump(by_alias=True)
+        assert dumped["_id"] == instance.id
+
+        # Accepts _id back (MongoDB read path)
+        reconstructed = cls(**dumped)
+        assert reconstructed.id == instance.id
+
+    def test_explicit_id_via_alias_is_honored(self):
+        """Passing _id (as MongoDB does) sets the id, not a fresh uuid."""
+        from app.models.user import User
+
+        u = User(_id="user-fixed-id", username="bob", email="bob@example.com")
+        assert u.id == "user-fixed-id"
+        assert u.model_dump(by_alias=True)["_id"] == "user-fixed-id"

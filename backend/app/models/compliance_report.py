@@ -4,22 +4,16 @@ completed/failed). Artifact lives in GridFS; metadata persists after the
 artifact expires.
 """
 
-import uuid
 from datetime import datetime
 from typing import Any, Dict, Literal, Optional
 
 from pydantic import Field
 
-from app.models.types import MongoDocument, PyObjectId
+from app.models.types import MongoDocument
 from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 
 
 class ComplianceReport(MongoDocument):
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
     scope: Literal["project", "team", "global", "user"]
     scope_id: Optional[str] = None
     framework: ReportFramework
