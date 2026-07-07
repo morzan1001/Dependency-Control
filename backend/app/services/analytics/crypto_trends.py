@@ -241,6 +241,19 @@ class CryptoTrendService:
         rs = range_start.isoformat()
         re = range_end.isoformat()
         fingerprint = hashlib.sha256(f"{rs}|{re}".encode()).hexdigest()[:16]
+        # Include a fingerprint of the resolved project set so that two callers
+        # sharing (scope, scope_id) but resolving to DIFFERENT projects never
+        # collide. This matters for scope="user", where scope_id is always None
+        # yet each user resolves to their own project_ids (see ScopeResolver.
+        # _resolve_user) — without this the shared process cache would leak one
+        # user's series to another (tenant-isolation breach). None (global scope,
+        # all projects) gets a distinct sentinel so it can't alias an empty set.
+        if resolved.project_ids is None:
+            projects_fp = "*"
+        else:
+            projects_fp = hashlib.sha256(
+                "|".join(sorted(resolved.project_ids)).encode()
+            ).hexdigest()[:16]
         return (
             "trends",
             resolved.scope,
@@ -248,4 +261,5 @@ class CryptoTrendService:
             metric,
             bucket,
             fingerprint,
+            projects_fp,
         )

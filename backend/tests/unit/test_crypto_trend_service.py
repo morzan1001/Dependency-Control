@@ -125,6 +125,46 @@ async def test_trend_buckets_by_month_and_latest_scan_wins(db):
     assert by_month == {1: 1.0, 2: 3.0}  # Jan = latest scan (1), not 2 or 3; Feb = 3
 
 
+def test_cache_key_distinguishes_users_under_user_scope(db):
+    """Two different users querying scope='user' both resolve to scope_id=None
+    but to DIFFERENT project_ids. Their cache keys must differ, otherwise the
+    shared process cache leaks user A's series to user B (tenant isolation)."""
+    svc = CryptoTrendService(db)
+    now = datetime.now(timezone.utc)
+    rs, re = now - timedelta(days=30), now
+    user_a = ResolvedScope(scope="user", scope_id=None, project_ids=["p1", "p2"])
+    user_b = ResolvedScope(scope="user", scope_id=None, project_ids=["p3", "p4"])
+    key_a = svc._cache_key(user_a, "total_crypto_findings", "week", rs, re)
+    key_b = svc._cache_key(user_b, "total_crypto_findings", "week", rs, re)
+    assert key_a != key_b
+
+
+def test_cache_key_stable_regardless_of_project_order(db):
+    """The project fingerprint is order-independent so an equivalent project set
+    still hits the cache."""
+    svc = CryptoTrendService(db)
+    now = datetime.now(timezone.utc)
+    rs, re = now - timedelta(days=30), now
+    a = ResolvedScope(scope="user", scope_id=None, project_ids=["p1", "p2"])
+    b = ResolvedScope(scope="user", scope_id=None, project_ids=["p2", "p1"])
+    assert svc._cache_key(a, "total_crypto_findings", "week", rs, re) == svc._cache_key(
+        b, "total_crypto_findings", "week", rs, re
+    )
+
+
+def test_cache_key_global_none_distinct_from_empty(db):
+    """global scope (project_ids=None → all projects) must not alias an empty
+    project set."""
+    svc = CryptoTrendService(db)
+    now = datetime.now(timezone.utc)
+    rs, re = now - timedelta(days=30), now
+    glob = ResolvedScope(scope="global", scope_id=None, project_ids=None)
+    empty = ResolvedScope(scope="user", scope_id=None, project_ids=[])
+    assert svc._cache_key(glob, "total_crypto_findings", "week", rs, re) != svc._cache_key(
+        empty, "total_crypto_findings", "week", rs, re
+    )
+
+
 @pytest.mark.asyncio
 async def test_trend_rejects_excessive_range(db):
     resolved = ResolvedScope(scope="project", scope_id="p", project_ids=["p"])

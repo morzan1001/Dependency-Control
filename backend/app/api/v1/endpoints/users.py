@@ -61,6 +61,25 @@ async def create_user(
             detail="Password is required when creating a user",
         )
 
+    # Creating a user with permissions is gated by the same capability used in
+    # update_user so that ordinary user:create holders (e.g. help-desk admins)
+    # cannot escalate privileges by minting an account with permissions they do
+    # not themselves hold. A caller may never grant a permission they lack.
+    if user_in.permissions:
+        if not has_permission(current_user.permissions, [Permissions.USER_MANAGE_PERMISSIONS]):
+            raise HTTPException(
+                status_code=403,
+                detail="Setting 'permissions' requires user:manage_permissions",
+            )
+        caller_perms = set(current_user.permissions or [])
+        requested = set(user_in.permissions or [])
+        unauthorised = requested - caller_perms
+        if unauthorised:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Cannot grant permissions you don't hold: {sorted(unauthorised)}",
+            )
+
     user_repo = UserRepository(db)
 
     if await user_repo.exists_by_email(user_in.email):
