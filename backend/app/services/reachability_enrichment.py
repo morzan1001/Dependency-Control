@@ -18,6 +18,7 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Mapping, Optional, TypedDict
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import UpdateOne
 
 from app.core.constants import (
     REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS,
@@ -28,7 +29,6 @@ from app.core.constants import (
     REACHABILITY_LEVEL_IMPORT,
     REACHABILITY_LEVEL_NONE,
     REACHABILITY_LEVEL_SYMBOL,
-    sort_by_severity,
 )
 from app.services.analyzers.purl_utils import get_purl_type
 from app.services.enrichment.scoring import (
@@ -38,6 +38,11 @@ from app.services.enrichment.scoring import (
 from app.services.vulnerable_symbols import get_symbols_for_finding
 
 logger = logging.getLogger(__name__)
+
+# Findings-per-round-trip cap for the bulk reachability persist. Mirrors the
+# analysis engine's dependency bulk-update chunking so a large scan doesn't hold
+# the callgraph-upload request open for thousands of serial Mongo updates.
+_BULK_CHUNK_SIZE = 500
 
 # Ecosystem identifier (a dependency's `type`, e.g. "pypi"/"npm"/"go-module", OR a
 # purl type) -> the callgraph language(s) that can actually analyze it. Anything
@@ -527,13 +532,14 @@ def _check_package_in_imports(package: str, import_map: Dict[str, List[str]]) ->
                 files_importing.append(file_path)
                 break
 
-            # Partial match (e.g., "lodash" in "lodash/merge")
-            if package_lower in imp_lower or imp_lower.startswith(package_lower + "/"):
-                files_importing.append(file_path)
-                break
-
-            # For Python: handle from X import Y
-            if imp_lower.startswith(package_lower + "."):
+            # Boundary-anchored subpath / submodule match only. A bare
+            # ``package_lower in imp_lower`` substring test spuriously matches
+            # unrelated packages (npm "ms" -> "forms"/"aws-sdk/clients/sms",
+            # Python "requests" -> "requests_oauthlib"), inflating reachability.
+            # Require a real path ("/") or module (".") boundary, mirroring the
+            # symbol-boundary fix in ``_match_symbols`` (audit #6 / SC#7).
+            # Direct equality is already handled above.
+            if imp_lower.startswith(package_lower + "/") or imp_lower.startswith(package_lower + "."):
                 files_importing.append(file_path)
                 break
 
@@ -675,28 +681,42 @@ async def run_pending_reachability_for_scan(
             scan_id=scan_id,
         )
 
-        # Update findings in database with reachability data
+        # Update findings in database with reachability data. Collect UpdateOne
+        # operations and flush them in chunked, unordered bulk_write round-trips
+        # instead of one sequential update per finding: a 10k-finding scan would
+        # otherwise fire 10k serial Mongo calls inline in the callgraph-upload
+        # request. Mirrors the analysis engine's dependency bulk-update pattern.
+        bulk_ops: List[UpdateOne] = []
         for finding_dict in findings_dicts:
             details = finding_dict.get("details", {})
             reachability_data = details.get("reachability")
-            if reachability_data is not None:
-                update_fields: Dict[str, Any] = {
-                    "reachable": reachability_data.get("is_reachable"),
-                    "reachability_level": reachability_data.get("analysis_level"),
-                    "reachable_functions": reachability_data.get("matched_symbols", []),
-                    "details.reachability": reachability_data,
-                }
-                # Persist the reachability-adjusted risk score (W5 / Finding 13)
-                # when enrichment computed one (i.e. the finding had a base
-                # details.risk_score to adjust).
-                if "adjusted_risk_score" in details:
-                    update_fields["details.adjusted_risk_score"] = details["adjusted_risk_score"]
-                await finding_repo.update(finding_dict["_id"], update_fields)
+            if reachability_data is None:
+                continue
+            update_fields: Dict[str, Any] = {
+                "reachable": reachability_data.get("is_reachable"),
+                "reachability_level": reachability_data.get("analysis_level"),
+                "reachable_functions": reachability_data.get("matched_symbols", []),
+                "details.reachability": reachability_data,
+            }
+            # Persist the reachability-adjusted risk score (W5 / Finding 13)
+            # when enrichment computed one (i.e. the finding had a base
+            # details.risk_score to adjust).
+            if "adjusted_risk_score" in details:
+                update_fields["details.adjusted_risk_score"] = details["adjusted_risk_score"]
+            bulk_ops.append(UpdateOne({"_id": finding_dict["_id"]}, {"$set": update_fields}))
 
-        # Store reachability summary in analysis_results for raw data view
+        for i in range(0, len(bulk_ops), _BULK_CHUNK_SIZE):
+            await finding_repo.collection.bulk_write(bulk_ops[i : i + _BULK_CHUNK_SIZE], ordered=False)
+
+        # Store reachability summary in analysis_results for raw data view. Reuse
+        # the canonical builder from analysis/stats so the pending path and the
+        # inline analysis path cannot drift (e.g. the high-confidence flag).
+        # Lazy import to avoid the stats -> reachability_enrichment import cycle.
         callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
         if callgraphs:
-            reachability_summary = _build_reachability_summary_for_pending(
+            from app.services.analysis.stats import build_reachability_summary
+
+            reachability_summary = build_reachability_summary(
                 findings_dicts,
                 [cg.model_dump(by_alias=True) for cg in callgraphs],
                 enriched_count,
@@ -731,82 +751,3 @@ async def run_pending_reachability_for_scan(
         logger.exception("[reachability] Failed to process scan %s: %s", scan_id, e)
 
     return result
-
-
-def _build_reachability_summary_for_pending(
-    findings: List[Dict[str, Any]], callgraphs: List[Dict[str, Any]], enriched_count: int
-) -> Dict[str, Any]:
-    """
-    Build a summary of reachability analysis for raw data view.
-    Used when processing pending reachability after callgraph upload.
-    Supports multiple callgraphs (one per language).
-    """
-    callgraph_info = [
-        {
-            "language": cg.get("language", "unknown"),
-            "total_modules": len(cg.get("module_usage", {})),
-            "total_imports": len(cg.get("import_map", {})),
-            "generated_at": (
-                cg["created_at"].isoformat()
-                if hasattr(cg.get("created_at"), "isoformat")
-                else str(cg["created_at"])
-                if cg.get("created_at")
-                else None
-            ),
-        }
-        for cg in callgraphs
-    ]
-
-    summary: Dict[str, Any] = {
-        "total_vulnerabilities": len(findings),
-        "analyzed": enriched_count,
-        "reachability_levels": {
-            "confirmed": 0,
-            "likely": 0,
-            "unknown": 0,
-            "unreachable": 0,
-        },
-        "callgraph_info": callgraph_info,
-        "languages": [cg.get("language", "unknown") for cg in callgraphs],
-        "reachable_vulnerabilities": [],
-        "unreachable_vulnerabilities": [],
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-    }
-
-    for finding in findings:
-        reachability_data = finding.get("details", {}).get("reachability", {})
-        reachable = reachability_data.get("is_reachable")
-        # Persisted analysis_level is none/import/symbol; map onto the display
-        # tiers the buckets use (confirmed/likely/unreachable/unknown).
-        tier = reachability_display_tier(reachable, reachability_data.get("analysis_level"))
-
-        vuln_info = {
-            "cve": finding.get("finding_id") or finding.get("id", ""),
-            "component": finding.get("component", ""),
-            "version": finding.get("version", ""),
-            "severity": finding.get("severity", "unknown"),
-            "reachability_level": tier,
-            "reachable_functions": reachability_data.get("matched_symbols", [])[:5],
-        }
-
-        if tier in summary["reachability_levels"]:
-            summary["reachability_levels"][tier] += 1
-
-        if reachable is True:
-            summary["reachable_vulnerabilities"].append(vuln_info)
-        elif reachable is False:
-            summary["unreachable_vulnerabilities"].append(vuln_info)
-
-    # Sort by severity (most severe first)
-    summary["reachable_vulnerabilities"] = sort_by_severity(
-        summary["reachable_vulnerabilities"], key="severity", reverse=True
-    )
-    summary["unreachable_vulnerabilities"] = sort_by_severity(
-        summary["unreachable_vulnerabilities"], key="severity", reverse=True
-    )
-
-    # Limit lists
-    summary["reachable_vulnerabilities"] = summary["reachable_vulnerabilities"][:30]
-    summary["unreachable_vulnerabilities"] = summary["unreachable_vulnerabilities"][:30]
-
-    return summary

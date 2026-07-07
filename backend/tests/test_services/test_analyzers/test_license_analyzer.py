@@ -1,5 +1,7 @@
 """Tests for the LicenseAnalyzer - license compliance analysis."""
 
+import pytest
+
 from app.models.finding import Severity
 from app.models.license import (
     DeploymentModel,
@@ -813,3 +815,79 @@ class TestLicenseCompatibility:
         ]
         issues = check_license_compatibility(components, ignore_dev=True)
         assert len(issues) == 1
+
+
+class TestTransitiveDirectness:
+    """End-to-end analyze() tests for directness detection via the top-level
+    `direct` field (regression: previously read the nonexistent
+    properties.direct field, so every component was treated as direct)."""
+
+    def setup_method(self):
+        self.analyzer = LicenseAnalyzer()
+
+    def _gpl_component(self, name, *, direct):
+        """A GPL-3.0 component in ParsedDependency.to_dict() shape."""
+        return {
+            "name": name,
+            "version": "1.0.0",
+            "purl": f"pkg:pypi/{name}@1.0.0",
+            "license": "GPL-3.0",
+            "scope": "runtime",
+            "direct": direct,
+            "properties": {},  # Dict[str,str], never contains 'direct'
+        }
+
+    @pytest.mark.asyncio
+    async def test_ignore_transitive_skips_transitive_dep(self):
+        """With ignore_transitive=True a transitive GPL dep must be skipped."""
+        components = [self._gpl_component("trans-gpl", direct=False)]
+        result = await self.analyzer.analyze(
+            sbom={},
+            settings={"ignore_transitive": True},
+            parsed_components=components,
+        )
+        assert result["license_issues"] == []
+        assert result["summary"]["skipped"] == 1
+
+    @pytest.mark.asyncio
+    async def test_ignore_transitive_keeps_direct_dep(self):
+        """A direct GPL dep is still evaluated when ignore_transitive=True."""
+        components = [self._gpl_component("direct-gpl", direct=True)]
+        result = await self.analyzer.analyze(
+            sbom={},
+            settings={"ignore_transitive": True},
+            parsed_components=components,
+        )
+        issues = result["license_issues"]
+        assert len(issues) == 1
+        assert issues[0]["severity"] == Severity.HIGH.value
+        assert result["summary"]["skipped"] == 0
+
+    @pytest.mark.asyncio
+    async def test_transitive_dep_severity_downgraded(self):
+        """A transitive GPL dep (ignore_transitive off) is downgraded HIGH->MEDIUM."""
+        components = [self._gpl_component("trans-gpl", direct=False)]
+        result = await self.analyzer.analyze(
+            sbom={},
+            settings={"ignore_transitive": False},
+            parsed_components=components,
+        )
+        issues = result["license_issues"]
+        assert len(issues) == 1
+        assert issues[0]["is_transitive"] is True
+        assert issues[0]["severity"] == Severity.MEDIUM.value
+        assert issues[0]["effective_severity"] == Severity.HIGH.value
+
+    @pytest.mark.asyncio
+    async def test_direct_dep_not_downgraded(self):
+        """A direct GPL dep keeps full HIGH severity and no transitive flag."""
+        components = [self._gpl_component("direct-gpl", direct=True)]
+        result = await self.analyzer.analyze(
+            sbom={},
+            settings={"ignore_transitive": False},
+            parsed_components=components,
+        )
+        issues = result["license_issues"]
+        assert len(issues) == 1
+        assert issues[0]["severity"] == Severity.HIGH.value
+        assert "is_transitive" not in issues[0]

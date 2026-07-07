@@ -126,6 +126,18 @@ export function CryptoPolicyEditor({
   initialRules, systemRules, onSave, onResetOverride, readOnly, title, subtitle,
 }: Props) {
   const [rules, setRules] = useState<CryptoRule[]>(initialRules);
+  // Resync local editor state whenever the parent supplies a fresh rule set
+  // (e.g. after "Reset all overrides" refetches, or a concurrent edit by
+  // another admin). useState only reads `initialRules` on the first render, so
+  // without this the table would keep showing stale rows and Save would
+  // re-create a just-deleted override. React-query reuses the same array
+  // reference when the refetched data is unchanged, so an in-progress edit is
+  // only discarded when the server data actually changed.
+  const [syncedRules, setSyncedRules] = useState<CryptoRule[]>(initialRules);
+  if (initialRules !== syncedRules) {
+    setSyncedRules(initialRules);
+    setRules(initialRules);
+  }
   const [addOpen, setAddOpen] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<CryptoPolicySource | "all">("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");

@@ -865,6 +865,62 @@ class TestComprehensiveStatsEpssZero:
         assert stats.threat_intel.max_epss_score == 0.0
 
 
+class TestComprehensiveStatsUnknownReachability:
+    """unknown_count is documented as 'vulnerabilities with unknown reachability'
+    and rendered as the 'Unknown' reachability badge. It must be
+    vuln_total - reachability_analyzed, NOT total(all finding types) -
+    reachability_analyzed, otherwise license/SAST/secret findings are counted as
+    vulnerabilities with unknown reachability (bug/high finding #1)."""
+
+    @staticmethod
+    def _typed_finding(_id, finding_type, *, reachable=None, reachability_level="unknown"):
+        doc = {
+            "_id": _id,
+            "finding_id": _id,
+            "scan_id": _W5_SCAN,
+            "type": finding_type,
+            "severity": "HIGH",
+            "component": "pkg",
+            "version": "1.0.0",
+            "details": {},
+            "waived": False,
+        }
+        if reachable is not None:
+            doc["reachable"] = reachable
+            doc["reachability_level"] = reachability_level
+        return doc
+
+    @pytest.mark.asyncio
+    async def test_non_vuln_findings_not_counted_as_unknown_reachability(self):
+        """A scan of many non-vulnerability findings plus fully-analyzed vulns
+        must report unknown_count == 0, not the count of non-vuln findings."""
+        findings = [self._typed_finding(f"lic{i}", "license") for i in range(5)]
+        findings += [self._typed_finding(f"sast{i}", "sast") for i in range(3)]
+        findings += [
+            self._typed_finding("v1", "vulnerability", reachable=True, reachability_level="symbol"),
+            self._typed_finding("v2", "vulnerability", reachable=False, reachability_level="none"),
+        ]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        # both vulns are reachability-analyzed -> unknown vulns = 0
+        assert stats.reachability.unknown_count == 0
+
+    @pytest.mark.asyncio
+    async def test_unknown_count_is_unanalyzed_vulns_only(self):
+        """unknown_count counts vulnerabilities lacking a reachability verdict,
+        ignoring non-vulnerability findings entirely."""
+        findings = [self._typed_finding(f"lic{i}", "license") for i in range(10)]
+        findings += [
+            self._typed_finding("v1", "vulnerability", reachable=True, reachability_level="symbol"),
+            self._typed_finding("v2", "vulnerability"),  # no reachable verdict -> unknown
+            self._typed_finding("v3", "vulnerability"),  # no reachable verdict -> unknown
+        ]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.reachability.analyzed_count == 1
+        assert stats.reachability.unknown_count == 2
+
+
 class TestComprehensiveStatsKev:
     @pytest.mark.asyncio
     async def test_kev_count_reads_persisted_in_kev_key(self):

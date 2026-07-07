@@ -3,7 +3,6 @@
 from app.schemas.sbom import SBOMFormat
 from app.services.sbom_parser import (
     SBOMParser,
-    DependencyGraphAnalyzer,
     is_url,
     extract_license_from_url,
     parse_sbom,
@@ -58,52 +57,6 @@ class TestExtractLicenseFromUrl:
 
     def test_unlicense_org(self):
         assert extract_license_from_url("https://unlicense.org") == "Unlicense"
-
-
-class TestDependencyGraphAnalyzer:
-    def test_build_reverse_dependency_graph(self):
-        relationships = [
-            {"child": "pkg-a", "parent": "root"},
-            {"child": "pkg-b", "parent": "pkg-a"},
-            {"child": "pkg-c", "parent": "pkg-a"},
-        ]
-        graph = DependencyGraphAnalyzer.build_reverse_dependency_graph(relationships)
-        assert "pkg-a" in graph
-        assert "root" in graph["pkg-a"]
-        assert "pkg-a" in graph["pkg-b"]
-        assert "pkg-a" in graph["pkg-c"]
-
-    def test_build_reverse_graph_custom_keys(self):
-        relationships = [
-            {"relatedSpdxElement": "pkg-a", "spdxElementId": "root"},
-        ]
-        graph = DependencyGraphAnalyzer.build_reverse_dependency_graph(
-            relationships,
-            child_key="relatedSpdxElement",
-            parent_key="spdxElementId",
-        )
-        assert "pkg-a" in graph
-        assert "root" in graph["pkg-a"]
-
-    def test_build_reverse_graph_empty(self):
-        graph = DependencyGraphAnalyzer.build_reverse_dependency_graph([])
-        assert graph == {}
-
-    def test_identify_direct_with_root_deps(self):
-        root_deps = {"pkg-a", "pkg-b"}
-        result = DependencyGraphAnalyzer.identify_direct_dependencies(
-            all_refs={"pkg-a", "pkg-b", "pkg-c"},
-            transitive_refs={"pkg-c"},
-            root_deps=root_deps,
-        )
-        assert result == root_deps
-
-    def test_identify_direct_by_subtraction(self):
-        result = DependencyGraphAnalyzer.identify_direct_dependencies(
-            all_refs={"pkg-a", "pkg-b", "pkg-c"},
-            transitive_refs={"pkg-b", "pkg-c"},
-        )
-        assert result == {"pkg-a"}
 
 
 class TestResolveCyclonedxDirectRefs:
@@ -429,3 +382,238 @@ class TestParseSBOMConvenience:
     def test_total_components_count(self, cyclonedx_minimal):
         result = parse_sbom(cyclonedx_minimal)
         assert result.total_components == result.parsed_components + result.skipped_components
+
+
+class TestSyftLegacyStringCpes:
+    """Finding 1: Syft schema < 16.0 emits `cpes` as a list of plain strings.
+    Parsing must not crash (which silently discarded all remaining artifacts)."""
+
+    def test_string_form_cpes_do_not_crash_and_are_captured(self):
+        parser = SBOMParser()
+        sbom = {
+            "descriptor": {"name": "syft", "version": "0.90.0"},
+            "source": {"type": "directory", "target": "/app"},
+            "artifacts": [
+                {
+                    "id": "a1",
+                    "name": "pkg-a",
+                    "version": "1.0",
+                    "type": "python",
+                    "cpes": ["cpe:2.3:a:pkg-a:pkg-a:1.0:*:*:*:*:*:*:*"],
+                },
+                {
+                    "id": "a2",
+                    "name": "pkg-b",
+                    "version": "2.0",
+                    "type": "python",
+                    "cpes": ["cpe:2.3:a:pkg-b:pkg-b:2.0:*:*:*:*:*:*:*"],
+                },
+            ],
+            "artifactRelationships": [],
+        }
+        result = parser.parse(sbom)
+        deps = {d.name: d for d in result.dependencies}
+        # Both artifacts survive (before the fix the first one crashed the whole loop)
+        assert set(deps) == {"pkg-a", "pkg-b"}
+        assert deps["pkg-a"].cpes == ["cpe:2.3:a:pkg-a:pkg-a:1.0:*:*:*:*:*:*:*"]
+
+    def test_dict_form_cpes_still_work(self):
+        parser = SBOMParser()
+        sbom = {
+            "descriptor": {"name": "syft", "version": "1.0.0"},
+            "source": {"type": "directory", "target": "/app"},
+            "artifacts": [
+                {
+                    "id": "a1",
+                    "name": "pkg-a",
+                    "version": "1.0",
+                    "type": "python",
+                    "cpes": [{"cpe": "cpe:2.3:a:pkg-a:pkg-a:1.0:*:*:*:*:*:*:*"}],
+                },
+            ],
+            "artifactRelationships": [],
+        }
+        result = parser.parse(sbom)
+        assert result.dependencies[0].cpes == ["cpe:2.3:a:pkg-a:pkg-a:1.0:*:*:*:*:*:*:*"]
+
+
+class TestCycloneDXCpe:
+    """Finding 3: CycloneDX spec defines a singular `cpe` string, not a `cpes` array."""
+
+    def test_singular_cpe_field_captured(self):
+        parser = SBOMParser()
+        sbom = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "metadata": {"component": {"type": "application", "name": "app", "bom-ref": "root"}},
+            "components": [
+                {
+                    "type": "library",
+                    "name": "pkg",
+                    "version": "1.0",
+                    "purl": "pkg:pypi/pkg@1.0",
+                    "cpe": "cpe:2.3:a:pkg:pkg:1.0:*:*:*:*:*:*:*",
+                },
+            ],
+            "dependencies": [],
+        }
+        result = parser.parse(sbom)
+        assert result.dependencies[0].cpes == ["cpe:2.3:a:pkg:pkg:1.0:*:*:*:*:*:*:*"]
+
+    def test_no_cpe_yields_empty_list(self):
+        parser = SBOMParser()
+        sbom = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "metadata": {"component": {"type": "application", "name": "app", "bom-ref": "root"}},
+            "components": [
+                {"type": "library", "name": "pkg", "version": "1.0", "purl": "pkg:pypi/pkg@1.0"},
+            ],
+            "dependencies": [],
+        }
+        result = parser.parse(sbom)
+        assert result.dependencies[0].cpes == []
+
+
+class TestSPDXDirectDependencyDetection:
+    """Finding 2: In the canonical GitHub SBOM layout the DESCRIBES target is the
+    application root; its DEPENDS_ON children are the DIRECT deps and the root itself
+    must not be reported as a direct dependency."""
+
+    def test_github_layout_root_children_are_direct(self):
+        parser = SBOMParser()
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "packages": [
+                {
+                    "SPDXID": "SPDXRef-repo",
+                    "name": "my-repo",
+                    "versionInfo": "1.0",
+                    "externalRefs": [
+                        {"referenceType": "purl", "referenceLocator": "pkg:github/acme/my-repo@1.0"}
+                    ],
+                },
+                {
+                    "SPDXID": "SPDXRef-dep1",
+                    "name": "dep1",
+                    "versionInfo": "1.0",
+                    "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:pypi/dep1@1.0"}],
+                },
+                {
+                    "SPDXID": "SPDXRef-dep2",
+                    "name": "dep2",
+                    "versionInfo": "2.0",
+                    "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:pypi/dep2@2.0"}],
+                },
+            ],
+            "relationships": [
+                {
+                    "spdxElementId": "SPDXRef-DOCUMENT",
+                    "relatedSpdxElement": "SPDXRef-repo",
+                    "relationshipType": "DESCRIBES",
+                },
+                {
+                    "spdxElementId": "SPDXRef-repo",
+                    "relatedSpdxElement": "SPDXRef-dep1",
+                    "relationshipType": "DEPENDS_ON",
+                },
+                {
+                    "spdxElementId": "SPDXRef-repo",
+                    "relatedSpdxElement": "SPDXRef-dep2",
+                    "relationshipType": "DEPENDS_ON",
+                },
+            ],
+        }
+        result = parser.parse(sbom)
+        deps = {d.name: d for d in result.dependencies}
+        assert deps["dep1"].direct is True
+        assert deps["dep2"].direct is True
+        assert deps["my-repo"].direct is False
+
+    def test_transitive_dep_of_direct_is_not_direct(self):
+        parser = SBOMParser()
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "packages": [
+                {"SPDXID": "SPDXRef-repo", "name": "my-repo", "versionInfo": "1.0"},
+                {"SPDXID": "SPDXRef-dep1", "name": "dep1", "versionInfo": "1.0"},
+                {"SPDXID": "SPDXRef-dep2", "name": "dep2", "versionInfo": "2.0"},
+            ],
+            "relationships": [
+                {
+                    "spdxElementId": "SPDXRef-DOCUMENT",
+                    "relatedSpdxElement": "SPDXRef-repo",
+                    "relationshipType": "DESCRIBES",
+                },
+                {
+                    "spdxElementId": "SPDXRef-repo",
+                    "relatedSpdxElement": "SPDXRef-dep1",
+                    "relationshipType": "DEPENDS_ON",
+                },
+                {
+                    "spdxElementId": "SPDXRef-dep1",
+                    "relatedSpdxElement": "SPDXRef-dep2",
+                    "relationshipType": "DEPENDS_ON",
+                },
+            ],
+        }
+        result = parser.parse(sbom)
+        deps = {d.name: d for d in result.dependencies}
+        assert deps["dep1"].direct is True
+        assert deps["dep2"].direct is False
+        assert deps["my-repo"].direct is False
+
+    def test_document_depends_on_directly(self):
+        # No intermediate root package: DOCUMENT DEPENDS_ON dep1 directly.
+        parser = SBOMParser()
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "packages": [
+                {"SPDXID": "SPDXRef-dep1", "name": "dep1", "versionInfo": "1.0"},
+                {"SPDXID": "SPDXRef-dep2", "name": "dep2", "versionInfo": "2.0"},
+            ],
+            "relationships": [
+                {
+                    "spdxElementId": "SPDXRef-DOCUMENT",
+                    "relatedSpdxElement": "SPDXRef-dep1",
+                    "relationshipType": "DEPENDS_ON",
+                },
+                {
+                    "spdxElementId": "SPDXRef-dep1",
+                    "relatedSpdxElement": "SPDXRef-dep2",
+                    "relationshipType": "DEPENDS_ON",
+                },
+            ],
+        }
+        result = parser.parse(sbom)
+        deps = {d.name: d for d in result.dependencies}
+        assert deps["dep1"].direct is True
+        assert deps["dep2"].direct is False
+
+
+class TestDetectFormatMalformed:
+    """Finding 5: detect_format must not raise on structurally odd (but valid JSON)
+    SBOMs; it should fall through to UNKNOWN so the best-effort path runs."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def test_components_first_element_not_dict(self):
+        fmt, _ = self.parser.detect_format({"components": [123, 456]})
+        assert fmt == SBOMFormat.UNKNOWN
+
+    def test_components_first_element_is_list(self):
+        fmt, _ = self.parser.detect_format({"components": [["nested"]]})
+        assert fmt == SBOMFormat.UNKNOWN
+
+    def test_source_is_string(self):
+        fmt, _ = self.parser.detect_format({"source": "some-string"})
+        assert fmt == SBOMFormat.UNKNOWN
+
+    def test_parse_does_not_raise_on_malformed(self):
+        result = parse_sbom({"components": [123], "source": "x"})
+        assert result is not None
+        assert result.format == SBOMFormat.UNKNOWN

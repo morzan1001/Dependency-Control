@@ -39,6 +39,7 @@ def _to_response(instance: GitLabInstance) -> GitLabInstanceResponse:
         oidc_audience=instance.oidc_audience,
         auto_create_projects=instance.auto_create_projects,
         sync_teams=instance.sync_teams,
+        team_sync_depth=getattr(instance, "team_sync_depth", 1),
         created_at=instance.created_at,
         created_by=instance.created_by,
         last_modified_at=instance.last_modified_at,
@@ -135,6 +136,7 @@ async def create_instance(
         oidc_audience=instance_data.oidc_audience,
         auto_create_projects=instance_data.auto_create_projects,
         sync_teams=instance_data.sync_teams,
+        team_sync_depth=instance_data.team_sync_depth,
         created_by=str(current_user.id),
         created_at=datetime.now(timezone.utc),
     )

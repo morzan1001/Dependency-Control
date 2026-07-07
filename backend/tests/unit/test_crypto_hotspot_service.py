@@ -100,3 +100,130 @@ async def test_hotspots_group_by_primitive(db):
     )
     keys = {e.key for e in result.items}
     assert "hash" in keys
+
+
+def _variant_asset(bom_ref, name, variant, *, project_id, scan_id, locations=None):
+    return CryptoAsset(
+        project_id=project_id,
+        scan_id=scan_id,
+        bom_ref=bom_ref,
+        name=name,
+        asset_type=CryptoAssetType.ALGORITHM,
+        primitive=CryptoPrimitive.PKE,
+        variant=variant,
+        occurrence_locations=locations or [],
+    )
+
+
+def _crypto_finding(_id, *, asset_name, project_id, scan_id, severity="HIGH", waived=False):
+    return {
+        "_id": _id,
+        "finding_id": _id,
+        "type": "crypto_weak_key",
+        "project_id": project_id,
+        "scan_id": scan_id,
+        "severity": severity,
+        "waived": waived,
+        "details": {"asset_name": asset_name},
+    }
+
+
+@pytest.mark.asyncio
+async def test_group_by_name_enrichment_joins_on_bare_name_despite_variants(db):
+    """Finding #1: hotspot rows must key on bare asset name so the findings
+    enrichment (which only has details.asset_name == asset.name) joins cleanly.
+    Previously the key was "name-variant" and every join missed → finding_count 0."""
+    await CryptoAssetRepository(db).bulk_upsert(
+        "pv",
+        "sv",
+        [
+            _variant_asset("a1", "RSA", "RSA-OAEP", project_id="pv", scan_id="sv"),
+            _variant_asset("a2", "RSA", "RSA-PSS", project_id="pv", scan_id="sv"),
+        ],
+    )
+    await db.scans.insert_one(
+        {"_id": "sv", "project_id": "pv", "status": "completed", "created_at": datetime.now(timezone.utc)}
+    )
+    for f in [
+        _crypto_finding("f1", asset_name="RSA", project_id="pv", scan_id="sv"),
+        _crypto_finding("f2", asset_name="RSA", project_id="pv", scan_id="sv", severity="MEDIUM"),
+    ]:
+        await db.findings.insert_one(f)
+
+    resolved = ResolvedScope(scope="project", scope_id="pv", project_ids=["pv"])
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", limit=10)
+
+    entries = [e for e in result.items if e.key == "RSA"]
+    assert len(entries) == 1, f"expected a single bare-name 'RSA' row, got keys {[e.key for e in result.items]}"
+    entry = entries[0]
+    assert entry.asset_count == 2
+    assert entry.finding_count == 2
+    assert entry.severity_mix == {"HIGH": 1, "MEDIUM": 1}
+
+
+@pytest.mark.asyncio
+async def test_group_by_name_enrichment_excludes_waived_findings(db):
+    """Finding #3: waived crypto findings must not inflate finding_count/severity_mix."""
+    await CryptoAssetRepository(db).bulk_upsert(
+        "pw",
+        "sw",
+        [_variant_asset("a1", "MD5", None, project_id="pw", scan_id="sw")],
+    )
+    await db.scans.insert_one(
+        {"_id": "sw", "project_id": "pw", "status": "completed", "created_at": datetime.now(timezone.utc)}
+    )
+    for f in [
+        _crypto_finding("f1", asset_name="MD5", project_id="pw", scan_id="sw"),
+        _crypto_finding("f2", asset_name="MD5", project_id="pw", scan_id="sw", waived=True),
+        _crypto_finding("f3", asset_name="MD5", project_id="pw", scan_id="sw", waived=True),
+    ]:
+        await db.findings.insert_one(f)
+
+    resolved = ResolvedScope(scope="project", scope_id="pw", project_ids=["pw"])
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", limit=10)
+
+    entry = next(e for e in result.items if e.key == "MD5")
+    assert entry.finding_count == 1
+    assert entry.severity_mix == {"HIGH": 1}
+
+
+@pytest.mark.asyncio
+async def test_group_by_severity_excludes_waived_findings(db):
+    """Finding #3 on the finding-dimension path (severity)."""
+    for f in [
+        _crypto_finding("f1", asset_name="MD5", project_id="ps", scan_id="ss", severity="HIGH"),
+        _crypto_finding("f2", asset_name="MD5", project_id="ps", scan_id="ss", severity="HIGH", waived=True),
+        _crypto_finding("f3", asset_name="MD5", project_id="ps", scan_id="ss", severity="LOW"),
+    ]:
+        await db.findings.insert_one(f)
+    await db.scans.insert_one(
+        {"_id": "ss", "project_id": "ps", "status": "completed", "created_at": datetime.now(timezone.utc)}
+    )
+    # Seed a completed scan so _pick_scan_ids selects "ss".
+    resolved = ResolvedScope(scope="project", scope_id="ps", project_ids=["ps"])
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="severity", limit=10)
+
+    by_key = {e.key: e for e in result.items}
+    assert by_key["HIGH"].finding_count == 1  # waived HIGH excluded
+    assert by_key["LOW"].finding_count == 1
+
+
+@pytest.mark.asyncio
+async def test_no_completed_scans_returns_empty_not_all_history(db):
+    """Finding #2: when _pick_scan_ids finds no completed/partial scan the
+    aggregation must match nothing rather than fall back to every scan."""
+    await CryptoAssetRepository(db).bulk_upsert(
+        "pn",
+        "srun",
+        [_variant_asset("a1", "AES", "AES-256", project_id="pn", scan_id="srun")],
+    )
+    # Only scan is still running → not eligible for _pick_scan_ids.
+    await db.scans.insert_one(
+        {"_id": "srun", "project_id": "pn", "status": "running", "created_at": datetime.now(timezone.utc)}
+    )
+
+    resolved = ResolvedScope(scope="project", scope_id="pn", project_ids=["pn"])
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", limit=10)
+
+    assert result.items == []
+    assert result.total == 0

@@ -100,6 +100,93 @@ def test_missing_bom_ref_synthesized():
     assert assets[0].bom_ref
 
 
+def test_cipher_suites_object_shape_extracts_name():
+    """CycloneDX 1.6 defines cipherSuites as objects; parser must extract name."""
+    components = [
+        {
+            "type": "cryptographic-asset",
+            "bom-ref": "proto",
+            "name": "TLS",
+            "cryptoProperties": {
+                "assetType": "protocol",
+                "protocolProperties": {
+                    "type": "tls",
+                    "version": "1.2",
+                    "cipherSuites": [
+                        {
+                            "name": "TLS_RSA_WITH_RC4_128_SHA",
+                            "algorithms": ["algo-rsa"],
+                            "identifiers": ["0x00,0x05"],
+                        },
+                        "TLS_LEGACY_STRING",
+                    ],
+                },
+            },
+        }
+    ]
+    assets = parse_crypto_components(components)
+    assert assets[0].cipher_suites == [
+        "TLS_RSA_WITH_RC4_128_SHA",
+        "TLS_LEGACY_STRING",
+    ]
+
+
+def test_cipher_suites_falsy_names_filtered():
+    """Objects without a usable name must not produce dict-repr garbage."""
+    components = [
+        {
+            "type": "cryptographic-asset",
+            "bom-ref": "proto",
+            "name": "TLS",
+            "cryptoProperties": {
+                "assetType": "protocol",
+                "protocolProperties": {
+                    "type": "tls",
+                    "cipherSuites": [
+                        {"algorithms": ["algo-rsa"]},
+                        {"name": ""},
+                        {"name": "TLS_GOOD_SUITE"},
+                    ],
+                },
+            },
+        }
+    ]
+    assets = parse_crypto_components(components)
+    assert assets[0].cipher_suites == ["TLS_GOOD_SUITE"]
+
+
+def test_tool_metadata_list_shape():
+    cbom = parse_cbom(
+        {
+            "specVersion": "1.6",
+            "metadata": {"tools": [{"name": "cbomkit", "version": "1.2.3"}]},
+            "components": [],
+        }
+    )
+    assert cbom.tool_name == "cbomkit"
+    assert cbom.tool_version == "1.2.3"
+
+
+def test_tool_metadata_dict_components_shape():
+    cbom = parse_cbom(
+        {
+            "specVersion": "1.6",
+            "metadata": {
+                "tools": {"components": [{"name": "cdxgen", "version": "9.0.0"}]}
+            },
+            "components": [],
+        }
+    )
+    assert cbom.tool_name == "cdxgen"
+    assert cbom.tool_version == "9.0.0"
+
+
+def test_tool_metadata_absent_is_none():
+    cbom = parse_cbom({"specVersion": "1.6", "components": []})
+    assert cbom.tool_name is None
+    assert cbom.tool_version is None
+
+
 def test_invalid_not_valid_after_is_none():
     components = [
         {

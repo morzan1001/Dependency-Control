@@ -147,6 +147,12 @@ export function linkifyAssistantMarkdown(
   // when both could match.
   const sorted = [...entities].sort((a, b) => b.priority - a.priority);
 
+  const linkifyCves = (text: string): string =>
+    text.replace(CVE_PATTERN, (cve) => {
+      const upper = cve.toUpperCase();
+      return `[${upper}](https://nvd.nist.gov/vuln/detail/${upper})`;
+    });
+
   const linkifyText = (segment: string): string => {
     let result = segment;
     for (const entity of sorted) {
@@ -161,12 +167,16 @@ export function linkifyAssistantMarkdown(
         return `${lead}${entity.markdown}`;
       });
     }
-    // Then linkify CVE IDs that weren't already linked
-    result = result.replace(CVE_PATTERN, (cve) => {
-      const upper = cve.toUpperCase();
-      return `[${upper}](https://nvd.nist.gov/vuln/detail/${upper})`;
-    });
-    return result;
+    // Then linkify bare CVE IDs to NVD — but ONLY over text the entity pass
+    // left as plain text. A finding whose anchor is a CVE (and whose href
+    // may repeat the CVE in a query param) has just been turned into a
+    // Markdown link; re-splitting on the same skip pattern keeps the CVE
+    // pass from rewriting a CVE inside that freshly-inserted link, which
+    // would otherwise produce nested, broken Markdown and a dead deep-link.
+    return result
+      .split(skipPattern)
+      .map((seg, idx) => (idx % 2 === 0 ? linkifyCves(seg) : seg))
+      .join('');
   };
 
   for (let i = 0; i < segments.length; i += 1) {

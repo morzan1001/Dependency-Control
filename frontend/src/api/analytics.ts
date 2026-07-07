@@ -27,8 +27,11 @@ export const analyticsApi = {
 
     searchDependencies: async (query: string, version?: string): Promise<SearchResult[]> => {
         const params = buildQueryParams({ q: query, version });
-        const response = await api.get<SearchResult[]>('/analytics/search', { params });
-        return response.data;
+        // The /analytics/search endpoint returns a paginated envelope
+        // ({ items, total, page, size }), not a bare array. Unwrap .items so
+        // consumers that call .map()/.length receive an array.
+        const response = await api.get<AdvancedSearchResponse>('/analytics/search', { params });
+        return response.data.items;
     },
 
     getSummary: async (): Promise<AnalyticsSummary> => {

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import re
@@ -11,6 +12,14 @@ from app.models.waiver import Waiver
 from app.services.analysis.stats import calculate_comprehensive_stats
 
 logger = logging.getLogger(__name__)
+
+# Lock-acquisition retry policy for recalculate_project_stats. Recalc is triggered
+# fire-and-forget from waiver CRUD endpoints, so a dropped run (None return) leaves
+# stats stale until an unrelated event re-triggers it. Bounded exponential backoff
+# lets a contending run wait for the current holder to finish and then recompute
+# against the fully-committed waiver set. Total worst-case wait ~= 0.2*(2^5-1) = 6.2s.
+_LOCK_MAX_RETRIES = 5
+_LOCK_RETRY_BASE_DELAY = 0.2
 
 # Waiver field mapping: waiver field -> finding query field
 _WAIVER_FIELD_MAP = {
@@ -132,8 +141,6 @@ def _build_waiver_query(waiver: Waiver) -> Dict[str, str | Dict[str, str]]:
 async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: List[Waiver]) -> None:
     """Apply all waivers for a scan."""
     for waiver in waivers:
-        query = _build_waiver_query(waiver)
-
         if waiver.vulnerability_id:
             await finding_repo.apply_vulnerability_waiver(
                 scan_id=scan_id,
@@ -141,13 +148,30 @@ async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: List[Waiver])
                 waived=True,
                 waiver_reason=waiver.reason,
             )
-        else:
-            await finding_repo.apply_finding_waiver(
-                scan_id=scan_id,
-                query=query,
-                waived=True,
-                waiver_reason=waiver.reason,
+            continue
+
+        query = _build_waiver_query(waiver)
+
+        # A waiver with no concrete matching criteria produces an empty query. Passing
+        # {} to apply_finding_waiver would match (and waive) EVERY finding in the scan,
+        # silently suppressing all security findings. Skip and log instead. Legitimate
+        # waivers always carry at least one of finding_id/package_name/package_version/
+        # finding_type (or a vulnerability_id, handled above).
+        if not query:
+            logger.warning(
+                "Skipping waiver %s: no matching criteria (empty query) — refusing to "
+                "waive every finding in scan %s",
+                getattr(waiver, "id", "?"),
+                scan_id,
             )
+            continue
+
+        await finding_repo.apply_finding_waiver(
+            scan_id=scan_id,
+            query=query,
+            waived=True,
+            waiver_reason=waiver.reason,
+        )
 
 
 def _is_signature_waiver(waiver: Any) -> bool:
@@ -326,11 +350,27 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
     lock_name = f"stats_recalc:{project_id}"
     holder_id = f"pod-{os.getenv('HOSTNAME', 'unknown')}-{os.getpid()}"
 
-    lock_acquired = await lock_repo.acquire_lock(lock_name, holder_id, 300)
+    # Retry with bounded exponential backoff instead of dropping the recalc on the
+    # first contention. Two concurrent waiver changes must both end up reflected: the
+    # loser of the lock waits for the holder to release, then recomputes against the
+    # now-committed waiver set (avoids stale stats / stale ignored_count).
+    lock_acquired = False
+    for attempt in range(_LOCK_MAX_RETRIES + 1):
+        lock_acquired = await lock_repo.acquire_lock(lock_name, holder_id, 300)
+        if lock_acquired:
+            break
+        if attempt < _LOCK_MAX_RETRIES:
+            delay = _LOCK_RETRY_BASE_DELAY * (2**attempt)
+            logger.debug(
+                f"Lock contention for stats recalculation of project {project_id}; "
+                f"retrying in {delay:.2f}s (attempt {attempt + 1}/{_LOCK_MAX_RETRIES})."
+            )
+            await asyncio.sleep(delay)
     if not lock_acquired:
         logger.warning(
-            f"Could not acquire lock for stats recalculation of project {project_id}. "
-            f"Another process is already recalculating stats."
+            f"Could not acquire lock for stats recalculation of project {project_id} "
+            f"after {_LOCK_MAX_RETRIES} retries. Another process is holding it; "
+            f"stats may be stale until the next recalculation."
         )
         return None
 

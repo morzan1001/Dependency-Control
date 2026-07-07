@@ -176,9 +176,15 @@ def _apply_ghsa_to_finding(
 def _apply_ghsa_resolutions(
     ghsa_resolutions: Dict[str, GHSAData],
     cve_to_findings: Dict[str, List[Dict[str, Any]]],
+    cvss_scores: Dict[str, float],
 ) -> None:
     """Apply all GHSA resolutions to affected findings."""
     for ghsa_id, ghsa_data in ghsa_resolutions.items():
+        # Carry the CVSS recorded under the GHSA id over to the resolved CVE key
+        # so Phase 3 risk scoring uses the real CVSS instead of the neutral base
+        # (GHSA-first ecosystems record cvss_score only under the GHSA id).
+        if ghsa_data.cve_id and ghsa_id in cvss_scores:
+            cvss_scores.setdefault(ghsa_data.cve_id, cvss_scores[ghsa_id])
         for finding in cve_to_findings.get(ghsa_id, []):
             _apply_ghsa_to_finding(finding, ghsa_id, ghsa_data, cve_to_findings)
 
@@ -369,7 +375,7 @@ class VulnerabilityEnrichmentService:
         if ghsa_ids:
             logger.info(f"Resolving {len(ghsa_ids)} GHSA IDs to CVEs")
             ghsa_resolutions = await self.resolve_ghsa_to_cve(ghsa_ids)
-            _apply_ghsa_resolutions(ghsa_resolutions, cve_to_findings)
+            _apply_ghsa_resolutions(ghsa_resolutions, cve_to_findings, cvss_scores)
 
         # Phase 3: Enrich CVEs with EPSS/KEV data
         cves_to_enrich = [cve for cve in cve_to_findings.keys() if cve.startswith("CVE-")]

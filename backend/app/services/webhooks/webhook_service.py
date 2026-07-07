@@ -19,7 +19,7 @@ import httpx
 from prometheus_client import Counter
 
 from app.core.http_utils import InstrumentedAsyncClient
-from app.services.webhooks.validation import assert_safe_webhook_target
+from app.services.webhooks.validation import build_pinned_transport
 from app.services.webhooks.types import (
     AnalysisFailedPayload,
     BaseWebhookPayload,
@@ -330,9 +330,11 @@ class WebhookService:
 
         while retry_count < self.max_retries:
             try:
-                await assert_safe_webhook_target(webhook.url)
+                transport = await build_pinned_transport(webhook.url)
 
-                async with InstrumentedAsyncClient("Webhook Delivery", timeout=self.timeout) as client:
+                async with InstrumentedAsyncClient(
+                    "Webhook Delivery", timeout=self.timeout, transport=transport
+                ) as client:
                     response = await client.post(
                         webhook.url,
                         content=json_payload,
@@ -641,9 +643,11 @@ class WebhookService:
         start_time = time.monotonic()
 
         try:
-            await assert_safe_webhook_target(webhook.url)
+            transport = await build_pinned_transport(webhook.url)
 
-            async with InstrumentedAsyncClient("Webhook Test", timeout=self.timeout) as client:
+            async with InstrumentedAsyncClient(
+                "Webhook Test", timeout=self.timeout, transport=transport
+            ) as client:
                 response = await client.post(
                     webhook.url,
                     content=json_payload,

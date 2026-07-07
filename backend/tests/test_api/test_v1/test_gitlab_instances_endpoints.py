@@ -316,6 +316,35 @@ class TestCreateInstance:
         assert result.name == "New GL"
         mock_repo.create.assert_called_once()
 
+    def test_create_persists_and_returns_team_sync_depth(self, admin_user):
+        """Regression (Finding #111): team_sync_depth must be wired through create.
+
+        The endpoint constructed GitLabInstance(...) explicitly and omitted
+        team_sync_depth, and _to_response(...) omitted it too, so the UI setting
+        was silently dropped on create and never round-tripped in the response.
+        """
+        from app.api.v1.endpoints.gitlab_instances import create_instance
+
+        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False)
+        mock_repo.create = AsyncMock(side_effect=lambda inst: inst)
+        mock_response = MagicMock(status_code=200)
+
+        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
+            with patch(f"{MODULE}.GitLabService", return_value=_make_gitlab_service_mock(mock_response)):
+                result = asyncio.run(
+                    create_instance(
+                        instance_data=self._make_create_data(team_sync_depth=3),
+                        db=MagicMock(),
+                        current_user=admin_user,
+                    )
+                )
+
+        # The persisted GitLabInstance carried the requested depth...
+        persisted = mock_repo.create.call_args.args[0]
+        assert persisted.team_sync_depth == 3
+        # ...and the response schema surfaces it (round-trips through _to_response).
+        assert result.team_sync_depth == 3
+
 
 class TestUpdateInstance:
     def _make_update_data(self, **fields):
@@ -423,6 +452,31 @@ class TestUpdateInstance:
 
         assert result.is_default is True
         mock_repo.set_as_default.assert_called_once_with("inst-1")
+
+    def test_update_applies_and_returns_team_sync_depth(self, admin_user):
+        """Regression (Finding #111): update must apply team_sync_depth when provided."""
+        from app.api.v1.endpoints.gitlab_instances import update_instance
+
+        existing = make_gitlab_instance(id="inst-1", team_sync_depth=1)
+        updated = make_gitlab_instance(id="inst-1", team_sync_depth=2)
+        mock_repo = _make_repo_mock(update=True)
+        mock_repo.get_by_id = AsyncMock(side_effect=[existing, updated])
+
+        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
+            result = asyncio.run(
+                update_instance(
+                    instance_id="inst-1",
+                    update_data=self._make_update_data(team_sync_depth=2),
+                    db=MagicMock(),
+                    current_user=admin_user,
+                )
+            )
+
+        # The update payload sent to the repository carried the new depth...
+        update_dict = mock_repo.update.call_args.args[1]
+        assert update_dict["team_sync_depth"] == 2
+        # ...and the refreshed response surfaces it.
+        assert result.team_sync_depth == 2
 
 
 class TestDeleteInstance:

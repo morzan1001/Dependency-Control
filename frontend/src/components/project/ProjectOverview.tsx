@@ -206,16 +206,19 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   // Check if we have actual threat intelligence data (not just empty objects)
   const threatIntel = 'threat_intel' in stats ? stats.threat_intel : null
   const hasThreatIntelData = threatIntel && (
-    (threatIntel.kev_count ?? 0) > 0 || 
-    (threatIntel.high_epss_count ?? 0) > 0 || 
-    (threatIntel.exploitable_count ?? 0) > 0 ||
-    (threatIntel.total_enriched ?? 0) > 0
+    (threatIntel.kev_count ?? 0) > 0 ||
+    (threatIntel.high_epss_count ?? 0) > 0 ||
+    (threatIntel.medium_epss_count ?? 0) > 0 ||
+    (threatIntel.weaponized_count ?? 0) > 0 ||
+    (threatIntel.active_exploitation_count ?? 0) > 0
   )
   const reachability = 'reachability' in stats ? stats.reachability : null
   const hasReachabilityData = reachability && (
-    (reachability.reachable ?? 0) > 0 || 
-    (reachability.potentially_reachable ?? 0) > 0 ||
-    (reachability.total_analyzed ?? 0) > 0
+    (reachability.analyzed_count ?? 0) > 0 ||
+    (reachability.reachable_count ?? 0) > 0 ||
+    (reachability.likely_reachable_count ?? 0) > 0 ||
+    (reachability.unreachable_count ?? 0) > 0 ||
+    (reachability.unknown_count ?? 0) > 0
   )
   const hasEnhancedStats = hasThreatIntelData || hasReachabilityData
   

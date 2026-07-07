@@ -106,7 +106,12 @@ class LicenseAnalyzer(Analyzer):
             stats["skipped"] += 1
             return
 
-        is_transitive = not component.get("properties", {}).get("direct", True)
+        # Directness is a TOP-LEVEL field on ParsedDependency (schemas/sbom.py).
+        # `properties` is a Dict[str, str] of raw CycloneDX property strings and
+        # never carries a 'direct' key, so reading it always yielded True.
+        # Default to direct (True) when unknown so unknown deps are never silently
+        # skipped or downgraded.
+        is_transitive = not component.get("direct", True)
         if ignore_transitive and is_transitive:
             stats["skipped"] += 1
             return

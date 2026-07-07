@@ -140,7 +140,15 @@ class PQCMigrationPlanGenerator:
         to assets with a quantum-vulnerable primitive and a known mapping.
         """
         out: List[CryptoAsset] = []
-        project_ids = resolved.project_ids or []
+        # resolved.project_ids is None for global scope, meaning "all
+        # projects" (ScopeResolver._resolve_global). Coercing None to [] would
+        # silently yield an all-clear plan for admins, so enumerate every
+        # project that has a usable scan instead. An explicit empty list still
+        # means "no projects".
+        if resolved.project_ids is None:
+            project_ids = await self._all_project_ids()
+        else:
+            project_ids = resolved.project_ids
         repo = CryptoAssetRepository(self.db)
         canonical_families = {m.source_family for m in self.mappings.mappings}
         for pid in project_ids:
@@ -164,6 +172,18 @@ class PQCMigrationPlanGenerator:
             if canonical in canonical_families:
                 filtered.append(a)
         return filtered
+
+    async def _all_project_ids(self) -> List[str]:
+        """Distinct project ids that have at least one usable scan.
+
+        Mirrors the "all projects" semantics of engine/analytics scan-id
+        selection (a None project filter means unrestricted) so global-scope
+        migration plans cover every project instead of returning nothing.
+        """
+        return await self.db.scans.distinct(
+            "project_id",
+            {"status": {"$in": ["completed", "partial"]}},
+        )
 
     async def _latest_scan_for_project(self, project_id: str) -> Optional[dict]:
         """Most recent completed/partial scan for a project, or None.
@@ -228,10 +248,3 @@ def _coerce_primitive(prim: Any) -> Optional[CryptoPrimitive]:
         except ValueError:
             return None
     return None
-
-
-def _created_at(doc: dict) -> datetime:
-    val = doc.get("created_at")
-    if isinstance(val, datetime):
-        return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
-    return datetime.min.replace(tzinfo=timezone.utc)

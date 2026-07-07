@@ -198,7 +198,7 @@ class HashVerificationAnalyzer(Analyzer):
 
     @staticmethod
     def _evaluate_registry_hashes(
-        registry_hashes_flat: Optional[Dict[str, str]],
+        registry_hashes_flat: Optional[Dict[str, Any]],
         sbom_hashes: Dict[str, str],
         name: str,
         version: str,
@@ -208,7 +208,12 @@ class HashVerificationAnalyzer(Analyzer):
         if registry_hashes_flat is None or not registry_hashes_flat:
             return None
 
-        registry_hashes = {k: {v} for k, v in registry_hashes_flat.items()}
+        # A registry value may be a single digest (npm: one dist per version)
+        # or a list of digests (PyPI: one entry per released file). Normalize
+        # both into a set so _compare_hashes accepts any legitimate file hash.
+        registry_hashes: Dict[str, set] = {}
+        for k, v in registry_hashes_flat.items():
+            registry_hashes[k] = set(v) if isinstance(v, (list, tuple, set)) else {v}
 
         if not sbom_hashes:
             return {
@@ -222,8 +227,14 @@ class HashVerificationAnalyzer(Analyzer):
 
     async def _fetch_pypi_registry_hashes(
         self, client: InstrumentedAsyncClient, name: str, version: str
-    ) -> Optional[Dict[str, str]]:
-        """Fetch PyPI registry hashes; empty dict = negative cache, None = transient error."""
+    ) -> Optional[Dict[str, List[str]]]:
+        """Fetch PyPI registry hashes; empty dict = negative cache, None = transient error.
+
+        A released version ships one entry per file in ``data['urls']`` (sdist
+        plus one wheel per platform), each with its own digest. Collect EVERY
+        file's digest per algorithm so an SBOM built on any platform verifies
+        against the matching wheel rather than only the first ``urls`` entry.
+        """
         try:
             url = self.REGISTRY_APIS["pypi"].format(package=name, version=version)
             response = await client.get(url)
@@ -231,12 +242,14 @@ class HashVerificationAnalyzer(Analyzer):
                 return {}
 
             data = response.json()
-            registry_hashes_flat: Dict[str, str] = {}
+            registry_hashes_flat: Dict[str, List[str]] = {}
             for url_info in data.get("urls", []):
                 for alg, value in url_info.get("digests", {}).items():
                     alg_normalized = normalize_hash_algorithm(alg)
-                    if alg_normalized not in registry_hashes_flat:
-                        registry_hashes_flat[alg_normalized] = value.lower()
+                    digest = value.lower()
+                    digests = registry_hashes_flat.setdefault(alg_normalized, [])
+                    if digest not in digests:
+                        digests.append(digest)
             return registry_hashes_flat or {}
         except httpx.TimeoutException:
             logger.debug(f"PyPI API timeout for {name}@{version}")
@@ -259,7 +272,7 @@ class HashVerificationAnalyzer(Analyzer):
 
         cache_key = CacheKeys.package_hash("pypi", name, version)
 
-        async def fetch_pypi_hashes() -> Optional[Dict[str, str]]:
+        async def fetch_pypi_hashes() -> Optional[Dict[str, List[str]]]:
             return await self._fetch_pypi_registry_hashes(client, name, version)
 
         registry_hashes_flat = await cache_service.get_or_fetch_with_lock(

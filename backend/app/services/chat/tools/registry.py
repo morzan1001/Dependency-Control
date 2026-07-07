@@ -56,6 +56,38 @@ _ERR_NO_SCAN_DATA = "No scan data available"
 _FIELD_VULN_ID = "details.vulnerabilities.id"
 _FIELD_EPSS_SCORE = "details.epss_score"
 
+# Upper bound on candidate findings pulled before ranking in Python. `severity`
+# is stored as a STRING, so MongoDB's own sort orders it lexicographically
+# (e.g. "MEDIUM" > "HIGH" > "CRITICAL") — using sort+limit server-side silently
+# drops the highest-severity findings. We therefore pull a bounded candidate set
+# and rank in-process against `_SEVERITY_RANK` before slicing to the caller's limit.
+_FINDING_RANK_FETCH_CAP = 1000
+
+
+def _finding_detail_number(finding: Dict[str, Any], field: str) -> float:
+    """Return a numeric `details.<field>` for tiebreak sorting; missing/non-numeric -> -1.0."""
+    details = finding.get("details") or {}
+    value = details.get(field)
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else -1.0
+
+
+def _rank_findings(findings: List[Dict[str, Any]]) -> None:
+    """Sort findings in place by severity (numeric rank, desc), then by
+    details.epss_score and details.cvss_score (desc) as tiebreakers.
+
+    Replaces the incorrect `sort=[("severity", -1), ...]` on the string field,
+    which MongoDB compared byte-wise (UNKNOWN > NEGLIGIBLE > MEDIUM > LOW > INFO >
+    HIGH > CRITICAL), pushing CRITICAL/HIGH below the limit cutoff.
+    """
+    findings.sort(
+        key=lambda f: (
+            _SEVERITY_RANK.get((f.get("severity") or "").upper(), 0),
+            _finding_detail_number(f, "epss_score"),
+            _finding_detail_number(f, "cvss_score"),
+        ),
+        reverse=True,
+    )
+
 
 class ChatToolRegistry:
     def get_available_tool_names(self, user_permissions: List[str]) -> set[str]:
@@ -197,8 +229,10 @@ class ChatToolRegistry:
             if args.get("type"):
                 query["type"] = args["type"]
             limit = _clamp_limit(args.get("limit"), 10, maximum=25)
-            cursor = db["findings"].find(query, sort=[("severity", -1)], limit=limit)
-            findings = await cursor.to_list(length=limit)
+            cursor = db["findings"].find(query, limit=_FINDING_RANK_FETCH_CAP)
+            findings = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
+            _rank_findings(findings)
+            findings = findings[:limit]
             return {
                 "findings": [_serialize_finding_for_llm(f) for f in findings],
                 "count": len(findings),
@@ -217,8 +251,10 @@ class ChatToolRegistry:
             if args.get("type"):
                 query["type"] = args["type"]
             limit = _clamp_limit(args.get("limit"), 10, maximum=25)
-            cursor = db["findings"].find(query, sort=[("severity", -1)], limit=limit)
-            findings = await cursor.to_list(length=limit)
+            cursor = db["findings"].find(query, limit=_FINDING_RANK_FETCH_CAP)
+            findings = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
+            _rank_findings(findings)
+            findings = findings[:limit]
             return {
                 "findings": [_serialize_finding_for_llm(f) for f in findings],
                 "count": len(findings),
@@ -533,12 +569,10 @@ class ChatToolRegistry:
                     return {"findings": [], "message": "No scans found"}
                 match["scan_id"] = {"$in": scan_ids}
             match.setdefault("severity", {"$in": ["CRITICAL", "HIGH"]})
-            cursor = db["findings"].find(
-                match,
-                sort=[("severity", -1), ("epss_score", -1), ("cvss_score", -1)],
-                limit=limit,
-            )
-            findings = await cursor.to_list(length=limit)
+            cursor = db["findings"].find(match, limit=_FINDING_RANK_FETCH_CAP)
+            findings = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
+            _rank_findings(findings)
+            findings = findings[:limit]
 
             project_ids_hit = list({f.get("project_id") for f in findings if f.get("project_id")})
             project_names: Dict[str, str] = {}
@@ -729,10 +763,11 @@ class ChatToolRegistry:
                     "details.fixed_version": {"$exists": True, "$ne": None},
                     "waived": {"$ne": True},
                 },
-                sort=[("severity", -1), (_FIELD_EPSS_SCORE, -1)],
-                limit=limit,
+                limit=_FINDING_RANK_FETCH_CAP,
             )
-            rows = await cursor.to_list(length=limit)
+            rows = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
+            _rank_findings(rows)
+            rows = rows[:limit]
             names = await self._project_names(db, list({f.get("project_id") for f in rows}))
             out = []
             for f in rows:
@@ -848,10 +883,11 @@ class ChatToolRegistry:
                     "details.exploit_maturity": {"$in": list(KEV_EQUIVALENT_MATURITY)},
                     "waived": {"$ne": True},
                 },
-                sort=[("severity", -1), (_FIELD_EPSS_SCORE, -1)],
-                limit=limit,
+                limit=_FINDING_RANK_FETCH_CAP,
             )
-            rows = await cursor.to_list(length=limit)
+            rows = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
+            _rank_findings(rows)
+            rows = rows[:limit]
             names = await self._project_names(db, list({f.get("project_id") for f in rows}))
             out = []
             for f in rows:
@@ -988,12 +1024,13 @@ class ChatToolRegistry:
                     old_keys.add((f["project_id"], f["finding_id"]))
             if not old_keys:
                 return {"findings": [], "message": f"No findings older than {days} days"}
-            cursor = db["findings"].find(
+            candidates = await db["findings"].find(
                 {"scan_id": {"$in": list(latest.values())}, "severity": {"$in": allowed_sev}},
-                sort=[("severity", -1), (_FIELD_EPSS_SCORE, -1)],
-            )
+                limit=_FINDING_RANK_FETCH_CAP,
+            ).to_list(length=_FINDING_RANK_FETCH_CAP)
+            _rank_findings(candidates)
             stale = []
-            async for f in cursor:
+            for f in candidates:
                 key = (f.get("project_id"), f.get("finding_id"))
                 if key in old_keys:
                     stale.append(f)
@@ -1022,10 +1059,11 @@ class ChatToolRegistry:
             limit = _clamp_limit(args.get("limit"), 10, maximum=25)
             cursor = db["findings"].find(
                 {"scan_id": {"$in": list(latest.values())}, "type": "license"},
-                sort=[("severity", -1)],
-                limit=limit,
+                limit=_FINDING_RANK_FETCH_CAP,
             )
-            rows = await cursor.to_list(length=limit)
+            rows = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
+            _rank_findings(rows)
+            rows = rows[:limit]
             names = await self._project_names(db, list({f.get("project_id") for f in rows}))
             out = []
             for f in rows:
@@ -1306,16 +1344,44 @@ class ChatToolRegistry:
                 project = await self._get_authorized_project(project_id, user_project_query, db)
                 if not project:
                     return {"error": _ERR_PROJECT_NOT_FOUND}
-            return await list_compliance_reports(
-                db,
-                project_id=project_id,
-                framework=args.get("framework"),
-                limit=_clamp_limit(args.get("limit"), 10, 50),
+                return await list_compliance_reports(
+                    db,
+                    project_id=project_id,
+                    framework=args.get("framework"),
+                    limit=_clamp_limit(args.get("limit"), 10, 50),
+                )
+            # No project_id: the underlying repo query would be unfiltered and
+            # leak every scope's reports org-wide. Mirror the HTTP endpoint's
+            # _build_visibility_filter and restrict to the caller's visibility.
+            from app.services.chat import tools as _pkg
+
+            authorized_project_ids = await self._get_authorized_project_ids(user_project_query, db)
+            visibility = await self._compliance_visibility_filter(
+                user, authorized_project_ids, team_repo
             )
+            framework = args.get("framework")
+            fw: Optional[Any] = None
+            if framework:
+                try:
+                    fw = _pkg.ReportFramework(framework)
+                except ValueError:
+                    fw = None
+            reports = await _pkg.ComplianceReportRepository(db).list(
+                framework=fw,
+                limit=_clamp_limit(args.get("limit"), 10, 50),
+                extra_filter=visibility,
+            )
+            return {"reports": [r.model_dump(by_alias=True) for r in reports]}
 
         if tool_name == "list_policy_audit_entries":
             project_id = args.get("project_id")
-            if project_id:
+            # System-scope audit is admin-only, mirroring the HTTP endpoint's
+            # _require_admin (system:manage) gate. Without this, any chat/MCP
+            # user could read the full system crypto-policy change history.
+            if args.get("policy_scope") == "system":
+                if not has_permission(user.permissions, Permissions.SYSTEM_MANAGE):
+                    return {"error": _ERR_ACCESS_DENIED}
+            elif project_id:
                 project = await self._get_authorized_project(project_id, user_project_query, db)
                 if not project:
                     return {"error": _ERR_PROJECT_NOT_FOUND}
@@ -1360,6 +1426,43 @@ class ChatToolRegistry:
         if not user_project_query:
             return await db["projects"].find_one({"_id": project_id})
         return await db["projects"].find_one({"$and": [{"_id": project_id}, user_project_query]})
+
+    async def _compliance_visibility_filter(
+        self,
+        user: User,
+        authorized_project_ids: List[str],
+        team_repo: TeamRepository,
+    ) -> Dict[str, Any]:
+        """Build the ``$or`` visibility filter for compliance reports, mirroring
+        ``compliance_reports._build_visibility_filter``:
+
+        - scope=user iff the caller is the requester (or holds system:manage),
+        - scope=project iff the project is in the caller's authorized set,
+        - scope=team iff the team is in the caller's team membership,
+        - scope=global iff the caller holds analytics:global or system:manage.
+        """
+        perms = getattr(user, "permissions", []) or []
+        is_super = has_permission(perms, Permissions.SYSTEM_MANAGE)
+        user_id = str(user.id)
+
+        branches: List[Dict[str, Any]] = []
+        user_branch: Dict[str, Any] = {"scope": "user"}
+        if not is_super:
+            user_branch["requested_by"] = user_id
+        branches.append(user_branch)
+
+        if authorized_project_ids:
+            branches.append({"scope": "project", "scope_id": {"$in": authorized_project_ids}})
+
+        user_teams = await team_repo.find_by_member(user_id)
+        team_ids = [str(t.id) for t in user_teams]
+        if team_ids:
+            branches.append({"scope": "team", "scope_id": {"$in": team_ids}})
+
+        if is_super or has_permission(perms, Permissions.ANALYTICS_GLOBAL):
+            branches.append({"scope": "global"})
+
+        return {"$or": branches}
 
     async def _get_authorized_project_ids(
         self, user_project_query: Dict[str, Any], db: AsyncIOMotorDatabase

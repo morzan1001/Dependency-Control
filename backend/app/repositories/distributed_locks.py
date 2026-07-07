@@ -10,6 +10,7 @@ from typing import Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReadPreference
+from pymongo.errors import DuplicateKeyError
 
 
 class DistributedLocksRepository:
@@ -36,28 +37,38 @@ class DistributedLocksRepository:
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(seconds=ttl_seconds)
 
-        # Atomic operation: Try to acquire lock
-        result = await self.collection.find_one_and_update(
-            {
-                "_id": lock_name,
-                # Lock is available if:
-                # 1. It doesn't exist, OR
-                # 2. It has expired
-                "$or": [
-                    {"expires_at": {"$exists": False}},
-                    {"expires_at": {"$lt": now}},
-                ],
-            },
-            {
-                "$set": {
-                    "acquired_at": now,
-                    "expires_at": expires_at,
-                    "holder": holder_id,
-                }
-            },
-            upsert=True,
-            return_document=True,
-        )
+        # Atomic operation: Try to acquire lock.
+        #
+        # When a lock document already exists AND is unexpired the availability
+        # filter below matches nothing, so the upsert attempts to INSERT a new
+        # doc with the same ``_id`` and the server raises a DuplicateKeyError
+        # (E11000). The same race happens when two pods contend for the very
+        # first acquisition. In both cases the lock is simply held by someone
+        # else, so we translate the duplicate-key into a graceful ``False``.
+        try:
+            result = await self.collection.find_one_and_update(
+                {
+                    "_id": lock_name,
+                    # Lock is available if:
+                    # 1. It doesn't exist, OR
+                    # 2. It has expired
+                    "$or": [
+                        {"expires_at": {"$exists": False}},
+                        {"expires_at": {"$lt": now}},
+                    ],
+                },
+                {
+                    "$set": {
+                        "acquired_at": now,
+                        "expires_at": expires_at,
+                        "holder": holder_id,
+                    }
+                },
+                upsert=True,
+                return_document=True,
+            )
+        except DuplicateKeyError:
+            return False
 
         return result is not None
 

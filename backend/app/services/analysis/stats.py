@@ -279,6 +279,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
         {
             "$project": {
                 "severity": 1,
+                "type": 1,
                 "cvss_score": {"$ifNull": ["$details.cvss_score", None]},
                 "epss_score": {"$ifNull": ["$details.epss_score", None]},
                 "is_kev": {"$ifNull": [f"$details.{DETAILS_KEY_IN_KEV}", False]},
@@ -319,6 +320,12 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                 "info": {"$sum": {"$cond": [{"$eq": ["$severity", "INFO"]}, 1, 0]}},
                 "unknown": {"$sum": {"$cond": [{"$eq": ["$severity", "UNKNOWN"]}, 1, 0]}},
                 "total": {"$sum": 1},
+                # Vulnerability-only total: reachability is a vulnerability-only
+                # concept, so the "unknown reachability" count must be measured
+                # against vulnerabilities, not every finding type (license, SAST,
+                # secret, EOL...). Without this, non-vuln findings inflate
+                # unknown_count.
+                "vuln_total": {"$sum": {"$cond": [{"$eq": ["$type", "vulnerability"]}, 1, 0]}},
                 # Base risk score (0-100): average of the per-finding composite
                 # details.risk_score, with a 0-100 calculated fallback for
                 # findings lacking enrichment. NOTE: no longer averages the raw
@@ -678,7 +685,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
             confirmed_reachable_count=res.get("confirmed_reachable", 0),
             likely_reachable_count=res.get("likely_reachable", 0),
             unreachable_count=res.get("unreachable_count", 0),
-            unknown_count=res.get("total", 0) - res.get("reachability_analyzed", 0),
+            unknown_count=res.get("vuln_total", 0) - res.get("reachability_analyzed", 0),
             reachable_critical=res.get("reachable_critical", 0),
             reachable_high=res.get("reachable_high", 0),
             reachable_count_high_confidence=res.get("reachable_count_high_confidence", 0),

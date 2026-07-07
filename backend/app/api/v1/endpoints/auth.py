@@ -137,17 +137,33 @@ def _verify_totp_or_raise(user: dict, otp: Optional[str]) -> None:
         auth_2fa_verifications_total.labels(result="success").inc()
 
 
-def _resolve_login_permissions(user: dict, otp: Optional[str], system_config: SystemSettings) -> list:
-    """Resolve permissions based on 2FA status. Verifies OTP when 2FA is enabled."""
+def _enforce_2fa_setup_scope(user: dict, system_config: SystemSettings) -> Optional[list]:
+    """Return the restricted setup-2FA scope when a local user must configure 2FA.
+
+    Returns ``["auth:setup_2fa"]`` if enforce_2fa is on and the user is a local
+    account without 2FA configured; otherwise ``None`` (no restriction applies).
+    """
     if user.get("totp_enabled", False):
-        _verify_totp_or_raise(user, otp)
-        return list(user.get("permissions", []))
+        return None
 
     auth_provider = user.get("auth_provider")
     is_local = not auth_provider or auth_provider == "local"
     if system_config.enforce_2fa and is_local:
         # User has no 2FA but it is enforced -> Issue limited token for setup (local users only)
         return ["auth:setup_2fa"]
+
+    return None
+
+
+def _resolve_login_permissions(user: dict, otp: Optional[str], system_config: SystemSettings) -> list:
+    """Resolve permissions based on 2FA status. Verifies OTP when 2FA is enabled."""
+    if user.get("totp_enabled", False):
+        _verify_totp_or_raise(user, otp)
+        return list(user.get("permissions", []))
+
+    restricted = _enforce_2fa_setup_scope(user, system_config)
+    if restricted is not None:
+        return restricted
 
     return list(user.get("permissions", []))
 
@@ -283,7 +299,12 @@ async def refresh_token(
 
     access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
-    permissions = user.get("permissions", [])
+    # Re-apply the enforced-2FA setup gate: a valid refresh token must not be
+    # able to mint a full-permission access token for a local user who still has
+    # not configured 2FA while enforcement is on. Mirror _resolve_login_permissions.
+    system_config = await deps.get_system_settings(db)
+    restricted = _enforce_2fa_setup_scope(user, system_config)
+    permissions = restricted if restricted is not None else user.get("permissions", [])
 
     access_token = security.create_access_token(
         user["username"], permissions=permissions, expires_delta=access_token_expires
@@ -347,7 +368,7 @@ async def create_user(
     await user_repo.create(new_user)
 
     # Send verification email if SMTP is configured
-    await send_verification_email(background_tasks, new_user.email)
+    await send_verification_email(background_tasks, new_user.email, system_settings=system_config)
 
     if auth_signups_total:
         auth_signups_total.labels(status="success").inc()
@@ -410,6 +431,7 @@ async def logout(
 async def request_verification_email(
     background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(deps.get_current_active_user)],
+    system_config: Annotated[SystemSettings, Depends(deps.get_system_settings)],
 ) -> VerificationEmailResponse:
     """
     Send a new verification email to the current user.
@@ -420,13 +442,15 @@ async def request_verification_email(
             detail="Email already verified",
         )
 
-    if not settings.SMTP_HOST:
+    # Gate on the effective SMTP config the email provider actually uses (DB system
+    # settings), not the env var, so the check matches whether sending will work.
+    if not system_config.smtp_host:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail=_MSG_EMAIL_NOT_CONFIGURED,
         )
 
-    await send_verification_email(background_tasks, current_user.email)
+    await send_verification_email(background_tasks, current_user.email, system_settings=system_config)
 
     return VerificationEmailResponse(message="Verification email sent")
 
@@ -489,8 +513,9 @@ async def resend_verification_email_public(
         message="If an account with this email exists, a verification email has been sent."
     )
 
-    # Check SMTP first - this is a system config issue, not user-specific
-    if not settings.SMTP_HOST:
+    # Check SMTP first - this is a system config issue, not user-specific.
+    # Gate on the DB system settings the email provider actually reads.
+    if not system_config.smtp_host:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail=_MSG_EMAIL_NOT_CONFIGURED,
@@ -832,8 +857,10 @@ async def forgot_password(
         message="If an account with this email exists, a password reset email has been sent."
     )
 
-    # Check SMTP first - this is a system config issue
-    if not settings.SMTP_HOST:
+    # Check SMTP first - this is a system config issue.
+    # Gate on the DB system settings the email provider actually reads.
+    system_config = await deps.get_system_settings(db)
+    if not system_config.smtp_host:
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail=_MSG_EMAIL_NOT_CONFIGURED,
@@ -850,6 +877,7 @@ async def forgot_password(
                 background_tasks,
                 user["email"],
                 user.get("username", "User"),
+                system_settings=system_config,
             )
 
     # Ensure response time is always ~200ms regardless of whether email exists

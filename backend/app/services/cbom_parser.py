@@ -29,8 +29,7 @@ logger = logging.getLogger(__name__)
 def parse_cbom(raw: Dict[str, Any]) -> ParsedCBOM:
     components = raw.get("components") or []
     tool_meta = (raw.get("metadata") or {}).get("tools") or []
-    tool_name = _tool_name_from_metadata(tool_meta)
-    tool_version = _tool_version_from_metadata(tool_meta)
+    tool_name, tool_version = _tool_from_metadata(tool_meta)
 
     total = sum(1 for c in components if c.get("type") == "cryptographic-asset")
     assets = parse_crypto_components(components)
@@ -47,28 +46,30 @@ def parse_cbom(raw: Dict[str, Any]) -> ParsedCBOM:
     )
 
 
-def _tool_name_from_metadata(tools: Any) -> Optional[str]:
+def _tool_from_metadata(tools: Any) -> tuple[Optional[str], Optional[str]]:
+    """Extract (name, version) of the producing tool from metadata.tools.
+
+    CycloneDX allows metadata.tools to be either the modern object form
+    ({"components": [...]}) or the legacy list form ([{...}]). Both carry the
+    tool as a component dict with "name"/"version".
+    """
+    tool: Optional[Dict[str, Any]] = None
     if isinstance(tools, dict):
         comps = tools.get("components") or []
         if comps:
-            value = comps[0].get("name")
-            return str(value) if value is not None else None
+            tool = comps[0]
     elif isinstance(tools, list) and tools:
-        value = tools[0].get("name")
-        return str(value) if value is not None else None
-    return None
+        tool = tools[0]
 
+    if not isinstance(tool, dict):
+        return None, None
 
-def _tool_version_from_metadata(tools: Any) -> Optional[str]:
-    if isinstance(tools, dict):
-        comps = tools.get("components") or []
-        if comps:
-            value = comps[0].get("version")
-            return str(value) if value is not None else None
-    elif isinstance(tools, list) and tools:
-        value = tools[0].get("version")
-        return str(value) if value is not None else None
-    return None
+    name = tool.get("name")
+    version = tool.get("version")
+    return (
+        str(name) if name is not None else None,
+        str(version) if version is not None else None,
+    )
 
 
 def parse_crypto_components(
@@ -219,7 +220,14 @@ def _populate_protocol(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> None:
     asset.version = props.get("version")
     cipher_suites = props.get("cipherSuites") or []
     if isinstance(cipher_suites, list):
-        asset.cipher_suites = [str(c) for c in cipher_suites]
+        names = []
+        for c in cipher_suites:
+            # CycloneDX 1.6: cipherSuites entries are objects with a "name"
+            # (IANA suite name). Tolerate the non-spec plain-string form too.
+            name = c.get("name") if isinstance(c, dict) else c
+            if name:
+                names.append(str(name))
+        asset.cipher_suites = names
 
 
 def _populate_evidence(asset: ParsedCryptoAsset, evidence: Dict[str, Any]) -> None:

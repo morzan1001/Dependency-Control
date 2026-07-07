@@ -63,17 +63,23 @@ class TestIsHighConfidenceReachable:
 
 from app.services.reachability_enrichment import (  # noqa: E402
     _build_component_language_map,
-    _build_reachability_summary_for_pending,
+    _check_package_in_imports,
     _enrich_finding_from_callgraphs,
     _enrich_single_finding,
     _match_symbols,
 )
 
+# The pending path no longer has a private summary builder; it now reuses the
+# canonical build_reachability_summary from analysis/stats so the two cannot
+# drift (audit: _build_reachability_summary_for_pending was a drifted copy).
+from app.services.analysis.stats import build_reachability_summary  # noqa: E402
+
 
 class TestPendingSummaryTiers:
     """The persisted pending summary must map analysis_level (none/import/symbol)
     onto the display tiers, not increment raw levels against confirmed/likely
-    buckets that never match (audit MF6)."""
+    buckets that never match (audit MF6). run_pending_reachability_for_scan now
+    calls the shared build_reachability_summary, so this exercises that helper."""
 
     @staticmethod
     def _f(_id, reachable, level):
@@ -89,12 +95,50 @@ class TestPendingSummaryTiers:
             self._f("c", False, "none"),
         ]
         cg = [{"language": "python", "module_usage": {}, "import_map": {}}]
-        summary = _build_reachability_summary_for_pending(findings, cg, 3)
+        summary = build_reachability_summary(findings, cg, 3)
         levels = summary["reachability_levels"]
         assert levels["confirmed"] == 1
         assert levels["likely"] == 1
         assert levels["unreachable"] == 1
         assert levels["unknown"] == 0
+
+    def test_shared_summary_includes_high_confidence_flag(self):
+        # The drifted pending copy omitted is_high_confidence; the canonical
+        # builder includes it, so the pending path now emits the same shape.
+        findings = [self._f("a", True, "symbol")]
+        cg = [{"language": "python", "module_usage": {}, "import_map": {}}]
+        summary = build_reachability_summary(findings, cg, 1)
+        assert "is_high_confidence" in summary["reachable_vulnerabilities"][0]
+
+
+class TestCheckPackageInImports:
+    """Import matching must be boundary-anchored. A bare `package in imp`
+    substring test spuriously marks unrelated packages as imported, inflating
+    reachability to `likely` and skipping the intended x0.4 down-weight (audit)."""
+
+    def test_exact_match(self):
+        assert _check_package_in_imports("lodash", {"a.js": ["lodash"]}) == ["a.js"]
+
+    def test_subpath_match(self):
+        # npm subpath import: "lodash/merge" belongs to package "lodash".
+        assert _check_package_in_imports("lodash", {"a.js": ["lodash/merge"]}) == ["a.js"]
+
+    def test_python_submodule_match(self):
+        # `from requests.sessions import Session` -> import "requests.sessions".
+        assert _check_package_in_imports("requests", {"a.py": ["requests.sessions"]}) == ["a.py"]
+
+    def test_substring_does_not_match_npm(self):
+        # "ms" must NOT match "forms" or a submodule of another scope.
+        assert _check_package_in_imports("ms", {"a.js": ["forms"]}) == []
+        assert _check_package_in_imports("ms", {"a.js": ["aws-sdk/clients/sms"]}) == []
+
+    def test_substring_does_not_match_python(self):
+        # "requests" must NOT match the unrelated "requests_oauthlib".
+        assert _check_package_in_imports("requests", {"a.py": ["requests_oauthlib"]}) == []
+
+    def test_prefix_substring_does_not_match(self):
+        # "form" is a prefix of "forms" but not a boundary match.
+        assert _check_package_in_imports("form", {"a.js": ["forms"]}) == []
 
 
 class TestEcosystemFromDependencyMap:
@@ -270,3 +314,86 @@ class TestReachabilityFailClosed:
         assert reach["is_reachable"] is True
         # import-level (no symbol match) must NOT boost beyond base
         assert finding["details"]["adjusted_risk_score"] == finding["details"]["risk_score"]
+
+
+class TestRunPendingBulkPersist:
+    """run_pending_reachability_for_scan must persist reachability through a
+    chunked bulk_write, not one sequential finding_repo.update per finding: a
+    large scan otherwise fires thousands of serial Mongo round-trips inline in
+    the callgraph-upload request (audit)."""
+
+    @pytest.mark.asyncio
+    async def test_persists_via_bulk_write_and_writes_summary(self, monkeypatch):
+        from tests.mocks.fake_mongo import FakeDatabase
+        from app.services.reachability_enrichment import run_pending_reachability_for_scan
+
+        db = FakeDatabase()
+        pid, sid = "p1", "s1"
+        await db.scans.insert_one(
+            {"_id": sid, "project_id": pid, "branch": "main", "reachability_pending": True}
+        )
+        await db.dependencies.insert_one({"scan_id": sid, "name": "requests", "type": "pypi"})
+        await db.callgraphs.insert_one(
+            {
+                "_id": "cg1",
+                "project_id": pid,
+                "scan_id": sid,
+                "language": "python",
+                "module_usage": {"requests": {"import_locations": ["a.py"], "used_symbols": []}},
+                "import_map": {"a.py": ["requests"]},
+            }
+        )
+        for i in range(3):
+            await db.findings.insert_one(
+                {
+                    "_id": f"f{i}",
+                    "id": f"f{i}",
+                    "finding_id": f"CVE-2024-000{i}",
+                    "type": "vulnerability",
+                    "severity": "HIGH",
+                    "component": "requests",
+                    "version": "1.0.0",
+                    "description": "x",
+                    "scanners": ["osv"],
+                    "project_id": pid,
+                    "scan_id": sid,
+                    "details": {},
+                }
+            )
+
+        # Spy: the persist must go through bulk_write. The per-doc repo update
+        # path (finding_repo.update -> update_one) must not be used for the loop.
+        calls = {"bulk": 0, "update_one": 0}
+        orig_bulk = db.findings.bulk_write
+        orig_update_one = db.findings.update_one
+
+        async def spy_bulk(ops, ordered=True):
+            calls["bulk"] += 1
+            return await orig_bulk(ops, ordered=ordered)
+
+        async def spy_update_one(query, update, upsert=False):
+            calls["update_one"] += 1
+            return await orig_update_one(query, update, upsert=upsert)
+
+        monkeypatch.setattr(db.findings, "bulk_write", spy_bulk)
+        monkeypatch.setattr(db.findings, "update_one", spy_update_one)
+
+        result = await run_pending_reachability_for_scan(sid, pid, db)
+
+        assert result["error"] is None
+        assert result["findings_enriched"] == 3
+        assert calls["bulk"] == 1  # single chunk for < _BULK_CHUNK_SIZE findings
+        assert calls["update_one"] == 0  # no sequential per-finding updates
+
+        # All three findings persisted with reachability data.
+        for i in range(3):
+            doc = await db.findings.find_one({"_id": f"f{i}"})
+            assert doc["reachable"] is True
+            assert doc["reachability_level"] == "import"
+
+        # Summary written via the shared builder; pending processing completed.
+        summary = await db.analysis_results.find_one({"scan_id": sid})
+        assert summary is not None
+        assert summary["result"]["analyzed"] == 3
+        scan = await db.scans.find_one({"_id": sid})
+        assert scan.get("reachability_completed_at") is not None

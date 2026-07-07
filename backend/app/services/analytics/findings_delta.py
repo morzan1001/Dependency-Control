@@ -50,17 +50,56 @@ def _sast_identifier(details: Dict[str, Any]) -> str:
     return f"{rule}:{line}" if line is not None else rule
 
 
+def _vulnerability_identifier(finding: Dict[str, Any]) -> str:
+    """Identity for an aggregated vulnerability record.
+
+    Persisted vulnerability findings are the AGGREGATED shape produced by
+    ``ResultAggregator._add_vulnerability_finding``: the CVE/advisory ids live in
+    ``details.vulnerabilities[].id`` (there is no flat ``details.cve_id``), and
+    the affected package version is a top-level field. Key on the sorted id set
+    plus the version so that adding/dropping a CVE, or bumping the version, is
+    detected as a change instead of being reported "unchanged".
+    """
+    details = finding.get("details") or {}
+    version = finding.get("version") or ""
+    vulns = details.get("vulnerabilities") or []
+    ids = sorted(str(v.get("id")) for v in vulns if isinstance(v, dict) and v.get("id"))
+    if not ids:
+        # Legacy / non-aggregated shape: fall back to flat id fields.
+        legacy = _first_id(details, "cve_id", "vuln_id")
+        ids = [legacy] if legacy else []
+    if not ids:
+        return ""
+    joined = ",".join(ids)
+    return f"{version}|{joined}" if version else joined
+
+
+def _secret_identifier(finding: Dict[str, Any]) -> str:
+    """Secrets have a deterministic, cross-scan-stable ``finding_id``
+    (``SECRET-<detector>-<hash8>``) derived from the detector plus a hash of the
+    secret value. Persisted secret findings carry no ``pattern_hash``/``rule_id``
+    in details (only detector/decoder/verified/redacted), so key on the
+    finding_id instead."""
+    return str(finding.get("finding_id") or finding.get("_id") or "")
+
+
 # Each entry returns the type-specific identifier or "" when no stable id
-# is present (callers fall back to the description+found_in hash).
+# is present (callers fall back to the description+found_in hash). These
+# extractors read only the ``details`` dict.
 _FINDING_TYPE_IDENTIFIER: Dict[str, Callable[[Dict[str, Any]], str]] = {
-    "vulnerability": lambda d: _first_id(d, "cve_id", "vuln_id"),
-    "secret": lambda d: _first_id(d, "pattern_hash", "rule_id"),
     "sast": _sast_identifier,
     "iac": lambda d: _first_id(d, "rule_id"),
     "license": lambda d: _first_id(d, "license_id", "license"),
     "malware": lambda d: _first_id(d, "signature", "rule_id"),
     "eol": lambda d: _first_id(d, "eol_date", "version"),
-    "outdated": lambda d: _first_id(d, "latest_version"),
+    "outdated": lambda d: _first_id(d, "fixed_version"),
+}
+
+# Extractors that need top-level finding fields (version, finding_id), not just
+# the details dict.
+_FINDING_TYPE_IDENTIFIER_FULL: Dict[str, Callable[[Dict[str, Any]], str]] = {
+    "vulnerability": _vulnerability_identifier,
+    "secret": _secret_identifier,
 }
 
 
@@ -83,12 +122,45 @@ def finding_identity_key(finding: Dict[str, Any]) -> Tuple[str, str, str]:
     component = finding.get("component") or ""
     details = finding.get("details") or {}
 
-    extractor = _FINDING_TYPE_IDENTIFIER.get(ftype)
-    identifier = extractor(details) if extractor else ""
+    full_extractor = _FINDING_TYPE_IDENTIFIER_FULL.get(ftype)
+    if full_extractor:
+        identifier = full_extractor(finding)
+    else:
+        extractor = _FINDING_TYPE_IDENTIFIER.get(ftype)
+        identifier = extractor(details) if extractor else ""
     if not identifier:
         identifier = _fallback_identifier(finding)
 
     return (ftype, component, identifier)
+
+
+# Projection covering exactly the fields consumed by finding_identity_key and
+# _to_item. Stored vulnerability findings embed the full
+# details.vulnerabilities[] payload (per-CVE descriptions, references,
+# matched_rules and a nested copy of details), so two large scans can otherwise
+# pull hundreds of MB into the worker per compare_scans call. Projecting to
+# details.vulnerabilities.id keeps only the id of each entry. All keys are
+# inclusions (plus the implicit _id), so this is a valid Mongo projection.
+_FETCH_PROJECTION: Dict[str, int] = {
+    "type": 1,
+    "component": 1,
+    "version": 1,
+    "severity": 1,
+    "description": 1,
+    "found_in": 1,
+    "finding_id": 1,
+    "created_at": 1,
+    "details.vulnerabilities.id": 1,
+    "details.cve_id": 1,
+    "details.vuln_id": 1,
+    "details.rule_id": 1,
+    "details.line": 1,
+    "details.license_id": 1,
+    "details.license": 1,
+    "details.signature": 1,
+    "details.eol_date": 1,
+    "details.fixed_version": 1,
+}
 
 
 async def _fetch_scan_findings(
@@ -105,7 +177,7 @@ async def _fetch_scan_findings(
         # Severity enum values are stored UPPERCASE; normalise the
         # (case-insensitive) caller input here so the $in matches.
         query["severity"] = {"$in": [s.upper() for s in severity]}
-    cursor = db["findings"].find(query).limit(MAX_FETCH)
+    cursor = db["findings"].find(query, projection=_FETCH_PROJECTION).limit(MAX_FETCH)
     return [doc async for doc in cursor]
 
 
@@ -118,6 +190,19 @@ def _doc_type(doc: dict) -> str:
     return doc.get("type") or ""
 
 
+def _item_cve_id(details: Dict[str, Any]) -> Optional[str]:
+    """Best display CVE id for the item. Aggregated vulnerability findings keep
+    their ids under ``details.vulnerabilities[].id``; only legacy/flat shapes
+    carry ``details.cve_id``."""
+    cve = details.get("cve_id")
+    if cve:
+        return str(cve)
+    for entry in details.get("vulnerabilities") or []:
+        if isinstance(entry, dict) and entry.get("id"):
+            return str(entry["id"])
+    return None
+
+
 def _to_item(doc: dict, change: str) -> FindingDeltaItem:
     details = doc.get("details") or {}
     found_in = doc.get("found_in") or []
@@ -128,7 +213,7 @@ def _to_item(doc: dict, change: str) -> FindingDeltaItem:
         severity=_doc_severity(doc),
         title=doc.get("description") or "",
         component=doc.get("component"),
-        cve_id=details.get("cve_id"),
+        cve_id=_item_cve_id(details),
         file_path=(found_in[0] if found_in else None),
         first_seen=doc.get("created_at"),
     )

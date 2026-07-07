@@ -31,6 +31,13 @@ class GitLabInstanceBase(BaseModel):
     is_default: bool = Field(False, description="Whether this is the default instance")
     auto_create_projects: bool = Field(False, description="Automatically create projects from OIDC tokens")
     sync_teams: bool = Field(False, description="Sync GitLab group members to local teams")
+    team_sync_depth: int = Field(
+        1,
+        ge=0,
+        description="GitLab group path depth for team creation. "
+        "1 = top-level group only (e.g. 'mo'), 2 = two levels (e.g. 'mo/edge'), "
+        "0 = full path.",
+    )
 
 
 class GitLabInstanceCreate(GitLabInstanceBase):
@@ -67,6 +74,9 @@ class GitLabInstanceUpdate(BaseModel):
     )
     auto_create_projects: Optional[bool] = Field(None, description="Automatically create projects from OIDC tokens")
     sync_teams: Optional[bool] = Field(None, description="Sync GitLab group members to local teams")
+    team_sync_depth: Optional[int] = Field(
+        None, ge=0, description="GitLab group path depth for team creation (0 = full path)."
+    )
 
     _audience_not_blank = field_validator("oidc_audience")(validate_optional_audience_not_blank)
 

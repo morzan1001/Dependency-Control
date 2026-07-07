@@ -41,7 +41,10 @@ async def send_verification_email(
         email: Destination email address
         system_settings: Optional system settings for email provider configuration
     """
-    if not settings.SMTP_HOST:
+    # Gate on the EFFECTIVE SMTP host the email provider actually uses to send
+    # (DB system settings), not the env var. Otherwise a DB-configured SMTP host
+    # is silently ignored when env SMTP_HOST is unset. Mirrors EmailProvider.send.
+    if not (system_settings and system_settings.smtp_host):
         return
 
     token = security.create_email_verification_token(email)
@@ -75,7 +78,10 @@ async def send_password_reset_email(
         username: Username for personalization
         system_settings: Optional system settings for email provider configuration
     """
-    if not settings.SMTP_HOST:
+    # Gate on the EFFECTIVE SMTP host the email provider actually uses to send
+    # (DB system settings), not the env var. Otherwise a DB-configured SMTP host
+    # is silently ignored when env SMTP_HOST is unset. Mirrors EmailProvider.send.
+    if not (system_settings and system_settings.smtp_host):
         return
 
     token = security.create_password_reset_token(email)
@@ -116,7 +122,10 @@ async def send_system_invitation_email(
         inviter_name: Name of the user who sent the invitation
         system_settings: Optional system settings for email provider configuration
     """
-    if not settings.SMTP_HOST:
+    # Gate on the EFFECTIVE SMTP host the email provider actually uses to send
+    # (DB system settings), not the env var. Otherwise a DB-configured SMTP host
+    # is silently ignored when env SMTP_HOST is unset. Mirrors EmailProvider.send.
+    if not (system_settings and system_settings.smtp_host):
         return
 
     html_content = get_system_invitation_template(
@@ -147,7 +156,10 @@ def send_project_member_added_email(
     system_settings: Optional[SystemSettings] = None,
 ) -> None:
     """Send a notification email when a user is added to a project."""
-    if not settings.SMTP_HOST:
+    # Gate on the EFFECTIVE SMTP host the email provider actually uses to send
+    # (DB system settings), not the env var. Otherwise a DB-configured SMTP host
+    # is silently ignored when env SMTP_HOST is unset. Mirrors EmailProvider.send.
+    if not (system_settings and system_settings.smtp_host):
         return
 
     link = f"{settings.FRONTEND_BASE_URL}/projects/{project_id}"

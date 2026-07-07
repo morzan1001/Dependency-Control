@@ -18,7 +18,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Dict
 
-from bson import ObjectId
+from bson import ObjectId, json_util
 
 from app.core.constants import ARCHIVE_BUNDLE_VERSION
 
@@ -38,11 +38,18 @@ class BundleStats:
 
 
 def _serialize(obj: Any) -> Any:
-    """Recursively normalize a Mongo document tree to JSON-safe types.
+    """Recursively normalize a value to plain JSON-safe types (lossy).
 
     Converts ObjectId → str, datetime → ISO string. Recurses into dicts and
     lists (including nested lists), so any deeply buried ObjectId/datetime is
     normalized consistently.
+
+    NOTE: this collapses BSON types to plain strings and is therefore NOT
+    round-trippable. It is used only for the header's ``scan_id``/``project_id``
+    identification fields, which are intentionally plain strings. Document
+    bodies that must survive a restore (the ``scan`` doc and every collection
+    doc) are encoded via :func:`_json_line`, which preserves BSON types using
+    MongoDB Extended JSON.
     """
     if isinstance(obj, ObjectId):
         return str(obj)
@@ -56,8 +63,13 @@ def _serialize(obj: Any) -> Any:
 
 
 def _json_line(obj: Any) -> bytes:
-    """JSON-encode an object as a single line ending with '\\n'."""
-    return (json.dumps(obj, separators=(",", ":")) + "\n").encode("utf-8")
+    """Encode an object as one Extended-JSON line ending with '\\n'.
+
+    Uses ``bson.json_util`` so ObjectId/datetime values are written as Extended
+    JSON (``{"$oid": ...}`` / ``{"$date": ...}``) and can be re-hydrated to real
+    BSON types on restore — keeping date range queries and _id typing intact.
+    """
+    return (json_util.dumps(obj, separators=(",", ":")) + "\n").encode("utf-8")
 
 
 class BundleFrames:
@@ -84,16 +96,21 @@ class BundleFrames:
         header = {
             "version": ARCHIVE_BUNDLE_VERSION,
             "archived_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            # scan_id/project_id are plain-string identifiers for the header;
+            # the full "scan" doc is kept with its BSON types so restore inserts
+            # real datetimes/ObjectIds (Extended JSON via _json_line).
             "scan_id": _serialize(scan_doc.get("_id")),
             "project_id": _serialize(scan_doc.get("project_id")),
-            "scan": _serialize(scan_doc),
+            "scan": scan_doc,
         }
         yield emit(_json_line(header))
 
         for coll_name, doc_iter in collections.items():
             yield emit(_json_line({"collection": coll_name}))
             async for doc in doc_iter:
-                yield emit(_json_line(_serialize(doc)))
+                # Emit with BSON types intact (Extended JSON) so a restore
+                # re-hydrates dates/ObjectIds rather than storing bare strings.
+                yield emit(_json_line(doc))
                 # findings.severity is canonicalized uppercase by the scan pipeline;
                 # lower/mixed-case docs will silently miss the critical/high tallies.
                 if coll_name == "findings":
@@ -160,7 +177,9 @@ async def read_bundle_frames(source: AsyncIterator[bytes]) -> AsyncIterator[Dict
 
     async for line in _iter_lines():
         try:
-            obj = json.loads(line)
+            # json_util re-hydrates Extended JSON ($date/$oid) back to BSON
+            # datetime/ObjectId; plain-string (legacy v2) bundles decode as-is.
+            obj = json_util.loads(line)
         except json.JSONDecodeError as e:
             raise ValueError(f"Malformed bundle line: {e}") from e
 

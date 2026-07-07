@@ -80,17 +80,7 @@ def default_evaluator(
     If all matching findings are waived -> WAIVED. If no crypto assets of the
     relevant primitive/asset-type exist -> NOT_APPLICABLE. Otherwise PASSED.
     """
-    matching: List[dict] = []
-    for f in data.findings:
-        ft = f.get("type")
-        if not any(ft == (t.value if hasattr(t, "value") else t) for t in control.maps_to_finding_types):
-            continue
-        if control.maps_to_rule_ids:
-            details = f.get("details") or {}
-            rule_id = details.get("rule_id")
-            if rule_id not in control.maps_to_rule_ids:
-                continue
-        matching.append(f)
+    matching = [f for f in data.findings if _finding_matches_control(f, control)]
 
     waived_findings = [f for f in matching if f.get("waived")]
     active_findings = [f for f in matching if not f.get("waived")]
@@ -115,6 +105,34 @@ def default_evaluator(
         waiver_reasons=[(f.get("waiver_reason") or "") for f in waived_findings if f.get("waiver_reason")],
         remediation=control.remediation,
     )
+
+
+def _finding_rule_ids(finding: dict) -> set:
+    """All rule_ids a finding attributes itself to.
+
+    The crypto analyzer dedups to one finding per asset and promotes the
+    strictest rule to ``details.rule_id``, recording every matched rule under
+    ``details.matched_rules`` so cross-framework agreement is preserved. Collect
+    both so a finding led by another framework's rule still counts toward a
+    control that maps to any of the matched rules.
+    """
+    details = finding.get("details") or {}
+    ids: set = set()
+    if lead_id := details.get("rule_id"):
+        ids.add(lead_id)
+    for m in details.get("matched_rules") or []:
+        if isinstance(m, dict) and m.get("rule_id"):
+            ids.add(m["rule_id"])
+    return ids
+
+
+def _finding_matches_control(finding: dict, control: ControlDefinition) -> bool:
+    ft = finding.get("type")
+    if not any(ft == (t.value if hasattr(t, "value") else t) for t in control.maps_to_finding_types):
+        return False
+    if control.maps_to_rule_ids:
+        return bool(_finding_rule_ids(finding) & set(control.maps_to_rule_ids))
+    return True
 
 
 def _rules_for_control(
@@ -168,7 +186,21 @@ def _is_applicable(
                 control.maps_to_rule_ids,
             )
         return True  # cannot scope to a primitive -> preserve inventory-presence behavior
-    return any(asset_in_rule_scope(asset, rule) for asset in data.crypto_assets for rule in rules)
+    enabled_rules = [rule for rule in rules if rule.enabled]
+    if not enabled_rules:
+        # Every backing rule resolves but is disabled in the policy, so the
+        # crypto analyzer never evaluates them and no finding can ever exist for
+        # this control. Reporting PASSED would be a false attestation -> treat
+        # the control as NOT_APPLICABLE (audit finding: disabled CNSA 2.0 / BSI
+        # rules shipped always-green reports).
+        logger.info(
+            "compliance: control %s is backed only by disabled rules %s; reporting "
+            "NOT_APPLICABLE rather than PASSED",
+            control.control_id,
+            control.maps_to_rule_ids,
+        )
+        return False
+    return any(asset_in_rule_scope(asset, rule) for asset in data.crypto_assets for rule in enabled_rules)
 
 
 def _extract_bom_refs(findings: List[dict]) -> List[str]:
@@ -194,8 +226,8 @@ def evaluate_framework(
             result = default_evaluator(control, data)
         control_results.append(result)
 
-    summary = _build_summary(control_results)
-    residuals = _build_residual_risks(control_results)
+    summary = build_summary(control_results)
+    residuals = build_residual_risks(control_results)
     fingerprint = _inputs_fingerprint(data)
     return FrameworkEvaluation(
         framework_key=framework.key,
@@ -252,12 +284,6 @@ def build_residual_risks(results: List[ControlResult]) -> List[ResidualRisk]:
         for r in results
         if status_value(r.status) == "failed"
     ]
-
-
-# Private aliases kept for backwards compatibility with existing callers
-# inside this module.
-_build_summary = build_summary
-_build_residual_risks = build_residual_risks
 
 
 def _inputs_fingerprint(data: EvaluationInput) -> str:

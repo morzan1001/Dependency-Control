@@ -298,3 +298,101 @@ class TestAnalyzeRecurringIssuesNonVulnSkipped:
         history = [_scan(f"scan{i}", [non_vuln_finding]) for i in range(5)]
         result = analyze_recurring_issues(history)
         assert len(result) == 0
+
+
+class TestRecurringDetectionEndToEndWithPersistedSummary:
+    """Regression for finding #84: recurring-vulnerability recommendations can never
+    fire unless the analysis engine PERSISTS a compact scan.findings_summary at
+    completion (it used to $unset it). This exercises the real engine summary builder
+    (_build_findings_summary) round-tripped through the Scan model — exactly the shape
+    scan_repo.find_many + Scan.model_dump feed into analyze_recurring_issues.
+    """
+
+    @staticmethod
+    def _aggregated_vuln(cve_id, severity="CRITICAL", component="pkg"):
+        """A Finding as produced by the aggregator (pre-persistence)."""
+        from app.models.finding import Finding
+
+        return Finding(
+            id=cve_id,
+            type="vulnerability",
+            severity=severity,
+            component=component,
+            version="1.0.0",
+            description=f"Description for {cve_id}",
+            scanners=["osv"],
+            details={"cve_id": cve_id, "bulky": "x" * 5000},
+        )
+
+    def _persisted_summary_for_scan(self, scan_id, findings):
+        """Run the engine's real prepare + summary builder, then round-trip through the
+        Scan model as the DB read path does."""
+        from app.models.project import Scan
+        from app.services.analysis.engine import (
+            _build_findings_summary,
+            _prepare_finding_records,
+        )
+
+        _, vulnerability_findings = _prepare_finding_records(findings, scan_id, "proj-1", None)
+        summary = _build_findings_summary(vulnerability_findings)
+        # Round-trip: persisting to Mongo + Scan.model_dump() must preserve the summary
+        # and it must validate as List[Finding].
+        scan = Scan(id=scan_id, project_id="proj-1", branch="main", findings_summary=summary)
+        return scan.model_dump()
+
+    def test_recurring_fires_across_three_completed_scans(self):
+        history = [
+            self._persisted_summary_for_scan(
+                f"scan{i}", [self._aggregated_vuln("CVE-2024-999", component="lodash")]
+            )
+            for i in range(3)
+        ]
+        # The persisted summary must be non-empty (the bug persisted nothing / $unset it).
+        assert all(s["findings_summary"] for s in history)
+        result = analyze_recurring_issues(history)
+        assert len(result) == 1
+        assert result[0].type == RecommendationType.RECURRING_VULNERABILITY
+        assert any("CVE-2024-999" in c and "lodash" in c for c in result[0].affected_components)
+
+    def test_one_off_does_not_fire(self):
+        history = [
+            self._persisted_summary_for_scan("scan1", [self._aggregated_vuln("CVE-2024-999")])
+        ]
+        assert analyze_recurring_issues(history) == []
+
+    def test_summary_is_bounded_and_compact(self):
+        from app.services.analysis.engine import (
+            _build_findings_summary,
+            _prepare_finding_records,
+        )
+
+        findings = [self._aggregated_vuln(f"CVE-2024-{i:04d}") for i in range(600)]
+        _, vulnerability_findings = _prepare_finding_records(findings, "scanX", "proj-1", None)
+        summary = _build_findings_summary(vulnerability_findings)
+        # Capped well under Mongo's 16MB doc limit.
+        assert len(summary) == 500
+        # Compact: bulky detail keys are dropped, only cve_id retained.
+        assert summary[0]["details"] == {"cve_id": summary[0]["id"]}
+
+    def test_summary_only_contains_vulnerabilities(self):
+        from app.models.finding import Finding
+        from app.services.analysis.engine import (
+            _build_findings_summary,
+            _prepare_finding_records,
+        )
+
+        license_finding = Finding(
+            id="lic-1",
+            type="license",
+            severity="MEDIUM",
+            component="pkg",
+            description="GPL",
+            scanners=["licensecheck"],
+        )
+        vuln = self._aggregated_vuln("CVE-2024-001")
+        findings_to_insert, vulnerability_findings = _prepare_finding_records(
+            [license_finding, vuln], "scanY", "proj-1", None
+        )
+        summary = _build_findings_summary(vulnerability_findings)
+        assert len(summary) == 1
+        assert summary[0]["type"] == "vulnerability"

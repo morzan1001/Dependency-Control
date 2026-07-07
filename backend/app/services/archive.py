@@ -22,8 +22,8 @@ from pymongo.errors import DuplicateKeyError, PyMongoError
 
 from app.core.config import settings
 from app.core.constants import (
-    ARCHIVE_BUNDLE_VERSION,
     ARCHIVE_PATH_TEMPLATE,
+    ENCRYPTION_MAGIC,
     RESTORE_INSERT_BATCH_SIZE,
 )
 from app.core.encryption import EncryptionStreamWriter, decrypt_stream, is_encryption_enabled
@@ -44,14 +44,36 @@ from app.models.archive import ArchiveMetadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.schemas.archive import ArchiveRestoreResponse
-from app.services.archive_bundle import BundleFrames, BundleStats, _serialize, read_bundle_frames
+from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames
 
 logger = logging.getLogger(__name__)
 
 _ARCHIVE_LOCK_TTL_SECONDS = 600
 
-# Test-compatibility re-exports
-_serialize_doc = _serialize
+# The only collections a bundle is allowed to restore into. Marker names in the
+# NDJSON stream are attacker-influenceable (the sha256 footer is a plain digest,
+# not an HMAC), so any name outside this set must abort the restore rather than
+# let restore write into an arbitrary MongoDB collection (users, api_keys, ...).
+_RESTORABLE_COLLECTIONS = frozenset(
+    {
+        "findings",
+        "finding_records",
+        "dependencies",
+        "analysis_results",
+        "callgraphs",
+        "crypto_assets",
+        "gridfs_sboms",
+    }
+)
+
+
+class _ArchiveSourceReadError(Exception):
+    """A source document could not be read intact while building the archive bundle.
+
+    Raised (rather than silently skipped) so the S3 upload aborts and the scan is
+    treated as an archive failure — housekeeping only deletes scans that archived
+    successfully, so this prevents permanent data loss on a transient read error.
+    """
 
 
 def _sanitize_for_log(value: Any, max_len: int = 200) -> str:
@@ -107,10 +129,16 @@ async def _stream_gridfs_sboms(db: Any, scan_doc: Dict[str, Any]) -> AsyncIterat
                 "data": json.loads(content),
             }
         except Exception as e:
-            logger.warning(
-                "Failed to load GridFS file",
+            # Do NOT swallow-and-continue: a dropped SBOM would make the archive
+            # report success while missing data, and housekeeping would then
+            # delete the source scan + its GridFS files, losing the SBOM forever.
+            # Re-raise so upload_stream aborts and the scan is skipped by
+            # housekeeping (recorded as an INTEGRITY archive failure).
+            logger.error(
+                "Failed to load GridFS file; aborting archive to avoid data loss",
                 extra={"gridfs_id": _sanitize_for_log(gid), "error": _sanitize_for_log(e)},
             )
+            raise _ArchiveSourceReadError(str(e)) from e
 
 
 async def _gzip_compress_stream(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
@@ -311,6 +339,14 @@ async def _upload_archive_bundle(
     payload, content_type = _build_archive_payload(db, scan_doc, scan_id, stats, bytes_counter)
     try:
         total = await upload_stream(s3_key, payload, content_type=content_type)
+    except _ArchiveSourceReadError as e:
+        logger.error(
+            "Aborting archive: source data could not be read intact",
+            extra={"scan_id": _sanitize_for_log(scan_id), "error": _sanitize_for_log(e)},
+        )
+        archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.INTEGRITY).inc()
+        archive_operations_total.labels(operation="archive", status="failure").inc()
+        return None
     except Exception as e:
         logger.exception(
             "Failed to upload archive",
@@ -398,11 +434,39 @@ async def archive_scan(
 # ---------------------------------------------------------------------------
 
 
-def _open_restore_stream(metadata: ArchiveMetadata) -> AsyncIterator[bytes]:
-    """Return a decompressed (and optionally decrypted) byte iterator for the bundle."""
+async def _open_restore_stream(metadata: ArchiveMetadata) -> AsyncIterator[bytes]:
+    """Yield a decompressed (and, if encrypted, decrypted) byte stream for the bundle.
+
+    Whether the bundle is encrypted is decided by sniffing the ENCRYPTION_MAGIC
+    prefix, NOT by the current ``is_encryption_enabled()`` flag. The flag reflects
+    today's config, but each bundle was written under whatever config existed at
+    archive time (there is no per-bundle marker on ArchiveMetadata). Branching on
+    the live flag bricks restore for any bundle whose encryption state differs
+    from the current setting (plain gzip piped through decrypt -> "Invalid
+    encryption magic"; encrypted bytes piped through gzip -> gzip error).
+    """
     s3_chunks = download_stream(metadata.s3_key, bucket=metadata.s3_bucket)
-    decrypted: AsyncIterator[bytes] = decrypt_stream(s3_chunks) if is_encryption_enabled() else s3_chunks
-    return _gzip_decompress_stream(decrypted)
+
+    head = bytearray()
+    async for chunk in s3_chunks:
+        if not chunk:
+            continue
+        head.extend(chunk)
+        if len(head) >= len(ENCRYPTION_MAGIC):
+            break
+
+    prefix = bytes(head)
+
+    async def _prepended() -> AsyncIterator[bytes]:
+        if prefix:
+            yield prefix
+        async for chunk in s3_chunks:
+            yield chunk
+
+    source: AsyncIterator[bytes] = _prepended()
+    decrypted = decrypt_stream(source) if prefix.startswith(ENCRYPTION_MAGIC) else source
+    async for out in _gzip_decompress_stream(decrypted):
+        yield out
 
 
 def _parse_error_reason(exc: ValueError) -> str:
@@ -428,16 +492,19 @@ async def _handle_header_event(
     db: Any,
     data: Dict[str, Any],
     collections_restored: List[str],
-) -> Optional[str]:
-    """Insert the scan doc and return a failure reason string if the version mismatches."""
-    if data.get("version") != ARCHIVE_BUNDLE_VERSION:
-        return ArchiveFailureReason.VERSION_MISMATCH
+) -> None:
+    """Insert the scan doc from a header event.
+
+    Version validation lives solely in ``read_bundle_frames``, which raises
+    ``ValueError('Unsupported bundle version')`` before ever yielding a header
+    with a mismatched version (mapped to VERSION_MISMATCH in _replay_bundle). A
+    second check here could never fire, so it is intentionally absent.
+    """
     scan_data = data.get("scan")
     if scan_data:
         scan_data["pinned"] = True
         await db.scans.insert_one(scan_data)
         collections_restored.append("scans")
-    return None
 
 
 async def _handle_doc_event(
@@ -448,6 +515,12 @@ async def _handle_doc_event(
     collections_restored: List[str],
 ) -> None:
     coll = event["collection"]
+    if coll not in _RESTORABLE_COLLECTIONS:
+        # Marker names come from bundle content, which is not authenticated (the
+        # footer is a plain sha256, not an HMAC). Refuse anything outside the
+        # known set so a crafted marker cannot write into arbitrary collections
+        # (users, api_keys, projects, ...). ValueError -> INTEGRITY in _replay_bundle.
+        raise ValueError(f"Unexpected collection in bundle: {_sanitize_for_log(coll)}")
     if coll == "gridfs_sboms":
         gridfs_entries.append(event["data"])
         return
@@ -473,9 +546,7 @@ async def _replay_bundle(
         async for event in read_bundle_frames(decompressed):
             etype = event["type"]
             if etype == "header":
-                reason = await _handle_header_event(db, event["data"], collections_restored)
-                if reason:
-                    return reason, collections_restored, gridfs_entries
+                await _handle_header_event(db, event["data"], collections_restored)
             elif etype == "doc":
                 await _handle_doc_event(db, event, batch_by_collection, gridfs_entries, collections_restored)
             elif etype == "footer":

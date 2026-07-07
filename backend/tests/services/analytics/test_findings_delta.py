@@ -3,12 +3,14 @@ from datetime import datetime, timezone
 import pytest
 
 from app.services.analytics.findings_delta import (
+    _FETCH_PROJECTION,
     compute_findings_delta,
     finding_identity_key,
 )
 
 
 def test_identity_key_vulnerability_uses_cve_id():
+    # Legacy/flat shape still supported via fallback.
     f = {
         "type": "vulnerability",
         "component": "log4j-core@2.17.1",
@@ -17,13 +19,47 @@ def test_identity_key_vulnerability_uses_cve_id():
     assert finding_identity_key(f) == ("vulnerability", "log4j-core@2.17.1", "CVE-2025-1234")
 
 
-def test_identity_key_secret_uses_pattern_hash():
+def test_identity_key_vulnerability_uses_aggregated_shape():
+    """Regression for the persisted AGGREGATED shape: ids live under
+    details.vulnerabilities[].id (no flat details.cve_id) and version is a
+    top-level field. The key must reflect the sorted id set plus the version."""
+    f = {
+        "type": "vulnerability",
+        "component": "lodash",
+        "version": "4.17.20",
+        "description": "",
+        "details": {
+            "vulnerabilities": [
+                {"id": "CVE-B", "description": "b"},
+                {"id": "CVE-A", "description": "a"},
+            ],
+            "fixed_version": "4.17.21",
+        },
+    }
+    assert finding_identity_key(f) == ("vulnerability", "lodash", "4.17.20|CVE-A,CVE-B")
+
+
+def test_identity_key_secret_uses_finding_id():
+    """Persisted secret findings carry no pattern_hash/rule_id in details; the
+    stable identity is the deterministic finding_id (SECRET-<detector>-<hash8>)."""
     f = {
         "type": "secret",
         "component": "src/api/keys.py",
-        "details": {"pattern_hash": "abc123"},
+        "finding_id": "SECRET-AWS-abcd1234",
+        "details": {"detector": "AWS", "verified": True},
     }
-    assert finding_identity_key(f) == ("secret", "src/api/keys.py", "abc123")
+    assert finding_identity_key(f) == ("secret", "src/api/keys.py", "SECRET-AWS-abcd1234")
+
+
+def test_identity_key_outdated_uses_fixed_version():
+    """Persisted outdated findings store details.fixed_version (the latest
+    version), never details.latest_version."""
+    f = {
+        "type": "outdated",
+        "component": "requests",
+        "details": {"fixed_version": "2.32.0"},
+    }
+    assert finding_identity_key(f) == ("outdated", "requests", "2.32.0")
 
 
 def test_identity_key_sast_uses_rule_id():
@@ -264,3 +300,143 @@ async def test_findings_delta_pagination(db):
     assert resp.page_size == 50
     assert resp.total_pages == 3
     assert len(resp.items) == 50
+
+
+def _agg_vuln_doc(_id, scan_id, component, version, cve_ids, severity="CRITICAL"):
+    """Build a persisted vulnerability finding in the real AGGREGATED shape."""
+    return {
+        "_id": _id,
+        "project_id": "p1",
+        "scan_id": scan_id,
+        "finding_id": f"{component}:{version}",
+        "type": "vulnerability",
+        "severity": severity,
+        "component": component,
+        "version": version,
+        "description": "",
+        "details": {
+            "vulnerabilities": [{"id": c, "description": f"desc {c}"} for c in cve_ids],
+            "fixed_version": None,
+        },
+        "created_at": datetime.now(timezone.utc),
+    }
+
+
+@pytest.mark.asyncio
+async def test_aggregated_vuln_cve_swap_is_added_and_removed(db):
+    """Real-shape regression: a component that drops CVE-A and gains CVE-B at the
+    same version must report added=1/removed=1, not 'unchanged'."""
+    await db["findings"].insert_many(
+        [
+            _agg_vuln_doc("a", "sa", "lodash", "4.17.20", ["CVE-A"]),
+            _agg_vuln_doc("b", "sb", "lodash", "4.17.20", ["CVE-B"]),
+        ]
+    )
+    resp = await compute_findings_delta(
+        db, project_id="p1", from_scan="sa", to_scan="sb",
+        page=1, page_size=50, change=None, severity=None, finding_type=None,
+    )
+    assert resp.totals.added == 1
+    assert resp.totals.removed == 1
+    assert resp.totals.unchanged == 0
+    added = [i for i in resp.items if i.change == "added"]
+    assert added and added[0].cve_id == "CVE-B"
+
+
+@pytest.mark.asyncio
+async def test_aggregated_vuln_version_bump_is_added_and_removed(db):
+    """Same CVE but a version bump must be detected as a change."""
+    await db["findings"].insert_many(
+        [
+            _agg_vuln_doc("a", "sa", "lodash", "4.17.20", ["CVE-A"]),
+            _agg_vuln_doc("b", "sb", "lodash", "4.17.21", ["CVE-A"]),
+        ]
+    )
+    resp = await compute_findings_delta(
+        db, project_id="p1", from_scan="sa", to_scan="sb",
+        page=1, page_size=50, change=None, severity=None, finding_type=None,
+    )
+    assert resp.totals.added == 1
+    assert resp.totals.removed == 1
+    assert resp.totals.unchanged == 0
+
+
+@pytest.mark.asyncio
+async def test_aggregated_vuln_unchanged_when_cve_set_identical(db):
+    """Identical CVE set at the same version stays 'unchanged'."""
+    await db["findings"].insert_many(
+        [
+            _agg_vuln_doc("a", "sa", "lodash", "4.17.20", ["CVE-A", "CVE-B"]),
+            _agg_vuln_doc("b", "sb", "lodash", "4.17.20", ["CVE-B", "CVE-A"]),
+        ]
+    )
+    resp = await compute_findings_delta(
+        db, project_id="p1", from_scan="sa", to_scan="sb",
+        page=1, page_size=50, change=None, severity=None, finding_type=None,
+    )
+    assert resp.totals.added == 0
+    assert resp.totals.removed == 0
+    assert resp.totals.unchanged == 1
+
+
+@pytest.mark.asyncio
+async def test_secret_identity_stable_across_scans_by_finding_id(db):
+    """A secret with the same deterministic finding_id in both scans is
+    'unchanged' even though per-scan _id differs and details carry no hash."""
+    await db["findings"].insert_many(
+        [
+            {
+                "_id": "s_a", "project_id": "p1", "scan_id": "sa",
+                "finding_id": "SECRET-AWS-abcd1234", "type": "secret",
+                "severity": "CRITICAL", "component": "src/x.py",
+                "description": "Secret detected: AWS",
+                "details": {"detector": "AWS", "verified": True},
+                "created_at": datetime.now(timezone.utc),
+            },
+            {
+                "_id": "s_b", "project_id": "p1", "scan_id": "sb",
+                "finding_id": "SECRET-AWS-abcd1234", "type": "secret",
+                "severity": "CRITICAL", "component": "src/x.py",
+                "description": "Secret detected: AWS",
+                "details": {"detector": "AWS", "verified": True},
+                "created_at": datetime.now(timezone.utc),
+            },
+        ]
+    )
+    resp = await compute_findings_delta(
+        db, project_id="p1", from_scan="sa", to_scan="sb",
+        page=1, page_size=50, change=None, severity=None, finding_type=None,
+    )
+    assert resp.totals.added == 0
+    assert resp.totals.removed == 0
+    assert resp.totals.unchanged == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_uses_projection(db, monkeypatch):
+    """The fetch must request a projection (RAM hot-spot fix) rather than pull
+    full documents. Verify a projection is passed and covers the read fields."""
+    captured = {}
+    coll = db["findings"]
+    original_find = coll.find
+
+    def spy_find(query=None, projection=None, **kwargs):
+        captured["projection"] = projection
+        return original_find(query, projection=projection, **kwargs)
+
+    monkeypatch.setattr(coll, "find", spy_find)
+
+    await compute_findings_delta(
+        db, project_id="p1", from_scan="sa", to_scan="sb",
+        page=1, page_size=50, change=None, severity=None, finding_type=None,
+    )
+
+    proj = captured["projection"]
+    assert proj is _FETCH_PROJECTION
+    # Fields the identity/item builders read must be present in the projection.
+    for field in (
+        "type", "component", "version", "severity", "description",
+        "found_in", "finding_id", "created_at",
+        "details.vulnerabilities.id", "details.fixed_version",
+    ):
+        assert proj.get(field) == 1

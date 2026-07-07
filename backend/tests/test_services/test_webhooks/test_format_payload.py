@@ -134,7 +134,7 @@ class TestTestWebhookForTeams:
         mock_client = _make_mock_http_client()
 
         with (
-            patch("app.services.webhooks.webhook_service.assert_safe_webhook_target"),
+            patch("app.services.webhooks.webhook_service.build_pinned_transport", new=AsyncMock(return_value=None)),
             patch("app.services.webhooks.webhook_service.InstrumentedAsyncClient", return_value=mock_client),
         ):
             service = WebhookService()
@@ -155,7 +155,7 @@ class TestTestWebhookForTeams:
         mock_client = _make_mock_http_client()
 
         with (
-            patch("app.services.webhooks.webhook_service.assert_safe_webhook_target"),
+            patch("app.services.webhooks.webhook_service.build_pinned_transport", new=AsyncMock(return_value=None)),
             patch("app.services.webhooks.webhook_service.InstrumentedAsyncClient", return_value=mock_client),
         ):
             service = WebhookService()

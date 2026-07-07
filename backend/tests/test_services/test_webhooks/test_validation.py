@@ -2,10 +2,13 @@
 
 from unittest.mock import patch
 
+import httpx
 import pytest
 
 from app.services.webhooks.validation import (
+    _PinnedIPTransport,
     assert_safe_webhook_target,
+    build_pinned_transport,
     detect_webhook_type,
     validate_webhook_url,
     validate_webhook_url_optional,
@@ -160,6 +163,142 @@ class TestAssertSafeWebhookTarget:
         with patch("asyncio.get_event_loop") as gel:
             gel.return_value.getaddrinfo = fake_getaddrinfo
             await assert_safe_webhook_target("https://example.com/hook")
+
+    @pytest.mark.asyncio
+    async def test_returns_vetted_ip_for_hostname(self):
+        async def fake_getaddrinfo(host, port, type=None):
+            return [(0, 0, 0, "", ("93.184.216.34", 0))]
+
+        with patch("asyncio.get_event_loop") as gel:
+            gel.return_value.getaddrinfo = fake_getaddrinfo
+            assert await assert_safe_webhook_target("https://example.com/hook") == "93.184.216.34"
+
+    @pytest.mark.asyncio
+    async def test_returns_ip_literal_for_public_ip(self):
+        assert await assert_safe_webhook_target("https://93.184.216.34/hook") == "93.184.216.34"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_for_loopback(self):
+        assert await assert_safe_webhook_target("http://localhost:8080/hook") is None
+
+    @pytest.mark.asyncio
+    async def test_unparseable_resolution_fails_closed(self):
+        # getaddrinfo returns entries, but none parse as a usable IP. We must
+        # fail closed (issue #4) rather than return None — returning None would
+        # let build_pinned_transport fall back to an unpinned, re-resolving
+        # transport and reopen the DNS-rebinding window.
+        async def fake_getaddrinfo(host, port, type=None):
+            return [(0, 0, 0, "", ("not-an-ip", 0))]
+
+        with patch("asyncio.get_event_loop") as gel:
+            gel.return_value.getaddrinfo = fake_getaddrinfo
+            with pytest.raises(ValueError, match="no usable IP"):
+                await assert_safe_webhook_target("https://weird.example.com/hook")
+
+    @pytest.mark.asyncio
+    async def test_empty_resolution_fails_closed(self):
+        # getaddrinfo returns no entries at all -> fail closed, do not return None.
+        async def fake_getaddrinfo(host, port, type=None):
+            return []
+
+        with patch("asyncio.get_event_loop") as gel:
+            gel.return_value.getaddrinfo = fake_getaddrinfo
+            with pytest.raises(ValueError, match="no usable IP"):
+                await assert_safe_webhook_target("https://empty.example.com/hook")
+
+
+class TestBuildPinnedTransport:
+    """Guards the DNS-rebinding (TOCTOU) fix: the delivery connection is pinned
+    to the single vetted IP so httpx cannot re-resolve to an internal target."""
+
+    @pytest.mark.asyncio
+    async def test_hostname_pins_to_vetted_ip(self):
+        async def fake_getaddrinfo(host, port, type=None):
+            return [(0, 0, 0, "", ("93.184.216.34", 0))]
+
+        with patch("asyncio.get_event_loop") as gel:
+            gel.return_value.getaddrinfo = fake_getaddrinfo
+            transport = await build_pinned_transport("https://attacker.example.com/hook")
+
+        assert isinstance(transport, _PinnedIPTransport)
+        assert transport._ip == "93.184.216.34"
+        assert transport._hostname == "attacker.example.com"
+
+    @pytest.mark.asyncio
+    async def test_pin_rewrites_connect_target_preserving_host_and_sni(self):
+        transport = _PinnedIPTransport("attacker.example.com", "93.184.216.34")
+        request = httpx.Request("POST", "https://attacker.example.com/hook")
+        transport._pin(request)
+        # Connection now targets the vetted IP literal...
+        assert request.url.host == "93.184.216.34"
+        # ...but Host header and TLS SNI still carry the original hostname.
+        assert request.headers["Host"] == "attacker.example.com"
+        assert request.extensions["sni_hostname"] == "attacker.example.com"
+
+    @pytest.mark.asyncio
+    async def test_rebinding_cannot_redirect_pinned_connection(self):
+        # DNS returns a public IP at vetting time; transport is pinned to it.
+        async def fake_getaddrinfo(host, port, type=None):
+            return [(0, 0, 0, "", ("93.184.216.34", 0))]
+
+        with patch("asyncio.get_event_loop") as gel:
+            gel.return_value.getaddrinfo = fake_getaddrinfo
+            transport = await build_pinned_transport("https://attacker.example.com/hook")
+
+        # Even though a later resolution would return the metadata IP, the
+        # pinned transport rewrites the connect target to the vetted address.
+        request = httpx.Request("POST", "https://attacker.example.com/latest/meta-data/")
+        transport._pin(request)
+        assert request.url.host == "93.184.216.34"
+        assert request.url.host != "169.254.169.254"
+
+    @pytest.mark.asyncio
+    async def test_blocked_resolution_raises(self):
+        async def fake_getaddrinfo(host, port, type=None):
+            return [(0, 0, 0, "", ("169.254.169.254", 0))]
+
+        with patch("asyncio.get_event_loop") as gel:
+            gel.return_value.getaddrinfo = fake_getaddrinfo
+            with pytest.raises(ValueError, match="resolves to"):
+                await build_pinned_transport("https://metadata-spoof.example.com/")
+
+    @pytest.mark.asyncio
+    async def test_blocked_ip_literal_raises(self):
+        with pytest.raises(ValueError, match="blocked IP range"):
+            await build_pinned_transport("https://192.168.1.1/hook")
+
+    @pytest.mark.asyncio
+    async def test_ip_literal_pins_to_itself(self):
+        transport = await build_pinned_transport("https://93.184.216.34/hook")
+        assert isinstance(transport, _PinnedIPTransport)
+        assert transport._ip == "93.184.216.34"
+
+    @pytest.mark.asyncio
+    async def test_loopback_returns_plain_transport(self):
+        transport = await build_pinned_transport("http://localhost:8080/hook")
+        assert type(transport) is httpx.AsyncHTTPTransport
+        assert not isinstance(transport, _PinnedIPTransport)
+
+    @pytest.mark.asyncio
+    async def test_unpinnable_resolution_does_not_fall_back_to_plain_transport(self):
+        # Issue #4: a non-loopback host that resolves to no usable IP must NOT
+        # yield a plain (unpinned) transport — build_pinned_transport must raise
+        # rather than hand back a client that re-resolves at connect time.
+        async def fake_getaddrinfo(host, port, type=None):
+            return [(0, 0, 0, "", ("garbage", 0))]
+
+        with patch("asyncio.get_event_loop") as gel:
+            gel.return_value.getaddrinfo = fake_getaddrinfo
+            with pytest.raises(ValueError, match="no usable IP"):
+                await build_pinned_transport("https://weird.example.com/hook")
+
+    @pytest.mark.asyncio
+    async def test_pin_only_applies_to_matching_host(self):
+        # A request whose host is already the pinned IP (or differs) must not be
+        # double-rewritten by handle_async_request's guard.
+        transport = _PinnedIPTransport("attacker.example.com", "93.184.216.34")
+        request = httpx.Request("POST", "https://other.example.com/hook")
+        assert (request.url.host or "").lower() != transport._hostname
 
 
 class TestValidateWebhookEvents:

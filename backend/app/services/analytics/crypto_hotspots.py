@@ -98,7 +98,10 @@ class CryptoHotspotService:
                 limit=limit,
             )
 
-        match: Dict[str, Any] = {"scan_id": {"$in": scan_ids}} if scan_ids else {}
+        # Always constrain to the selected scans. An empty scan_ids list must
+        # match nothing ($in: []) rather than disable the filter — dropping the
+        # constraint would aggregate every historical scan (audit finding #2).
+        match: Dict[str, Any] = {"scan_id": {"$in": scan_ids}}
         if project_ids is not None:
             match["project_id"] = {"$in": project_ids}
 
@@ -110,7 +113,12 @@ class CryptoHotspotService:
                     "_id": group_key,
                     "asset_count": {"$sum": 1},
                     "project_ids": {"$addToSet": "$project_id"},
-                    "locations": {"$push": "$occurrence_locations"},
+                    # Cap accumulated locations inside the pipeline. $push of every
+                    # asset's occurrence_locations array can blow MongoDB's 16MB
+                    # group-document limit on hot groups; we only ever surface 20
+                    # (audit finding #4). $firstN (MongoDB 5.2+) keeps at most 20
+                    # per-asset arrays, which Python flattens/truncates below.
+                    "locations": {"$firstN": {"input": "$occurrence_locations", "n": 20}},
                     "first_seen": {"$min": "$created_at"},
                     "last_seen": {"$max": "$created_at"},
                 }
@@ -164,9 +172,14 @@ class CryptoHotspotService:
         bom_refs contributing to the group, finding_count the raw match
         count.
         """
-        match: Dict[str, Any] = {"type": {"$regex": "^crypto_"}}
-        if scan_ids:
-            match["scan_id"] = {"$in": scan_ids}
+        # Waived findings reflect a risk decision, not current posture — exclude
+        # them so hotspots agree with crypto_trends (audit #11 / finding #3).
+        # Always constrain scans ($in: [] matches nothing; finding #2).
+        match: Dict[str, Any] = {
+            "type": {"$regex": "^crypto_"},
+            "waived": {"$ne": True},
+            "scan_id": {"$in": scan_ids},
+        }
         if project_ids is not None:
             match["project_id"] = {"$in": project_ids}
 
@@ -245,7 +258,12 @@ class CryptoHotspotService:
 
     def _group_key_stage(self, group_by: GroupBy) -> Any:
         if group_by == "name":
-            return {"name": "$name", "variant": "$variant"}
+            # Group on the bare asset name only. Findings carry
+            # details.asset_name == asset.name (no variant), so the enrichment
+            # join in _enrich_with_findings must key on the same bare name;
+            # keying hotspots by "name-variant" here would make every join miss
+            # and misattribute finding_count/severity_mix (audit finding #1).
+            return "$name"
         if group_by == "primitive":
             return "$primitive"
         if group_by == "asset_type":
@@ -255,10 +273,6 @@ class CryptoHotspotService:
 
     def _key_from_row(self, row: Dict[str, Any], group_by: GroupBy) -> Optional[str]:
         key = row.get("_id")
-        if group_by == "name" and isinstance(key, dict):
-            name = key.get("name") or ""
-            variant = key.get("variant") or ""
-            return f"{name}-{variant}".rstrip("-") if name else None
         if isinstance(key, str) and key:
             return key
         return None
@@ -280,6 +294,9 @@ class CryptoHotspotService:
         match: Dict[str, Any] = {
             "scan_id": {"$in": scan_ids},
             "type": {"$regex": "^crypto_"},
+            # Exclude waived findings so enriched finding_count/severity_mix
+            # match the crypto_trends posture semantics (audit #11 / finding #3).
+            "waived": {"$ne": True},
         }
         if project_ids is not None:
             match["project_id"] = {"$in": project_ids}
