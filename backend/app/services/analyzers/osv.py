@@ -91,9 +91,7 @@ class OSVAnalyzer(Analyzer):
                 if not payload["queries"]:
                     continue
                 for attempt in range(1 + self.max_retries):
-                    rate_limited = await self._post_and_handle(
-                        client, payload, valid_components, results, chunk_start
-                    )
+                    rate_limited = await self._post_and_handle(client, payload, valid_components, results, chunk_start)
                     if not rate_limited:
                         break
                     if attempt < self.max_retries:

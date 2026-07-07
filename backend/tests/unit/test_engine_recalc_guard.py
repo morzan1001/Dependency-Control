@@ -9,9 +9,7 @@ from app.services.analysis.engine import _project_has_active_waivers
 
 def _make_db(count_documents_return: int):
     """Build a minimal fake db whose waivers.count_documents returns the given value."""
-    waivers = SimpleNamespace(
-        count_documents=AsyncMock(return_value=count_documents_return)
-    )
+    waivers = SimpleNamespace(count_documents=AsyncMock(return_value=count_documents_return))
     return SimpleNamespace(waivers=waivers)
 
 

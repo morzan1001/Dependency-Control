@@ -101,9 +101,7 @@ class ScopeResolver:
         except HTTPException:
             return False  # legitimate 403/404 access denial
         except Exception:
-            logger.warning(
-                "check_project_access failed unexpectedly for project %s", project_id, exc_info=True
-            )
+            logger.warning("check_project_access failed unexpectedly for project %s", project_id, exc_info=True)
             return False
 
     async def _check_team_member(self, team_id: str) -> bool:

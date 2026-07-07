@@ -126,9 +126,7 @@ class ComplianceReportEngine:
             db=db,
         )
 
-    async def _pick_scan_ids(
-        self, db: AsyncIOMotorDatabase, resolved: ResolvedScope
-    ) -> List[Tuple[str, str]]:
+    async def _pick_scan_ids(self, db: AsyncIOMotorDatabase, resolved: ResolvedScope) -> List[Tuple[str, str]]:
         match: dict[str, Any] = {"status": {"$in": ["completed", "partial"]}}
         if resolved.project_ids is not None:
             match["project_id"] = {"$in": resolved.project_ids}
@@ -140,9 +138,7 @@ class ComplianceReportEngine:
         # Return (project_id, scan_id) pairs so callers avoid re-querying each scan's project.
         return [(row["_id"], row["scan_id"]) async for row in db.scans.aggregate(pipeline)]
 
-    async def _collect_crypto_assets(
-        self, db: AsyncIOMotorDatabase, scan_pairs: List[Tuple[str, str]]
-    ) -> List[Any]:
+    async def _collect_crypto_assets(self, db: AsyncIOMotorDatabase, scan_pairs: List[Tuple[str, str]]) -> List[Any]:
         repo = CryptoAssetRepository(db)
         out: List[Any] = []
         for pid, sid in scan_pairs:

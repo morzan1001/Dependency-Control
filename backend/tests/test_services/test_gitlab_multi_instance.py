@@ -1131,9 +1131,7 @@ class TestApiGetPaginatedCap:
         def _make_response(page: int):
             resp = MagicMock()
             resp.status_code = 200
-            resp.json.return_value = [
-                {"id": i, "username": f"u{page}_{i}"} for i in range(100)
-            ]
+            resp.json.return_value = [{"id": i, "username": f"u{page}_{i}"} for i in range(100)]
             # Always claims there are far more pages than the cap.
             resp.headers = {"x-total-pages": "9999"}
             return resp

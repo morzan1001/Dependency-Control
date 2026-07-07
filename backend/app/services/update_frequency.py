@@ -454,9 +454,7 @@ async def _load_completed_scans(
         limit=fetch_limit,
         projection={"_id": 1, "created_at": 1, "status": 1, "project_id": 1, "branch": 1},
     )
-    scans_raw: List[Dict[str, Any]] = [
-        {"_id": s.id, "created_at": s.created_at, "status": s.status} for s in scans
-    ]
+    scans_raw: List[Dict[str, Any]] = [{"_id": s.id, "created_at": s.created_at, "status": s.status} for s in scans]
     if since is not None:
         scans_raw = [s for s in scans_raw if s["created_at"] >= since]
     scans_raw.reverse()

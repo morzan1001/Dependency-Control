@@ -175,27 +175,51 @@ async def _seed_added_removed(db):
     await db["findings"].insert_many(
         [
             {
-                "_id": "fa1", "project_id": "p1", "scan_id": "sa", "finding_id": "fa1",
-                "type": "vulnerability", "severity": "CRITICAL", "component": "lib@1",
-                "description": "CVE-A", "details": {"cve_id": "CVE-A"},
+                "_id": "fa1",
+                "project_id": "p1",
+                "scan_id": "sa",
+                "finding_id": "fa1",
+                "type": "vulnerability",
+                "severity": "CRITICAL",
+                "component": "lib@1",
+                "description": "CVE-A",
+                "details": {"cve_id": "CVE-A"},
                 "created_at": datetime.now(timezone.utc),
             },
             {
-                "_id": "fa2", "project_id": "p1", "scan_id": "sa", "finding_id": "fa2",
-                "type": "secret", "severity": "HIGH", "component": "src/x.py",
-                "description": "leaked", "details": {"pattern_hash": "h1"},
+                "_id": "fa2",
+                "project_id": "p1",
+                "scan_id": "sa",
+                "finding_id": "fa2",
+                "type": "secret",
+                "severity": "HIGH",
+                "component": "src/x.py",
+                "description": "leaked",
+                "details": {"pattern_hash": "h1"},
                 "created_at": datetime.now(timezone.utc),
             },
             {
-                "_id": "fb1", "project_id": "p1", "scan_id": "sb", "finding_id": "fb1",
-                "type": "vulnerability", "severity": "CRITICAL", "component": "lib@1",
-                "description": "CVE-A again", "details": {"cve_id": "CVE-A"},
+                "_id": "fb1",
+                "project_id": "p1",
+                "scan_id": "sb",
+                "finding_id": "fb1",
+                "type": "vulnerability",
+                "severity": "CRITICAL",
+                "component": "lib@1",
+                "description": "CVE-A again",
+                "details": {"cve_id": "CVE-A"},
                 "created_at": datetime.now(timezone.utc),
             },
             {
-                "_id": "fb2", "project_id": "p1", "scan_id": "sb", "finding_id": "fb2",
-                "type": "vulnerability", "severity": "MEDIUM", "component": "other@2",
-                "description": "CVE-NEW", "details": {"cve_id": "CVE-NEW"},
+                "_id": "fb2",
+                "project_id": "p1",
+                "scan_id": "sb",
+                "finding_id": "fb2",
+                "type": "vulnerability",
+                "severity": "MEDIUM",
+                "component": "other@2",
+                "description": "CVE-NEW",
+                "details": {"cve_id": "CVE-NEW"},
                 "created_at": datetime.now(timezone.utc),
             },
         ]
@@ -208,8 +232,15 @@ async def test_breakdowns_decompose_full_totals_under_change_filter(db):
     the `change` filter scopes the paginated item list (audit #12)."""
     await _seed_added_removed(db)
     resp = await compute_findings_delta(
-        db, project_id="p1", from_scan="sa", to_scan="sb",
-        page=1, page_size=50, change="added", severity=None, finding_type=None,
+        db,
+        project_id="p1",
+        from_scan="sa",
+        to_scan="sb",
+        page=1,
+        page_size=50,
+        change="added",
+        severity=None,
+        finding_type=None,
     )
     # totals are independent of the change filter: 1 added, 1 removed
     assert resp.totals.added == 1
@@ -333,8 +364,15 @@ async def test_aggregated_vuln_cve_swap_is_added_and_removed(db):
         ]
     )
     resp = await compute_findings_delta(
-        db, project_id="p1", from_scan="sa", to_scan="sb",
-        page=1, page_size=50, change=None, severity=None, finding_type=None,
+        db,
+        project_id="p1",
+        from_scan="sa",
+        to_scan="sb",
+        page=1,
+        page_size=50,
+        change=None,
+        severity=None,
+        finding_type=None,
     )
     assert resp.totals.added == 1
     assert resp.totals.removed == 1
@@ -353,8 +391,15 @@ async def test_aggregated_vuln_version_bump_is_added_and_removed(db):
         ]
     )
     resp = await compute_findings_delta(
-        db, project_id="p1", from_scan="sa", to_scan="sb",
-        page=1, page_size=50, change=None, severity=None, finding_type=None,
+        db,
+        project_id="p1",
+        from_scan="sa",
+        to_scan="sb",
+        page=1,
+        page_size=50,
+        change=None,
+        severity=None,
+        finding_type=None,
     )
     assert resp.totals.added == 1
     assert resp.totals.removed == 1
@@ -371,8 +416,15 @@ async def test_aggregated_vuln_unchanged_when_cve_set_identical(db):
         ]
     )
     resp = await compute_findings_delta(
-        db, project_id="p1", from_scan="sa", to_scan="sb",
-        page=1, page_size=50, change=None, severity=None, finding_type=None,
+        db,
+        project_id="p1",
+        from_scan="sa",
+        to_scan="sb",
+        page=1,
+        page_size=50,
+        change=None,
+        severity=None,
+        finding_type=None,
     )
     assert resp.totals.added == 0
     assert resp.totals.removed == 0
@@ -386,17 +438,25 @@ async def test_secret_identity_stable_across_scans_by_finding_id(db):
     await db["findings"].insert_many(
         [
             {
-                "_id": "s_a", "project_id": "p1", "scan_id": "sa",
-                "finding_id": "SECRET-AWS-abcd1234", "type": "secret",
-                "severity": "CRITICAL", "component": "src/x.py",
+                "_id": "s_a",
+                "project_id": "p1",
+                "scan_id": "sa",
+                "finding_id": "SECRET-AWS-abcd1234",
+                "type": "secret",
+                "severity": "CRITICAL",
+                "component": "src/x.py",
                 "description": "Secret detected: AWS",
                 "details": {"detector": "AWS", "verified": True},
                 "created_at": datetime.now(timezone.utc),
             },
             {
-                "_id": "s_b", "project_id": "p1", "scan_id": "sb",
-                "finding_id": "SECRET-AWS-abcd1234", "type": "secret",
-                "severity": "CRITICAL", "component": "src/x.py",
+                "_id": "s_b",
+                "project_id": "p1",
+                "scan_id": "sb",
+                "finding_id": "SECRET-AWS-abcd1234",
+                "type": "secret",
+                "severity": "CRITICAL",
+                "component": "src/x.py",
                 "description": "Secret detected: AWS",
                 "details": {"detector": "AWS", "verified": True},
                 "created_at": datetime.now(timezone.utc),
@@ -404,8 +464,15 @@ async def test_secret_identity_stable_across_scans_by_finding_id(db):
         ]
     )
     resp = await compute_findings_delta(
-        db, project_id="p1", from_scan="sa", to_scan="sb",
-        page=1, page_size=50, change=None, severity=None, finding_type=None,
+        db,
+        project_id="p1",
+        from_scan="sa",
+        to_scan="sb",
+        page=1,
+        page_size=50,
+        change=None,
+        severity=None,
+        finding_type=None,
     )
     assert resp.totals.added == 0
     assert resp.totals.removed == 0
@@ -427,16 +494,30 @@ async def test_fetch_uses_projection(db, monkeypatch):
     monkeypatch.setattr(coll, "find", spy_find)
 
     await compute_findings_delta(
-        db, project_id="p1", from_scan="sa", to_scan="sb",
-        page=1, page_size=50, change=None, severity=None, finding_type=None,
+        db,
+        project_id="p1",
+        from_scan="sa",
+        to_scan="sb",
+        page=1,
+        page_size=50,
+        change=None,
+        severity=None,
+        finding_type=None,
     )
 
     proj = captured["projection"]
     assert proj is _FETCH_PROJECTION
     # Fields the identity/item builders read must be present in the projection.
     for field in (
-        "type", "component", "version", "severity", "description",
-        "found_in", "finding_id", "created_at",
-        "details.vulnerabilities.id", "details.fixed_version",
+        "type",
+        "component",
+        "version",
+        "severity",
+        "description",
+        "found_in",
+        "finding_id",
+        "created_at",
+        "details.vulnerabilities.id",
+        "details.fixed_version",
     ):
         assert proj.get(field) == 1

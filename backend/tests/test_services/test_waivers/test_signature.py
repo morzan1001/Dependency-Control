@@ -6,14 +6,27 @@ def _sast_merged(component, line, scanner, rule_id, fingerprint, code):
     """Build a Finding shaped like merge_sast_findings output (nested per-scanner entry)."""
     return Finding(
         id=f"{scanner.upper()}-{rule_id}-{component}-{line}",
-        type="sast", severity="HIGH", component=component, description="d",
+        type="sast",
+        severity="HIGH",
+        component=component,
+        description="d",
         scanners=[scanner],
         details={
             "sast_findings": [
-                {"id": rule_id, "scanner": scanner, "severity": "HIGH", "title": "t", "description": "d",
-                 "details": {"fingerprint": fingerprint, "code_extract": code, "start": {"line": line}}}
+                {
+                    "id": rule_id,
+                    "scanner": scanner,
+                    "severity": "HIGH",
+                    "title": "t",
+                    "description": "d",
+                    "details": {"fingerprint": fingerprint, "code_extract": code, "start": {"line": line}},
+                }
             ],
-            "file": component, "line": line, "cwe_ids": [], "category_groups": [], "owasp": [],
+            "file": component,
+            "line": line,
+            "cwe_ids": [],
+            "category_groups": [],
+            "owasp": [],
         },
     )
 
@@ -52,10 +65,17 @@ class TestSastSignature:
     def test_deterministic_scanner_selection_prefers_opengrep(self):
         f = _sast_merged("a.py", 10, "opengrep", "r", "fp-og", "code")
         # add a bearer entry in non-preferred order
-        f.details["sast_findings"].insert(0, {
-            "id": "r", "scanner": "bearer", "severity": "HIGH", "title": "t", "description": "d",
-            "details": {"fingerprint": "fp-bearer", "code_extract": "code", "start": {"line": 10}},
-        })
+        f.details["sast_findings"].insert(
+            0,
+            {
+                "id": "r",
+                "scanner": "bearer",
+                "severity": "HIGH",
+                "title": "t",
+                "description": "d",
+                "details": {"fingerprint": "fp-bearer", "code_extract": "code", "start": {"line": 10}},
+            },
+        )
         sig = compute_match_signature(f)
         assert sig.anchor == "fp-og"  # opengrep preferred regardless of list order
         assert sig.rule_key == "opengrep:r"
@@ -70,10 +90,20 @@ class TestSastSignature:
 class TestIacSignature:
     def _kics(self, similarity_id=None, search_key="k", actual="public", expected="private", line=5):
         return Finding(
-            id=f"KICS-q1-main.tf-{line}", type="iac", severity="HIGH", component="main.tf",
-            description="d", scanners=["kics"],
-            details={"rule_id": "q1", "search_key": search_key, "similarity_id": similarity_id,
-                     "actual_value": actual, "expected_value": expected, "start": {"line": line}},
+            id=f"KICS-q1-main.tf-{line}",
+            type="iac",
+            severity="HIGH",
+            component="main.tf",
+            description="d",
+            scanners=["kics"],
+            details={
+                "rule_id": "q1",
+                "search_key": search_key,
+                "similarity_id": similarity_id,
+                "actual_value": actual,
+                "expected_value": expected,
+                "start": {"line": line},
+            },
         )
 
     def test_similarity_id_preferred(self):
@@ -96,9 +126,15 @@ class TestIacSignature:
 
 class TestSecretSignature:
     def test_hash_from_id(self):
-        f = Finding(id="SECRET-aws-1a2b3c4d", type="secret", severity="CRITICAL",
-                    component="env.sh", description="d", scanners=["trufflehog"],
-                    details={"detector": "aws"})
+        f = Finding(
+            id="SECRET-aws-1a2b3c4d",
+            type="secret",
+            severity="CRITICAL",
+            component="env.sh",
+            description="d",
+            scanners=["trufflehog"],
+            details={"detector": "aws"},
+        )
         sig = compute_match_signature(f)
         assert sig.rule_key == "aws"
         assert sig.anchor == "1a2b3c4d"
@@ -108,8 +144,15 @@ class TestSecretSignature:
 
 class TestNonLocationFindings:
     def test_vulnerability_returns_none(self):
-        f = Finding(id="CVE-2021-1", type="vulnerability", severity="HIGH", component="lodash",
-                    description="d", scanners=["grype"], details={})
+        f = Finding(
+            id="CVE-2021-1",
+            type="vulnerability",
+            severity="HIGH",
+            component="lodash",
+            description="d",
+            scanners=["grype"],
+            details={},
+        )
         assert compute_match_signature(f) is None
 
 
@@ -126,7 +169,7 @@ def test_compute_match_signature_from_doc_recovers_bearer_sast():
                 {
                     "scanner": "bearer",
                     "id": "java_lang_hardcoded_secret",
-                    "details": {"fingerprint": "edb203_2", "code_extract": "X=\"s\"", "start": {"line": 94}},
+                    "details": {"fingerprint": "edb203_2", "code_extract": 'X="s"', "start": {"line": 94}},
                 }
             ],
         },
@@ -146,11 +189,16 @@ def test_compute_match_signature_from_doc_none_for_non_location():
 
 def test_sast_signature_collects_all_scanner_rule_keys():
     doc = {
-        "finding_id": "BEARER-r-a.py-10", "component": "a.py", "type": "sast",
-        "details": {"line": 10, "sast_findings": [
-            {"scanner": "bearer", "id": "X", "details": {"fingerprint": "fpB", "start": {"line": 10}}},
-            {"scanner": "opengrep", "id": "X", "details": {"fingerprint": "fpO", "start": {"line": 10}}},
-        ]},
+        "finding_id": "BEARER-r-a.py-10",
+        "component": "a.py",
+        "type": "sast",
+        "details": {
+            "line": 10,
+            "sast_findings": [
+                {"scanner": "bearer", "id": "X", "details": {"fingerprint": "fpB", "start": {"line": 10}}},
+                {"scanner": "opengrep", "id": "X", "details": {"fingerprint": "fpO", "start": {"line": 10}}},
+            ],
+        },
     }
     sig = compute_match_signature_from_doc(doc)
     assert sig is not None
@@ -159,8 +207,12 @@ def test_sast_signature_collects_all_scanner_rule_keys():
 
 
 def test_iac_signature_rule_keys_is_single():
-    doc = {"finding_id": "KICS-q1-main.tf-3", "component": "main.tf", "type": "iac",
-           "details": {"rule_id": "q1", "similarity_id": "s", "start": {"line": 3}}}
+    doc = {
+        "finding_id": "KICS-q1-main.tf-3",
+        "component": "main.tf",
+        "type": "iac",
+        "details": {"rule_id": "q1", "similarity_id": "s", "start": {"line": 3}},
+    }
     sig = compute_match_signature_from_doc(doc)
     assert sig is not None
     assert sig.rule_keys == ["KICS:q1"]

@@ -95,9 +95,7 @@ class TestShouldUpdateProjectLatestScan:
         scan_repo = SimpleNamespace(
             get_by_id_strong=AsyncMock(return_value=SimpleNamespace(created_at=current_created))
         )
-        return asyncio.run(
-            _should_update_project_latest_scan("scan-new", scan_doc, "proj-1", scan_repo, project_repo)
-        )
+        return asyncio.run(_should_update_project_latest_scan("scan-new", scan_doc, "proj-1", scan_repo, project_repo))
 
     def test_stale_scan_does_not_overwrite_newer_latest(self):
         now = datetime.now(timezone.utc)
@@ -141,8 +139,15 @@ class TestFinalizeGuardsProjectUpdate:
 
         finalized = asyncio.run(
             _finalize_scan_and_project(
-                "scan-stale", scan_doc, "proj-1", 5, 0, self._stats(), {"status": "completed"},
-                scan_repo, project_repo,
+                "scan-stale",
+                scan_doc,
+                "proj-1",
+                5,
+                0,
+                self._stats(),
+                {"status": "completed"},
+                scan_repo,
+                project_repo,
             )
         )
 
@@ -238,8 +243,15 @@ class TestFinalizeTOCTOU:
 
         finalized = asyncio.run(
             _finalize_scan_and_project(
-                "scan-1", scan_doc, "proj-1", 5, 0, self._stats(), {"status": "completed"},
-                scan_repo, project_repo,
+                "scan-1",
+                scan_doc,
+                "proj-1",
+                5,
+                0,
+                self._stats(),
+                {"status": "completed"},
+                scan_repo,
+                project_repo,
                 external_load_start=datetime.now(timezone.utc),
             )
         )
@@ -268,8 +280,15 @@ class TestFinalizeTOCTOU:
 
         finalized = asyncio.run(
             _finalize_scan_and_project(
-                "scan-1", scan_doc, "proj-1", 5, 0, self._stats(), {"status": "completed"},
-                scan_repo, project_repo,
+                "scan-1",
+                scan_doc,
+                "proj-1",
+                5,
+                0,
+                self._stats(),
+                {"status": "completed"},
+                scan_repo,
+                project_repo,
                 external_load_start=datetime.now(timezone.utc),
             )
         )

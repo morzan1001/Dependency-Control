@@ -110,6 +110,7 @@ class ScanManager:
         signature (no re-anchoring here — the recalc is authoritative for that)."""
         if finding.match is not None and waiver.match is not None:
             from app.services.waivers.matching import waiver_strong_match
+
             return waiver_strong_match(finding.match, waiver.match, waiver.status or "false_positive")
         # Legacy path for non-location findings (license/eol/vuln-by-type/component).
         # Mirror _build_waiver_query's AND semantics (services/stats.py): every field the

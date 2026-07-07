@@ -78,9 +78,7 @@ class OutdatedAnalyzer(Analyzer):
             if not parsed or not parsed.registry_system:
                 continue
 
-            info = package_infos.get(
-                CacheKeys.latest_version(parsed.registry_system, parsed.deps_dev_name)
-            )
+            info = package_infos.get(CacheKeys.latest_version(parsed.registry_system, parsed.deps_dev_name))
             if not info:
                 continue
 
@@ -98,9 +96,7 @@ class OutdatedAnalyzer(Analyzer):
             "yanked_versions": yanked,
         }
 
-    async def _resolve_package_infos(
-        self, components: List[Dict[str, Any]]
-    ) -> Dict[str, Dict[str, Any]]:
+    async def _resolve_package_infos(self, components: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
         """Return ``{cache_key: {"default": str|None, "withdrawn": [str, ...]}}``.
 
         Warm entries come from a batched ``mget``; misses are fetched concurrently with a
@@ -173,10 +169,7 @@ class OutdatedAnalyzer(Analyzer):
         async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
             for i in range(0, len(missing_keys), batch_size):
                 batch = missing_keys[i : i + batch_size]
-                tasks = [
-                    self._fetch_package_info(client, cache_key, *key_targets[cache_key])
-                    for cache_key in batch
-                ]
+                tasks = [self._fetch_package_info(client, cache_key, *key_targets[cache_key]) for cache_key in batch]
                 results: List[Any] = await asyncio.gather(*tasks, return_exceptions=True)
 
                 for cache_key, result in zip(batch, results):

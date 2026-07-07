@@ -1,4 +1,5 @@
 """Recalc applies waivers via signature matching, follows line shifts, lapses on content change."""
+
 import logging
 
 import pytest
@@ -9,15 +10,23 @@ from app.services.stats import _apply_waivers_signature  # new orchestrated entr
 
 def _finding_doc(scan_id, fid, anchor, ch, line, rule="OPENGREP:r", file="a.py"):
     return {
-        "_id": fid, "scan_id": scan_id, "finding_id": fid, "type": "sast", "component": file,
-        "severity": "HIGH", "description": "d", "waived": False,
-        "match": MatchSignature(rule_key=rule, file_key=file, anchor=anchor,
-                                anchor_kind="scanner_fp", content_hash=ch, last_line=line).model_dump(),
+        "_id": fid,
+        "scan_id": scan_id,
+        "finding_id": fid,
+        "type": "sast",
+        "component": file,
+        "severity": "HIGH",
+        "description": "d",
+        "waived": False,
+        "match": MatchSignature(
+            rule_key=rule, file_key=file, anchor=anchor, anchor_kind="scanner_fp", content_hash=ch, last_line=line
+        ).model_dump(),
     }
 
 
 class _Repo:
     """Minimal in-memory finding repo capturing waive writes."""
+
     def __init__(self, docs):
         self.docs = {d["_id"]: d for d in docs}
         self.waived = {}
@@ -37,6 +46,7 @@ class _Repo:
 class _WRepo:
     def __init__(self, updates=None):
         self.updates = updates if updates is not None else {}
+
     async def update(self, wid, data):
         self.updates[wid] = data
 
@@ -53,9 +63,18 @@ async def test_line_shift_keeps_waived():
     scan = "s1"
     repo = _Repo([_finding_doc(scan, "f1", "fpA", "c1", 80)])
     wrepo = _WRepo()
-    w = _Waiver("w1", "false_positive",
-                MatchSignature(rule_key="OPENGREP:r", file_key="a.py", anchor="fpA",
-                               anchor_kind="scanner_fp", content_hash="c1", last_line=10))
+    w = _Waiver(
+        "w1",
+        "false_positive",
+        MatchSignature(
+            rule_key="OPENGREP:r",
+            file_key="a.py",
+            anchor="fpA",
+            anchor_kind="scanner_fp",
+            content_hash="c1",
+            last_line=10,
+        ),
+    )
     await _apply_waivers_signature(repo, wrepo, scan, [w])
     assert "f1" in repo.waived
 
@@ -65,9 +84,18 @@ async def test_content_change_accepted_risk_lapses():
     scan = "s1"
     repo = _Repo([_finding_doc(scan, "f1", "fpZ", "c2", 12)])
     wrepo = _WRepo()
-    w = _Waiver("w1", "accepted_risk",
-                MatchSignature(rule_key="OPENGREP:r", file_key="a.py", anchor="fpA",
-                               anchor_kind="scanner_fp", content_hash="c1", last_line=10))
+    w = _Waiver(
+        "w1",
+        "accepted_risk",
+        MatchSignature(
+            rule_key="OPENGREP:r",
+            file_key="a.py",
+            anchor="fpA",
+            anchor_kind="scanner_fp",
+            content_hash="c1",
+            last_line=10,
+        ),
+    )
     await _apply_waivers_signature(repo, wrepo, scan, [w])
     assert "f1" not in repo.waived
     assert repo.lapsed.get("f1") == "w1"
@@ -76,13 +104,22 @@ async def test_content_change_accepted_risk_lapses():
 def _finding_doc_no_match(scan_id, fid, finding_id, fingerprint, line, file="a.py"):
     """A location finding doc with NO stored `match` but with the merged SAST details."""
     return {
-        "_id": fid, "scan_id": scan_id, "finding_id": finding_id, "type": "sast",
-        "component": file, "severity": "HIGH", "description": "d", "waived": False,
+        "_id": fid,
+        "scan_id": scan_id,
+        "finding_id": finding_id,
+        "type": "sast",
+        "component": file,
+        "severity": "HIGH",
+        "description": "d",
+        "waived": False,
         "details": {
             "line": line,
             "sast_findings": [
-                {"scanner": "bearer", "id": "java_lang_hardcoded_secret",
-                 "details": {"fingerprint": fingerprint, "code_extract": "X=\"s\"", "start": {"line": line}}},
+                {
+                    "scanner": "bearer",
+                    "id": "java_lang_hardcoded_secret",
+                    "details": {"fingerprint": fingerprint, "code_extract": 'X="s"', "start": {"line": line}},
+                },
             ],
         },
     }
@@ -95,12 +132,21 @@ async def test_self_heals_finding_without_persisted_match():
     repo = _Repo([_finding_doc_no_match(scan, "f94", "BEARER-r-a.py-94", "fpNEW_2", 94)])
     wrepo = _WRepo()
     # Waiver anchored at the old line 100 with a (now stale) strong anchor.
-    w = _Waiver("w1", "false_positive",
-                MatchSignature(rule_key="bearer:java_lang_hardcoded_secret", file_key="a.py",
-                               anchor="fpOLD_2", anchor_kind="scanner_fp", content_hash="c1", last_line=100))
+    w = _Waiver(
+        "w1",
+        "false_positive",
+        MatchSignature(
+            rule_key="bearer:java_lang_hardcoded_secret",
+            file_key="a.py",
+            anchor="fpOLD_2",
+            anchor_kind="scanner_fp",
+            content_hash="c1",
+            last_line=100,
+        ),
+    )
     await _apply_waivers_signature(repo, wrepo, scan, [w])
-    assert "f94" in repo.waived          # recovered: recomputed sig made it a Pass-2 candidate
-    assert "w1" in wrepo.updates          # re-anchored signature persisted
+    assert "f94" in repo.waived  # recovered: recomputed sig made it a Pass-2 candidate
+    assert "w1" in wrepo.updates  # re-anchored signature persisted
 
 
 @pytest.mark.asyncio
@@ -122,9 +168,18 @@ async def test_dormant_waiver_is_logged(caplog):
     # One finding in a different group => the waiver binds nothing (dormant).
     repo = _Repo([_finding_doc(scan, "f1", "fpA", "c1", 5, rule="opengrep:x", file="a.py")])
     wrepo = _WRepo()
-    w = _Waiver("w1", "false_positive",
-                MatchSignature(rule_key="bearer:java_lang_hardcoded_secret", file_key="a.py",
-                               anchor="fpB", anchor_kind="scanner_fp", content_hash="c1", last_line=100))
+    w = _Waiver(
+        "w1",
+        "false_positive",
+        MatchSignature(
+            rule_key="bearer:java_lang_hardcoded_secret",
+            file_key="a.py",
+            anchor="fpB",
+            anchor_kind="scanner_fp",
+            content_hash="c1",
+            last_line=100,
+        ),
+    )
     with caplog.at_level(logging.WARNING):
         await _apply_waivers_signature(repo, wrepo, scan, [w])
     assert "f1" not in repo.waived
@@ -135,17 +190,37 @@ async def test_dormant_waiver_is_logged(caplog):
 async def test_records_match_outcome_per_waiver():
     scan = "s1"
     # f1 is waived by w_active (exact anchor); w_dormant matches nothing.
-    repo = _Repo([
-        _finding_doc(scan, "f1", "fpA", "c1", 10, rule="bearer:X", file="a.py"),
-        _finding_doc(scan, "f2", "zz", "cX", 5, rule="opengrep:y", file="b.py"),
-    ])
+    repo = _Repo(
+        [
+            _finding_doc(scan, "f1", "fpA", "c1", 10, rule="bearer:X", file="a.py"),
+            _finding_doc(scan, "f2", "zz", "cX", 5, rule="opengrep:y", file="b.py"),
+        ]
+    )
     wrepo = _WRepo()
-    w_active = _Waiver("wa", "false_positive",
-        MatchSignature(rule_key="bearer:X", file_key="a.py", anchor="fpA",
-                       anchor_kind="scanner_fp", content_hash="c1", last_line=10))
-    w_dormant = _Waiver("wd", "false_positive",
-        MatchSignature(rule_key="bearer:X", file_key="a.py", anchor="nomatch",
-                       anchor_kind="scanner_fp", content_hash="cZZ", last_line=999))
+    w_active = _Waiver(
+        "wa",
+        "false_positive",
+        MatchSignature(
+            rule_key="bearer:X",
+            file_key="a.py",
+            anchor="fpA",
+            anchor_kind="scanner_fp",
+            content_hash="c1",
+            last_line=10,
+        ),
+    )
+    w_dormant = _Waiver(
+        "wd",
+        "false_positive",
+        MatchSignature(
+            rule_key="bearer:X",
+            file_key="a.py",
+            anchor="nomatch",
+            anchor_kind="scanner_fp",
+            content_hash="cZZ",
+            last_line=999,
+        ),
+    )
     await _apply_waivers_signature(repo, wrepo, scan, [w_active, w_dormant])
     assert wrepo.updates["wa"]["last_eval_scan_id"] == scan
     assert wrepo.updates["wa"]["last_match_count"] == 1
@@ -158,12 +233,21 @@ async def test_outcome_write_skipped_when_unchanged():
     scan = "s1"
     repo = _Repo([_finding_doc(scan, "f1", "fpA", "c1", 10, rule="bearer:X", file="a.py")])
     wrepo = _WRepo()
-    w = _Waiver("wa", "false_positive",
-        MatchSignature(rule_key="bearer:X", file_key="a.py", anchor="fpA",
-                       anchor_kind="scanner_fp", content_hash="c1", last_line=10))
+    w = _Waiver(
+        "wa",
+        "false_positive",
+        MatchSignature(
+            rule_key="bearer:X",
+            file_key="a.py",
+            anchor="fpA",
+            anchor_kind="scanner_fp",
+            content_hash="c1",
+            last_line=10,
+        ),
+    )
     # Pre-set the outcome to exactly what this recalc would compute (scan s1, count 1).
     w.last_eval_scan_id = scan
     w.last_match_count = 1
     await _apply_waivers_signature(repo, wrepo, scan, [w])
-    assert "f1" in repo.waived            # still waived
-    assert "wa" not in wrepo.updates      # but NO redundant outcome write (guard skipped it)
+    assert "f1" in repo.waived  # still waived
+    assert "wa" not in wrepo.updates  # but NO redundant outcome write (guard skipped it)

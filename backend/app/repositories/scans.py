@@ -169,9 +169,7 @@ class ScanRepository:
         needing: List[tuple] = []
         for p in projects:
             pid, deleted = _project_id_and_deleted(p)
-            latest_scan_id = (
-                p.get("latest_scan_id") if isinstance(p, dict) else getattr(p, "latest_scan_id", None)
-            )
+            latest_scan_id = p.get("latest_scan_id") if isinstance(p, dict) else getattr(p, "latest_scan_id", None)
             if not latest_scan_id:
                 continue
             if deleted:
@@ -183,8 +181,7 @@ class ScanRepository:
             return result
 
         or_conditions = [
-            {"project_id": pid, "branch": {"$nin": deleted}, "status": "completed"}
-            for pid, deleted in needing
+            {"project_id": pid, "branch": {"$nin": deleted}, "status": "completed"} for pid, deleted in needing
         ]
         pipeline: List[Dict[str, Any]] = [
             {"$match": {"$or": or_conditions}},

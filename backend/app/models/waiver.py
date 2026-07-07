@@ -39,7 +39,7 @@ class Waiver(CreatedAtModel):
     rule_id: Optional[str] = None  # e.g. "javascript_lang_insufficiently_random_values"
     match: Optional[MatchSignature] = None  # snapshot of the matched finding's signature
     last_eval_scan_id: Optional[str] = None  # scan the signature path last evaluated this waiver against
-    last_match_count: Optional[int] = None   # #findings this waiver currently suppresses; None = not yet evaluated
+    last_match_count: Optional[int] = None  # #findings this waiver currently suppresses; None = not yet evaluated
 
     reason: str
     status: str = WAIVER_STATUS_ACCEPTED_RISK

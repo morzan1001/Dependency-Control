@@ -41,9 +41,7 @@ class TestGetLatestActiveScan:
         coll = create_mock_collection(find_one=_completed_scan_doc("scan-9"))
         repo = ScanRepository(create_mock_db({"scans": coll}))
 
-        result = asyncio.run(
-            repo.get_latest_active_scan({"_id": "p1", "deleted_branches": ["feature-x", "old"]})
-        )
+        result = asyncio.run(repo.get_latest_active_scan({"_id": "p1", "deleted_branches": ["feature-x", "old"]}))
 
         query = coll.find_one.call_args.args[0]
         assert query["project_id"] == "p1"

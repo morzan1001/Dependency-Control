@@ -15,9 +15,7 @@ from tests.mocks.fake_mongo import FakeDatabase
 async def repo():
     db = FakeDatabase()
     r = UserRepository(db)
-    await r.create_raw(
-        {"_id": "u1", "username": "alice", "email": "alice@corp.com", "permissions": []}
-    )
+    await r.create_raw({"_id": "u1", "username": "alice", "email": "alice@corp.com", "permissions": []})
     return r
 
 

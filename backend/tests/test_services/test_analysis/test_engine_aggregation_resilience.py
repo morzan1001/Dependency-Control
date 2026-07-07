@@ -61,9 +61,7 @@ class TestAggregateExternalResultsResilience:
         bad_result = BoomResult()
 
         # Make result_repo return [bad_result, good_result] to test both orderings
-        result_repo = SimpleNamespace(
-            find_by_scan=AsyncMock(return_value=[bad_result, good_result])
-        )
+        result_repo = SimpleNamespace(find_by_scan=AsyncMock(return_value=[bad_result, good_result]))
 
         # Force the bad result to raise during aggregate by monkeypatching aggregate
         original_aggregate = aggregator.aggregate
@@ -75,9 +73,7 @@ class TestAggregateExternalResultsResilience:
 
         aggregator.aggregate = patched_aggregate
 
-        asyncio.run(
-            _aggregate_external_results(aggregator, result_repo, "scan-1", results_summary)
-        )
+        asyncio.run(_aggregate_external_results(aggregator, result_repo, "scan-1", results_summary))
 
         findings = aggregator.get_findings()
 
@@ -134,9 +130,7 @@ class TestAggregateExternalResultsResilience:
 
         bad_result = BoomResult()
 
-        result_repo = SimpleNamespace(
-            find_by_scan=AsyncMock(return_value=[bad_result, good_result])
-        )
+        result_repo = SimpleNamespace(find_by_scan=AsyncMock(return_value=[bad_result, good_result]))
 
         original_aggregate = aggregator.aggregate
 
@@ -147,11 +141,7 @@ class TestAggregateExternalResultsResilience:
 
         aggregator.aggregate = patched_aggregate
 
-        asyncio.run(
-            _aggregate_external_results(aggregator, result_repo, "scan-2", results_summary)
-        )
+        asyncio.run(_aggregate_external_results(aggregator, result_repo, "scan-2", results_summary))
 
         # Good result should be in summary
-        assert any("trivy" in s for s in results_summary), (
-            f"Expected trivy in results_summary; got {results_summary}"
-        )
+        assert any("trivy" in s for s in results_summary), f"Expected trivy in results_summary; got {results_summary}"

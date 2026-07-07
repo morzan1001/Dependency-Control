@@ -28,10 +28,7 @@ REDIS_OPERATION_TIMEOUT_SECONDS = 5.0
 
 # Atomic compare-and-delete: release the lock only if the value still matches our
 # token, so a slow fetch can't delete a lock re-acquired by another pod.
-_UNLOCK_LUA = (
-    "if redis.call('get', KEYS[1]) == ARGV[1] then "
-    "return redis.call('del', KEYS[1]) else return 0 end"
-)
+_UNLOCK_LUA = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
 
 cache_hits_total: Optional[Counter] = None
 cache_misses_total: Optional[Counter] = None

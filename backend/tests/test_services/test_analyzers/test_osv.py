@@ -177,7 +177,11 @@ def _scripted_client_factory(responses: List[_Response], call_counter: List[int]
 def _vuln_response() -> _Response:
     return _Response(
         200,
-        {"results": [{"vulns": [{"id": "GHSA-boom", "summary": "bad", "severity": [{"type": "CVSS_V3", "score": "9.8"}]}]}]},
+        {
+            "results": [
+                {"vulns": [{"id": "GHSA-boom", "summary": "bad", "severity": [{"type": "CVSS_V3", "score": "9.8"}]}]}
+            ]
+        },
     )
 
 

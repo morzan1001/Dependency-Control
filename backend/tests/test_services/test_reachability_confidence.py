@@ -84,7 +84,10 @@ class TestPendingSummaryTiers:
     @staticmethod
     def _f(_id, reachable, level):
         return {
-            "finding_id": _id, "component": _id, "version": "1", "severity": "HIGH",
+            "finding_id": _id,
+            "component": _id,
+            "version": "1",
+            "severity": "HIGH",
             "details": {"reachability": {"is_reachable": reachable, "analysis_level": level}},
         }
 
@@ -329,9 +332,7 @@ class TestRunPendingBulkPersist:
 
         db = FakeDatabase()
         pid, sid = "p1", "s1"
-        await db.scans.insert_one(
-            {"_id": sid, "project_id": pid, "branch": "main", "reachability_pending": True}
-        )
+        await db.scans.insert_one({"_id": sid, "project_id": pid, "branch": "main", "reachability_pending": True})
         await db.dependencies.insert_one({"scan_id": sid, "name": "requests", "type": "pypi"})
         await db.callgraphs.insert_one(
             {

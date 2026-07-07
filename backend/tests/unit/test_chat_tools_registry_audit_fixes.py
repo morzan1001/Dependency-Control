@@ -73,9 +73,7 @@ class TestSeverityRanking:
         for i in range(3):
             _seed_finding(db, f"crit-{i}", "CRITICAL")
 
-        result = await ChatToolRegistry()._dispatch(
-            "get_project_findings", {"project_id": "proj-1"}, admin_user, db
-        )
+        result = await ChatToolRegistry()._dispatch("get_project_findings", {"project_id": "proj-1"}, admin_user, db)
 
         sevs = [f["severity"] for f in result["findings"]]
         assert len(sevs) == 10
@@ -152,9 +150,7 @@ class TestComplianceReportsVisibility:
             "app.services.chat.tools.ComplianceReportRepository",
             return_value=repo_instance,
         ):
-            await ChatToolRegistry()._dispatch(
-                "list_compliance_reports", {}, plain_user, db
-            )
+            await ChatToolRegistry()._dispatch("list_compliance_reports", {}, plain_user, db)
 
         repo_instance.list.assert_awaited_once()
         extra_filter = repo_instance.list.await_args.kwargs["extra_filter"]

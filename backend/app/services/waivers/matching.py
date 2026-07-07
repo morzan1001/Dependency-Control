@@ -6,8 +6,8 @@ from typing import Any, Dict, List, Optional, Sequence
 from app.core.constants import WAIVER_STATUS_FALSE_POSITIVE
 from app.models.match_signature import MatchSignature
 
-REANCHOR_WINDOW = 50   # max line distance to consider a candidate the moved instance
-REANCHOR_MARGIN = 3    # nearest must beat second-nearest by this many lines to be unambiguous
+REANCHOR_WINDOW = 50  # max line distance to consider a candidate the moved instance
+REANCHOR_MARGIN = 3  # nearest must beat second-nearest by this many lines to be unambiguous
 
 
 def _content_equal(a: Optional[str], b: Optional[str]) -> bool:
@@ -44,10 +44,10 @@ class MatchFinding:
 
 @dataclass
 class WaiverApplication:
-    waived: Dict[str, str] = field(default_factory=dict)          # finding_id -> waiver_id
-    lapsed: Dict[str, str] = field(default_factory=dict)          # finding_id -> waiver_id (re-review)
+    waived: Dict[str, str] = field(default_factory=dict)  # finding_id -> waiver_id
+    lapsed: Dict[str, str] = field(default_factory=dict)  # finding_id -> waiver_id (re-review)
     reanchored: Dict[str, MatchSignature] = field(default_factory=dict)  # waiver_id -> new signature
-    dormant: Dict[str, str] = field(default_factory=dict)         # waiver_id -> reason (bound nothing)
+    dormant: Dict[str, str] = field(default_factory=dict)  # waiver_id -> reason (bound nothing)
 
 
 def _waiver_status(w: Any) -> str:
@@ -119,7 +119,8 @@ def _pass2_reanchor(
         wsig = w.match
         status = _waiver_status(w)
         candidates = [
-            f for f in by_group.get(_group_key(wsig), [])
+            f
+            for f in by_group.get(_group_key(wsig), [])
             if f.id not in claimed and f.sig is not None and _rule_keys_intersect(f.sig, wsig)
         ]
         if not candidates:
@@ -197,8 +198,9 @@ def _bind_reanchor(app: WaiverApplication, claimed: set, w: Any, finding: MatchF
     app.reanchored[w.id] = new_sig
 
 
-def _mark_lapsed(app: WaiverApplication, candidates: List[MatchFinding], last_line: Optional[int],
-                 waiver_id: str) -> None:
+def _mark_lapsed(
+    app: WaiverApplication, candidates: List[MatchFinding], last_line: Optional[int], waiver_id: str
+) -> None:
     """Flag the most-likely former location(s) as lapsed so the UI can prompt re-review."""
     in_window = [f for f in candidates if _line_distance(f, last_line) <= REANCHOR_WINDOW] or candidates
     nearest = min(in_window, key=lambda f: _line_distance(f, last_line))

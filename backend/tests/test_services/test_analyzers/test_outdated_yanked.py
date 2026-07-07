@@ -209,15 +209,11 @@ class TestMultipleVersionsOfSamePackage:
         assert result["ahead_of_default"] == []
 
     @pytest.mark.asyncio
-    async def test_both_versions_classified_on_cold_cache_single_fetch(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_both_versions_classified_on_cold_cache_single_fetch(self, monkeypatch: pytest.MonkeyPatch) -> None:
         cache = _FakeCache()
         monkeypatch.setattr("app.services.analyzers.outdated.cache_service", cache)
 
-        client = _ScriptedClient(
-            {"lodash": {"versions": [_v("3.0.0"), _v("4.17.20", default=True)]}}
-        )
+        client = _ScriptedClient({"lodash": {"versions": [_v("3.0.0"), _v("4.17.20", default=True)]}})
         monkeypatch.setattr("app.services.analyzers.outdated.InstrumentedAsyncClient", client)
 
         analyzer = OutdatedAnalyzer()
@@ -247,9 +243,7 @@ class TestSingleFetchFeedsOutdatedAndYanked:
         monkeypatch.setattr("app.services.analyzers.outdated.cache_service", cache)
 
         # 1.0.0 is both withdrawn and behind the 1.0.1 default.
-        client = _ScriptedClient(
-            {"retract-me": {"versions": [_v("1.0.0", withdrawn=True), _v("1.0.1", default=True)]}}
-        )
+        client = _ScriptedClient({"retract-me": {"versions": [_v("1.0.0", withdrawn=True), _v("1.0.1", default=True)]}})
         monkeypatch.setattr("app.services.analyzers.outdated.InstrumentedAsyncClient", client)
 
         analyzer = OutdatedAnalyzer()
@@ -264,9 +258,7 @@ class TestSingleFetchFeedsOutdatedAndYanked:
 
     @pytest.mark.asyncio
     async def test_warm_cache_emits_yanked_without_http(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        cache = _FakeCache(
-            {_seed_key("pypi", "retract-me"): {"default": "1.0.1", "withdrawn": ["1.0.0"]}}
-        )
+        cache = _FakeCache({_seed_key("pypi", "retract-me"): {"default": "1.0.1", "withdrawn": ["1.0.0"]}})
         monkeypatch.setattr("app.services.analyzers.outdated.cache_service", cache)
         monkeypatch.setattr(
             "app.services.analyzers.outdated.InstrumentedAsyncClient",
@@ -281,9 +273,7 @@ class TestSingleFetchFeedsOutdatedAndYanked:
 
     @pytest.mark.asyncio
     async def test_active_version_emits_no_yanked_finding(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        cache = _FakeCache(
-            {_seed_key("pypi", "still-good"): {"default": "1.0.1", "withdrawn": ["0.9.0"]}}
-        )
+        cache = _FakeCache({_seed_key("pypi", "still-good"): {"default": "1.0.1", "withdrawn": ["0.9.0"]}})
         monkeypatch.setattr("app.services.analyzers.outdated.cache_service", cache)
         monkeypatch.setattr(
             "app.services.analyzers.outdated.InstrumentedAsyncClient",

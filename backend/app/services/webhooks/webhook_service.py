@@ -515,9 +515,7 @@ class WebhookService:
             logger.debug(f"No webhooks configured for event {event_type}")
             return
 
-        logger.info(
-            f"Triggering {len(webhooks)} webhook(s) for event {event_type} (project: {project_id or 'global'})"
-        )
+        logger.info(f"Triggering {len(webhooks)} webhook(s) for event {event_type} (project: {project_id or 'global'})")
 
         if webhooks_triggered_total:
             webhooks_triggered_total.labels(event_type=event_type).inc(len(webhooks))
@@ -659,9 +657,7 @@ class WebhookService:
         try:
             transport = await build_pinned_transport(webhook.url)
 
-            async with InstrumentedAsyncClient(
-                "Webhook Test", timeout=self.timeout, transport=transport
-            ) as client:
+            async with InstrumentedAsyncClient("Webhook Test", timeout=self.timeout, transport=transport) as client:
                 response = await client.post(
                     webhook.url,
                     content=json_payload,

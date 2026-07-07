@@ -20,9 +20,7 @@ class TestOpenGridfsDownloadWithRetry:
     def test_retries_then_succeeds(self):
         # Two transient misses (file not replicated yet) then success.
         fs = SimpleNamespace(
-            open_download_stream=AsyncMock(
-                side_effect=[RuntimeError("no file"), RuntimeError("no file"), "STREAM"]
-            )
+            open_download_stream=AsyncMock(side_effect=[RuntimeError("no file"), RuntimeError("no file"), "STREAM"])
         )
         result = asyncio.run(open_gridfs_download_with_retry(fs, "oid", attempts=4, base_delay=0))
         assert result == "STREAM"
@@ -75,9 +73,17 @@ class TestFinalizeMarksFailed:
 
         asyncio.run(
             _finalize_scan_and_project(
-                "scan-1", scan_doc, "proj-1", 1, 0, self._stats(), {"status": "failed"},
-                scan_repo, project_repo,
-                status="failed", error="SBOM could not be loaded for analysis",
+                "scan-1",
+                scan_doc,
+                "proj-1",
+                1,
+                0,
+                self._stats(),
+                {"status": "failed"},
+                scan_repo,
+                project_repo,
+                status="failed",
+                error="SBOM could not be loaded for analysis",
             )
         )
 
@@ -99,8 +105,15 @@ class TestFinalizeMarksFailed:
 
         asyncio.run(
             _finalize_scan_and_project(
-                "scan-1", scan_doc, "proj-1", 5, 0, self._stats(), {"status": "completed"},
-                scan_repo, project_repo,
+                "scan-1",
+                scan_doc,
+                "proj-1",
+                5,
+                0,
+                self._stats(),
+                {"status": "completed"},
+                scan_repo,
+                project_repo,
             )
         )
 

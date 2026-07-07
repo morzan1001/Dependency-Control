@@ -115,9 +115,7 @@ class TestGetWaiverStatusExpiry:
 
 class TestGetWaiverStatusNoFindingDoc:
     @pytest.mark.asyncio
-    async def test_get_waiver_status_no_latest_scan_id_reports_present_but_not_suppressing(
-        self, db, admin_user
-    ):
+    async def test_get_waiver_status_no_latest_scan_id_reports_present_but_not_suppressing(self, db, admin_user):
         # Scenario: project has NO latest_scan_id at all (never scanned or scan id cleared).
         # finding stays None because latest_scan_id is falsy → skip the DB lookup entirely.
         # An active waiver exists, but with nothing to suppress it should report present-but-not-suppressing.
@@ -144,10 +142,17 @@ class TestGetWaiverStatusFindingFlags:
     @pytest.mark.asyncio
     async def test_reports_waived_from_finding_flag(self, db, admin_user):
         # finding waived in latest scan by recalc; waiver may have a different/old finding_id
-        await db["findings"].insert_one({
-            "_id": "x", "scan_id": "scan1", "finding_id": "OPENGREP-r-a.py-99",
-            "project_id": "p1", "type": "sast", "waived": True, "waiver_reason": "fp",
-        })
+        await db["findings"].insert_one(
+            {
+                "_id": "x",
+                "scan_id": "scan1",
+                "finding_id": "OPENGREP-r-a.py-99",
+                "project_id": "p1",
+                "type": "sast",
+                "waived": True,
+                "waiver_reason": "fp",
+            }
+        )
         db.projects._docs["p1"] = {"_id": "p1", "name": "test", "team_id": None, "latest_scan_id": "scan1"}
 
         result = await ChatToolRegistry()._dispatch(
@@ -161,11 +166,18 @@ class TestGetWaiverStatusFindingFlags:
 
     @pytest.mark.asyncio
     async def test_reports_lapsed(self, db, admin_user):
-        await db["findings"].insert_one({
-            "_id": "y", "scan_id": "scan1", "finding_id": "OPENGREP-r-a.py-10",
-            "project_id": "p1", "type": "sast", "waived": False, "waiver_lapsed": True,
-            "lapsed_waiver_id": "w1",
-        })
+        await db["findings"].insert_one(
+            {
+                "_id": "y",
+                "scan_id": "scan1",
+                "finding_id": "OPENGREP-r-a.py-10",
+                "project_id": "p1",
+                "type": "sast",
+                "waived": False,
+                "waiver_lapsed": True,
+                "lapsed_waiver_id": "w1",
+            }
+        )
         db.projects._docs["p1"] = {"_id": "p1", "name": "test", "team_id": None, "latest_scan_id": "scan1"}
 
         result = await ChatToolRegistry()._dispatch(

@@ -210,14 +210,10 @@ _SBOM_GRIDFS_LOAD_ERROR = "Failed to load SBOM from GridFS"
 
 def _all_sbom_loads_failed(sboms_to_process: List[Any], aggregated_findings: List[Any]) -> bool:
     """True when every GridFS SBOM failed to load, so the scan must not be reported as completed."""
-    gridfs_expected = sum(
-        1 for it in sboms_to_process if isinstance(it, dict) and it.get("type") == "gridfs_reference"
-    )
+    gridfs_expected = sum(1 for it in sboms_to_process if isinstance(it, dict) and it.get("type") == "gridfs_reference")
     if gridfs_expected == 0:
         return False
-    failures = sum(
-        1 for f in aggregated_findings if _SBOM_GRIDFS_LOAD_ERROR in (getattr(f, "description", "") or "")
-    )
+    failures = sum(1 for f in aggregated_findings if _SBOM_GRIDFS_LOAD_ERROR in (getattr(f, "description", "") or ""))
     return failures >= gridfs_expected
 
 
@@ -885,9 +881,7 @@ async def _finalize_scan_and_project(
     return True
 
 
-async def _filter_out_waived_findings(
-    aggregated_findings: List[Any], scan_id: str, db: Database
-) -> List[Any]:
+async def _filter_out_waived_findings(aggregated_findings: List[Any], scan_id: str, db: Database) -> List[Any]:
     """Drop findings waived in this scan so notifications/webhooks match the waiver-aware stats.
 
     Waivers are applied only as DB updates; in-memory Finding objects are never marked waived,
@@ -934,15 +928,18 @@ async def _project_has_active_waivers(project_id: str, db: Database) -> bool:
     """Cheap existence check: does the project (or a global waiver) have an active waiver?
     Used to skip the post-analysis recalc when there is nothing to re-anchor/lapse."""
     from datetime import datetime, timezone
+
     now = datetime.now(timezone.utc)
     query = {
         "$and": [
             {"$or": [{"project_id": project_id}, {"project_id": None}]},
-            {"$or": [
-                {"expiration_date": {"$exists": False}},
-                {"expiration_date": None},
-                {"expiration_date": {"$gt": now}},
-            ]},
+            {
+                "$or": [
+                    {"expiration_date": {"$exists": False}},
+                    {"expiration_date": None},
+                    {"expiration_date": {"$gt": now}},
+                ]
+            },
         ]
     }
     return (await db.waivers.count_documents(query, limit=1)) > 0
@@ -1116,6 +1113,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         notify_stats = stats
         if project_id and await _project_has_active_waivers(project_id, db):
             from app.services.stats import recalculate_project_stats
+
             recalced = await recalculate_project_stats(project_id, db)
             if recalced is not None:
                 notify_stats = recalced

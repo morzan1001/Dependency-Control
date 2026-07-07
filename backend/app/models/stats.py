@@ -24,7 +24,8 @@ class ReachabilityStats(BaseModel):
         0, description="Count of reachable vulnerabilities (total = confirmed symbol-level + likely import-level)"
     )
     confirmed_reachable_count: int = Field(
-        0, description="Count of confirmed (symbol-level) reachable vulnerabilities — the strong subset of reachable_count"
+        0,
+        description="Count of confirmed (symbol-level) reachable vulnerabilities — the strong subset of reachable_count",
     )
     likely_reachable_count: int = Field(
         0, description="Count of likely (import-level) reachable vulnerabilities — the weaker subset of reachable_count"

@@ -91,7 +91,9 @@ class TestScanFindingsPipelineKeepsId:
     def test_id_not_dropped_before_sort_and_excluded_from_data(self):
         from app.api.v1.endpoints.projects import _build_scan_findings_pipeline
 
-        pipeline = _build_scan_findings_pipeline({"scan_id": "s"}, sort_by="severity", sort_order="desc", skip=0, limit=50)
+        pipeline = _build_scan_findings_pipeline(
+            {"scan_id": "s"}, sort_by="severity", sort_order="desc", skip=0, limit=50
+        )
         # locate the pre-sort $project and the $sort
         sort_idx = next(i for i, st in enumerate(pipeline) if "$sort" in st)
         pre_sort_projects = [st["$project"] for st in pipeline[:sort_idx] if "$project" in st]

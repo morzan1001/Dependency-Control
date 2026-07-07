@@ -342,9 +342,7 @@ class TestRecurringDetectionEndToEndWithPersistedSummary:
 
     def test_recurring_fires_across_three_completed_scans(self):
         history = [
-            self._persisted_summary_for_scan(
-                f"scan{i}", [self._aggregated_vuln("CVE-2024-999", component="lodash")]
-            )
+            self._persisted_summary_for_scan(f"scan{i}", [self._aggregated_vuln("CVE-2024-999", component="lodash")])
             for i in range(3)
         ]
         # The persisted summary must be non-empty (the bug persisted nothing / $unset it).
@@ -355,9 +353,7 @@ class TestRecurringDetectionEndToEndWithPersistedSummary:
         assert any("CVE-2024-999" in c and "lodash" in c for c in result[0].affected_components)
 
     def test_one_off_does_not_fire(self):
-        history = [
-            self._persisted_summary_for_scan("scan1", [self._aggregated_vuln("CVE-2024-999")])
-        ]
+        history = [self._persisted_summary_for_scan("scan1", [self._aggregated_vuln("CVE-2024-999")])]
         assert analyze_recurring_issues(history) == []
 
     def test_summary_is_bounded_and_compact(self):

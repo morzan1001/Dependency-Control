@@ -275,12 +275,20 @@ class TestBackfillProvenance:
     def test_per_team_failure_is_isolated(self, caplog):
         db = FakeDatabase()
         _seed_team(
-            db, "t-bad", "GitLab Group: bad", gitlab_instance_id="inst-a", gitlab_group_id=1,
+            db,
+            "t-bad",
+            "GitLab Group: bad",
+            gitlab_instance_id="inst-a",
+            gitlab_group_id=1,
             members=[{"user_id": "u1"}],
         )
         _seed_project(db, "p-bad", "t-bad", gitlab_instance_id="inst-a", gitlab_project_id=1)
         _seed_team(
-            db, "t-good", "GitLab Group: good", gitlab_instance_id="inst-a", gitlab_group_id=2,
+            db,
+            "t-good",
+            "GitLab Group: good",
+            gitlab_instance_id="inst-a",
+            gitlab_group_id=2,
             members=[{"user_id": "u2"}],
         )
         _seed_project(db, "p-good", "t-good", gitlab_instance_id="inst-a", gitlab_project_id=2)

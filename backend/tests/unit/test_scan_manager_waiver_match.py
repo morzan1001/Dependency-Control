@@ -5,16 +5,38 @@ from app.services.scan_manager import ScanManager
 
 
 def _finding(anchor):
-    return Finding(id="OPENGREP-r-a.py-10", type="sast", severity="HIGH", component="a.py",
-                   description="d", scanners=["opengrep"],
-                   match=MatchSignature(rule_key="opengrep:r", file_key="a.py", anchor=anchor,
-                                        anchor_kind="scanner_fp", content_hash="c1", last_line=10))
+    return Finding(
+        id="OPENGREP-r-a.py-10",
+        type="sast",
+        severity="HIGH",
+        component="a.py",
+        description="d",
+        scanners=["opengrep"],
+        match=MatchSignature(
+            rule_key="opengrep:r",
+            file_key="a.py",
+            anchor=anchor,
+            anchor_kind="scanner_fp",
+            content_hash="c1",
+            last_line=10,
+        ),
+    )
 
 
 def _waiver(anchor, status="false_positive"):
-    return Waiver(reason="r", created_by="u", status=status,
-                  match=MatchSignature(rule_key="opengrep:r", file_key="a.py", anchor=anchor,
-                                       anchor_kind="scanner_fp", content_hash="c1", last_line=10))
+    return Waiver(
+        reason="r",
+        created_by="u",
+        status=status,
+        match=MatchSignature(
+            rule_key="opengrep:r",
+            file_key="a.py",
+            anchor=anchor,
+            anchor_kind="scanner_fp",
+            content_hash="c1",
+            last_line=10,
+        ),
+    )
 
 
 class TestInMemoryStrongMatch:
@@ -28,14 +50,27 @@ class TestInMemoryStrongMatch:
 
 def _legacy_finding(finding_id, ftype, component, version=None):
     """A finding without a match signature (license/eol/vuln/secret-by-type)."""
-    return Finding(id=finding_id, type=ftype, severity="HIGH", component=component,
-                   version=version, description="d", scanners=["s"])
+    return Finding(
+        id=finding_id,
+        type=ftype,
+        severity="HIGH",
+        component=component,
+        version=version,
+        description="d",
+        scanners=["s"],
+    )
 
 
 def _legacy_waiver(finding_type=None, package_name=None, package_version=None, finding_id=None):
-    return Waiver(reason="r", created_by="u", status="false_positive",
-                  finding_type=finding_type, package_name=package_name,
-                  package_version=package_version, finding_id=finding_id)
+    return Waiver(
+        reason="r",
+        created_by="u",
+        status="false_positive",
+        finding_type=finding_type,
+        package_name=package_name,
+        package_version=package_version,
+        finding_id=finding_id,
+    )
 
 
 class TestLegacyWaiverAndSemantics:

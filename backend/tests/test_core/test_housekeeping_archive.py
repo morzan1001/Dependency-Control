@@ -539,9 +539,7 @@ async def test_reap_stale_metadata_batches_one_find_per_batch(monkeypatch):
     db = MagicMock()
 
     # 5 metadata rows; scan-1 and scan-4 are restored (exist in db.scans), rest are not.
-    metas = [
-        {"_id": f"meta-{i}", "scan_id": f"scan-{i}"} for i in range(5)
-    ]
+    metas = [{"_id": f"meta-{i}", "scan_id": f"scan-{i}"} for i in range(5)]
     restored_scan_ids = {"scan-1", "scan-4"}
 
     async def metadata_cursor(*_args, **_kwargs):

@@ -71,9 +71,7 @@ async def get_project_recommendations(
 
     # Cache per scan + caller scope so users with different project access never
     # share an entry; cross-project signal isn't in the key and may be TTL-stale.
-    scope_hash = hashlib.md5(
-        ",".join(sorted(user_project_ids)).encode(), usedforsecurity=False
-    ).hexdigest()[:16]
+    scope_hash = hashlib.md5(",".join(sorted(user_project_ids)).encode(), usedforsecurity=False).hexdigest()[:16]
     cache_key = CacheKeys.recommendations(project_id, scan_id, scope_hash)
     cached = await cache_service.get(cache_key)
     if cached:

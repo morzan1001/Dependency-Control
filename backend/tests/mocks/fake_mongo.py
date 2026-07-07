@@ -59,6 +59,7 @@ def _truncate_date(value: Any, unit: str) -> Any:
         return midnight - _timedelta(days=(value.weekday() + 1) % 7)
     return midnight  # day (default)
 
+
 _SET_ON_INSERT = "$setOnInsert"
 _CMP = {"$lt": _op.lt, "$lte": _op.le, "$gt": _op.gt, "$gte": _op.ge}
 
@@ -586,9 +587,7 @@ class FakeCollection:
         # Read-preference / write-concern variations are no-ops in-process.
         return self
 
-    async def find_one_and_update(
-        self, query, update, return_document: bool = False, upsert: bool = False, **_kwargs
-    ):
+    async def find_one_and_update(self, query, update, return_document: bool = False, upsert: bool = False, **_kwargs):
         matched = _matched_key(self._docs, query)
         if matched is None:
             if not upsert:

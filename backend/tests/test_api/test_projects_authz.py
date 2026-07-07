@@ -72,9 +72,7 @@ class TestRotateApiKeyRoutesThroughGate:
         mock_repo.update = AsyncMock(return_value=None)
 
         with patch(f"{ENDPOINTS}.ProjectRepository", return_value=mock_repo):
-            with patch(
-                f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project
-            ) as mock_gate:
+            with patch(f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project) as mock_gate:
                 result = asyncio.run(rotate_api_key("proj-1", user, MagicMock()))
 
         # The gate must be invoked at admin level even for a project:update holder.
@@ -106,9 +104,7 @@ class TestLoadProjectForUpdateRoutesThroughGate:
         user = _update_user()
         project = _project(members=[])
 
-        with patch(
-            f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project
-        ) as mock_gate:
+        with patch(f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project) as mock_gate:
             result = asyncio.run(_load_project_for_update("proj-1", user, MagicMock()))
 
         mock_gate.assert_awaited_once()
@@ -312,9 +308,7 @@ class TestUpdateProjectTeamSourceProvenance:
         # update must have been called
         mock_update.assert_awaited_once()
         call_kwargs = mock_update.call_args[0][1]  # second positional arg is the update dict
-        assert "team_source" not in call_kwargs, (
-            "team_source must NOT be written when team_id is unchanged"
-        )
+        assert "team_source" not in call_kwargs, "team_source must NOT be written when team_id is unchanged"
 
     def test_different_team_id_stamps_manual(self):
         """PATCHing with a DIFFERENT team_id must set team_source='manual' (W9)."""
@@ -335,9 +329,7 @@ class TestUpdateProjectTeamSourceProvenance:
 
         mock_update.assert_awaited_once()
         call_kwargs = mock_update.call_args[0][1]
-        assert call_kwargs.get("team_source") == "manual", (
-            "team_source must be set to 'manual' when team_id changes"
-        )
+        assert call_kwargs.get("team_source") == "manual", "team_source must be set to 'manual' when team_id changes"
 
     def test_no_team_id_in_payload_does_not_stamp_manual(self):
         """PATCHing with no team_id field at all must not touch team_source (W9)."""

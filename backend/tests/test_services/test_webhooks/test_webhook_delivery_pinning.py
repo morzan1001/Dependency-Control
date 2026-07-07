@@ -78,14 +78,13 @@ async def test_send_webhook_connects_through_pinned_transport():
     service = ws_module.WebhookService(timeout=1.0, max_retries=1)
     webhook = _webhook()
 
-    with patch.object(ws_module, "InstrumentedAsyncClient", _capturing_client(captured)), patch(
-        "asyncio.get_event_loop"
-    ) as gel, patch.object(service, "_format_payload", return_value={"ok": True}), patch.object(
-        service, "_build_headers", return_value={}
-    ), patch.object(
-        service, "_update_webhook_status", new=AsyncMock()
-    ), patch.object(
-        service, "_log_webhook_delivery", new=AsyncMock()
+    with (
+        patch.object(ws_module, "InstrumentedAsyncClient", _capturing_client(captured)),
+        patch("asyncio.get_event_loop") as gel,
+        patch.object(service, "_format_payload", return_value={"ok": True}),
+        patch.object(service, "_build_headers", return_value={}),
+        patch.object(service, "_update_webhook_status", new=AsyncMock()),
+        patch.object(service, "_log_webhook_delivery", new=AsyncMock()),
     ):
         gel.return_value.getaddrinfo = _fake_getaddrinfo_public
         await service._send_webhook(
@@ -109,10 +108,11 @@ async def test_test_webhook_connects_through_pinned_transport():
     service = ws_module.WebhookService(timeout=1.0, max_retries=1)
     webhook = _webhook()
 
-    with patch.object(ws_module, "InstrumentedAsyncClient", _capturing_client(captured)), patch(
-        "asyncio.get_event_loop"
-    ) as gel, patch.object(service, "_format_payload", return_value={"ok": True}), patch.object(
-        service, "_build_headers", return_value={}
+    with (
+        patch.object(ws_module, "InstrumentedAsyncClient", _capturing_client(captured)),
+        patch("asyncio.get_event_loop") as gel,
+        patch.object(service, "_format_payload", return_value={"ok": True}),
+        patch.object(service, "_build_headers", return_value={}),
     ):
         gel.return_value.getaddrinfo = _fake_getaddrinfo_public
         await service.test_webhook(webhook)

@@ -160,8 +160,7 @@ async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: List[Waiver])
         # finding_type (or a vulnerability_id, handled above).
         if not query:
             logger.warning(
-                "Skipping waiver %s: no matching criteria (empty query) — refusing to "
-                "waive every finding in scan %s",
+                "Skipping waiver %s: no matching criteria (empty query) — refusing to waive every finding in scan %s",
                 getattr(waiver, "id", "?"),
                 scan_id,
             )
@@ -264,7 +263,13 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
 
     logger.info(
         "waiver signature apply: scan=%s waivers=%d waived=%d reanchored=%d lapsed=%d dormant=%d recomputed_sig=%d",
-        scan_id, len(enriched), len(app.waived), len(app.reanchored), len(app.lapsed), len(app.dormant), recomputed,
+        scan_id,
+        len(enriched),
+        len(app.waived),
+        len(app.reanchored),
+        len(app.lapsed),
+        len(app.dormant),
+        recomputed,
     )
     if app.dormant:
         group_sizes: Dict[str, int] = {}
@@ -280,7 +285,12 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
             fk = getattr(m, "file_key", None)
             logger.warning(
                 "waiver dormant: waiver=%s scan=%s reason=%s rule_key=%s file_key=%s last_line=%s group_findings=%d",
-                wid, scan_id, dormant_reason, rk, fk, getattr(m, "last_line", None),
+                wid,
+                scan_id,
+                dormant_reason,
+                rk,
+                fk,
+                getattr(m, "last_line", None),
                 group_sizes.get(f"{rk}\x00{fk}", 0),
             )
 
@@ -378,8 +388,10 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         for waiver in waivers:
             if waiver.vulnerability_id:
                 await finding_repo.apply_vulnerability_waiver(
-                    scan_id=scan_id, vulnerability_id=waiver.vulnerability_id,
-                    waived=True, waiver_reason=waiver.reason,
+                    scan_id=scan_id,
+                    vulnerability_id=waiver.vulnerability_id,
+                    waived=True,
+                    waiver_reason=waiver.reason,
                 )
         non_vuln = [w for w in waivers if not w.vulnerability_id]
         legacy = [w for w in non_vuln if not _is_signature_waiver(w)]

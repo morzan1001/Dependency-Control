@@ -97,8 +97,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
 
     async def set_lapsed(self, scan_id: str, mapping: Dict[str, str]) -> int:
         ops = [
-            UpdateOne({"scan_id": scan_id, "_id": fid},
-                      {"$set": {"waiver_lapsed": True, "lapsed_waiver_id": wid}})
+            UpdateOne({"scan_id": scan_id, "_id": fid}, {"$set": {"waiver_lapsed": True, "lapsed_waiver_id": wid}})
             for fid, wid in mapping.items()
         ]
         if not ops:

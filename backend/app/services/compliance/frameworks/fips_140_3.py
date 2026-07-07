@@ -134,9 +134,7 @@ def _make_disallowed_evaluator(
                 if bom_ref:
                     hits_bom_refs.append(bom_ref)
         # only applicable when an asset of this category exists
-        category_present = any(
-            _asset_primitive_value(asset) in relevant_primitives for asset in data.crypto_assets
-        )
+        category_present = any(_asset_primitive_value(asset) in relevant_primitives for asset in data.crypto_assets)
         if hits_names:
             status = ControlStatus.FAILED
         elif category_present:

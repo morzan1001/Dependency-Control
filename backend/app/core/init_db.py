@@ -69,12 +69,8 @@ async def _backfill_synced_team_gitlab_ids(database: AsyncIOMotorDatabase[Any]) 
             if team.get("gitlab_instance_id"):
                 continue
 
-            linked = await projects.find(
-                {"team_id": team_id}, {"gitlab_instance_id": 1}
-            ).to_list(None)
-            instance_ids = {
-                p.get("gitlab_instance_id") for p in linked if p.get("gitlab_instance_id")
-            }
+            linked = await projects.find({"team_id": team_id}, {"gitlab_instance_id": 1}).to_list(None)
+            instance_ids = {p.get("gitlab_instance_id") for p in linked if p.get("gitlab_instance_id")}
 
             if len(instance_ids) != 1:
                 skipped += 1

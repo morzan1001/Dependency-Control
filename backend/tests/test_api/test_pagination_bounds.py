@@ -82,6 +82,7 @@ class TestReadProjectsPaginationBounds:
     @pytest.fixture
     def endpoint(self):
         from app.api.v1.endpoints.projects import read_projects
+
         return read_projects
 
     def test_skip_has_ge_zero(self, endpoint):
@@ -105,6 +106,7 @@ class TestReadProjectsPaginationBounds:
     def test_default_skip_within_bounds(self, endpoint):
         """Default skip must satisfy ge=0."""
         import inspect
+
         default = inspect.signature(endpoint).parameters["skip"].default
         ge = _bound(endpoint, "skip", "ge")
         if ge is not None:
@@ -113,6 +115,7 @@ class TestReadProjectsPaginationBounds:
     def test_default_limit_within_bounds(self, endpoint):
         """Default limit must satisfy ge=1 and le=cap."""
         import inspect
+
         default = inspect.signature(endpoint).parameters["limit"].default
         ge = _bound(endpoint, "limit", "ge")
         le = _bound(endpoint, "limit", "le")
@@ -128,6 +131,7 @@ class TestReadAllScansPaginationBounds:
     @pytest.fixture
     def endpoint(self):
         from app.api.v1.endpoints.projects import read_all_scans
+
         return read_all_scans
 
     def test_skip_has_ge_zero(self, endpoint):
@@ -143,6 +147,7 @@ class TestReadAllScansPaginationBounds:
 
     def test_default_limit_within_bounds(self, endpoint):
         import inspect
+
         default = inspect.signature(endpoint).parameters["limit"].default
         le = _bound(endpoint, "limit", "le")
         if le is not None:
@@ -155,6 +160,7 @@ class TestReadProjectScansPaginationBounds:
     @pytest.fixture
     def endpoint(self):
         from app.api.v1.endpoints.projects import read_project_scans
+
         return read_project_scans
 
     def test_skip_has_ge_zero(self, endpoint):
@@ -170,6 +176,7 @@ class TestReadProjectScansPaginationBounds:
 
     def test_default_limit_within_bounds(self, endpoint):
         import inspect
+
         default = inspect.signature(endpoint).parameters["limit"].default
         le = _bound(endpoint, "limit", "le")
         if le is not None:
@@ -182,6 +189,7 @@ class TestReadScanFindingsPaginationBounds:
     @pytest.fixture
     def endpoint(self):
         from app.api.v1.endpoints.projects import read_scan_findings
+
         return read_scan_findings
 
     def test_skip_has_ge_zero(self, endpoint):
@@ -197,6 +205,7 @@ class TestReadScanFindingsPaginationBounds:
 
     def test_default_limit_within_bounds(self, endpoint):
         import inspect
+
         default = inspect.signature(endpoint).parameters["limit"].default
         le = _bound(endpoint, "limit", "le")
         if le is not None:
@@ -223,6 +232,7 @@ class TestReadScanFindingsPaginationBounds:
 # We mount only the projects router with a stub auth dependency so auth does
 # not interfere.
 # ---------------------------------------------------------------------------
+
 
 def _make_test_app():
     """Build a minimal FastAPI app with the projects router + stub auth."""
@@ -261,6 +271,7 @@ def _make_test_app():
 @pytest.fixture(scope="module")
 def test_client():
     from fastapi.testclient import TestClient
+
     app = _make_test_app()
     return TestClient(app, raise_server_exceptions=False)
 
@@ -283,11 +294,16 @@ class TestHTTP422OnOutOfBoundsParams:
         assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
 
     def test_read_projects_valid_params_not_422(self, test_client):
-        with patch(f"{ENDPOINTS}.ProjectRepository") as mock_repo_cls, \
-             patch(f"{ENDPOINTS}.TeamRepository") as mock_team_cls, \
-             patch(f"{ENDPOINTS}.has_permission", return_value=True), \
-             patch(f"{ENDPOINTS}.build_user_project_query", new_callable=AsyncMock, return_value={}), \
-             patch(f"{ENDPOINTS}.build_pagination_response", return_value={"items": [], "total": 0, "page": 1, "pages": 0, "size": 20}):
+        with (
+            patch(f"{ENDPOINTS}.ProjectRepository") as mock_repo_cls,
+            patch(f"{ENDPOINTS}.TeamRepository") as mock_team_cls,
+            patch(f"{ENDPOINTS}.has_permission", return_value=True),
+            patch(f"{ENDPOINTS}.build_user_project_query", new_callable=AsyncMock, return_value={}),
+            patch(
+                f"{ENDPOINTS}.build_pagination_response",
+                return_value={"items": [], "total": 0, "page": 1, "pages": 0, "size": 20},
+            ),
+        ):
             mock_repo = MagicMock()
             mock_repo.count = AsyncMock(return_value=0)
             mock_repo.find_many = AsyncMock(return_value=[])
@@ -343,9 +359,14 @@ class TestHTTP422OnOutOfBoundsParams:
     def _patched_findings_call(self, test_client, limit):
         """Fire a findings request with handler internals stubbed so only Query
         validation decides 422-vs-not. Returns the response."""
-        with patch(f"{ENDPOINTS}._resolve_scan_for_findings", new_callable=AsyncMock), \
-             patch(f"{ENDPOINTS}.FindingRepository") as mock_repo_cls, \
-             patch(f"{ENDPOINTS}.build_pagination_response", return_value={"items": [], "total": 0, "page": 1, "pages": 0, "size": limit}):
+        with (
+            patch(f"{ENDPOINTS}._resolve_scan_for_findings", new_callable=AsyncMock),
+            patch(f"{ENDPOINTS}.FindingRepository") as mock_repo_cls,
+            patch(
+                f"{ENDPOINTS}.build_pagination_response",
+                return_value={"items": [], "total": 0, "page": 1, "pages": 0, "size": limit},
+            ),
+        ):
             mock_repo = MagicMock()
             mock_repo.aggregate = AsyncMock(return_value=[{"data": [], "total": [{"count": 0}]}])
             mock_repo_cls.return_value = mock_repo

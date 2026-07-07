@@ -118,7 +118,11 @@ async def test_trend_buckets_by_month_and_latest_scan_wins(db):
         ],
     )
     points = await CryptoTrendService(db)._finding_buckets(
-        resolved, "total_crypto_findings", "month", datetime(2025, 12, 1, tzinfo=timezone.utc), datetime(2026, 3, 1, tzinfo=timezone.utc)
+        resolved,
+        "total_crypto_findings",
+        "month",
+        datetime(2025, 12, 1, tzinfo=timezone.utc),
+        datetime(2026, 3, 1, tzinfo=timezone.utc),
     )
     assert len(points) == 2  # exactly one bucket per month, not one per scan
     by_month = {p.timestamp.month: p.value for p in points}

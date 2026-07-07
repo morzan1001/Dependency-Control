@@ -16,12 +16,8 @@ async def test_enrich_vulnerability_findings_does_not_close_shared_singleton(mon
     their EPSS/KEV data (audit bug/high #1)."""
     enrich_mock = AsyncMock()
     close_mock = AsyncMock()
-    monkeypatch.setattr(
-        enrichment.vulnerability_enrichment_service, "enrich_findings", enrich_mock
-    )
-    monkeypatch.setattr(
-        enrichment.vulnerability_enrichment_service, "close", close_mock
-    )
+    monkeypatch.setattr(enrichment.vulnerability_enrichment_service, "enrich_findings", enrich_mock)
+    monkeypatch.setattr(enrichment.vulnerability_enrichment_service, "close", close_mock)
 
     findings: list = [{"details": {"vulnerabilities": []}}]
     await enrich_vulnerability_findings(findings)

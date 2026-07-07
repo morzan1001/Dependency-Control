@@ -23,9 +23,7 @@ def test_extracts_nested_vulnerability_fixed_versions():
 
 
 def test_combines_top_level_and_nested():
-    out = extract_fix_versions(
-        [{"fixed_version": "1.2.3", "vulnerabilities": [{"fixed_version": "1.2.4"}]}]
-    )
+    out = extract_fix_versions([{"fixed_version": "1.2.3", "vulnerabilities": [{"fixed_version": "1.2.4"}]}])
     assert out == {"1.2.3", "1.2.4"}
 
 

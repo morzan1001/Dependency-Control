@@ -22,18 +22,12 @@ class TestNormalizePath:
         assert _normalize("/api/v1/projects/123") == "/api/v1/projects/{id}"
 
     def test_uuid_replaced(self) -> None:
-        assert (
-            _normalize("/api/v1/users/550e8400-e29b-41d4-a716-446655440000")
-            == "/api/v1/users/{id}"
-        )
+        assert _normalize("/api/v1/users/550e8400-e29b-41d4-a716-446655440000") == "/api/v1/users/{id}"
 
     def test_objectid_replaced(self) -> None:
         # 24-hex ObjectId that starts with a digit. The numeric rule must NOT
         # consume the leading digit before the ObjectId rule can match.
-        assert (
-            _normalize("/api/v1/scans/5f1a2b3c4d5e6f7a8b9c0d1e")
-            == "/api/v1/scans/{id}"
-        )
+        assert _normalize("/api/v1/scans/5f1a2b3c4d5e6f7a8b9c0d1e") == "/api/v1/scans/{id}"
 
     def test_token_starting_with_digit_not_mangled(self) -> None:
         # A urlsafe token starting with a digit must not have its leading digit

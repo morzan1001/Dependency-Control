@@ -193,8 +193,13 @@ class TestNormalizeOpengrep:
                     "path": "app/util.py",
                     "start": {"line": 10, "col": 5},
                     "end": {"line": 10, "col": 20},
-                    "extra": {"severity": "WARNING", "message": "m", "metadata": {},
-                              "fingerprint": "fp-xyz", "lines": "random.random()"},
+                    "extra": {
+                        "severity": "WARNING",
+                        "message": "m",
+                        "metadata": {},
+                        "fingerprint": "fp-xyz",
+                        "lines": "random.random()",
+                    },
                 }
             ]
         )

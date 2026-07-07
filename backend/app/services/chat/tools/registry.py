@@ -502,8 +502,9 @@ class ChatToolRegistry:
             # No finding doc for this id in the latest scan: an existing waiver row
             # suppresses nothing, so report it as present-but-not-suppressing.
             now = datetime.now(timezone.utc)
-            waiver = await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": args["project_id"]}) \
-                or await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": None})
+            waiver = await db["waivers"].find_one(
+                {"finding_id": args["finding_id"], "project_id": args["project_id"]}
+            ) or await db["waivers"].find_one({"finding_id": args["finding_id"], "project_id": None})
             if not waiver:
                 return {"waived": False}
             if _waiver_is_active(waiver, now):
@@ -1014,10 +1015,14 @@ class ChatToolRegistry:
                     old_keys.add((f["project_id"], f["finding_id"]))
             if not old_keys:
                 return {"findings": [], "message": f"No findings older than {days} days"}
-            candidates = await db["findings"].find(
-                {"scan_id": {"$in": list(latest.values())}, "severity": {"$in": allowed_sev}},
-                limit=_FINDING_RANK_FETCH_CAP,
-            ).to_list(length=_FINDING_RANK_FETCH_CAP)
+            candidates = (
+                await db["findings"]
+                .find(
+                    {"scan_id": {"$in": list(latest.values())}, "severity": {"$in": allowed_sev}},
+                    limit=_FINDING_RANK_FETCH_CAP,
+                )
+                .to_list(length=_FINDING_RANK_FETCH_CAP)
+            )
             _rank_findings(candidates)
             stale = []
             for f in candidates:
@@ -1345,9 +1350,7 @@ class ChatToolRegistry:
             from app.services.chat import tools as _pkg
 
             authorized_project_ids = await self._get_authorized_project_ids(user_project_query, db)
-            visibility = await self._compliance_visibility_filter(
-                user, authorized_project_ids, team_repo
-            )
+            visibility = await self._compliance_visibility_filter(user, authorized_project_ids, team_repo)
             framework = args.get("framework")
             fw: Optional[Any] = None
             if framework:

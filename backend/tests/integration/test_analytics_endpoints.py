@@ -147,14 +147,20 @@ async def test_recommendations_excludes_deleted_branch_scan(client, db, owner_au
     # Older scan on an active branch — the one that MUST be selected.
     await db.scans.insert_one(
         {
-            "_id": "scan-active", "project_id": "p", "branch": "main", "status": "completed",
+            "_id": "scan-active",
+            "project_id": "p",
+            "branch": "main",
+            "status": "completed",
             "created_at": now - timedelta(hours=1),
         }
     )
     # Newer scan on a DELETED branch — must be ignored.
     await db.scans.insert_one(
         {
-            "_id": "scan-dead", "project_id": "p", "branch": "dead", "status": "completed",
+            "_id": "scan-dead",
+            "project_id": "p",
+            "branch": "dead",
+            "status": "completed",
             "created_at": now,
         }
     )
@@ -175,15 +181,27 @@ async def test_recommendations_cached_on_second_call(client, db, owner_auth_head
 
     await db.scans.insert_one(
         {
-            "_id": "rs", "project_id": "p", "branch": "main", "status": "completed",
+            "_id": "rs",
+            "project_id": "p",
+            "branch": "main",
+            "status": "completed",
             "created_at": datetime.now(timezone.utc),
         }
     )
     await db.findings.insert_one(
         {
-            "_id": "rf1", "id": "rf1", "project_id": "p", "scan_id": "rs", "finding_id": "CVE-X",
-            "type": "vulnerability", "severity": "HIGH", "component": "lib", "version": "1.0",
-            "description": "test finding", "details": {}, "scanners": ["osv"],
+            "_id": "rf1",
+            "id": "rf1",
+            "project_id": "p",
+            "scan_id": "rs",
+            "finding_id": "CVE-X",
+            "type": "vulnerability",
+            "severity": "HIGH",
+            "component": "lib",
+            "version": "1.0",
+            "description": "test finding",
+            "details": {},
+            "scanners": ["osv"],
         }
     )
 

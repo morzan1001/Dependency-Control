@@ -241,22 +241,16 @@ class TestNonBlockingSemantics:
     @pytest.mark.asyncio
     async def test_trigger_webhooks_propagates_internal_error(self):
         service = WebhookService()
-        with patch.object(
-            service, "_get_webhooks_for_event", new=AsyncMock(side_effect=RuntimeError("boom"))
-        ):
+        with patch.object(service, "_get_webhooks_for_event", new=AsyncMock(side_effect=RuntimeError("boom"))):
             with pytest.raises(RuntimeError):
                 await service.trigger_webhooks(MagicMock(), "scan.completed", {}, "p1")
 
     @pytest.mark.asyncio
     async def test_safe_trigger_webhooks_swallows_errors(self):
         service = WebhookService()
-        with patch.object(
-            service, "trigger_webhooks", new=AsyncMock(side_effect=RuntimeError("boom"))
-        ):
+        with patch.object(service, "trigger_webhooks", new=AsyncMock(side_effect=RuntimeError("boom"))):
             # Must not raise.
-            await service.safe_trigger_webhooks(
-                MagicMock(), "scan.completed", {}, "p1", context="test"
-            )
+            await service.safe_trigger_webhooks(MagicMock(), "scan.completed", {}, "p1", context="test")
 
 
 def _make_mock_http_client(status_code: int = 200):

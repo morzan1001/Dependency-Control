@@ -436,7 +436,7 @@ class TestEcosystemKeyingNoConflation:
             ("pypi", "foo"): [ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=10))],
         }
         observations = [
-            ("npm", "foo", "1.0.0", _REF),   # latency vs npm publish = 50
+            ("npm", "foo", "1.0.0", _REF),  # latency vs npm publish = 50
             ("pypi", "foo", "1.0.0", _REF),  # latency vs pypi publish = 10
         ]
         latencies = compute_adoption_latencies(history, observations)

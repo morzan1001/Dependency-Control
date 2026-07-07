@@ -425,16 +425,46 @@ class TestSeverityCountAccumulatorsExecuted:
         # One (component, version) group with the SAME CVE repeated across three
         # projects (so $addToSet must collapse it) plus a mix of severities.
         return [
-            {"_id": "f1", "component": "lodash", "version": "4.17.11", "project_id": "p1",
-             "severity": "CRITICAL", "finding_id": "CVE-2021-1"},
-            {"_id": "f2", "component": "lodash", "version": "4.17.11", "project_id": "p2",
-             "severity": "critical", "finding_id": "CVE-2021-1"},  # dup CVE, diff project
-            {"_id": "f3", "component": "lodash", "version": "4.17.11", "project_id": "p3",
-             "severity": "High", "finding_id": "CVE-2021-2"},
-            {"_id": "f4", "component": "lodash", "version": "4.17.11", "project_id": "p1",
-             "severity": "medium", "finding_id": "CVE-2021-3"},
-            {"_id": "f5", "component": "lodash", "version": "4.17.11", "project_id": "p1",
-             "severity": "low", "finding_id": None},  # non-CVE / no id
+            {
+                "_id": "f1",
+                "component": "lodash",
+                "version": "4.17.11",
+                "project_id": "p1",
+                "severity": "CRITICAL",
+                "finding_id": "CVE-2021-1",
+            },
+            {
+                "_id": "f2",
+                "component": "lodash",
+                "version": "4.17.11",
+                "project_id": "p2",
+                "severity": "critical",
+                "finding_id": "CVE-2021-1",
+            },  # dup CVE, diff project
+            {
+                "_id": "f3",
+                "component": "lodash",
+                "version": "4.17.11",
+                "project_id": "p3",
+                "severity": "High",
+                "finding_id": "CVE-2021-2",
+            },
+            {
+                "_id": "f4",
+                "component": "lodash",
+                "version": "4.17.11",
+                "project_id": "p1",
+                "severity": "medium",
+                "finding_id": "CVE-2021-3",
+            },
+            {
+                "_id": "f5",
+                "component": "lodash",
+                "version": "4.17.11",
+                "project_id": "p1",
+                "severity": "low",
+                "finding_id": None,
+            },  # non-CVE / no id
         ]
 
     def _group_spec(self) -> Dict[str, Any]:
@@ -528,8 +558,7 @@ class TestHotspotsPostSortPagination:
         # finding_count order before the epss re-ranking runs.
         _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="epss", skip=60, limit=20)
         assert not any("$skip" in stage for stage in pipeline), (
-            "post-sort pipeline must not $skip in Mongo; pagination is applied in "
-            "Python after the epss/risk re-sort"
+            "post-sort pipeline must not $skip in Mongo; pagination is applied in Python after the epss/risk re-sort"
         )
 
     def test_finding_count_sort_still_paginates_in_mongo(self):

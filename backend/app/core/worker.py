@@ -190,9 +190,7 @@ class AnalysisWorkerManager:
 
         return True
 
-    async def _notify_analysis_failed(
-        self, db: AsyncIOMotorDatabase, scan: Dict[str, Any], error: str
-    ) -> None:
+    async def _notify_analysis_failed(self, db: AsyncIOMotorDatabase, scan: Dict[str, Any], error: str) -> None:
         """Fire the analysis_failed webhook + project notification for a failed scan.
 
         Best-effort: any error here is logged and swallowed so it never masks the

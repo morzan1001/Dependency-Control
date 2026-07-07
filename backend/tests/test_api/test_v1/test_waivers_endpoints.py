@@ -603,9 +603,7 @@ class TestOrphanedFilter:
         assert count_query.get("last_eval_scan_id") == {"$ne": None}, (
             "count query must filter last_eval_scan_id != None"
         )
-        assert count_query.get("last_match_count") == 0, (
-            "count query must filter last_match_count == 0"
-        )
+        assert count_query.get("last_match_count") == 0, "count query must filter last_match_count == 0"
 
         # Same filter must be in find_many query
         find_query = mock_repo2.find_many.call_args[0][0]
@@ -628,9 +626,7 @@ class TestOrphanedFilter:
             result_all = _call_list_waivers(admin_user)
 
         count_query_all = mock_repo3.count.call_args[0][0]
-        assert "last_eval_scan_id" not in count_query_all, (
-            "plain call must NOT add orphaned filter"
-        )
+        assert "last_eval_scan_id" not in count_query_all, "plain call must NOT add orphaned filter"
         assert result_all["total"] == 2
         assert len(result_all["items"]) == 2
 

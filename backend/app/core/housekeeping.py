@@ -103,9 +103,7 @@ async def _cleanup_gridfs_files(db: Any, gridfs_ids: List[str], deleted_scan_ids
             pass  # File may already be deleted
 
 
-async def _surviving_gridfs_references(
-    db: Any, gridfs_ids: List[str], excluded_scan_ids: List[str]
-) -> set[str]:
+async def _surviving_gridfs_references(db: Any, gridfs_ids: List[str], excluded_scan_ids: List[str]) -> set[str]:
     """Return the subset of ``gridfs_ids`` that is still referenced by at
     least one scan outside ``excluded_scan_ids``.
     """

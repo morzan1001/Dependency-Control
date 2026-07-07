@@ -65,9 +65,10 @@ class TestHandleFailedAnalysis:
         db = _build_db_with_scans(update_one, project=project)
         scan = {"_id": "scan-1", "project_id": "proj-1", "retry_count": 4}
 
-        with patch("app.core.worker.webhook_service.trigger_analysis_failed", new=AsyncMock()) as trigger, patch(
-            "app.core.worker.safe_notify_project_event", new=AsyncMock()
-        ) as notify:
+        with (
+            patch("app.core.worker.webhook_service.trigger_analysis_failed", new=AsyncMock()) as trigger,
+            patch("app.core.worker.safe_notify_project_event", new=AsyncMock()) as notify,
+        ):
             terminal = asyncio.run(mgr._handle_failed_analysis(scan, "scan-1", db))
 
         assert terminal is True
@@ -86,9 +87,10 @@ class TestHandleFailedAnalysis:
         db = _build_db_with_scans(AsyncMock(), project=None)
         scan = {"_id": "scan-1", "project_id": "proj-1"}
 
-        with patch("app.core.worker.webhook_service.trigger_analysis_failed", new=AsyncMock()) as trigger, patch(
-            "app.core.worker.safe_notify_project_event", new=AsyncMock()
-        ) as notify:
+        with (
+            patch("app.core.worker.webhook_service.trigger_analysis_failed", new=AsyncMock()) as trigger,
+            patch("app.core.worker.safe_notify_project_event", new=AsyncMock()) as notify,
+        ):
             # Missing project -> no webhook/notification, no raise.
             asyncio.run(mgr._notify_analysis_failed(db, scan, "boom"))
 

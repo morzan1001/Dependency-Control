@@ -33,14 +33,22 @@ class TestScorecardSeverityThreading:
         not from shared instance state."""
         # Default-ish thresholds: 3.0 falls in [medium, low) -> MEDIUM.
         issue_default = self.analyzer._create_scorecard_issue(
-            "pkg", "1.0.0", "pkg:pypi/pkg@1.0.0", "github.com/o/r", _scorecard(3.0),
+            "pkg",
+            "1.0.0",
+            "pkg:pypi/pkg@1.0.0",
+            "github.com/o/r",
+            _scorecard(3.0),
             {"high": 2.0, "medium": 4.0, "low": 5.0},
         )
         assert issue_default["severity"] == Severity.MEDIUM.value
 
         # Stricter thresholds: 3.0 now falls below high -> HIGH.
         issue_strict = self.analyzer._create_scorecard_issue(
-            "pkg", "1.0.0", "pkg:pypi/pkg@1.0.0", "github.com/o/r", _scorecard(3.0),
+            "pkg",
+            "1.0.0",
+            "pkg:pypi/pkg@1.0.0",
+            "github.com/o/r",
+            _scorecard(3.0),
             {"high": 4.0, "medium": 6.0, "low": 8.0},
         )
         assert issue_strict["severity"] == Severity.HIGH.value
@@ -50,11 +58,19 @@ class TestScorecardSeverityThreading:
         SAME instance must not let the first call's thresholds bleed into the
         second (the concurrency cross-contamination the audit flagged)."""
         strict = self.analyzer._create_scorecard_issue(
-            "a", "1", "pkg:pypi/a@1", "github.com/o/a", _scorecard(3.0),
+            "a",
+            "1",
+            "pkg:pypi/a@1",
+            "github.com/o/a",
+            _scorecard(3.0),
             {"high": 4.0, "medium": 6.0, "low": 8.0},
         )
         lenient = self.analyzer._create_scorecard_issue(
-            "b", "1", "pkg:pypi/b@1", "github.com/o/b", _scorecard(3.0),
+            "b",
+            "1",
+            "pkg:pypi/b@1",
+            "github.com/o/b",
+            _scorecard(3.0),
             {"high": 1.0, "medium": 2.0, "low": 2.5},
         )
         assert strict["severity"] == Severity.HIGH.value

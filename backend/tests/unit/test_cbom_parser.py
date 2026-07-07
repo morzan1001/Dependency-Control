@@ -171,9 +171,7 @@ def test_tool_metadata_dict_components_shape():
     cbom = parse_cbom(
         {
             "specVersion": "1.6",
-            "metadata": {
-                "tools": {"components": [{"name": "cdxgen", "version": "9.0.0"}]}
-            },
+            "metadata": {"tools": {"components": [{"name": "cdxgen", "version": "9.0.0"}]}},
             "components": [],
         }
     )

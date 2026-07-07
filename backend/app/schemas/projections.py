@@ -84,9 +84,7 @@ class CallgraphMinimal(BaseModel):
             return self
         # Prefer the raw imports list; fall back to the module_usage map, which
         # the minimal projection includes.
-        self.import_map = _import_map_from_imports(self.imports) or _import_map_from_module_usage(
-            self.module_usage
-        )
+        self.import_map = _import_map_from_imports(self.imports) or _import_map_from_module_usage(self.module_usage)
         return self
 
 

@@ -235,9 +235,7 @@ async def test_current_user_message_not_duplicated_in_prompt():
         pass
 
     user_turns = [
-        m
-        for m in captured["messages"]
-        if m.get("role") == "user" and m.get("content") == "which project is worst?"
+        m for m in captured["messages"] if m.get("role") == "user" and m.get("content") == "which project is worst?"
     ]
     assert len(user_turns) == 1, f"user message should appear once, got {len(user_turns)}"
 

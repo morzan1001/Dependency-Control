@@ -97,8 +97,9 @@ async def _capture_vuln_message(findings):
         trigger_vulnerability_found=AsyncMock(),
     )
 
-    with patch.object(notifications, "notification_service", fake_notify), patch.object(
-        notifications, "webhook_service", fake_webhook
+    with (
+        patch.object(notifications, "notification_service", fake_notify),
+        patch.object(notifications, "webhook_service", fake_webhook),
     ):
         await send_scan_notifications(
             scan_id="scan-abc-123",

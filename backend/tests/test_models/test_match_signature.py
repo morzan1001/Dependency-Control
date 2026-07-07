@@ -13,8 +13,14 @@ class TestMatchSignature:
     def test_finding_accepts_match_and_lapsed_fields(self):
         sig = MatchSignature(rule_key="OPENGREP:r", file_key="a.py", anchor="fp1", anchor_kind="scanner_fp")
         f = Finding(
-            id="OPENGREP-r-a.py-10", type="sast", severity="HIGH", component="a.py",
-            description="x", scanners=["opengrep"], match=sig, waiver_lapsed=True,
+            id="OPENGREP-r-a.py-10",
+            type="sast",
+            severity="HIGH",
+            component="a.py",
+            description="x",
+            scanners=["opengrep"],
+            match=sig,
+            waiver_lapsed=True,
             lapsed_waiver_id="w1",
         )
         assert f.match.anchor == "fp1"
@@ -32,33 +38,49 @@ class TestMatchSignature:
         assert w.match.anchor_kind == "similarity_id"
 
     def test_effective_rule_keys_falls_back_to_single_rule_key(self):
-        s = MatchSignature(rule_key="bearer:X", file_key="a.py", anchor="fp",
-                           anchor_kind="scanner_fp", content_hash="c", last_line=1)
+        s = MatchSignature(
+            rule_key="bearer:X", file_key="a.py", anchor="fp", anchor_kind="scanner_fp", content_hash="c", last_line=1
+        )
         assert s.rule_keys == []
         assert s.effective_rule_keys == {"bearer:X"}
 
     def test_effective_rule_keys_uses_list_when_present(self):
-        s = MatchSignature(rule_key="bearer:X", file_key="a.py", anchor="fp",
-                           anchor_kind="scanner_fp", content_hash="c", last_line=1,
-                           rule_keys=["bearer:X", "opengrep:X"])
+        s = MatchSignature(
+            rule_key="bearer:X",
+            file_key="a.py",
+            anchor="fp",
+            anchor_kind="scanner_fp",
+            content_hash="c",
+            last_line=1,
+            rule_keys=["bearer:X", "opengrep:X"],
+        )
         assert s.effective_rule_keys == {"bearer:X", "opengrep:X"}
 
     def test_effective_rule_keys_does_not_inject_primary_when_list_present(self):
         from app.models.match_signature import MatchSignature
-        s = MatchSignature(rule_key="bearer:X", file_key="a.py", anchor="fp",
-                           anchor_kind="scanner_fp", content_hash="c", last_line=1,
-                           rule_keys=["opengrep:Y", "semgrep:Z"])
+
+        s = MatchSignature(
+            rule_key="bearer:X",
+            file_key="a.py",
+            anchor="fp",
+            anchor_kind="scanner_fp",
+            content_hash="c",
+            last_line=1,
+            rule_keys=["opengrep:Y", "semgrep:Z"],
+        )
         assert s.effective_rule_keys == {"opengrep:Y", "semgrep:Z"}
         assert "bearer:X" not in s.effective_rule_keys
 
     def test_waiver_eval_outcome_fields_default_none(self):
         from app.models.waiver import Waiver
+
         w = Waiver(reason="r", created_by="u")
         assert w.last_eval_scan_id is None
         assert w.last_match_count is None
 
     def test_waiver_accepts_eval_outcome_fields(self):
         from app.models.waiver import Waiver
+
         w = Waiver(reason="r", created_by="u", last_eval_scan_id="scan-1", last_match_count=0)
         assert w.last_eval_scan_id == "scan-1"
         assert w.last_match_count == 0

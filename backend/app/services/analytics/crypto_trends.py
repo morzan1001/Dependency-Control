@@ -242,9 +242,7 @@ class CryptoTrendService:
         if resolved.project_ids is None:
             projects_fp = "*"
         else:
-            projects_fp = hashlib.sha256(
-                "|".join(sorted(resolved.project_ids)).encode()
-            ).hexdigest()[:16]
+            projects_fp = hashlib.sha256("|".join(sorted(resolved.project_ids)).encode()).hexdigest()[:16]
         return (
             "trends",
             resolved.scope,

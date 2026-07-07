@@ -152,8 +152,7 @@ def _is_applicable(
         # Every backing rule is disabled, so no finding can ever exist; PASSED
         # would be a false attestation -> NOT_APPLICABLE.
         logger.info(
-            "compliance: control %s is backed only by disabled rules %s; reporting "
-            "NOT_APPLICABLE rather than PASSED",
+            "compliance: control %s is backed only by disabled rules %s; reporting NOT_APPLICABLE rather than PASSED",
             control.control_id,
             control.maps_to_rule_ids,
         )

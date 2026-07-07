@@ -490,9 +490,7 @@ class TestSPDXDirectDependencyDetection:
                     "SPDXID": "SPDXRef-repo",
                     "name": "my-repo",
                     "versionInfo": "1.0",
-                    "externalRefs": [
-                        {"referenceType": "purl", "referenceLocator": "pkg:github/acme/my-repo@1.0"}
-                    ],
+                    "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:github/acme/my-repo@1.0"}],
                 },
                 {
                     "SPDXID": "SPDXRef-dep1",

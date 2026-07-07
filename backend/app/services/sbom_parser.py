@@ -72,12 +72,7 @@ class SBOMParser:
 
         # CycloneDX by structure (has components array with purl)
         components = sbom.get("components")
-        if (
-            isinstance(components, list)
-            and components
-            and isinstance(components[0], dict)
-            and "purl" in components[0]
-        ):
+        if isinstance(components, list) and components and isinstance(components[0], dict) and "purl" in components[0]:
             return SBOMFormat.CYCLONEDX, sbom.get("specVersion")
 
         return None
@@ -796,9 +791,7 @@ class SBOMParser:
         # Syft JSON schema < 16.0 emits `cpes` as a list of plain strings; newer
         # releases use a list of dicts ({"cpe": "..."}). Handle both so a legacy
         # SBOM does not crash the artifact loop and silently drop dependencies.
-        cpes = [
-            (c.get("cpe") if isinstance(c, dict) else c) for c in artifact.get("cpes") or [] if c
-        ]
+        cpes = [(c.get("cpe") if isinstance(c, dict) else c) for c in artifact.get("cpes") or [] if c]
         cpes = [c for c in cpes if c]
         found_by = artifact.get("foundBy")
         pkg_type = artifact.get("type", "unknown")
@@ -979,9 +972,7 @@ class SBOMParser:
         relationships = sbom.get("relationships", [])
         doc_spdx_id = sbom.get("SPDXID", "SPDXRef-DOCUMENT")
 
-        direct_package_ids, reverse_deps_graph = self._build_spdx_dependency_graph(
-            relationships, doc_spdx_id
-        )
+        direct_package_ids, reverse_deps_graph = self._build_spdx_dependency_graph(relationships, doc_spdx_id)
 
         packages = sbom.get("packages", [])
         inferred = not bool(relationships)

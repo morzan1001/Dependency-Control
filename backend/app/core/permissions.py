@@ -126,6 +126,7 @@ ALL_PERMISSIONS: List[str] = [
     Permissions.MCP_ACCESS,
 ]
 
+
 def has_permission(
     user_permissions: List[str],
     required: str | List[str],
