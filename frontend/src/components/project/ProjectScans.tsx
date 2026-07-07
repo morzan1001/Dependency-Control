@@ -19,7 +19,6 @@ interface ProjectScansProps {
   projectId: string
 }
 
-// Helper to get the effective stats and status (from latest re-scan if available)
 const getEffectiveScanData = (scan: Scan) => {
     const source = scan.latest_run || scan;
     return {
@@ -71,11 +70,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
   const scanList = useMemo(() => scans || [], [scans])
   const hasMore = scanList.length === limit
 
-  // Compute the Delta comparison partner for each scan explicitly: the
-  // chronologically previous *completed* scan of the SAME branch. The previous
-  // approach paired adjacent rows of the current sort order, which compared
-  // unrelated scans whenever the table was sorted by branch/status/findings, or
-  // whenever multiple branches were interleaved under the default sort.
+  // Delta partner = the chronologically previous completed scan of the same branch.
   const deltaPartners = useMemo(() => {
     const partners = new Map<string, Scan>()
     const byBranch = new Map<string, Scan[]>()

@@ -24,8 +24,7 @@ export function PackageAutocomplete({
   const [open, setOpen] = useState(false)
   const [inputValue, setInputValue] = useState(value)
   const [lastSyncedValue, setLastSyncedValue] = useState(value)
-  // Sync internal input with prop value changes from a controlled parent
-  // by adjusting state during render — see https://react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes
+  // Sync input with controlled prop by adjusting state during render.
   if (value !== lastSyncedValue) {
     setLastSyncedValue(value)
     setInputValue(value)
@@ -33,10 +32,8 @@ export function PackageAutocomplete({
   const debouncedSearch = useDebounce(inputValue, DEBOUNCE_DELAY_MS)
   const containerRef = useRef<HTMLDivElement>(null)
 
-  // Fetch suggestions
   const { data: suggestions, isLoading } = usePackageSuggestions(debouncedSearch)
 
-  // Close dropdown when clicking outside
   const handleClose = useCallback(() => setOpen(false), [])
   useClickOutside(containerRef, handleClose, open)
 

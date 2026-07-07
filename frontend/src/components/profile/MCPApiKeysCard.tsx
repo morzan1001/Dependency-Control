@@ -180,7 +180,6 @@ export function MCPApiKeysCard() {
         )}
       </CardContent>
 
-      {/* Create dialog */}
       <Dialog open={createOpen} onOpenChange={setCreateOpen}>
         <DialogContent>
           <DialogHeader>
@@ -232,7 +231,6 @@ export function MCPApiKeysCard() {
         </DialogContent>
       </Dialog>
 
-      {/* Token reveal dialog — non-dismissable until copied */}
       <Dialog
         open={revealedToken !== null}
         onOpenChange={(open) => {

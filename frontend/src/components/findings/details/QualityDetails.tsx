@@ -102,7 +102,6 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
         </div>
       )}
 
-      {/* Critical Issues */}
       {criticalIssues.length > 0 && (
         <DetailSection
           label="Critical Issues"
@@ -118,7 +117,6 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
         </DetailSection>
       )}
 
-      {/* Failed Checks */}
       {failedChecks.length > 0 && (
         <DetailSection label={`Failed Checks (${failedChecks.length})`}>
           <div className="grid grid-cols-2 gap-2">
@@ -134,7 +132,6 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
         </DetailSection>
       )}
 
-      {/* All Checks Summary */}
       {checksSummary && Object.keys(checksSummary).length > 0 && (
         <DetailSection label="All Checks">
           <div className="grid grid-cols-3 gap-1 text-xs">
@@ -150,7 +147,6 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
         </DetailSection>
       )}
 
-      {/* Recommendation */}
       {recommendation && (
         <div className="p-3 bg-blue-50 dark:bg-blue-950/50 border border-blue-200 dark:border-blue-800 rounded-lg">
           <h4 className="text-sm font-medium text-blue-800 dark:text-blue-300 mb-1 flex items-center gap-2">
@@ -167,7 +163,6 @@ export function QualityDetailsView({ details }: { details: FindingDetails }) {
         </div>
       )}
 
-      {/* Scorecard Report Link */}
       {repository && (
         <a
           href={`https://scorecard.dev/viewer/?uri=${encodeURIComponent(repository.replace(/^https?:\/\//, ''))}`}
@@ -219,7 +214,6 @@ export function MaintainerRiskDetailsView({ details }: { details: FindingDetails
 
   return (
     <div className="space-y-4">
-      {/* Risk Factors */}
       {risks.length > 0 && (
         <DetailSection label={`Risk Factors (${risks.length})`}>
           <div className="space-y-2">
@@ -247,12 +241,10 @@ export function MaintainerRiskDetailsView({ details }: { details: FindingDetails
         </DetailSection>
       )}
 
-      {/* Maintainer Info */}
       {Object.keys(maintainerInfo).length > 0 && (
         <DetailSection label="Maintainer Information">
           <div className="bg-muted/50 rounded-lg p-4 border space-y-3">
             <div className="grid grid-cols-2 gap-4">
-              {/* Author */}
               {(maintainerInfo.author || maintainerInfo.author_email) && (
                 <div className="flex items-start gap-2">
                   <User className="h-4 w-4 text-muted-foreground mt-0.5" />
@@ -264,7 +256,6 @@ export function MaintainerRiskDetailsView({ details }: { details: FindingDetails
                 </div>
               )}
 
-              {/* Maintainer */}
               {(maintainerInfo.maintainer || maintainerInfo.maintainer_email) && (
                 <div className="flex items-start gap-2">
                   <Building className="h-4 w-4 text-muted-foreground mt-0.5" />
@@ -278,7 +269,6 @@ export function MaintainerRiskDetailsView({ details }: { details: FindingDetails
                 </div>
               )}
 
-              {/* Last Release */}
               {maintainerInfo.latest_release_date && (
                 <div className="flex items-start gap-2">
                   <Calendar className="h-4 w-4 text-muted-foreground mt-0.5" />
@@ -292,7 +282,6 @@ export function MaintainerRiskDetailsView({ details }: { details: FindingDetails
                 </div>
               )}
 
-              {/* Release Count */}
               {maintainerInfo.release_count && (
                 <div className="flex items-start gap-2">
                   <Package className="h-4 w-4 text-muted-foreground mt-0.5" />
@@ -304,7 +293,6 @@ export function MaintainerRiskDetailsView({ details }: { details: FindingDetails
               )}
             </div>
 
-            {/* Project URLs */}
             {(maintainerInfo.home_page || maintainerInfo.project_urls) && (
               <div className="pt-2 border-t">
                 <p className="text-xs text-muted-foreground mb-2">Project Links</p>
@@ -413,7 +401,6 @@ export function AggregatedQualityView({ details }: { details: FindingDetails }) 
     }
   }
 
-  // If there's only one quality issue, render it directly without accordion
   if (qualityIssues.length === 1) {
     const singleIssue = qualityIssues[0]
     return (
@@ -425,7 +412,6 @@ export function AggregatedQualityView({ details }: { details: FindingDetails }) 
 
   return (
     <div className="space-y-4">
-      {/* Summary Header - only show when multiple issues */}
       <div className="flex items-center gap-4 p-4 bg-muted/50 rounded-lg border">
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1">
@@ -447,7 +433,6 @@ export function AggregatedQualityView({ details }: { details: FindingDetails }) 
         </div>
       </div>
 
-      {/* Individual Quality Issues */}
       <div className="space-y-2">
         {qualityIssues.map((issue, idx) => {
           const isExpanded = expandedIssues.has(issue.id)
@@ -455,7 +440,6 @@ export function AggregatedQualityView({ details }: { details: FindingDetails }) 
 
           return (
             <div key={issue.id || idx} className="border rounded-lg overflow-hidden">
-              {/* Issue Header - Clickable */}
               <button
                 onClick={() => toggleIssue(issue.id)}
                 className="w-full flex items-center gap-3 p-3 bg-muted/30 hover:bg-muted/50 transition-colors text-left"
@@ -480,7 +464,6 @@ export function AggregatedQualityView({ details }: { details: FindingDetails }) 
                 )}
               </button>
 
-              {/* Expanded Details */}
               {isExpanded && (
                 <div className="p-4 border-t bg-background">
                   {renderIssueDetails(issue.type, issue.details)}

@@ -125,14 +125,7 @@ function HotspotsSection() {
 function TrendsSection() {
   const [metric, setMetric] = useState<TrendMetric>("total_crypto_findings");
   const [days, setDays] = useState(30);
-  // Normalize the range to day granularity and memoize on `days` so re-renders
-  // (metric changes, Radix remounting the tab) don't feed millisecond-unique
-  // timestamps into the react-query key, which would defeat caching and reflash
-  // the loading state on every render.
-  // Normalize the range to day granularity and memoize on `days` so re-renders
-  // (metric changes, Radix remounting the tab) don't feed millisecond-unique
-  // timestamps into the react-query key, which would defeat caching and reflash
-  // the loading state on every render.
+  // Memoize the day-granularity range on `days` so re-renders don't feed unique timestamps into the query key and defeat caching.
   const { start, end } = useMemo(() => {
     const end = new Date();
     end.setHours(0, 0, 0, 0);

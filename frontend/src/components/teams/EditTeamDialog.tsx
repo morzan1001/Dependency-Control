@@ -26,7 +26,7 @@ export function EditTeamDialog({ team, isOpen, onClose }: EditTeamDialogProps) {
   const [prevTeamId, setPrevTeamId] = useState<string | null>(team?.id || null);
   const updateTeamMutation = useUpdateTeam();
 
-  // Sync state when team prop changes (React 19 pattern: adjust state during render)
+  // Intentional state adjustment during render to reset fields when the team prop changes.
   if (team && team.id !== prevTeamId) {
     setPrevTeamId(team.id);
     setName(team.name || '');

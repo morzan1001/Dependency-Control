@@ -52,8 +52,7 @@ export function CreateProjectDialog({
     note: string;
   } | null>(null);
   const [hasCopied, setHasCopied] = useState(false);
-  
-  // Only fetch teams and app config when dialog is open
+
   const { data: teams } = useTeams(undefined, undefined, undefined, { enabled: open });
   const { data: appConfig } = useAppConfig({ enabled: open });
 

@@ -242,7 +242,6 @@ export function UpdateFrequencyComparison() {
 
   return (
     <div className="space-y-6">
-      {/* Header with team filter */}
       <Card>
         <CardHeader>
           <CardTitle>Update Frequency Comparison</CardTitle>
@@ -272,7 +271,6 @@ export function UpdateFrequencyComparison() {
         </CardContent>
       </Card>
 
-      {/* Loading */}
       {isLoading && (
         <div className="space-y-4">
           <div className="grid gap-4 md:grid-cols-4">
@@ -284,7 +282,6 @@ export function UpdateFrequencyComparison() {
         </div>
       )}
 
-      {/* Error */}
       {error && (
         <Card>
           <CardContent className="py-8">
@@ -296,7 +293,6 @@ export function UpdateFrequencyComparison() {
         </Card>
       )}
 
-      {/* Empty state */}
       {data?.projects.length === 0 && (
         <Card>
           <CardContent className="py-12">
@@ -309,7 +305,6 @@ export function UpdateFrequencyComparison() {
         </Card>
       )}
 
-      {/* Results */}
       {data && data.projects.length > 0 && (
         <>
           <ComparisonSummaryCards data={data} />

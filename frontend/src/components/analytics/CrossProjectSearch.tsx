@@ -142,7 +142,6 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Search Input */}
         <div className="relative">
           <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
@@ -153,7 +152,6 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
           />
         </div>
 
-        {/* Filters Panel */}
         {showFilters && (
           <div className="p-4 border rounded-lg bg-muted/50 space-y-4">
             <div className="flex items-center justify-between">
@@ -167,7 +165,6 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
             </div>
             
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-              {/* Version Filter */}
               <div className="space-y-2">
                 <Label>Version</Label>
                 <Input
@@ -177,7 +174,6 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                 />
               </div>
 
-              {/* Type Filter */}
               <div className="space-y-2">
                 <Label>Package Type</Label>
                 <Select value={selectedType} onValueChange={setSelectedType}>
@@ -193,7 +189,6 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                 </Select>
               </div>
 
-              {/* Source Type Filter */}
               <div className="space-y-2">
                 <Label>Source</Label>
                 <Select value={selectedSourceType} onValueChange={setSelectedSourceType}>
@@ -224,7 +219,6 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                 </Select>
               </div>
 
-              {/* Vulnerability Filter */}
               <div className="space-y-2">
                 <Label>Vulnerability Status</Label>
                 <Select 
@@ -242,7 +236,6 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
                 </Select>
               </div>
 
-              {/* Project Filter */}
               <div className="space-y-2">
                 <Label>Projects</Label>
                 <Select 
@@ -264,7 +257,6 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
           </div>
         )}
 
-        {/* Results */}
         <div ref={parentRef}>
           {(() => {
             if (query.length < 2) {

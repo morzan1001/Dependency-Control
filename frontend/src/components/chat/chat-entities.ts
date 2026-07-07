@@ -1,27 +1,16 @@
 import type { ToolCall } from '@/types/chat';
 import { advisoryUrl } from '@/lib/finding-utils';
 
-/**
- * A piece of text we know maps to a concrete entity in the app, so we can
- * turn plain mentions ("acme-api", "CVE-2024-12345") into links when the
- * assistant writes them in its answer.
- *
- * Only entities that actually appeared in a tool result are collected — this
- * prevents hallucinated link targets. If the model invents a project name
- * that wasn't in any tool response, it stays plain text.
- */
+// Text mapping to a concrete app entity, used to linkify plain mentions in answers.
 export interface LinkableEntity {
-  /** Exact string the model might write. */
   readonly text: string;
-  /** Full Markdown link to replace it with. */
   readonly markdown: string;
-  /** Longer text wins, so "acme-api-v2" is preferred over "acme-api". */
+  // Longer text wins, so "acme-api-v2" is preferred over "acme-api".
   readonly priority: number;
 }
 
 const CVE_PATTERN = /\bCVE-\d{4}-\d{4,}\b/gi;
 
-/** Walk a tool-result subtree and emit all `{id, name}` pairs we recognise. */
 function collectFromToolResult(
   result: unknown,
   out: Map<string, LinkableEntity>,
@@ -35,14 +24,12 @@ function collectFromToolResult(
 
   const add = (key: string, text: string, markdown: string, priority: number) => {
     if (!text || !markdown) return;
-    // Prefer the longer/more specific entry for the same target id.
     const existing = out.get(key);
     if (!existing || existing.priority < priority) {
       out.set(key, { text, markdown, priority });
     }
   };
 
-  // Project
   if (typeof obj.project_name === 'string' && typeof obj.project_id === 'string') {
     add(
       `project:${obj.project_id}`,
@@ -51,7 +38,6 @@ function collectFromToolResult(
       obj.project_name.length,
     );
   }
-  // Team
   if (typeof obj.team_name === 'string' && typeof obj.team_id === 'string') {
     add(
       `team:${obj.team_id}`,
@@ -60,11 +46,7 @@ function collectFromToolResult(
       obj.team_name.length,
     );
   }
-  // Finding — deep-link to the scan page with the drawer auto-opened. We
-  // need project_id + scan_id + a finding identifier. The backend emits
-  // `id` (internal UUID) for vulnerability findings; `finding_id` for the
-  // stable human string. Prefer the UUID (guaranteed unique); fall back
-  // to finding_id so we still link license/quality items.
+  // Finding deep-link: prefer the UUID `id`, fall back to `finding_id`.
   if (
     typeof obj.project_id === 'string' &&
     typeof obj.scan_id === 'string' &&
@@ -72,8 +54,7 @@ function collectFromToolResult(
   ) {
     const fid = typeof obj.id === 'string' ? obj.id : (obj.finding_id as string);
     const href = `/projects/${obj.project_id}/scans/${obj.scan_id}?finding=${encodeURIComponent(fid)}`;
-    // Prefer a CVE mention as link anchor (user-recognisable), then
-    // component@version, then the raw finding_id as last resort.
+    // Prefer a CVE anchor, else component@version.
     if (typeof obj.cve === 'string' && obj.cve) {
       add(
         `finding:${fid}:cve`,
@@ -93,11 +74,6 @@ function collectFromToolResult(
       );
     }
   }
-  // Standalone project/team objects with id + name (no prefix)
-  if (typeof obj.id === 'string' && typeof obj.name === 'string') {
-    // Can't tell what entity type without more context — skip to avoid wrong links.
-  }
-
   for (const value of Object.values(obj)) {
     collectFromToolResult(value, out);
   }
@@ -114,38 +90,24 @@ export function collectEntitiesFromToolCalls(
   return Array.from(map.values());
 }
 
-/** Escape a string so it is safe to use inside a RegExp. */
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-/**
- * Post-process Markdown emitted by the model: turn mentions of known
- * entities into Markdown links. Matches are whole-word, case-insensitive,
- * and skip text that is already inside a Markdown link or code span.
- *
- * CVE IDs are linked to the NVD for external reference regardless of
- * whether they appeared in a tool result — the format alone is unambiguous.
- */
+// Linkify known-entity mentions (whole-word, case-insensitive) plus any CVE ID,
+// skipping text already inside a Markdown link or code span.
 export function linkifyAssistantMarkdown(
   content: string,
   entities: ReadonlyArray<LinkableEntity>,
 ): string {
   if (!content) return content;
 
-  // Split by code spans / code fences / existing links so we only touch
-  // plain text. Anything that looks like [..](..) or `..` or ```..``` is
-  // passed through untouched. We split on a regex with a capturing group
-  // so the split result alternates plain-text | skipped-segment.
-  // The `[\s\S]*?` non-greedy match is bounded by the literal closing fence;
-  // chat messages are size-capped on the server (CHAT_MAX_MESSAGE_LENGTH), so
-  // worst-case O(n²) backtracking remains negligible. Manually reviewed for
-  // ReDoS — see SonarQube hotspot S5852.
+  // Split on code spans/fences/existing links (captured) so only plain-text
+  // segments at even indices get rewritten.
   const skipPattern = /(\[[^\]]*\]\([^)]*\)|```[\s\S]*?```|`[^`]*`)/g;
   const segments = content.split(skipPattern);
 
-  // Sort entities longest first so "acme-api-v2" wins over "acme-api"
-  // when both could match.
+  // Longest first so "acme-api-v2" wins over "acme-api".
   const sorted = [...entities].sort((a, b) => b.priority - a.priority);
 
   const linkifyCves = (text: string): string =>
@@ -158,8 +120,7 @@ export function linkifyAssistantMarkdown(
     let result = segment;
     for (const entity of sorted) {
       const escaped = escapeRegExp(entity.text);
-      // Match as a whole token. Use non-word boundaries that also exclude `/`
-      // and `.` so we don't rewrite text inside URLs or version strings.
+      // Whole-token match; boundaries exclude `/` and `.` to skip URLs and versions.
       const regex = new RegExp(
         `(^|[^A-Za-z0-9_\\-./])(${escaped})(?=[^A-Za-z0-9_\\-./]|$)`,
         'gi',
@@ -168,12 +129,7 @@ export function linkifyAssistantMarkdown(
         return `${lead}${entity.markdown}`;
       });
     }
-    // Then linkify bare CVE IDs to NVD — but ONLY over text the entity pass
-    // left as plain text. A finding whose anchor is a CVE (and whose href
-    // may repeat the CVE in a query param) has just been turned into a
-    // Markdown link; re-splitting on the same skip pattern keeps the CVE
-    // pass from rewriting a CVE inside that freshly-inserted link, which
-    // would otherwise produce nested, broken Markdown and a dead deep-link.
+    // Re-split before the CVE pass so it skips links the entity pass just inserted.
     return result
       .split(skipPattern)
       .map((seg, idx) => (idx % 2 === 0 ? linkifyCves(seg) : seg))
@@ -181,7 +137,6 @@ export function linkifyAssistantMarkdown(
   };
 
   for (let i = 0; i < segments.length; i += 1) {
-    // Even indices = plain text; odd indices = skipped segments (links / code).
     if (i % 2 === 0) {
       segments[i] = linkifyText(segments[i]);
     }

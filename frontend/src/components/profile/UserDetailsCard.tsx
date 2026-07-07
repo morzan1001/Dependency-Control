@@ -28,7 +28,7 @@ export function UserDetailsCard({ user, notificationChannels, appConfig }: Reado
   const [mattermostUsername, setMattermostUsername] = useState(user?.mattermost_username || '');
   const [prevUserId, setPrevUserId] = useState<string | undefined>(user?.id);
 
-  // Sync state when user prop changes (React 19 pattern: adjust state during render)
+  // Reset form fields when a different user loads
   if (user && user.id !== prevUserId) {
     setPrevUserId(user.id);
     setUsername(user.username || '');

@@ -65,8 +65,7 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
   const [resetLink, setResetLink] = useState<string | null>(null);
 
-  // Fetch every project (paging past the first page) so a user's membership
-  // is not silently truncated to the first 100 projects in large orgs.
+  // Fetch all projects (paged) so membership isn't truncated in large orgs.
   const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useProjectsDropdown();
 
   const projects = projectsData?.items || [];
@@ -78,7 +77,6 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
   const resetPasswordMutation = useAdminResetPassword();
   const disable2FAMutation = useAdminDisable2FA();
 
-  // Helper to handle mutation executions with toasts
   const handleUpdate = (id: string, data: UserUpdate) => {
     updateUserMutation.mutate({ id, data }, {
         onSuccess: () => {
@@ -137,7 +135,6 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
   const getUserProjects = (userId: string) => {
     if (!projects) return [];
 
-    // Find teams this user belongs to
     const userTeamIds = teams
       ? teams.filter(t => t.members?.some(m => m.user_id === userId)).map(t => t.id)
       : [];

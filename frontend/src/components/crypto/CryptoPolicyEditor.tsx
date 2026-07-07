@@ -13,17 +13,9 @@ import type {
 } from "@/types/cryptoPolicy";
 
 interface Props {
-  /**
-   * Rules to display. In merged mode this is the *effective* list (system
-   * rules with overrides applied); the editor diffs against `systemRules`
-   * on save to emit only the override delta.
-   */
+  // Effective rules (system + overrides) in merged mode; diffed against systemRules on save.
   initialRules: CryptoRule[];
-  /**
-   * When provided, the editor renders a Status column (System / Overridden
-   * / Custom), exposes a "Revert" action per overridden row, and `onSave`
-   * receives only the rules that differ from the system baseline.
-   */
+  // When set, enables merged mode: Status column, per-row Revert, and onSave emits only the override delta.
   systemRules?: CryptoRule[];
   onSave: (rules: CryptoRule[]) => Promise<void>;
   onResetOverride?: () => Promise<void>;
@@ -126,13 +118,7 @@ export function CryptoPolicyEditor({
   initialRules, systemRules, onSave, onResetOverride, readOnly, title, subtitle,
 }: Props) {
   const [rules, setRules] = useState<CryptoRule[]>(initialRules);
-  // Resync local editor state whenever the parent supplies a fresh rule set
-  // (e.g. after "Reset all overrides" refetches, or a concurrent edit by
-  // another admin). useState only reads `initialRules` on the first render, so
-  // without this the table would keep showing stale rows and Save would
-  // re-create a just-deleted override. React-query reuses the same array
-  // reference when the refetched data is unchanged, so an in-progress edit is
-  // only discarded when the server data actually changed.
+  // Resync editor state when the parent supplies a new initialRules reference (useState only reads it once).
   const [syncedRules, setSyncedRules] = useState<CryptoRule[]>(initialRules);
   if (initialRules !== syncedRules) {
     setSyncedRules(initialRules);
@@ -176,9 +162,6 @@ export function CryptoPolicyEditor({
   const handleSave = async () => {
     setSaving(true);
     try {
-      // In merged mode emit only the override delta (rules that differ from
-      // the system baseline). In standalone mode emit the rules as-is — the
-      // system-policy admin page uses that.
       const toEmit = mergedMode
         ? rules.filter(r => getRuleStatus(r, systemMap) !== "system")
         : rules;

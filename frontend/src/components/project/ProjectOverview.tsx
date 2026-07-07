@@ -15,7 +15,6 @@ import { MAX_SCANS_FOR_CHARTS } from '@/lib/constants'
 import { formatDate } from '@/lib/utils'
 import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
 
-/** Accumulate threat intelligence stats from a scan into the accumulator */
 function accumulateThreatIntel(acc: ThreatIntelligenceStats, ti: ThreatIntelligenceStats) {
   acc.kev_count += ti.kev_count || 0
   acc.kev_ransomware_count += ti.kev_ransomware_count || 0
@@ -28,7 +27,6 @@ function accumulateThreatIntel(acc: ThreatIntelligenceStats, ti: ThreatIntellige
   }
 }
 
-/** Accumulate reachability stats from a scan into the accumulator */
 function accumulateReachability(acc: ReachabilityStats, r: ReachabilityStats) {
   acc.analyzed_count += r.analyzed_count || 0
   acc.reachable_count += r.reachable_count || 0
@@ -39,7 +37,6 @@ function accumulateReachability(acc: ReachabilityStats, r: ReachabilityStats) {
   acc.reachable_high += r.reachable_high || 0
 }
 
-/** Accumulate prioritized counts from a scan into the accumulator */
 function accumulatePrioritized(acc: PrioritizedCounts, p: PrioritizedCounts) {
   acc.total += p.total || 0
   acc.critical += p.critical || 0
@@ -65,17 +62,13 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
 
   const scanList = scans || []
 
-  // Filter scans based on selection
   const filteredScans = scanList.filter((s: Scan) => selectedBranches.includes(s.branch))
 
-  // Count unique pipelines (excluding rescans)
   const uniqueScansCount = filteredScans.filter((s: Scan) => !s.is_rescan).length
 
-  // Calculate Project Stats - aggregate across ALL selected branches
   const projectStats = useMemo(() => {
       if (!filteredScans.length) return null;
 
-      // 1. Group by branch and find latest completed scan for each
       const latestScansByBranch: Record<string, Scan> = {};
 
       filteredScans.forEach((scan: Scan) => {
@@ -97,7 +90,6 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           unknown: scan.stats?.unknown || 0
       }));
 
-      // 2. Aggregate stats across ALL branches' latest scans
       const allBranchScans = Object.values(latestScansByBranch);
 
       const aggregatedStats: {
@@ -110,7 +102,6 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           threat_intel: null, reachability: null, prioritized: null
       };
 
-      // Sum severity counts, take max risk scores
       let maxRisk = 0;
       let maxAdjustedRisk = 0;
       const threatIntelAcc: ThreatIntelligenceStats = {
@@ -180,7 +171,6 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       return { stats: aggregatedStats, branchStats: branchStatsData, latestScansByBranch, branchCount: allBranchScans.length };
   }, [filteredScans]);
 
-  // Branch selector state for enrichment detail cards
   const latestScansByBranch = projectStats?.latestScansByBranch || {};
   const branchNames = Object.keys(latestScansByBranch);
   const [enrichmentBranch, setEnrichmentBranch] = useState<string | null>(null);
@@ -203,8 +193,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
 
   const stats = projectStats?.stats || { critical: 0, high: 0, medium: 0, low: 0, risk_score: 0 }
   const branchStats = projectStats?.branchStats || []
-  
-  // Check if we have actual threat intelligence data (not just empty objects)
+
   const threatIntel = 'threat_intel' in stats ? stats.threat_intel : null
   const hasThreatIntelData = threatIntel && (
     (threatIntel.kev_count ?? 0) > 0 ||
@@ -222,11 +211,9 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
     (reachability.unknown_count ?? 0) > 0
   )
   const hasEnhancedStats = hasThreatIntelData || hasReachabilityData
-  
-  // Trend Data Processing
+
   const sortedScans = [...filteredScans].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-  
-  // Group by date - TrendEntry allows dynamic branch keys
+
   interface TrendEntry {
     date: string;
     [branch: string]: string | number;
@@ -242,7 +229,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       }
       
       const entry = trendMap.get(date)!
-      // If multiple scans for same branch on same day, this will take the last one (due to sort order)
+      // Multiple scans for a branch on the same day: last one wins (sort order).
       entry[scan.branch] = risk
   })
   
@@ -318,7 +305,6 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
         </Card>
       </div>
 
-      {/* Threat Intelligence Dashboard - aggregated across all selected branches */}
       {hasEnhancedStats && (
         <ThreatIntelligenceDashboard stats={stats} branchCount={projectStats?.branchCount} />
       )}
@@ -444,7 +430,6 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
         </div>
       )}
 
-      {/* Post-Processor Intelligence (EPSS/KEV, Reachability) - per branch */}
       {activeBranch && scanResults?.some(r => isPostProcessorResult(r.analyzer_name)) && (
         <div className="space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-2">

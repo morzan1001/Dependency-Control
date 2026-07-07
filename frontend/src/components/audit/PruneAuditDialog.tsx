@@ -12,7 +12,6 @@ interface Props {
 }
 
 function defaultCutoffISO(): string {
-  // 180 days ago, at 00:00 UTC
   const d = new Date();
   d.setUTCDate(d.getUTCDate() - 180);
   d.setUTCHours(0, 0, 0, 0);
@@ -25,7 +24,6 @@ export function PruneAuditDialog({ open, onClose, onConfirm, busy }: Props) {
 
   const handleConfirm = async () => {
     if (!beforeDate) return;
-    // Convert YYYY-MM-DD to ISO 8601 at 00:00 UTC
     const iso = new Date(`${beforeDate}T00:00:00.000Z`).toISOString();
     await onConfirm(iso);
   };

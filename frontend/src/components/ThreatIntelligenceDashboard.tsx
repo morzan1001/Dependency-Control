@@ -1,10 +1,3 @@
-/**
- * Threat Intelligence Dashboard Component
- * 
- * Displays prioritized vulnerability data using EPSS, KEV, and Reachability
- * to help teams focus on the most critical and actionable issues.
- */
-
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Progress } from '@/components/ui/progress'
@@ -76,16 +69,14 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
   const threatIntel = stats.threat_intel
   const reachability = stats.reachability
   const prioritized = stats.prioritized
-  
-  // Calculate key metrics
+
   const totalVulns = stats.critical + stats.high + stats.medium + stats.low
   const actionableCount = prioritized?.actionable_total || 0
   const deprioritizedCount = prioritized?.deprioritized_count || 0
   const reductionPercent = totalVulns > 0 
     ? Math.round((deprioritizedCount / totalVulns) * 100) 
     : 0
-  
-  // If no threat intel data, show a simpler view
+
   if (!threatIntel && !reachability) {
     return (
       <Card className={className}>
@@ -105,7 +96,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
   
   return (
     <div className={`space-y-4 ${className}`}>
-      {/* Priority Overview */}
       <Card>
         <CardHeader className="pb-2">
           <div className="flex items-center justify-between">
@@ -133,7 +123,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {/* Actionable Critical */}
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -160,7 +149,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
               </Tooltip>
             </TooltipProvider>
 
-            {/* Actionable High */}
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -186,7 +174,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
               </Tooltip>
             </TooltipProvider>
 
-            {/* Total Actionable */}
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -212,7 +199,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
               </Tooltip>
             </TooltipProvider>
 
-            {/* Deprioritized */}
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -239,8 +225,7 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
               </Tooltip>
             </TooltipProvider>
           </div>
-          
-          {/* Progress bar showing actionable vs total */}
+
           {totalVulns > 0 && (
             <div className="mt-4 space-y-1">
               <div className="flex justify-between text-xs text-muted-foreground">
@@ -256,9 +241,7 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
         </CardContent>
       </Card>
 
-      {/* Threat Intelligence Details */}
       <div className="grid gap-4 md:grid-cols-2">
-        {/* EPSS/KEV Card */}
         {threatIntel && (
           <Card>
             <CardHeader className="pb-2">
@@ -268,7 +251,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* KEV Status */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <AlertCircle className="h-4 w-4 text-severity-critical" />
@@ -279,7 +261,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
                 </Badge>
               </div>
               
-              {/* Ransomware */}
               {threatIntel.kev_ransomware_count > 0 && (
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
@@ -290,7 +271,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
                 </div>
               )}
               
-              {/* High EPSS */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <TrendingUp className="h-4 w-4 text-severity-high" />
@@ -302,7 +282,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
                 </Badge>
               </div>
               
-              {/* Medium EPSS */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Activity className="h-4 w-4 text-severity-medium" />
@@ -311,7 +290,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
                 <Badge variant="secondary">{threatIntel.medium_epss_count}</Badge>
               </div>
               
-              {/* EPSS Stats */}
               {threatIntel.avg_epss_score !== null && (
                 <div className="pt-2 border-t text-xs text-muted-foreground">
                   <div className="flex justify-between">
@@ -330,7 +308,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
           </Card>
         )}
 
-        {/* Reachability Card */}
         {reachability && reachability.analyzed_count > 0 && (
           <Card>
             <CardHeader className="pb-2">
@@ -340,7 +317,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-4">
-              {/* Reachable */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4 text-severity-critical" />
@@ -351,7 +327,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
                 </Badge>
               </div>
               
-              {/* Likely Reachable */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <AlertCircle className="h-4 w-4 text-severity-high" />
@@ -362,7 +337,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
                 </Badge>
               </div>
               
-              {/* Unreachable */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <CheckCircle2 className="h-4 w-4 text-success" />
@@ -373,7 +347,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
                 </Badge>
               </div>
               
-              {/* Unknown */}
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <Info className="h-4 w-4 text-muted-foreground" />
@@ -382,7 +355,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
                 <Badge variant="secondary">{reachability.unknown_count}</Badge>
               </div>
               
-              {/* Severity breakdown */}
               {(reachability.reachable_critical > 0 || reachability.reachable_high > 0) && (
                 <div className="pt-2 border-t text-xs text-muted-foreground">
                   <div className="flex justify-between">
@@ -400,7 +372,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
         )}
       </div>
 
-      {/* Risk Score Comparison */}
       {stats.adjusted_risk_score !== undefined && stats.adjusted_risk_score !== stats.risk_score && (
         <Card>
           <CardHeader className="pb-2">

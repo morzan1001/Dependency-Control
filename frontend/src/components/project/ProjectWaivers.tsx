@@ -57,7 +57,6 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
 
     const loadMoreRef = useRef<HTMLTableRowElement>(null)
 
-    // Debounced search value
     const debouncedSearch = useDebounce(searchInput, DEBOUNCE_DELAY_MS)
 
     const {
@@ -71,13 +70,11 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
 
     const deleteWaiverMutation = useDeleteWaiver()
 
-    // Flatten paginated data
     const allWaivers = useMemo(() => {
         if (!data?.pages) return []
         return data.pages.flatMap(page => page.items)
     }, [data])
 
-    // Infinite scroll observer
     useEffect(() => {
         const observer = new IntersectionObserver(
             (entries) => {
@@ -110,7 +107,6 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
     }, [deleteWaiverMutation, queryClient, projectId])
 
     const handleSort = (key: string) => {
-        // Map UI keys to API keys
         const apiKey = key === 'expires' ? 'expiration_date' : key
 
         if (sortBy === apiKey) {
@@ -269,7 +265,6 @@ export function ProjectWaivers({ projectId }: ProjectWaiversProps) {
                                     </TableCell>
                                 </TableRow>
                             ))}
-                            {/* Infinite scroll trigger row */}
                             {hasNextPage && (
                                 <TableRow ref={loadMoreRef}>
                                     <TableCell colSpan={6} className="text-center py-4">

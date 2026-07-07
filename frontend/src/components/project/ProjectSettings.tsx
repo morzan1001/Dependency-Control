@@ -97,7 +97,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     project.analyzer_settings || {}
   )
 
-  // Back-compat: fall back to legacy `license_policy` when no per-analyzer setting exists.
+  // Fall back to license_policy when no per-analyzer license setting exists.
   const initialLicenseCompliance = analyzerSettingsState.license_compliance || (
     project.license_policy ? { ...project.license_policy } as Record<string, unknown> : {}
   )
@@ -149,8 +149,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const { data: gitlabInstances } = useGitLabInstances({ active_only: true });
   const { data: githubInstances } = useGitHubInstances({ active_only: true });
 
-  // A project sourced from one CI/CD platform shouldn't show the other's
-  // configuration. We treat the presence of an *_instance_id as the source.
+  // Show only the config for the platform the project was sourced from (by *_instance_id).
   const projectSource: "gitlab" | "github" | "none" = project.github_instance_id
     ? "github"
     : project.gitlab_instance_id

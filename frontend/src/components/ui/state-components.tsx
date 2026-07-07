@@ -1,16 +1,6 @@
-/**
- * Shared UI State Components
- * 
- * Reusable components for loading, error, and empty states.
- * Eliminates duplicate skeleton/error/empty patterns across the application.
- */
-
 import { AlertCircle, FileX, Inbox, SearchX } from 'lucide-react'
 import { Button } from './button'
 
-/**
- * Inline error message (for form fields, etc.)
- */
 export function InlineError({ message, className = '' }: { message: string; className?: string }) {
   return (
     <div className={`flex items-center gap-2 text-destructive text-sm ${className}`}>
@@ -40,9 +30,6 @@ const emptyStateIcons: Record<EmptyStateVariant, typeof Inbox> = {
   file: FileX,
 }
 
-/**
- * Empty state with icon and optional action
- */
 export function EmptyState({
   title = 'No data found',
   description,
@@ -68,10 +55,7 @@ export function EmptyState({
   )
 }
 
-/**
- * No data available
- */
-export function NoData({ 
+export function NoData({
   entityName = 'items',
   className = '' 
 }: { 

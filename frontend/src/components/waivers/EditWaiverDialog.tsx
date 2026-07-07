@@ -41,8 +41,7 @@ function EditWaiverForm({ waiver, onClose }: { waiver: Waiver; onClose: () => vo
             data: {
                 reason,
                 status,
-                // Keep null distinct from undefined: null clears the expiry on PATCH,
-                // undefined would leave it untouched. Empty input → null.
+                // null clears the expiry on PATCH; undefined would leave it untouched.
                 expiration_date: date ? expirationDateInputToIso(date) ?? null : null,
             },
         }, {

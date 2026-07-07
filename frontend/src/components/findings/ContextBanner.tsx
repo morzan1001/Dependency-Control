@@ -1,8 +1,3 @@
-/**
- * Reusable ContextBanner component
- * Displays contextual information with consistent styling (info, warning, danger, success)
- */
-
 import React from 'react'
 
 export type BannerVariant = 'info' | 'warning' | 'danger' | 'success'

@@ -1,10 +1,3 @@
-/**
- * Post-Processor Results Components
- * 
- * Renders EPSS/KEV and Reachability analysis results in a user-friendly format
- * instead of raw JSON.
- */
-
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -39,7 +32,6 @@ import {
 import { getSeverityBadgeVariant } from "@/lib/finding-utils";
 import { formatDateTime } from "@/lib/utils";
 
-// Type definitions
 interface EPSSKEVSummary {
   total_vulnerabilities: number;
   epss_enriched: number;
@@ -114,10 +106,8 @@ interface ReachabilitySummary {
   timestamp: string;
 }
 
-// EPSS/KEV Results Component
 export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
-  // Return the indicator (child) selector so the moving Progress bar is
-  // colored, not the background track (which would make every bar read as full).
+  // Target the Progress indicator, not the track, so bars aren't all rendered full.
   const getMaturityColor = (maturity: string) => {
     switch (maturity) {
       case "weaponized": return "[&>div]:bg-red-600";
@@ -142,7 +132,6 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
 
   return (
     <div className="space-y-6">
-      {/* Summary Stats */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardContent className="pt-6">
@@ -224,7 +213,6 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
         </Card>
       </div>
 
-      {/* Exploit Maturity Distribution */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -256,7 +244,6 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
         </CardContent>
       </Card>
 
-      {/* EPSS Score Distribution */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -297,7 +284,6 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
         </CardContent>
       </Card>
 
-      {/* KEV Details */}
       {data.kev_details.length > 0 && (
         <Card className="border-red-200 dark:border-red-800">
           <CardHeader className="bg-red-50 dark:bg-red-950">
@@ -348,7 +334,6 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
         </Card>
       )}
 
-      {/* High Risk CVEs */}
       {data.high_risk_cves.length > 0 && (
         <Card>
           <CardHeader>
@@ -403,7 +388,6 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
         </Card>
       )}
 
-      {/* Timestamp */}
       <p className="text-xs text-muted-foreground text-right">
         Enriched at: {formatDateTime(data.timestamp)}
       </p>
@@ -411,7 +395,6 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
   );
 }
 
-// Reachability Results Component
 export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
   const totalAnalyzed = 
     data.reachability_levels.confirmed + 
@@ -425,7 +408,6 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
 
   return (
     <div className="space-y-6">
-      {/* Summary Stats */}
       <div className="grid gap-4 md:grid-cols-4">
         <Card>
           <CardContent className="pt-6">
@@ -489,7 +471,6 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
         </Card>
       </div>
 
-      {/* Callgraph Info */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base flex items-center gap-2">
@@ -519,7 +500,6 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
         </CardContent>
       </Card>
 
-      {/* Reachability Distribution */}
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Reachability Analysis Results</CardTitle>
@@ -594,7 +574,6 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
         </CardContent>
       </Card>
 
-      {/* Reachable Vulnerabilities */}
       {data.reachable_vulnerabilities.length > 0 && (
         <Card className="border-red-200 dark:border-red-800">
           <CardHeader className="bg-red-50 dark:bg-red-950">
@@ -653,7 +632,6 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
         </Card>
       )}
 
-      {/* Unreachable Vulnerabilities */}
       {data.unreachable_vulnerabilities.length > 0 && (
         <Card className="border-green-200 dark:border-green-800">
           <CardHeader className="bg-green-50 dark:bg-green-950">
@@ -690,7 +668,6 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
         </Card>
       )}
 
-      {/* Timestamp */}
       <p className="text-xs text-muted-foreground text-right">
         Analyzed at: {formatDateTime(data.timestamp)}
       </p>
@@ -698,7 +675,6 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
   );
 }
 
-// Render the appropriate component for post-processor results
 export function PostProcessorResultCard({ analyzerName, result }: { analyzerName: string; result: unknown }) {
   const getIcon = () => {
     switch (analyzerName) {

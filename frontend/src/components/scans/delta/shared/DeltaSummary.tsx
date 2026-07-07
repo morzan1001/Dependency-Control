@@ -1,6 +1,3 @@
-/** Single-line totals strip used above the item list in the crypto and
- *  components tabs. `changed` is optional — only components has it. */
-
 interface Props {
   readonly added: number;
   readonly removed: number;

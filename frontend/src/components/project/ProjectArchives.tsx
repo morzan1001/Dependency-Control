@@ -154,7 +154,6 @@ export function ProjectArchives({ projectId }: ProjectArchivesProps) {
           </div>
         </CardHeader>
         <CardContent>
-          {/* Filters */}
           <div className="flex flex-wrap items-end gap-3 mb-4">
             <div className="w-48">
               <label htmlFor="archive-branch-filter" className="text-xs font-medium text-muted-foreground mb-1 block">Branch</label>

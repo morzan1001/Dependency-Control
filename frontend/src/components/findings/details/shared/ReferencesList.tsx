@@ -1,15 +1,10 @@
 import { ExternalLink } from "lucide-react"
 
 interface ReferencesListProps {
-    /** Array of URLs to display */
     readonly urls: string[]
-    /** Use compact (smaller text) styling */
     readonly compact?: boolean
 }
 
-/**
- * Reusable component for displaying a list of clickable reference links.
- */
 export function ReferencesList({ urls, compact = false }: ReferencesListProps) {
     if (!urls || urls.length === 0) return null
 

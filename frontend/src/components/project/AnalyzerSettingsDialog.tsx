@@ -29,9 +29,7 @@ interface AnalyzerSettingsDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
   schema: AnalyzerSettingsSchema
-  /** Current values for this analyzer (from project.analyzer_settings[analyzer_id]). */
   currentValues: Record<string, unknown>
-  /** Called when user clicks Save. Receives the full settings dict for this analyzer. */
   onSave: (values: Record<string, SettingValue>) => void
   isSaving?: boolean
   canEdit: boolean
@@ -46,11 +44,7 @@ export function AnalyzerSettingsDialog({
   isSaving,
   canEdit,
 }: Readonly<AnalyzerSettingsDialogProps>) {
-  // Values are initialized lazily from the schema + currentValues the first
-  // time the dialog mounts. To "reset" values when the dialog is reopened or
-  // when the analyzer changes, the parent passes a `key` prop that forces a
-  // remount (see ProjectSettings.tsx). Avoids the setState-in-effect anti-pattern:
-  // https://react.dev/learn/you-might-not-need-an-effect
+  // Lazily initialized; parent passes a `key` to force a remount when values must reset.
   const [values, setValues] = useState<Record<string, SettingValue>>(() =>
     initializeValues(schema, currentValues)
   )

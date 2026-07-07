@@ -92,8 +92,7 @@ function DependencyNode({ node, level, onSelect }: Readonly<DependencyNodeProps>
                 )}
               </Tooltip>
             )}
-            
-            {/* Source information */}
+
             {sourceInfo && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -169,7 +168,6 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
     ? tree?.filter(n => n.direct) 
     : tree
 
-  // Separate direct and transitive for display
   const directDeps = filteredTree?.filter(n => n.direct) || []
   const transitiveDeps = filteredTree?.filter(n => !n.direct) || []
 
@@ -221,7 +219,6 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
           if (filteredTree && filteredTree.length > 0) {
             return (
             <div className="space-y-4">
-              {/* Summary */}
               <div className="flex items-center gap-4 p-4 bg-muted rounded-lg">
                 <div className="flex items-center gap-2">
                   <Shield className="h-5 w-5 text-green-500" />
@@ -243,7 +240,6 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
                 </div>
               </div>
 
-              {/* Direct Dependencies Section */}
               {directDeps.length > 0 && (
                 <div>
                   <h4 className="text-sm font-medium text-muted-foreground mb-2">Direct Dependencies</h4>
@@ -260,7 +256,6 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
                 </div>
               )}
 
-              {/* Transitive Dependencies Section */}
               {!showDirectOnly && transitiveDeps.length > 0 && (
                 <div>
                   <h4 className="text-sm font-medium text-muted-foreground mb-2">Transitive Dependencies</h4>

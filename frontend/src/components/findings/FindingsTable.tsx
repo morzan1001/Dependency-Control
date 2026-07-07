@@ -22,11 +22,9 @@ import { getSourceInfo } from '@/lib/finding-utils'
 import { ScanContext } from './details/SastDetailsView'
 import { resolveRelatedFindingInRows, fetchRelatedFinding } from './related-finding-rows'
 
-// Stable keys for the loading skeleton rows. Using fixed string keys avoids
-// the "array index as key" anti-pattern while still rendering a stable list.
+// Fixed string keys avoid the array-index-as-key anti-pattern.
 const SKELETON_ROW_KEYS = Array.from({ length: 10 }, (_, i) => `skeleton-row-${i}`)
 
-// Sub-shape of `Finding.details` we touch when computing the display ID.
 type FindingWithDetails = {
     id: string
     type?: string
@@ -36,13 +34,7 @@ type FindingWithDetails = {
     }
 }
 
-/**
- * Compute the user-visible ID for a finding row.
- *
- * Vulnerability and quality findings can aggregate multiple underlying issues;
- * we show "Multiple …" when there is more than one, the single issue's id when
- * there is exactly one, and otherwise fall back to the finding's own id.
- */
+// Aggregated findings show "Multiple …"; a single issue shows its id; else the finding's own id.
 function getDisplayId(finding: FindingWithDetails): string | undefined {
     const vulnCount = finding.details?.vulnerabilities?.length ?? 0
     if (finding.type === 'vulnerability') {
@@ -170,12 +162,7 @@ interface FindingsTableProps {
     readonly licenseCategory?: string;
     /** Hide INFO-level findings */
     readonly hideInfo?: boolean;
-    /**
-     * Which side of the active/waived split this table shows.
-     * - "active" (default): only un-waived findings — the main list users care about.
-     * - "waived": only waived findings — used for the secondary "what is being suppressed" list.
-     * - "all": both. Kept as an escape hatch; not used by the standard scan view.
-     */
+    /** Active/waived split: "active" (default) un-waived only, "waived" waived only, "all" both. */
     readonly waivedFilter?: "active" | "waived" | "all";
 }
 
@@ -250,8 +237,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                 sort_order: sortOrder,
                 ...(licenseCategory ? { license_category: licenseCategory } : {}),
                 ...(hideInfo ? { hide_info: true } : {}),
-                // "all" is the escape hatch — omit the param so the backend
-                // returns both waived and active findings.
+                // "all": omit the param so the backend returns both waived and active.
                 ...(waivedFilter === "active" ? { waived: false } : {}),
                 ...(waivedFilter === "waived" ? { waived: true } : {}),
             });
@@ -273,7 +259,6 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         ? allRows.findIndex(f => f.severity?.toUpperCase() === severity.toUpperCase())
         : -1
 
-    // Scroll to first finding matching the target severity (from URL param)
     useEffect(() => {
         if (!severity || hasScrolledRef.current || scrollTargetIndex < 0) return
         const targetRow = scrollTargetRef.current
@@ -285,8 +270,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         }
     }, [severity, scrollTargetIndex])
 
-    // IntersectionObserver on sentinel element triggers loading the next page
-    // when the user scrolls near the bottom of the table.
+    // Load the next page when the sentinel nears the viewport.
     useEffect(() => {
         const sentinel = sentinelRef.current
         if (!sentinel) return
@@ -383,9 +367,6 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                     <TableBody>
                         {allRows.map((finding, index) => {
                             const sourceInfo = getSourceInfo(finding?.source_type)
-                            // Attach the scroll-to ref to the first row whose severity matches
-                            // the URL param. The index is derived purely from `allRows` above
-                            // (no ref reads during render).
                             const isScrollTarget = index === scrollTargetIndex
                             const rowClass = `border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer ${
                                 finding.type === 'system_warning' ? 'bg-destructive/5 hover:bg-destructive/10 border-l-2 border-l-destructive' : ''

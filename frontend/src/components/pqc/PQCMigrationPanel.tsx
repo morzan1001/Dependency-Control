@@ -58,23 +58,16 @@ function SummaryCard({ label, value, color }: { label: string; value: number; co
   );
 }
 
-// Name of the sibling tab that hosts <ComplianceReportsPanel />. It lives in an
-// uncontrolled Radix <Tabs> higher up (CryptoAnalyticsTab), so while the user is
-// on the PQC Migration tab the compliance panel — and the only listener for the
-// "goto-compliance-reports-tab" event — is UNMOUNTED. We therefore have to make
-// the tab active first (so the panel mounts and attaches its listener) and only
-// then dispatch the prefill event.
+// The compliance panel and its "goto-compliance-reports-tab" listener are unmounted until this tab is active, so activate the tab before dispatching the prefill event.
 const COMPLIANCE_TAB_VALUE = "compliance-reports";
 
 function activateComplianceTab(): boolean {
-  // Radix builds trigger ids as `${baseId}-trigger-${value}` (react-tabs), so the
-  // value suffix is a stable contract even though the generated baseId is opaque.
+  // Radix trigger ids end with `-trigger-${value}`; the value suffix is stable though the baseId is opaque.
   const trigger = document.querySelector<HTMLElement>(
     `[role="tab"][id$="-trigger-${COMPLIANCE_TAB_VALUE}"]`,
   );
   if (trigger) {
-    // Radix activates a tab on mousedown (button 0) / focus, not on a bare
-    // click(), so dispatch the events a real user interaction would produce.
+    // Radix activates a tab on mousedown/focus, not a bare click().
     trigger.dispatchEvent(
       new MouseEvent("mousedown", { bubbles: true, cancelable: true, button: 0 }),
     );
@@ -89,10 +82,7 @@ function ExportAsReportButton() {
   const handleClick = () => {
     localStorage.setItem("prefill_compliance_framework", "pqc-migration-plan");
     activateComplianceTab();
-    // The compliance panel attaches its event listener in a mount effect (which
-    // runs after paint), so a synchronous dispatch would be missed. Retry until
-    // the panel consumes the intent (its handler clears the localStorage key) or
-    // we give up. Extra dispatches are harmless once the key is gone.
+    // The panel attaches its listener in a mount effect (after paint), so retry until it consumes the intent (clears the key) or we give up.
     let attempts = 0;
     const fire = () => {
       window.dispatchEvent(new CustomEvent("goto-compliance-reports-tab"));

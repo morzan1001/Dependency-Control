@@ -2,22 +2,13 @@ import { LucideIcon } from "lucide-react"
 import { ReactNode } from "react"
 
 interface DetailSectionProps {
-    /** The label/title for this section */
     readonly label: string
-    /** Optional Lucide icon component */
     readonly icon?: LucideIcon
-    /** The content to display */
     readonly children: ReactNode
-    /** Use mb-1 (tight) or mb-2 (normal) spacing. Default: normal */
     readonly compact?: boolean
-    /** Additional className for the container */
     readonly className?: string
 }
 
-/**
- * Reusable detail section with consistent label styling.
- * Used across all finding detail views.
- */
 export function DetailSection({
     label,
     icon: Icon,

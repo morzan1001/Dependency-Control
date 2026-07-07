@@ -4,37 +4,24 @@ import { ExternalLink, LucideIcon } from "lucide-react"
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline"
 
 interface BadgeItem {
-    /** The text to display */
     label: string
-    /** Optional URL to make the badge a link */
     url?: string
-    /** Custom variant override */
     variant?: BadgeVariant
-    /** Custom class for styling */
     className?: string
 }
 
 interface BadgeListProps {
-    /** Array of items to render as badges */
     readonly items: (string | BadgeItem)[]
-    /** Default variant for all badges */
     readonly variant?: BadgeVariant
-    /** Optional icon to show before each badge label */
     readonly icon?: LucideIcon
-    /** URL builder function for simple string items */
     readonly buildUrl?: (item: string) => string
-    /** Label transformer for simple string items */
     readonly formatLabel?: (item: string) => string
-    /** Custom className for badges */
     readonly badgeClassName?: string
 }
 
-/**
- * Reusable badge list component for displaying tags, categories, references, etc.
- */
-export function BadgeList({ 
-    items, 
-    variant = "secondary", 
+export function BadgeList({
+    items,
+    variant = "secondary",
     icon: Icon,
     buildUrl,
     formatLabel,

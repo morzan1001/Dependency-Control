@@ -35,7 +35,7 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
 
   const updateUserMutation = useUpdateUser();
 
-  // Sync selectedPermissions when user changes or dialog opens (React 19 pattern: adjust state during render)
+  // Adjust state during render to resync permissions when the user or open state changes.
   if (user && (user.id !== prevUserId || (open && !prevOpen))) {
     setPrevUserId(user.id);
     setPrevOpen(open);
@@ -108,7 +108,6 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
 
         {user && (
           <div className="grid gap-6 py-4">
-              {/* Preset Buttons */}
               <div className="space-y-2">
                 <Label className="text-sm font-medium">Quick Presets</Label>
                 <div className="flex flex-wrap gap-2">
@@ -154,7 +153,6 @@ export function UserPermissionsDialog({ user, open, onOpenChange }: UserPermissi
                 </p>
               </div>
 
-              {/* Permission Groups */}
               {PERMISSION_GROUPS.map((group) => {
                   const groupPermIds = group.permissions.map(p => p.id);
                   const allSelected = isGroupFullySelected(groupPermIds);

@@ -1,16 +1,5 @@
-/**
- * Shared EPSS / KEV / exploit-maturity table cells.
- *
- * These were copy-pasted between the analytics ImpactAnalysis and
- * VulnerabilityHotspots tables (audit #125). Extracting them here removes the
- * duplication and lets the consuming tables hoist a single <TooltipProvider>
- * around the card instead of re-instantiating one per cell (5x per row).
- *
- * The two tables render subtly different variants (the hotspots EPSS cell shows
- * a "Top X%" sub-line and a different tooltip label; the impact-analysis KEV
- * ransomware badge carries a text label while the hotspots one is icon-only),
- * so the exact per-site output is preserved via explicit props.
- */
+// Shared EPSS/KEV/exploit-maturity cells for the impact-analysis and hotspots
+// tables; per-site output differences are preserved via explicit props.
 import { Badge } from '@/components/ui/badge'
 import {
   Tooltip,
@@ -30,15 +19,10 @@ function getEpssColorClass(score: number): string {
 interface EpssCellProps {
   score?: number | null
   percentile?: number | null
-  /**
-   * 'hotspot' renders the "Top X%" sub-line and the "EPSS: … probability of
-   * exploitation" tooltip label; 'impact' omits the sub-line and uses the
-   * "Probability of exploitation in next 30 days" label.
-   */
+  /** 'hotspot' adds the "Top X%" sub-line and a different tooltip label; 'impact' omits them. */
   variant: 'impact' | 'hotspot'
 }
 
-/** Renders the EPSS score cell with tooltip. */
 export function EpssCell({ score, percentile, variant }: Readonly<EpssCellProps>) {
   if (score === undefined || score === null) {
     return <span className="text-muted-foreground text-xs">-</span>
@@ -77,12 +61,10 @@ interface KevCellProps {
   kevCount?: number | null
   ransomwareUse?: boolean | null
   dueDate?: string | null
-  /** When true the ransomware badge carries a "Ransomware" text label (impact
-   * analysis); when false it is icon-only (hotspots). */
+  /** When true the ransomware badge carries a "Ransomware" text label; when false it is icon-only. */
   ransomwareLabel?: boolean
 }
 
-/** Renders the KEV (Known Exploited Vulnerabilities) cell with tooltip. */
 export function KevCell({
   hasKev,
   kevCount,
@@ -123,10 +105,7 @@ export function KevCell({
   )
 }
 
-/**
- * Renders an exploit-maturity badge. Returns null for unknown/absent maturity
- * so callers can drop it directly inside a tooltip body.
- */
+/** Returns null for unknown/absent maturity so callers can drop it directly inside a tooltip body. */
 export function ExploitMaturityBadge({ maturity }: Readonly<{ maturity?: string }>) {
   if (!maturity || maturity === 'unknown') return null
   const colors: Record<string, string> = {

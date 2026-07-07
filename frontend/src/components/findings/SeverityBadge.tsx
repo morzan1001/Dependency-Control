@@ -1,8 +1,3 @@
-/**
- * Reusable SeverityBadge component
- * Displays severity with consistent styling and icons across the application
- */
-
 import { Badge } from '@/components/ui/badge'
 import {
   AlertOctagon,

@@ -22,11 +22,9 @@ function extractRuleId(finding: Finding): string | undefined {
   return finding.details?.rule_id || finding.details?.check_id || undefined
 }
 
-/** Convert an ISO timestamp or yyyy-mm-dd string to the yyyy-mm-dd value an
- * `<input type="date">` expects. Returns '' for empty/invalid input. */
+// Normalize an ISO timestamp or yyyy-mm-dd string to the yyyy-mm-dd value an `<input type="date">` expects; '' if empty/invalid.
 function isoToDateInput(iso: string | null | undefined): string {
   if (!iso) return ''
-  // Already yyyy-mm-dd (10 chars, matches date-only format)
   if (/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso
   const parsed = new Date(iso)
   if (Number.isNaN(parsed.getTime())) return ''

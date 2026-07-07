@@ -22,7 +22,6 @@ interface ImpactAnalysisProps {
 export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisProps>) {
   const { data: results, isLoading } = useImpactAnalysis(20)
 
-  // Calculate max impact score for relative sizing
   const maxImpact = results?.reduce((max, r) => Math.max(max, r.fix_impact_score), 0) || 1
 
   const getExploitMaturityColor = (maturity?: string) => {
@@ -37,7 +36,6 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
     return colors[maturity] || 'text-muted-foreground'
   }
 
-  // Helper to render priority reason with icon instead of emoji
   const renderPriorityReason = (reason: string) => {
     const [type, ...rest] = reason.includes(':') ? reason.split(':') : ['', reason]
     const text = rest.join(':').trim() // Rejoin in case text contains colons
@@ -90,7 +88,6 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
         )}
         {!isLoading && results && results.length > 0 && (
           <div className="space-y-4">
-            {/* Top 3 Priority Fixes */}
             <div className="grid gap-4 md:grid-cols-3">
               {results.slice(0, 3).map((r, index) => {
                 let borderClass = 'border-yellow-500 border-2'
@@ -133,7 +130,6 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                         </Badge>
                       )}
                     </div>
-                    {/* EPSS/KEV indicators */}
                     <div className="flex items-center gap-2 mt-2 flex-wrap">
                       {r.has_kev && (
                           <Tooltip>
@@ -177,7 +173,6 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                           </Tooltip>
                       )}
                     </div>
-                    {/* Priority Reasons */}
                     {r.priority_reasons && r.priority_reasons.length > 0 && (
                       <div className="mt-2 pt-2 border-t border-muted">
                         <ul className="text-xs text-muted-foreground space-y-0.5">
@@ -193,7 +188,6 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
               })}
             </div>
 
-            {/* Full Table */}
             <Table>
               <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
                 <TableRow>

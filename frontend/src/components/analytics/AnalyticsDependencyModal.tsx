@@ -57,8 +57,7 @@ import {
 } from "lucide-react"
 import { getSeverityBgColor, advisoryUrl, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
 
-// Rank a severity for sorting; higher = more severe. Derived from the canonical
-// SEVERITY_ORDER (audit #188) so it can never drift from the shared palette.
+// Higher = more severe; derived from SEVERITY_ORDER to stay in sync with the shared palette.
 function severityRank(severity?: string): number {
   const idx = SEVERITY_ORDER.indexOf((severity?.toUpperCase() ?? 'UNKNOWN') as Severity)
   return idx === -1 ? 0 : SEVERITY_ORDER.length - idx
@@ -102,12 +101,7 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
-/**
- * Only allow http(s) URLs to be used as an href. Metadata links (homepage,
- * repository, download, license, deps.dev links) originate from third-party
- * package registries that a malicious package fully controls, so a
- * `javascript:`/`data:` URI must never end up as a clickable link.
- */
+// Only allow http(s) hrefs; metadata URLs come from untrusted registries (block javascript:/data:).
 function safeHref(url?: string | null): string | undefined {
   return url && (url.startsWith('http://') || url.startsWith('https://')) ? url : undefined
 }
@@ -127,7 +121,6 @@ function InfoRow({
 }) {
   if (!value) return null
 
-  // Only use href if it's a valid absolute URL
   const validHref = safeHref(href)
 
   return (
@@ -155,7 +148,6 @@ function InfoRow({
   )
 }
 
-/** Resolve the badge variant for a license category */
 function getLicenseBadgeVariant(category?: string): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (category === 'permissive' || category === 'public_domain') return 'default'
   if (category === 'weak_copyleft') return 'secondary'
@@ -163,7 +155,6 @@ function getLicenseBadgeVariant(category?: string): 'default' | 'secondary' | 'd
   return 'outline'
 }
 
-/** Scorecard display sub-component */
 function ScorecardDisplay({ metadata }: { metadata: DependencyMetadata }) {
   const scorecard = metadata.deps_dev?.scorecard
   if (!scorecard) return null
@@ -206,7 +197,6 @@ function ScorecardDisplay({ metadata }: { metadata: DependencyMetadata }) {
   )
 }
 
-// Dependency Metadata Section Component
 function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata }) {
   const [showDetails, setShowDetails] = useState(false)
 
@@ -226,7 +216,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
   
   return (
     <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
-      {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1 min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -249,7 +238,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
           )}
         </div>
         
-        {/* Quick Stats - Only vulnerability count (project count shown in table) */}
         <div className="flex items-center gap-3 flex-shrink-0">
           {metadata.total_vulnerability_count > 0 && (
             <div className="text-center text-destructive">
@@ -260,7 +248,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
         </div>
       </div>
 
-      {/* Known Advisories Warning - Always visible when present */}
       {metadata.deps_dev?.known_advisories && metadata.deps_dev.known_advisories.length > 0 && (
         <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-md">
           <AlertOctagon className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
@@ -293,7 +280,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
         </div>
       )}
 
-      {/* deps.dev Stats Grid - Always visible */}
       {hasDepsDevData && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {metadata.deps_dev?.stars !== undefined && (
@@ -335,10 +321,8 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
         </div>
       )}
 
-      {/* Scorecard - Always visible */}
       <ScorecardDisplay metadata={metadata} />
 
-      {/* External Links - Always visible */}
       {hasExternalLinks && (
         <div className="flex flex-wrap gap-2">
           {homepageHref && (
@@ -380,7 +364,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
         </div>
       )}
 
-      {/* License Risks - Always visible when present */}
       {metadata.license_risks && metadata.license_risks.length > 0 && (
         <div className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-md">
           <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
@@ -400,7 +383,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
         </div>
       )}
 
-      {/* Collapsible Details - For less important info */}
       <Collapsible open={showDetails} onOpenChange={setShowDetails}>
         <CollapsibleTrigger asChild>
           <Button variant="ghost" size="sm" className="w-full justify-between">
@@ -411,7 +393,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent className="space-y-4 pt-4">
-          {/* Package Identity */}
           {metadata.purl && (
             <div className="space-y-1">
               <h4 className="text-sm font-medium flex items-center gap-2">
@@ -424,12 +405,10 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
             </div>
           )}
 
-          {/* Group */}
           {metadata.group && (
             <InfoRow icon={Tag} label="Group" value={metadata.group} />
           )}
 
-          {/* Maintainers */}
           {hasMaintainerInfo && (
             <div className="space-y-1">
               <h4 className="text-sm font-medium flex items-center gap-2">
@@ -440,7 +419,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
             </div>
           )}
 
-          {/* deps.dev Links */}
           {depsDevLinks.length > 0 && (
             <div className="space-y-2">
               <h4 className="text-sm font-medium">Additional Links</h4>
@@ -462,7 +440,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
             </div>
           )}
 
-          {/* License Details */}
           {metadata.license && licenseHref && (
             <div className="space-y-1">
               <h4 className="text-sm font-medium flex items-center gap-2">
@@ -481,7 +458,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
             </div>
           )}
 
-          {/* Published Date */}
           {metadata.deps_dev?.published_at && (
             <InfoRow
               icon={Calendar}
@@ -494,7 +470,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
             />
           )}
 
-          {/* Enrichment Sources */}
           {metadata.enrichment_sources && metadata.enrichment_sources.length > 0 && (
             <p className="text-xs text-muted-foreground pt-2 border-t">
               Data enriched from: {metadata.enrichment_sources.map(formatEnrichmentSource).join(", ")}
@@ -506,7 +481,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
   )
 }
 
-// Main Modal Component
 export function AnalyticsDependencyModal({
   component, 
   version,
@@ -573,7 +547,6 @@ export function AnalyticsDependencyModal({
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto space-y-6 pr-2">
-          {/* Metadata Section */}
           {isLoadingMetadata ? (
             <div className="space-y-3">
               <Skeleton className="h-8 w-3/4" />
@@ -583,7 +556,6 @@ export function AnalyticsDependencyModal({
             <DependencyMetadataSection metadata={metadata} />
           ) : null}
 
-          {/* Findings Section */}
           <div className="space-y-3">
             <h3 className="text-lg font-medium flex items-center gap-2">
               <Shield className="h-5 w-5" />
@@ -688,7 +660,6 @@ export function AnalyticsDependencyModal({
           </div>
         </div>
 
-        {/* Finding Details Modal */}
         {selectedFinding && (
           <FindingDetailsModal
             finding={selectedFinding}
@@ -706,7 +677,6 @@ export function AnalyticsDependencyModal({
               }
             }}
             onNavigate={() => {
-              // Close both modals when navigating
               setFindingModalOpen(false)
               setSelectedFinding(null)
               onOpenChange(false)
