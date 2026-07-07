@@ -129,6 +129,43 @@ class TestNormalizeTrufflehog:
         self.agg.aggregate("trufflehog", result)
         assert len(self.agg.findings) == 2
 
+    def test_prefers_detector_name_over_numeric_detector_type(self):
+        """TruffleHog v3 emits DetectorType as a numeric enum ordinal and the
+        human-readable name in DetectorName. The normalizer must prefer
+        DetectorName so the leaked credential type stays recoverable."""
+        result = {
+            "findings": [
+                {
+                    "DetectorName": "AWS",
+                    "DetectorType": "2",
+                    "Raw": "AKIAIOSFODNN7EXAMPLE",
+                    "SourceMetadata": {"Data": {"Filesystem": {"file": "config/aws.env"}}},
+                }
+            ]
+        }
+        self.agg.aggregate("trufflehog", result)
+        f = list(self.agg.findings.values())[0]
+        assert f.details["detector"] == "AWS"
+        assert "AWS" in f.description
+        assert "AWS" in f.id
+        # The numeric ordinal must not leak into user-visible fields.
+        assert f.description == "Secret detected: AWS"
+
+    def test_falls_back_to_detector_type_when_no_name(self):
+        """When DetectorName is absent, fall back to DetectorType."""
+        result = {
+            "findings": [
+                {
+                    "DetectorType": "AWS",
+                    "Raw": "test",
+                    "SourceMetadata": {"Data": {}},
+                }
+            ]
+        }
+        self.agg.aggregate("trufflehog", result)
+        f = list(self.agg.findings.values())[0]
+        assert f.details["detector"] == "AWS"
+
     def test_empty_raw_uses_nohash(self):
         result = {
             "findings": [

@@ -116,14 +116,16 @@ interface ReachabilitySummary {
 
 // EPSS/KEV Results Component
 export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
+  // Return the indicator (child) selector so the moving Progress bar is
+  // colored, not the background track (which would make every bar read as full).
   const getMaturityColor = (maturity: string) => {
     switch (maturity) {
-      case "weaponized": return "bg-red-600";
-      case "active": return "bg-red-500";
-      case "high": return "bg-orange-500";
-      case "medium": return "bg-yellow-500";
-      case "low": return "bg-green-500";
-      default: return "bg-gray-400";
+      case "weaponized": return "[&>div]:bg-red-600";
+      case "active": return "[&>div]:bg-red-500";
+      case "high": return "[&>div]:bg-orange-500";
+      case "medium": return "[&>div]:bg-yellow-500";
+      case "low": return "[&>div]:bg-green-500";
+      default: return "[&>div]:bg-gray-400";
     }
   };
 
@@ -242,9 +244,9 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
                 <div key={maturity} className="flex items-center gap-3">
                   <div className="w-32 text-sm">{getMaturityLabel(maturity)}</div>
                   <div className="flex-1">
-                    <Progress 
-                      value={(count / data.total_vulnerabilities) * 100} 
-                      className={`h-3 ${getMaturityColor(maturity)}`}
+                    <Progress
+                      value={(count / data.total_vulnerabilities) * 100}
+                      className={`h-3 bg-muted ${getMaturityColor(maturity)}`}
                     />
                   </div>
                   <div className="w-12 text-right text-sm font-medium">{count}</div>

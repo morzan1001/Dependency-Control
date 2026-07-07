@@ -13,22 +13,18 @@ export const broadcastKeys = {
 export const useBroadcast = () => {
   return useMutation({
     mutationFn: (data: BroadcastRequest) => broadcastApi.send(data),
-    onSuccess: (data) => {
-      if (data.project_count !== undefined && data.project_count > 0) {
-        toast.success(`Broadcast sent successfully`, {
-          description: `Notified members of ${data.project_count} projects.`
-        });
-      } else if (!data.unique_user_count) {
-        // If not dry run and normal global msg
-         toast.success(`Broadcast sent successfully`, {
-          description: `Notified recipients.`
+    // Success is intentionally not toasted here: dry-run impact previews must
+    // not claim a broadcast was sent, and real sends are already toasted by the
+    // caller (Broadcasts.tsx). Toasting here would falsely report dry runs and
+    // double-toast real sends.
+    onError: (error, variables) => {
+      // Real sends surface their own error toast in Broadcasts.tsx; only dry-run
+      // impact calculations delegate error reporting to this hook.
+      if (variables.dry_run) {
+        toast.error("Failed to calculate impact", {
+          description: getErrorMessage(error)
         });
       }
-    },
-    onError: (error) => {
-       toast.error("Failed to send broadcast", {
-        description: getErrorMessage(error)
-       })
     }
   });
 };

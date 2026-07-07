@@ -57,6 +57,24 @@ export const ANALYTICS_PERMISSIONS = [
   Permissions.ANALYTICS_SEARCH,
 ] as const;
 
+// Permissions that grant access to at least one tab on the Analytics page.
+// Must stay in sync with the per-tab checks in pages/Analytics.tsx: any of
+// these renders a usable tab, so any of them must pass the /analytics route
+// gate. Notably this includes analytics:recommendations (Recommendations +
+// Update Frequency tabs) and excludes analytics:dependencies, which the
+// Analytics page never checks — granting it alone would only yield an empty
+// page. (Distinct from the ANALYTICS_PERMISSIONS constant above, which has the
+// same drift and is reconciled separately.)
+export const ANALYTICS_ROUTE_PERMISSIONS = [
+  'analytics:read',
+  'analytics:summary',
+  'analytics:tree',
+  'analytics:impact',
+  'analytics:hotspots',
+  'analytics:recommendations',
+  'analytics:search',
+] as const;
+
 export const POST_PROCESSOR_ANALYZERS = ['epss_kev', 'reachability'] as const;
 
 // Per-user notification events. Must match `NOTIFICATION_EVENTS` in

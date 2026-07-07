@@ -242,6 +242,62 @@ class TestDeduplicateRecommendations:
         result = _deduplicate_recommendations(recs)
         assert len(result) == 1
 
+    def test_same_type_component_different_titles_not_deduplicated(self):
+        """Distinct recs sharing type + first component but with different titles
+        (e.g. the four SUPPLY_CHAIN_RISK recs, or per-category FIX_CODE_SECURITY recs)
+        must both survive."""
+        rec_a = _make_recommendation(
+            rec_type=RecommendationType.SUPPLY_CHAIN_RISK,
+            component="pkg-a",
+            title="Replace Unmaintained Dependencies",
+        )
+        rec_b = _make_recommendation(
+            rec_type=RecommendationType.SUPPLY_CHAIN_RISK,
+            component="pkg-a",
+            title="Review Low-Quality Dependencies",
+        )
+        result = _deduplicate_recommendations([rec_a, rec_b])
+        assert len(result) == 2
+
+    def test_same_type_component_title_different_action_not_deduplicated(self):
+        """A cert with both a crypto_cert_expired and a crypto_cert_self_signed finding
+        yields two ROTATE_CERTIFICATE recs with an IDENTICAL title and component; they
+        differ only by action['finding_type'] and must not be merged."""
+        rec_a = _make_recommendation(
+            rec_type=RecommendationType.ROTATE_CERTIFICATE,
+            component="cert.pem",
+            title="Rotate or fix certificate: cert.pem",
+        )
+        rec_a.action = {"finding_type": "crypto_cert_expired", "asset_name": "cert.pem"}
+        rec_b = _make_recommendation(
+            rec_type=RecommendationType.ROTATE_CERTIFICATE,
+            component="cert.pem",
+            title="Rotate or fix certificate: cert.pem",
+        )
+        rec_b.action = {"finding_type": "crypto_cert_self_signed", "asset_name": "cert.pem"}
+        result = _deduplicate_recommendations([rec_a, rec_b])
+        assert len(result) == 2
+
+    def test_true_duplicates_still_merged(self):
+        """Recs identical in type + component + title + action are still merged."""
+        rec_a = _make_recommendation(
+            rec_type=RecommendationType.ROTATE_CERTIFICATE,
+            component="cert.pem",
+            title="Rotate or fix certificate: cert.pem",
+            priority=Priority.LOW,
+        )
+        rec_a.action = {"finding_type": "crypto_cert_expired", "asset_name": "cert.pem"}
+        rec_b = _make_recommendation(
+            rec_type=RecommendationType.ROTATE_CERTIFICATE,
+            component="cert.pem",
+            title="Rotate or fix certificate: cert.pem",
+            priority=Priority.CRITICAL,
+        )
+        rec_b.action = {"finding_type": "crypto_cert_expired", "asset_name": "cert.pem"}
+        result = _deduplicate_recommendations([rec_a, rec_b])
+        assert len(result) == 1
+        assert result[0].priority == Priority.CRITICAL
+
 
 class TestGenerateRecommendationsEmpty:
     """Tests for generate_recommendations with empty input."""
@@ -518,6 +574,55 @@ class TestGenerateRecommendationsScanHistory:
             scan_history=[{"scan_id": "s1", "findings_count": 5}],
         )
         assert isinstance(result, list)
+
+
+class TestGenerateRecommendationsTyposquatting:
+    """Typosquat findings (emitted as malware with details.imitated_package)
+    should produce TYPOSQUAT_DETECTED recommendations with populated context."""
+
+    @staticmethod
+    def _make_typosquat_finding(component="reqeusts", imitated="requests", similarity=0.95):
+        return {
+            "id": f"TYPO-{component}",
+            "type": "malware",
+            "severity": "CRITICAL",
+            "component": component,
+            "version": "1.0.0",
+            "details": {"imitated_package": imitated, "similarity": similarity},
+            "aliases": [],
+        }
+
+    @pytest.mark.asyncio
+    async def test_malware_with_imitated_package_generates_typosquat_rec(self):
+        engine = RecommendationEngine()
+        finding = self._make_typosquat_finding()
+
+        result = await engine.generate_recommendations(findings=[finding], dependencies=[])
+
+        typo_recs = [r for r in result if r.type == RecommendationType.TYPOSQUAT_DETECTED]
+        assert len(typo_recs) == 1
+        # The '(looks like: X)' context must be populated from imitated_package.
+        assert any("reqeusts (looks like: requests)" == c for c in typo_recs[0].affected_components)
+
+    @pytest.mark.asyncio
+    async def test_plain_malware_does_not_generate_typosquat_rec(self):
+        engine = RecommendationEngine()
+        finding = {
+            "id": "MAL-001",
+            "type": "malware",
+            "severity": "CRITICAL",
+            "component": "evil-pkg",
+            "version": "1.0.0",
+            "details": {},
+            "aliases": [],
+        }
+
+        result = await engine.generate_recommendations(findings=[finding], dependencies=[])
+
+        typo_recs = [r for r in result if r.type == RecommendationType.TYPOSQUAT_DETECTED]
+        assert len(typo_recs) == 0
+        # A malware finding still surfaces as a malware recommendation.
+        assert any(r.type == RecommendationType.MALWARE_DETECTED for r in result)
 
 
 class TestEngineInitialization:

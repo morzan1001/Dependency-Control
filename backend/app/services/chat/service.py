@@ -26,6 +26,11 @@ from app.services.chat.tools import ChatToolRegistry
 
 logger = logging.getLogger(__name__)
 
+# How long each cold-start keepalive slice waits before emitting a warm-up
+# info event. Module-level so it can be tuned/patched (e.g. in tests) without
+# changing behavior in production.
+_WARMUP_SLICE_SECONDS = 10.0
+
 
 class ChatService:
     def __init__(self, db: AsyncIOMotorDatabase):
@@ -81,6 +86,13 @@ class ChatService:
         assistant_saved = False
         client_notified_of_error = False
 
+        # Load history BEFORE persisting the new user message. get_recent_messages
+        # sorts by created_at (descending, then reversed), so it would otherwise
+        # return the message we just saved — and build_messages appends `content`
+        # itself. Loading first keeps the current turn (and its images) from
+        # appearing twice in the prompt.
+        history = await self.repo.get_recent_messages(conversation_id, limit=settings.CHAT_MAX_HISTORY_MESSAGES)
+
         # Save user message
         await self.repo.add_message(
             conversation_id,
@@ -94,9 +106,6 @@ class ChatService:
         if conv and conv.get("message_count", 0) == 1:
             title = content[:80] + ("..." if len(content) > 80 else "")
             await self.repo.update_conversation_title(conversation_id, str(user.id), title)
-
-        # Load history
-        history = await self.repo.get_recent_messages(conversation_id, limit=settings.CHAT_MAX_HISTORY_MESSAGES)
 
         # Build context
         available_tools = self.tools.get_available_tool_definitions(user.permissions)
@@ -134,27 +143,40 @@ class ChatService:
                             # persistent task so the fetch keeps running
                             # across keepalive slices.
                             pending = asyncio.ensure_future(stream_iter.__anext__())
-                            waited = 0.0
-                            slice_seconds = 10.0
-                            while True:
-                                try:
-                                    chunk = await asyncio.wait_for(
-                                        asyncio.shield(pending),
-                                        timeout=slice_seconds,
-                                    )
-                                    break
-                                except asyncio.TimeoutError:
-                                    waited += slice_seconds
-                                    if not warmup_info_sent:
-                                        warmup_info_sent = True
-                                        msg = (
-                                            "Loading the model into GPU memory — "
-                                            "the first request after idle usually "
-                                            "takes 30–90 seconds."
+                            try:
+                                waited = 0.0
+                                slice_seconds = _WARMUP_SLICE_SECONDS
+                                while True:
+                                    try:
+                                        chunk = await asyncio.wait_for(
+                                            asyncio.shield(pending),
+                                            timeout=slice_seconds,
                                         )
-                                    else:
-                                        msg = f"Still warming up ({int(waited)}s) — hang tight."
-                                    yield ("data: " + json.dumps({"type": "info", "message": msg}) + "\n\n")
+                                        break
+                                    except asyncio.TimeoutError:
+                                        waited += slice_seconds
+                                        if not warmup_info_sent:
+                                            warmup_info_sent = True
+                                            msg = (
+                                                "Loading the model into GPU memory — "
+                                                "the first request after idle usually "
+                                                "takes 30–90 seconds."
+                                            )
+                                        else:
+                                            msg = f"Still warming up ({int(waited)}s) — hang tight."
+                                        yield ("data: " + json.dumps({"type": "info", "message": msg}) + "\n\n")
+                            finally:
+                                # If we leave the warm-up wait without having consumed
+                                # the first chunk (e.g. the SSE client disconnected and
+                                # Starlette threw GeneratorExit at the yield above),
+                                # asyncio.shield kept `pending` alive — so it would keep
+                                # driving the httpx stream and pin Ollama/GPU. Cancel it
+                                # and reap it to avoid the leak + "exception never
+                                # retrieved" noise. A normally-consumed chunk leaves
+                                # `pending` done, so this is a no-op on the happy path.
+                                if not pending.done():
+                                    pending.cancel()
+                                    await asyncio.gather(pending, return_exceptions=True)
                         else:
                             chunk = await stream_iter.__anext__()
                     except StopAsyncIteration:

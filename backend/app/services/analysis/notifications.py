@@ -8,6 +8,7 @@ import logging
 from typing import Any, Dict, List
 
 from app.core.config import settings
+from app.core.constants import get_severity_value
 from app.models.finding import Finding
 from app.models.project import Project
 from app.services.notifications import notification_service
@@ -27,10 +28,6 @@ from app.services.webhooks import webhook_service
 from app.services.analysis.types import Database
 
 logger = logging.getLogger(__name__)
-
-
-# Severity sort order for prioritizing vulnerabilities
-SEVERITY_ORDER: Dict[str, int] = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
 
 
 def _extract_vulnerability_info(vuln: Dict[str, Any], finding: Dict[str, Any]) -> Dict[str, Any]:
@@ -99,7 +96,7 @@ def _build_vulnerability_message(
     high_epss_vulns: List[Dict[str, Any]],
     critical_vulns: List[Dict[str, Any]],
     top_vulns: List[Dict[str, Any]],
-    scan_id: str,
+    scan_link: str,
 ) -> tuple[str, str]:
     """
     Build subject and message for vulnerability notification.
@@ -133,7 +130,7 @@ def _build_vulnerability_message(
         for i, vuln in enumerate(top_vulns, 1):
             message += _format_vuln_line(i, vuln) + "\n"
 
-    message += f"\nView full report: {scan_id}"
+    message += f"\nView full report: {scan_link}"
 
     return subject, message
 
@@ -249,20 +246,20 @@ async def send_scan_notifications(
             key=lambda x: (
                 not x.get("in_kev", False),  # KEV first
                 -(x.get("epss_score") or 0),  # Then by EPSS
-                SEVERITY_ORDER.get(x.get("severity", "LOW"), 4),
+                -get_severity_value(x.get("severity")),  # Then most severe first
             ),
         )[:10]
 
+        scan_link = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
         subject, message = _build_vulnerability_message(
             project.name,
             kev_vulns,
             high_epss_vulns,
             critical_vulns,
             top_vulns,
-            scan_id,
+            scan_link,
         )
 
-        scan_link = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
         vuln_html = get_vulnerability_found_template(
             report_link=scan_link,
             project_name=settings.PROJECT_NAME,

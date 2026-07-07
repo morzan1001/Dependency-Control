@@ -173,6 +173,32 @@ class TestListInstances:
         mock_repo.list_all.assert_called_once_with(skip=20, limit=10)
         assert result["total"] == 50
 
+    def test_pagination_response_page_reflects_requested_page(self, admin_user):
+        """Regression: build_pagination_response must receive skip, not the page number.
+
+        Previously the endpoint passed the 1-based `page` as the `skip` argument, so
+        build_pagination_response computed page = (page // size) + 1. For page=2,
+        size=100 this collapsed to 1, breaking client-side pagination state.
+        """
+        from app.api.v1.endpoints.gitlab_instances import list_instances
+
+        mock_repo = _make_repo_mock(list_all=[], count_all=250)
+
+        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
+            result = asyncio.run(
+                list_instances(
+                    page=2,
+                    size=100,
+                    active_only=False,
+                    db=MagicMock(),
+                    current_user=admin_user,
+                )
+            )
+
+        assert result["page"] == 2
+        assert result["size"] == 100
+        assert result["pages"] == 3
+
     def test_empty_list(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import list_instances
 

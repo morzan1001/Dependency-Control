@@ -61,6 +61,19 @@ class TestScanModel:
         scan = Scan(project_id="proj-1", branch="main")
         assert scan.id is not None
 
+    def test_pinned_defaults_to_false(self):
+        scan = Scan(project_id="proj-1", branch="main")
+        assert scan.pinned is False
+
+    def test_pinned_survives_hydration_and_serialization(self):
+        # Regression: pin/protected state is persisted on scan docs (pin endpoints,
+        # housekeeping, archive restore) but was stripped from every scan API
+        # response because the Scan model omitted the field.
+        doc = {"_id": "scan-1", "project_id": "proj-1", "branch": "main", "pinned": True}
+        scan = Scan(**doc)
+        assert scan.pinned is True
+        assert scan.model_dump(by_alias=True)["pinned"] is True
+
 
 class TestAnalysisResultModel:
     def test_minimal_valid(self):

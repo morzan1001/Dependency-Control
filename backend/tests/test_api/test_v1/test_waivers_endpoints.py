@@ -439,6 +439,59 @@ class TestGetWaiver:
         assert exc_info.value.detail == "Waiver not found"
 
 
+class TestUpdateWaiverRecalc:
+    """update_waiver must re-run stats recalc whenever a field that gates
+    waiver application changes. Active state is driven by expiration_date
+    (WaiverRepository._non_expired_filter), so expiring/extending a waiver
+    changes which findings are waived and must trigger recalculation."""
+
+    def _run_update(self, admin_user, update_kwargs):
+        from app.api.v1.endpoints.waivers import update_waiver
+        from app.schemas.waiver import WaiverUpdate
+
+        existing = _make_waiver(id="waiver-1", project_id="proj-1")
+        updated = _make_waiver(id="waiver-1", project_id="proj-1", **update_kwargs)
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=existing)
+        mock_repo.update = AsyncMock(return_value=updated)
+        bg_tasks = BackgroundTasks()
+
+        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+            with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
+                with patch(f"{MODULE}.recalculate_project_stats") as mock_recalc:
+                    asyncio.run(
+                        update_waiver(
+                            waiver_id="waiver-1",
+                            waiver_in=WaiverUpdate(**update_kwargs),
+                            background_tasks=bg_tasks,
+                            current_user=admin_user,
+                            db=MagicMock(),
+                        )
+                    )
+        return bg_tasks, mock_recalc
+
+    def test_expiration_date_change_triggers_recalc(self, admin_user):
+        """Regression: expiring/extending a waiver changes the active set and
+        must schedule recalculate_project_stats."""
+        new_expiry = datetime.now(timezone.utc) - timedelta(days=1)
+        bg_tasks, mock_recalc = self._run_update(admin_user, {"expiration_date": new_expiry})
+
+        scheduled = [t.func for t in bg_tasks.tasks]
+        assert mock_recalc in scheduled
+
+    def test_status_change_still_triggers_recalc(self, admin_user):
+        bg_tasks, mock_recalc = self._run_update(admin_user, {"status": "false_positive"})
+
+        scheduled = [t.func for t in bg_tasks.tasks]
+        assert mock_recalc in scheduled
+
+    def test_reason_only_change_does_not_trigger_recalc(self, admin_user):
+        bg_tasks, mock_recalc = self._run_update(admin_user, {"reason": "Updated reason"})
+
+        scheduled = [t.func for t in bg_tasks.tasks]
+        assert mock_recalc not in scheduled
+
+
 class TestListWaivers:
     def test_admin_sees_all_waivers(self, admin_user):
         waiver_docs = [

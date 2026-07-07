@@ -64,7 +64,7 @@ def _deduplicate_recommendations(
 
     Keeps the recommendation with the highest score when duplicates are found.
     """
-    seen: Dict[Tuple[str, str, str], Recommendation] = {}
+    seen: Dict[Tuple[str, str, str, str], Recommendation] = {}
 
     for rec in recommendations:
         # Find first valid (non-empty, non-None) component for the key
@@ -74,12 +74,22 @@ def _deduplicate_recommendations(
                 primary_component = comp.strip()
                 break
 
-        # Include title in key to avoid incorrectly merging different recommendations
-        # with empty/same components but different contexts
+        # Always include the title AND an action discriminator so that only
+        # genuine duplicates (same type + component + title + action variant)
+        # merge. Distinct recommendations that share a type and first component
+        # must be preserved, e.g.:
+        #   - a cert with both a crypto_cert_expired and a crypto_cert_self_signed
+        #     finding -> two ROTATE_CERTIFICATE recs with an IDENTICAL title, so
+        #     the action['finding_type'] is what tells them apart;
+        #   - the four SUPPLY_CHAIN_RISK recs and the per-category
+        #     FIX_CODE_SECURITY recs -> distinguished by their titles.
+        action = rec.action if isinstance(rec.action, dict) else {}
+        action_discriminator = action.get("finding_type") or action.get("type") or ""
         key = (
             rec.type.value,
             primary_component,
-            rec.title if not primary_component else "",
+            rec.title,
+            str(action_discriminator),
         )
 
         if key not in seen:
@@ -106,14 +116,26 @@ class RecommendationEngine:
         self.max_dependency_depth = MAX_DEPENDENCY_DEPTH
 
     @staticmethod
-    def _collect_typosquat_quality_findings(quality_findings: List[ModelOrDict]) -> List[ModelOrDict]:
-        """Filter quality findings for typosquatting indicators."""
+    def _collect_typosquat_findings(malware_findings: List[ModelOrDict]) -> List[ModelOrDict]:
+        """Extract typosquatting findings from the malware finding group.
+
+        The typosquatting analyzer emits its hits as ``FindingType.MALWARE`` with a
+        ``details['imitated_package']`` key (see
+        ``normalizers.quality.normalize_typosquatting``). ``incidents.process_typosquatting``
+        reads the imitated name from ``details['similar_to']``, so remap the key here to
+        populate the "(looks like: X)" context without touching the shared incidents module.
+        """
         typosquat_findings: List[ModelOrDict] = []
-        for f in quality_findings:
+        for f in malware_findings:
             details = get_attr(f, "details", {})
-            risk_type = details.get("risk_type", "") if isinstance(details, dict) else ""
-            if "typosquat" in risk_type.lower():
-                typosquat_findings.append(f)
+            imitated = details.get("imitated_package") if isinstance(details, dict) else None
+            if imitated:
+                typosquat_findings.append(
+                    {
+                        "component": get_attr(f, "component", ""),
+                        "details": {"similar_to": imitated},
+                    }
+                )
         return typosquat_findings
 
     def _process_typosquatting(
@@ -121,18 +143,13 @@ class RecommendationEngine:
         recommendations: List[Recommendation],
         findings_by_type: Dict[str, List[ModelOrDict]],
     ) -> None:
-        """Detect typosquatting findings (in quality or dedicated type) and queue recommendations."""
-        typosquat_findings = self._collect_typosquat_quality_findings(findings_by_type.get("quality", []))
+        """Queue typosquatting recommendations for malware findings carrying an
+        imitated-package indicator."""
+        typosquat_findings = self._collect_typosquat_findings(findings_by_type.get("malware", []))
         if typosquat_findings:
             _safe_extend(
                 recommendations,
                 lambda: incidents.process_typosquatting(typosquat_findings),
-                "typosquatting_quality",
-            )
-        if findings_by_type.get("typosquatting"):
-            _safe_extend(
-                recommendations,
-                lambda: incidents.process_typosquatting(findings_by_type["typosquatting"]),
                 "typosquatting",
             )
 

@@ -32,7 +32,14 @@ export function getUserProjectRole(
 
 /**
  * Check if a user meets a minimum project role requirement.
- * Owner always satisfies any role. project:read_all acts as superuser bypass.
+ *
+ * Mirrors the backend gate (check_project_access, projects.py:140-213):
+ *  - `viewer` (or no) requiredRole is a READ request; `editor`/`admin` is WRITE.
+ *  - The WRITE superuser (`project:update` OR `project:delete`) bypasses
+ *    membership for ANY request (write implies read).
+ *  - `project:read_all` is a READ-ONLY superuser: it grants READ access only
+ *    and must NOT satisfy a WRITE (editor/admin) required role.
+ *  - Owner always satisfies any role.
  */
 export function hasProjectRole(
   project: Project,
@@ -40,7 +47,22 @@ export function hasProjectRole(
   requiredRole: 'viewer' | 'editor' | 'admin',
   globalPermissions?: string[]
 ): boolean {
-  if (globalPermissions?.includes('project:read_all')) return true;
+  const isWriteRequest = requiredRole === 'editor' || requiredRole === 'admin';
+
+  // WRITE superuser ("manage any project"): project:update / project:delete
+  // bypass membership for every request.
+  if (
+    globalPermissions?.includes('project:update') ||
+    globalPermissions?.includes('project:delete')
+  ) {
+    return true;
+  }
+
+  // READ-ONLY superuser: read_all grants read access only; it must not satisfy
+  // a write (editor/admin) required role.
+  if (!isWriteRequest && globalPermissions?.includes('project:read_all')) {
+    return true;
+  }
 
   const role = getUserProjectRole(project, userId);
   if (role === null) return false;

@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react'
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { jwtDecode } from 'jwt-decode'
 
@@ -35,8 +35,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return checkPermission(permissions, permission)
   }, [permissions])
 
+  // Keep the latest logout in a ref so the mount-only init effect can register
+  // a stable logout callback without re-running when `navigate` (and therefore
+  // `logout`) changes identity on every route navigation.
+  const logoutRef = useRef(logout)
   useEffect(() => {
-    setLogoutCallback(logout)
+    logoutRef.current = logout
+  }, [logout])
+
+  useEffect(() => {
+    setLogoutCallback(() => logoutRef.current())
 
     const initAuth = async () => {
       const token = localStorage.getItem('token')
@@ -61,7 +69,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     initAuth()
-  }, [logout])
+    // Run once on mount only. logout is accessed via logoutRef to avoid
+    // re-running (and re-firing getMe / clobbering isAuthenticated) on every
+    // client-side navigation, which changes navigate/logout identity.
+  }, [])
 
   const login = useCallback((accessToken: string, refreshToken: string, skipNavigation = false) => {
     localStorage.setItem('token', accessToken)

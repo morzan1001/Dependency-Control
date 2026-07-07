@@ -1,7 +1,9 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
+import { useState, useMemo } from 'react'
 import { useDependencyMetadata, useComponentFindings } from '@/hooks/queries/use-analytics'
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { DependencyMetadata, ComponentFinding } from '@/types/analytics'
 import { FindingDetailsModal } from '@/components/findings/FindingDetailsModal'
+import { resolveRelatedFinding } from './related-finding'
 import {
   Dialog,
   DialogContent,
@@ -89,30 +91,10 @@ interface AnalyticsDependencyModalProps {
 }
 
 function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false)
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current)
-      }
-    }
-  }, [])
-
-  const handleCopy = useCallback(async () => {
-    await navigator.clipboard.writeText(text)
-    setCopied(true)
-    // Clear any existing timeout before setting a new one
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current)
-    }
-    timeoutRef.current = setTimeout(() => setCopied(false), 2000)
-  }, [text])
+  const { copied, copy } = useCopyToClipboard()
 
   return (
-    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={handleCopy}>
+    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={(e) => copy(text, e)}>
       {copied ? (
         <Check className="h-3 w-3 text-green-500" />
       ) : (
@@ -120,6 +102,16 @@ function CopyButton({ text }: { text: string }) {
       )}
     </Button>
   )
+}
+
+/**
+ * Only allow http(s) URLs to be used as an href. Metadata links (homepage,
+ * repository, download, license, deps.dev links) originate from third-party
+ * package registries that a malicious package fully controls, so a
+ * `javascript:`/`data:` URI must never end up as a clickable link.
+ */
+function safeHref(url?: string | null): string | undefined {
+  return url && (url.startsWith('http://') || url.startsWith('https://')) ? url : undefined
 }
 
 function InfoRow({
@@ -138,7 +130,7 @@ function InfoRow({
   if (!value) return null
 
   // Only use href if it's a valid absolute URL
-  const validHref = href && (href.startsWith('http://') || href.startsWith('https://')) ? href : undefined
+  const validHref = safeHref(href)
 
   return (
     <div className="flex items-start gap-3 py-1.5">
@@ -231,8 +223,18 @@ function ScorecardDisplay({ metadata }: { metadata: DependencyMetadata }) {
 // Dependency Metadata Section Component
 function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata }) {
   const [showDetails, setShowDetails] = useState(false)
-  
-  const hasExternalLinks = metadata.homepage || metadata.repository_url || metadata.download_url
+
+  const homepageHref = safeHref(metadata.homepage)
+  const repositoryHref = safeHref(metadata.repository_url)
+  const downloadHref = safeHref(metadata.download_url)
+  const licenseHref = safeHref(metadata.license_url)
+  const depsDevLinks = metadata.deps_dev?.links
+    ? Object.entries(metadata.deps_dev.links)
+        .map(([label, url]) => [label, safeHref(url)] as const)
+        .filter((entry): entry is readonly [string, string] => Boolean(entry[1]))
+    : []
+
+  const hasExternalLinks = homepageHref || repositoryHref || downloadHref
   const hasDepsDevData = metadata.deps_dev
   const hasMaintainerInfo = metadata.author || metadata.publisher
   
@@ -350,9 +352,9 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
       {/* External Links - Always visible */}
       {hasExternalLinks && (
         <div className="flex flex-wrap gap-2">
-          {metadata.homepage && (
+          {homepageHref && (
             <a
-              href={metadata.homepage}
+              href={homepageHref}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-background hover:bg-muted rounded-md transition-colors border"
@@ -362,9 +364,9 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
               <ExternalLink className="h-3 w-3" />
             </a>
           )}
-          {metadata.repository_url && (
+          {repositoryHref && (
             <a
-              href={metadata.repository_url}
+              href={repositoryHref}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-background hover:bg-muted rounded-md transition-colors border"
@@ -374,9 +376,9 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
               <ExternalLink className="h-3 w-3" />
             </a>
           )}
-          {metadata.download_url && (
+          {downloadHref && (
             <a
-              href={metadata.download_url}
+              href={downloadHref}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-background hover:bg-muted rounded-md transition-colors border"
@@ -450,11 +452,11 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
           )}
 
           {/* deps.dev Links */}
-          {metadata.deps_dev?.links && Object.keys(metadata.deps_dev.links).length > 0 && (
+          {depsDevLinks.length > 0 && (
             <div className="space-y-2">
               <h4 className="text-sm font-medium">Additional Links</h4>
               <div className="flex flex-wrap gap-2">
-                {Object.entries(metadata.deps_dev.links).map(([label, url]) => (
+                {depsDevLinks.map(([label, url]) => (
                   <a
                     key={label}
                     href={url}
@@ -472,14 +474,14 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
           )}
 
           {/* License Details */}
-          {metadata.license && metadata.license_url && (
+          {metadata.license && licenseHref && (
             <div className="space-y-1">
               <h4 className="text-sm font-medium flex items-center gap-2">
                 <FileText className="h-4 w-4" /> License Details
               </h4>
               <div className="ml-6">
                 <a
-                  href={metadata.license_url}
+                  href={licenseHref}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-sm text-primary hover:underline flex items-center gap-1"
@@ -516,7 +518,7 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
 }
 
 // Main Modal Component
-export function AnalyticsDependencyModal({ 
+export function AnalyticsDependencyModal({
   component, 
   version,
   type,
@@ -711,54 +713,7 @@ export function AnalyticsDependencyModal({
             projectId={selectedFinding.project_id}
             scanId={selectedFinding.scan_id}
             onSelectFinding={(id) => {
-              // First try exact match by ID
-              let found = sortedFindings.find(f => f.id === id);
-              
-              if (!found) {
-                // Handle OUTDATED-{component} format
-                if (id.startsWith("OUTDATED-")) {
-                  const comp = id.replace("OUTDATED-", "");
-                  found = sortedFindings.find(f => 
-                    f.type === "outdated" && 
-                    f.component?.toLowerCase() === comp.toLowerCase()
-                  );
-                }
-                // Handle QUALITY:{component}:{version} format
-                else if (id.startsWith("QUALITY:")) {
-                  const parts = id.split(":");
-                  if (parts.length >= 2) {
-                    const comp = parts[1];
-                    const ver = parts[2];
-                    found = sortedFindings.find(f => 
-                      f.type === "quality" && 
-                      f.component?.toLowerCase() === comp?.toLowerCase() &&
-                      (!ver || f.version === ver)
-                    );
-                  }
-                }
-                // Handle LIC-{license} format
-                else if (id.startsWith("LIC-")) {
-                  found = sortedFindings.find(f => f.id === id || f.type === "license");
-                }
-                // Handle EOL-{component}-{cycle} format
-                else if (id.startsWith("EOL-")) {
-                  const parts = id.replace("EOL-", "").split("-");
-                  const comp = parts[0];
-                  found = sortedFindings.find(f => 
-                    f.type === "eol" && 
-                    f.component?.toLowerCase() === comp?.toLowerCase()
-                  );
-                }
-                // Handle component:version format (vulnerabilities)
-                else if (id.includes(":") && !id.startsWith("AGG:")) {
-                  const [comp, ver] = id.split(":");
-                  found = sortedFindings.find(f => 
-                    f.component?.toLowerCase() === comp?.toLowerCase() && 
-                    f.version === ver
-                  );
-                }
-              }
-              
+              const found = resolveRelatedFinding(sortedFindings, id);
               if (found) {
                 setSelectedFinding(found);
               }

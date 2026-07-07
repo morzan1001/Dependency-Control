@@ -47,6 +47,24 @@ def make_failed_payload():
     }
 
 
+def make_policy_payload(event="crypto_policy.changed"):
+    """Mirror the flat payload built by audit.history._dispatch_webhook:
+    top-level project_id/actor/change_summary, no nested project/scan."""
+    return {
+        "event": event,
+        "timestamp": "2026-05-04T10:00:00Z",
+        "policy_type": "crypto",
+        "policy_scope": "project",
+        "project_id": "proj-42",
+        "version": 7,
+        "action": "update",
+        "actor": {"user_id": "u1", "display_name": "Alice"},
+        "change_summary": "Disallowed MD5",
+        "comment": None,
+        "reverted_from_version": None,
+    }
+
+
 class TestFormatPayloadGenericWebhook:
     def test_returns_raw_payload_unchanged(self):
         service = WebhookService()
@@ -110,6 +128,135 @@ class TestFormatPayloadTeamsWebhook:
         result = service._format_payload(webhook, "scan_completed", make_scan_payload())
         assert result["type"] == "message"
         assert result["attachments"][0]["contentType"] == "application/vnd.microsoft.card.adaptive"
+
+
+class TestFormatPayloadPolicyEvents:
+    """Policy-changed events use a flat payload (no nested project/scan). The
+    Teams card must surface the actor, change summary and scope rather than
+    falling through to an empty 'Unknown Project' generic card."""
+
+    def _card_text(self, result: dict) -> str:
+        assert result["type"] == "message"
+        card = result["attachments"][0]["content"]
+        return " ".join(b.get("text", "") for b in card["body"])
+
+    def test_crypto_policy_changed_card_has_details(self):
+        service = WebhookService()
+        webhook = make_webhook("teams")
+        result = service._format_payload(webhook, "crypto_policy.changed", make_policy_payload())
+        text = self._card_text(result)
+        assert "Crypto Policy Changed" in text
+        assert "Alice" in text
+        assert "Disallowed MD5" in text
+        assert "proj-42" in text
+        assert "version 7" in text
+        assert "Unknown Project" not in text
+
+    def test_license_policy_changed_system_scope(self):
+        service = WebhookService()
+        webhook = make_webhook("teams")
+        payload = make_policy_payload("license_policy.changed")
+        payload["policy_type"] = "license"
+        payload["policy_scope"] = "system"
+        payload["project_id"] = None
+        result = service._format_payload(webhook, "license_policy.changed", payload)
+        text = self._card_text(result)
+        assert "License Policy Changed" in text
+        assert "system" in text
+        assert "Unknown Project" not in text
+
+    def test_policy_card_falls_back_when_actor_missing(self):
+        service = WebhookService()
+        webhook = make_webhook("teams")
+        payload = make_policy_payload()
+        payload["actor"] = None
+        payload["change_summary"] = ""
+        result = service._format_payload(webhook, "crypto_policy.changed", payload)
+        text = self._card_text(result)
+        assert "A user" in text
+        assert "Policy updated" in text
+
+    def test_generic_webhook_returns_raw_policy_payload(self):
+        service = WebhookService()
+        webhook = make_webhook("generic")
+        raw = make_policy_payload()
+        result = service._format_payload(webhook, "crypto_policy.changed", raw)
+        assert result is raw
+
+
+class TestLogWebhookDeliveryProjectId:
+    @pytest.mark.asyncio
+    async def test_flat_project_id_used_for_policy_events(self):
+        service = WebhookService()
+        captured = {}
+
+        class FakeRepo:
+            def __init__(self, db):
+                pass
+
+            async def log_delivery(self, **kwargs):
+                captured.update(kwargs)
+
+        with patch("app.repositories.webhook_deliveries.WebhookDeliveriesRepository", FakeRepo):
+            await service._log_webhook_delivery(
+                db=MagicMock(),
+                webhook_id="w1",
+                event_type="crypto_policy.changed",
+                payload=make_policy_payload(),
+                success=True,
+            )
+
+        assert captured["payload_summary"]["project_id"] == "proj-42"
+        assert captured["payload_summary"]["scan_id"] is None
+
+    @pytest.mark.asyncio
+    async def test_nested_project_id_still_used_for_scan_events(self):
+        service = WebhookService()
+        captured = {}
+
+        class FakeRepo:
+            def __init__(self, db):
+                pass
+
+            async def log_delivery(self, **kwargs):
+                captured.update(kwargs)
+
+        with patch("app.repositories.webhook_deliveries.WebhookDeliveriesRepository", FakeRepo):
+            await service._log_webhook_delivery(
+                db=MagicMock(),
+                webhook_id="w1",
+                event_type="scan.completed",
+                payload=make_scan_payload(),
+                success=True,
+            )
+
+        assert captured["payload_summary"]["project_id"] == "proj-1"
+        assert captured["payload_summary"]["scan_id"] == "scan-abc"
+
+
+class TestNonBlockingSemantics:
+    """safe_trigger_webhooks is the single source of non-blocking semantics;
+    trigger_webhooks itself may propagate an unexpected dispatch error."""
+
+    @pytest.mark.asyncio
+    async def test_trigger_webhooks_propagates_internal_error(self):
+        service = WebhookService()
+        with patch.object(
+            service, "_get_webhooks_for_event", new=AsyncMock(side_effect=RuntimeError("boom"))
+        ):
+            with pytest.raises(RuntimeError):
+                await service.trigger_webhooks(MagicMock(), "scan.completed", {}, "p1")
+
+    @pytest.mark.asyncio
+    async def test_safe_trigger_webhooks_swallows_errors(self):
+        service = WebhookService()
+        with patch.object(
+            service, "trigger_webhooks", new=AsyncMock(side_effect=RuntimeError("boom"))
+        ):
+            # Must not raise.
+            await service.safe_trigger_webhooks(
+                MagicMock(), "scan.completed", {}, "p1", context="test"
+            )
 
 
 def _make_mock_http_client(status_code: int = 200):

@@ -626,19 +626,27 @@ class PrometheusMiddleware:
           /api/v1/projects/123 -> /api/v1/projects/{id}
           /api/v1/users/550e8400-e29b-41d4-a716-446655440000 -> /api/v1/users/{id}
         """
+        # All patterns are anchored to whole path segments with a trailing
+        # (?=/|$) boundary so a rule only fires when it matches an entire
+        # segment. Without it, /\d+ would replace only the leading digit run of
+        # a mixed-alphanumeric segment (e.g. a urlsafe token starting with a
+        # digit), producing a unique never-repeated label and defeating the
+        # cardinality protection this function exists to provide.
+
         # Replace UUIDs
         path = re.sub(
-            r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}",
+            r"/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?=/|$)",
             _ID_PLACEHOLDER,
             path,
             flags=re.IGNORECASE,
         )
 
-        # Replace numeric IDs
-        path = re.sub(r"/\d+", _ID_PLACEHOLDER, path)
+        # Replace MongoDB ObjectIds (24 hex chars) BEFORE numeric IDs so a hex
+        # id starting with a digit isn't partially consumed by the numeric rule.
+        path = re.sub(r"/[0-9a-f]{24}(?=/|$)", _ID_PLACEHOLDER, path, flags=re.IGNORECASE)
 
-        # Replace MongoDB ObjectIds (24 hex chars)
-        path = re.sub(r"/[0-9a-f]{24}", _ID_PLACEHOLDER, path, flags=re.IGNORECASE)
+        # Replace numeric IDs
+        path = re.sub(r"/\d+(?=/|$)", _ID_PLACEHOLDER, path)
 
         return path
 
@@ -657,38 +665,6 @@ def track_db_operation(collection: str, operation: str) -> AbstractContextManage
         except Exception as e:
             error_type = type(e).__name__
             db_errors_total.labels(error_type=error_type).inc()
-            raise
-
-    return _tracker()
-
-
-def track_cache_operation(operation: str) -> AbstractContextManager[None]:
-    """Context manager to track cache operation metrics."""
-
-    @contextmanager
-    def _tracker() -> Generator[None, None, None]:
-        start_time = time.time()
-        yield
-        duration = time.time() - start_time
-        cache_operations_total.labels(operation=operation).inc()
-        cache_operation_duration_seconds.labels(operation=operation).observe(duration)
-
-    return _tracker()
-
-
-def track_external_api(service: str) -> AbstractContextManager[None]:
-    """Context manager to track external API call metrics."""
-
-    @contextmanager
-    def _tracker() -> Generator[None, None, None]:
-        start_time = time.time()
-        try:
-            yield
-            duration = time.time() - start_time
-            external_api_requests_total.labels(service=service).inc()
-            external_api_duration_seconds.labels(service=service).observe(duration)
-        except Exception:
-            external_api_errors_total.labels(service=service).inc()
             raise
 
     return _tracker()

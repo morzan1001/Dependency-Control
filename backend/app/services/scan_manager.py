@@ -44,9 +44,9 @@ class ScanManager:
     def __init__(self, db: AsyncIOMotorDatabase, project: Project):
         self.db = db
         self.project = project
-        self._waivers_cache: Optional[List[Waiver]] = None
-        self._waivers_cache_time: Optional[datetime] = None
-        self._cache_ttl_minutes = 5  # Cache TTL in minutes
+        # Memoized per request; a ScanManager instance lives for a single request,
+        # so there is no cross-request cache (and thus no TTL) to manage.
+        self._waivers: Optional[List[Waiver]] = None
 
     def build_pipeline_url(self, data: BaseIngest) -> Optional[str]:
         """Construct pipeline URL if not provided."""
@@ -115,42 +115,34 @@ class ScanManager:
             },
         }
 
-        # Atomic upsert via ScanRepository
+        # Atomic upsert via ScanRepository. Capture the raw result so we can tell
+        # whether a new scan was inserted (upserted_id set) versus an existing scan
+        # updated, instead of hardcoding is_new.
+        from app.core.metrics import track_db_operation
         from app.repositories import ScanRepository
 
         scan_repo = ScanRepository(self.db)
-        await scan_repo.upsert({"_id": scan_id}, scan_update)
+        with track_db_operation("scans", "update_one"):
+            upsert_result = await scan_repo.collection.update_one({"_id": scan_id}, scan_update, upsert=True)
 
-        # Check if new scan was created
-        is_new = True  # This is a simplification - could be improved
+        is_new = upsert_result.upserted_id is not None
 
         return ScanContext(scan_id=scan_id, is_new=is_new, pipeline_url=pipeline_url)
 
     async def _get_waivers(self) -> List[Waiver]:
         """
-        Fetch and cache active waivers for this project.
-        Cache is invalidated after TTL expires.
+        Fetch active waivers for this project, memoized for the lifetime of this
+        (request-scoped) ScanManager instance.
 
         Uses WaiverRepository for consistent data access.
         """
-        from app.repositories import WaiverRepository
+        if self._waivers is None:
+            from app.repositories import WaiverRepository
 
-        now = datetime.now(timezone.utc)
+            waiver_repo = WaiverRepository(self.db)
+            self._waivers = await waiver_repo.find_active_for_project(str(self.project.id), include_global=True)
 
-        # Check if cache is valid
-        if self._waivers_cache is not None and self._waivers_cache_time is not None:
-            cache_age = (now - self._waivers_cache_time).total_seconds() / 60
-            if cache_age < self._cache_ttl_minutes:
-                return self._waivers_cache
-            else:
-                logger.debug(f"Waiver cache expired (age: {cache_age:.1f} min, TTL: {self._cache_ttl_minutes} min)")
-
-        # Fetch fresh waivers from database via repository
-        waiver_repo = WaiverRepository(self.db)
-        self._waivers_cache = await waiver_repo.find_active_for_project(str(self.project.id), include_global=True)
-        self._waivers_cache_time = now
-
-        return self._waivers_cache
+        return self._waivers
 
     def _finding_matches_waiver(self, finding: Finding, waiver: Waiver) -> bool:
         """Best-effort exact match at ingest. Location-based findings use the strong-anchor
@@ -158,12 +150,25 @@ class ScanManager:
         if finding.match is not None and waiver.match is not None:
             from app.services.waivers.matching import waiver_strong_match
             return waiver_strong_match(finding.match, waiver.match, waiver.status or "false_positive")
-        # Legacy path for non-location findings (license/eol/vuln-by-type/component)
-        if waiver.finding_type and waiver.finding_type == finding.type:
-            return True
-        if waiver.package_name and waiver.package_name == finding.component:
-            return True
-        return False
+        # Legacy path for non-location findings (license/eol/vuln-by-type/component).
+        # Mirror _build_waiver_query's AND semantics (services/stats.py): every field the
+        # waiver sets must match the finding; an unset (or "Unknown") field is a wildcard.
+        # Using OR here over-waives, e.g. a secret waiver scoped to one file would suppress
+        # every secret in the whole upload.
+        field_pairs = (
+            (waiver.finding_id, finding.id),
+            (waiver.package_name, finding.component),
+            (waiver.package_version, finding.version),
+            (waiver.finding_type, finding.type),
+        )
+        matched_any = False
+        for waiver_value, finding_value in field_pairs:
+            if not waiver_value or waiver_value == "Unknown":
+                continue
+            if waiver_value != finding_value:
+                return False
+            matched_any = True
+        return matched_any
 
     async def apply_waivers(self, findings: List[Finding]) -> Tuple[List[Finding], int]:
         """

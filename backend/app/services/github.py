@@ -1,4 +1,5 @@
 import logging
+import urllib.parse
 from contextlib import asynccontextmanager
 from typing import Any, AsyncIterator, Dict, List, Optional
 
@@ -35,9 +36,13 @@ class GitHubService:
         self.base_url = github_instance.url.rstrip("/")
         self._cache_key_prefix = f"gh_instance:{github_instance.id}"
 
-        # Derive API URL from github_url
+        # Derive API URL from github_url. Match on the parsed host (not a
+        # substring): hostnames like "github.company.com" or
+        # "github.com.mycorp.internal" contain "github.com" but are GHES
+        # instances that must NOT have their PAT sent to public api.github.com.
         github_url = (github_instance.github_url or "").rstrip("/")
-        if not github_url or "github.com" in github_url:
+        host = (urllib.parse.urlsplit(github_url).hostname or "").lower()
+        if not github_url or host in ("github.com", "www.github.com"):
             self.api_url = "https://api.github.com"
         else:
             # GHES: https://{host}/api/v3

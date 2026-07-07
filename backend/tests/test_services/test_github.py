@@ -30,6 +30,40 @@ class TestGitHubServiceInitialization:
         service = GitHubService(instance)
         assert service.base_url == "https://github.corp.example.com"
 
+    def test_api_url_for_github_com(self):
+        instance = make_github_instance(github_url="https://github.com")
+        service = GitHubService(instance)
+        assert service.api_url == "https://api.github.com"
+
+    def test_api_url_for_www_github_com(self):
+        instance = make_github_instance(github_url="https://www.github.com")
+        service = GitHubService(instance)
+        assert service.api_url == "https://api.github.com"
+
+    def test_api_url_empty_github_url_defaults_to_public(self):
+        instance = make_github_instance(github_url="")
+        service = GitHubService(instance)
+        assert service.api_url == "https://api.github.com"
+
+    def test_api_url_for_ghes(self):
+        instance = make_github_instance(github_url="https://github.corp.example.com")
+        service = GitHubService(instance)
+        assert service.api_url == "https://github.corp.example.com/api/v3"
+
+    def test_ghes_host_with_github_com_prefix_not_misrouted(self):
+        """SECURITY: a GHES host whose name merely contains 'github.com' as a
+        substring must resolve to its own /api/v3 endpoint, never the public
+        api.github.com (which would leak the enterprise PAT)."""
+        for ghes_url in (
+            "https://github.company.com",
+            "https://github.commerce.io",
+            "https://github.com.mycorp.internal",
+        ):
+            instance = make_github_instance(github_url=ghes_url)
+            service = GitHubService(instance)
+            assert service.api_url == f"{ghes_url}/api/v3", ghes_url
+            assert service.api_url != "https://api.github.com", ghes_url
+
 
 class TestGitHubServiceCacheKeys:
     def test_uses_instance_id(self):

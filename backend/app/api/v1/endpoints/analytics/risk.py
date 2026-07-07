@@ -352,9 +352,14 @@ async def get_vulnerability_hotspots(
     ]
 
     if post_sort_by:
-        # epss/risk live in enrichment data, so we re-sort post-fetch in Python
-        # and over-fetch to keep page sizes meaningful after the re-sort.
-        pipeline.append({"$limit": limit * 3})
+        # epss/risk live in enrichment data, not in Mongo, so a correct global
+        # ranking requires enriching EVERY candidate group before we can order
+        # and paginate. We therefore do NOT push $skip/$limit into the pipeline
+        # here (that would truncate in finding_count order and, for any page with
+        # skip >= the cap, drop rows entirely); all groups are fetched — relying
+        # on allow_disk_use for large $group/$sort working sets — then re-sorted
+        # and sliced by skip/limit in Python below.
+        pass
     else:
         pipeline.append({"$skip": skip})
         pipeline.append({"$limit": limit})

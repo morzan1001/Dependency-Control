@@ -72,7 +72,7 @@ async def list_instances(
 
     items = [_to_response(instance) for instance in instances]
 
-    return build_pagination_response(items, total, page, size)
+    return build_pagination_response(items, total, skip, size)
 
 
 @router.get("/{instance_id}", responses=RESP_AUTH_404)

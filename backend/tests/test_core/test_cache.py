@@ -2,16 +2,14 @@
 
 import hashlib
 
-from app.core.cache import CacheKeys, CacheTTL
+import fakeredis.aioredis
+import pytest
+
+from app.core.cache import CacheKeys, CacheService, CacheTTL
 
 
 class TestCacheTTLValues:
     """All TTL constants must be positive integers."""
-
-    def test_lock_default_is_positive_int(self):
-        """LOCK_DEFAULT should be a positive integer."""
-        assert isinstance(CacheTTL.LOCK_DEFAULT, int)
-        assert CacheTTL.LOCK_DEFAULT > 0
 
     def test_kev_catalog_is_positive_int(self):
         """KEV_CATALOG should be a positive integer."""
@@ -42,11 +40,6 @@ class TestCacheTTLValues:
         """DEPS_DEV_METADATA should be a positive integer."""
         assert isinstance(CacheTTL.DEPS_DEV_METADATA, int)
         assert CacheTTL.DEPS_DEV_METADATA > 0
-
-    def test_deps_dev_scorecard_is_positive_int(self):
-        """DEPS_DEV_SCORECARD should be a positive integer."""
-        assert isinstance(CacheTTL.DEPS_DEV_SCORECARD, int)
-        assert CacheTTL.DEPS_DEV_SCORECARD > 0
 
     def test_latest_version_is_positive_int(self):
         """LATEST_VERSION should be a positive integer."""
@@ -81,10 +74,6 @@ class TestCacheTTLValues:
 
 class TestCacheTTLExpectedValues:
     """TTL constants should have the documented expected values."""
-
-    def test_lock_default_is_30_seconds(self):
-        """LOCK_DEFAULT should be 30 seconds."""
-        assert CacheTTL.LOCK_DEFAULT == 30
 
     def test_kev_catalog_is_24_hours(self):
         """KEV_CATALOG should be 24 hours."""
@@ -216,18 +205,6 @@ class TestCacheKeysDepsDev:
         assert CacheKeys.deps_dev("maven", "org.apache:commons", "1.0") == "deps:maven:org.apache:commons:1.0"
 
 
-class TestCacheKeysDevsDevScorecard:
-    """Tests for CacheKeys.deps_dev_scorecard static method."""
-
-    def test_basic_project_id(self):
-        """deps_dev_scorecard should format with 'scorecard:' prefix."""
-        assert CacheKeys.deps_dev_scorecard("github.com/org/repo") == "scorecard:github.com/org/repo"
-
-    def test_different_project(self):
-        """deps_dev_scorecard should work with different project IDs."""
-        assert CacheKeys.deps_dev_scorecard("gitlab.com/group/proj") == "scorecard:gitlab.com/group/proj"
-
-
 class TestCacheKeysLatestVersion:
     """Tests for CacheKeys.latest_version static method."""
 
@@ -298,3 +275,55 @@ class TestCacheKeysMalware:
     def test_npm_malware(self):
         """malware should work with npm packages."""
         assert CacheKeys.malware("npm", "lodash", "4.17.21") == "malware:npm:lodash:4.17.21"
+
+
+@pytest.fixture
+def fake_cache():
+    """A CacheService backed by an in-memory fakeredis async client."""
+    svc = CacheService()
+    svc._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    svc._pool = object()  # non-None so get_client() short-circuits to the fake
+    svc._available = True
+    return svc
+
+
+class TestStampedeLockRelease:
+    """get_or_fetch_with_lock must only release a lock it still owns (audit #2).
+
+    Regression: the old code stored a constant "1" and deleted the lock
+    unconditionally in ``finally``. If the fetch outlived ``lock_ttl_seconds``
+    the key expired, another pod re-acquired it, and the slow holder then
+    deleted that second pod's lock -- reopening the very stampede window the
+    lock exists to close.
+    """
+
+    @pytest.mark.asyncio
+    async def test_release_does_not_delete_another_pods_lock(self, fake_cache):
+        key = "epss:CVE-2024-0001"
+        full_lock_key = fake_cache._make_key(f"lock:{key}")
+        other_pod_token = "pod-B-token"
+
+        async def slow_fetch():
+            # Simulate our lock TTL expiring mid-fetch and pod B re-acquiring it.
+            await fake_cache._client.set(full_lock_key, other_pod_token)
+            return {"score": 0.5}
+
+        result = await fake_cache.get_or_fetch_with_lock(key, slow_fetch, ttl_seconds=60)
+
+        assert result == {"score": 0.5}
+        # Pod B's lock must survive: the slow holder only deletes locks it owns.
+        assert await fake_cache._client.get(full_lock_key) == other_pod_token
+
+    @pytest.mark.asyncio
+    async def test_holder_releases_its_own_lock(self, fake_cache):
+        key = "epss:CVE-2024-0002"
+        full_lock_key = fake_cache._make_key(f"lock:{key}")
+
+        async def fetch():
+            return {"score": 0.9}
+
+        result = await fake_cache.get_or_fetch_with_lock(key, fetch, ttl_seconds=60)
+
+        assert result == {"score": 0.9}
+        # Normal path: holder still owns the lock, so it is released.
+        assert await fake_cache._client.exists(full_lock_key) == 0

@@ -311,8 +311,11 @@ async def update_waiver(
         raise HTTPException(status_code=404, detail=_MSG_WAIVER_NOT_FOUND)
     _invalidate_analytics_cache()
 
-    # Trigger stats recalculation if status changed (affects waived/unwaived state)
-    if "status" in update_data:
+    # Trigger stats recalculation when any field that gates waiver application
+    # changes. Active state is driven by expiration_date (see
+    # WaiverRepository._non_expired_filter), so expiring/extending a waiver
+    # changes the set of active waivers and must re-run recalculation.
+    if {"status", "expiration_date"} & update_data.keys():
         if updated.project_id:
             background_tasks.add_task(recalculate_project_stats, updated.project_id, db)
         else:

@@ -15,6 +15,11 @@ from app.repositories.policy_audit_entry import PolicyAuditRepository
 
 logger = logging.getLogger(__name__)
 
+# Crypto and license policy audit entries share one collection, discriminated
+# by ``policy_type``. delete_older_than defaults to "crypto", so retention must
+# prune every discriminator explicitly or license entries accumulate forever.
+_POLICY_TYPES = ("crypto", "license")
+
 
 async def prune_old_audit_entries(db: AsyncIOMotorDatabase) -> int:
     """Prune entries older than settings.POLICY_AUDIT_RETENTION_DAYS.
@@ -27,11 +32,13 @@ async def prune_old_audit_entries(db: AsyncIOMotorDatabase) -> int:
     repo = PolicyAuditRepository(db)
 
     total = 0
-    total += await repo.delete_older_than(
-        policy_scope="system",
-        project_id=None,
-        cutoff=cutoff,
-    )
+    for policy_type in _POLICY_TYPES:
+        total += await repo.delete_older_than(
+            policy_scope="system",
+            project_id=None,
+            cutoff=cutoff,
+            policy_type=policy_type,
+        )
     # Per-project retention: iterate distinct project_ids
     distinct = await db[PolicyAuditRepository.collection_name].distinct(
         "project_id",
@@ -40,10 +47,12 @@ async def prune_old_audit_entries(db: AsyncIOMotorDatabase) -> int:
     for pid in distinct:
         if pid is None:
             continue
-        total += await repo.delete_older_than(
-            policy_scope="project",
-            project_id=pid,
-            cutoff=cutoff,
-        )
+        for policy_type in _POLICY_TYPES:
+            total += await repo.delete_older_than(
+                policy_scope="project",
+                project_id=pid,
+                cutoff=cutoff,
+                policy_type=policy_type,
+            )
     logger.info("Policy audit retention pruned %d entries (days=%d)", total, days)
     return total

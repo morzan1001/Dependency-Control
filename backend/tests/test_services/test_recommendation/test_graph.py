@@ -159,6 +159,47 @@ class TestAnalyzeDeepDependencyChainsCircular:
         assert any("pkg-b" in c for c in components)
 
 
+class TestAnalyzeDeepDependencyChainsCycleSegment:
+    """Only true cycle members should be flagged, not non-cycle ancestors."""
+
+    def test_ancestor_not_flagged_as_circular(self):
+        # A -> B -> C -> B  (cycle is B<->C; A is a non-cycle ancestor)
+        deps = [
+            {
+                "name": "pkg-a",
+                "version": "1.0",
+                "purl": "pkg:npm/pkg-a@1.0",
+                "direct": True,
+                "parent_components": [],
+            },
+            {
+                "name": "pkg-b",
+                "version": "1.0",
+                "purl": "pkg:npm/pkg-b@1.0",
+                "direct": False,
+                "parent_components": ["pkg:npm/pkg-a@1.0", "pkg:npm/pkg-c@1.0"],
+            },
+            {
+                "name": "pkg-c",
+                "version": "1.0",
+                "purl": "pkg:npm/pkg-c@1.0",
+                "direct": False,
+                "parent_components": ["pkg:npm/pkg-b@1.0"],
+            },
+        ]
+        result = analyze_deep_dependency_chains(deps, max_dependency_depth=8)
+        circular_recs = [r for r in result if "Circular" in r.title]
+        assert len(circular_recs) == 1
+        components = circular_recs[0].affected_components
+        # True cycle members present
+        assert any("pkg-b" in c for c in components)
+        assert any("pkg-c" in c for c in components)
+        # Non-cycle ancestor must NOT be flagged
+        assert not any("pkg-a" in c for c in components)
+        # ...and the cycle only has 2 members
+        assert circular_recs[0].impact["total"] == 2
+
+
 class TestAnalyzeDeepDependencyChainsBothCircularAndDeep:
     """Both circular and deep chain issues produce two recommendations."""
 

@@ -146,6 +146,12 @@ class Scan(CreatedAtModel):
     reachability_pending: Optional[bool] = None
     reachability_pending_since: Optional[datetime] = None
 
+    # Housekeeping protection: pinned scans are exempt from retention cleanup
+    # (housekeeping filters on "pinned": {"$ne": True}) and are set by the scan
+    # pin endpoints and archive restore. Must be part of the model so scan API
+    # responses carry the flag through to the UI.
+    pinned: bool = False
+
     # Re-scan metadata
     is_rescan: bool = False
     original_scan_id: Optional[str] = None

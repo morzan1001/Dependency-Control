@@ -35,9 +35,11 @@ export default function ProjectDetails() {
   const [isBranchFilterOpen, setIsBranchFilterOpen] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
 
+  const [hasInitializedBranches, setHasInitializedBranches] = useState(false)
+
   const { data: project, isLoading: isLoadingProject } = useProject(id!)
 
-  const { data: branches } = useProjectBranches(id!)
+  const { data: branches, isSuccess: branchesSuccess } = useProjectBranches(id!)
 
   const { data: user } = useCurrentUser()
 
@@ -45,11 +47,21 @@ export default function ProjectDetails() {
   const activeBranchNames = useMemo(() => branches?.filter(b => b.is_active).map(b => b.name) || [], [branches])
   const deletedBranchNames = useMemo(() => branches?.filter(b => !b.is_active).map(b => b.name) || [], [branches])
 
-  // Initialize selected branches once the branches query resolves. Setting
-  // state during render is safe here because the `selectedBranches.length === 0`
-  // guard short-circuits on the very next render — no infinite loop.
+  // Initialize the selected branches exactly once, and only after BOTH the
+  // project and branches queries have settled. `useProject` and
+  // `useProjectBranches` are independent parallel requests: if we initialized
+  // as soon as branches resolved, a branches-before-project race would leave
+  // `project` undefined and fall through to selecting every active branch,
+  // producing timing-dependent Overview aggregates. Gating on
+  // `branchesSuccess && !isLoadingProject` guarantees `project.default_branch`
+  // is available when present. A `hasInitializedBranches` flag (rather than
+  // `selectedBranches.length === 0`) means an intentionally empty selection —
+  // e.g. unchecking every branch or toggling "Select All Active" off — is
+  // preserved instead of snapping back. Setting state during render is safe:
+  // the flag short-circuits on the next render, so there is no loop.
   // See https://react.dev/learn/you-might-not-need-an-effect#initializing-the-application
-  if (activeBranchNames.length > 0 && selectedBranches.length === 0) {
+  if (branchesSuccess && !isLoadingProject && !hasInitializedBranches) {
+    setHasInitializedBranches(true)
     if (project?.default_branch && activeBranchNames.includes(project.default_branch)) {
       setSelectedBranches([project.default_branch])
     } else {

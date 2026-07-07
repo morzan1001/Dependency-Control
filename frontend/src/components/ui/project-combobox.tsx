@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { useState, useRef, useCallback } from 'react'
-import { useProjects } from '@/hooks/queries/use-projects'
+import { useProjects, useProject } from '@/hooks/queries/use-projects'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -33,7 +33,10 @@ export function ProjectCombobox({
   const { data: projectsData, isLoading } = useProjects(debouncedSearch || undefined, 1, 50)
 
   const projects = projectsData?.items || []
-  const selectedProject = projects.find(p => p.id === value)
+  // Resolve the selected project independently of the (paged/filtered) list query
+  // so the trigger keeps showing its name even when it is not on the current page.
+  const { data: selectedProjectData } = useProject(value)
+  const selectedProject = projects.find(p => p.id === value) ?? selectedProjectData
 
   // Close dropdown when clicking outside
   const handleClose = useCallback(() => setOpen(false), [])
@@ -56,7 +59,7 @@ export function ProjectCombobox({
     setSearch('')
   }
 
-  const handleClear = (e: React.MouseEvent) => {
+  const handleClear = (e: React.SyntheticEvent) => {
     e.stopPropagation()
     onValueChange('')
     setSearch('')
@@ -112,14 +115,21 @@ export function ProjectCombobox({
             </div>
             <div className="flex items-center gap-1 shrink-0">
               {value && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-5 w-5"
+                <span
+                  role="button"
+                  tabIndex={0}
+                  aria-label="Clear selection"
+                  className="inline-flex h-5 w-5 items-center justify-center rounded-sm hover:bg-accent hover:text-accent-foreground"
                   onClick={handleClear}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                      e.preventDefault()
+                      handleClear(e)
+                    }
+                  }}
                 >
                   <X className="h-3 w-3" />
-                </Button>
+                </span>
               )}
               <ChevronsUpDown className="h-4 w-4 text-muted-foreground" />
             </div>

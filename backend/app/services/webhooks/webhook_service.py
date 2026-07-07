@@ -37,6 +37,8 @@ from app.core.constants import (
     WEBHOOK_BACKOFF_BASE,
     WEBHOOK_EVENT_ALIASES,
     WEBHOOK_EVENT_ANALYSIS_FAILED,
+    WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED,
+    WEBHOOK_EVENT_LICENSE_POLICY_CHANGED,
     WEBHOOK_EVENT_SCAN_COMPLETED,
     WEBHOOK_EVENT_VULNERABILITY_FOUND,
     WEBHOOK_HEADER_CONTENT_TYPE,
@@ -231,9 +233,11 @@ class WebhookService:
         try:
             deliveries_repo = WebhookDeliveriesRepository(db)
 
+            # Policy-changed events carry project_id at the top level (no nested
+            # "project"/"scan"), so fall back to the flat key to avoid logging None.
             payload_summary = {
                 "scan_id": payload.get("scan", {}).get("id"),
-                "project_id": payload.get("project", {}).get("id"),
+                "project_id": payload.get("project", {}).get("id") or payload.get("project_id"),
             }
 
             await deliveries_repo.log_delivery(
@@ -302,6 +306,8 @@ class WebhookService:
                 error=str(raw_payload.get("error", "Unknown error")),
                 scan_url=scan_url,
             )
+        if normalized in (WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED, WEBHOOK_EVENT_LICENSE_POLICY_CHANGED):
+            return self._build_policy_changed_card(normalized, raw_payload)
         if event_type == "test":  # "test" has no alias; event_type == normalized here
             return TeamsFormatter.build_test_card()
         return TeamsFormatter.build_generic_card(
@@ -309,6 +315,30 @@ class WebhookService:
             message=f"Event for project **{project_name}**",
             url=scan_url,
         )
+
+    @staticmethod
+    def _build_policy_changed_card(
+        normalized_event: str,
+        raw_payload: "Mapping[str, Any]",
+    ) -> "Mapping[str, Any]":
+        """Teams card for policy-changed events. These payloads are flat
+        (project_id/actor/change_summary at the top level, no nested
+        project/scan), so read the flat fields rather than the scan/project
+        shape used by scan-oriented events."""
+        project_id = raw_payload.get("project_id")
+        policy_scope = raw_payload.get("policy_scope")
+        version = raw_payload.get("version")
+        change_summary = raw_payload.get("change_summary") or "Policy updated"
+        actor = raw_payload.get("actor") or {}
+        actor_name = actor.get("display_name") or "A user"
+
+        subject = normalized_event.replace(".", " ").replace("_", " ").title()
+        scope_text = f"project {project_id}" if project_id else (policy_scope or "system")
+        message = f"{actor_name} updated the {scope_text} policy: {change_summary}"
+        if version is not None:
+            message = f"{message} (version {version})"
+
+        return TeamsFormatter.build_generic_card(subject=subject, message=message, url=None)
 
     async def _send_webhook(
         self,
@@ -490,40 +520,44 @@ class WebhookService:
         payload: "Mapping[str, Any]",
         project_id: Optional[str] = None,
     ) -> None:
-        try:
-            webhooks = await self._get_webhooks_for_event(db, project_id, event_type)
+        """Dispatch an event to all matching webhooks.
 
-            if not webhooks:
-                logger.debug(f"No webhooks configured for event {event_type}")
-                return
+        Individual delivery failures are handled internally (``_send_webhook``
+        never raises and ``asyncio.gather`` runs with ``return_exceptions=True``),
+        but an unexpected failure while *resolving* webhooks may propagate. Use
+        :meth:`safe_trigger_webhooks` — the single source of non-blocking
+        semantics — when a failed dispatch must not affect the caller.
+        """
+        webhooks = await self._get_webhooks_for_event(db, project_id, event_type)
 
-            logger.info(
-                f"Triggering {len(webhooks)} webhook(s) for event {event_type} (project: {project_id or 'global'})"
-            )
+        if not webhooks:
+            logger.debug(f"No webhooks configured for event {event_type}")
+            return
 
-            if webhooks_triggered_total:
-                webhooks_triggered_total.labels(event_type=event_type).inc(len(webhooks))
+        logger.info(
+            f"Triggering {len(webhooks)} webhook(s) for event {event_type} (project: {project_id or 'global'})"
+        )
 
-            tasks = [self._send_webhook(db, webhook, payload, event_type) for webhook in webhooks]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+        if webhooks_triggered_total:
+            webhooks_triggered_total.labels(event_type=event_type).inc(len(webhooks))
 
-            failed_count = 0
-            for idx, result in enumerate(results):
-                if isinstance(result, Exception):
-                    logger.error(f"Webhook {webhooks[idx].id} raised exception: {result}")
-                    failed_count += 1
-                elif result is False:
-                    failed_count += 1
+        tasks = [self._send_webhook(db, webhook, payload, event_type) for webhook in webhooks]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            if failed_count > 0 and webhooks_failed_total:
-                webhooks_failed_total.labels(event_type=event_type).inc(failed_count)
+        failed_count = 0
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"Webhook {webhooks[idx].id} raised exception: {result}")
+                failed_count += 1
+            elif result is False:
+                failed_count += 1
 
-            logger.info(
-                f"Webhooks for {event_type} completed: {len(webhooks) - failed_count} succeeded, {failed_count} failed"
-            )
+        if failed_count > 0 and webhooks_failed_total:
+            webhooks_failed_total.labels(event_type=event_type).inc(failed_count)
 
-        except Exception as e:
-            logger.exception("Error triggering webhooks for %s: %s", event_type, e)
+        logger.info(
+            f"Webhooks for {event_type} completed: {len(webhooks) - failed_count} succeeded, {failed_count} failed"
+        )
 
     async def trigger_scan_completed(
         self,

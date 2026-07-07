@@ -179,6 +179,7 @@ def _run_hotspots(
     agg_results: List[Dict[str, Any]],
     limit: int = 20,
     sort_by: str = "finding_count",
+    skip: int = 0,
 ) -> Tuple[Any, List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Run /hotspots with patched helpers. Returns (response, finding_pipeline, agg_kwargs)."""
     from app.api.v1.endpoints.analytics.risk import get_vulnerability_hotspots
@@ -219,7 +220,7 @@ def _run_hotspots(
             get_vulnerability_hotspots(
                 current_user=user,
                 db=db,
-                skip=0,
+                skip=skip,
                 limit=limit,
                 sort_by=sort_by,
                 sort_order="desc",
@@ -474,3 +475,66 @@ class TestSeverityCountAccumulatorsExecuted:
         # is bounded by the number of DISTINCT ids, not the finding count.
         cve_ids = sorted(fid for fid in finding_ids if fid and fid.startswith("CVE-"))
         assert cve_ids == ["CVE-2021-1", "CVE-2021-2", "CVE-2021-3"]
+
+
+# ---------------------------------------------------------------------------
+# Post-sort (epss/risk) pagination — Finding #1
+#
+# epss/risk are not in Mongo (they come from enrichment), so the endpoint
+# re-sorts in Python and slices ``hotspots[skip : skip + limit]``. The Mongo
+# pipeline must therefore hand Python EVERY candidate group; if it caps the
+# fetch (the old ``$limit: limit * 3`` with no ``$skip``), any page with
+# ``skip >= limit * 3`` is served an empty/truncated set and the visible page
+# is ranked against a finding_count-truncated subset rather than the true
+# epss/risk ordering.
+# ---------------------------------------------------------------------------
+
+
+def _limit_values_after_group(pipeline: List[Dict[str, Any]]) -> List[int]:
+    """Return every ``$limit`` value in a stage at/after the first ``$group``."""
+    seen_group = False
+    limits: List[int] = []
+    for stage in pipeline:
+        if "$group" in stage:
+            seen_group = True
+        if seen_group and "$limit" in stage:
+            limits.append(stage["$limit"])
+    return limits
+
+
+class TestHotspotsPostSortPagination:
+    def test_epss_deep_page_pipeline_not_truncated(self):
+        # A deep page: skip=60, limit=20 needs at least the first 80 globally
+        # epss-ranked groups available to Python. The pipeline must not cap the
+        # fetch below skip + limit (the old code capped at limit*3 = 60 < 80).
+        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="epss", skip=60, limit=20)
+        for lim in _limit_values_after_group(pipeline):
+            assert lim >= 60 + 20, (
+                f"post-sort pipeline caps fetch at {lim}, dropping rows needed for "
+                "skip=60/limit=20 (needs >= 80 or no cap)"
+            )
+
+    def test_risk_deep_page_pipeline_not_truncated(self):
+        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="risk", skip=60, limit=20)
+        for lim in _limit_values_after_group(pipeline):
+            assert lim >= 60 + 20, (
+                f"post-sort pipeline caps fetch at {lim}, dropping rows needed for "
+                "skip=60/limit=20 (needs >= 80 or no cap)"
+            )
+
+    def test_epss_pipeline_has_no_premature_mongo_skip(self):
+        # Pagination for post-sort happens in Python (after the re-sort), so the
+        # Mongo pipeline must NOT $skip — a Mongo $skip would drop rows in
+        # finding_count order before the epss re-ranking runs.
+        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="epss", skip=60, limit=20)
+        assert not any("$skip" in stage for stage in pipeline), (
+            "post-sort pipeline must not $skip in Mongo; pagination is applied in "
+            "Python after the epss/risk re-sort"
+        )
+
+    def test_finding_count_sort_still_paginates_in_mongo(self):
+        # Regression guard: the non-post-sort path keeps pushing $skip/$limit
+        # into Mongo (that path IS globally ordered in Mongo).
+        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="finding_count", skip=40, limit=20)
+        assert any(stage.get("$skip") == 40 for stage in pipeline), "expected $skip in Mongo pipeline"
+        assert any(stage.get("$limit") == 20 for stage in pipeline), "expected $limit in Mongo pipeline"

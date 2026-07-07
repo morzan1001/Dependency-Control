@@ -1,6 +1,7 @@
 """Tests for update frequency analysis — version classification, trend, aggregates,
 and the streaming orchestrator."""
 
+import asyncio
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -10,6 +11,7 @@ import pytest
 from app.schemas.analytics import ScanTimelineEntry
 from app.services.release_history import ReleaseHistory, ReleaseInfo
 from app.services.update_frequency import (
+    _COMPARISON_CONCURRENCY,
     _aggregate_metrics,
     _compute_trend,
     _dominant_ecosystem,
@@ -237,23 +239,42 @@ class TestAggregateMetricsCoverage:
 # --- Fake repos for streaming-orchestrator tests ---
 
 
+class _FakeScanObj:
+    """Mirrors the attribute access (.id/.created_at/.status) of the real Scan model."""
+
+    def __init__(self, doc: Dict[str, Any]):
+        self.id = doc["_id"]
+        self.created_at = doc["created_at"]
+        self.status = doc.get("status", "completed")
+
+
 class FakeScanRepo:
     def __init__(self, scans: List[Dict[str, Any]]):
         # scans must include _id, created_at, status, project_id
         self._scans = scans
 
-    async def find_by_project(
+    async def find_many(
         self,
-        project_id: str,
+        query: Dict[str, Any],
+        sort: Optional[List[Tuple[str, int]]] = None,
         skip: int = 0,
-        limit: int = 100,
-        sort_by: str = "created_at",
-        sort_order: int = -1,
+        limit: Optional[int] = None,
         projection: Optional[Dict[str, int]] = None,
-    ) -> List[Dict[str, Any]]:
-        matched = [s for s in self._scans if s["project_id"] == project_id]
-        matched.sort(key=lambda s: s["created_at"], reverse=(sort_order == -1))
-        return matched[skip : skip + limit]
+    ) -> List[_FakeScanObj]:
+        # Mirrors ScanRepository.find_many: filter by the query (incl. status),
+        # sort, then apply the limit — status is filtered BEFORE the limit.
+        matched = [s for s in self._scans if s.get("project_id") == query.get("project_id")]
+        status = query.get("status")
+        if status is not None:
+            matched = [s for s in matched if s.get("status") == status]
+        if sort:
+            field, order = sort[0]
+            matched.sort(key=lambda s: s[field], reverse=(order == -1))
+        if limit is not None:
+            matched = matched[skip : skip + limit]
+        else:
+            matched = matched[skip:]
+        return [_FakeScanObj(s) for s in matched]
 
 
 class FakeDepRepo:
@@ -662,3 +683,140 @@ class TestStreamingOrchestrator:
             assert not isinstance(scan_filter, dict), (
                 f"analysis_repo.find_many called with bulk scan filter {scan_filter}; expected per-scan loading"
             )
+
+    @pytest.mark.asyncio
+    async def test_completed_filter_applied_before_limit(self):
+        # Finding 1: the newest max_scans scans are all failed, but a long
+        # completed history exists underneath. Filtering status AFTER the limit
+        # (the bug) would return [] and report "not enough scans"; filtering in
+        # the query must surface the older completed scans.
+        completed = [_make_scan(f"c{i}", i) for i in range(6)]  # days 0..5, completed
+        failed = [
+            {**_make_scan(f"f{i}", 10 + i), "status": "failed"} for i in range(20)
+        ]  # days 10..29, failed -> these are the newest 20
+        scans = completed + failed
+        deps = {f"c{i}": [_make_dep(f"c{i}", "pkg-a", f"1.0.{i}")] for i in range(6)}
+        scan_repo = FakeScanRepo(scans)
+        dep_repo = FakeDepRepo(deps)
+        analysis_repo = FakeAnalysisRepo([])
+
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=scan_repo,
+            dep_repo=dep_repo,
+            analysis_repo=analysis_repo,
+            max_scans=20,
+        )
+
+        assert m.scan_count == 6, "completed scans must survive the fetch limit even when the newest scans failed"
+        assert m.total_updates == 5
+
+    @pytest.mark.asyncio
+    async def test_maven_upstream_uses_deps_dev_name(self):
+        # Finding 2: Maven components store only the artifact as the DB name,
+        # but deps.dev needs "group:artifact" (ParsedPURL.deps_dev_name). The
+        # spec must use that name, and observations must be re-keyed to match
+        # the fetched history so adoption-latency still resolves.
+        def _maven_dep(scan_id: str, version: str) -> Dict[str, Any]:
+            return {
+                "scan_id": scan_id,
+                "name": "log4j-core",  # DB name = artifact only
+                "version": version,
+                "type": "maven",
+                "purl": f"pkg:maven/org.apache.logging.log4j/log4j-core@{version}",
+            }
+
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {"s1": [_maven_dep("s1", "2.14.0")], "s2": [_maven_dep("s2", "2.17.0")]}
+        scan1_date = scans[1]["created_at"]
+        registry_name = "org.apache.logging.log4j:log4j-core"
+        history: ReleaseHistory = {
+            registry_name: [
+                ReleaseInfo(version="2.14.0", published_at=scans[0]["created_at"] - timedelta(days=100)),
+                ReleaseInfo(version="2.17.0", published_at=scan1_date - timedelta(days=15)),
+            ],
+        }
+
+        class FakeFetcher:
+            def __init__(self, h: ReleaseHistory):
+                self._h = h
+                self.calls: List[Sequence[Tuple[str, str]]] = []
+
+            async def fetch(self, packages: Sequence[Tuple[str, str]]) -> ReleaseHistory:
+                self.calls.append(list(packages))
+                return self._h
+
+        fetcher = FakeFetcher(history)
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+            release_fetcher=fetcher,
+        )
+
+        # The fetcher must be asked for the group:artifact name, not the bare artifact.
+        assert ("maven", registry_name) in fetcher.calls[0]
+        assert ("maven", "log4j-core") not in fetcher.calls[0]
+        # Observations re-keyed to the deps.dev name -> adoption latency resolves (15d).
+        assert m.adoption_latency_days_median == 15.0
+
+    def test_comparison_semaphore_reusable_across_event_loops(self):
+        # Finding 3: the concurrency semaphore must be created per call so it
+        # binds to the loop actually running the gather. A module-global
+        # semaphore binds to the FIRST loop it blocks on and then raises
+        # "bound to a different event loop" on every later loop.
+        #
+        # asyncio.Semaphore only touches the loop (via _get_loop) when acquire()
+        # has to *wait* on an exhausted counter (see acquire(): _get_loop is
+        # reached only under `if self.locked()`). So the bug is invisible unless
+        # the test creates genuine contention: MORE concurrent projects than the
+        # concurrency limit (_COMPARISON_CONCURRENCY == 3), AND work that truly
+        # suspends while holding the semaphore. Plain in-memory fakes return
+        # without ever yielding, so the counter never hits 0 with a waiter behind
+        # it and the semaphore never binds — which is exactly why the previous
+        # version of this test passed against the buggy code. These fakes await
+        # asyncio.sleep(0) so each project holds the semaphore across a real
+        # suspension point, forcing the 4th and 5th projects to block on (and
+        # bind) the semaphore.
+        n_projects = _COMPARISON_CONCURRENCY + 2  # 5 > concurrency limit of 3
+
+        class _SuspendingScanRepo(FakeScanRepo):
+            async def find_many(self, *args, **kwargs):
+                await asyncio.sleep(0)  # yield to the loop while holding the semaphore
+                return await super().find_many(*args, **kwargs)
+
+        class _SuspendingDepRepo(FakeDepRepo):
+            async def find_all(self, *args, **kwargs):
+                await asyncio.sleep(0)
+                return await super().find_all(*args, **kwargs)
+
+        projects = [{"_id": f"proj-{i}", "name": f"Project {i}"} for i in range(n_projects)]
+        all_scans: List[Dict[str, Any]] = []
+        deps: Dict[str, List[Dict[str, Any]]] = {}
+        for i in range(n_projects):
+            pid = f"proj-{i}"
+            s1, s2 = f"{pid}-s1", f"{pid}-s2"
+            all_scans.append(_make_scan(s1, 0, project_id=pid))
+            all_scans.append(_make_scan(s2, 30, project_id=pid))
+            deps[s1] = [_make_dep(s1, "pkg-a", "1.0.0")]
+            deps[s2] = [_make_dep(s2, "pkg-a", "1.0.1")]
+
+        async def _run():
+            return await compute_update_frequency_comparison(
+                projects=projects,
+                scan_repo=_SuspendingScanRepo(all_scans),
+                dep_repo=_SuspendingDepRepo(deps),
+                analysis_repo=FakeAnalysisRepo([]),
+            )
+
+        first = asyncio.run(_run())
+        # Fresh loop. With a module-global semaphore bound to the first loop, the
+        # projects that must wait on it raise RuntimeError here; gather swallows
+        # them (return_exceptions=True), so the summaries silently drop below
+        # n_projects. The per-call semaphore keeps all projects intact.
+        second = asyncio.run(_run())
+        assert len(first.projects) == n_projects
+        assert len(second.projects) == n_projects

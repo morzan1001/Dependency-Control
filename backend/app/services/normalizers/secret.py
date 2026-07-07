@@ -30,7 +30,11 @@ def normalize_trufflehog(aggregator: "ResultAggregator", result: Dict[str, Any],
     # TruffleHog structure: {"findings": [TruffleHogFinding objects]}
     for finding in result.get("findings") or []:
         file_path = _extract_file_path(finding)
-        detector = finding.get("DetectorType") or "Generic Secret"
+        # TruffleHog v3 emits DetectorType as a numeric enum ordinal (e.g. "2")
+        # and the human-readable name in DetectorName. Prefer DetectorName so the
+        # leaked credential type (AWS key vs Slack token) stays recoverable, and
+        # only fall back to the ordinal if the name is missing.
+        detector = finding.get("DetectorName") or finding.get("DetectorType") or "Generic Secret"
 
         # Create a unique ID based on detector, file path, and a non-cryptographic hash of the
         # secret (avoids storing the raw value in the finding key).

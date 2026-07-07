@@ -100,6 +100,16 @@ export function formatEpssScore(
   return `${(epss * 100).toFixed(decimals)}%`
 }
 
+// Maps the backend exploit_maturity values (unknown/low/medium/high/active/
+// weaponized — see backend scoring.calculate_exploit_maturity) to a text color
+// class. weaponized/active are real-world exploited (KEV/ransomware) → critical.
+export function getExploitMaturityClass(maturity: string | null | undefined): string {
+  if (maturity === 'weaponized' || maturity === 'active') return 'text-severity-critical font-medium';
+  if (maturity === 'high') return 'text-severity-high';
+  if (maturity === 'medium') return 'text-severity-medium';
+  return '';
+}
+
 export { formatDate, formatDateTime } from './utils'
 
 export interface SourceInfo {

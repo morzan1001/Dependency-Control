@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { History, MessageSquare, MessagesSquare, Plus, Sparkles, Square } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { ChatInput } from '@/components/chat/ChatInput';
 import { ChatMessage, StreamingMessage } from '@/components/chat/ChatMessage';
@@ -48,6 +49,15 @@ const PROMPT_SUGGESTIONS: ReadonlyArray<{
     prompt: 'Which projects use log4j, and are any of them reachable?',
   },
 ];
+
+function getErrorMessage(err: unknown): string {
+  const axiosDetail = (
+    err as { response?: { data?: { detail?: unknown } } } | null
+  )?.response?.data?.detail;
+  if (typeof axiosDetail === 'string' && axiosDetail.trim()) return axiosDetail;
+  if (err instanceof Error && err.message) return err.message;
+  return 'Please try again in a moment.';
+}
 
 export default function Chat() {
   const { hasPermission } = useAuth();
@@ -105,23 +115,42 @@ export default function Chat() {
   }, [conversationDetail?.messages, streamingContent, streamingToolCalls.length]);
 
   const handleNewConversation = async () => {
-    const conv = await createConversation.mutateAsync(undefined);
-    setActiveConversationId(conv.id);
+    try {
+      const conv = await createConversation.mutateAsync(undefined);
+      setActiveConversationId(conv.id);
+    } catch (err) {
+      toast.error('Failed to start a new conversation', {
+        description: getErrorMessage(err),
+      });
+    }
   };
 
   const handleDeleteConversation = async (id: string) => {
-    await deleteConversation.mutateAsync(id);
-    if (activeConversationId === id) {
-      setActiveConversationId(null);
+    try {
+      await deleteConversation.mutateAsync(id);
+      if (activeConversationId === id) {
+        setActiveConversationId(null);
+      }
+    } catch (err) {
+      toast.error('Failed to delete conversation', {
+        description: getErrorMessage(err),
+      });
     }
   };
 
   const handleSend = (content: string) => {
     if (!activeConversationId) {
-      createConversation.mutateAsync(undefined).then((conv) => {
-        setActiveConversationId(conv.id);
-        sendMessage(content, [], conv.id);
-      });
+      createConversation
+        .mutateAsync(undefined)
+        .then((conv) => {
+          setActiveConversationId(conv.id);
+          sendMessage(content, [], conv.id);
+        })
+        .catch((err) => {
+          toast.error('Failed to send message', {
+            description: getErrorMessage(err),
+          });
+        });
       return;
     }
     sendMessage(content);

@@ -34,6 +34,7 @@ import { ThemeProvider } from "next-themes"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { systemApi } from '@/api/system'
+import { ANALYTICS_ROUTE_PERMISSIONS } from '@/lib/constants'
 import { lazy, Suspense, useState, useEffect } from 'react'
 
 const queryClient = new QueryClient({
@@ -190,7 +191,7 @@ function AppRoutes() {
           </RequirePermission>
         } />
         <Route path="/analytics" element={
-          <RequirePermission permission={['analytics:read', 'analytics:summary', 'analytics:dependencies', 'analytics:tree', 'analytics:impact', 'analytics:hotspots', 'analytics:search']}>
+          <RequirePermission permission={[...ANALYTICS_ROUTE_PERMISSIONS]}>
             <AnalyticsPage />
           </RequirePermission>
         } />

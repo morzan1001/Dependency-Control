@@ -976,7 +976,21 @@ async def update_notification_settings(
     project_repo = ProjectRepository(db)
 
     if is_admin:
-        await project_repo.update(project_id, update_data)
+        # Persist any enforcement change AND the admin's own per-project
+        # preferences. Previously this branch wrote only update_data
+        # (enforcement), silently discarding the admin's submitted
+        # notification_preferences (and no-op'ing entirely when no enforcement
+        # change was included).
+        if update_data:
+            await project_repo.update(project_id, update_data)
+        for i, member in enumerate(project.members):
+            if member.user_id == str(current_user.id):
+                await project_repo.update_member(
+                    project_id,
+                    str(current_user.id),
+                    {f"members.{i}.notification_preferences": settings.notification_preferences},
+                )
+                break
     else:
         # If settings are enforced, regular members cannot update their preferences
         if project.enforce_notification_settings and not has_update_perm:
@@ -1626,22 +1640,37 @@ async def export_project_csv(
         ]
     )
 
-    # Iterate findings
-    # Assuming findings_summary structure. Adjust based on actual data.
-    if scan.findings_summary:
-        for finding in scan.findings_summary:
-            f_dict = finding.model_dump()
-            writer.writerow(
-                [
-                    f_dict.get("component", ""),
-                    f_dict.get("version", ""),
-                    f_dict.get("type", ""),
-                    f_dict.get("id", ""),
-                    f_dict.get("severity", ""),
-                    f_dict.get("description", ""),
-                    f_dict.get("details", {}).get("fixed_version", ""),
-                ]
-            )
+    # Read findings from the findings collection rather than scan.findings_summary.
+    # findings_summary is a compact, vulnerability-only projection capped at 500
+    # entries and without details.fixed_version, so exporting from it silently
+    # drops non-vulnerability findings, truncates large scans, and blanks the
+    # "Fixed Version" column. The findings collection is the complete, accurate
+    # source; stream it so memory stays bounded for large scans.
+    finding_repo = FindingRepository(db)
+    async for f_dict in finding_repo.iterate_raw(
+        {"scan_id": scan.id},
+        {
+            "finding_id": 1,
+            "component": 1,
+            "version": 1,
+            "type": 1,
+            "severity": 1,
+            "description": 1,
+            "details.fixed_version": 1,
+        },
+    ):
+        details = f_dict.get("details") or {}
+        writer.writerow(
+            [
+                f_dict.get("component", ""),
+                f_dict.get("version", ""),
+                f_dict.get("type", ""),
+                f_dict.get("finding_id", ""),
+                f_dict.get("severity", ""),
+                f_dict.get("description", ""),
+                details.get("fixed_version", ""),
+            ]
+        )
 
     return Response(
         content=output.getvalue(),

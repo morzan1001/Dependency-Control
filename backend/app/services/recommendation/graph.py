@@ -39,21 +39,26 @@ def analyze_deep_dependency_chains(
     # Detect cycles using DFS with coloring (white=0, gray=1, black=2)
     color: Dict[str, int] = {}
 
-    def has_cycle(node: str, path: set) -> bool:
-        if node in path:
-            in_cycle.update(path)
+    def has_cycle(node: str, path: List[str], on_path: set) -> bool:
+        if node in on_path:
+            # Mark only the nodes that form the cycle: from the first
+            # occurrence of ``node`` in the current path onward. Ancestors
+            # before that point reach the cycle but are not part of it.
+            start = path.index(node)
+            in_cycle.update(path[start:])
             return True
         if color.get(node, 0) == 2:  # Already fully processed
             return False
 
         color[node] = 1  # Mark as being processed
-        path.add(node)
+        path.append(node)
+        on_path.add(node)
 
         for child in children_map.get(node, []):
-            if has_cycle(child, path):
-                in_cycle.add(node)
+            has_cycle(child, path, on_path)
 
-        path.remove(node)
+        path.pop()
+        on_path.discard(node)
         color[node] = 2  # Mark as fully processed
         return False
 
@@ -61,7 +66,7 @@ def analyze_deep_dependency_chains(
     for dep in dependencies:
         key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
         if get_attr(dep, "direct", False) and color.get(key, 0) == 0:
-            has_cycle(key, set())
+            has_cycle(key, [], set())
 
     # First pass: direct deps have depth 1
     for dep in dependencies:

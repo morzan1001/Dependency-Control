@@ -91,9 +91,18 @@ const refreshAccessToken = async (): Promise<string | null> => {
     })
     .catch((err) => {
       logger.error('Token refresh failed', err instanceof Error ? err.message : 'Unknown error');
-      localStorage.removeItem('token');
-      localStorage.removeItem('refresh_token');
-      return null;
+      const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+      // A 4xx means the refresh token itself is invalid/expired: the tokens are
+      // dead, so clear them and signal the caller to log out (return null).
+      if (status !== undefined && status >= 400 && status < 500) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('refresh_token');
+        return null;
+      }
+      // Network error, timeout, or 5xx: transient failure. The refresh token may
+      // still be valid, so keep both tokens and re-throw so the caller does NOT
+      // force a logout; a later request can retry with the intact refresh token.
+      throw err;
     })
     .finally(() => {
       refreshPromise = null;
@@ -191,7 +200,10 @@ api.interceptors.response.use(
             return api(originalRequest);
           }
         } catch {
-          // refresh failed; fall through to logout
+          // Transient refresh failure (network/timeout/5xx): the tokens are still
+          // intact. Reject the original request without forcing a logout so a later
+          // attempt can retry with the surviving refresh token.
+          throw error;
         }
       }
 

@@ -451,9 +451,9 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     # Cached package metadata.
     await database["dependency_enrichments"].create_index("purl", unique=True)
 
-    # Invitations
-    await database["project_invitations"].create_index("token", unique=True)
-    await database["project_invitations"].create_index("email")
+    # Invitations (InvitationRepository stores project invitations in "invitations").
+    await database["invitations"].create_index("token", unique=True)
+    await database["invitations"].create_index("email")
 
     # Archive Metadata
     await database["archive_metadata"].create_index("project_id")
@@ -516,8 +516,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         [("scope", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING)], unique=True
     )
 
-    # Policy Audit Entries
-    await database["policy_audit_entries"].create_index(
+    # Policy Audit Entries (PolicyAuditRepository stores these in "crypto_policy_history").
+    await database["crypto_policy_history"].create_index(
         [
             ("policy_type", pymongo.ASCENDING),
             ("policy_scope", pymongo.ASCENDING),
@@ -525,11 +525,11 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("version", pymongo.DESCENDING),
         ]
     )
-    await database["policy_audit_entries"].create_index(
+    await database["crypto_policy_history"].create_index(
         [("policy_scope", pymongo.ASCENDING), ("project_id", pymongo.ASCENDING), ("version", pymongo.DESCENDING)]
     )
-    await database["policy_audit_entries"].create_index([("timestamp", pymongo.DESCENDING)])
-    await database["policy_audit_entries"].create_index(
+    await database["crypto_policy_history"].create_index([("timestamp", pymongo.DESCENDING)])
+    await database["crypto_policy_history"].create_index(
         [("actor_user_id", pymongo.ASCENDING), ("timestamp", pymongo.DESCENDING)]
     )
 
