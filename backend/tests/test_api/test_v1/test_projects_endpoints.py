@@ -3,7 +3,6 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
 
 from app.models.project import Project, ProjectMember, Scan
 from app.models.user import User

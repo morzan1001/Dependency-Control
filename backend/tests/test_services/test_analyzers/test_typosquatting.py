@@ -174,21 +174,18 @@ class TestSeverityThresholds:
     def setup_method(self):
         self.analyzer = TyposquattingAnalyzer()
 
-    def _make_issue(self, ratio):
-        """Build a severity string using the same thresholds as analyze()."""
-        from app.models.finding import Severity
+    # Default thresholds analyze() applies (critical_similarity / high_similarity).
+    CRITICAL_AT = 0.95
+    HIGH_AT = 0.90
 
-        if ratio > 0.95:
-            return Severity.CRITICAL.value
-        elif ratio > 0.90:
-            return Severity.HIGH.value
-        else:
-            return Severity.MEDIUM.value
+    def _make_issue(self, ratio):
+        """Compute severity via the REAL production threshold function so a
+        regression in _severity_for_ratio is actually caught."""
+        from app.services.analyzers.typosquatting import _severity_for_ratio
+
+        return _severity_for_ratio(ratio, self.CRITICAL_AT, self.HIGH_AT)
 
     def test_ratio_above_095_is_critical(self):
-        assert self._make_issue(0.96) == "CRITICAL"
-
-    def test_ratio_exactly_096_is_critical(self):
         assert self._make_issue(0.96) == "CRITICAL"
 
     def test_ratio_above_090_is_high(self):

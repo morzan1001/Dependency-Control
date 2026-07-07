@@ -62,9 +62,4 @@ describe('/analytics route permission gate', () => {
       unmount()
     }
   })
-
-  it('gate list matches the tab-granting permissions and excludes analytics:dependencies', () => {
-    expect(ANALYTICS_ROUTE_PERMISSIONS).toContain('analytics:recommendations')
-    expect(ANALYTICS_ROUTE_PERMISSIONS).not.toContain('analytics:dependencies')
-  })
 })

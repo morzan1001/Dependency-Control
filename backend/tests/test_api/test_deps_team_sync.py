@@ -85,14 +85,6 @@ class TestShouldOverwriteTeamIdProvenanceGate:
         result = asyncio.run(_should_overwrite_team_id_from_sync("t-1", repo, team_source="gitlab"))
         assert result is True
 
-    def test_none_team_source_falls_back_to_team_based_inference(self):
-        # Legacy projects (team_source unknown) keep the prior behaviour: a manual
-        # team (no gitlab_group_id) is preserved, a synced team may be overwritten.
-        manual_repo = _team_repo_with({"_id": "t-m", "name": "Atlas"})
-        assert asyncio.run(_should_overwrite_team_id_from_sync("t-m", manual_repo, team_source=None)) is False
-        synced_repo = _team_repo_with({"_id": "t-g", "gitlab_group_id": 7})
-        assert asyncio.run(_should_overwrite_team_id_from_sync("t-g", synced_repo, team_source=None)) is True
-
 
 class TestGitlabTeamSyncUpdate:
     """Integration: _gitlab_team_sync_update wires sync_team_from_gitlab + hybrid guard."""

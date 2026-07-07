@@ -213,17 +213,6 @@ class TestAnalyzeCrossProjectPatternsSharedVuln:
         shared_recs = [r for r in result if r.type == RecommendationType.SHARED_VULNERABILITY]
         assert len(shared_recs) == 1
 
-    def test_cve_in_two_projects_type(self):
-        data = _cross_project_data(
-            [
-                _project(project_id="p1", project_name="App1", cves=["CVE-2024-001"]),
-                _project(project_id="p2", project_name="App2", cves=["CVE-2024-001"]),
-            ]
-        )
-        result = analyze_cross_project_patterns([], [], data)
-        shared_recs = [r for r in result if r.type == RecommendationType.SHARED_VULNERABILITY]
-        assert shared_recs[0].type == RecommendationType.SHARED_VULNERABILITY
-
     def test_cve_in_two_projects_affected_components(self):
         data = _cross_project_data(
             [

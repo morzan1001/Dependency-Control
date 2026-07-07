@@ -22,15 +22,6 @@ describe("WaiverExpiryCell", () => {
     expect(screen.queryByText(/Expired/i)).not.toBeInTheDocument();
   });
 
-  it("shows the formatted date for an active waiver, no Expired badge", () => {
-    render(
-      <WaiverExpiryCell
-        waiver={makeWaiver({ expiration_date: "2099-12-31T23:59:59.999Z", is_active: true })}
-      />,
-    );
-    expect(screen.queryByText(/Expired/i)).not.toBeInTheDocument();
-  });
-
   it("renders an 'Expired' badge for inactive waivers", () => {
     render(
       <WaiverExpiryCell

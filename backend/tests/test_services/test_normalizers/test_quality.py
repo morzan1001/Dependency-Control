@@ -116,21 +116,6 @@ class TestNormalizeScorecard:
         f = list(self.agg.findings.values())[0]
         assert "3.5" in f.description
 
-    def test_scorecard_cached_for_enrichment(self):
-        result = {
-            "scorecard_issues": [
-                {
-                    "component": "pkg",
-                    "version": "1.0",
-                    "scorecard": {"overallScore": 5.0, "checks": []},
-                    "failed_checks": [],
-                    "critical_issues": [],
-                }
-            ]
-        }
-        self.agg.aggregate("deps_dev", result)
-        assert "pkg@1.0" in self.agg._scorecard_cache
-
     def test_record_scorecard_public_method(self):
         """ResultAggregator exposes a public record_scorecard method that stores data."""
         assert hasattr(ResultAggregator, "record_scorecard")

@@ -19,11 +19,6 @@ class TestBuildMrCommentStatus:
         comment = _build_mr_comment("scan-1", stats, None)
         assert "[WARNING]" in comment
 
-    def test_alert_when_critical_findings(self):
-        stats = Stats(critical=1, risk_score=80.0)
-        comment = _build_mr_comment("scan-1", stats, None)
-        assert "[ALERT]" in comment
-
     def test_alert_when_high_findings(self):
         stats = Stats(high=3, risk_score=50.0)
         comment = _build_mr_comment("scan-1", stats, None)

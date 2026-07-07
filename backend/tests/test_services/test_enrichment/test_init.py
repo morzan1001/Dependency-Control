@@ -28,10 +28,3 @@ async def test_enrich_vulnerability_findings_does_not_close_shared_singleton(mon
 
     enrich_mock.assert_awaited_once_with(findings)
     close_mock.assert_not_called()
-
-
-def test_dead_ghsa_wrappers_removed():
-    """resolve_ghsa_ids and get_github_advisory_url were dead public API with no
-    callers anywhere in the repo and have been removed (audit savings #2)."""
-    assert not hasattr(enrichment, "resolve_ghsa_ids")
-    assert not hasattr(enrichment, "get_github_advisory_url")

@@ -8,6 +8,9 @@ from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks.base import EvaluationInput
+from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
+from app.services.compliance.frameworks.license_audit import LicenseAuditFramework
+from app.services.compliance.frameworks.nist_sp_800_131a import NistSp800_131aFramework
 
 
 def _report(**overrides):
@@ -203,16 +206,6 @@ async def test_engine_gather_inputs_builds_evaluation_input():
     assert result.resolved is resolved
     assert "user scope" in result.scope_description
     assert result.scan_ids == ["s1"]
-
-
-# ---------------------------------------------------------------------------
-# Findings-filter + license-policy plumbing (audit 2026-07-07 finding #1)
-# and N+1 crypto-asset collection (finding #2).
-# ---------------------------------------------------------------------------
-
-from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
-from app.services.compliance.frameworks.license_audit import LicenseAuditFramework
-from app.services.compliance.frameworks.nist_sp_800_131a import NistSp800_131aFramework
 
 
 def _make_engine_db(*, agg_rows, project_doc=None):

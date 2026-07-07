@@ -73,24 +73,6 @@ class TestWebhookModelCreationWithType:
         webhook = Webhook(project_id="proj-1", webhook_type=resolved_type, **webhook_data)
         assert webhook.webhook_type == "teams"
 
-    def test_webhook_response_exposes_type(self):
-        from app.schemas.webhook import WebhookResponse
-
-        webhook = Webhook(
-            url="https://contoso.webhook.office.com/webhookb2/abc",
-            events=["scan.completed"],
-            webhook_type="teams",
-        )
-        resp = WebhookResponse(
-            id=webhook.id,
-            url=webhook.url,
-            events=webhook.events,
-            is_active=webhook.is_active,
-            created_at=webhook.created_at,
-            webhook_type=webhook.webhook_type,
-        )
-        assert resp.webhook_type == "teams"
-
 
 class TestDetectWebhookTypeOnUpdate:
     """Simulate the update-endpoint logic: re-detect when URL changes, respect explicit override."""

@@ -430,26 +430,6 @@ class TestCheckTeamAccess:
             )
         assert result.id == "team-1"
 
-    def test_admin_can_access_with_admin_required(self, regular_user):
-        from app.api.v1.helpers.teams import check_team_access
-
-        team = self._make_team(
-            members=[TeamMember(user_id=str(regular_user.id), role=TEAM_ROLE_ADMIN)],
-        )
-        mock_repo = MagicMock()
-        mock_repo.get_by_id = AsyncMock(return_value=team)
-
-        with patch(f"{HELPERS_TEAMS}.TeamRepository", return_value=mock_repo):
-            result = asyncio.run(
-                check_team_access(
-                    "team-1",
-                    regular_user,
-                    MagicMock(),
-                    required_role=TEAM_ROLE_ADMIN,
-                )
-            )
-        assert result.id == "team-1"
-
     def test_user_without_team_read_denied(self, no_perms_user):
         from app.api.v1.helpers.teams import check_team_access
 

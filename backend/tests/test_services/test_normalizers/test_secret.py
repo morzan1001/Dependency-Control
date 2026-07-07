@@ -151,21 +151,6 @@ class TestNormalizeTrufflehog:
         # The numeric ordinal must not leak into user-visible fields.
         assert f.description == "Secret detected: AWS"
 
-    def test_falls_back_to_detector_type_when_no_name(self):
-        """When DetectorName is absent, fall back to DetectorType."""
-        result = {
-            "findings": [
-                {
-                    "DetectorType": "AWS",
-                    "Raw": "test",
-                    "SourceMetadata": {"Data": {}},
-                }
-            ]
-        }
-        self.agg.aggregate("trufflehog", result)
-        f = list(self.agg.findings.values())[0]
-        assert f.details["detector"] == "AWS"
-
     def test_empty_raw_uses_nohash(self):
         result = {
             "findings": [

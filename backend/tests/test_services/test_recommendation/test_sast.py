@@ -29,9 +29,6 @@ class TestProcessSastEmpty:
     def test_empty_list_returns_empty(self):
         assert process_sast([]) == []
 
-    def test_empty_iterable(self):
-        assert process_sast([]) == []
-
 
 class TestProcessSastInjection:
     """Injection category normalization and recommendation."""

@@ -8,7 +8,6 @@ cleaned-up signature and confirm the call site no longer supplies the count.
 
 import inspect
 
-import app.services.chat.context as context_mod
 from app.services.chat.context import build_messages
 
 
@@ -23,14 +22,3 @@ def test_build_messages_works_with_new_arity():
     # System prompt first, user message last — behaviour unchanged.
     assert messages[0]["role"] == "system"
     assert messages[-1] == {"role": "user", "content": "hello"}
-
-
-def test_service_calls_build_messages_without_tool_count(monkeypatch):
-    """The service call site must not pass len(available_tools) anymore."""
-    import app.services.chat.service as service_mod
-
-    src = inspect.getsource(service_mod.send_message) if hasattr(
-        service_mod, "send_message"
-    ) else inspect.getsource(service_mod.ChatService.send_message)
-    assert "build_messages(history, content, images or [])" in src
-    assert "len(available_tools))" not in src

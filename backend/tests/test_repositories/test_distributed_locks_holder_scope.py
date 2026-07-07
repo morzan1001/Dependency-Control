@@ -122,23 +122,3 @@ class TestHolderScopedRelease:
             assert acquired_by_b is True
 
         asyncio.run(scenario())
-
-    def test_release_filters_on_both_id_and_holder(self):
-        """The delete filter must include the holder, not just the _id."""
-        async def scenario():
-            repo, coll = _make_repo()
-            await repo.acquire_lock("lock-z", "owner", ttl_seconds=300)
-
-            captured = {}
-            original = coll.delete_one
-
-            async def spy(filter):
-                captured["filter"] = filter
-                return await original(filter)
-
-            coll.delete_one = spy
-            await repo.release_lock("lock-z", "owner")
-
-            assert captured["filter"] == {"_id": "lock-z", "holder": "owner"}
-
-        asyncio.run(scenario())

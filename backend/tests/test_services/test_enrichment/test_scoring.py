@@ -125,11 +125,8 @@ class TestCalculateRiskScore:
 
     def test_score_capped_at_100(self):
         score = calculate_risk_score(10.0, 0.95, True, True, reachability_level="confirmed")
-        assert score <= 100.0
-
-    def test_full_score_worst_case(self):
-        score = calculate_risk_score(10.0, 0.95, True, True, reachability_level="confirmed")
-        assert score >= 80.0  # Should be very high
+        # Worst-case inputs produce a very high score that is still capped at 100.
+        assert 80.0 <= score <= 100.0
 
 
 class TestMapReachabilityLevelToModifier:

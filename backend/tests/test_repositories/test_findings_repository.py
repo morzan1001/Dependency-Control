@@ -62,23 +62,6 @@ class TestGetVulnCountsByComponentsScanScope:
         assert "scan_id" in match_stage, "$match must contain scan_id"
         assert match_stage["scan_id"] == {"$in": scan_ids}
 
-    def test_historical_scan_findings_not_counted(self):
-        """Component with vuln only in OLD scan → count must be 0 for latest scan.
-
-        The repository returns counts from whatever the aggregation returns;
-        the scan_id filter ensures only latest-scan docs are aggregated.
-        Simulate the DB returning zero results (because the filter excludes
-        old-scan rows), and assert the count is 0 for the component.
-        """
-        # Aggregation returns nothing → old-scan finding was filtered out
-        result, _ = self._run(
-            scan_ids=["scan-latest"],
-            project_ids=["proj-1"],
-            component_names=["lodash"],
-            agg_results=[],
-        )
-        assert result.get("lodash", 0) == 0
-
     def test_latest_scan_finding_is_counted(self):
         """Component with vuln in the latest scan IS counted."""
         agg_results = [{"_id": "requests", "count": 3}]

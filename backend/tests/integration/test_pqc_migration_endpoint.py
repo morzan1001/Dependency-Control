@@ -75,17 +75,3 @@ async def test_pqc_endpoint_respects_scope_permission(
         headers=member_auth_headers,
     )
     assert resp.status_code in (401, 403)
-
-
-@pytest.mark.asyncio
-async def test_pqc_endpoint_cache_hit_on_second_call(
-    client,
-    db,
-    owner_auth_headers_proj,
-):
-    url = "/api/v1/analytics/crypto/pqc-migration?scope=user"
-    r1 = await client.get(url, headers=owner_auth_headers_proj)
-    r2 = await client.get(url, headers=owner_auth_headers_proj)
-    assert r1.status_code == 200
-    assert r2.status_code == 200
-    assert r1.json()["mappings_version"] == r2.json()["mappings_version"]

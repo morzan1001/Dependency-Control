@@ -16,7 +16,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.permissions import Permissions
 from app.services.chat.tools import ChatToolRegistry
 from app.models.user import User
 from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER

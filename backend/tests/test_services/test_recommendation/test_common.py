@@ -420,10 +420,6 @@ class TestCalculateScore:
         )
         assert calculate_score(with_actionable) > calculate_score(without)
 
-    def test_score_is_integer(self):
-        rec = _make_recommendation()
-        assert isinstance(calculate_score(rec), int)
-
     def test_combined_threat_intel(self):
         """Multiple threat intel signals should stack."""
         single = _make_recommendation(

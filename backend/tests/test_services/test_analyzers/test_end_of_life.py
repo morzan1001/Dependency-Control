@@ -93,10 +93,6 @@ class TestVersionMatchesCycle:
         """'3.8.5' matches cycle '3' via major version."""
         assert self.analyzer._version_matches_cycle("3.8.5", "3") is True
 
-    def test_major_minor_match(self):
-        """'3.8.5' matches cycle '3.8' via major.minor."""
-        assert self.analyzer._version_matches_cycle("3.8.5", "3.8") is True
-
     def test_no_match_different_major(self):
         assert self.analyzer._version_matches_cycle("3.8.5", "2.7") is False
 

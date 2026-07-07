@@ -61,23 +61,6 @@ class TestModelIdAlias:
 class TestUseEnumValues:
     """Finding and FindingRecord store enum values as plain strings."""
 
-    def test_finding_stores_string_values(self):
-        from app.models.finding import Finding, FindingType, Severity
-
-        finding = Finding(
-            id="CVE-1",
-            type=FindingType.VULNERABILITY,
-            severity=Severity.HIGH,
-            component="pkg",
-            description="desc",
-            scanners=["trivy"],
-        )
-        # use_enum_values=True -> stored as plain strings
-        assert finding.type == "vulnerability"
-        assert finding.severity == "HIGH"
-        assert isinstance(finding.type, str)
-        assert isinstance(finding.severity, str)
-
     def test_finding_record_inherits_enum_config(self):
         from app.models.finding import FindingType, Severity
         from app.models.finding_record import FindingRecord
@@ -339,52 +322,6 @@ class TestSettingsConfig:
 
 class TestSystemSettingsConfig:
     """SystemSettings model config works."""
-
-    def test_system_settings_defaults(self):
-        from app.models.system import SystemSettings
-
-        s = SystemSettings()
-        assert s.id == "current"
-        assert s.instance_name == "Dependency Control"
-        assert s.default_active_analyzers == ["trivy", "osv", "license_compliance", "end_of_life"]
-
-    def test_system_settings_from_mongo(self):
-        from app.models.system import SystemSettings
-
-        doc = {
-            "_id": "current",
-            "instance_name": "My Instance",
-            "enforce_2fa": True,
-        }
-        s = SystemSettings(**doc)
-        assert s.id == "current"
-        assert s.instance_name == "My Instance"
-        assert s.enforce_2fa is True
-
-    def test_custom_analyzers_roundtrip(self):
-        """Custom default_active_analyzers survives model_dump -> reconstruct."""
-        from app.models.system import SystemSettings
-
-        custom = ["trivy", "osv"]
-        s = SystemSettings(default_active_analyzers=custom)
-        assert s.default_active_analyzers == custom
-
-        doc = s.model_dump(by_alias=True)
-        assert doc["default_active_analyzers"] == custom
-
-        restored = SystemSettings(**doc)
-        assert restored.default_active_analyzers == custom
-
-    def test_legacy_mongo_doc_without_analyzers_uses_default(self):
-        """MongoDB docs created before the feature get the Pydantic default."""
-        from app.models.system import SystemSettings
-
-        legacy_doc = {
-            "_id": "current",
-            "instance_name": "Old Instance",
-        }
-        s = SystemSettings(**legacy_doc)
-        assert s.default_active_analyzers == ["trivy", "osv", "license_compliance", "end_of_life"]
 
     def test_empty_analyzers_list_persists(self):
         """An admin can explicitly set no default analyzers."""

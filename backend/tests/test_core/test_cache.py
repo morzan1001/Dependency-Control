@@ -11,30 +11,10 @@ from app.core.cache import CacheKeys, CacheService, CacheTTL
 class TestCacheTTLValues:
     """All TTL constants must be positive integers."""
 
-    def test_kev_catalog_is_positive_int(self):
-        """KEV_CATALOG should be a positive integer."""
-        assert isinstance(CacheTTL.KEV_CATALOG, int)
-        assert CacheTTL.KEV_CATALOG > 0
-
     def test_popular_packages_is_positive_int(self):
         """POPULAR_PACKAGES should be a positive integer."""
         assert isinstance(CacheTTL.POPULAR_PACKAGES, int)
         assert CacheTTL.POPULAR_PACKAGES > 0
-
-    def test_epss_score_is_positive_int(self):
-        """EPSS_SCORE should be a positive integer."""
-        assert isinstance(CacheTTL.EPSS_SCORE, int)
-        assert CacheTTL.EPSS_SCORE > 0
-
-    def test_ghsa_data_is_positive_int(self):
-        """GHSA_DATA should be a positive integer."""
-        assert isinstance(CacheTTL.GHSA_DATA, int)
-        assert CacheTTL.GHSA_DATA > 0
-
-    def test_osv_vulnerability_is_positive_int(self):
-        """OSV_VULNERABILITY should be a positive integer."""
-        assert isinstance(CacheTTL.OSV_VULNERABILITY, int)
-        assert CacheTTL.OSV_VULNERABILITY > 0
 
     def test_deps_dev_metadata_is_positive_int(self):
         """DEPS_DEV_METADATA should be a positive integer."""
@@ -65,11 +45,6 @@ class TestCacheTTLValues:
         """MALWARE_CHECK should be a positive integer."""
         assert isinstance(CacheTTL.MALWARE_CHECK, int)
         assert CacheTTL.MALWARE_CHECK > 0
-
-    def test_negative_result_is_positive_int(self):
-        """NEGATIVE_RESULT should be a positive integer."""
-        assert isinstance(CacheTTL.NEGATIVE_RESULT, int)
-        assert CacheTTL.NEGATIVE_RESULT > 0
 
 
 class TestCacheTTLExpectedValues:

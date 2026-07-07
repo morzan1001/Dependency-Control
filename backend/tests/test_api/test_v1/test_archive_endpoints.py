@@ -427,39 +427,6 @@ class TestDownloadArchive:
             db=MagicMock(),
         )
 
-    def test_returns_streaming_response_on_s3_download(self, admin_user):
-        """download_archive returns a StreamingResponse; S3 errors surface during iteration."""
-        from app.api.v1.endpoints.archives import download_archive
-
-        metadata = _make_archive_metadata()
-        mock_repo = MagicMock()
-        mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
-
-        async def failing_stream(key, *, bucket=None):
-            # Yield nothing before raising so Python treats this as an async generator
-            for _ in ():
-                yield b""  # pragma: no cover
-            raise RuntimeError("S3 error")
-
-        with (
-            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
-            patch(f"{MODULE}.is_archive_enabled", return_value=True),
-            patch(f"{MODULE}.is_encryption_enabled", return_value=False),
-            patch(f"{MODULE}.ArchiveMetadataRepository", return_value=mock_repo),
-            patch(f"{MODULE}.download_stream", failing_stream),
-        ):
-            # download_archive itself succeeds (returns StreamingResponse);
-            # the S3 error surfaces when the stream is consumed
-            result = asyncio.run(
-                download_archive(
-                    project_id="proj-1",
-                    scan_id="scan-1",
-                    current_user=admin_user,
-                    db=MagicMock(),
-                )
-            )
-        assert result is not None  # StreamingResponse was constructed
-
     def test_raises_404_when_archive_belongs_to_different_project(self, admin_user):
         from app.api.v1.endpoints.archives import download_archive
 

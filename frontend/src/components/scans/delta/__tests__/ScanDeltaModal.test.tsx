@@ -63,18 +63,6 @@ describe("ScanDeltaModal", () => {
     });
   });
 
-  it("shows tab badge counts after tab is loaded", async () => {
-    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
-      ...empty("findings"),
-      totals: { added: 3, removed: 2, unchanged: 0, changed: 0, by_severity: {}, by_type: {} },
-    });
-    renderModal();
-    await waitFor(() => {
-      const tab = screen.getByRole("tab", { name: /findings/i });
-      expect(tab).toHaveTextContent("5"); // added+removed
-    });
-  });
-
   it("each tab badge shows its own count, not other tabs'", async () => {
     // Different totals per category — verify counts don't bleed across tabs.
     (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockImplementation(

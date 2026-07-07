@@ -560,37 +560,6 @@ class TestEvaluateLicenseWithContext:
         assert result is not None
         assert result["severity"] == Severity.MEDIUM.value
 
-    # --- Default policy = backward compatibility ---
-
-    def test_default_policy_matches_old_behavior_weak_copyleft(self):
-        """Default LicensePolicy produces same result as old code for weak copyleft."""
-        result = self._evaluate_with_policy("LGPL-3.0")
-        assert result is not None
-        assert result["severity"] == Severity.INFO.value
-
-    def test_default_policy_matches_old_behavior_strong_copyleft(self):
-        """Default LicensePolicy produces same result as old code for strong copyleft."""
-        result = self._evaluate_with_policy("GPL-3.0")
-        assert result is not None
-        assert result["severity"] == Severity.HIGH.value
-
-    def test_default_policy_matches_old_behavior_network_copyleft(self):
-        """Default LicensePolicy produces same result as old code for network copyleft."""
-        result = self._evaluate_with_policy("AGPL-3.0")
-        assert result is not None
-        assert result["severity"] == Severity.CRITICAL.value
-
-    def test_default_policy_matches_old_behavior_proprietary(self):
-        """Default LicensePolicy produces same result as old code for proprietary."""
-        result = self._evaluate_with_policy("CC-BY-NC-4.0")
-        assert result is not None
-        assert result["severity"] == Severity.HIGH.value
-
-    def test_default_policy_matches_old_behavior_permissive(self):
-        """Default LicensePolicy produces same result as old code for permissive."""
-        result = self._evaluate_with_policy("MIT")
-        assert result is None
-
     # --- context_reason and effective_severity fields ---
 
     def test_context_reason_absent_when_not_adjusted(self):

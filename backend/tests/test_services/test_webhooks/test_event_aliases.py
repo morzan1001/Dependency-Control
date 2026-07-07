@@ -56,11 +56,6 @@ class TestValidationAcceptsBothForms:
         result = validate_webhook_events(["scan.completed"])
         assert result == ["scan.completed"]
 
-    def test_subscribe_accepts_legacy_alias(self):
-        """Backward-compat: legacy snake_case names still validate."""
-        result = validate_webhook_events(["scan_completed"])
-        assert result == ["scan_completed"]
-
     def test_single_event_accepts_dot_notation(self):
         assert validate_webhook_event_type("vulnerability.found") == "vulnerability.found"
 

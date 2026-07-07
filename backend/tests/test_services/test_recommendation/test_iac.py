@@ -26,9 +26,6 @@ class TestProcessIacEmpty:
     def test_empty_list_returns_empty(self):
         assert process_iac([]) == []
 
-    def test_empty_iterable(self):
-        assert process_iac([]) == []
-
 
 class TestProcessIacDocker:
     """Docker platform normalization."""

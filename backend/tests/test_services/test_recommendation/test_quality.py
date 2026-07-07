@@ -36,9 +36,6 @@ class TestProcessQualityEmpty:
     def test_empty_list_returns_empty(self):
         assert process_quality([]) == []
 
-    def test_empty_iterable(self):
-        assert process_quality([]) == []
-
 
 class TestProcessQualityUnmaintained:
     """Unmaintained package produces SUPPLY_CHAIN_RISK recommendation."""

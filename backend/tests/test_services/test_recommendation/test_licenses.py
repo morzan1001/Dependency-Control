@@ -25,9 +25,6 @@ class TestProcessLicensesEmpty:
     def test_empty_list_returns_empty(self):
         assert process_licenses([]) == []
 
-    def test_empty_iterable(self):
-        assert process_licenses([]) == []
-
 
 class TestProcessLicensesSingleFinding:
     """A single license finding produces exactly one recommendation."""
