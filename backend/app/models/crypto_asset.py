@@ -49,7 +49,10 @@ class CryptoAsset(MongoDocument):
     not_valid_before: Optional[datetime] = Field(None, description="Certificate validity start timestamp")
     not_valid_after: Optional[datetime] = Field(None, description="Certificate validity end timestamp")
     signature_algorithm_ref: Optional[str] = Field(
-        None, description="bom-ref of the algorithm used to sign this certificate"
+        None, description="bom-ref of the algorithm used to sign this certificate (the CA's signing key)"
+    )
+    subject_public_key_ref: Optional[str] = Field(
+        None, description="bom-ref of the algorithm asset representing this certificate's own subject public key"
     )
     certificate_format: Optional[str] = Field(None, description="Certificate format identifier (e.g. X.509)")
 

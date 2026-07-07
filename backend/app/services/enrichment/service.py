@@ -226,7 +226,10 @@ def _apply_enrichment_to_finding(
         details["kev_date_added"] = enrichment.kev_date_added
         details["kev_due_date"] = enrichment.kev_due_date
         details["kev_required_action"] = enrichment.kev_required_action
-        details["kev_ransomware_use"] = enrichment.kev_ransomware_use
+        # Aggregate monotonically (like in_kev/epss): a finding with both a
+        # ransomware-linked and a non-ransomware KEV CVE must stay flagged, not be
+        # clobbered to False by whichever CVE is applied last (audit SC#3).
+        details["kev_ransomware_use"] = bool(details.get("kev_ransomware_use")) or enrichment.kev_ransomware_use
 
     if enrichment.exploit_maturity and enrichment.exploit_maturity != "unknown":
         current_maturity = details.get("exploit_maturity", "unknown")

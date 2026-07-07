@@ -1,7 +1,9 @@
+import { Suspense } from 'react'
 import { Outlet, Link, useLocation } from 'react-router-dom'
 import { LayoutDashboard, Users, FolderGit2, LogOut, UserCog, User, Settings, BarChart3, Megaphone, Archive, ShieldAlert, MessageSquare, type LucideIcon } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { Skeleton } from '@/components/ui/skeleton'
 import { useAuth } from '@/context'
 import { useAppConfig } from '@/hooks/queries/use-system'
 import { ANALYTICS_PERMISSIONS } from '@/lib/constants'
@@ -137,10 +139,21 @@ export default function DashboardLayout() {
         </div>
       </aside>
 
-      {/* Main Content */}
+      {/* Main Content — Suspense lives HERE (around the Outlet) so a lazy route's
+          chunk load only shows a loader in the content area; the header/sidebar
+          chrome stays mounted instead of the whole app tearing down (audit SC#14). */}
       <main className="flex-1 overflow-y-auto overflow-x-hidden">
         <div className="p-8">
-          <Outlet />
+          <Suspense
+            fallback={
+              <div className="space-y-4">
+                <Skeleton className="h-8 w-48" />
+                <Skeleton className="h-32 w-full" />
+              </div>
+            }
+          >
+            <Outlet />
+          </Suspense>
         </div>
       </main>
     </div>

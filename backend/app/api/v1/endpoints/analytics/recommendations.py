@@ -1,5 +1,6 @@
 """Analytics recommendations endpoint: /projects/{project_id}/recommendations."""
 
+import hashlib
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
@@ -12,6 +13,7 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
 )
 from app.api.v1.helpers.responses import RESP_AUTH_404
+from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
 from app.core.permissions import Permissions
 from app.repositories import (
@@ -71,6 +73,21 @@ async def get_project_recommendations(
         raise HTTPException(status_code=404, detail="No scan found for this project")
 
     scan_id = scan.id
+
+    # Cache the (expensive) result per scan + caller scope. scan_id auto-
+    # invalidates on a new scan; scope_hash isolates the cross-project signal so
+    # users with different project access never share an entry. NOTE (audit SC#12):
+    # the cross-project recommendations fold in OTHER projects' latest scans, which
+    # are NOT in the key — a peer rescan can leave cross_project_* recommendations
+    # stale until the (short) TTL expires. Accepted: the cross-project signal is
+    # advisory and the TTL bounds the staleness.
+    scope_hash = hashlib.md5(
+        ",".join(sorted(user_project_ids)).encode(), usedforsecurity=False
+    ).hexdigest()[:16]
+    cache_key = CacheKeys.recommendations(project_id, scan_id, scope_hash)
+    cached = await cache_service.get(cache_key)
+    if cached:
+        return RecommendationsResponse(**cached)
 
     source_target = None
 
@@ -201,7 +218,7 @@ async def get_project_recommendations(
         ):
             summary["crypto_issues"] += impact_total
 
-    return RecommendationsResponse(
+    response = RecommendationsResponse(
         project_id=project_id,
         project_name=project.get("name", "Unknown"),
         scan_id=scan_id,
@@ -210,3 +227,8 @@ async def get_project_recommendations(
         recommendations=[RecommendationResponse(**r.to_dict()) for r in recommendations],
         summary=summary,
     )
+    # mode="json" so the cached payload uses JSON-native types — identical to what
+    # the Redis-backed cache_service stores (json.dumps), so a cache hit reconstructs
+    # the same shape as a cache miss regardless of enums/datetimes (audit SC#11).
+    await cache_service.set(cache_key, response.model_dump(mode="json"), ttl_seconds=CacheTTL.RECOMMENDATIONS)
+    return response

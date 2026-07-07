@@ -9,8 +9,12 @@ from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, cast
 
 from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
+    DETAILS_KEY_KEV_RANSOMWARE,
     HIGH_RISK_SCORE_THRESHOLD,
     REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
+    REACHABILITY_LEVEL_IMPORT,
+    REACHABILITY_LEVEL_SYMBOL,
     SEVERITY_CALCULATED_RISK_SCORES,
     sort_by_severity,
 )
@@ -21,7 +25,7 @@ from app.models.stats import (
     Stats,
     ThreatIntelligenceStats,
 )
-from app.services.reachability_enrichment import is_high_confidence_reachable
+from app.services.reachability_enrichment import is_high_confidence_reachable, reachability_display_tier
 from app.services.analysis.types import (
     CallgraphInfo,
     Database,
@@ -96,7 +100,7 @@ def _process_finding_risk(
             "component": finding.get("component", ""),
             "version": finding.get("version") or "",
             "risk_score": round(risk_score, 1),
-            "epss_score": round(epss_score, 4) if epss_score else None,
+            "epss_score": round(epss_score, 4) if epss_score is not None else None,
             "in_kev": details.get("in_kev", False),
             "exploit_maturity": maturity,
         }
@@ -220,21 +224,23 @@ def build_reachability_summary(
     for finding in findings:
         reachability_data = finding.get("details", {}).get("reachability", {})
         reachable = reachability_data.get("is_reachable")
-        reachability_level: str = reachability_data.get("analysis_level", "unknown")
+        # The persisted analysis_level is none/import/symbol; map it onto the
+        # confirmed/likely/unreachable/unknown display vocabulary the buckets use.
+        tier = reachability_display_tier(reachable, reachability_data.get("analysis_level"))
 
         vuln_info: VulnerabilityInfo = {
             "cve": finding.get("finding_id") or finding.get("id", ""),
             "component": finding.get("component", ""),
             "version": finding.get("version") or "",
             "severity": finding.get("severity", "unknown"),
-            "reachability_level": reachability_level,
+            "reachability_level": tier,
             "reachable_functions": reachability_data.get("matched_symbols", [])[:5],
             "is_high_confidence": is_high_confidence_reachable(reachability_data),
         }
 
         reachability_counts = cast(Dict[str, int], summary["reachability_levels"])
-        if reachability_level in reachability_counts:
-            reachability_counts[reachability_level] += 1
+        if tier in reachability_counts:
+            reachability_counts[tier] += 1
 
         if reachable is True:
             summary["reachable_vulnerabilities"].append(vuln_info)
@@ -275,8 +281,8 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                 "severity": 1,
                 "cvss_score": {"$ifNull": ["$details.cvss_score", None]},
                 "epss_score": {"$ifNull": ["$details.epss_score", None]},
-                "is_kev": {"$ifNull": ["$details.is_kev", False]},
-                "kev_ransomware": {"$ifNull": ["$details.kev_ransomware", False]},
+                "is_kev": {"$ifNull": [f"$details.{DETAILS_KEY_IN_KEV}", False]},
+                "kev_ransomware": {"$ifNull": [f"$details.{DETAILS_KEY_KEV_RANSOMWARE}", False]},
                 "reachable": {"$ifNull": ["$reachable", None]},
                 "reachability_level": {"$ifNull": ["$reachability_level", "unknown"]},
                 # Confidence is nested under details.reachability — pulled
@@ -360,8 +366,39 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                 "reachability_analyzed": {"$sum": {"$cond": [{"$ne": ["$reachable", None]}, 1, 0]}},
                 "reachable_count": {"$sum": {"$cond": [{"$eq": ["$reachable", True]}, 1, 0]}},
                 "unreachable_count": {"$sum": {"$cond": [{"$eq": ["$reachable", False]}, 1, 0]}},
-                "confirmed_reachable": {"$sum": {"$cond": [{"$eq": ["$reachability_level", "confirmed"]}, 1, 0]}},
-                "likely_reachable": {"$sum": {"$cond": [{"$eq": ["$reachability_level", "likely"]}, 1, 0]}},
+                # Tiers derived from (reachable, analysis_level): the persisted
+                # reachability_level vocabulary is none/import/symbol, so gating on
+                # "confirmed"/"likely" string literals always yielded 0. A
+                # symbol-level reachable hit is the strong "confirmed" tier; an
+                # import-level reachable hit is the weaker "likely" tier.
+                "confirmed_reachable": {
+                    "$sum": {
+                        "$cond": [
+                            {
+                                "$and": [
+                                    {"$eq": ["$reachable", True]},
+                                    {"$eq": ["$reachability_level", REACHABILITY_LEVEL_SYMBOL]},
+                                ]
+                            },
+                            1,
+                            0,
+                        ]
+                    }
+                },
+                "likely_reachable": {
+                    "$sum": {
+                        "$cond": [
+                            {
+                                "$and": [
+                                    {"$eq": ["$reachable", True]},
+                                    {"$eq": ["$reachability_level", REACHABILITY_LEVEL_IMPORT]},
+                                ]
+                            },
+                            1,
+                            0,
+                        ]
+                    }
+                },
                 # Reachable by severity
                 "reachable_critical": {
                     "$sum": {
@@ -628,8 +665,8 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
             kev_ransomware_count=res.get("kev_ransomware_count", 0),
             high_epss_count=res.get("high_epss_count", 0),
             medium_epss_count=res.get("medium_epss_count", 0),
-            avg_epss_score=round(avg_epss, 4) if avg_epss else None,
-            max_epss_score=round(max_epss, 4) if max_epss else None,
+            avg_epss_score=round(avg_epss, 4) if avg_epss is not None else None,
+            max_epss_score=round(max_epss, 4) if max_epss is not None else None,
             weaponized_count=res.get("weaponized_count", 0),
             active_exploitation_count=res.get("active_exploitation_count", 0),
         )
@@ -638,6 +675,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
         stats.reachability = ReachabilityStats(
             analyzed_count=res.get("reachability_analyzed", 0),
             reachable_count=res.get("reachable_count", 0),
+            confirmed_reachable_count=res.get("confirmed_reachable", 0),
             likely_reachable_count=res.get("likely_reachable", 0),
             unreachable_count=res.get("unreachable_count", 0),
             unknown_count=res.get("total", 0) - res.get("reachability_analyzed", 0),

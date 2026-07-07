@@ -1,21 +1,13 @@
 import { useQuery } from "@tanstack/react-query";
 import { getCryptoHotspots } from "@/api/cryptoAnalytics";
 import type { AnalyticsScope, GroupingDimension } from "@/types/cryptoAnalytics";
+import { heatmapBgClass, heatmapCell } from "./heatmap-utils";
 
 interface Props {
   scope: AnalyticsScope;
   scopeId?: string;
   groupBy: GroupingDimension;
   scanId?: string;
-}
-
-function bgClass(count: number, max: number): string {
-  if (count === 0) return "bg-muted/30";
-  const ratio = count / Math.max(max, 1);
-  if (ratio >= 0.8) return "bg-red-500/80 text-white";
-  if (ratio >= 0.5) return "bg-orange-500/70";
-  if (ratio >= 0.25) return "bg-yellow-500/50";
-  return "bg-yellow-500/20";
 }
 
 export function HotspotHeatmap({ scope, scopeId, groupBy, scanId }: Props) {
@@ -50,20 +42,18 @@ export function HotspotHeatmap({ scope, scopeId, groupBy, scanId }: Props) {
         <tbody>
           {data.items.map((e) => (
             <tr key={e.key}>
-              <td className="sticky left-0 bg-background p-1 font-mono">{e.key}</td>
+              <td className="sticky left-0 bg-background p-1 font-mono whitespace-nowrap">
+                {e.key} <span className="text-muted-foreground">({e.asset_count})</span>
+              </td>
               {columns.map((c) => {
-                const present =
-                  scope === "project"
-                    ? e.locations.includes(c)
-                    : e.project_ids.includes(c);
-                const count = present ? e.asset_count : 0;
+                const cell = heatmapCell(e, c, scope, max);
                 return (
                   <td
                     key={c}
-                    className={`p-1 text-center min-w-6 ${bgClass(count, max)}`}
-                    title={`${e.key} × ${c}: ${count}`}
+                    className={`p-1 text-center min-w-6 ${heatmapBgClass(cell.present, cell.intensityRatio)}`}
+                    title={cell.title}
                   >
-                    {count > 0 ? count : ""}
+                    {cell.label}
                   </td>
                 );
               })}

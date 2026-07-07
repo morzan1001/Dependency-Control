@@ -8,6 +8,7 @@ from app.schemas.recommendation import (
     RecommendationType,
 )
 from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
     EPSS_HIGH_THRESHOLD,
     SCORECARD_LOW_THRESHOLD,
     get_severity_weight,
@@ -98,7 +99,7 @@ def _record_vulnerability(pkg_data: Dict[str, Any], f: ModelOrDict, severity: st
         pkg_data["high_count"] += 1
 
     details_dict = details if isinstance(details, dict) else {}
-    if details_dict.get("is_kev"):
+    if details_dict.get(DETAILS_KEY_IN_KEV):
         pkg_data["kev_count"] += 1
     epss = details_dict.get("epss_score")
     if epss is not None and epss >= EPSS_HIGH_THRESHOLD:
@@ -377,7 +378,7 @@ def _append_vuln_risk_factor(pkg: Dict[str, Any]) -> None:
     kev = sum(
         1
         for v in pkg["vulns"]
-        if isinstance(get_attr(v, "details", {}), dict) and get_attr(v, "details", {}).get("is_kev")
+        if isinstance(get_attr(v, "details", {}), dict) and get_attr(v, "details", {}).get(DETAILS_KEY_IN_KEV)
     )
 
     pkg["risk_factors"].append(

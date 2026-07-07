@@ -39,7 +39,6 @@ function DependencyNode({ node, level, onSelect }: Readonly<DependencyNodeProps>
   }
 
   return (
-    <TooltipProvider>
       <div>
         <div
           className={cn(
@@ -153,7 +152,6 @@ function DependencyNode({ node, level, onSelect }: Readonly<DependencyNodeProps>
           </div>
         )}
       </div>
-    </TooltipProvider>
   )
 }
 
@@ -176,6 +174,7 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
   const transitiveDeps = filteredTree?.filter(n => !n.direct) || []
 
   return (
+    <TooltipProvider>
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
@@ -289,5 +288,6 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
         })()}
       </CardContent>
     </Card>
+    </TooltipProvider>
   )
 }

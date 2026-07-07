@@ -12,7 +12,7 @@ def _vuln(component, severity="HIGH", version="1.0", fixed_version="2.0", is_kev
         "version": version,
         "details": {
             "fixed_version": fixed_version,
-            "is_kev": is_kev,
+            "in_kev": is_kev,
         },
         "id": finding_id,
     }
@@ -25,7 +25,7 @@ def _vuln_no_fix(component, severity="HIGH", version="1.0", finding_id="CVE-2024
         "component": component,
         "version": version,
         "details": {
-            "is_kev": False,
+            "in_kev": False,
         },
         "id": finding_id,
     }

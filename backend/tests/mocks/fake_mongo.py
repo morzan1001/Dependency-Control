@@ -21,8 +21,9 @@ Supported aggregation stages
 - ``$match``, ``$sort``, ``$group``, ``$project``, ``$limit``, ``$unwind``
 - ``$group`` accumulators: ``$sum``, ``$avg``, ``$first``, ``$min``, ``$max``,
   ``$addToSet``, ``$push``
-- ``$dateTrunc`` in ``$group._id`` is accepted but not bucket-rounded
-  (returns the raw date value), so trend endpoints emit a single bucket.
+- ``$dateTrunc`` truncates to the start of the unit (day/week/month/year; week
+  starts Sunday, matching MongoDB's default), in both expressions and
+  ``$group._id``, so trend bucketing is exercised end-to-end.
 
 Supported aggregation expression operators (in ``$project`` / accumulator args)
 ------------------------------------------------------------------------------
@@ -37,8 +38,26 @@ from __future__ import annotations
 import asyncio
 import operator as _op
 import re as _re
+from datetime import datetime as _datetime
+from datetime import timedelta as _timedelta
 from typing import Any
 from unittest.mock import MagicMock
+
+
+def _truncate_date(value: Any, unit: str) -> Any:
+    """Best-effort $dateTrunc: round a datetime down to the start of the unit
+    (day/week/month/year). Week starts on Sunday, matching MongoDB's default.
+    Non-datetime values pass through unchanged."""
+    if not isinstance(value, _datetime):
+        return value
+    midnight = value.replace(hour=0, minute=0, second=0, microsecond=0)
+    if unit == "year":
+        return midnight.replace(month=1, day=1)
+    if unit == "month":
+        return midnight.replace(day=1)
+    if unit == "week":
+        return midnight - _timedelta(days=(value.weekday() + 1) % 7)
+    return midnight  # day (default)
 
 _SET_ON_INSERT = "$setOnInsert"
 _CMP = {"$lt": _op.lt, "$lte": _op.le, "$gt": _op.gt, "$gte": _op.ge}
@@ -185,8 +204,8 @@ def _eval_expr(doc: dict, expr):
         return expr
 
     if "$dateTrunc" in expr:
-        # Bucket rounding intentionally skipped — return raw date value.
-        return _eval_expr(doc, expr["$dateTrunc"].get("date"))
+        spec = expr["$dateTrunc"]
+        return _truncate_date(_eval_expr(doc, spec.get("date")), spec.get("unit", "day"))
     if "$first" in expr:
         return _eval_expr(doc, expr["$first"])
     if "$ifNull" in expr:
@@ -282,11 +301,11 @@ def _resolve_group_key(doc: dict, id_spec):
         return _resolve_dotted(doc, id_spec[1:])
     if isinstance(id_spec, dict):
         if "$dateTrunc" in id_spec:
-            return None
+            return _eval_expr(doc, id_spec)
         resolved = {}
         for k, v in id_spec.items():
             if isinstance(v, dict) and "$dateTrunc" in v:
-                resolved[k] = None
+                resolved[k] = _eval_expr(doc, v)
             else:
                 resolved[k] = _resolve_field(doc, v)
         try:

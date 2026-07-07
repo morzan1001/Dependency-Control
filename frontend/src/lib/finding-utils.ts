@@ -59,6 +59,18 @@ export function getScoreColor(score: number): string {
   return 'text-success'
 }
 
+/**
+ * Color class for a combined risk score on the backend's 0-100 scale
+ * (CVSS impact + EPSS + KEV + reachability, per calculate_risk_score).
+ * Distinct from getScoreColor, which is the inverted 0-10 OpenSSF scorecard.
+ */
+export function getRiskColorClass(score: number): string {
+  if (score >= 70) return 'text-severity-critical'
+  if (score >= 40) return 'text-severity-high'
+  if (score >= 20) return 'text-severity-medium'
+  return 'text-muted-foreground'
+}
+
 export function getScoreBorderColor(score: number): string {
   if (score < 3) return 'border-red-200 dark:border-red-800'
   if (score < 5) return 'border-amber-200 dark:border-amber-800'

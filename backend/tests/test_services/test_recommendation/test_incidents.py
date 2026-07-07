@@ -35,8 +35,8 @@ def _vuln(component, severity="CRITICAL", is_kev=False, kev_ransomware=False, ep
         "severity": severity,
         "component": component,
         "details": {
-            "is_kev": is_kev,
-            "kev_ransomware": kev_ransomware,
+            "in_kev": is_kev,
+            "kev_ransomware_use": kev_ransomware,
             "epss_score": epss_score,
             "cve_id": cve_id,
         },

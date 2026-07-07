@@ -112,6 +112,25 @@ def build_disallowed_algorithm_controls(
     return out
 
 
+# Disallowed-category -> the crypto primitives whose presence makes the control
+# applicable. A control can only legitimately PASS when the project actually
+# contains an asset of the category it governs; otherwise it is NOT_APPLICABLE.
+_CATEGORY_PRIMITIVES: Dict[str, frozenset] = {
+    "hash_functions": frozenset({"hash"}),
+    "symmetric_ciphers": frozenset({"block-cipher", "stream-cipher"}),
+    "asymmetric": frozenset({"pke", "signature", "kem"}),
+}
+
+
+def _asset_primitive_value(asset: object) -> Optional[str]:
+    prim = getattr(asset, "primitive", None)
+    if prim is None and isinstance(asset, dict):
+        prim = asset.get("primitive")
+    if prim is None:
+        return None
+    return prim.value if hasattr(prim, "value") else str(prim)
+
+
 def _make_disallowed_evaluator(
     *,
     algos: List[str],
@@ -124,6 +143,7 @@ def _make_disallowed_evaluator(
     captured by closure so derived frameworks (ISO 19790) emit the right
     identifier instead of inheriting FIPS' prefix."""
     norm_disallowed = {a.upper() for a in algos}
+    relevant_primitives = _CATEGORY_PRIMITIVES.get(category, frozenset())
 
     def evaluator(data: EvaluationInput) -> ControlResult:
         hits_bom_refs: List[str] = []
@@ -137,9 +157,14 @@ def _make_disallowed_evaluator(
                 bom_ref = getattr(asset, "bom_ref", None) or (asset.get("bom_ref") if isinstance(asset, dict) else None)
                 if bom_ref:
                     hits_bom_refs.append(bom_ref)
+        # The control is only applicable when an asset of this category exists;
+        # PASSED on any-crypto-asset would be a false attestation (audit MF4).
+        category_present = any(
+            _asset_primitive_value(asset) in relevant_primitives for asset in data.crypto_assets
+        )
         if hits_names:
             status = ControlStatus.FAILED
-        elif data.crypto_assets:
+        elif category_present:
             status = ControlStatus.PASSED
         else:
             status = ControlStatus.NOT_APPLICABLE

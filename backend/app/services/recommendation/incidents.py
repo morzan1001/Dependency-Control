@@ -1,6 +1,6 @@
 from typing import List
 
-from app.core.constants import EPSS_VERY_HIGH_THRESHOLD
+from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, EPSS_VERY_HIGH_THRESHOLD
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
@@ -115,8 +115,8 @@ def _classify_vuln_finding(
     if not isinstance(details, dict):
         return
 
-    if details.get("is_kev"):
-        if details.get("kev_ransomware"):
+    if details.get(DETAILS_KEY_IN_KEV):
+        if details.get(DETAILS_KEY_KEV_RANSOMWARE):
             ransomware_vulns.append(f)
         else:
             kev_vulns.append(f)

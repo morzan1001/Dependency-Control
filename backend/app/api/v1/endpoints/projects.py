@@ -1182,8 +1182,16 @@ def _build_scan_findings_match(
             query["type"] = type_filter
 
     if severity:
-        query["severity"] = severity.upper()
-    if hide_info:
+        sev = severity.upper()
+        # An explicit severity filter must not be silently clobbered by
+        # hide_info. HIGH/CRITICAL/... already exclude INFO; only an explicit
+        # INFO + hide_info is contradictory, so resolve that to "match nothing"
+        # rather than letting one option override the other.
+        if hide_info and sev == "INFO":
+            query["severity"] = {"$in": []}
+        else:
+            query["severity"] = sev
+    elif hide_info:
         query["severity"] = {"$ne": "INFO"}
     if license_category:
         query["details.category"] = license_category
@@ -1261,6 +1269,8 @@ def _scan_findings_add_fields_stage() -> Dict[str, Any]:
             },
             # Map finding_id to id for frontend compatibility
             "id": "$finding_id",
+            # Deterministic scalar for sorting by scanner (scanners is a list).
+            "first_scanner": {"$arrayElemAt": ["$scanners", 0]},
             # Flatten dependency info
             "source_type": {"$arrayElemAt": ["$dependency_info.source_type", 0]},
             "source_target": {"$arrayElemAt": ["$dependency_info.source_target", 0]},
@@ -1274,12 +1284,41 @@ def _scan_findings_add_fields_stage() -> Dict[str, Any]:
     }
 
 
+# Maps the sort keys the API accepts (including UI/legacy aliases) to the real
+# document fields. "severity" is special-cased to severity_rank below. Anything
+# not listed falls back to severity, so an unrecognised sort_by can never yield
+# an unsorted (and therefore unstably-paginated) result.
+_SCAN_FINDINGS_SORT_FIELDS: Dict[str, str] = {
+    "severity": "severity",
+    "component": "component",
+    "type": "type",
+    "source_type": "source_type",
+    "finding_id": "finding_id",
+    "vuln_id": "finding_id",  # legacy/UI alias -> real field
+    "scanner": "first_scanner",  # UI alias -> computed scalar (see _scan_findings_add_fields_stage)
+}
+
+
 def _scan_findings_sort_stage(sort_by: str, sort_order: str) -> Dict[str, Any]:
-    """Compose the ``$sort`` stage, honouring the severity-rank shortcut."""
+    """Compose the ``$sort`` stage.
+
+    Every sort ends with the UNIQUE document ``_id`` as the terminal tiebreaker
+    so that ``$skip`` / ``$limit`` pagination is stable — without a unique final
+    key, rows with equal sort values can reorder between pages and be duplicated
+    or skipped during infinite scroll. (``finding_id`` is the logical analyzer id
+    and is NOT unique within a scan — one CVE across N components yields N docs —
+    so it cannot be the stabiliser; ``_id`` is kept in the pipeline through the
+    sort for exactly this reason.) Sort keys are normalised to real document
+    fields; unknown keys fall back to severity rather than an unsorted result.
+    """
     sort_dir = -1 if sort_order == "desc" else 1
-    if sort_by == "severity":
-        return {"$sort": {"severity_rank": sort_dir, "component": 1}}
-    return {"$sort": {sort_by: sort_dir}}
+    field = _SCAN_FINDINGS_SORT_FIELDS.get(sort_by, "severity")
+    if field == "severity":
+        return {"$sort": {"severity_rank": sort_dir, "component": 1, "_id": 1}}
+    sort_spec: Dict[str, Any] = {field: sort_dir}
+    if field != "_id":
+        sort_spec["_id"] = 1
+    return {"$sort": sort_spec}
 
 
 def _build_scan_findings_pipeline(
@@ -1295,13 +1334,17 @@ def _build_scan_findings_pipeline(
         {"$match": query},
         _scan_findings_lookup_stage(),
         _scan_findings_add_fields_stage(),
-        # Remove the temporary lookup array and exclude MongoDB _id
-        {"$project": {"dependency_info": 0, "_id": 0}},
+        # Drop only the temporary lookup array here. _id is kept through the
+        # $sort so it can serve as the unique terminal tiebreaker (MF3); it is
+        # excluded from the returned data inside the $facet below.
+        {"$project": {"dependency_info": 0}},
         _scan_findings_sort_stage(sort_by, sort_order),
         {
             "$facet": {
                 "metadata": [{"$count": "total"}],
-                "data": [{"$skip": skip}, {"$limit": limit}],
+                # Exclude _id (kept only for the sort tiebreaker) and the
+                # first_scanner sort-helper (kept only for sorting) from output.
+                "data": [{"$skip": skip}, {"$limit": limit}, {"$project": {"_id": 0, "first_scanner": 0}}],
             }
         },
     ]

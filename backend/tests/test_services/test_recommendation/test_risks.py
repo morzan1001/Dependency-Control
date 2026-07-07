@@ -22,7 +22,7 @@ def _vuln(
 ):
     """Build a vulnerability finding dict."""
     details = {
-        "is_kev": is_kev,
+        "in_kev": is_kev,
         "epss_score": epss_score,
     }
     if fixed_version is not None:
@@ -341,7 +341,7 @@ class TestDetectCriticalHotspotsSkipsEmptyComponent:
                 "type": "vulnerability",
                 "severity": "CRITICAL",
                 "component": "",
-                "details": {"is_kev": True},
+                "details": {"in_kev": True},
                 "id": "CVE-2024-001",
             },
         ]

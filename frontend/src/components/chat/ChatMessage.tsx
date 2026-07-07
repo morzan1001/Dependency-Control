@@ -1,4 +1,4 @@
-import { useMemo, type ComponentProps } from 'react';
+import { memo, useMemo, type ComponentProps } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
@@ -114,7 +114,7 @@ interface ChatMessageProps {
   readonly message: Message;
 }
 
-export function ChatMessage({ message }: ChatMessageProps) {
+function ChatMessageImpl({ message }: ChatMessageProps) {
   const isUser = message.role === 'user';
 
   if (isUser) {
@@ -158,6 +158,13 @@ export function ChatMessage({ message }: ChatMessageProps) {
     </div>
   );
 }
+
+/**
+ * Memoized: a completed message's props are stable per id, so it must not
+ * re-parse its markdown every time the parent re-renders during streaming
+ * (one re-render per token). Only the in-progress StreamingMessage re-renders.
+ */
+export const ChatMessage = memo(ChatMessageImpl);
 
 interface StreamingMessageProps {
   readonly content: string;
