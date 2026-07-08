@@ -1,8 +1,4 @@
-"""
-Recommendation Schema Definitions
-
-Data classes for the recommendation engine output structures.
-"""
+"""Data classes for the recommendation engine output structures."""
 
 from dataclasses import dataclass, field
 from enum import Enum
@@ -126,13 +122,12 @@ class VulnerabilityInfo:
     description: Optional[str] = None
     source_type: str = "unknown"  # image or application
 
-    # EPSS/KEV/Reachability fields for intelligent prioritization
     epss_score: Optional[float] = None  # 0.0 to 1.0
-    is_kev: bool = False  # In CISA KEV catalog
-    kev_ransomware: bool = False  # Known ransomware use
+    is_kev: bool = False
+    kev_ransomware: bool = False
     is_reachable: Optional[bool] = None
     reachability_level: Optional[str] = None  # confirmed, likely, unknown, unreachable
-    risk_score: Optional[float] = None  # Adjusted risk score (0-100)
+    risk_score: Optional[float] = None  # 0-100
 
     @property
     def is_fixable(self) -> bool:
@@ -141,7 +136,6 @@ class VulnerabilityInfo:
     @property
     def is_actionable(self) -> bool:
         """Returns True if this vulnerability should be prioritized for action."""
-        # Actionable if: (KEV or high EPSS) AND (reachable or unknown reachability)
         is_exploitable = self.is_kev or (self.epss_score is not None and self.epss_score >= 0.1)
         is_reachable_or_unknown = self.is_reachable is None or self.is_reachable is True
         return bool(is_exploitable and is_reachable_or_unknown)
@@ -149,7 +143,6 @@ class VulnerabilityInfo:
     @property
     def is_deprioritized(self) -> bool:
         """Returns True if this vulnerability can be safely deprioritized."""
-        # Deprioritized if: unreachable OR (low EPSS and not KEV)
         if self.is_reachable is False:
             return True
         if not self.is_kev and (self.epss_score is None or self.epss_score < 0.01):
@@ -201,10 +194,8 @@ class Recommendation:
     affected_components: List[str]
     action: Dict[str, Any]  # Specific action details
     effort: str = Effort.MEDIUM  # Accepts Effort enum or string for compatibility
-    affected_projects: List[Dict[str, Any]] = field(default_factory=list)  # [{id, name}]
 
     def to_dict(self) -> Dict[str, Any]:
-        # Handle both Effort enum and string values
         effort_value = self.effort.value if isinstance(self.effort, Effort) else self.effort
         return {
             "type": self.type.value,
@@ -215,5 +206,4 @@ class Recommendation:
             "affected_components": self.affected_components,
             "action": self.action,
             "effort": effort_value,
-            "affected_projects": self.affected_projects,
         }

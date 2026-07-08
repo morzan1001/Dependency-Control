@@ -8,7 +8,7 @@ from app.schemas.recommendation import (
     RecommendationType,
     VulnerabilityInfo,
 )
-from app.core.constants import OS_PACKAGE_TYPES
+from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, OS_PACKAGE_TYPES
 from app.services.recommendation.common import calculate_best_fix_version, get_attr, ModelOrDict
 
 
@@ -22,23 +22,18 @@ def process_vulnerabilities(
     """Process vulnerability findings."""
     recommendations = []
 
-    # Categorize vulnerabilities by source
     vulns_by_source = _categorize_by_source(findings, dep_by_purl, dep_by_name_version)
 
-    # 1. Check for base image update recommendation
     base_image_rec = _analyze_base_image_vulns(vulns_by_source.get("image", []), dependencies, source_target)
     if base_image_rec:
         recommendations.append(base_image_rec)
 
-    # 2. Analyze direct dependency updates
     direct_recs = _analyze_direct_dependencies(vulns_by_source.get("application", []), dep_by_purl, dep_by_name_version)
     recommendations.extend(direct_recs)
 
-    # 3. Analyze transitive dependencies
     transitive_recs = _analyze_transitive_dependencies(vulns_by_source.get("transitive", []), dependencies)
     recommendations.extend(transitive_recs)
 
-    # 4. Handle vulns with no fix
     no_fix_recs = _analyze_no_fix_vulns(vulns_by_source.get("no_fix", []))
     recommendations.extend(no_fix_recs)
 
@@ -87,8 +82,8 @@ def _build_vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
         current_version=get_attr(f, "version", ""),
         fixed_version=details_dict.get("fixed_version"),
         epss_score=details_dict.get("epss_score"),
-        is_kev=details_dict.get("is_kev", False),
-        kev_ransomware=details_dict.get("kev_ransomware", False),
+        is_kev=details_dict.get(DETAILS_KEY_IN_KEV, False),
+        kev_ransomware=details_dict.get(DETAILS_KEY_KEV_RANSOMWARE, False),
         is_reachable=get_attr(f, "reachable"),
         reachability_level=get_attr(f, "reachability_level"),
         risk_score=details_dict.get("risk_score"),
@@ -145,11 +140,9 @@ def _is_os_package(dep: ModelOrDict) -> bool:
     pkg_type = str(get_attr(dep, "type", "")).lower()
     purl = get_attr(dep, "purl", "") or ""
 
-    # Check type
     if pkg_type in OS_PACKAGE_TYPES:
         return True
 
-    # Check PURL prefix
     for os_type in OS_PACKAGE_TYPES:
         if purl.startswith(f"pkg:{os_type}/"):
             return True
@@ -167,7 +160,6 @@ def _analyze_base_image_vulns(
     if not vulns:
         return None
 
-    # Count severities
     severity_counts: Dict[str, int] = defaultdict(int)
     affected_packages = set()
 
@@ -178,11 +170,9 @@ def _analyze_base_image_vulns(
     total_vulns = len(vulns)
     critical_high = severity_counts.get("CRITICAL", 0) + severity_counts.get("HIGH", 0)
 
-    # Only recommend if significant impact
     if total_vulns < 3 and critical_high < 1:
         return None
 
-    # Determine priority
     if severity_counts.get("CRITICAL", 0) > 0:
         priority = Priority.CRITICAL
     elif severity_counts.get("HIGH", 0) > 0:
@@ -192,10 +182,8 @@ def _analyze_base_image_vulns(
     else:
         priority = Priority.LOW
 
-    # Try to determine current image tag
     image_name = source_target or "your base image"
 
-    # Extract image name (without tag) for display
     if source_target and ":" in source_target:
         parts = source_target.rsplit(":", 1)
         image_name = parts[0]
@@ -217,7 +205,7 @@ def _analyze_base_image_vulns(
             "low": severity_counts.get("LOW", 0),
             "total": total_vulns,
         },
-        affected_components=list(affected_packages)[:20],  # Limit for display
+        affected_components=list(affected_packages)[:20],
         action={
             "type": "update_base_image",
             "current_image": source_target,
@@ -509,7 +497,6 @@ def _analyze_no_fix_vulns(vulns: List[VulnerabilityInfo]) -> List[Recommendation
     if not crit_high_vulns:
         return []
 
-    # If there are critical/high vulnerabilities with no fix, suggest alternatives
     return [
         Recommendation(
             type=RecommendationType.NO_FIX_AVAILABLE,

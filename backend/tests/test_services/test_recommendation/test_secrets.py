@@ -20,19 +20,11 @@ def _secret(
 
 
 class TestProcessSecretsEmpty:
-    """Edge case: no findings at all."""
-
     def test_empty_list_returns_empty(self):
-        assert process_secrets([]) == []
-
-    def test_none_equivalent_empty(self):
-        """An empty iterable should also be safe."""
         assert process_secrets([]) == []
 
 
 class TestProcessSecretsSingleFinding:
-    """A single secret finding should produce exactly one recommendation."""
-
     def test_returns_one_recommendation(self):
         result = process_secrets([_secret()])
         assert len(result) == 1
@@ -75,15 +67,12 @@ class TestProcessSecretsSingleFinding:
 
 
 class TestProcessSecretsMultipleGroupedByDetector:
-    """Multiple secrets should be grouped by detector type."""
-
     def test_multiple_same_detector_grouped(self):
         findings = [
             _secret(detector_type="AWS Key", finding_id="s1"),
             _secret(detector_type="AWS Key", finding_id="s2"),
         ]
         result = process_secrets(findings)
-        # Still one recommendation for all secrets
         assert len(result) == 1
         assert result[0].impact["total"] == 2
 
@@ -115,8 +104,6 @@ class TestProcessSecretsMultipleGroupedByDetector:
 
 
 class TestProcessSecretsFilesAffected:
-    """Files affected should be tracked correctly."""
-
     def test_unique_files_counted(self):
         findings = [
             _secret(component="src/a.py", finding_id="s1"),
@@ -151,8 +138,6 @@ class TestProcessSecretsFilesAffected:
 
 
 class TestProcessSecretsPriority:
-    """Priority determination based on severity mix."""
-
     def test_only_medium_severity_gives_high_priority(self):
         findings = [
             _secret(severity="MEDIUM", finding_id="s1"),
@@ -185,8 +170,6 @@ class TestProcessSecretsPriority:
 
 
 class TestProcessSecretsSeverityCounts:
-    """Impact dict should have correct severity counts."""
-
     def test_severity_counts_correct(self):
         findings = [
             _secret(severity="CRITICAL", finding_id="s1"),

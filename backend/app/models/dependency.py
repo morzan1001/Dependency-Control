@@ -1,28 +1,14 @@
-import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
 
-from app.models.types import PyObjectId
+from app.models.types import MongoDocument
 
 
-class Dependency(BaseModel):
-    """
-    Represents a flattened dependency for efficient searching and analytics.
-    This is a 'derived' record from the raw SBOM.
+class Dependency(MongoDocument):
+    """Flattened dependency derived from the raw SBOM (CycloneDX, SPDX, Syft JSON) for search and analytics."""
 
-    Supports data from:
-    - CycloneDX (1.4, 1.5, 1.6)
-    - SPDX (2.2, 2.3)
-    - Syft JSON (native format)
-    """
-
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
     project_id: str = Field(..., description="Reference to the project")
     scan_id: str = Field(..., description="Reference to the scan where this was found")
 
@@ -83,5 +69,3 @@ class Dependency(BaseModel):
 
     # Timestamps
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-    model_config = ConfigDict(populate_by_name=True)

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
@@ -125,9 +125,14 @@ function HotspotsSection() {
 function TrendsSection() {
   const [metric, setMetric] = useState<TrendMetric>("total_crypto_findings");
   const [days, setDays] = useState(30);
-  const end = new Date();
-  const start = new Date(end);
-  start.setDate(end.getDate() - days);
+  // Memoize the day-granularity range on `days` so re-renders don't feed unique timestamps into the query key and defeat caching.
+  const { start, end } = useMemo(() => {
+    const end = new Date();
+    end.setHours(0, 0, 0, 0);
+    const start = new Date(end);
+    start.setDate(end.getDate() - days);
+    return { start, end };
+  }, [days]);
 
   return (
     <div className="space-y-4">

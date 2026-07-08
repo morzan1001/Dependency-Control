@@ -1,8 +1,4 @@
-"""
-Loader for the PQC mappings YAML snapshot. Cached in-memory per-process.
-Bump CURRENT_MAPPINGS_VERSION and regenerate snapshot_date when NIST
-publishes new standards.
-"""
+"""Loader for the PQC mappings YAML snapshot, cached in-memory per-process."""
 
 from dataclasses import dataclass
 from datetime import datetime
@@ -76,13 +72,7 @@ def load_mappings() -> PQCMappings:
 
 
 def clear_mappings_cache() -> None:
-    """Clear the in-process ``load_mappings`` cache.
-
-    Test-only helper: because ``load_mappings`` uses ``@lru_cache(maxsize=1)``,
-    patching the YAML file or swapping ``_MAPPINGS_PATH`` within a single
-    process will not take effect until the cache is invalidated. Call this
-    helper from test setup/teardown to force a re-read.
-    """
+    """Clear the in-process ``load_mappings`` cache so the YAML is re-read."""
     load_mappings.cache_clear()
 
 
@@ -98,6 +88,10 @@ def normalise_family(name: Optional[str], mappings: PQCMappings) -> str:
         return ""
     if name in mappings.family_aliases:
         return mappings.family_aliases[name]
+    # CBOM tools emit families with arbitrary casing; match aliases case-insensitively.
+    upper_aliases = {k.upper(): v for k, v in mappings.family_aliases.items()}
+    if name.upper() in upper_aliases:
+        return upper_aliases[name.upper()]
     canonical = {m.source_family for m in mappings.mappings}
     if name in canonical:
         return name

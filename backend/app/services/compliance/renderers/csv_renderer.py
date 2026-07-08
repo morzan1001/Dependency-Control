@@ -32,12 +32,7 @@ class CsvRenderer:
         disclaimer: Optional[str] = None,
     ) -> Tuple[bytes, str, str]:
         buf = io.StringIO()
-        # Framework disclaimers (e.g. FIPS/ISO "algorithm-level conformance
-        # only") are emitted by the PDF/JSON/SARIF renderers. Prepend them
-        # as CSV comment lines (leading '#') so a bare CSV export from a
-        # FIPS evaluation cannot be mistaken for a full CMVP pass. Most
-        # consumers (Excel, `pandas.read_csv(comment='#')`) skip such
-        # lines automatically.
+        # Prepend disclaimers as '#' comment lines so a bare CSV export cannot be mistaken for a full pass.
         fw_name = evaluation.framework_name or ""
         fw_version = evaluation.framework_version or ""
         if disclaimer:
@@ -59,9 +54,7 @@ class CsvRenderer:
                     "title": c.title,
                     "status": status_val,
                     "severity": sev_val,
-                    # Sum both evidence lists: default evaluator populates
-                    # evidence_finding_ids; custom evaluators (e.g. FIPS disallowed
-                    # categories) emit evidence only in evidence_asset_bom_refs.
+                    # Evidence may land in either list depending on the evaluator.
                     "evidence_count": (len(c.evidence_finding_ids) + len(c.evidence_asset_bom_refs)),
                     "waived": "true" if status_val == "waived" else "false",
                     "remediation": c.remediation,

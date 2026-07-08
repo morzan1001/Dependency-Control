@@ -1,5 +1,6 @@
 """Analytics recommendations endpoint: /projects/{project_id}/recommendations."""
 
+import hashlib
 from typing import Any, Dict, Optional
 
 from fastapi import HTTPException
@@ -12,6 +13,7 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
 )
 from app.api.v1.helpers.responses import RESP_AUTH_404
+from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
 from app.core.permissions import Permissions
 from app.repositories import (
@@ -38,8 +40,7 @@ async def get_project_recommendations(
     db: DatabaseDep,
     scan_id: Optional[str] = None,
 ) -> RecommendationsResponse:
-    """Generate remediation recommendations for a project's findings,
-    prioritized by impact and effort."""
+    """Generate remediation recommendations for a project's findings."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
     project_repo = ProjectRepository(db)
@@ -60,17 +61,21 @@ async def get_project_recommendations(
         if scan and scan.project_id != project_id:
             scan = None
     else:
-        scans = await scan_repo.find_many(
-            {"project_id": project_id, "status": "completed"},
-            limit=1,
-            sort=[("created_at", -1)],
-        )
-        scan = scans[0] if scans else None
+        # Excludes scans on deleted branches.
+        scan = await scan_repo.get_latest_active_scan(project)
 
     if not scan:
         raise HTTPException(status_code=404, detail="No scan found for this project")
 
     scan_id = scan.id
+
+    # Cache per scan + caller scope so users with different project access never
+    # share an entry; cross-project signal isn't in the key and may be TTL-stale.
+    scope_hash = hashlib.md5(",".join(sorted(user_project_ids)).encode(), usedforsecurity=False).hexdigest()[:16]
+    cache_key = CacheKeys.recommendations(project_id, scan_id, scope_hash)
+    cached = await cache_service.get(cache_key)
+    if cached:
+        return RecommendationsResponse(**cached)
 
     source_target = None
 
@@ -201,7 +206,7 @@ async def get_project_recommendations(
         ):
             summary["crypto_issues"] += impact_total
 
-    return RecommendationsResponse(
+    response = RecommendationsResponse(
         project_id=project_id,
         project_name=project.get("name", "Unknown"),
         scan_id=scan_id,
@@ -210,3 +215,6 @@ async def get_project_recommendations(
         recommendations=[RecommendationResponse(**r.to_dict()) for r in recommendations],
         summary=summary,
     )
+    # mode="json" so a cache hit reconstructs the same shape as a miss (enums/datetimes).
+    await cache_service.set(cache_key, response.model_dump(mode="json"), ttl_seconds=CacheTTL.RECOMMENDATIONS)
+    return response

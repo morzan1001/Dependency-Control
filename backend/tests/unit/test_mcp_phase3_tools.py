@@ -89,8 +89,7 @@ async def test_get_framework_evaluation_summary_returns_counts():
     ):
         engine_instance = MagicMock(_gather_inputs=AsyncMock(return_value=MagicMock()))
         engine_cls.return_value = engine_instance
-        # spec=["evaluate"] so hasattr(fw, "evaluate_async") is False — the
-        # chat tool dispatches on that attribute for the PQC framework.
+        # spec=["evaluate"] makes hasattr(fw, "evaluate_async") False, matching how the chat tool dispatches.
         fake_framework = MagicMock(spec=["evaluate"])
         fake_framework.evaluate = MagicMock(
             return_value=MagicMock(

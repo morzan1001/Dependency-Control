@@ -17,7 +17,7 @@ class TrivyAnalyzer(CLIAnalyzer):
     cli_command = "trivy"
     empty_result_key = "Results"
 
-    # Retry up to 3 times for transient Trivy server errors (e.g. layer cache miss after DB update)
+    # Retry transient Trivy server errors (e.g. layer cache miss after a DB update).
     max_retries = 3
     retry_delay = 3.0
 
@@ -26,7 +26,7 @@ class TrivyAnalyzer(CLIAnalyzer):
         "failed to apply layers",
         "connection refused",
         "connection reset",
-        "EOF",
+        "eof",
         "context deadline exceeded",
         "unavailable",
         "i/o timeout",
@@ -37,11 +37,7 @@ class TrivyAnalyzer(CLIAnalyzer):
         return any(p in msg for p in self._RETRYABLE_PATTERNS)
 
     def _build_command_args(self, sbom_path: str, settings_dict: Optional[Dict[str, Any]]) -> List[str]:
-        """Build Trivy CLI command arguments.
-
-        When TRIVY_SERVER_URL is configured, adds --server flag to offload
-        scanning to a central Trivy server (no local DB needed).
-        """
+        """Build Trivy CLI command arguments; adds --server when TRIVY_SERVER_URL is set."""
         args = [
             "trivy",
             "sbom",
@@ -62,12 +58,7 @@ class TrivyAnalyzer(CLIAnalyzer):
         tmp_sbom_path: str,
         settings_dict: Optional[Dict[str, Any]],
     ) -> Tuple[str, List[str]]:
-        """
-        Convert SBOM to CycloneDX if needed.
-
-        Trivy supports CycloneDX and SPDX formats natively.
-        For other formats (like Syft JSON), we convert using syft.
-        """
+        """Convert to CycloneDX via syft when the SBOM isn't already CycloneDX or SPDX (both native to Trivy)."""
         is_cyclonedx = "bomFormat" in sbom and sbom["bomFormat"] == "CycloneDX"
         is_spdx = "spdxVersion" in sbom
 
@@ -155,7 +146,6 @@ class TrivyAnalyzer(CLIAnalyzer):
         return normalized
 
     def _map_severity(self, trivy_severity: str) -> str:
-        """Map Trivy severity to our Severity enum."""
         return map_vendor_severity(trivy_severity)
 
     def _create_message(

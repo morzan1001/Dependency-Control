@@ -1,14 +1,7 @@
-/**
- * Barrel export for findings components
- */
-
-// Core components
-export { SeverityBadge, SeverityBadgeCompact, SeverityText } from './SeverityBadge'
-export { ContextBanner, ContextAlert, type BannerVariant, type ContextBannerProps } from './ContextBanner'
-export { FindingTypeBadge, FindingTypeBadges } from './FindingTypeBadge'
-export { CopyableCode, CopyableText } from './CopyableCode'
-export { CollapsibleReferences, ReferenceLinks } from './CollapsibleReferences'
-
-// Main findings components
+export { SeverityBadge } from './SeverityBadge'
+export { ContextBanner, type BannerVariant, type ContextBannerProps } from './ContextBanner'
+export { FindingTypeBadge } from './FindingTypeBadge'
+export { CopyableCode } from './CopyableCode'
+export { CollapsibleReferences } from './CollapsibleReferences'
 export { FindingsTable } from './FindingsTable'
 export { FindingDetailsModal } from './FindingDetailsModal'

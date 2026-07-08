@@ -96,8 +96,6 @@ class UserMigrateToLocal(BaseModel):
 
 
 class UserInDBBase(UserBase):
-    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    # PyObjectId handles ObjectId to string conversion
     id: PyObjectId = Field(validation_alias="_id")
     totp_enabled: bool = False
     is_verified: bool = False

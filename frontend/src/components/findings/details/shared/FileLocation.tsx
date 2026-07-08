@@ -2,17 +2,11 @@ import { FileCode, ExternalLink } from "lucide-react"
 import { buildFileUrl } from "@/lib/scm-links"
 
 interface FileLocationProps {
-    /** The file path to display */
     readonly filePath: string
-    /** Start line number */
     readonly startLine?: number | null
-    /** End line number */
     readonly endLine?: number | null
-    /** Start column */
     readonly startCol?: number | null
-    /** End column */
     readonly endCol?: number | null
-    /** SCM context for building repository link */
     readonly scmContext?: {
         projectUrl?: string | null
         pipelineUrl?: string | null
@@ -21,9 +15,6 @@ interface FileLocationProps {
     } | null
 }
 
-/**
- * Build a human-readable location string from line/column info.
- */
 function buildLocationString(
     startLine?: number | null,
     endLine?: number | null,
@@ -31,7 +22,7 @@ function buildLocationString(
     endCol?: number | null
 ): string {
     if (!startLine) return "Unknown"
-    
+
     let str = `Line ${startLine}`
     if (endLine && endLine !== startLine) {
         str += ` - ${endLine}`
@@ -42,18 +33,14 @@ function buildLocationString(
     return str
 }
 
-/**
- * Reusable component for displaying file path with optional repository link and location.
- */
-export function FileLocation({ 
-    filePath, 
-    startLine, 
-    endLine, 
-    startCol, 
-    endCol, 
-    scmContext 
+export function FileLocation({
+    filePath,
+    startLine,
+    endLine,
+    startCol,
+    endCol,
+    scmContext
 }: FileLocationProps) {
-    // Build repository URL if context is available
     const fileUrl = scmContext ? buildFileUrl({
         projectUrl: scmContext.projectUrl,
         pipelineUrl: scmContext.pipelineUrl,
@@ -74,7 +61,7 @@ export function FileLocation({
                     <div className="flex items-center gap-2">
                         <FileCode className="h-4 w-4 text-muted-foreground flex-shrink-0" />
                         {fileUrl ? (
-                            <a 
+                            <a
                                 href={fileUrl}
                                 target="_blank"
                                 rel="noopener noreferrer"
@@ -99,5 +86,3 @@ export function FileLocation({
         </div>
     )
 }
-
-

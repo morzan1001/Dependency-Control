@@ -45,7 +45,6 @@ def test_response_findings_minimal_payload_validates():
 def test_components_changed_total_present():
     totals = ScanDeltaTotals(added=0, removed=0, unchanged=0, changed=3)
     assert totals.changed == 3
-    # Smoke check: the other item types are importable and constructable.
     comp = ComponentDeltaItem(change="version_changed", name="left-pad")
     crypto = CryptoDeltaItem(change="added", name="RSA-1024")
     assert comp.change == DeltaChange.VERSION_CHANGED

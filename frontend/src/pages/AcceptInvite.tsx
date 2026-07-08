@@ -14,14 +14,14 @@ export default function AcceptInvite() {
   const token = searchParams.get('token')
   const [error, setError] = useState<string | null>(token ? null : "Invalid invitation link.")
   const [isLoading, setIsLoading] = useState(!!token)
-  const [isSubmitting, setIsSubmitting] = useState(false)
   const [email, setEmail] = useState<string | null>(null)
   const navigate = useNavigate()
   const { login } = useAuth()
-  
+
   const { mutate: validate } = useValidateInvitation();
   const acceptMutation = useAcceptInvitation();
   const loginMutation = useLogin();
+  const isSubmitting = acceptMutation.isPending || loginMutation.isPending
 
   useEffect(() => {
     if (!token) return
@@ -42,7 +42,6 @@ export default function AcceptInvite() {
     event.preventDefault()
     if (!token) return
 
-    setIsSubmitting(true)
     setError(null)
 
     const formData = new FormData(event.currentTarget)
@@ -52,13 +51,11 @@ export default function AcceptInvite() {
 
     if (password !== confirmPassword) {
       setError("Passwords do not match")
-      setIsSubmitting(false)
       return
     }
 
     acceptMutation.mutate({ token, username, password }, {
        onSuccess: () => {
-         // Auto-login
          loginMutation.mutate({ username, password }, {
              onSuccess: (data) => {
                  login(data.access_token, data.refresh_token)
@@ -70,7 +67,6 @@ export default function AcceptInvite() {
        },
        onError: (err) => {
           setError(getErrorMessage(err))
-          setIsSubmitting(false)
        }
     })
   }

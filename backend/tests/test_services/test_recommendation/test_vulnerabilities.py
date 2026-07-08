@@ -21,7 +21,6 @@ def _make_finding(
     finding_type="vulnerability",
     kev_ransomware=False,
 ):
-    """Create a minimal vulnerability finding dict."""
     return {
         "id": finding_id,
         "type": finding_type,
@@ -31,9 +30,9 @@ def _make_finding(
         "details": {
             "fixed_version": fixed_version,
             "purl": purl or f"pkg:pypi/{component}@{version}",
-            "is_kev": is_kev,
+            "in_kev": is_kev,
             "epss_score": epss_score,
-            "kev_ransomware": kev_ransomware,
+            "kev_ransomware_use": kev_ransomware,
         },
         "reachable": reachable,
         "reachability_level": reachability_level,
@@ -49,7 +48,6 @@ def _make_dependency(
     source_type="application",
     dep_type="pypi",
 ):
-    """Create a minimal dependency dict."""
     return {
         "name": name,
         "version": version,
@@ -61,7 +59,6 @@ def _make_dependency(
 
 
 def _build_lookup_maps(dependencies):
-    """Build purl and name@version lookup maps from a list of dependencies."""
     dep_by_purl = {}
     dep_by_name_version = {}
     for d in dependencies:
@@ -80,7 +77,6 @@ class TestEmptyFindings:
         assert result == []
 
     def test_no_vulnerability_type_findings_ignored(self):
-        """Findings with type != 'vulnerability' should be skipped."""
         finding = _make_finding(finding_type="secret")
         dep = _make_dependency()
         dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
@@ -89,8 +85,6 @@ class TestEmptyFindings:
 
 
 class TestDirectDependencyUpdate:
-    """Single critical direct vuln with fix should produce DIRECT_DEPENDENCY_UPDATE."""
-
     @pytest.mark.parametrize(
         "severity,expected_priority",
         [
@@ -140,9 +134,7 @@ class TestDirectDependencyUpdate:
         assert result[0].action["current_version"] == "1.0.0"
 
     def test_finding_without_known_dep_still_treated_as_application(self):
-        """If no dependency matches, finding should still be categorized as application."""
         finding = _make_finding(component="unknown-pkg", purl="pkg:pypi/unknown-pkg@1.0.0")
-        # No matching dependency
         result = process_vulnerabilities([finding], {}, {}, [], None)
 
         assert len(result) >= 1
@@ -150,8 +142,6 @@ class TestDirectDependencyUpdate:
 
 
 class TestGroupedVulnerabilities:
-    """Multiple vulns for same component should be grouped into one recommendation."""
-
     def test_two_vulns_same_component_grouped(self):
         findings = [
             _make_finding(finding_id="CVE-2024-0001", component="requests", version="1.0.0", fixed_version="1.1.0"),
@@ -168,7 +158,6 @@ class TestGroupedVulnerabilities:
 
         result = process_vulnerabilities(findings, dep_by_purl, dep_by_nv, [dep], None)
 
-        # Should be grouped: 1 recommendation for "requests"
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
         assert len(direct_recs) == 1
         assert direct_recs[0].impact["total"] == 2
@@ -221,8 +210,6 @@ class TestGroupedVulnerabilities:
 
 
 class TestBaseImageUpdate:
-    """OS package vulns should produce BASE_IMAGE_UPDATE recommendation."""
-
     def test_deb_packages_trigger_base_image_update(self):
         """3+ OS vulns should trigger a base image update recommendation."""
         findings = [
@@ -253,7 +240,6 @@ class TestBaseImageUpdate:
         assert base_recs[0].priority == Priority.HIGH
 
     def test_single_critical_os_vuln_triggers_base_image(self):
-        """A single critical OS vuln should also trigger base image update."""
         finding = _make_finding(
             severity="CRITICAL",
             component="libssl",
@@ -379,8 +365,6 @@ class TestBaseImageUpdate:
 
 
 class TestTransitiveDependency:
-    """Transitive dep vulns should produce TRANSITIVE_FIX_VIA_PARENT."""
-
     def test_transitive_vuln_with_fix(self):
         finding = _make_finding(
             component="transitive-pkg",
@@ -480,8 +464,6 @@ class TestTransitiveDependency:
 
 
 class TestNoFixAvailable:
-    """Vulns without a fix and critical/high severity should produce NO_FIX_AVAILABLE."""
-
     @pytest.mark.parametrize(
         "severity,expected_count,expected_priority",
         [
@@ -525,8 +507,6 @@ class TestNoFixAvailable:
 
 
 class TestKevVulnerabilities:
-    """KEV vulns should always have CRITICAL priority."""
-
     def test_kev_vuln_is_critical_priority(self):
         finding = _make_finding(severity="MEDIUM", is_kev=True)
         dep = _make_dependency()
@@ -590,8 +570,6 @@ class TestKevVulnerabilities:
 
 
 class TestUnreachableDowngrade:
-    """All critical vulns unreachable should be downgraded to HIGH."""
-
     def test_all_critical_unreachable_downgraded_to_high(self):
         finding = _make_finding(severity="CRITICAL", reachable=False)
         dep = _make_dependency()
@@ -603,7 +581,6 @@ class TestUnreachableDowngrade:
         assert direct_recs[0].priority == Priority.HIGH
 
     def test_mixed_reachable_unreachable_stays_critical(self):
-        """If at least one critical vuln is reachable, priority stays CRITICAL."""
         findings = [
             _make_finding(finding_id="CVE-2024-0001", severity="CRITICAL", reachable=True),
             _make_finding(finding_id="CVE-2024-0002", severity="CRITICAL", reachable=False),
@@ -617,7 +594,6 @@ class TestUnreachableDowngrade:
         assert direct_recs[0].priority == Priority.CRITICAL
 
     def test_unknown_reachability_stays_critical(self):
-        """If reachability is unknown (None), critical should stay CRITICAL."""
         finding = _make_finding(severity="CRITICAL", reachable=None)
         dep = _make_dependency()
         dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
@@ -649,8 +625,6 @@ class TestUnreachableDowngrade:
 
 
 class TestEpssHandling:
-    """EPSS scores should affect priority and impact data."""
-
     def test_high_epss_boosts_to_high_priority(self):
         finding = _make_finding(severity="MEDIUM", epss_score=0.15)
         dep = _make_dependency()
@@ -693,8 +667,6 @@ class TestEpssHandling:
 
 
 class TestReachabilityImpactData:
-    """Reachability data should be included in impact dict."""
-
     def test_reachable_count_in_impact(self):
         finding = _make_finding(reachable=True)
         dep = _make_dependency()
@@ -736,7 +708,6 @@ class TestReachabilityImpactData:
         assert direct_recs[0].impact["reachable_high"] >= 1
 
     def test_reachable_critical_forces_critical_priority(self):
-        """A reachable critical vuln should always be CRITICAL priority regardless."""
         finding_crit = _make_finding(severity="CRITICAL", reachable=True)
         dep = _make_dependency()
         dep_by_purl, dep_by_nv = _build_lookup_maps([dep])
@@ -748,8 +719,6 @@ class TestReachabilityImpactData:
 
 
 class TestLookupFallback:
-    """Dependencies should be matched by name@version when purl doesn't match."""
-
     def test_fallback_to_name_version(self):
         finding = _make_finding(
             component="my-lib",
@@ -766,5 +735,4 @@ class TestLookupFallback:
 
         result = process_vulnerabilities([finding], dep_by_purl, dep_by_nv, [dep], None)
 
-        # Should still find the dependency via name@version lookup
         assert len(result) >= 1

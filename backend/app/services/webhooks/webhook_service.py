@@ -1,5 +1,4 @@
-"""Webhook delivery service. Canonical event names are dot-notation (scan.completed);
-snake_case aliases are accepted via WEBHOOK_EVENT_ALIASES."""
+"""Webhook delivery; canonical event names are dot-notation, snake_case aliases accepted via WEBHOOK_EVENT_ALIASES."""
 
 from __future__ import annotations
 
@@ -19,7 +18,7 @@ import httpx
 from prometheus_client import Counter
 
 from app.core.http_utils import InstrumentedAsyncClient
-from app.services.webhooks.validation import assert_safe_webhook_target
+from app.services.webhooks.validation import build_pinned_transport
 from app.services.webhooks.types import (
     AnalysisFailedPayload,
     BaseWebhookPayload,
@@ -37,6 +36,8 @@ from app.core.constants import (
     WEBHOOK_BACKOFF_BASE,
     WEBHOOK_EVENT_ALIASES,
     WEBHOOK_EVENT_ANALYSIS_FAILED,
+    WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED,
+    WEBHOOK_EVENT_LICENSE_POLICY_CHANGED,
     WEBHOOK_EVENT_SCAN_COMPLETED,
     WEBHOOK_EVENT_VULNERABILITY_FOUND,
     WEBHOOK_HEADER_CONTENT_TYPE,
@@ -56,8 +57,7 @@ def _normalize_event_name(event_type: str) -> str:
 
 
 def _event_match_set(event_type: str) -> List[str]:
-    """Subscriptions may store the canonical dot-notation name or the snake_case
-    alias — return both forms so either subscription type matches."""
+    """Return both the canonical and alias forms so either stored subscription name matches."""
     canonical = _normalize_event_name(event_type)
     names = [canonical]
     for alias, target in WEBHOOK_EVENT_ALIASES.items():
@@ -175,7 +175,6 @@ class WebhookService:
                     },
                 )
             else:
-                # Circuit breaker: 5 consecutive failures disable webhook for 1h.
                 CIRCUIT_BREAKER_THRESHOLD = 5
                 CIRCUIT_BREAKER_DURATION_HOURS = 1
 
@@ -187,8 +186,7 @@ class WebhookService:
                     },
                 )
 
-                # Conditional update is race-safe: only flips when threshold is
-                # reached and breaker isn't already active (prevents duplicate logs).
+                # Conditional update is race-safe: flips only once per threshold breach, avoiding duplicate logs.
                 circuit_until = now + timedelta(hours=CIRCUIT_BREAKER_DURATION_HOURS)
                 result = await db.webhooks.find_one_and_update(
                     {
@@ -231,9 +229,10 @@ class WebhookService:
         try:
             deliveries_repo = WebhookDeliveriesRepository(db)
 
+            # Policy-changed events carry project_id flat, not nested under "project".
             payload_summary = {
                 "scan_id": payload.get("scan", {}).get("id"),
-                "project_id": payload.get("project", {}).get("id"),
+                "project_id": payload.get("project", {}).get("id") or payload.get("project_id"),
             }
 
             await deliveries_repo.log_delivery(
@@ -255,11 +254,7 @@ class WebhookService:
         event_type: str,
         raw_payload: "Mapping[str, Any]",
     ) -> "Mapping[str, Any]":
-        # Self-heal legacy/misconfigured webhooks: a webhook stored as "generic"
-        # but pointing at a Teams URL (e.g. created before webhook_type existed
-        # on the model, or before we ran auto-detection on save) would otherwise
-        # send raw event JSON to Power Automate, which then fails with
-        # `attachments is null`. Detect at format-time and fall back to Teams.
+        # A generic-typed webhook pointing at a Teams URL must be formatted as Teams, else Power Automate rejects the raw JSON.
         effective_type = webhook.webhook_type
         if effective_type != "teams":
             from app.services.webhooks.validation import detect_webhook_type
@@ -302,6 +297,8 @@ class WebhookService:
                 error=str(raw_payload.get("error", "Unknown error")),
                 scan_url=scan_url,
             )
+        if normalized in (WEBHOOK_EVENT_CRYPTO_POLICY_CHANGED, WEBHOOK_EVENT_LICENSE_POLICY_CHANGED):
+            return self._build_policy_changed_card(normalized, raw_payload)
         if event_type == "test":  # "test" has no alias; event_type == normalized here
             return TeamsFormatter.build_test_card()
         return TeamsFormatter.build_generic_card(
@@ -309,6 +306,27 @@ class WebhookService:
             message=f"Event for project **{project_name}**",
             url=scan_url,
         )
+
+    @staticmethod
+    def _build_policy_changed_card(
+        normalized_event: str,
+        raw_payload: "Mapping[str, Any]",
+    ) -> "Mapping[str, Any]":
+        """Teams card for policy-changed events, whose payloads are flat (no nested project/scan)."""
+        project_id = raw_payload.get("project_id")
+        policy_scope = raw_payload.get("policy_scope")
+        version = raw_payload.get("version")
+        change_summary = raw_payload.get("change_summary") or "Policy updated"
+        actor = raw_payload.get("actor") or {}
+        actor_name = actor.get("display_name") or "A user"
+
+        subject = normalized_event.replace(".", " ").replace("_", " ").title()
+        scope_text = f"project {project_id}" if project_id else (policy_scope or "system")
+        message = f"{actor_name} updated the {scope_text} policy: {change_summary}"
+        if version is not None:
+            message = f"{message} (version {version})"
+
+        return TeamsFormatter.build_generic_card(subject=subject, message=message, url=None)
 
     async def _send_webhook(
         self,
@@ -330,9 +348,11 @@ class WebhookService:
 
         while retry_count < self.max_retries:
             try:
-                await assert_safe_webhook_target(webhook.url)
+                transport = await build_pinned_transport(webhook.url)
 
-                async with InstrumentedAsyncClient("Webhook Delivery", timeout=self.timeout) as client:
+                async with InstrumentedAsyncClient(
+                    "Webhook Delivery", timeout=self.timeout, transport=transport
+                ) as client:
                     response = await client.post(
                         webhook.url,
                         content=json_payload,
@@ -488,40 +508,35 @@ class WebhookService:
         payload: "Mapping[str, Any]",
         project_id: Optional[str] = None,
     ) -> None:
-        try:
-            webhooks = await self._get_webhooks_for_event(db, project_id, event_type)
+        """Dispatch an event to all matching webhooks; a failure while resolving webhooks may propagate, so use safe_trigger_webhooks when the caller must not be affected."""
+        webhooks = await self._get_webhooks_for_event(db, project_id, event_type)
 
-            if not webhooks:
-                logger.debug(f"No webhooks configured for event {event_type}")
-                return
+        if not webhooks:
+            logger.debug(f"No webhooks configured for event {event_type}")
+            return
 
-            logger.info(
-                f"Triggering {len(webhooks)} webhook(s) for event {event_type} (project: {project_id or 'global'})"
-            )
+        logger.info(f"Triggering {len(webhooks)} webhook(s) for event {event_type} (project: {project_id or 'global'})")
 
-            if webhooks_triggered_total:
-                webhooks_triggered_total.labels(event_type=event_type).inc(len(webhooks))
+        if webhooks_triggered_total:
+            webhooks_triggered_total.labels(event_type=event_type).inc(len(webhooks))
 
-            tasks = [self._send_webhook(db, webhook, payload, event_type) for webhook in webhooks]
-            results = await asyncio.gather(*tasks, return_exceptions=True)
+        tasks = [self._send_webhook(db, webhook, payload, event_type) for webhook in webhooks]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-            failed_count = 0
-            for idx, result in enumerate(results):
-                if isinstance(result, Exception):
-                    logger.error(f"Webhook {webhooks[idx].id} raised exception: {result}")
-                    failed_count += 1
-                elif result is False:
-                    failed_count += 1
+        failed_count = 0
+        for idx, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.error(f"Webhook {webhooks[idx].id} raised exception: {result}")
+                failed_count += 1
+            elif result is False:
+                failed_count += 1
 
-            if failed_count > 0 and webhooks_failed_total:
-                webhooks_failed_total.labels(event_type=event_type).inc(failed_count)
+        if failed_count > 0 and webhooks_failed_total:
+            webhooks_failed_total.labels(event_type=event_type).inc(failed_count)
 
-            logger.info(
-                f"Webhooks for {event_type} completed: {len(webhooks) - failed_count} succeeded, {failed_count} failed"
-            )
-
-        except Exception as e:
-            logger.exception("Error triggering webhooks for %s: %s", event_type, e)
+        logger.info(
+            f"Webhooks for {event_type} completed: {len(webhooks) - failed_count} succeeded, {failed_count} failed"
+        )
 
     async def trigger_scan_completed(
         self,
@@ -626,8 +641,7 @@ class WebhookService:
             },
         }
 
-        # Teams always gets the test card; bypass _format_payload because test_payload
-        # carries event="scan.completed" and would produce a scan card instead.
+        # Bypass _format_payload for Teams: test_payload's event would produce a scan card, not the test card.
         formatted_test_payload: Mapping[str, Any]
         if webhook.webhook_type == "teams":
             formatted_test_payload = TeamsFormatter.build_test_card()
@@ -641,9 +655,9 @@ class WebhookService:
         start_time = time.monotonic()
 
         try:
-            await assert_safe_webhook_target(webhook.url)
+            transport = await build_pinned_transport(webhook.url)
 
-            async with InstrumentedAsyncClient("Webhook Test", timeout=self.timeout) as client:
+            async with InstrumentedAsyncClient("Webhook Test", timeout=self.timeout, transport=transport) as client:
                 response = await client.post(
                     webhook.url,
                     content=json_payload,
@@ -697,5 +711,4 @@ class WebhookService:
             }
 
 
-# Global singleton instance
 webhook_service = WebhookService()

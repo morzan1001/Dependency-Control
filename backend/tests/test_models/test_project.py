@@ -25,7 +25,7 @@ class TestProjectModel:
         assert len(project.id) > 0
 
     def test_team_source_defaults_to_none(self):
-        # Finding 18: provenance of how team_id was last set. None = unknown/legacy.
+        # None marks unknown provenance for how team_id was last set.
         project = Project(name="test", owner_id="user-1")
         assert project.team_source is None
 
@@ -60,6 +60,16 @@ class TestScanModel:
     def test_id_auto_generated(self):
         scan = Scan(project_id="proj-1", branch="main")
         assert scan.id is not None
+
+    def test_pinned_defaults_to_false(self):
+        scan = Scan(project_id="proj-1", branch="main")
+        assert scan.pinned is False
+
+    def test_pinned_survives_hydration_and_serialization(self):
+        doc = {"_id": "scan-1", "project_id": "proj-1", "branch": "main", "pinned": True}
+        scan = Scan(**doc)
+        assert scan.pinned is True
+        assert scan.model_dump(by_alias=True)["pinned"] is True
 
 
 class TestAnalysisResultModel:

@@ -1,15 +1,4 @@
-"""Tests for GridFS-ref-counting during retention housekeeping.
-
-Regression test for the orphan-SBOM bug: when a rescan inherits its source
-scan's ``sbom_refs`` dict (which contains the original scan's ``gridfs_id``),
-multiple scans end up sharing the same GridFS file. The retention cleanup
-must NOT delete a GridFS file that any other (non-deleted) scan still
-references — otherwise the surviving scans hit
-``Failed to load SBOM from GridFS: no file in gridfs collection`` on their
-next worker run.
-
-See ``app/core/housekeeping.py:_cleanup_gridfs_files``.
-"""
+"""GridFS ref-counting during retention: cleanup must not delete a file another scan still references."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -25,10 +14,7 @@ def _gridfs_ref(gid: str) -> dict:
 
 @pytest.mark.asyncio
 async def test_cleanup_skips_gridfs_file_still_referenced_by_other_scan():
-    """A rescan-chain scenario: scan A is the original ingest, scan B is a
-    rescan that copied A's ``sbom_refs``. When retention deletes B, A's
-    GridFS file must survive because A still references it.
-    """
+    """Rescan B copied A's sbom_refs; deleting B must keep A's shared GridFS file."""
     db = FakeDatabase()
     shared_gid = "6a06edb3dcb1d39dc6d91793"
 
@@ -65,9 +51,7 @@ async def test_cleanup_skips_gridfs_file_still_referenced_by_other_scan():
 
 @pytest.mark.asyncio
 async def test_cleanup_deletes_gridfs_file_when_no_other_scan_refs_it():
-    """Sanity check: the ref-counting must still allow real cleanup when
-    the deleted scan is the last referent of its GridFS file.
-    """
+    """Ref-counting must still allow cleanup when the deleted scan is the last referent."""
     db = FakeDatabase()
     orphan_gid = "5a06edb3dcb1d39dc6d91793"
 
@@ -94,9 +78,7 @@ async def test_cleanup_deletes_gridfs_file_when_no_other_scan_refs_it():
 
 @pytest.mark.asyncio
 async def test_cleanup_deletes_mixed_refs_correctly():
-    """Deleted scan references two files; one is shared with a survivor,
-    the other is exclusive. Only the exclusive file should be deleted.
-    """
+    """A deleted scan's exclusive file is deleted; a file shared with a survivor is kept."""
     db = FakeDatabase()
     shared_gid = "6a06edb3dcb1d39dc6d91793"
     exclusive_gid = "7a06edb3dcb1d39dc6d91793"

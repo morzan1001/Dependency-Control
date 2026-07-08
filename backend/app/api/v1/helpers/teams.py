@@ -1,8 +1,4 @@
-"""
-Team Helper Functions
-
-Shared helper functions for team-related operations.
-"""
+"""Shared helper functions for team-related operations."""
 
 from typing import Any, Dict, List, Optional
 
@@ -27,17 +23,7 @@ def build_team_enrichment_pipeline(
     sort_by: str = "name",
     sort_direction: int = 1,
 ) -> List[Dict[str, Any]]:
-    """
-    Build MongoDB aggregation pipeline to enrich teams with member usernames.
-
-    Args:
-        match_query: MongoDB query to filter teams
-        sort_by: Field to sort by
-        sort_direction: 1 for ascending, -1 for descending
-
-    Returns:
-        Aggregation pipeline list
-    """
+    """Build a MongoDB aggregation pipeline that enriches teams with member usernames."""
     return [
         {"$match": match_query},
         {"$sort": {sort_by: sort_direction}},
@@ -102,28 +88,13 @@ async def check_team_access(
     db: AsyncIOMotorDatabase,
     required_role: Optional[str] = None,
 ) -> Team:
-    """
-    Check if a user has access to a team and return the team.
-
-    Args:
-        team_id: The team ID to check access for
-        user: The current user
-        db: Database instance
-        required_role: Optional minimum role required (member, admin)
-
-    Returns:
-        The Team object if access is granted
-
-    Raises:
-        HTTPException: 404 if team not found, 403 if access denied
-    """
+    """Check a user's access to a team and return it, raising 404/403 on failure."""
     team_repo = TeamRepository(db)
     team = await team_repo.get_by_id(team_id)
     if not team:
         raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
 
-    # SECURITY: team:read_all grants access to ALL teams (superuser); skip member/role checks.
-    # Note: team:update does NOT bypass membership - only grants write permission.
+    # team:read_all is a superuser grant over all teams; team:update does not bypass membership.
     if not has_permission(user.permissions, Permissions.TEAM_READ_ALL):
         member_role = None
         is_member = False
@@ -136,14 +107,12 @@ async def check_team_access(
         if not is_member:
             raise HTTPException(status_code=403, detail="Not a member of this team")
 
-        # Check for basic read permission
         if Permissions.TEAM_READ not in user.permissions and Permissions.TEAM_READ_ALL not in user.permissions:
             raise HTTPException(status_code=403, detail="Not enough permissions")
 
         if required_role:
             if member_role is None:
                 raise HTTPException(status_code=403, detail="Not enough permissions in this team")
-            # Role hierarchy: admin > member (TEAM_ROLES is ordered this way)
             if TEAM_ROLES.index(member_role) < TEAM_ROLES.index(required_role):
                 raise HTTPException(status_code=403, detail="Not enough permissions in this team")
 
@@ -151,13 +120,7 @@ async def check_team_access(
 
 
 async def enrich_team_with_usernames(team_data: Dict[str, Any], db: AsyncIOMotorDatabase) -> None:
-    """
-    Enrich team data with member usernames (in-place mutation).
-
-    Args:
-        team_data: Raw team document from database (modified in place)
-        db: Database instance
-    """
+    """Enrich a raw team document with member usernames, mutating it in place."""
     user_repo = UserRepository(db)
     members = team_data.get("members", [])
     user_ids = [m["user_id"] for m in members if "user_id" in m]
@@ -173,19 +136,7 @@ async def enrich_team_with_usernames(team_data: Dict[str, Any], db: AsyncIOMotor
 
 
 async def fetch_and_enrich_team(team_id: str, db: AsyncIOMotorDatabase) -> TeamResponse:
-    """
-    Fetch a team by ID, enrich with usernames, and return as TeamResponse.
-
-    Args:
-        team_id: The team ID to fetch
-        db: Database instance
-
-    Returns:
-        Enriched TeamResponse
-
-    Raises:
-        HTTPException: 404 if team not found
-    """
+    """Fetch a team by ID, enrich with usernames, and return it, raising 404 if missing."""
     team_repo = TeamRepository(db)
     team_data = await team_repo.get_raw_by_id(team_id)
 
@@ -197,16 +148,7 @@ async def fetch_and_enrich_team(team_id: str, db: AsyncIOMotorDatabase) -> TeamR
 
 
 def find_member_in_team(team: Team, user_id: str) -> Optional[int]:
-    """
-    Find a member's index in a team's member list.
-
-    Args:
-        team: The team to search in
-        user_id: The user ID to find
-
-    Returns:
-        Index of the member, or None if not found
-    """
+    """Return a member's index in the team's member list, or None if not found."""
     for i, member in enumerate(team.members):
         if member.user_id == user_id:
             return i
@@ -214,16 +156,7 @@ def find_member_in_team(team: Team, user_id: str) -> Optional[int]:
 
 
 def get_member_role(team: Team, user_id: str) -> Optional[str]:
-    """
-    Get a member's role in a team.
-
-    Args:
-        team: The team to search in
-        user_id: The user ID to find
-
-    Returns:
-        Role string, or None if not a member
-    """
+    """Return a member's role in the team, or None if not a member."""
     for member in team.members:
         if member.user_id == user_id:
             return member.role
@@ -236,24 +169,7 @@ async def get_team_with_access(
     db: AsyncIOMotorDatabase,
     required_role: str = TEAM_ROLE_ADMIN,
 ) -> Team:
-    """
-    Get a team, checking global permission or role-based access.
-
-    If the user has global 'team:update' permission, fetches the team directly.
-    Otherwise, verifies the user has the required role in the team.
-
-    Args:
-        team_id: The team ID to fetch
-        user: The current user
-        db: Database instance
-        required_role: Minimum role required if no global permission
-
-    Returns:
-        The Team object
-
-    Raises:
-        HTTPException: 404 if team not found, 403 if access denied
-    """
+    """Get a team via global 'team:update' permission or, failing that, role-based access."""
     team_repo = TeamRepository(db)
 
     if has_permission(user.permissions, "team:update"):

@@ -13,7 +13,7 @@ import { useWaiverById } from '@/hooks/queries/use-waivers'
 import { canCreateProjectWaiver } from '@/lib/project-roles'
 import { FindingTypeBadge } from './FindingTypeBadge'
 import { CollapsibleReferences } from './CollapsibleReferences'
-import { getSeverityBadgeVariant } from '@/lib/finding-utils'
+import { getSeverityBadgeVariant, getExploitMaturityClass, advisoryUrl } from '@/lib/finding-utils'
 import { formatDate } from '@/lib/utils'
 import { ContextBannersSection } from './details/ContextBannersSection'
 import { OriginBadge } from './details/OriginBadge'
@@ -50,21 +50,8 @@ function MatchedSymbolsList({ symbols }: { symbols: string[] }) {
     )
 }
 
-function getAliasLink(alias: string): string | null {
-    if (alias.startsWith('CVE-')) return `https://nvd.nist.gov/vuln/detail/${alias}`;
-    if (alias.startsWith('GHSA-')) return `https://github.com/advisories/${alias}`;
-    return null;
-}
-
-function getExploitMaturityClass(maturity: string | null | undefined): string {
-    if (maturity === 'high') return 'text-severity-critical font-medium';
-    if (maturity === 'functional') return 'text-severity-high';
-    if (maturity === 'poc') return 'text-severity-medium';
-    return '';
-}
-
 function AliasLink({ alias }: { alias: string }) {
-    const link = getAliasLink(alias);
+    const link = advisoryUrl(alias);
 
     if (link) {
         return (
@@ -103,7 +90,7 @@ interface FindingDetailsModalProps {
     scanId?: string
     scanContext?: ScanContext
     onSelectFinding?: (id: string) => void
-    onNavigate?: () => void  // Called before navigation to allow parent cleanup
+    onNavigate?: () => void
 }
 
 export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanId, scanContext, onSelectFinding, onNavigate }: FindingDetailsModalProps) {
@@ -117,9 +104,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
         ? canCreateProjectWaiver(project, currentUser.id, permissions)
         : hasPermission('waiver:manage')
 
-    // Fetch the lapsed waiver so we can prefill the re-waive form with its
-    // previous reason/status/expiration when the user opens a waiver form for
-    // a lapsed finding.
+    // Prefill the re-waive form with the lapsed waiver's reason/status/expiration.
     const { data: lapsedWaiver } = useWaiverById(finding?.lapsed_waiver_id)
 
     if (!finding) return null
@@ -128,16 +113,13 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
         setSelectedVulnId(vulnId || null)
         setShowWaiverForm(true)
     }
-    
-    // Navigate to Raw tab with SBOM anchor
+
     const handleSbomClick = (source: string) => {
         if (!scanId) return
-        // Extract SBOM index from source name (e.g., "SBOM #1" -> 0)
         const match = /SBOM #(\d+)/i.exec(source)
         const sbomIndex = match ? Number.parseInt(match[1], 10) - 1 : 0
-        // Close this modal and notify parent to close as well
         onClose()
-        onNavigate?.()  // Allow parent modals to close
+        onNavigate?.()
         navigate(`/projects/${projectId}/scans/${scanId}?tab=raw&sbom=${sbomIndex}`)
     }
 
@@ -156,7 +138,6 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                     <DialogDescription className="flex flex-wrap items-center gap-2">
                         <span className="flex items-center gap-1">
                             <Badge variant="outline">{finding.type}</Badge>
-                            {/* Show additional absorbed finding types */}
                             {finding.details?.additional_finding_types?.map((addType: { type: string; severity: string }) => (
                                 <FindingTypeBadge key={addType.type} type={addType.type} />
                             ))}
@@ -211,7 +192,6 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                         <DetailSection label="Found In Sources">
                                             <div className="flex flex-wrap gap-2 items-start">
                                             {finding.found_in.map((source) => {
-                                                // Check if this looks like an SBOM reference
                                                 const isSbomRef = /SBOM #\d+/i.test(source) || !source.includes('/')
                                                 return (
                                                     <Badge 
@@ -236,7 +216,6 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                         </DetailSection>
                                     </div>
                                 )}
-                                {/* Origin Badge for findings without found_in */}
                                 {(!finding.found_in || finding.found_in.length === 0) && finding.source_type && (
                                     <div className="col-span-2">
                                         <OriginBadge finding={finding} />
@@ -247,39 +226,32 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                         <DetailSection label="Related Findings" compact>
                                             <div className="flex flex-wrap gap-2">
                                             {finding.related_findings.map((relatedId) => {
-                                                // Format the label and determine badge color based on type
                                                 let label = relatedId;
                                                 let badgeClass = "font-mono text-xs cursor-pointer ";
-                                                
+
                                                 if (relatedId.startsWith("OUTDATED-")) {
-                                                    // OUTDATED-{component} format
                                                     const component = relatedId.replace("OUTDATED-", "");
                                                     label = `Outdated: ${component}`;
                                                     badgeClass += "border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100";
                                                 } else if (relatedId.startsWith("QUALITY:")) {
-                                                    // QUALITY:{component}:{version} format
                                                     const parts = relatedId.split(":");
                                                     label = `Quality: ${parts[1]}${parts[2] ? ` (${parts[2]})` : ""}`;
                                                     badgeClass += "border-yellow-200 bg-yellow-50 text-yellow-700 hover:bg-yellow-100";
                                                 } else if (relatedId.startsWith("LIC-")) {
-                                                    // LIC-{license} format
                                                     const license = relatedId.replace("LIC-", "");
                                                     label = `License: ${license}`;
                                                     badgeClass += "border-purple-200 bg-purple-50 text-purple-700 hover:bg-purple-100";
                                                 } else if (relatedId.startsWith("EOL-")) {
-                                                    // EOL-{component}-{cycle} format
                                                     const info = relatedId.replace("EOL-", "");
                                                     label = `EOL: ${info}`;
                                                     badgeClass += "border-orange-200 bg-orange-50 text-orange-700 hover:bg-orange-100";
                                                 } else if (relatedId.includes(":")) {
-                                                    // component:version format (vulnerabilities)
                                                     const parts = relatedId.split(":");
                                                     if (parts.length === 2) {
                                                         label = `Vuln: ${parts[0]} (${parts[1]})`;
                                                     }
                                                     badgeClass += "border-red-200 bg-red-50 text-red-700 hover:bg-red-100";
                                                 } else {
-                                                    // Unknown format - default styling
                                                     badgeClass += "border-gray-200 bg-gray-50 text-gray-700 hover:bg-gray-100";
                                                 }
                                                 
@@ -311,7 +283,6 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
 
                             {finding.type === 'secret' && (
                                 <div className="space-y-4">
-                                    {/* File location with link */}
                                     {scanContext && finding.component && (
                                         <FileLocation
                                             filePath={finding.component}
@@ -362,8 +333,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                         Found {vulns.length} vulnerabilities in {getFindingPackage(finding)}
                                                     </p>
                                                 )}
-                                                
-                                                {/* Unified context banners section */}
+
                                                 <ContextBannersSection finding={finding} />
                                                 
                                                 {vulns.map((vuln: NestedVulnerability) => {
@@ -373,12 +343,11 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                     const resolvedCve = vuln.resolved_cve;
                                                     const githubAdvisoryUrl = vuln.github_advisory_url || finding.details?.github_advisory_url;
 
-                                                    // Determine the best link for the vulnerability
                                                     let vulnLink = null;
                                                     if (isCve) {
-                                                        vulnLink = `https://nvd.nist.gov/vuln/detail/${vulnId}`;
+                                                        vulnLink = advisoryUrl(vulnId);
                                                     } else if (isGhsa) {
-                                                        vulnLink = githubAdvisoryUrl || `https://github.com/advisories/${vulnId}`;
+                                                        vulnLink = githubAdvisoryUrl || advisoryUrl(vulnId);
                                                     }
 
                                                     return (
@@ -401,10 +370,9 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 ) : (
                                                                     <Badge variant="outline">{vulnId}</Badge>
                                                                 )}
-                                                                {/* Show resolved CVE if GHSA was resolved */}
                                                                 {isGhsa && resolvedCve && (
                                                                     <a
-                                                                        href={`https://nvd.nist.gov/vuln/detail/${resolvedCve}`}
+                                                                        href={advisoryUrl(resolvedCve) ?? undefined}
                                                                         target="_blank"
                                                                         rel="noopener noreferrer"
                                                                         className="inline-flex items-center gap-1"
@@ -487,7 +455,6 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 </div>
                                                                 )
                                                             })()}
-                                                            {/* Reachability Analysis */}
                                                             {(vuln.reachability || finding.details?.reachability) && (() => {
                                                                 const reachability = vuln.reachability ?? finding.details?.reachability
                                                                 const confidenceScore = reachability?.confidence_score
@@ -521,7 +488,6 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 </div>
                                                                 )
                                                             })()}
-                                                            {/* Reachability matched symbols */}
                                                             {(vuln.reachability?.matched_symbols ?? finding.details?.reachability?.matched_symbols ?? []).length > 0 && (
                                                                 <MatchedSymbolsList symbols={vuln.reachability?.matched_symbols ?? finding.details?.reachability?.matched_symbols ?? []} />
                                                             )}
@@ -570,7 +536,6 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 </div>
                             )}
 
-                            {/* License Compliance findings */}
                             {finding.type === 'license' && finding.details && (
                                 <>
                                     <ContextBannersSection finding={finding} />
@@ -578,7 +543,6 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 </>
                             )}
 
-                            {/* Quality findings (aggregated: quality_issues list) */}
                             {finding.type === 'quality' && finding.details && (
                                 <>
                                     <ContextBannersSection finding={finding} />
@@ -586,12 +550,10 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                 </>
                             )}
 
-                            {/* Outdated findings */}
                             {finding.type === 'outdated' && (
                                 <ContextBannersSection finding={finding} />
                             )}
 
-                            {/* EOL findings */}
                             {finding.type === 'eol' && (
                                 <ContextBannersSection finding={finding} />
                             )}

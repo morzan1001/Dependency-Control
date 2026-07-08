@@ -166,14 +166,7 @@ async def test_analyzer_respects_disabled_rule(db):
 @pytest.mark.skip(reason="Requires live worker+engine infrastructure — covered by PR 2 acceptance")
 @pytest.mark.asyncio
 async def test_end_to_end_cbom_ingest_creates_findings(client, db, api_key_headers):
-    """CBOM ingest + analyzer dispatch → findings in the findings collection.
-
-    This test requires a full worker+engine infrastructure that processes scans
-    asynchronously. The current integration test environment uses an in-process fake
-    DB that lacks the async iteration support and worker queue infrastructure needed
-    for this test to work. This functionality will be validated during the full E2E
-    tests in PR 2 acceptance testing.
-    """
+    """CBOM ingest + analyzer dispatch produce findings in the findings collection."""
     import json
     from pathlib import Path
     from app.models.crypto_policy import CryptoPolicy

@@ -1,8 +1,4 @@
-"""Tests for GitHubInstanceRepository.
-
-Tests query logic, URL normalization, and CRUD operations using mocked MongoDB.
-Mirrors the pattern in test_gitlab_instance_repository.py.
-"""
+"""Tests for GitHubInstanceRepository query, URL-normalization, and CRUD logic with mocked MongoDB."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock

@@ -1,10 +1,4 @@
-"""SBOM GridFS load resilience.
-
-Covers the read-your-writes fix: a freshly-uploaded SBOM read via the global
-``secondaryPreferred`` preference could be momentarily missing (replication lag), which
-made the whole analysis abort yet the scan was still marked ``completed``. The fix reads
-the primary with a bounded retry and marks the scan ``failed`` when no SBOM could be loaded.
-"""
+"""SBOM GridFS load resilience: primary read with bounded retry, marking the scan failed when no SBOM loads."""
 
 import asyncio
 from types import SimpleNamespace
@@ -18,11 +12,9 @@ from app.services.analysis.engine import _all_sbom_loads_failed, _finalize_scan_
 
 class TestOpenGridfsDownloadWithRetry:
     def test_retries_then_succeeds(self):
-        # Two transient misses (file not replicated yet) then success.
+        # two transient misses (file not replicated yet) then success
         fs = SimpleNamespace(
-            open_download_stream=AsyncMock(
-                side_effect=[RuntimeError("no file"), RuntimeError("no file"), "STREAM"]
-            )
+            open_download_stream=AsyncMock(side_effect=[RuntimeError("no file"), RuntimeError("no file"), "STREAM"])
         )
         result = asyncio.run(open_gridfs_download_with_retry(fs, "oid", attempts=4, base_delay=0))
         assert result == "STREAM"
@@ -46,7 +38,7 @@ class TestAllSbomLoadsFailed:
         assert _all_sbom_loads_failed(sboms, findings) is True
 
     def test_partial_failure_returns_false(self):
-        # 2 GridFS SBOMs expected, only 1 failed -> the scan still analysed something.
+        # 2 GridFS SBOMs expected, only 1 failed -> the scan still analysed something
         sboms = [
             {"type": "gridfs_reference", "gridfs_id": "a"},
             {"type": "gridfs_reference", "gridfs_id": "b"},
@@ -75,28 +67,47 @@ class TestFinalizeMarksFailed:
 
         asyncio.run(
             _finalize_scan_and_project(
-                "scan-1", scan_doc, "proj-1", 1, 0, self._stats(), {"status": "failed"},
-                scan_repo, project_repo,
-                status="failed", error="SBOM could not be loaded for analysis",
+                "scan-1",
+                scan_doc,
+                "proj-1",
+                1,
+                0,
+                self._stats(),
+                {"status": "failed"},
+                scan_repo,
+                project_repo,
+                status="failed",
+                error="SBOM could not be loaded for analysis",
             )
         )
 
         scan_set = scan_update.await_args.args[1]["$set"]
         assert scan_set["status"] == "failed"
         assert scan_set["error"] == "SBOM could not be loaded for analysis"
-        # A failed scan must NOT become the project's latest scan / overwrite its stats.
+        # a failed scan must not become the project's latest scan or overwrite its stats
         project_update.assert_not_awaited()
 
     def test_completed_status_updates_project(self):
         project_update = AsyncMock()
         scan_repo = SimpleNamespace(update_raw=AsyncMock())
-        project_repo = SimpleNamespace(update_raw=project_update)
+        # no latest scan yet -> guard allows the update
+        project_repo = SimpleNamespace(
+            update_raw=project_update,
+            get_by_id_strong=AsyncMock(return_value=SimpleNamespace(latest_scan_id=None)),
+        )
         scan_doc = SimpleNamespace(is_rescan=False, original_scan_id=None)
 
         asyncio.run(
             _finalize_scan_and_project(
-                "scan-1", scan_doc, "proj-1", 5, 0, self._stats(), {"status": "completed"},
-                scan_repo, project_repo,
+                "scan-1",
+                scan_doc,
+                "proj-1",
+                5,
+                0,
+                self._stats(),
+                {"status": "completed"},
+                scan_repo,
+                project_repo,
             )
         )
 

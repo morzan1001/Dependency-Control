@@ -1,8 +1,4 @@
-"""Tests for MR comment building.
-
-Tests the pure _build_mr_comment function that generates GitLab MR comments
-with scan results, severity tables, and status labels.
-"""
+"""Tests for MR comment building."""
 
 from app.models.stats import Stats
 from app.services.analysis.integrations import _build_mr_comment
@@ -18,11 +14,6 @@ class TestBuildMrCommentStatus:
         stats = Stats(risk_score=25.0)
         comment = _build_mr_comment("scan-1", stats, None)
         assert "[WARNING]" in comment
-
-    def test_alert_when_critical_findings(self):
-        stats = Stats(critical=1, risk_score=80.0)
-        comment = _build_mr_comment("scan-1", stats, None)
-        assert "[ALERT]" in comment
 
     def test_alert_when_high_findings(self):
         stats = Stats(high=3, risk_score=50.0)

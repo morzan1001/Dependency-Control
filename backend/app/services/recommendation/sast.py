@@ -10,7 +10,6 @@ def process_sast(findings: List[ModelOrDict]) -> List[Recommendation]:
     if not findings:
         return []
 
-    # Group by rule/category
     findings_by_category = defaultdict(list)
     for f in findings:
         details = get_attr(f, "details", {})
@@ -20,7 +19,6 @@ def process_sast(findings: List[ModelOrDict]) -> List[Recommendation]:
             or (details.get("check_id") if isinstance(details, dict) else None)
             or "security"
         )
-        # Normalize category
         category_lower = category.lower()
         if "inject" in category_lower or "sqli" in category_lower:
             category = "Injection"
@@ -37,7 +35,6 @@ def process_sast(findings: List[ModelOrDict]) -> List[Recommendation]:
 
     recommendations = []
 
-    # Create recommendations per category if significant
     for category, cat_findings in findings_by_category.items():
         severity_counts: Dict[str, int] = defaultdict(int)
         files_affected = set()
@@ -48,7 +45,6 @@ def process_sast(findings: List[ModelOrDict]) -> List[Recommendation]:
 
         critical_high = severity_counts.get("CRITICAL", 0) + severity_counts.get("HIGH", 0)
 
-        # Only create recommendations for significant issues
         if critical_high < 1 and len(cat_findings) < 3:
             continue
 
@@ -61,7 +57,6 @@ def process_sast(findings: List[ModelOrDict]) -> List[Recommendation]:
         else:
             priority = Priority.LOW
 
-        # Extract rule IDs safely
         rule_ids = set()
         for f in cat_findings:
             details = get_attr(f, "details", {})

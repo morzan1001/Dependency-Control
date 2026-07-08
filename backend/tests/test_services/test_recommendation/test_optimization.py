@@ -12,7 +12,7 @@ def _vuln(component, severity="HIGH", version="1.0", fixed_version="2.0", is_kev
         "version": version,
         "details": {
             "fixed_version": fixed_version,
-            "is_kev": is_kev,
+            "in_kev": is_kev,
         },
         "id": finding_id,
     }
@@ -25,7 +25,7 @@ def _vuln_no_fix(component, severity="HIGH", version="1.0", finding_id="CVE-2024
         "component": component,
         "version": version,
         "details": {
-            "is_kev": False,
+            "in_kev": False,
         },
         "id": finding_id,
     }
@@ -227,6 +227,20 @@ class TestIdentifyQuickWinsNoFixedVersion:
         # Only fixable vulns are counted
         assert len(result) == 1
         assert result[0].impact["total"] == 2
+
+
+class TestIdentifyQuickWinsMinimalCandidate:
+    def test_two_medium_no_kev_still_recommended(self):
+        # Exactly 2 vulns with no KEV is the minimal valid quick-win candidate.
+        vulns = [
+            _vuln("pkg", severity="MEDIUM", is_kev=False, finding_id="CVE-2024-001"),
+            _vuln("pkg", severity="MEDIUM", is_kev=False, finding_id="CVE-2024-002"),
+        ]
+        deps = [_dep("pkg")]
+        result = identify_quick_wins(vulns, deps)
+        assert len(result) == 1
+        assert result[0].impact["total"] == 2
+        assert result[0].impact["kev_count"] == 0
 
 
 class TestIdentifyQuickWinsActionDetails:

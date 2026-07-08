@@ -16,10 +16,7 @@ def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: O
 
 
 def _calculate_epss_contribution(epss_score: float) -> float:
-    """EPSS → 0..25 points, piecewise linear and continuous at bucket boundaries.
-
-    Anchors: 0@0.0, 10@MEDIUM_THRESHOLD, 20@HIGH_THRESHOLD, 25@1.0.
-    """
+    """EPSS 0..1 → 0..25 points, piecewise linear, continuous at bucket boundaries (0@0, 10@MEDIUM, 20@HIGH, 25@1.0)."""
     if epss_score <= 0:
         return 0.0
     if epss_score >= 1.0:
@@ -36,10 +33,7 @@ def _apply_reachability_modifier(
     is_reachable: Optional[bool],
     reachability_level: Optional[str],
 ) -> float:
-    """Scale by reachability: 0.4 if unreachable, 1.1 if confirmed, else identity.
-
-    The unreachable factor is not 0 — symbol-level analysis isn't perfect.
-    """
+    """Scale by reachability: 0.4 if unreachable, 1.1 if confirmed, else identity (not 0 — analysis is imperfect)."""
     if is_reachable is None and reachability_level is None:
         return score
     if is_reachable is False or reachability_level == "unreachable":
@@ -57,11 +51,7 @@ def calculate_risk_score(
     is_reachable: Optional[bool] = None,
     reachability_level: Optional[str] = None,
 ) -> float:
-    """Combined risk score 0..100 = CVSS impact + EPSS likelihood + KEV/ransomware + reachability.
-
-    CVSS up to 40 (or 20 default), EPSS up to 25, KEV +20, ransomware +5,
-    then the reachability multiplier. Capped at 100.
-    """
+    """Combined 0..100 risk = CVSS (<=40, 20 default) + EPSS (<=25) + KEV (+20) + ransomware (+5), then reachability multiplier, capped at 100."""
     score = (cvss_score / 10.0) * 40 if cvss_score is not None else 20.0
     if epss_score is not None:
         score += _calculate_epss_contribution(epss_score)
@@ -92,26 +82,7 @@ def map_reachability_level_to_modifier(
     analysis_level: Optional[str],
     is_reachable: Optional[bool],
 ) -> Optional[str]:
-    """Translate the reachability-enrichment vocabulary into the modifier vocabulary.
-
-    The reachability enrichment records ``analysis_level`` as one of
-    ``none`` / ``import`` / ``symbol`` (see ``REACHABILITY_LEVEL_*``) plus an
-    ``is_reachable`` boolean, whereas the scoring modifier
-    (:func:`calculate_adjusted_risk_score`) speaks ``unreachable`` /
-    ``confirmed`` / identity. This bridges the two safely:
-
-    - A definitively NOT-reachable verdict (``is_reachable is False``) →
-      ``"unreachable"`` (the x0.4 de-prioritisation).
-    - A symbol-level reachable hit (``is_reachable is True`` and
-      ``analysis_level == "symbol"``) → ``"confirmed"`` (the x1.1 boost). This
-      is the only signal strong enough to boost: a matched vulnerable symbol.
-    - Anything weaker — import-only reachable, ``none``, ``unknown`` — maps to
-      identity (``None``) so it neither boosts nor penalises.
-
-    The modifier vocabulary (``confirmed`` / ``unreachable``) is passed through
-    unchanged, so callers that already speak it keep working.
-    """
-    # Already in modifier vocabulary — pass through.
+    """Map reachability enrichment (analysis_level + is_reachable) to the scoring modifier vocab: not-reachable -> "unreachable", symbol-level reachable -> "confirmed", else identity."""
     if analysis_level in ("confirmed", "unreachable"):
         return analysis_level
     if is_reachable is False:

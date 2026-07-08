@@ -16,7 +16,6 @@ from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
 
-# Import metrics for notification tracking
 notifications_sent_total: Optional[Counter] = None
 notifications_failed_total: Optional[Counter] = None
 
@@ -25,7 +24,6 @@ try:
 except ImportError:
     pass
 
-# Import aiosmtplib for async SMTP (required dependency)
 try:
     import aiosmtplib
 except ImportError as e:
@@ -69,7 +67,6 @@ class EmailProvider(NotificationProvider):
         return msg
 
     async def _attach_logo(self, msg: MIMEMultipart, logo_path: str) -> None:
-        """Attach a logo image to the message."""
         img_data = await asyncio.to_thread(Path(logo_path).read_bytes)
         image = MIMEImage(img_data)
         image.add_header("Content-ID", "<logo>")
@@ -85,14 +82,10 @@ class EmailProvider(NotificationProvider):
         encryption: str,
         msg: MIMEMultipart,
     ) -> None:
-        """
-        Send email using async SMTP (aiosmtplib).
-        Does not block the event loop.
-        """
+        """Send email via async SMTP without blocking the event loop."""
         timeout = SMTP_TIMEOUT_SECONDS
 
         try:
-            # Configure SMTP client based on encryption
             if encryption == "ssl":
                 smtp = aiosmtplib.SMTP(
                     hostname=smtp_host,
@@ -112,11 +105,9 @@ class EmailProvider(NotificationProvider):
                 if encryption == "starttls":
                     await smtp.starttls()
 
-                # Login if credentials provided
                 if smtp_user and smtp_password:
                     await smtp.login(smtp_user, smtp_password)
 
-                # Send message
                 await smtp.send_message(msg)
 
         except Exception as e:
@@ -136,7 +127,6 @@ class EmailProvider(NotificationProvider):
             logger.warning("System settings not provided. Skipping email.")
             return False
 
-        # Determine configuration to use
         smtp_host = system_settings.smtp_host
         smtp_port = system_settings.smtp_port
         smtp_user = system_settings.smtp_user
@@ -172,7 +162,6 @@ class EmailProvider(NotificationProvider):
             if logo_path and os.path.exists(logo_path):
                 await self._attach_logo(msg, logo_path)
 
-            # Send email asynchronously using aiosmtplib
             await self._send_async(
                 smtp_host,
                 smtp_port,

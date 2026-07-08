@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Literal, Optional
 
-from fastapi import BackgroundTasks, Depends, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import get_current_active_user, get_database
@@ -14,7 +14,7 @@ from app.core.constants import WEBHOOK_EVENT_PQC_MIGRATION_PLAN_GENERATED
 from app.models.user import User
 from app.schemas.pqc_migration import MigrationPlanResponse
 from app.services.analytics.cache import get_analytics_cache
-from app.services.analytics.scopes import ResolvedScope, ScopeResolutionError, ScopeResolver
+from app.services.analytics.scopes import ResolvedScope, ScopeResolver
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 from app.services.pqc_migration.mappings_loader import CURRENT_MAPPINGS_VERSION
 
@@ -32,13 +32,10 @@ async def get_pqc_migration_plan(
     current_user: User = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),
 ) -> MigrationPlanResponse:
-    try:
-        resolved = await ScopeResolver(db, current_user).resolve(
-            scope=scope,
-            scope_id=scope_id,
-        )
-    except ScopeResolutionError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    resolved = await ScopeResolver(db, current_user).resolve(
+        scope=scope,
+        scope_id=scope_id,
+    )
 
     cache = get_analytics_cache()
     cache_key = (
@@ -59,8 +56,7 @@ async def get_pqc_migration_plan(
     )
     cache.set(cache_key, resp)
 
-    # Fire webhook out-of-band so a slow webhook endpoint cannot block the
-    # API response. Failures are swallowed inside `_fire_pqc_webhook`.
+    # Fire webhook out-of-band so a slow endpoint cannot block the API response.
     background_tasks.add_task(_fire_pqc_webhook, db, resp, resolved)
 
     return resp
@@ -71,12 +67,7 @@ async def _fire_pqc_webhook(
     resp: MigrationPlanResponse,
     resolved: ResolvedScope,
 ) -> None:
-    """Best-effort webhook dispatch for the PQC migration plan.
-
-    Modeled after ``compliance_reports._run_and_webhook`` — any exception is
-    logged but never re-raised, because the plan has already been delivered
-    to the caller by the time this background task runs.
-    """
+    """Best-effort webhook dispatch for the PQC migration plan; exceptions are logged, never raised."""
     from app.services.webhooks import webhook_service
 
     payload = {

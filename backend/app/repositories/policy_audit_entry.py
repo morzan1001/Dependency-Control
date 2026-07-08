@@ -1,10 +1,4 @@
-"""PolicyAuditRepository — MongoDB access for `crypto_policy_history`.
-
-Entries carry a ``policy_type`` discriminator (default ``"crypto"``) so
-crypto and license policies share one collection. Queries without an
-explicit ``policy_type`` default to ``crypto`` so entries written before
-the discriminator existed still match.
-"""
+"""MongoDB access for crypto_policy_history; a policy_type discriminator (default crypto) lets crypto and license policies share one collection, and docs missing the field are treated as crypto."""
 
 from datetime import datetime
 from typing import Any, Dict, List, Literal, Optional
@@ -19,8 +13,7 @@ PolicyType = Literal["crypto", "license"]
 
 
 def _policy_type_filter(policy_type: PolicyType) -> Dict[str, Any]:
-    """For ``"crypto"`` we also match documents missing the field — they
-    pre-date the discriminator."""
+    """crypto also matches docs missing the field (treated as crypto)."""
     if policy_type == "crypto":
         return {"$or": [{"policy_type": "crypto"}, {"policy_type": {"$exists": False}}]}
     return {"policy_type": policy_type}

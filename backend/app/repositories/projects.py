@@ -13,8 +13,6 @@ _COL = "projects"
 
 
 class ProjectRepository:
-    """Repository for project database operations."""
-
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self.collection = db.projects
@@ -33,28 +31,15 @@ class ProjectRepository:
         return Project(**data) if data else None
 
     async def get_raw_by_id(self, project_id: str) -> Optional[Dict[str, Any]]:
-        """Get raw project document by ID."""
         return await self.collection.find_one({"_id": project_id})
 
     async def get_by_gitlab_id(self, gitlab_project_id: int) -> Optional[Project]:
-        """Get project by GitLab project ID."""
         data = await self.collection.find_one({"gitlab_project_id": gitlab_project_id})
         if data:
             return Project(**data)
         return None
 
-    async def get_raw_by_gitlab_id(self, gitlab_project_id: int) -> Optional[Dict[str, Any]]:
-        """
-        Get raw project document by GitLab project ID.
-        DEPRECATED: Use get_by_gitlab_composite_key for multi-instance support.
-        """
-        return await self.collection.find_one({"gitlab_project_id": gitlab_project_id})
-
     async def get_by_gitlab_composite_key(self, gitlab_instance_id: str, gitlab_project_id: int) -> Optional[Project]:
-        """
-        Get project by composite GitLab key (instance + project ID).
-        This is the PRIMARY lookup method for GitLab-integrated projects.
-        """
         data = await self.collection.find_one(
             {"gitlab_instance_id": gitlab_instance_id, "gitlab_project_id": gitlab_project_id}
         )
@@ -65,30 +50,21 @@ class ProjectRepository:
     async def get_raw_by_gitlab_composite_key(
         self, gitlab_instance_id: str, gitlab_project_id: int
     ) -> Optional[Dict[str, Any]]:
-        """Get raw project document by composite GitLab key."""
         return await self.collection.find_one(
             {"gitlab_instance_id": gitlab_instance_id, "gitlab_project_id": gitlab_project_id}
         )
 
     async def list_by_instance(self, gitlab_instance_id: str, skip: int = 0, limit: int = 100) -> List[Project]:
-        """Get all projects for a specific GitLab instance."""
         cursor = self.collection.find({"gitlab_instance_id": gitlab_instance_id}).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [Project(**doc) for doc in docs]
 
     async def count_by_instance(self, gitlab_instance_id: str) -> int:
-        """Count projects for a specific GitLab instance."""
         return await self.collection.count_documents({"gitlab_instance_id": gitlab_instance_id})
-
-    # GitHub Integration (Multi-Instance Support)
 
     async def get_by_github_composite_key(
         self, github_instance_id: str, github_repository_id: str
     ) -> Optional[Project]:
-        """
-        Get project by composite GitHub key (instance + repository ID).
-        This is the PRIMARY lookup method for GitHub-integrated projects.
-        """
         data = await self.collection.find_one(
             {"github_instance_id": github_instance_id, "github_repository_id": github_repository_id}
         )
@@ -99,29 +75,22 @@ class ProjectRepository:
     async def get_raw_by_github_composite_key(
         self, github_instance_id: str, github_repository_id: str
     ) -> Optional[Dict[str, Any]]:
-        """Get raw project document by composite GitHub key."""
         return await self.collection.find_one(
             {"github_instance_id": github_instance_id, "github_repository_id": github_repository_id}
         )
 
     async def list_by_github_instance(self, github_instance_id: str, skip: int = 0, limit: int = 100) -> List[Project]:
-        """Get all projects for a specific GitHub instance."""
         cursor = self.collection.find({"github_instance_id": github_instance_id}).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [Project(**doc) for doc in docs]
 
     async def count_by_github_instance(self, github_instance_id: str) -> int:
-        """Count projects for a specific GitHub instance."""
         return await self.collection.count_documents({"github_instance_id": github_instance_id})
 
     async def find_or_create_by_gitlab_key(
         self, gitlab_instance_id: str, gitlab_project_id: int, project: Project
     ) -> Tuple[Project, bool]:
-        """Atomically find or create a project by GitLab composite key.
-
-        Uses $setOnInsert so existing projects are never modified.
-        Returns (project, created) tuple.
-        """
+        """Atomic find-or-create by GitLab composite key ($setOnInsert leaves existing projects untouched); returns (project, created)."""
         result = await self.collection.find_one_and_update(
             {"gitlab_instance_id": gitlab_instance_id, "gitlab_project_id": gitlab_project_id},
             {"$setOnInsert": project.model_dump(by_alias=True)},
@@ -134,11 +103,7 @@ class ProjectRepository:
     async def find_or_create_by_github_key(
         self, github_instance_id: str, github_repository_id: str, project: Project
     ) -> Tuple[Project, bool]:
-        """Atomically find or create a project by GitHub composite key.
-
-        Uses $setOnInsert so existing projects are never modified.
-        Returns (project, created) tuple.
-        """
+        """Atomic find-or-create by GitHub composite key ($setOnInsert leaves existing projects untouched); returns (project, created)."""
         result = await self.collection.find_one_and_update(
             {"github_instance_id": github_instance_id, "github_repository_id": github_repository_id},
             {"$setOnInsert": project.model_dump(by_alias=True)},
@@ -164,7 +129,6 @@ class ProjectRepository:
         return await self.get_by_id(project_id)
 
     async def update_raw(self, project_id: str, update_ops: Dict[str, Any]) -> None:
-        """Update project with raw MongoDB operations."""
         with track_db_operation(_COL, "update_one"):
             await self.collection.update_one({"_id": project_id}, update_ops)
 
@@ -182,7 +146,6 @@ class ProjectRepository:
         sort_order: int = 1,
         projection: Optional[Dict[str, int]] = None,
     ) -> List[Project]:
-        """Find multiple projects with pagination. Returns Pydantic models."""
         with track_db_operation(_COL, "find"):
             cursor = self.collection.find(query, projection).sort(sort_by, sort_order).skip(skip).limit(limit)
             docs = await cursor.to_list(limit)
@@ -206,7 +169,6 @@ class ProjectRepository:
         query: Dict[str, Any],
         limit: int = 1000,
     ) -> List[ProjectIdOnly]:
-        """Find project IDs matching query. Returns minimal Pydantic models."""
         cursor = self.collection.find(query, {"_id": 1}).limit(limit)
         docs = await cursor.to_list(limit)
         return [ProjectIdOnly(**doc) for doc in docs]
@@ -216,7 +178,6 @@ class ProjectRepository:
         query: Dict[str, Any],
         limit: int = 1000,
     ) -> List[ProjectWithScanId]:
-        """Find projects with scan IDs and deleted branches. Returns Pydantic models."""
         cursor = self.collection.find(query, {"_id": 1, "name": 1, "latest_scan_id": 1, "deleted_branches": 1}).limit(
             limit
         )
@@ -228,7 +189,6 @@ class ProjectRepository:
         query: Dict[str, Any],
         limit: int = 1000,
     ) -> List[ProjectMinimal]:
-        """Find projects with ID and name only (performance optimized)."""
         cursor = self.collection.find(query, {"_id": 1, "name": 1}).limit(limit)
         docs = await cursor.to_list(limit)
         return [ProjectMinimal(**doc) for doc in docs]
@@ -238,12 +198,7 @@ class ProjectRepository:
             return await self.collection.count_documents(query or {})
 
     async def aggregate(self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None) -> List[Dict[str, Any]]:
-        """Run aggregation pipeline.
-
-        Args:
-            pipeline: MongoDB aggregation pipeline stages.
-            limit: Maximum number of results. Use $limit in the pipeline for best performance.
-        """
+        """Prefer $limit inside the pipeline over the limit arg."""
         with track_db_operation(_COL, "aggregate"):
             return await self.collection.aggregate(pipeline).to_list(limit)
 
@@ -259,19 +214,12 @@ class ProjectRepository:
         await self.collection.update_one({"_id": project_id}, {"$pull": {"members": {"user_id": user_id}}})
 
     async def update_member(self, project_id: str, user_id: str, update_data: Dict[str, Any]) -> None:
-        """Update a member's data in project.
-
-        Args:
-            project_id: The project ID
-            user_id: The user ID of the member
-            update_data: Dictionary with full field paths (e.g., {'members.0.role': 'admin'})
-        """
+        """update_data uses full field paths, e.g. {'members.0.role': 'admin'}."""
         await self.collection.update_one({"_id": project_id, "members.user_id": user_id}, {"$set": update_data})
 
     async def iterate(
         self, query: Optional[Dict[str, Any]] = None, projection: Optional[Dict[str, int]] = None
     ) -> AsyncGenerator[Project, None]:
-        """Iterate over projects as Pydantic models (async generator)."""
         async for doc in self.collection.find(query or {}, projection):
             yield Project(**doc)
 

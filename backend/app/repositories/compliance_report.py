@@ -1,7 +1,4 @@
-"""
-ComplianceReportRepository — metadata persistence for report jobs.
-Artifact bytes live in GridFS; this repo stores the job-document only.
-"""
+"""Report job metadata; artifact bytes live in GridFS, this repo stores the job document only."""
 
 from datetime import datetime
 from typing import Any, Dict, List, Optional
@@ -48,8 +45,7 @@ class ComplianceReportRepository(BaseRepository[ComplianceReport]):
         if status:
             query["status"] = status.value if hasattr(status, "value") else status
         if extra_filter:
-            # Combine via $and so callers can pass an $or visibility clause
-            # without colliding with the field-level filters above.
+            # $and so an $or visibility clause doesn't collide with the field-level filters.
             query = {"$and": [query, extra_filter]} if query else extra_filter
         with track_db_operation(self.collection_name, "find"):
             cursor = self.collection.find(query).sort("requested_at", DESCENDING).skip(skip).limit(limit)

@@ -1,15 +1,4 @@
-"""
-CBOM Parser
-
-Parses CycloneDX 1.6 `cryptographic-asset` components into ParsedCryptoAsset.
-
-Two entry points:
-- parse_cbom(raw_payload): full CBOM payload (used by /ingest/cbom endpoint)
-- parse_crypto_components(components): component list only (used by sbom_parser
-  when it detects cryptographic-asset types inside a regular SBOM)
-
-Fail-soft: unparseable items are skipped and counted, never crash the caller.
-"""
+"""Parse CycloneDX 1.6 ``cryptographic-asset`` components into ParsedCryptoAsset. Fail-soft: unparseable items are skipped and counted."""
 
 import hashlib
 import logging
@@ -29,8 +18,7 @@ logger = logging.getLogger(__name__)
 def parse_cbom(raw: Dict[str, Any]) -> ParsedCBOM:
     components = raw.get("components") or []
     tool_meta = (raw.get("metadata") or {}).get("tools") or []
-    tool_name = _tool_name_from_metadata(tool_meta)
-    tool_version = _tool_version_from_metadata(tool_meta)
+    tool_name, tool_version = _tool_from_metadata(tool_meta)
 
     total = sum(1 for c in components if c.get("type") == "cryptographic-asset")
     assets = parse_crypto_components(components)
@@ -47,28 +35,30 @@ def parse_cbom(raw: Dict[str, Any]) -> ParsedCBOM:
     )
 
 
-def _tool_name_from_metadata(tools: Any) -> Optional[str]:
+def _tool_from_metadata(tools: Any) -> tuple[Optional[str], Optional[str]]:
+    """Extract (name, version) of the producing tool from metadata.tools.
+
+    CycloneDX allows metadata.tools to be either the modern object form
+    ({"components": [...]}) or the legacy list form ([{...}]). Both carry the
+    tool as a component dict with "name"/"version".
+    """
+    tool: Optional[Dict[str, Any]] = None
     if isinstance(tools, dict):
         comps = tools.get("components") or []
         if comps:
-            value = comps[0].get("name")
-            return str(value) if value is not None else None
+            tool = comps[0]
     elif isinstance(tools, list) and tools:
-        value = tools[0].get("name")
-        return str(value) if value is not None else None
-    return None
+        tool = tools[0]
 
+    if not isinstance(tool, dict):
+        return None, None
 
-def _tool_version_from_metadata(tools: Any) -> Optional[str]:
-    if isinstance(tools, dict):
-        comps = tools.get("components") or []
-        if comps:
-            value = comps[0].get("version")
-            return str(value) if value is not None else None
-    elif isinstance(tools, list) and tools:
-        value = tools[0].get("version")
-        return str(value) if value is not None else None
-    return None
+    name = tool.get("name")
+    version = tool.get("version")
+    return (
+        str(name) if name is not None else None,
+        str(version) if version is not None else None,
+    )
 
 
 def parse_crypto_components(
@@ -147,11 +137,9 @@ _KEY_SIZE_PROPERTY_NAMES = (
 def _resolve_key_size_bits(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> Optional[int]:
     """Best-effort key-size extraction.
 
-    parameterSetIdentifier is a string in CycloneDX 1.6 (e.g. "P-256",
-    "ML-KEM-1024", "1024"); treat it as a key size only when it's a pure
-    positive integer. Otherwise fall back to well-known custom properties so
-    producers can carry the bit length explicitly. Anything we can't parse
-    leaves key_size_bits as None and the analyzer simply skips that asset.
+    parameterSetIdentifier is a CycloneDX 1.6 string (e.g. "P-256", "1024"); treat it as a
+    key size only when it's a pure positive integer, else fall back to known custom properties.
+    Unparseable leaves key_size_bits None and the analyzer skips the asset.
     """
     asset_label = asset.bom_ref or asset.name or "<unknown>"
 
@@ -210,6 +198,7 @@ def _populate_certificate(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> No
     asset.not_valid_before = _parse_iso_date(props.get("notValidBefore"))
     asset.not_valid_after = _parse_iso_date(props.get("notValidAfter"))
     asset.signature_algorithm_ref = props.get("signatureAlgorithmRef")
+    asset.subject_public_key_ref = props.get("subjectPublicKeyRef")
     asset.certificate_format = props.get("certificateFormat")
 
 
@@ -218,7 +207,14 @@ def _populate_protocol(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> None:
     asset.version = props.get("version")
     cipher_suites = props.get("cipherSuites") or []
     if isinstance(cipher_suites, list):
-        asset.cipher_suites = [str(c) for c in cipher_suites]
+        names = []
+        for c in cipher_suites:
+            # CycloneDX 1.6: cipherSuites entries are objects with a "name"
+            # (IANA suite name). Tolerate the non-spec plain-string form too.
+            name = c.get("name") if isinstance(c, dict) else c
+            if name:
+                names.append(str(name))
+        asset.cipher_suites = names
 
 
 def _populate_evidence(asset: ParsedCryptoAsset, evidence: Dict[str, Any]) -> None:

@@ -1,8 +1,4 @@
-"""
-Pagination Helper Functions
-
-Shared utilities for building paginated responses.
-"""
+"""Shared utilities for building paginated responses."""
 
 from typing import Any, Dict, List
 
@@ -13,18 +9,7 @@ def build_pagination_response(
     skip: int,
     limit: int,
 ) -> Dict[str, Any]:
-    """
-    Build a standardized pagination response.
-
-    Args:
-        items: List of items for the current page
-        total: Total number of items across all pages
-        skip: Number of items skipped
-        limit: Maximum items per page
-
-    Returns:
-        Dictionary with items, total, page, size, and pages
-    """
+    """Build a standardized pagination response (items, total, page, size, pages)."""
     return {
         "items": items,
         "total": total,

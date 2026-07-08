@@ -126,21 +126,38 @@ class CryptoTrendService:
     ) -> List[TrendPoint]:
         match: Dict[str, Any] = dict(_METRIC_FILTER[metric])
         match["scan_created_at"] = {"$gte": range_start, "$lte": range_end}
+        # Exclude waived/accepted findings (a risk decision, not current posture).
+        match["waived"] = {"$ne": True}
         if resolved.project_ids is not None:
             match["project_id"] = {"$in": resolved.project_ids}
+        trunc = {"$dateTrunc": {"date": "$scan_created_at", "unit": _dateTrunc_unit(bucket)}}
+        # Per bucket we count the latest scan per project regardless of scan status;
+        # a partial/failed latest scan may under-report, accepted since failed scans
+        # typically write no crypto findings.
         pipeline = [
             {"$match": match},
+            # Carry project/bucket as fields so later stages don't depend on composite-_id sub-paths.
             {
                 "$group": {
-                    "_id": {
-                        "$dateTrunc": {
-                            "date": "$scan_created_at",
-                            "unit": _dateTrunc_unit(bucket),
-                        }
-                    },
-                    "value": {"$sum": 1},
+                    "_id": {"project": "$project_id", "bucket": trunc, "scan": "$scan_id"},
+                    "project": {"$first": "$project_id"},
+                    "bucket": {"$first": trunc},
+                    "scan_created_at": {"$max": "$scan_created_at"},
+                    "cnt": {"$sum": 1},
                 }
             },
+            # Pick the latest scan per (project, bucket) so re-scans in one bucket
+            # (e.g. CI + nightly) count a persistent issue once, not per scan.
+            {"$sort": {"scan_created_at": -1}},
+            {
+                "$group": {
+                    "_id": {"project": "$project", "bucket": "$bucket"},
+                    "bucket": {"$first": "$bucket"},
+                    "value": {"$first": "$cnt"},
+                }
+            },
+            # Sum the per-project latest-scan counts into one value per bucket.
+            {"$group": {"_id": "$bucket", "value": {"$sum": "$value"}}},
             {"$sort": {"_id": 1}},
         ]
         out: List[TrendPoint] = []
@@ -218,6 +235,14 @@ class CryptoTrendService:
         rs = range_start.isoformat()
         re = range_end.isoformat()
         fingerprint = hashlib.sha256(f"{rs}|{re}".encode()).hexdigest()[:16]
+        # Fingerprint the resolved project set so two callers sharing (scope, scope_id)
+        # but resolving to different projects never collide (tenant isolation for
+        # scope="user", where scope_id is always None). None (global) gets a distinct
+        # sentinel so it can't alias an empty set.
+        if resolved.project_ids is None:
+            projects_fp = "*"
+        else:
+            projects_fp = hashlib.sha256("|".join(sorted(resolved.project_ids)).encode()).hexdigest()[:16]
         return (
             "trends",
             resolved.scope,
@@ -225,4 +250,5 @@ class CryptoTrendService:
             metric,
             bucket,
             fingerprint,
+            projects_fp,
         )

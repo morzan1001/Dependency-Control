@@ -1,11 +1,4 @@
-/**
- * Project Role Utilities
- *
- * Pure functions that mirror the backend's check_project_access() logic
- * (backend/app/api/v1/helpers/projects.py:64-139) to determine what
- * actions a user can perform on a project based on their project role
- * and global permissions.
- */
+// Mirrors the backend's check_project_access() so the UI gates match the API.
 
 import { Project } from '@/types/project';
 
@@ -15,10 +8,7 @@ export const PROJECT_ROLE_ADMIN = 'admin';
 
 const ROLE_HIERARCHY: string[] = [PROJECT_ROLE_VIEWER, PROJECT_ROLE_EDITOR, PROJECT_ROLE_ADMIN];
 
-/**
- * Get the effective project role for a user.
- * Returns 'owner' for the project owner, the member role string, or null if not a member.
- */
+// 'owner' for the project owner, the member role, or null if not a member.
 export function getUserProjectRole(
   project: Project,
   userId: string
@@ -30,17 +20,27 @@ export function getUserProjectRole(
   return (member?.role as 'admin' | 'editor' | 'viewer') ?? null;
 }
 
-/**
- * Check if a user meets a minimum project role requirement.
- * Owner always satisfies any role. project:read_all acts as superuser bypass.
- */
+// Minimum-role gate: viewer = read, editor/admin = write. project:update or
+// project:delete bypass membership for any request (write implies read);
+// project:read_all grants read only; owner satisfies any role.
 export function hasProjectRole(
   project: Project,
   userId: string,
   requiredRole: 'viewer' | 'editor' | 'admin',
   globalPermissions?: string[]
 ): boolean {
-  if (globalPermissions?.includes('project:read_all')) return true;
+  const isWriteRequest = requiredRole === 'editor' || requiredRole === 'admin';
+
+  if (
+    globalPermissions?.includes('project:update') ||
+    globalPermissions?.includes('project:delete')
+  ) {
+    return true;
+  }
+
+  if (!isWriteRequest && globalPermissions?.includes('project:read_all')) {
+    return true;
+  }
 
   const role = getUserProjectRole(project, userId);
   if (role === null) return false;

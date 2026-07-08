@@ -116,6 +116,66 @@ async def test_write_includes_crypto_assets_in_bundle_and_stats():
 
 
 @pytest.mark.asyncio
+async def test_roundtrip_preserves_datetime_and_objectid_bson_types():
+    """Restore must get real BSON datetime/ObjectId back, not strings, so date-range filters and created_at sorts keep working."""
+    import datetime as dt
+
+    from bson import ObjectId
+
+    from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames
+
+    created = dt.datetime(2023, 5, 1, 12, 0, 0, tzinfo=dt.timezone.utc)
+    # json_util decodes $date to naive-UTC (exactly how Mongo stores/compares dates).
+    created_utc_naive = created.replace(tzinfo=None)
+    scan_oid = ObjectId()
+    finding_oid = ObjectId()
+    scan_doc = {"_id": scan_oid, "project_id": "p1", "created_at": created, "completed_at": created}
+
+    stats = BundleStats()
+
+    async def gen():
+        async for chunk in BundleFrames.write(
+            scan_doc=scan_doc,
+            collections={
+                "findings": _async_iter([{"_id": finding_oid, "severity": "HIGH", "detected_at": created}]),
+            },
+            stats=stats,
+        ):
+            yield chunk
+
+    raw = await _collect(gen())
+
+    async def source():
+        yield raw
+
+    header = None
+    findings: List[dict] = []
+    async for event in read_bundle_frames(source()):
+        if event["type"] == "header":
+            header = event["data"]
+        elif event["type"] == "doc" and event["collection"] == "findings":
+            findings.append(event["data"])
+
+    assert header is not None
+    restored_scan = header["scan"]
+    # Datetime fields come back as real datetimes so $gte/$lte/sort work.
+    assert isinstance(restored_scan["created_at"], dt.datetime)
+    assert restored_scan["created_at"] == created_utc_naive
+    assert isinstance(restored_scan["completed_at"], dt.datetime)
+    # _id comes back as a real ObjectId.
+    assert isinstance(restored_scan["_id"], ObjectId)
+    assert restored_scan["_id"] == scan_oid
+    # Header identification fields stay plain strings by design.
+    assert header["scan_id"] == str(scan_oid)
+
+    assert len(findings) == 1
+    assert isinstance(findings[0]["_id"], ObjectId)
+    assert findings[0]["_id"] == finding_oid
+    assert isinstance(findings[0]["detected_at"], dt.datetime)
+    assert findings[0]["detected_at"] == created_utc_naive
+
+
+@pytest.mark.asyncio
 async def test_read_rejects_unknown_version():
     from app.services.archive_bundle import read_bundle_frames
 
@@ -235,7 +295,6 @@ async def test_header_serializes_objectid_id_and_project_id():
 
 @pytest.mark.asyncio
 async def test_read_raises_when_footer_missing():
-    """A bundle stream that ends without the footer line must raise ValueError."""
     from app.services.archive_bundle import read_bundle_frames
 
     header = json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x"}}).encode() + b"\n"

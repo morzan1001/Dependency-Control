@@ -1,6 +1,6 @@
 import { User, UserUpdate } from '@/types/user';
 import { getErrorMessage } from '@/lib/utils';
-import { useProjects } from '@/hooks/queries/use-projects';
+import { useProjectsDropdown } from '@/hooks/queries/use-projects';
 import { useTeams } from '@/hooks/queries/use-teams';
 import {
   useUpdateUser,
@@ -65,7 +65,8 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
   const [isPermissionDialogOpen, setIsPermissionDialogOpen] = useState(false);
   const [resetLink, setResetLink] = useState<string | null>(null);
 
-  const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useProjects('', 1, 100);
+  // Fetch all projects (paged) so membership isn't truncated in large orgs.
+  const { data: projectsData, isLoading: isLoadingProjects, error: errorProjects } = useProjectsDropdown();
 
   const projects = projectsData?.items || [];
 
@@ -76,7 +77,6 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
   const resetPasswordMutation = useAdminResetPassword();
   const disable2FAMutation = useAdminDisable2FA();
 
-  // Helper to handle mutation executions with toasts
   const handleUpdate = (id: string, data: UserUpdate) => {
     updateUserMutation.mutate({ id, data }, {
         onSuccess: () => {
@@ -135,7 +135,6 @@ export function UserDetailsDialog({ user, open, onOpenChange }: UserDetailsDialo
   const getUserProjects = (userId: string) => {
     if (!projects) return [];
 
-    // Find teams this user belongs to
     const userTeamIds = teams
       ? teams.filter(t => t.members?.some(m => m.user_id === userId)).map(t => t.id)
       : [];

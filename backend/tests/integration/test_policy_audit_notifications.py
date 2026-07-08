@@ -1,5 +1,4 @@
-"""Verify that policy audit changes trigger in-app notifications through the
-correct NotificationService methods."""
+"""Policy audit changes trigger in-app notifications via the correct NotificationService methods."""
 
 from unittest.mock import AsyncMock
 
@@ -26,8 +25,6 @@ async def test_system_policy_change_notifies_users_with_permission(
     admin_auth_headers,
     monkeypatch,
 ):
-    """System-scope changes should call notify_users_with_permission with
-    ``system:manage`` (and analytics:global) so that admins are reached."""
     from app.services.notifications import service as svc_mod
 
     mock_perm = AsyncMock()
@@ -56,8 +53,7 @@ async def test_project_policy_change_notifies_project_members(
     owner_auth_headers_proj,
     monkeypatch,
 ):
-    """Project-scope changes should call notify_project_members with the
-    resolved Project object, not the bare id."""
+    """notify_project_members receives the resolved Project object, not the bare id."""
     from app.services.notifications import service as svc_mod
 
     mock_perm = AsyncMock()

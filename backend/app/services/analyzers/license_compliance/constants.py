@@ -20,7 +20,7 @@ SPDX_EXPR_SPLIT = re.compile(r"\s+(?:AND|OR|WITH)\s+")
 SPDX_OR_SPLIT = re.compile(r"\s+OR\s+")
 SPDX_AND_SPLIT = re.compile(r"\s+AND\s+")
 
-# SPDX identifiers used across the incompatibility table - centralized to satisfy S1192.
+# SPDX identifiers shared across the incompatibility table.
 SPDX_GPL_2_0 = "GPL-2.0"
 SPDX_GPL_2_0_ONLY = "GPL-2.0-only"
 SPDX_GPL_3_0 = "GPL-3.0"
@@ -238,7 +238,7 @@ LICENSE_DATABASE: Dict[str, LicenseInfo] = {
         risks=[],
         compatible_with_proprietary=True,
         requires_attribution=True,
-        requires_source_disclosure=True,  # Modified files only
+        requires_source_disclosure=True,
         viral=False,
         network_clause=False,
     ),
@@ -552,7 +552,6 @@ LICENSE_DATABASE: Dict[str, LicenseInfo] = {
 }
 
 
-# Map license categories to stats keys
 CATEGORY_STAT_KEY: Dict[LicenseCategory, str] = {
     LicenseCategory.PERMISSIVE: "permissive",
     LicenseCategory.PUBLIC_DOMAIN: "permissive",
@@ -563,16 +562,12 @@ CATEGORY_STAT_KEY: Dict[LicenseCategory, str] = {
 }
 
 
-# Lazy lowercase lookup tables (built on first access)
 _license_db_lower: Optional[Dict[str, str]] = None
 _alias_lower: Optional[Dict[str, str]] = None
 
 
 def get_lowercase_mappings() -> Tuple[Dict[str, str], Dict[str, str]]:
-    """Return (db_lower, alias_lower) lookup tables for case-insensitive matching.
-
-    The tables are built lazily on first invocation and cached at module level.
-    """
+    """Return cached (db_lower, alias_lower) lookup tables for case-insensitive matching."""
     global _license_db_lower, _alias_lower
     if _license_db_lower is None:
         _license_db_lower = {k.lower(): k for k in LICENSE_DATABASE.keys()}

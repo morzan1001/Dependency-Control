@@ -102,7 +102,6 @@ export function SeverityDistribution() {
         <CardTitle className="text-lg">Severity Distribution</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Stacked bar */}
         <div className="flex h-4 rounded-full overflow-hidden">
           {severities.map((s) => (
             s.value > 0 && (
@@ -116,7 +115,6 @@ export function SeverityDistribution() {
           ))}
         </div>
         
-        {/* Legend */}
         <div className="grid grid-cols-2 gap-2">
           {severities.map((s) => (
             <div key={s.label} className="flex items-center gap-2">

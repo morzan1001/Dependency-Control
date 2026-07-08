@@ -69,7 +69,6 @@ export interface NestedVulnerability {
   resolved_cve?: string;
   github_advisory_url?: string;
   kev?: boolean;
-  kev_ransomware?: boolean;
   kev_due_date?: string;
   waived?: boolean;
   waiver_reason?: string;
@@ -85,7 +84,7 @@ export interface NestedVulnerability {
     [key: string]: string | string[] | number | boolean | null | undefined;
   };
   in_kev?: boolean;
-  kev_ransomware_use?: string;
+  kev_ransomware_use?: boolean;
   kev_date_added?: string;
   kev_required_action?: string;
   reachability?: ReachabilityInfo;
@@ -215,12 +214,11 @@ export interface FindingDetails {
   fixed_version?: string;
   github_advisory_url?: string;
   kev?: boolean;
-  kev_ransomware?: boolean;
   kev_due_date?: string;
   urls?: string[];
   references?: string[];
   in_kev?: boolean;
-  kev_ransomware_use?: string;
+  kev_ransomware_use?: boolean;
   kev_date_added?: string;
   kev_required_action?: string;
   exploit_maturity?: string;
@@ -371,8 +369,6 @@ export interface SbomData {
   [key: string]: string | number | boolean | null | undefined | Array<{ name: string; version?: string; type?: string; purl?: string }>;
 }
 
-// --- SBOM Document types (raw CycloneDX/SPDX documents from API) ---
-
 export interface SbomToolComponent {
   name: string;
 }
@@ -405,8 +401,6 @@ export interface SbomResponse {
   error?: string;
 }
 
-// --- Scan query/response types ---
-
 export interface ScanFindingsParams {
   skip?: number;
   limit?: number;
@@ -420,6 +414,8 @@ export interface ScanFindingsParams {
   hide_info?: boolean;
   /** True: only waived findings; False: only active; omitted: both. */
   waived?: boolean;
+  /** True: hide findings on transitive dependencies (keeps direct and non-dependency findings). */
+  direct_only?: boolean;
 }
 
 export interface ScanFindingsResponse {

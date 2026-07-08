@@ -68,13 +68,11 @@ async def test_delete_project_policy_writes_audit_entry(
     db,
     owner_auth_headers_proj_p2,
 ):
-    # Seed a project policy first
     await client.put(
         "/api/v1/projects/p2/crypto-policy",
         json={"rules": [_rule_dict("x")]},
         headers=owner_auth_headers_proj_p2,
     )
-    # Delete it
     resp = await client.delete(
         "/api/v1/projects/p2/crypto-policy",
         headers=owner_auth_headers_proj_p2,

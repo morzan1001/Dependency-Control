@@ -1,9 +1,4 @@
-"""
-CBOM Schema Definitions
-
-Normalized in-memory representation produced by cbom_parser.py.
-Mirrors Pydantic conventions of schemas/sbom.py.
-"""
+"""Normalized in-memory CBOM representation produced by the CBOM parser."""
 
 from datetime import datetime
 from enum import Enum
@@ -54,6 +49,7 @@ class ParsedCryptoAsset(BaseModel):
     not_valid_before: Optional[datetime] = None
     not_valid_after: Optional[datetime] = None
     signature_algorithm_ref: Optional[str] = None
+    subject_public_key_ref: Optional[str] = None
     certificate_format: Optional[str] = None
 
     # Protocol-only

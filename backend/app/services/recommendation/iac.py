@@ -10,7 +10,6 @@ def process_iac(findings: List[ModelOrDict]) -> List[Recommendation]:
     if not findings:
         return []
 
-    # Group by platform/category
     findings_by_platform = defaultdict(list)
     for f in findings:
         details = get_attr(f, "details", {})
@@ -20,7 +19,6 @@ def process_iac(findings: List[ModelOrDict]) -> List[Recommendation]:
             or (query_name.split(".")[0] if query_name else None)
             or "infrastructure"
         )
-        # Normalize platform
         platform_lower = platform.lower()
         if "docker" in platform_lower:
             platform = "Docker"
@@ -104,6 +102,5 @@ def _get_common_iac_issues(findings: List[ModelOrDict]) -> List[str]:
         )
         issues[issue_type] += 1
 
-    # Sort by frequency and return top 5
     sorted_issues = sorted(issues.items(), key=lambda x: x[1], reverse=True)
     return [issue for issue, count in sorted_issues[:5]]

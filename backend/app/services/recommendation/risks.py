@@ -8,6 +8,7 @@ from app.schemas.recommendation import (
     RecommendationType,
 )
 from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
     EPSS_HIGH_THRESHOLD,
     SCORECARD_LOW_THRESHOLD,
     get_severity_weight,
@@ -98,7 +99,7 @@ def _record_vulnerability(pkg_data: Dict[str, Any], f: ModelOrDict, severity: st
         pkg_data["high_count"] += 1
 
     details_dict = details if isinstance(details, dict) else {}
-    if details_dict.get("is_kev"):
+    if details_dict.get(DETAILS_KEY_IN_KEV):
         pkg_data["kev_count"] += 1
     epss = details_dict.get("epss_score")
     if epss is not None and epss >= EPSS_HIGH_THRESHOLD:
@@ -257,16 +258,7 @@ def detect_critical_hotspots(
     findings: List[ModelOrDict],
     _dependencies: List[ModelOrDict],
 ) -> List[Recommendation]:
-    """
-    Detect critical hotspots - packages that accumulate multiple severe issues.
-
-    A hotspot is a package that:
-    - Has multiple vulnerabilities (3+ CVEs)
-    - Has at least one critical/high severity issue
-    - May also have other risk factors (quality, license, etc.)
-
-    These are the packages that "hurt" the most and fixing them has highest impact.
-    """
+    """Detect critical hotspots - packages that accumulate multiple severe issues."""
     if not findings:
         return []
 
@@ -278,11 +270,7 @@ def detect_critical_hotspots(
         if is_hotspot:
             hotspots.append(_build_hotspot(pkg_name, pkg_data, reasons))
 
-    # Sort hotspots lexicographically: malware first, then KEV count, then high-EPSS,
-    # then aggregated risk_score. Python compares tuples element-by-element, so the
-    # earlier components dominate; the previous *10000/*1000/*100 multipliers were
-    # visual noise that hinted at a weighted-sum but actually behaved identically
-    # to this tuple sort.
+    # Order: malware, then KEV count, then high-EPSS, then risk_score.
     hotspots.sort(
         key=lambda h: (h.has_malware, h.kev_count, h.high_epss_count, h.risk_score),
         reverse=True,
@@ -377,7 +365,7 @@ def _append_vuln_risk_factor(pkg: Dict[str, Any]) -> None:
     kev = sum(
         1
         for v in pkg["vulns"]
-        if isinstance(get_attr(v, "details", {}), dict) and get_attr(v, "details", {}).get("is_kev")
+        if isinstance(get_attr(v, "details", {}), dict) and get_attr(v, "details", {}).get(DETAILS_KEY_IN_KEV)
     )
 
     pkg["risk_factors"].append(
@@ -435,17 +423,7 @@ def detect_toxic_dependencies(
     findings: List[ModelOrDict],
     dependencies: List[ModelOrDict],
 ) -> List[Recommendation]:
-    """
-    Detect "toxic" dependencies - packages with multiple independent risk factors.
-
-    A toxic dependency has 2+ of:
-    - Multiple vulnerabilities
-    - Low OpenSSF Scorecard
-    - EOL status
-    - License issues
-    - Outdated (no updates in years)
-    - Malware/Typosquatting flags
-    """
+    """Detect "toxic" dependencies - packages with 2+ independent risk factors."""
     if not findings:
         return []
 
@@ -464,26 +442,17 @@ def analyze_attack_surface(
     dependencies: List[ModelOrDict],
     findings: List[ModelOrDict],
 ) -> List[Recommendation]:
-    """
-    Analyze attack surface and recommend reduction strategies.
-
-    Identifies:
-    - Unused or rarely used dependencies with vulnerabilities
-    - Dependencies that could be replaced with built-in functionality
-    - Heavy dependencies that could be replaced with lighter alternatives
-    """
+    """Analyze attack surface and recommend reduction strategies."""
     if not dependencies:
         return []
 
     recommendations = []
 
-    # Count vulnerabilities by package
     vuln_count_by_pkg: Dict[str, int] = defaultdict(int)
     for f in findings:
         if get_attr(f, "type") == "vulnerability":
             vuln_count_by_pkg[get_attr(f, "component", "")] += 1
 
-    # Identify transitive dependencies with many vulnerabilities
     transitive_with_vulns = []
     for dep in dependencies:
         pkg_name = get_attr(dep, "name", "")
@@ -501,7 +470,6 @@ def analyze_attack_surface(
             )
 
     if transitive_with_vulns:
-        # Sort by vulnerability count
         transitive_with_vulns.sort(key=lambda x: x["vuln_count"], reverse=True)
 
         total_vulns = sum(t["vuln_count"] for t in transitive_with_vulns)
@@ -541,7 +509,6 @@ def analyze_attack_surface(
             )
         )
 
-    # Identify very large dependency counts
     total_deps = len(dependencies)
     direct_deps = len([d for d in dependencies if get_attr(d, "direct", False)])
 

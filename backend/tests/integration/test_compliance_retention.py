@@ -1,9 +1,4 @@
-"""Integration test for the compliance-report retention sweeper.
-
-`expires_at` is set on every completed report but was never read before —
-GridFS and the metadata collection grew unbounded. The sweeper deletes
-expired documents (and best-effort their GridFS blobs).
-"""
+"""The retention sweeper deletes expired compliance reports and best-effort their GridFS blobs."""
 
 from datetime import datetime, timedelta, timezone
 

@@ -24,6 +24,7 @@ from app.core.constants import (
 from app.core.s3 import delete_object, is_archive_enabled, list_objects
 from app.db.mongodb import get_database
 from app.models.project import Project, Scan
+from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.core.metrics import (
     archive_housekeeping_batch_total,
@@ -42,13 +43,7 @@ logger = logging.getLogger(__name__)
 
 
 async def _get_referenced_scan_ids(db: Any) -> list[str]:
-    """
-    Get all scan IDs that are referenced by rescans (via original_scan_id).
-    These scans should NOT be deleted by retention cleanup to prevent orphaned SBOM refs.
-
-    Returns:
-        List of scan IDs that are referenced by active rescans
-    """
+    """Scan IDs referenced by rescans (via original_scan_id); retention must not delete these."""
     cursor = db.scans.find(
         {
             "is_rescan": True,
@@ -88,15 +83,10 @@ async def _collect_gridfs_ids(db: Any, scan_ids: List[str]) -> List[str]:
 async def _cleanup_gridfs_files(db: Any, gridfs_ids: List[str], deleted_scan_ids: Optional[List[str]] = None) -> None:
     """Delete GridFS files that no surviving scan still references.
 
-    Rescans copy ``sbom_refs`` (and therefore the ``gridfs_id``) from their
-    source scan, so multiple scans can share a single GridFS file. Deleting
-    the file when only one of those scans is removed would orphan every
-    other reference — the surviving rescans would then fail to load their
-    SBOM and crash the worker with
-    ``Failed to load SBOM from GridFS: no file in gridfs collection``.
-
-    ``deleted_scan_ids`` lists the scans currently being purged; their own
-    references must be excluded from the surviving-reference check.
+    Rescans copy ``sbom_refs`` (and the ``gridfs_id``) from their source scan, so
+    multiple scans can share one GridFS file; deleting it while another scan still
+    references it would orphan that reference. ``deleted_scan_ids`` (the scans being
+    purged) is excluded from the surviving-reference check.
     """
     if not gridfs_ids:
         return
@@ -113,9 +103,7 @@ async def _cleanup_gridfs_files(db: Any, gridfs_ids: List[str], deleted_scan_ids
             pass  # File may already be deleted
 
 
-async def _surviving_gridfs_references(
-    db: Any, gridfs_ids: List[str], excluded_scan_ids: List[str]
-) -> set[str]:
+async def _surviving_gridfs_references(db: Any, gridfs_ids: List[str], excluded_scan_ids: List[str]) -> set[str]:
     """Return the subset of ``gridfs_ids`` that is still referenced by at
     least one scan outside ``excluded_scan_ids``.
     """
@@ -137,24 +125,12 @@ async def _surviving_gridfs_references(
 
 
 async def _delete_scans_and_related_data(db: Any, scan_ids: List[str], label: str = "") -> int:
-    """
-    Delete scans and all associated data (findings, dependencies, GridFS SBOMs, callgraphs).
-
-    Args:
-        db: Database connection
-        scan_ids: List of scan IDs to delete
-        label: Label for log messages
-
-    Returns:
-        Number of scans deleted
-    """
+    """Delete scans and all associated data (findings, dependencies, GridFS SBOMs, callgraphs)."""
     if not scan_ids:
         return 0
 
-    # Collect GridFS references before deleting scans
     gridfs_ids = await _collect_gridfs_ids(db, scan_ids)
 
-    # Delete all related collections
     await db.analysis_results.delete_many({"scan_id": {"$in": scan_ids}})
     await db.findings.delete_many({"scan_id": {"$in": scan_ids}})
     await db.finding_records.delete_many({"scan_id": {"$in": scan_ids}})
@@ -163,10 +139,6 @@ async def _delete_scans_and_related_data(db: Any, scan_ids: List[str], label: st
     await db.crypto_assets.delete_many({"scan_id": {"$in": scan_ids}})
     result = await db.scans.delete_many({"_id": {"$in": scan_ids}})
 
-    # Clean up GridFS files — but only those no surviving scan still references.
-    # Rescans share gridfs_ids with their source scans; deleting unconditionally
-    # would break the chain. Pass the just-deleted scan IDs so the ref check
-    # ignores them when looking for surviving references.
     await _cleanup_gridfs_files(db, gridfs_ids, deleted_scan_ids=scan_ids)
 
     if label:
@@ -316,29 +288,43 @@ async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> 
         logger.exception("Scheduled re-scan check failed: %s", e)
 
 
-async def _reap_stale_metadata(db: Any) -> int:
-    """Delete archive_metadata entries whose scan_id now lives in db.scans.
-
-    These appear after a restore where the S3 delete and/or metadata delete
-    failed: the scan is back in MongoDB but the metadata record still points
-    at the (now-orphaned) S3 object. Removing the metadata reclassifies the
-    S3 object as a true orphan that the next sweep will reap.
+async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
+    """Delete archive_metadata entries whose scan_id is back in db.scans (restore leftovers),
+    reclassifying their S3 object as an orphan for the next sweep. Batched to avoid N+1 lookups.
     """
+
+    async def _reap_batch(scan_ids: List[str]) -> int:
+        if not scan_ids:
+            return 0
+        restored: List[str] = []
+        async for scan in db.scans.find({"_id": {"$in": scan_ids}}, {"_id": 1}):
+            sid = scan.get("_id")
+            if sid is not None:
+                restored.append(sid)
+        if not restored:
+            return 0
+        try:
+            result = await db.archive_metadata.delete_many({"scan_id": {"$in": restored}})
+            count: int = result.deleted_count
+            if count:
+                logger.info(f"Reaped {count} stale archive_metadata entries for restored scans {restored}")
+            return count
+        except Exception as e:
+            logger.warning(f"Failed to delete stale metadata for scans {restored}: {e}")
+            return 0
+
     deleted = 0
+    batch: List[str] = []
     async for meta in db.archive_metadata.find({}, {"_id": 1, "scan_id": 1}):
         scan_id = meta.get("scan_id")
         if not scan_id:
             continue
-        scan = await db.scans.find_one({"_id": scan_id}, {"_id": 1})
-        if scan is None:
-            continue
-        try:
-            result = await db.archive_metadata.delete_one({"_id": meta["_id"]})
-            if result.deleted_count:
-                deleted += 1
-                logger.info(f"Reaped stale archive_metadata for scan {scan_id} (scan exists in db.scans)")
-        except Exception as e:
-            logger.warning(f"Failed to delete stale metadata for scan {scan_id}: {e}")
+        batch.append(scan_id)
+        if len(batch) >= batch_size:
+            deleted += await _reap_batch(batch)
+            batch = []
+    if batch:
+        deleted += await _reap_batch(batch)
     return deleted
 
 
@@ -347,13 +333,11 @@ async def _reap_orphan_s3_objects(db: Any) -> int:
 
     Runs in two passes:
       1. Stale metadata: drop archive_metadata rows whose scan is already in db.scans
-         (post-restore leftovers — Bug #7-class zombies).
+         (post-restore leftovers).
       2. S3 orphans: list bucket, skip objects with matching metadata, delete
          the rest if older than ARCHIVE_ORPHAN_MIN_AGE_HOURS.
 
-    Best-effort: errors are logged and swallowed.
-
-    Returns the number of S3 objects actually deleted.
+    Best-effort: errors are logged and swallowed. Returns the number of S3 objects deleted.
     """
     if not is_archive_enabled():
         return 0
@@ -427,7 +411,6 @@ async def _archive_scans_and_delete(db: Any, scan_ids: List[str], label: str = "
     else:
         archive_housekeeping_batch_total.labels(status="success").inc()
 
-    # Only delete scans that were successfully archived
     successfully_archived = [sid for sid in scan_ids if sid not in failed_ids]
 
     deleted = await _delete_scans_and_related_data(db, successfully_archived, label)
@@ -478,11 +461,9 @@ async def run_housekeeping() -> None:
     try:
         db = await get_database()
 
-        # Get System Settings
         repo = SystemSettingsRepository(db)
         system_settings = await repo.get()
 
-        # Determine retention strategy
         if system_settings.retention_mode == "global":
             retention_days = system_settings.global_retention_days
             retention_action = system_settings.global_retention_action
@@ -494,7 +475,7 @@ async def run_housekeeping() -> None:
                     f"Processing scans older than {cutoff_date}"
                 )
 
-                # IMPORTANT: Don't delete/archive scans referenced by rescans
+                # Don't delete/archive scans referenced by rescans.
                 referenced_scan_ids = await _get_referenced_scan_ids(db)
 
                 cursor = db.scans.find(
@@ -510,7 +491,6 @@ async def run_housekeeping() -> None:
                 await _process_scans_in_batches(db, cursor, retention_action, "Global housekeeping")
 
         else:
-            # Project-specific retention
             logger.info("Running project-specific housekeeping...")
 
             # Group projects by (retention_days, retention_action) to minimize DB queries
@@ -535,7 +515,7 @@ async def run_housekeeping() -> None:
                 },
             ]
 
-            # Fetch referenced scan IDs once (not per group)
+            # Fetch referenced scan IDs once, not per group.
             referenced_scan_ids = await _get_referenced_scan_ids(db)
 
             async for group in db.projects.aggregate(pipeline):
@@ -585,17 +565,10 @@ async def run_housekeeping() -> None:
 async def trigger_stale_pending_scans(
     worker_manager: Optional["WorkerManager"] = None,
 ) -> None:
-    """
-    Finds scans that are 'pending' with results but haven't received new results
-    for a configured threshold, and triggers their aggregation.
+    """Trigger aggregation for 'pending' scans that have results but have gone stale.
 
-    This handles the case where only findings-based scanners (TruffleHog, OpenGrep, etc.)
-    ran without an SBOM scan, or where the SBOM scanner failed to trigger.
-
-    The logic:
-    1. Find scans with status='pending' that have received_results (at least one scanner reported)
-    2. Check if last_result_at is older than threshold
-    3. Trigger aggregation for these scans
+    Covers the case where only findings-based scanners (TruffleHog, OpenGrep, etc.) ran
+    without an SBOM scan, or where the SBOM scanner failed to trigger.
     """
     if not worker_manager:
         return
@@ -604,10 +577,8 @@ async def trigger_stale_pending_scans(
     try:
         db = await get_database()
 
-        # Threshold since last result
         stale_threshold = datetime.now(timezone.utc) - timedelta(seconds=HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS)
 
-        # Find pending scans that have results but are stale
         cursor = db.scans.find(
             {
                 "status": "pending",
@@ -647,7 +618,6 @@ async def recover_stuck_scans(
     logger.debug("Running stuck scan recovery...")
     try:
         db = await get_database()
-        # Timeout threshold from settings
         timeout_threshold = datetime.now(timezone.utc) - timedelta(
             seconds=settings.HOUSEKEEPING_STUCK_SCAN_TIMEOUT_SECONDS
         )
@@ -686,7 +656,6 @@ async def recover_stuck_scans(
                     },
                 )
 
-                # Re-queue the job if worker_manager is available and we successfully reset it
                 if worker_manager and result.modified_count > 0:
                     await worker_manager.add_job(str(scan_id))
 
@@ -762,23 +731,18 @@ async def _resolve_latest_scan_after_branch_deletion(
     if not scan_doc or scan_doc.get("branch") not in deleted:
         return {}
 
-    project_id = project_data["_id"]
-    active_scan = await db.scans.find_one(
-        {
-            "project_id": project_id,
-            "branch": {"$nin": deleted},
-            "status": "completed",
-        },
-        sort=[("created_at", -1)],
-    )
+    # Delegate the "latest scan on a non-deleted branch" selection to the
+    # canonical ScanRepository method (single source of truth). ``deleted`` is
+    # the freshly-computed deleted-branch set, not yet persisted on the project.
+    active_scan = await ScanRepository(db).get_latest_active_scan(project_data, deleted_branches=deleted)
     if active_scan:
         updates: dict = {
-            "latest_scan_id": active_scan["_id"],
-            "last_scan_at": ensure_utc(active_scan.get("created_at")),
+            "latest_scan_id": active_scan.id,
+            "last_scan_at": ensure_utc(active_scan.created_at),
         }
-        if active_scan.get("stats"):
-            updates["stats"] = active_scan["stats"]
-        logger.info(f"Project {project_name}: updated latest_scan_id to active branch '{active_scan.get('branch')}'")
+        if active_scan.stats:
+            updates["stats"] = active_scan.stats.model_dump()
+        logger.info(f"Project {project_name}: updated latest_scan_id to active branch '{active_scan.branch}'")
         return updates
 
     logger.info(f"Project {project_name}: no active branch scans, cleared stats")
@@ -883,45 +847,36 @@ async def housekeeping_loop(
 
     Note: Stale pending scan aggregation runs in a separate faster loop.
     """
-    # Use timezone-aware datetime for consistent comparison
     last_retention_run = datetime.min.replace(tzinfo=timezone.utc)
     last_branch_sync = datetime.min.replace(tzinfo=timezone.utc)
 
     while True:
-        # Run stuck scan recovery
         await recover_stuck_scans(worker_manager)
-
-        # Run scheduled re-scans
         await check_scheduled_rescans(worker_manager)
 
-        # Update database statistics metrics
         try:
             db = await get_database()
             await update_db_stats(db)
         except Exception as e:
             logger.exception("Failed to update database statistics: %s", e)
 
-        # Update archive statistics metrics
         try:
             db = await get_database()
             await update_archive_stats(db)
         except Exception as e:
             logger.exception("Failed to update archive statistics: %s", e)
 
-        # Update cache statistics metrics
         try:
             await update_cache_stats()
         except Exception as e:
             logger.exception("Failed to update cache statistics: %s", e)
 
-        # Run retention cleanup if interval has passed (fixed 24h interval)
         if (datetime.now(timezone.utc) - last_retention_run) > timedelta(
             hours=HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS
         ):
             await run_housekeeping()
             last_retention_run = datetime.now(timezone.utc)
 
-        # Run branch status sync if interval has passed
         if (datetime.now(timezone.utc) - last_branch_sync) > timedelta(hours=HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS):
             await sync_branch_status()
             last_branch_sync = datetime.now(timezone.utc)

@@ -1,9 +1,4 @@
-"""
-CryptoPolicy MongoDB model.
-
-One document per scope. scope='system' has exactly one document (the seed).
-scope='project' has one document per project that has an override.
-"""
+"""CryptoPolicy model: one 'system' seed document plus one 'project' document per project override."""
 
 import uuid
 from datetime import datetime, timezone

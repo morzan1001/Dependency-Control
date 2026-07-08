@@ -28,7 +28,6 @@ logger = logging.getLogger(__name__)
 
 
 def _to_response(instance: GitLabInstance) -> GitLabInstanceResponse:
-    """Convert GitLabInstance to response schema."""
     return GitLabInstanceResponse(
         id=str(instance.id),
         name=instance.name,
@@ -39,6 +38,7 @@ def _to_response(instance: GitLabInstance) -> GitLabInstanceResponse:
         oidc_audience=instance.oidc_audience,
         auto_create_projects=instance.auto_create_projects,
         sync_teams=instance.sync_teams,
+        team_sync_depth=getattr(instance, "team_sync_depth", 1),
         created_at=instance.created_at,
         created_by=instance.created_by,
         last_modified_at=instance.last_modified_at,
@@ -54,10 +54,7 @@ async def list_instances(
     size: int = 100,
     active_only: bool = False,
 ) -> Dict[str, Any]:
-    """
-    List all GitLab instances.
-    Requires system:manage permission.
-    """
+    """List all GitLab instances."""
     instance_repo = GitLabInstanceRepository(db)
 
     skip = (page - 1) * size
@@ -71,7 +68,7 @@ async def list_instances(
 
     items = [_to_response(instance) for instance in instances]
 
-    return build_pagination_response(items, total, page, size)
+    return build_pagination_response(items, total, skip, size)
 
 
 @router.get("/{instance_id}", responses=RESP_AUTH_404)
@@ -80,10 +77,7 @@ async def get_instance(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
 ) -> GitLabInstanceResponse:
-    """
-    Get a specific GitLab instance by ID.
-    Requires system:manage permission.
-    """
+    """Get a specific GitLab instance by ID."""
     instance_repo = GitLabInstanceRepository(db)
     instance = await instance_repo.get_by_id(instance_id)
 
@@ -101,30 +95,21 @@ async def create_instance(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
 ) -> GitLabInstanceResponse:
-    """
-    Create a new GitLab instance.
-    Requires system:manage permission.
-
-    - Validates that URL and name are unique
-    - Tests connection before creating
-    """
+    """Create a new GitLab instance after validating uniqueness and testing the connection."""
     instance_repo = GitLabInstanceRepository(db)
 
-    # Validate URL uniqueness
     if await instance_repo.exists_by_url(instance_data.url):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"A GitLab instance with URL '{instance_data.url}' already exists",
         )
 
-    # Validate name uniqueness
     if await instance_repo.exists_by_name(instance_data.name):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"A GitLab instance with name '{instance_data.name}' already exists",
         )
 
-    # Create instance object
     new_instance = GitLabInstance(
         name=instance_data.name,
         url=instance_data.url.rstrip("/"),
@@ -135,11 +120,11 @@ async def create_instance(
         oidc_audience=instance_data.oidc_audience,
         auto_create_projects=instance_data.auto_create_projects,
         sync_teams=instance_data.sync_teams,
+        team_sync_depth=instance_data.team_sync_depth,
         created_by=str(current_user.id),
         created_at=datetime.now(timezone.utc),
     )
 
-    # Test connection before saving (only if token is provided)
     if new_instance.access_token:
         gitlab_service = GitLabService(new_instance)
         try:
@@ -158,10 +143,8 @@ async def create_instance(
                 status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to connect to GitLab instance: {str(e)}"
             )
 
-    # Save to database
     created_instance = await instance_repo.create(new_instance)
 
-    # If this is set as default, ensure no other instance is default
     if created_instance.is_default:
         await instance_repo.set_as_default(str(created_instance.id))
 
@@ -177,13 +160,7 @@ async def update_instance(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
 ) -> GitLabInstanceResponse:
-    """
-    Update a GitLab instance.
-    Requires system:manage permission.
-
-    - Only updates provided fields
-    - Validates uniqueness constraints
-    """
+    """Update a GitLab instance; only provided fields are changed, with uniqueness validation."""
     instance_repo = GitLabInstanceRepository(db)
     instance = await instance_repo.get_by_id(instance_id)
 
@@ -192,20 +169,16 @@ async def update_instance(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"GitLab instance with ID {instance_id} not found"
         )
 
-    # Build update dict (only non-None values)
     update_dict = update_data.model_dump(exclude_unset=True)
 
-    # Validate URL uniqueness if changing URL
     if "url" in update_dict and update_dict["url"] != instance.url:
         if await instance_repo.exists_by_url(update_dict["url"], exclude_id=instance_id):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Another instance with URL '{update_dict['url']}' already exists",
             )
-        # Normalize URL
         update_dict["url"] = update_dict["url"].rstrip("/")
 
-    # Validate name uniqueness if changing name
     if "name" in update_dict and update_dict["name"] != instance.name:
         if await instance_repo.exists_by_name(update_dict["name"], exclude_id=instance_id):
             raise HTTPException(
@@ -213,7 +186,7 @@ async def update_instance(
                 detail=f"Another instance with name '{update_dict['name']}' already exists",
             )
 
-    # Validate that sync_teams requires an access token
+    # Team syncing requires an access token.
     will_have_token = update_dict.get("access_token", instance.access_token)
     will_sync_teams = update_dict.get("sync_teams", instance.sync_teams)
     if will_sync_teams and not will_have_token:
@@ -222,20 +195,16 @@ async def update_instance(
             detail="An access token is required to enable team syncing",
         )
 
-    # Add last_modified metadata
     update_dict["last_modified_at"] = datetime.now(timezone.utc)
 
-    # Update in database
     success = await instance_repo.update(instance_id, update_dict)
 
     if not success:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to update instance")
 
-    # If setting as default, unset all others
     if update_dict.get("is_default"):
         await instance_repo.set_as_default(instance_id)
 
-    # Fetch updated instance
     updated_instance = await instance_repo.get_by_id(instance_id)
     if not updated_instance:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Instance not found after update")
@@ -252,13 +221,7 @@ async def delete_instance(
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     force: bool = False,
 ) -> None:
-    """
-    Delete a GitLab instance.
-    Requires system:manage permission.
-
-    - Fails if projects are still linked (unless force=true)
-    - Use force=true to delete despite dependencies (projects will be orphaned)
-    """
+    """Delete a GitLab instance; fails if projects are still linked unless force=true (which orphans them)."""
     instance_repo = GitLabInstanceRepository(db)
     project_repo = ProjectRepository(db)
 
@@ -269,7 +232,6 @@ async def delete_instance(
             status_code=status.HTTP_404_NOT_FOUND, detail=f"GitLab instance with ID {instance_id} not found"
         )
 
-    # Check for dependent projects
     project_count = await project_repo.count_by_instance(instance_id)
 
     if project_count > 0 and not force:
@@ -282,7 +244,6 @@ async def delete_instance(
             ),
         )
 
-    # Delete instance
     success = await instance_repo.delete(instance_id)
 
     if not success:
@@ -300,12 +261,7 @@ async def test_connection(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
 ) -> GitLabInstanceTestConnectionResponse:
-    """
-    Test connection to a GitLab instance.
-    Requires system:manage permission.
-
-    Calls GitLab's /version endpoint to verify connectivity and credentials.
-    """
+    """Test connection by calling GitLab's /version endpoint to verify connectivity and credentials."""
     instance_repo = GitLabInstanceRepository(db)
     instance = await instance_repo.get_by_id(instance_id)
 

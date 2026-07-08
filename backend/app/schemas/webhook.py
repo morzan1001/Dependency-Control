@@ -1,6 +1,4 @@
-"""
-Webhook API schemas for request/response validation.
-"""
+"""Webhook API schemas for request/response validation."""
 
 from datetime import datetime
 from typing import Dict, List, Literal, Optional

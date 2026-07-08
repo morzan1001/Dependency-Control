@@ -2,6 +2,27 @@ import { Container, FileCode, HardDrive, Layers, type LucideIcon } from 'lucide-
 
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO' | 'UNKNOWN'
 
+// Maps a CVE/GHSA id to its public advisory URL, or null if unknown.
+export function advisoryUrl(id: string): string | null {
+  if (id?.startsWith('CVE-')) return `https://nvd.nist.gov/vuln/detail/${id}`
+  if (id?.startsWith('GHSA-')) return `https://github.com/advisories/${id}`
+  return null
+}
+
+// Severity hex colours for charts (Recharts can't use Tailwind token classes);
+// values mirror the light-mode severity tokens in index.css.
+export const SEVERITY_CHART_COLORS: Record<Severity, string> = {
+  CRITICAL: '#dc2626', // red-600 / --severity-critical
+  HIGH: '#f97316', // orange-500 / --severity-high
+  MEDIUM: '#eab308', // yellow-500 / --severity-medium
+  LOW: '#3b82f6', // blue-500 / --severity-low
+  INFO: '#6b7280', // gray-500 / --severity-info
+  UNKNOWN: '#9ca3af', // gray-400
+}
+
+// Canonical severity ordering, most severe first.
+export const SEVERITY_ORDER: Severity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO', 'UNKNOWN']
+
 export function getSeverityColor(severity: string): string {
   switch (severity?.toUpperCase()) {
     case 'CRITICAL':
@@ -59,6 +80,14 @@ export function getScoreColor(score: number): string {
   return 'text-success'
 }
 
+// Colour for the backend 0-100 risk score (distinct from getScoreColor's 0-10 scorecard scale).
+export function getRiskColorClass(score: number): string {
+  if (score >= 70) return 'text-severity-critical'
+  if (score >= 40) return 'text-severity-high'
+  if (score >= 20) return 'text-severity-medium'
+  return 'text-muted-foreground'
+}
+
 export function getScoreBorderColor(score: number): string {
   if (score < 3) return 'border-red-200 dark:border-red-800'
   if (score < 5) return 'border-amber-200 dark:border-amber-800'
@@ -88,7 +117,14 @@ export function formatEpssScore(
   return `${(epss * 100).toFixed(decimals)}%`
 }
 
-export { formatDate, formatDateTime } from './utils'
+// Maps backend exploit_maturity to a text colour class; weaponized/active are
+// real-world exploited (KEV) so they render as critical.
+export function getExploitMaturityClass(maturity: string | null | undefined): string {
+  if (maturity === 'weaponized' || maturity === 'active') return 'text-severity-critical font-medium';
+  if (maturity === 'high') return 'text-severity-high';
+  if (maturity === 'medium') return 'text-severity-medium';
+  return '';
+}
 
 export interface SourceInfo {
   icon: LucideIcon

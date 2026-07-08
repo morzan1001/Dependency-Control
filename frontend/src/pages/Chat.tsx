@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { History, MessageSquare, MessagesSquare, Plus, Sparkles, Square } from 'lucide-react';
+import { toast } from 'sonner';
 
 import { ChatInput } from '@/components/chat/ChatInput';
 import { ChatMessage, StreamingMessage } from '@/components/chat/ChatMessage';
@@ -49,6 +50,15 @@ const PROMPT_SUGGESTIONS: ReadonlyArray<{
   },
 ];
 
+function getErrorMessage(err: unknown): string {
+  const axiosDetail = (
+    err as { response?: { data?: { detail?: unknown } } } | null
+  )?.response?.data?.detail;
+  if (typeof axiosDetail === 'string' && axiosDetail.trim()) return axiosDetail;
+  if (err instanceof Error && err.message) return err.message;
+  return 'Please try again in a moment.';
+}
+
 export default function Chat() {
   const { hasPermission } = useAuth();
   const canReadHistory = hasPermission('chat:history_read');
@@ -81,9 +91,7 @@ export default function Chat() {
     error,
   } = useChatStream(activeConversationId, onMessageComplete);
 
-  // Drop the optimistic user message once the persisted version is back
-  // from the server (so we don't render it twice). On error, also drop it
-  // a moment after the stream ends so the UI doesn't hang on a pending bubble.
+  // Drop the optimistic user message once the persisted one arrives, so it isn't rendered twice.
   useEffect(() => {
     if (isStreaming || !pendingUserMessage) return;
     const lastMsg = conversationDetail?.messages?.[conversationDetail.messages.length - 1];
@@ -95,7 +103,6 @@ export default function Chat() {
       clearPendingUserMessage();
       return;
     }
-    // Fallback — clear after a short grace period if nothing matched.
     const t = setTimeout(clearPendingUserMessage, 1500);
     return () => clearTimeout(t);
   }, [isStreaming, pendingUserMessage, conversationDetail?.messages, clearPendingUserMessage]);
@@ -105,23 +112,42 @@ export default function Chat() {
   }, [conversationDetail?.messages, streamingContent, streamingToolCalls.length]);
 
   const handleNewConversation = async () => {
-    const conv = await createConversation.mutateAsync(undefined);
-    setActiveConversationId(conv.id);
+    try {
+      const conv = await createConversation.mutateAsync(undefined);
+      setActiveConversationId(conv.id);
+    } catch (err) {
+      toast.error('Failed to start a new conversation', {
+        description: getErrorMessage(err),
+      });
+    }
   };
 
   const handleDeleteConversation = async (id: string) => {
-    await deleteConversation.mutateAsync(id);
-    if (activeConversationId === id) {
-      setActiveConversationId(null);
+    try {
+      await deleteConversation.mutateAsync(id);
+      if (activeConversationId === id) {
+        setActiveConversationId(null);
+      }
+    } catch (err) {
+      toast.error('Failed to delete conversation', {
+        description: getErrorMessage(err),
+      });
     }
   };
 
   const handleSend = (content: string) => {
     if (!activeConversationId) {
-      createConversation.mutateAsync(undefined).then((conv) => {
-        setActiveConversationId(conv.id);
-        sendMessage(content, [], conv.id);
-      });
+      createConversation
+        .mutateAsync(undefined)
+        .then((conv) => {
+          setActiveConversationId(conv.id);
+          sendMessage(content, [], conv.id);
+        })
+        .catch((err) => {
+          toast.error('Failed to send message', {
+            description: getErrorMessage(err),
+          });
+        });
       return;
     }
     sendMessage(content);
@@ -137,7 +163,6 @@ export default function Chat() {
   return (
     <TooltipProvider delayDuration={200}>
     <div className="flex h-[calc(100vh-4rem)] flex-col">
-      {/* Page header */}
       <header className="flex items-center justify-between gap-4 border-b bg-background px-6 py-4">
         <div className="flex items-center gap-3 overflow-hidden">
           <MessagesSquare className="h-5 w-5 shrink-0 text-primary" />
@@ -183,7 +208,6 @@ export default function Chat() {
         </div>
       </header>
 
-      {/* Messages area */}
       <div className="flex-1 overflow-y-auto">
         <div className="mx-auto max-w-3xl space-y-4 px-4 py-6">
           {showEmptyState && !pendingUserMessage ? (
@@ -228,7 +252,6 @@ export default function Chat() {
         </div>
       </div>
 
-      {/* Stop button floats above input while streaming */}
       {isStreaming && (
         <div className="mx-auto flex max-w-3xl justify-center pb-2">
           <Button onClick={abort} variant="outline" size="sm">

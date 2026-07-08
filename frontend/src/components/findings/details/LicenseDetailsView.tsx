@@ -96,7 +96,6 @@ export function LicenseDetailsView({ details }: Readonly<{ details: FindingDetai
 
   return (
     <div className="space-y-4">
-      {/* Context-Aware Severity Banner */}
       {contextReason && (
         <div className="flex items-start gap-3 p-3 rounded-lg border border-emerald-200 bg-emerald-50/50 dark:border-emerald-800 dark:bg-emerald-950/30">
           <ShieldCheck className="h-5 w-5 text-emerald-600 dark:text-emerald-400 flex-shrink-0 mt-0.5" />
@@ -111,7 +110,6 @@ export function LicenseDetailsView({ details }: Readonly<{ details: FindingDetai
         </div>
       )}
 
-      {/* License & Category Header */}
       <div className="flex items-start gap-4 p-4 rounded-lg border bg-muted/30">
         <Scale className="h-8 w-8 text-muted-foreground flex-shrink-0" />
         <div className="flex-1">
@@ -137,7 +135,6 @@ export function LicenseDetailsView({ details }: Readonly<{ details: FindingDetai
         </div>
       </div>
 
-      {/* Explanation */}
       {explanation && (
         <div className="space-y-2">
           <h4 className="text-sm font-medium flex items-center gap-2">
@@ -150,7 +147,6 @@ export function LicenseDetailsView({ details }: Readonly<{ details: FindingDetai
         </div>
       )}
 
-      {/* Recommendation */}
       {recommendation && (
         <div className="space-y-2">
           <h4 className="text-sm font-medium flex items-center gap-2">
@@ -163,9 +159,7 @@ export function LicenseDetailsView({ details }: Readonly<{ details: FindingDetai
         </div>
       )}
 
-      {/* Obligations & Risks */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {/* Obligations */}
         {obligations.length > 0 && (
           <div className="space-y-2">
             <h4 className="text-sm font-medium flex items-center gap-2">
@@ -183,7 +177,6 @@ export function LicenseDetailsView({ details }: Readonly<{ details: FindingDetai
           </div>
         )}
 
-        {/* Risks */}
         {risks.length > 0 && (
           <div className="space-y-2">
             <h4 className="text-sm font-medium flex items-center gap-2">

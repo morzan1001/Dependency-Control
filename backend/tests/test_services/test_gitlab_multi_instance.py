@@ -59,8 +59,7 @@ class TestApiMethodTokenGuards:
 
 
 class TestTeamMemberSyncResolveOnly:
-    """Sync resolves members to EXISTING local users only; it never creates users
-    (which previously pulled GitLab bot/service accounts into Dependency Control)."""
+    """Sync resolves members to EXISTING local users only; it never creates users."""
 
     def test_resolves_existing_user_by_email_no_create(self):
         service = GitLabService(make_gitlab_instance())
@@ -658,8 +657,7 @@ class TestTeamSyncGroupMembers:
 
 
 class TestTeamSyncSilentReturnsAreLogged:
-    """Every silent return None path in sync_team_from_gitlab MUST emit a log
-    so operators can detect projects that were created without a team_id."""
+    """Every silent return-None path in sync_team_from_gitlab must emit a log so operators can detect projects created without a team_id."""
 
     def test_logs_when_project_data_is_none(self, gitlab_instance_a, caplog):
         service = GitLabService(gitlab_instance_a)
@@ -758,8 +756,7 @@ class TestTeamSyncSilentReturnsAreLogged:
 
 
 class TestTeamSyncResolveGroupFallback:
-    """When _resolve_group_by_path fails, the team must be created consistently
-    (no team named for the truncated path but tagged with the deep subgroup's id)."""
+    """When _resolve_group_by_path fails, the team must be created consistently (name and group_id at the same level)."""
 
     def test_falls_back_to_deep_group_id_and_path_when_truncation_unresolvable(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
@@ -796,8 +793,7 @@ class TestTeamSyncResolveGroupFallback:
 
             teams_coll.insert_one.assert_called_once()
             team_data = teams_coll.insert_one.call_args[0][0]
-            # group_id and name must reference the SAME level — either both deep or
-            # both truncated. The current bug uses truncated name + deep group_id.
+            # group_id and name must reference the SAME level — either both deep or both truncated.
             if team_data["gitlab_group_id"] == 42:
                 assert team_data["name"] == "GitLab Group: org/subgroup", (
                     f"If gitlab_group_id is the deep namespace.id (42), the team name must reflect "
@@ -806,9 +802,7 @@ class TestTeamSyncResolveGroupFallback:
 
 
 class _StatefulTeamsCollection:
-    """In-memory teams collection that mimics MongoDB find_one/insert_one/update_one
-    filter semantics, so cross-instance collisions are observable the same way they
-    would be against a real database."""
+    """In-memory teams collection mimicking MongoDB find_one/insert_one/update_one filter semantics."""
 
     def __init__(self):
         self.docs: list[dict] = []
@@ -836,8 +830,7 @@ class _StatefulTeamsCollection:
 
 
 class TestTeamSyncInstanceScoping:
-    """Finding 8: GitLab team matching must be scoped to the (instance, group)
-    composite key. Two instances owning a group with the SAME path must NOT collide."""
+    """GitLab team matching must be scoped to the (instance, group) composite key; two instances owning a group with the SAME path must NOT collide."""
 
     def _sync(self, instance, teams_coll, group_id, group_path):
         service = GitLabService(instance)
@@ -861,9 +854,7 @@ class TestTeamSyncInstanceScoping:
             )
 
     def test_same_group_path_across_instances_does_not_collide(self):
-        """Instance A and instance B both own a group at path 'shared-grp' (same
-        gitlab_group_id number, different instances). Syncing B must create a NEW
-        team and must NOT adopt/mutate instance A's team."""
+        """Instance A and B both own a group at path 'shared-grp' (same group id, different instances); syncing B must create a NEW team, not adopt/mutate A's."""
         instance_a = make_gitlab_instance(id="inst-a", name="A", url="https://a.com")
         instance_b = make_gitlab_instance(id="inst-b", name="B", url="https://b.com")
         teams = _StatefulTeamsCollection()
@@ -900,8 +891,7 @@ class TestTeamSyncInstanceScoping:
         assert team_a_after["members"] == members_before
 
     def test_repeated_sync_same_instance_group_reuses_team(self):
-        """Composite-key match: re-syncing the SAME (instance, group) must re-use the
-        same team, not create a duplicate."""
+        """Re-syncing the SAME (instance, group) must re-use the same team, not create a duplicate."""
         instance_a = make_gitlab_instance(id="inst-a", name="A", url="https://a.com")
         teams = _StatefulTeamsCollection()
 
@@ -913,9 +903,7 @@ class TestTeamSyncInstanceScoping:
 
 
 class TestTeamSyncMergeSemantics:
-    """Finding 16: sync must MERGE members, not REPLACE the whole array. Manually
-    added members (source="manual") survive; only the gitlab-sourced subset is
-    refreshed from the freshly-fetched GitLab members."""
+    """Sync must MERGE members, not REPLACE the whole array: manual members survive; only the gitlab-sourced subset is refreshed."""
 
     def test_manual_member_survives_gitlab_resync(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
@@ -1008,9 +996,7 @@ class TestTeamSyncMergeSemantics:
 
 
 class TestTeamSyncEmaillessMembers:
-    """Sync resolves members to EXISTING local users only and NEVER creates users —
-    creating them pulled GitLab service accounts / bots (group_<id>_bot_<hash>) into
-    Dependency Control even though they never signed in."""
+    """Sync resolves members to EXISTING local users only and never creates users (which would pull in GitLab service accounts / bots)."""
 
     def test_emailless_member_without_local_account_is_skipped(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
@@ -1037,7 +1023,7 @@ class TestTeamSyncEmaillessMembers:
                 )
             )
 
-        # Sync NEVER creates users (that pulled GitLab service accounts / bots in).
+        # Sync NEVER creates users (which would pull GitLab service accounts / bots in).
         users_coll.insert_one.assert_not_called()
         # The only member was skipped -> empty member set -> no new team created.
         teams_coll.insert_one.assert_not_called()
@@ -1077,12 +1063,10 @@ class TestTeamSyncEmaillessMembers:
 
 
 class TestApiGetPaginatedCap:
-    """Finding 17: membership fetches must not be silently truncated at the default
-    cap. Either fetch all pages, or at minimum WARN when a cap is hit."""
+    """Membership fetches must not be silently truncated at the default cap: fetch all pages, or at minimum WARN when a cap is hit."""
 
     def test_get_group_members_fetches_beyond_default_1000(self, gitlab_instance_a):
-        """Simulate a group with 12 pages (1200 members) and assert all are fetched
-        (the old default max_pages=10 would have truncated to 1000)."""
+        """A group with 12 pages (1200 members) must have all members fetched, not truncated at 1000."""
         service = GitLabService(gitlab_instance_a)
 
         total_pages = 12
@@ -1131,9 +1115,7 @@ class TestApiGetPaginatedCap:
         def _make_response(page: int):
             resp = MagicMock()
             resp.status_code = 200
-            resp.json.return_value = [
-                {"id": i, "username": f"u{page}_{i}"} for i in range(100)
-            ]
+            resp.json.return_value = [{"id": i, "username": f"u{page}_{i}"} for i in range(100)]
             # Always claims there are far more pages than the cap.
             resp.headers = {"x-total-pages": "9999"}
             return resp

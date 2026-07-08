@@ -13,17 +13,9 @@ import type {
 } from "@/types/cryptoPolicy";
 
 interface Props {
-  /**
-   * Rules to display. In merged mode this is the *effective* list (system
-   * rules with overrides applied); the editor diffs against `systemRules`
-   * on save to emit only the override delta.
-   */
+  // Effective rules (system + overrides) in merged mode; diffed against systemRules on save.
   initialRules: CryptoRule[];
-  /**
-   * When provided, the editor renders a Status column (System / Overridden
-   * / Custom), exposes a "Revert" action per overridden row, and `onSave`
-   * receives only the rules that differ from the system baseline.
-   */
+  // When set, enables merged mode: Status column, per-row Revert, and onSave emits only the override delta.
   systemRules?: CryptoRule[];
   onSave: (rules: CryptoRule[]) => Promise<void>;
   onResetOverride?: () => Promise<void>;
@@ -126,6 +118,12 @@ export function CryptoPolicyEditor({
   initialRules, systemRules, onSave, onResetOverride, readOnly, title, subtitle,
 }: Props) {
   const [rules, setRules] = useState<CryptoRule[]>(initialRules);
+  // Resync editor state when the parent supplies a new initialRules reference (useState only reads it once).
+  const [syncedRules, setSyncedRules] = useState<CryptoRule[]>(initialRules);
+  if (initialRules !== syncedRules) {
+    setSyncedRules(initialRules);
+    setRules(initialRules);
+  }
   const [addOpen, setAddOpen] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<CryptoPolicySource | "all">("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
@@ -164,9 +162,6 @@ export function CryptoPolicyEditor({
   const handleSave = async () => {
     setSaving(true);
     try {
-      // In merged mode emit only the override delta (rules that differ from
-      // the system baseline). In standalone mode emit the rules as-is — the
-      // system-policy admin page uses that.
       const toEmit = mergedMode
         ? rules.filter(r => getRuleStatus(r, systemMap) !== "system")
         : rules;

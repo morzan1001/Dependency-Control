@@ -115,8 +115,7 @@ async def test_scope_description_echoes_input():
 
 
 def test_sync_evaluate_raises_runtime_error():
-    """Sync entry point must fail loudly — it used to call asyncio.run(...)
-    inside the FastAPI BackgroundTask event loop and crash in production."""
+    """Sync entry point must fail loudly rather than call asyncio.run inside the FastAPI event loop."""
     fw = PQCMigrationPlanFramework()
     db = MagicMock()
     with pytest.raises(RuntimeError, match="evaluate_async"):

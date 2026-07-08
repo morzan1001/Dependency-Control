@@ -1,6 +1,4 @@
-"""
-REST endpoints for crypto analytics (hotspots, trends).
-"""
+"""REST endpoints for crypto analytics (hotspots, trends)."""
 
 from datetime import datetime
 from typing import Literal, Optional
@@ -13,10 +11,7 @@ from app.api.v1.helpers.responses import RESP_400_403, RESP_403, RESP_404
 from app.schemas.analytics import HotspotResponse, TrendSeries
 from app.services.analytics.crypto_hotspots import CryptoHotspotService, GroupBy
 from app.services.analytics.crypto_trends import Bucket, CryptoTrendService, Metric
-from app.services.analytics.scopes import (
-    ScopeResolutionError,
-    ScopeResolver,
-)
+from app.services.analytics.scopes import ScopeResolver
 
 _ScopeLit = Literal["project", "team", "global", "user"]
 
@@ -35,13 +30,10 @@ async def get_hotspots(
     scan_id: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=500),
 ) -> HotspotResponse:
-    try:
-        resolved = await ScopeResolver(db, current_user).resolve(
-            scope=scope,
-            scope_id=scope_id,
-        )
-    except ScopeResolutionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+    resolved = await ScopeResolver(db, current_user).resolve(
+        scope=scope,
+        scope_id=scope_id,
+    )
     return await CryptoHotspotService(db).hotspots(
         resolved=resolved,
         group_by=group_by,
@@ -59,13 +51,10 @@ async def get_hotspot_locations(
     scope_id: Optional[str] = Query(None),
     grouping: GroupBy = Query("name"),
 ) -> object:
-    try:
-        resolved = await ScopeResolver(db, current_user).resolve(
-            scope=scope,
-            scope_id=scope_id,
-        )
-    except ScopeResolutionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+    resolved = await ScopeResolver(db, current_user).resolve(
+        scope=scope,
+        scope_id=scope_id,
+    )
     resp = await CryptoHotspotService(db).hotspots(
         resolved=resolved,
         group_by=grouping,
@@ -88,13 +77,10 @@ async def get_trends(
     metric: Metric = Query("total_crypto_findings"),
     bucket: Bucket = Query("week"),
 ) -> TrendSeries:
-    try:
-        resolved = await ScopeResolver(db, current_user).resolve(
-            scope=scope,
-            scope_id=scope_id,
-        )
-    except ScopeResolutionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+    resolved = await ScopeResolver(db, current_user).resolve(
+        scope=scope,
+        scope_id=scope_id,
+    )
     try:
         return await CryptoTrendService(db).trend(
             resolved=resolved,

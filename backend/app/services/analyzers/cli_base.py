@@ -1,8 +1,4 @@
-"""
-CLI Analyzer Base Class
-
-Provides shared functionality for analyzers that execute CLI tools (trivy, grype, etc.).
-"""
+"""Shared base for analyzers that execute CLI tools (trivy, grype, etc.)."""
 
 import asyncio
 import json
@@ -19,17 +15,8 @@ logger = logging.getLogger(__name__)
 
 
 class CLIAnalyzer(Analyzer):
-    """
-    Base class for analyzers that execute CLI tools.
+    """Base class for analyzers that execute CLI tools with temp-file management and retry."""
 
-    Provides common functionality:
-    - Temporary file management for SBOM input
-    - Subprocess execution
-    - JSON output parsing
-    - Cleanup handling
-    """
-
-    # Subclasses must override these
     cli_command: str = ""
     empty_result_key: str = "results"
 
@@ -40,11 +27,7 @@ class CLIAnalyzer(Analyzer):
         return shutil.which(self.cli_command) is not None
 
     def _is_retryable_error(self, _stderr: bytes) -> bool:
-        """Check if the error is transient and worth retrying.
-
-        Default: never retry. Subclasses override (e.g. trivy.py) to match tool-specific
-        transient errors against ``stderr``.
-        """
+        """Whether the error is transient and worth retrying; default never."""
         return False
 
     async def analyze(
@@ -54,7 +37,6 @@ class CLIAnalyzer(Analyzer):
         parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         """Run CLI analysis with automatic temp file management and retry."""
-        # Check tool availability first
         if not self.is_tool_available():
             logger.warning(f"{self.name}: CLI tool '{self.cli_command}' not found in PATH")
             return {
@@ -67,13 +49,10 @@ class CLIAnalyzer(Analyzer):
         extra_paths: List[str] = []
 
         try:
-            # Create temporary file for SBOM
             tmp_sbom_path = self._create_temp_sbom(sbom)
 
-            # Allow subclasses to preprocess (e.g., convert SBOM format)
             target_path, extra_paths = await self._preprocess_sbom(sbom, tmp_sbom_path, settings)
 
-            # Build and execute command
             args = self._build_command_args(target_path, settings)
 
             last_stderr = b""
@@ -85,7 +64,6 @@ class CLIAnalyzer(Analyzer):
 
                 last_stderr = stderr
 
-                # Retry only for transient errors
                 if attempt < self.max_retries and self._is_retryable_error(stderr):
                     delay = self.retry_delay * (2**attempt)
                     logger.warning(
@@ -104,7 +82,6 @@ class CLIAnalyzer(Analyzer):
             return {"error": f"Exception during {self.name} analysis: {str(e)}"}
 
         finally:
-            # Cleanup temp files
             self._cleanup_files([p for p in [tmp_sbom_path] + extra_paths if p is not None])
 
     def _create_temp_sbom(self, sbom: Dict[str, Any]) -> str:
@@ -119,14 +96,7 @@ class CLIAnalyzer(Analyzer):
         tmp_sbom_path: str,
         _settings: Optional[Dict[str, Any]],
     ) -> Tuple[str, List[str]]:
-        """
-        Preprocess SBOM before analysis.
-
-        Override in subclasses for format conversion, etc.
-
-        Returns:
-            Tuple of (target_path, list_of_extra_temp_files_to_cleanup)
-        """
+        """Preprocess SBOM before analysis; returns (target_path, extra_temp_files_to_cleanup)."""
         return tmp_sbom_path, []
 
     @abstractmethod
@@ -134,12 +104,10 @@ class CLIAnalyzer(Analyzer):
         """Build command line arguments. Must be implemented by subclasses."""
         raise NotImplementedError
 
-    # Default timeout for CLI tool execution (5 minutes)
     cli_timeout: int = 300
 
-    # Retry configuration for transient failures
-    max_retries: int = 0  # Subclasses can override
-    retry_delay: float = 2.0  # Base delay in seconds (doubles each retry)
+    max_retries: int = 0
+    retry_delay: float = 2.0  # base delay in seconds, doubles each retry
 
     async def _execute_command(self, args: List[str]) -> Tuple[bytes, bytes, int]:
         """Execute the CLI command and return stdout, stderr, returncode."""

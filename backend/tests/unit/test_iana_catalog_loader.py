@@ -1,9 +1,4 @@
-"""Unit tests for the IANA TLS cipher-suite catalog loader.
-
-The loader is async and Redis-backed; tests patch ``cache_service`` so
-they exercise the Redis-miss + live-fetch + YAML-fallback paths without
-requiring network or Redis.
-"""
+"""Unit tests for the IANA TLS cipher-suite catalog loader, patching cache_service to exercise the Redis-miss/fetch/YAML-fallback paths."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -65,8 +60,7 @@ async def test_unknown_suite_returns_none():
 async def test_catalog_entry_has_shape():
     cat = await load_iana_catalog()
     entry = next(iter(cat.values()))
-    # Pydantic guarantees field types; just confirm the loader returns the typed class
-    # (not a raw dict) so downstream attribute access doesn't silently break.
+    # confirm the loader returns the typed class, not a raw dict, so downstream attribute access works.
     assert isinstance(entry, CipherSuiteEntry)
 
 
@@ -109,7 +103,6 @@ async def test_redis_hit_short_circuits_fetch():
         cat = await load_iana_catalog()
     assert "TLS_CACHED_FAKE" in cat
     assert "cached-sentinel" in cat["TLS_CACHED_FAKE"].weaknesses
-    # Redis hit: live fetch must NOT be called.
     fetch_mock.assert_not_called()
 
 
@@ -144,7 +137,6 @@ async def test_live_fetch_populates_redis():
     ):
         cat = await load_iana_catalog()
     assert "TLS_FETCHED_FAKE" in cat
-    # Cache write-through: Redis set was called with the fetched suites.
     redis_set.assert_awaited_once()
     call_args = redis_set.await_args
     assert call_args is not None

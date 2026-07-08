@@ -1,8 +1,3 @@
-/**
- * CollapsibleReferences component
- * Displays a collapsible list of reference URLs
- */
-
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 
@@ -41,42 +36,6 @@ export function CollapsibleReferences({ references, title = 'References' }: Coll
             </a>
           ))}
         </div>
-      )}
-    </div>
-  )
-}
-
-/**
- * Inline reference links (always visible)
- */
-export function ReferenceLinks({ references, maxVisible = 3 }: { references?: string[]; maxVisible?: number }) {
-  const [showAll, setShowAll] = useState(false)
-
-  if (!references || references.length === 0) return null
-
-  const visible = showAll ? references : references.slice(0, maxVisible)
-  const hasMore = references.length > maxVisible
-
-  return (
-    <div className="flex flex-wrap gap-1 items-center">
-      {visible.map((ref, i) => (
-        <a
-          key={ref}
-          href={ref}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-xs text-blue-500 hover:underline"
-        >
-          [{i + 1}]
-        </a>
-      ))}
-      {hasMore && !showAll && (
-        <button 
-          onClick={() => setShowAll(true)}
-          className="text-xs text-muted-foreground hover:text-foreground"
-        >
-          +{references.length - maxVisible} more
-        </button>
       )}
     </div>
   )

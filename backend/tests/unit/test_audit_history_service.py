@@ -78,7 +78,6 @@ async def test_record_policy_change_survives_webhook_failure():
         ),
     ):
         new = CryptoPolicy(scope="system", version=1, rules=[])
-        # Should not raise
         entry = await record_policy_change(
             db,
             policy_scope="system",
@@ -133,9 +132,7 @@ async def test_record_policy_change_denormalises_actor():
 
 @pytest.mark.asyncio
 async def test_record_policy_change_clears_analytics_cache():
-    """Policy changes alter what hotspots/trends/PQC plans should return;
-    the TTL cache must be flushed synchronously on each policy write so
-    the next analytics query re-computes against the new rule set."""
+    """Each policy write must synchronously flush the analytics TTL cache."""
     db = MagicMock()
     insert_mock = AsyncMock()
     clear_mock = MagicMock()

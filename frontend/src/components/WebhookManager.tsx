@@ -15,10 +15,7 @@ import { useAuth } from "@/context/useAuth"
 import { useDialogState } from "@/hooks/use-dialog-state"
 import { formatDate } from "@/lib/utils"
 
-/**
- * Mirror of `detect_webhook_type` in backend/app/services/webhooks/validation.py
- * — purely a UX hint; the server re-evaluates and is the source of truth.
- */
+// UX hint only; the server re-evaluates webhook type and is the source of truth.
 function detectWebhookType(url: string): "generic" | "teams" {
   let host: string;
   let path: string;
@@ -70,7 +67,7 @@ export function WebhookManager({
     secret: ""
   })
 
-  // Back-compat: legacy snake_case event names mapped to canonical dot-notation.
+  // Stored webhooks may still carry legacy snake_case event names; map to canonical dot-notation.
   const EVENT_ALIASES: Record<string, string> = {
     scan_completed: "scan.completed",
     vulnerability_found: "vulnerability.found",

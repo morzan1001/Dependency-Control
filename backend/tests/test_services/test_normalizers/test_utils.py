@@ -240,18 +240,12 @@ class TestExtractGrypeCvss:
         assert score is None
 
     def test_version_3_10_vs_3_2_picks_higher(self):
-        """Version 3.10 should be picked over 3.2 (numeric comparison).
-        This tests a known potential bug: string comparison would make
-        '3.10' < '3.2' because '1' < '2' lexicographically.
-        The correct behavior is that 3.10 > 3.2 numerically.
-        """
+        """Version 3.10 must be picked over 3.2 (numeric, not lexicographic, comparison)."""
         cvss_list = [
             {"version": "3.2", "metrics": {"baseScore": 5.0}, "vector": "V32"},
             {"version": "3.10", "metrics": {"baseScore": 9.0}, "vector": "V310"},
         ]
         score, _ = extract_grype_cvss(cvss_list)
-        # Correct behavior: 3.10 > 3.2, so score should be 9.0
-        # If string comparison is used, this will incorrectly return 5.0
         assert score == 9.0, (
             f"Expected score 9.0 from version 3.10, got {score}. "
             "This is a bug: string comparison of version strings treats '3.10' < '3.2'"

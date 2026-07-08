@@ -1,9 +1,4 @@
-"""Unit tests for the crypto-policy seeder.
-
-Uses the FakeDb fixture from tests/unit/conftest.py instead of a real MongoDB
-so the test runs anywhere without infrastructure. ``record_policy_change`` is
-patched to avoid pulling in webhook/notification side effects on every seed.
-"""
+"""Unit tests for the crypto-policy seeder."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -19,8 +14,7 @@ from app.services.crypto_policy.seeder import (
 
 @pytest.fixture(autouse=True)
 def _silence_audit_history():
-    """Seeder calls record_policy_change which would emit webhooks + notify users.
-    Neither is interesting for the seeder contract — patch it out."""
+    """Patch out record_policy_change so seeding doesn't emit webhooks or notifications."""
     with patch(
         "app.services.crypto_policy.seeder.record_policy_change",
         new=AsyncMock(),

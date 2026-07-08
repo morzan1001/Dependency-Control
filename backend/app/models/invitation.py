@@ -1,18 +1,12 @@
-import uuid
 from datetime import datetime
 
-from pydantic import ConfigDict, EmailStr, Field
+from pydantic import ConfigDict, EmailStr
 
 from app.models.base import CreatedAtModel
-from app.models.types import PyObjectId
+from app.models.types import MongoDocument
 
 
-class ProjectInvitation(CreatedAtModel):
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
+class ProjectInvitation(MongoDocument, CreatedAtModel):
     project_id: str
     email: EmailStr
     role: str
@@ -20,19 +14,14 @@ class ProjectInvitation(CreatedAtModel):
     invited_by: str
     expires_at: datetime
 
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
-class SystemInvitation(CreatedAtModel):
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
+class SystemInvitation(MongoDocument, CreatedAtModel):
     email: EmailStr
     token: str
     invited_by: str
     expires_at: datetime
     is_used: bool = False
 
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)

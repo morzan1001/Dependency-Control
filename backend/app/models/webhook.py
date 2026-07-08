@@ -2,49 +2,22 @@
 Webhook model for MongoDB storage.
 """
 
-import uuid
 from datetime import datetime
 from typing import Dict, List, Literal, Optional
 
-from pydantic import ConfigDict, Field, field_validator
+from pydantic import ConfigDict, field_validator
 
 from app.models.base import CreatedAtModel
-from app.models.types import PyObjectId
+from app.models.types import MongoDocument
 from app.services.webhooks.validation import (
     validate_webhook_events,
     validate_webhook_url,
 )
 
 
-class Webhook(CreatedAtModel):
-    """
-    Webhook configuration for event notifications.
+class Webhook(MongoDocument, CreatedAtModel):
+    """Webhook configuration for event notifications, scoped to a project, a team, or globally (both IDs None)."""
 
-    Supports three scopes:
-        - Project webhooks: project_id is set, team_id is None
-        - Team webhooks: team_id is set, project_id is None
-        - Global webhooks: both project_id and team_id are None
-
-    Attributes:
-        id: Unique identifier (MongoDB _id)
-        project_id: Associated project ID, None for team/global webhooks
-        team_id: Associated team ID, None for project/global webhooks
-        url: Target URL for webhook delivery
-        events: List of event types to subscribe to
-        secret: Optional secret for HMAC signature verification (not returned in API responses)
-        headers: Optional custom headers to include in requests
-        is_active: Whether the webhook is enabled
-        webhook_type: Type of webhook (generic or teams) for payload formatting
-        created_at: Creation timestamp
-        last_triggered_at: Last successful delivery timestamp
-        last_failure_at: Last failed delivery timestamp
-    """
-
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
     project_id: Optional[str] = None
     team_id: Optional[str] = None
     url: str
@@ -65,7 +38,6 @@ class Webhook(CreatedAtModel):
     @field_validator("events")
     @classmethod
     def _validate_events(cls, v: List[str]) -> List[str]:
-        """Validate that all events are valid and list is not empty."""
         return validate_webhook_events(v, allow_empty=False)
 
     @field_validator("url")
@@ -73,4 +45,4 @@ class Webhook(CreatedAtModel):
     def _validate_url(cls, v: str) -> str:
         return validate_webhook_url(v)
 
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)

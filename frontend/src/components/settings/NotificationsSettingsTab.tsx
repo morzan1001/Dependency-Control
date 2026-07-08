@@ -212,7 +212,6 @@ export function NotificationsSettingsTab({
                       </>
                     )}
                     
-                    {/* Check if settings are dirty (unsaved changes) */}
                     {(formData.slack_client_id !== settings?.slack_client_id || formData.slack_client_secret !== settings?.slack_client_secret) ? (
                       <div className="p-3 mb-4 text-sm text-amber-800 bg-amber-50 border border-amber-200 rounded-md dark:bg-amber-950/50 dark:text-amber-200 dark:border-amber-900">
                         Please save your changes before connecting to Slack.

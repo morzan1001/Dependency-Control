@@ -8,10 +8,7 @@ from app.services.analysis.engine import _project_has_active_waivers
 
 
 def _make_db(count_documents_return: int):
-    """Build a minimal fake db whose waivers.count_documents returns the given value."""
-    waivers = SimpleNamespace(
-        count_documents=AsyncMock(return_value=count_documents_return)
-    )
+    waivers = SimpleNamespace(count_documents=AsyncMock(return_value=count_documents_return))
     return SimpleNamespace(waivers=waivers)
 
 
@@ -36,10 +33,8 @@ class TestProjectHasActiveWaivers:
         call_args = db.waivers.count_documents.await_args
         query = call_args.args[0]
 
-        # Top-level must be $and
         assert "$and" in query
 
-        # First clause: $or over project_id
         project_id_clause = query["$and"][0]["$or"]
         assert {"project_id": "proj-456"} in project_id_clause
         assert {"project_id": None} in project_id_clause

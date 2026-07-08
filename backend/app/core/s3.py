@@ -2,7 +2,7 @@
 
 import logging
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, AsyncIterator, Optional, cast
+from typing import Any, AsyncGenerator, AsyncIterator, Optional
 
 from aiobotocore.session import AioSession, get_session  # type: ignore[import-untyped]
 
@@ -19,12 +19,6 @@ def _get_session() -> AioSession:
     if _session is None:
         _session = get_session()
     return _session
-
-
-def _reset_session() -> None:
-    """Drop the cached session. Useful after hard connection errors."""
-    global _session
-    _session = None
 
 
 def is_archive_enabled() -> bool:
@@ -60,23 +54,6 @@ async def ensure_bucket_exists() -> None:
         except Exception:
             logger.info(f"Creating S3 bucket '{settings.S3_BUCKET_NAME}'...")
             await s3.create_bucket(Bucket=settings.S3_BUCKET_NAME)
-
-
-async def upload_bytes(
-    key: str, data: bytes, content_type: str = "application/gzip", *, bucket: Optional[str] = None
-) -> int:
-    """Single-PUT upload for small objects. Use upload_stream for large/streaming uploads."""
-    async with get_s3_client() as s3:
-        await s3.put_object(Bucket=_bucket(bucket), Key=key, Body=data, ContentType=content_type)
-    return len(data)
-
-
-async def download_bytes(key: str, *, bucket: Optional[str] = None) -> bytes:
-    """Buffered download for small objects. Use download_stream for large objects."""
-    async with get_s3_client() as s3:
-        response = await s3.get_object(Bucket=_bucket(bucket), Key=key)
-        async with response["Body"] as stream:
-            return cast(bytes, await stream.read())
 
 
 async def upload_stream(
@@ -160,7 +137,27 @@ async def delete_object(key: str, *, bucket: Optional[str] = None) -> None:
 
 
 async def list_objects(prefix: str = "", *, bucket: Optional[str] = None) -> list[dict[str, Any]]:
-    """List S3 objects under a prefix. Returns the raw Contents entries (Key, Size, LastModified, ...)."""
+    """List all S3 objects under a prefix, following pagination.
+
+    Returns the raw Contents entries (Key, Size, LastModified, ...) across every
+    page. ``list_objects_v2`` returns at most 1000 keys per call, so this loops on
+    ``NextContinuationToken`` until ``IsTruncated`` is false; otherwise objects
+    beyond the first lexicographic page would be invisible to callers such as the
+    orphan reaper.
+    """
+    b = _bucket(bucket)
+    objects: list[dict[str, Any]] = []
+    token: Optional[str] = None
     async with get_s3_client() as s3:
-        response = await s3.list_objects_v2(Bucket=_bucket(bucket), Prefix=prefix)
-        return cast(list[dict[str, Any]], response.get("Contents", []))
+        while True:
+            kwargs: dict[str, Any] = {"Bucket": b, "Prefix": prefix}
+            if token is not None:
+                kwargs["ContinuationToken"] = token
+            response = await s3.list_objects_v2(**kwargs)
+            objects.extend(response.get("Contents", []))
+            if not response.get("IsTruncated"):
+                break
+            token = response.get("NextContinuationToken")
+            if not token:
+                break
+    return objects

@@ -57,6 +57,19 @@ export const ANALYTICS_PERMISSIONS = [
   Permissions.ANALYTICS_SEARCH,
 ] as const;
 
+// Permissions that gate the /analytics route: any one grants a usable tab.
+// Must stay in sync with the per-tab checks in pages/Analytics.tsx (includes
+// analytics:recommendations, excludes analytics:dependencies which no tab checks).
+export const ANALYTICS_ROUTE_PERMISSIONS = [
+  'analytics:read',
+  'analytics:summary',
+  'analytics:tree',
+  'analytics:impact',
+  'analytics:hotspots',
+  'analytics:recommendations',
+  'analytics:search',
+] as const;
+
 export const POST_PROCESSOR_ANALYZERS = ['epss_kev', 'reachability'] as const;
 
 // Per-user notification events. Must match `NOTIFICATION_EVENTS` in

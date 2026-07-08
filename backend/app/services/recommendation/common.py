@@ -94,7 +94,7 @@ def calculate_best_fix_version(versions: List[str]) -> str:
     return parsed[0]
 
 
-# Cached at module-level to avoid repeated dict lookups in calculate_score().
+# Module-level cache to avoid repeated dict lookups on the hot scoring path.
 _PRIORITY_SCORES = {
     Priority.CRITICAL: RECOMMENDATION_SCORING_WEIGHTS["priority_critical"],
     Priority.HIGH: RECOMMENDATION_SCORING_WEIGHTS["priority_high"],
@@ -120,8 +120,7 @@ _MED_UNREACH_PENALTY = REACHABILITY_MODIFIERS["medium_unreachable_penalty"]
 
 
 def calculate_score(rec: Recommendation) -> int:
-    """Score recommendations for sorting. KEV/active-exploitation/reachable boosts
-    push real exposures up; mostly-unreachable findings get a multiplicative penalty."""
+    """Score a recommendation for sorting; mostly-unreachable findings get a multiplicative penalty."""
     impact = rec.impact
     base_score = _PRIORITY_SCORES.get(rec.priority, 0)
 

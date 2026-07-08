@@ -68,8 +68,6 @@ def _project(
 
 
 class TestCorrelateScorceardEmpty:
-    """Empty or missing findings."""
-
     def test_empty_vuln_returns_empty(self):
         result = correlate_scorecard_with_vulnerabilities([], [_quality_finding()])
         assert result == []
@@ -84,8 +82,6 @@ class TestCorrelateScorceardEmpty:
 
 
 class TestCorrelateScorceardCriticalUnmaintained:
-    """Critical vuln in unmaintained package."""
-
     def test_critical_vuln_unmaintained_produces_recommendation(self):
         vulns = [_vuln_finding(component="pkg", severity="CRITICAL")]
         quality = [_quality_finding(component="pkg", overall_score=3.0, critical_issues=["Maintained"])]
@@ -121,7 +117,7 @@ class TestCorrelateScorceardHighVulnLowScore:
         assert rec.type == RecommendationType.CRITICAL_RISK
 
     def test_high_vuln_score_exactly_at_threshold_not_flagged(self):
-        # SCORECARD_UNMAINTAINED_THRESHOLD is 5.0, condition is < 5.0
+        # SCORECARD_UNMAINTAINED_THRESHOLD is 5.0; condition is score < 5.0.
         vulns = [_vuln_finding(component="pkg", severity="HIGH")]
         quality = [_quality_finding(component="pkg", overall_score=5.0)]
         result = correlate_scorecard_with_vulnerabilities(vulns, quality)
@@ -129,8 +125,6 @@ class TestCorrelateScorceardHighVulnLowScore:
 
 
 class TestCorrelateScorceardNotFlagged:
-    """Cases that should NOT produce recommendations."""
-
     def test_low_vuln_low_score_not_flagged(self):
         vulns = [_vuln_finding(component="pkg", severity="LOW")]
         quality = [_quality_finding(component="pkg", overall_score=2.0)]
@@ -163,8 +157,6 @@ class TestCorrelateScorceardNotFlagged:
 
 
 class TestCorrelateScorceardAffectedComponents:
-    """Affected components formatting."""
-
     def test_unmaintained_label_in_components(self):
         vulns = [_vuln_finding(component="pkg", severity="CRITICAL", version="1.0.0")]
         quality = [_quality_finding(component="pkg", overall_score=2.0, critical_issues=["Maintained"])]
@@ -179,8 +171,6 @@ class TestCorrelateScorceardAffectedComponents:
 
 
 class TestAnalyzeCrossProjectPatternsEmpty:
-    """Empty or missing cross_project_data."""
-
     def test_empty_cross_project_data_returns_empty(self):
         result = analyze_cross_project_patterns([], [], {})
         assert result == []
@@ -213,17 +203,6 @@ class TestAnalyzeCrossProjectPatternsSharedVuln:
         shared_recs = [r for r in result if r.type == RecommendationType.SHARED_VULNERABILITY]
         assert len(shared_recs) == 1
 
-    def test_cve_in_two_projects_type(self):
-        data = _cross_project_data(
-            [
-                _project(project_id="p1", project_name="App1", cves=["CVE-2024-001"]),
-                _project(project_id="p2", project_name="App2", cves=["CVE-2024-001"]),
-            ]
-        )
-        result = analyze_cross_project_patterns([], [], data)
-        shared_recs = [r for r in result if r.type == RecommendationType.SHARED_VULNERABILITY]
-        assert shared_recs[0].type == RecommendationType.SHARED_VULNERABILITY
-
     def test_cve_in_two_projects_affected_components(self):
         data = _cross_project_data(
             [
@@ -249,8 +228,6 @@ class TestAnalyzeCrossProjectPatternsSharedVuln:
 
 
 class TestAnalyzeCrossProjectPatternsInconsistentVersions:
-    """Inconsistent package versions across projects."""
-
     def test_inconsistent_versions_produces_recommendation(self):
         data = _cross_project_data(
             [
@@ -345,8 +322,6 @@ class TestAnalyzeCrossProjectPatternsPrioritizeProjects:
 
 
 class TestAnalyzeCrossProjectPatternsMultipleRecommendations:
-    """Can produce multiple recommendation types at once."""
-
     def test_shared_vuln_and_inconsistent_versions(self):
         data = _cross_project_data(
             [

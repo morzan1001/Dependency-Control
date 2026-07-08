@@ -1,6 +1,6 @@
-"""Tests for update frequency analysis — version classification, trend, aggregates,
-and the streaming orchestrator."""
+"""Tests for update frequency analysis (version classification, trend, aggregates, streaming orchestrator)."""
 
+import asyncio
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -10,6 +10,7 @@ import pytest
 from app.schemas.analytics import ScanTimelineEntry
 from app.services.release_history import ReleaseHistory, ReleaseInfo
 from app.services.update_frequency import (
+    _COMPARISON_CONCURRENCY,
     _aggregate_metrics,
     _compute_trend,
     _dominant_ecosystem,
@@ -51,14 +52,14 @@ class TestClassifyVersionChange:
     def test_one_unparseable_returns_unknown(self):
         assert classify_version_change("1.0.0", "abc") == "unknown"
 
-    # A2: identical versions must NOT be classified as "patch"
+    # identical versions must NOT be classified as "patch"
     def test_identical_versions_returns_none(self):
         assert classify_version_change("1.0.0", "1.0.0") == "none"
 
     def test_identical_with_v_prefix_returns_none(self):
         assert classify_version_change("v1.0.0", "1.0.0") == "none"
 
-    # A3: pre-release identifiers must be respected
+    # pre-release identifiers must be respected
     def test_stable_to_prerelease_is_not_no_change(self):
         # 1.0.0 -> 1.0.0-beta1 is a real change (downgrade), must not be "none"
         result = classify_version_change("1.0.0", "1.0.0-beta1")
@@ -97,10 +98,7 @@ class TestClassifyVersionChange:
         assert classify_version_change("abc1234", "def5678") == "unknown"
 
     def test_calver_classified_by_release_tuple(self):
-        # CalVer (year.month.day) maps cleanly onto the release tuple. We
-        # don't try to detect "this is a calendar version" heuristically;
-        # we just trust packaging.Version's parse. Pin the expected behavior
-        # so future regex tweaks can't silently change it.
+        # CalVer maps onto the release tuple via packaging.Version; behavior pinned so regex tweaks can't silently change it.
         assert classify_version_change("2024.01.15", "2024.02.01") == "minor"
         assert classify_version_change("2024.01.15", "2025.01.15") == "major"
         assert classify_version_change("2024.01.15", "2024.01.16") == "patch"
@@ -149,7 +147,7 @@ class TestDominantEcosystem:
 
 
 class TestComputeTrend:
-    # A4: trend is "unknown" when there isn't enough data, not "stable"
+    # trend is "unknown" when there isn't enough data, not "stable"
     def test_empty_timeline_returns_unknown(self):
         direction, _ = _compute_trend([])
         assert direction == "unknown"
@@ -174,19 +172,19 @@ class TestComputeTrend:
 
 
 class TestEmptyMetrics:
-    # A4: empty metrics use "unknown" trend, not "stable"
+    # empty metrics use "unknown" trend, not "stable"
     def test_empty_metrics_trend_is_unknown(self):
         m = _empty_metrics("p1", "Project One", 0, "")
         assert m.trend_direction == "unknown"
 
-    # A6: empty metrics have null coverage (no outdated history yet)
+    # empty metrics have null coverage (no outdated history yet)
     def test_empty_metrics_coverage_is_none(self):
         m = _empty_metrics("p1", "Project One", 0, "")
         assert m.update_coverage_pct is None
 
 
 class TestAggregateMetricsCoverage:
-    # A6: coverage is None when nothing has ever been outdated
+    # coverage is None when nothing has ever been outdated
     def test_coverage_none_when_no_outdated(self):
         scans = [
             {"_id": "s1", "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc)},
@@ -237,23 +235,42 @@ class TestAggregateMetricsCoverage:
 # --- Fake repos for streaming-orchestrator tests ---
 
 
+class _FakeScanObj:
+    """Mirrors the attribute access (.id/.created_at/.status) of the real Scan model."""
+
+    def __init__(self, doc: Dict[str, Any]):
+        self.id = doc["_id"]
+        self.created_at = doc["created_at"]
+        self.status = doc.get("status", "completed")
+
+
 class FakeScanRepo:
     def __init__(self, scans: List[Dict[str, Any]]):
         # scans must include _id, created_at, status, project_id
         self._scans = scans
 
-    async def find_by_project(
+    async def find_many(
         self,
-        project_id: str,
+        query: Dict[str, Any],
+        sort: Optional[List[Tuple[str, int]]] = None,
         skip: int = 0,
-        limit: int = 100,
-        sort_by: str = "created_at",
-        sort_order: int = -1,
+        limit: Optional[int] = None,
         projection: Optional[Dict[str, int]] = None,
-    ) -> List[Dict[str, Any]]:
-        matched = [s for s in self._scans if s["project_id"] == project_id]
-        matched.sort(key=lambda s: s["created_at"], reverse=(sort_order == -1))
-        return matched[skip : skip + limit]
+    ) -> List[_FakeScanObj]:
+        # Mirrors ScanRepository.find_many: filter by the query (incl. status),
+        # sort, then apply the limit — status is filtered BEFORE the limit.
+        matched = [s for s in self._scans if s.get("project_id") == query.get("project_id")]
+        status = query.get("status")
+        if status is not None:
+            matched = [s for s in matched if s.get("status") == status]
+        if sort:
+            field, order = sort[0]
+            matched.sort(key=lambda s: s[field], reverse=(order == -1))
+        if limit is not None:
+            matched = matched[skip : skip + limit]
+        else:
+            matched = matched[skip:]
+        return [_FakeScanObj(s) for s in matched]
 
 
 class FakeDepRepo:
@@ -400,8 +417,7 @@ class TestStreamingOrchestrator:
         )
 
         assert m.scan_count == 5
-        # If the orchestrator used the oldest 5 (legacy bug), recent_updates would
-        # show versions like 1.0.1..1.0.4. The new behavior must show 1.0.26..1.0.29.
+        # The newest 5 scans must drive recent_updates (1.0.26..1.0.29), not the oldest 5 (1.0.1..1.0.4).
         latest_versions = {e.new_version for e in m.recent_updates}
         assert "1.0.29" in latest_versions
         assert "1.0.0" not in latest_versions
@@ -430,10 +446,7 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_observations_bounded_for_high_churn_history(self):
-        # 200 scans, every scan introduces a new unique version per package,
-        # 5 packages -> 1000 (pkg, version) pairs. Without a bound this lives
-        # forever in memory; with a bound the orchestrator must complete and
-        # produce metrics rather than retaining every pair.
+        # 200 scans x 5 packages = 1000 (pkg, version) pairs; the orchestrator must stay bounded and still produce metrics.
         scans = [_make_scan(f"s{i}", i) for i in range(200)]
         deps: Dict[str, List[Dict[str, Any]]] = {}
         for i in range(200):
@@ -530,10 +543,7 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_since_overrides_max_scans_when_window_holds_more(self):
-        # 30 daily scans, max_scans=5 (default-ish), since=very-old.
-        # Old code: loaded only 5 newest scans, ignored everything older
-        # in the requested window. New code: hard_limit-bounded load so
-        # the entire `since` window is honored.
+        # 30 daily scans, max_scans=5, since=very-old: the entire since window must be honored (hard_limit-bounded load).
         scans = [_make_scan(f"s{i}", i) for i in range(30)]
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(30)}
         scan_repo = FakeScanRepo(scans)
@@ -639,7 +649,7 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_outdated_loaded_per_pair_not_upfront(self):
-        # The streaming refactor must NOT issue a single bulk find_many across all scan_ids.
+        # Must NOT issue a single bulk find_many across all scan_ids.
         scans = [_make_scan(f"s{i}", i) for i in range(5)]
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", "1.0.0")] for i in range(5)}
         results = [_outdated_result(f"s{i}", []) for i in range(5)]
@@ -662,3 +672,122 @@ class TestStreamingOrchestrator:
             assert not isinstance(scan_filter, dict), (
                 f"analysis_repo.find_many called with bulk scan filter {scan_filter}; expected per-scan loading"
             )
+
+    @pytest.mark.asyncio
+    async def test_completed_filter_applied_before_limit(self):
+        # The newest max_scans scans are all failed with a long completed history underneath; status must be filtered in the query so older completed scans surface.
+        completed = [_make_scan(f"c{i}", i) for i in range(6)]  # days 0..5, completed
+        failed = [
+            {**_make_scan(f"f{i}", 10 + i), "status": "failed"} for i in range(20)
+        ]  # days 10..29, failed -> these are the newest 20
+        scans = completed + failed
+        deps = {f"c{i}": [_make_dep(f"c{i}", "pkg-a", f"1.0.{i}")] for i in range(6)}
+        scan_repo = FakeScanRepo(scans)
+        dep_repo = FakeDepRepo(deps)
+        analysis_repo = FakeAnalysisRepo([])
+
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=scan_repo,
+            dep_repo=dep_repo,
+            analysis_repo=analysis_repo,
+            max_scans=20,
+        )
+
+        assert m.scan_count == 6, "completed scans must survive the fetch limit even when the newest scans failed"
+        assert m.total_updates == 5
+
+    @pytest.mark.asyncio
+    async def test_maven_upstream_uses_deps_dev_name(self):
+        # Maven components store only the artifact as the DB name, but deps.dev needs "group:artifact"; the spec must use that name and re-key observations so adoption-latency resolves.
+        def _maven_dep(scan_id: str, version: str) -> Dict[str, Any]:
+            return {
+                "scan_id": scan_id,
+                "name": "log4j-core",  # DB name = artifact only
+                "version": version,
+                "type": "maven",
+                "purl": f"pkg:maven/org.apache.logging.log4j/log4j-core@{version}",
+            }
+
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {"s1": [_maven_dep("s1", "2.14.0")], "s2": [_maven_dep("s2", "2.17.0")]}
+        scan1_date = scans[1]["created_at"]
+        registry_name = "org.apache.logging.log4j:log4j-core"
+        history: ReleaseHistory = {
+            registry_name: [
+                ReleaseInfo(version="2.14.0", published_at=scans[0]["created_at"] - timedelta(days=100)),
+                ReleaseInfo(version="2.17.0", published_at=scan1_date - timedelta(days=15)),
+            ],
+        }
+
+        class FakeFetcher:
+            def __init__(self, h: ReleaseHistory):
+                self._h = h
+                self.calls: List[Sequence[Tuple[str, str]]] = []
+
+            async def fetch(self, packages: Sequence[Tuple[str, str]]) -> ReleaseHistory:
+                self.calls.append(list(packages))
+                return self._h
+
+        fetcher = FakeFetcher(history)
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+            release_fetcher=fetcher,
+        )
+
+        # The fetcher must be asked for the group:artifact name, not the bare artifact.
+        assert ("maven", registry_name) in fetcher.calls[0]
+        assert ("maven", "log4j-core") not in fetcher.calls[0]
+        # Observations re-keyed to the deps.dev name -> adoption latency resolves (15d).
+        assert m.adoption_latency_days_median == 15.0
+
+    def test_comparison_semaphore_reusable_across_event_loops(self):
+        # The concurrency semaphore must be created per call so it binds to the
+        # loop running the gather; a module-global one binds to the first loop and
+        # then raises "bound to a different event loop". Reproducing needs genuine
+        # contention: more projects than _COMPARISON_CONCURRENCY AND work that
+        # suspends (asyncio.sleep(0)) while holding the semaphore.
+        n_projects = _COMPARISON_CONCURRENCY + 2  # 5 > concurrency limit of 3
+
+        class _SuspendingScanRepo(FakeScanRepo):
+            async def find_many(self, *args, **kwargs):
+                await asyncio.sleep(0)  # yield to the loop while holding the semaphore
+                return await super().find_many(*args, **kwargs)
+
+        class _SuspendingDepRepo(FakeDepRepo):
+            async def find_all(self, *args, **kwargs):
+                await asyncio.sleep(0)
+                return await super().find_all(*args, **kwargs)
+
+        projects = [{"_id": f"proj-{i}", "name": f"Project {i}"} for i in range(n_projects)]
+        all_scans: List[Dict[str, Any]] = []
+        deps: Dict[str, List[Dict[str, Any]]] = {}
+        for i in range(n_projects):
+            pid = f"proj-{i}"
+            s1, s2 = f"{pid}-s1", f"{pid}-s2"
+            all_scans.append(_make_scan(s1, 0, project_id=pid))
+            all_scans.append(_make_scan(s2, 30, project_id=pid))
+            deps[s1] = [_make_dep(s1, "pkg-a", "1.0.0")]
+            deps[s2] = [_make_dep(s2, "pkg-a", "1.0.1")]
+
+        async def _run():
+            return await compute_update_frequency_comparison(
+                projects=projects,
+                scan_repo=_SuspendingScanRepo(all_scans),
+                dep_repo=_SuspendingDepRepo(deps),
+                analysis_repo=FakeAnalysisRepo([]),
+            )
+
+        first = asyncio.run(_run())
+        # Fresh loop. With a module-global semaphore bound to the first loop, the
+        # projects that must wait on it raise RuntimeError here; gather swallows
+        # them (return_exceptions=True), so the summaries silently drop below
+        # n_projects. The per-call semaphore keeps all projects intact.
+        second = asyncio.run(_run())
+        assert len(first.projects) == n_projects
+        assert len(second.projects) == n_projects

@@ -35,9 +35,7 @@ export function SummaryCard({ data }: { data: RecommendationsResponse }) {
           }
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">
-        {/* Vulnerability Summary - only show if there are vulnerabilities */}
-        {(data.total_vulnerabilities || 0) > 0 && (
+      <CardContent className="space-y-4">        {(data.total_vulnerabilities || 0) > 0 && (
           <div>
             <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
               <ShieldAlert className="h-4 w-4" />
@@ -71,8 +69,6 @@ export function SummaryCard({ data }: { data: RecommendationsResponse }) {
             </div>
           </div>
         )}
-
-        {/* Other Finding Types */}
         {hasOtherFindings && (
           <div>
             <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
@@ -115,8 +111,6 @@ export function SummaryCard({ data }: { data: RecommendationsResponse }) {
             </div>
           </div>
         )}
-
-        {/* Dependency Health & Insights */}
         {((data.summary.outdated_deps || 0) > 0 ||
           (data.summary.fragmentation_issues || 0) > 0 ||
           (data.summary.trend_alerts || 0) > 0 ||

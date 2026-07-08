@@ -21,18 +21,11 @@ def _iac(
 
 
 class TestProcessIacEmpty:
-    """Edge case: no findings."""
-
     def test_empty_list_returns_empty(self):
-        assert process_iac([]) == []
-
-    def test_empty_iterable(self):
         assert process_iac([]) == []
 
 
 class TestProcessIacDocker:
-    """Docker platform normalization."""
-
     def test_docker_platform_normalized(self):
         rec = process_iac([_iac(platform="docker")])[0]
         assert "Docker" in rec.title
@@ -51,8 +44,6 @@ class TestProcessIacDocker:
 
 
 class TestProcessIacKubernetes:
-    """Kubernetes platform normalization."""
-
     def test_kubernetes_keyword(self):
         rec = process_iac([_iac(platform="kubernetes")])[0]
         assert "Kubernetes" in rec.title
@@ -63,8 +54,6 @@ class TestProcessIacKubernetes:
 
 
 class TestProcessIacTerraform:
-    """Terraform platform normalization."""
-
     def test_terraform_keyword(self):
         rec = process_iac([_iac(platform="terraform")])[0]
         assert "Terraform" in rec.title
@@ -75,8 +64,6 @@ class TestProcessIacTerraform:
 
 
 class TestProcessIacAWSCloudFormation:
-    """AWS/CloudFormation platform normalization."""
-
     def test_aws_keyword(self):
         rec = process_iac([_iac(platform="aws")])[0]
         assert "AWS/CloudFormation" in rec.title
@@ -87,24 +74,18 @@ class TestProcessIacAWSCloudFormation:
 
 
 class TestProcessIacAnsible:
-    """Ansible platform normalization."""
-
     def test_ansible_keyword(self):
         rec = process_iac([_iac(platform="ansible")])[0]
         assert "Ansible" in rec.title
 
 
 class TestProcessIacHelm:
-    """Helm platform normalization."""
-
     def test_helm_keyword(self):
         rec = process_iac([_iac(platform="helm")])[0]
         assert "Helm" in rec.title
 
 
 class TestProcessIacBelowThreshold:
-    """Findings that do not meet significance threshold are skipped."""
-
     def test_single_low_no_recommendation(self):
         result = process_iac([_iac(severity="LOW")])
         assert result == []
@@ -131,8 +112,6 @@ class TestProcessIacBelowThreshold:
 
 
 class TestProcessIacAboveThreshold:
-    """Findings that DO pass the threshold."""
-
     def test_single_high_generates_recommendation(self):
         result = process_iac([_iac(severity="HIGH")])
         assert len(result) == 1
@@ -148,8 +127,6 @@ class TestProcessIacAboveThreshold:
 
 
 class TestProcessIacPriority:
-    """Priority determination."""
-
     def test_critical_severity_gives_critical_priority(self):
         rec = process_iac([_iac(severity="CRITICAL")])[0]
         assert rec.priority == Priority.CRITICAL
@@ -170,8 +147,6 @@ class TestProcessIacPriority:
 
 
 class TestProcessIacCommonIssues:
-    """Common issues extraction from query_name."""
-
     def test_common_issues_in_action(self):
         rec = process_iac([_iac(query_name="Healthcheck Missing")])[0]
         assert "Healthcheck Missing" in rec.action["common_issues"]
@@ -184,7 +159,7 @@ class TestProcessIacCommonIssues:
         ]
         rec = process_iac(findings)[0]
         issues = rec.action["common_issues"]
-        # Healthcheck Missing appears 2x, should come first
+        # Healthcheck Missing appears twice, so it sorts first.
         assert issues[0] == "Healthcheck Missing"
         assert "Run As Root" in issues
 
@@ -195,8 +170,6 @@ class TestProcessIacCommonIssues:
 
 
 class TestProcessIacImpact:
-    """Impact dict verification."""
-
     def test_severity_counts(self):
         findings = [
             _iac(severity="CRITICAL", finding_id="i1"),
@@ -219,8 +192,6 @@ class TestProcessIacImpact:
 
 
 class TestProcessIacMultiplePlatforms:
-    """Different platforms produce separate recommendations."""
-
     def test_two_platforms_produce_two_recommendations(self):
         findings = [
             _iac(platform="docker", finding_id="i1"),
@@ -241,18 +212,14 @@ class TestProcessIacMultiplePlatforms:
 
 
 class TestProcessIacEffort:
-    """Effort is always 'medium' for IAC recommendations."""
-
     def test_effort_is_medium(self):
         rec = process_iac([_iac()])[0]
         assert rec.effort == "medium"
 
 
 class TestProcessIacPlatformFallback:
-    """Platform extraction fallbacks."""
-
     def test_platform_from_query_name_dot_prefix(self):
-        """If platform is missing, first segment of query_name (before dot) is used."""
+        # With no platform, the query_name segment before the first dot is used.
         finding = {
             "type": "iac",
             "severity": "HIGH",
@@ -264,7 +231,7 @@ class TestProcessIacPlatformFallback:
         assert "Terraform" in rec.title
 
     def test_fallback_to_infrastructure(self):
-        """If no platform and no query_name, defaults to 'infrastructure'."""
+        # No platform and no query_name defaults to 'infrastructure'.
         finding = {
             "type": "iac",
             "severity": "HIGH",

@@ -1,11 +1,4 @@
-"""
-SARIF 2.1.0 renderer.
-
-Each ControlDefinition maps to a SARIF rule; each ControlResult maps to a
-result. FAILED → result with `level`=error/warning based on severity;
-PASSED → `kind="pass"`; WAIVED → `kind="pass"` + `baselineState="unchanged"`;
-NOT_APPLICABLE → `kind="notApplicable"`.
-"""
+"""SARIF 2.1.0 renderer: each control maps to a rule and a result."""
 
 import json
 from typing import Optional, Tuple

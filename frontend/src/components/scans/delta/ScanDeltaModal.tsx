@@ -44,8 +44,7 @@ export function ScanDeltaModal({ projectId, fromScanId, toScanId, onClose }: Pro
           </DialogDescription>
         </DialogHeader>
         {open && fromScanId && toScanId && (
-          // key forces a remount on scan-pair change, resetting tab/visited/counts
-          // state so a reopened modal does not show the previous comparison's badge counts.
+          // key remounts on scan-pair change to reset tab/visited/count state
           <ScanDeltaBody
             key={`${fromScanId}->${toScanId}`}
             projectId={projectId}

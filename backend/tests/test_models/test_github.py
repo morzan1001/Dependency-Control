@@ -52,7 +52,6 @@ class TestGitHubInstanceModel:
         assert data["_id"] == instance.id
 
     def test_validation_alias(self):
-        """Should accept _id from MongoDB documents."""
         instance = GitHubInstance(
             _id="custom-id",
             name="Test",
@@ -124,7 +123,6 @@ class TestGitHubOIDCPayloadModel:
         assert payload.event_name == "push"
 
     def test_extra_claims_ignored(self):
-        """GitHubOIDCPayload uses extra='ignore' to handle unknown JWT claims."""
         payload = GitHubOIDCPayload(
             repository_id="1",
             repository="o/r",
@@ -141,8 +139,6 @@ class TestGitHubOIDCPayloadModel:
 
 
 class TestProjectGitHubFields:
-    """Test that Project model accepts the new GitHub fields."""
-
     def test_project_with_github_fields(self):
         from app.models.project import Project
 

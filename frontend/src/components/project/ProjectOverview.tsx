@@ -13,8 +13,8 @@ import { PostProcessorResultCard } from '@/components/PostProcessorResults'
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { MAX_SCANS_FOR_CHARTS } from '@/lib/constants'
 import { formatDate } from '@/lib/utils'
+import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
 
-/** Accumulate threat intelligence stats from a scan into the accumulator */
 function accumulateThreatIntel(acc: ThreatIntelligenceStats, ti: ThreatIntelligenceStats) {
   acc.kev_count += ti.kev_count || 0
   acc.kev_ransomware_count += ti.kev_ransomware_count || 0
@@ -27,7 +27,6 @@ function accumulateThreatIntel(acc: ThreatIntelligenceStats, ti: ThreatIntellige
   }
 }
 
-/** Accumulate reachability stats from a scan into the accumulator */
 function accumulateReachability(acc: ReachabilityStats, r: ReachabilityStats) {
   acc.analyzed_count += r.analyzed_count || 0
   acc.reachable_count += r.reachable_count || 0
@@ -38,7 +37,6 @@ function accumulateReachability(acc: ReachabilityStats, r: ReachabilityStats) {
   acc.reachable_high += r.reachable_high || 0
 }
 
-/** Accumulate prioritized counts from a scan into the accumulator */
 function accumulatePrioritized(acc: PrioritizedCounts, p: PrioritizedCounts) {
   acc.total += p.total || 0
   acc.critical += p.critical || 0
@@ -64,17 +62,13 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
 
   const scanList = scans || []
 
-  // Filter scans based on selection
   const filteredScans = scanList.filter((s: Scan) => selectedBranches.includes(s.branch))
 
-  // Count unique pipelines (excluding rescans)
   const uniqueScansCount = filteredScans.filter((s: Scan) => !s.is_rescan).length
 
-  // Calculate Project Stats - aggregate across ALL selected branches
   const projectStats = useMemo(() => {
       if (!filteredScans.length) return null;
 
-      // 1. Group by branch and find latest completed scan for each
       const latestScansByBranch: Record<string, Scan> = {};
 
       filteredScans.forEach((scan: Scan) => {
@@ -96,7 +90,6 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           unknown: scan.stats?.unknown || 0
       }));
 
-      // 2. Aggregate stats across ALL branches' latest scans
       const allBranchScans = Object.values(latestScansByBranch);
 
       const aggregatedStats: {
@@ -109,7 +102,6 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           threat_intel: null, reachability: null, prioritized: null
       };
 
-      // Sum severity counts, take max risk scores
       let maxRisk = 0;
       let maxAdjustedRisk = 0;
       const threatIntelAcc: ThreatIntelligenceStats = {
@@ -179,7 +171,6 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       return { stats: aggregatedStats, branchStats: branchStatsData, latestScansByBranch, branchCount: allBranchScans.length };
   }, [filteredScans]);
 
-  // Branch selector state for enrichment detail cards
   const latestScansByBranch = projectStats?.latestScansByBranch || {};
   const branchNames = Object.keys(latestScansByBranch);
   const [enrichmentBranch, setEnrichmentBranch] = useState<string | null>(null);
@@ -202,27 +193,27 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
 
   const stats = projectStats?.stats || { critical: 0, high: 0, medium: 0, low: 0, risk_score: 0 }
   const branchStats = projectStats?.branchStats || []
-  
-  // Check if we have actual threat intelligence data (not just empty objects)
+
   const threatIntel = 'threat_intel' in stats ? stats.threat_intel : null
   const hasThreatIntelData = threatIntel && (
-    (threatIntel.kev_count ?? 0) > 0 || 
-    (threatIntel.high_epss_count ?? 0) > 0 || 
-    (threatIntel.exploitable_count ?? 0) > 0 ||
-    (threatIntel.total_enriched ?? 0) > 0
+    (threatIntel.kev_count ?? 0) > 0 ||
+    (threatIntel.high_epss_count ?? 0) > 0 ||
+    (threatIntel.medium_epss_count ?? 0) > 0 ||
+    (threatIntel.weaponized_count ?? 0) > 0 ||
+    (threatIntel.active_exploitation_count ?? 0) > 0
   )
   const reachability = 'reachability' in stats ? stats.reachability : null
   const hasReachabilityData = reachability && (
-    (reachability.reachable ?? 0) > 0 || 
-    (reachability.potentially_reachable ?? 0) > 0 ||
-    (reachability.total_analyzed ?? 0) > 0
+    (reachability.analyzed_count ?? 0) > 0 ||
+    (reachability.reachable_count ?? 0) > 0 ||
+    (reachability.likely_reachable_count ?? 0) > 0 ||
+    (reachability.unreachable_count ?? 0) > 0 ||
+    (reachability.unknown_count ?? 0) > 0
   )
   const hasEnhancedStats = hasThreatIntelData || hasReachabilityData
-  
-  // Trend Data Processing
+
   const sortedScans = [...filteredScans].sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime())
-  
-  // Group by date - TrendEntry allows dynamic branch keys
+
   interface TrendEntry {
     date: string;
     [branch: string]: string | number;
@@ -238,7 +229,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       }
       
       const entry = trendMap.get(date)!
-      // If multiple scans for same branch on same day, this will take the last one (due to sort order)
+      // Multiple scans for a branch on the same day: last one wins (sort order).
       entry[scan.branch] = risk
   })
   
@@ -246,10 +237,10 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   const COLORS = ['#2563eb', '#16a34a', '#d97706', '#dc2626', '#9333ea', '#0891b2', '#ea580c', '#4f46e5'];
 
   const pieData = [
-      { name: 'Critical', value: stats.critical || 0, color: '#ef4444' },
-      { name: 'High', value: stats.high || 0, color: '#f97316' },
-      { name: 'Medium', value: stats.medium || 0, color: '#eab308' },
-      { name: 'Low', value: stats.low || 0, color: '#3b82f6' },
+      { name: 'Critical', value: stats.critical || 0, color: SEVERITY_CHART_COLORS.CRITICAL },
+      { name: 'High', value: stats.high || 0, color: SEVERITY_CHART_COLORS.HIGH },
+      { name: 'Medium', value: stats.medium || 0, color: SEVERITY_CHART_COLORS.MEDIUM },
+      { name: 'Low', value: stats.low || 0, color: SEVERITY_CHART_COLORS.LOW },
   ].filter(d => d.value > 0);
 
   return (
@@ -314,7 +305,6 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
         </Card>
       </div>
 
-      {/* Threat Intelligence Dashboard - aggregated across all selected branches */}
       {hasEnhancedStats && (
         <ThreatIntelligenceDashboard stats={stats} branchCount={projectStats?.branchCount} />
       )}
@@ -428,10 +418,10 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
                                     itemStyle={{ color: 'hsl(var(--foreground))' }}
                                 />
                                 <Legend />
-                                <Bar dataKey="critical" stackId="a" fill="#ef4444" />
-                                <Bar dataKey="high" stackId="a" fill="#f97316" />
-                                <Bar dataKey="medium" stackId="a" fill="#eab308" />
-                                <Bar dataKey="low" stackId="a" fill="#3b82f6" />
+                                <Bar dataKey="critical" stackId="a" fill={SEVERITY_CHART_COLORS.CRITICAL} />
+                                <Bar dataKey="high" stackId="a" fill={SEVERITY_CHART_COLORS.HIGH} />
+                                <Bar dataKey="medium" stackId="a" fill={SEVERITY_CHART_COLORS.MEDIUM} />
+                                <Bar dataKey="low" stackId="a" fill={SEVERITY_CHART_COLORS.LOW} />
                             </BarChart>
                         </ResponsiveContainer>
                     </div>
@@ -440,7 +430,6 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
         </div>
       )}
 
-      {/* Post-Processor Intelligence (EPSS/KEV, Reachability) - per branch */}
       {activeBranch && scanResults?.some(r => isPostProcessorResult(r.analyzer_name)) && (
         <div className="space-y-4">
           <div className="flex items-center justify-between flex-wrap gap-2">

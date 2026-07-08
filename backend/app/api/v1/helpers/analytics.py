@@ -1,9 +1,4 @@
-"""
-Analytics Helper Functions
-
-Helper functions for analytics endpoints, extracted for better
-code organization and reusability.
-"""
+"""Helper functions for analytics endpoints."""
 
 from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
@@ -37,16 +32,14 @@ from app.core.constants import (
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
-from app.repositories import ProjectRepository
+from app.repositories import ProjectRepository, ScanRepository
 
-# MongoDB aggregation pipeline operators
 MONGO_MATCH = "$match"
 MONGO_GROUP = "$group"
 
 
 def require_analytics_permission(user: User, permission: str) -> None:
     """Raise 403 if user doesn't have the required analytics permission."""
-    # Check for the specific permission or the general analytics:read permission
     if not has_permission(user.permissions, [Permissions.ANALYTICS_READ, permission]):
         raise HTTPException(
             status_code=403,
@@ -59,13 +52,7 @@ def require_analytics_permission(user: User, permission: str) -> None:
 
 
 async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> List[str]:
-    """Get list of project IDs the user has access to.
-
-    Thin shim over ``ScopeResolver(db, user).resolve(scope='user', ...)`` so
-    SBOM-analytics and CBOM-analytics share the same authorisation /
-    project-selection logic.  Kept as a function for backward compatibility
-    with existing call sites; new code should use ``ScopeResolver`` directly.
-    """
+    """Get list of project IDs the user has access to."""
     from app.services.analytics.scopes import ScopeResolver
 
     resolved = await ScopeResolver(db, user).resolve(scope="user", scope_id=None)
@@ -76,51 +63,8 @@ async def _resolve_active_scan_ids(
     projects: List[Any],
     db: AsyncIOMotorDatabase,
 ) -> Dict[str, str]:
-    """
-    Resolve latest scan IDs for projects, excluding scans from deleted branches.
-
-    For projects without deleted branches, uses latest_scan_id directly.
-    For projects with deleted branches, queries for the latest completed scan
-    on an active branch.
-
-    Returns:
-        Dict mapping project_id -> resolved scan_id
-    """
-    result: Dict[str, str] = {}
-    projects_needing_lookup = []
-
-    for p in projects:
-        if not p.latest_scan_id:
-            continue
-        if p.deleted_branches:
-            projects_needing_lookup.append(p)
-        else:
-            result[p.id] = p.latest_scan_id
-
-    if not projects_needing_lookup:
-        return result
-
-    # For projects with deleted branches, find latest completed scan on active branch
-    or_conditions = [
-        {
-            "project_id": p.id,
-            "branch": {"$nin": p.deleted_branches},
-            "status": "completed",
-        }
-        for p in projects_needing_lookup
-    ]
-
-    pipeline: List[Dict[str, Any]] = [
-        {MONGO_MATCH: {"$or": or_conditions}},
-        {"$sort": {"created_at": -1}},
-        {MONGO_GROUP: {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
-    ]
-
-    cursor = db.scans.aggregate(pipeline)
-    async for doc in cursor:
-        result[doc["_id"]] = doc["scan_id"]
-
-    return result
+    """Resolve latest scan ID per project, excluding scans from deleted branches."""
+    return await ScanRepository(db).get_latest_active_scan_ids(projects)
 
 
 async def get_latest_scan_ids(project_ids: List[str], db: AsyncIOMotorDatabase) -> List[str]:
@@ -136,13 +80,7 @@ async def get_latest_scan_ids(project_ids: List[str], db: AsyncIOMotorDatabase) 
 
 
 async def get_projects_with_scans(project_ids: List[str], db: AsyncIOMotorDatabase) -> Tuple[Dict[str, str], List[str]]:
-    """
-    Get project name mapping and scan IDs for given projects.
-    Excludes scans from deleted branches.
-
-    Returns:
-        Tuple of (project_name_map, scan_ids)
-    """
+    """Return (project_name_map, scan_ids), excluding scans from deleted branches."""
     project_repo = ProjectRepository(db)
     projects = await project_repo.find_many_with_scan_id(
         {"_id": {"$in": project_ids}},
@@ -190,13 +128,7 @@ def extract_fix_versions(details_list: List[Any]) -> set:
 
 
 def process_cve_enrichments(finding_ids: List[str], enrichments: Dict[str, Any]) -> CVEEnrichmentResult:
-    """
-    Process CVE enrichment data and extract maximum values.
-
-    Returns CVEEnrichmentResult with:
-        max_epss, max_percentile, max_risk, has_kev, kev_count,
-        kev_ransomware_use, kev_due_date, exploit_maturity
-    """
+    """Process CVE enrichment data and extract the maximum/worst-case values."""
     result = CVEEnrichmentResult()
 
     for fid in finding_ids:
@@ -205,18 +137,15 @@ def process_cve_enrichments(finding_ids: List[str], enrichments: Dict[str, Any])
 
         enr = enrichments[fid]
 
-        # EPSS scores
         if enr.epss_score is not None:
             if result.max_epss is None or enr.epss_score > result.max_epss:
                 result.max_epss = enr.epss_score
                 result.max_percentile = enr.epss_percentile
 
-        # Risk score
         if enr.risk_score is not None:
             if result.max_risk is None or enr.risk_score > result.max_risk:
                 result.max_risk = enr.risk_score
 
-        # KEV data
         if enr.is_kev:
             result.has_kev = True
             result.kev_count += 1
@@ -226,7 +155,6 @@ def process_cve_enrichments(finding_ids: List[str], enrichments: Dict[str, Any])
                 if result.kev_due_date is None or enr.kev_due_date < result.kev_due_date:
                     result.kev_due_date = enr.kev_due_date
 
-        # Exploit maturity
         if EXPLOIT_MATURITY_ORDER.get(enr.exploit_maturity, 0) > EXPLOIT_MATURITY_ORDER.get(result.exploit_maturity, 0):
             result.exploit_maturity = enr.exploit_maturity
 
@@ -272,43 +200,23 @@ def calculate_impact_score(
     has_fix: bool,
     days_known: Optional[int],
 ) -> float:
-    """
-    Calculate fix impact score based on severity, reach, and threat intelligence.
-
-    Factors considered (in order of importance):
-    1. KEV with ransomware usage (highest priority)
-    2. KEV with overdue remediation deadline
-    3. Any KEV entry (actively exploited)
-    4. High EPSS score (>10% exploitation probability)
-    5. CVSS severity distribution
-    6. Number of affected projects (blast radius)
-    7. Fix availability (prefer fixable issues)
-    8. Days known (older = more urgent)
-    """
-    # Base score from severity (weighted) - severity_counts may use lowercase keys
+    """Calculate fix impact score based on severity, reach, and threat intelligence."""
+    # severity_counts may use lowercase or original-case keys
     severity_score = sum(
         severity_counts.get(sev.lower(), severity_counts.get(sev, 0)) * weight
         for sev, weight in SEVERITY_WEIGHTS.items()
     )
 
-    # Reach multiplier (how many projects affected)
     reach_multiplier = min(affected_projects, IMPACT_REACH_MULTIPLIER_CAP)
     base_impact = float(severity_score * reach_multiplier)
 
-    # KEV Boost (strongest signal - actively exploited)
     base_impact *= _calculate_kev_boost(enrichment_data)
-
-    # EPSS Boost (probability of exploitation)
     base_impact *= _calculate_epss_boost(enrichment_data.max_epss)
-
-    # Exploit maturity boost
     base_impact *= EXPLOIT_MATURITY_BOOST.get(enrichment_data.exploit_maturity, 1.0)
 
-    # Fix availability boost (prioritize fixable issues)
     if has_fix:
         base_impact *= IMPACT_FIX_AVAILABLE_BOOST
 
-    # Age factor (older vulnerabilities slightly higher priority)
     if days_known and days_known > DAYS_KNOWN_OVERDUE_THRESHOLD:
         base_impact *= IMPACT_AGE_BOOST
 
@@ -370,19 +278,7 @@ def count_severities(severities: List[Optional[str]]) -> Dict[str, int]:
 def build_findings_severity_map(
     findings: List[Any],
 ) -> Dict[str, Dict[str, int]]:
-    """
-    Build a map of component names to their severity counts.
-
-    Args:
-        findings: List of finding documents (can be Pydantic models or dicts)
-
-    Returns:
-        Dict mapping component name to severity counts:
-        {
-            "lodash": {"critical": 1, "high": 2, "medium": 0, "low": 0, "total": 3},
-            ...
-        }
-    """
+    """Map component names to their severity counts."""
     findings_map: Dict[str, Dict[str, int]] = {}
 
     for finding in findings:
@@ -415,20 +311,7 @@ def build_hotspot_priority_reasons(
     has_fix: bool,
     days_until_due: Optional[int],
 ) -> List[str]:
-    """
-    Build priority reasons for vulnerability hotspots.
-
-    Simplified version of build_priority_reasons() for hotspot display.
-
-    Args:
-        enrichment_data: CVE enrichment data from process_cve_enrichments()
-        severity_counts: Dict with critical, high, medium, low counts
-        has_fix: Whether a fix is available
-        days_until_due: Days until KEV deadline (negative = overdue)
-
-    Returns:
-        List of priority reason strings
-    """
+    """Build priority reasons for vulnerability hotspots."""
     reasons = []
 
     if enrichment_data.kev_ransomware_use:
@@ -460,22 +343,9 @@ async def gather_cross_project_data(
     current_project_id: str,
     db: AsyncIOMotorDatabase,
 ) -> Optional[Dict[str, Any]]:
-    """
-    Gather cross-project vulnerability and dependency data.
+    """Gather cross-project vulnerability and dependency data for shared-vuln analysis.
 
-    Used for identifying shared vulnerabilities across projects.
-
-    Args:
-        user_project_ids: All project IDs the user has access to
-        current_project_id: The project being analyzed (excluded from results)
-        db: Database connection
-
-    Returns:
-        Dict with cross-project data or None if user has only one project:
-        {
-            "projects": [...],
-            "total_projects": int
-        }
+    Returns None if the user has one project or fewer.
     """
     from app.repositories import (
         DependencyRepository,
@@ -497,17 +367,15 @@ async def gather_cross_project_data(
         "total_projects": len(user_project_ids),
     }
 
-    # Get other projects (limit to 20 for performance)
+    # Cap at 20 other projects for performance
     other_project_ids = [pid for pid in user_project_ids if pid != current_project_id][:20]
 
-    # Batch fetch: Get all projects info at once
     other_projects = await project_repo.find_many_with_scan_id(
         {"_id": {"$in": other_project_ids}},
         limit=len(other_project_ids),
     )
     project_info_map = {p.id: p for p in other_projects}
 
-    # Resolve scan IDs excluding deleted branches
     resolved_scans = await _resolve_active_scan_ids(other_projects, db)
 
     scan_id_to_project: Dict[str, str] = {}
@@ -519,14 +387,12 @@ async def gather_cross_project_data(
     if not other_scan_ids:
         return cross_project_data
 
-    # Batch fetch: Get all scans at once for stats
     other_scans = await scan_repo.find_many_with_stats(
         {"_id": {"$in": other_scan_ids}},
         limit=len(other_scan_ids),
     )
     scan_stats_map = {s.id: s.stats for s in other_scans if s.stats}
 
-    # Batch fetch: Get CVEs for all scans via aggregation
     cve_pipeline: List[Dict[str, Any]] = [
         {
             MONGO_MATCH: {
@@ -544,7 +410,6 @@ async def gather_cross_project_data(
     cve_results = await finding_repo.aggregate(cve_pipeline)
     scan_cves_map = {r["_id"]: [c for c in r["cves"] if c] for r in cve_results}
 
-    # Batch fetch: Get packages for all scans via aggregation
     pkg_pipeline: List[Dict[str, Any]] = [
         {MONGO_MATCH: {"scan_id": {"$in": other_scan_ids}}},
         {
@@ -558,7 +423,6 @@ async def gather_cross_project_data(
     pkg_results = await dep_repo.aggregate(pkg_pipeline)
     scan_pkgs_map = {r["_id"]: r["packages"] for r in pkg_results}
 
-    # Build cross-project data from batch results
     for scan_id, proj_id in scan_id_to_project.items():
         proj_info = project_info_map.get(proj_id)
         stats = scan_stats_map.get(scan_id)

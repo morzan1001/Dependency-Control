@@ -26,10 +26,8 @@ describe("WebhookManager", () => {
       />,
     );
 
-    // Open the create dialog
     fireEvent.click(screen.getByRole("button", { name: /Add Webhook/i }));
 
-    // All 7 event labels must be present
     expect(screen.getByLabelText(/Scan completed/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Vulnerability found/i)).toBeInTheDocument();
     expect(screen.getByLabelText(/Analysis failed/i)).toBeInTheDocument();

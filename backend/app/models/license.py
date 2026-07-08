@@ -1,8 +1,4 @@
-"""
-License Models
-
-Contains data classes and enums for license compliance analysis.
-"""
+"""Data classes and enums for license compliance analysis."""
 
 from dataclasses import dataclass, field
 from enum import Enum

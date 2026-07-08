@@ -46,7 +46,6 @@ describe("WaivedFindingsSection", () => {
       <WaivedFindingsSection scanId="s1" projectId="p1" category="security" />,
     );
 
-    // The probe call settles first; section then decides to render nothing.
     await waitFor(() => {
       expect(scanApi.getFindings).toHaveBeenCalled();
     });
@@ -59,7 +58,6 @@ describe("WaivedFindingsSection", () => {
     renderWithProviders(<WaivedFindingsSection scanId="s1" projectId="p1" category="security" />);
 
     expect(await screen.findByText(/Waived findings/i)).toBeInTheDocument();
-    // The count is exposed for transparency.
     expect(screen.getByText(/\b3\b/)).toBeInTheDocument();
   });
 

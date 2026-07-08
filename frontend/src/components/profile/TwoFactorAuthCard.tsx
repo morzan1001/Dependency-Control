@@ -22,7 +22,6 @@ export function TwoFactorAuthCard({ user }: TwoFactorAuthCardProps) {
 
   const handleSetupClose = () => {
     setIsSetupOpen(false);
-    // Clear sensitive data when dialog closes
     setSetupData(null);
   };
 
@@ -39,7 +38,6 @@ export function TwoFactorAuthCard({ user }: TwoFactorAuthCardProps) {
     }
   });
 
-  // Check if user authenticates via external provider (OIDC)
   const isOidcUser = user?.auth_provider && user.auth_provider !== 'local';
 
   return (
@@ -51,7 +49,6 @@ export function TwoFactorAuthCard({ user }: TwoFactorAuthCardProps) {
         </CardHeader>
         <CardContent className="space-y-4">
           {isOidcUser ? (
-            // OIDC users cannot configure local 2FA
             <div className="flex items-center justify-between p-4 border rounded-lg bg-muted/50">
               <div className="flex items-center gap-3">
                 <div className="p-2 bg-blue-100 dark:bg-blue-900/30 rounded-full">
@@ -71,7 +68,6 @@ export function TwoFactorAuthCard({ user }: TwoFactorAuthCardProps) {
               </span>
             </div>
           ) : (
-            // Local users can configure 2FA
             <div className="flex items-center justify-between p-4 border rounded-lg">
               <div className="flex items-center gap-3">
                 {user?.totp_enabled ? (

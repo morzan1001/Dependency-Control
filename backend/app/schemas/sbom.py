@@ -1,9 +1,4 @@
-"""
-SBOM Schema Definitions
-
-Pydantic models for normalized SBOM representations.
-Supports CycloneDX, SPDX, and Syft formats.
-"""
+"""Pydantic models for normalized SBOM representations (CycloneDX, SPDX, Syft)."""
 
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -80,7 +75,6 @@ class ParsedDependency(BaseModel):
     properties: Dict[str, str] = Field(default_factory=dict)
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary. Alias for model_dump() for backward compatibility."""
         return self.model_dump()
 
 

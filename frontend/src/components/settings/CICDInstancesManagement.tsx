@@ -160,7 +160,6 @@ export function CICDInstancesManagement() {
     [gitlabData, githubData]
   );
 
-  // GitLab mutations
   const createGitLabMutation = useMutation({
     mutationFn: (data: GitLabInstanceCreate) => gitlabInstancesApi.create(data),
     onSuccess: () => {
@@ -218,7 +217,6 @@ export function CICDInstancesManagement() {
     },
   });
 
-  // GitHub mutations
   const createGitHubMutation = useMutation({
     mutationFn: (data: GitHubInstanceCreate) => githubInstancesApi.create(data),
     onSuccess: () => {
@@ -529,7 +527,6 @@ export function CICDInstancesManagement() {
         )}
       </CardContent>
 
-      {/* Create Dialog */}
       <Dialog open={isCreateDialogOpen} onOpenChange={(open) => { if (!open) closeCreateDialog(); }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -550,7 +547,6 @@ export function CICDInstancesManagement() {
         </DialogContent>
       </Dialog>
 
-      {/* Edit Dialog */}
       <Dialog open={isEditDialogOpen} onOpenChange={(open) => { if (!open) closeEditDialog(); }}>
         <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
@@ -576,7 +572,6 @@ export function CICDInstancesManagement() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete Confirmation */}
       <Dialog
         open={deleteInstance !== null}
         onOpenChange={() => setDeleteInstance(null)}
@@ -607,7 +602,6 @@ export function CICDInstancesManagement() {
   );
 }
 
-// Form component with conditional fields based on instance type
 function InstanceForm({
   formData,
   setFormData,
@@ -621,7 +615,6 @@ function InstanceForm({
 }>) {
   return (
     <div className="space-y-4">
-      {/* Type selector (only on create) */}
       {showTypeSelector && (
         <div className="grid gap-2">
           <Label>Provider Type *</Label>
@@ -642,7 +635,6 @@ function InstanceForm({
         </div>
       )}
 
-      {/* Type badge (on edit) */}
       {isEdit && (
         <div className="flex items-center gap-2">
           <Label>Provider Type</Label>
@@ -652,7 +644,6 @@ function InstanceForm({
         </div>
       )}
 
-      {/* Common fields */}
       <div className="grid gap-2">
         <Label htmlFor="ci-name">Name *</Label>
         <Input
@@ -681,7 +672,6 @@ function InstanceForm({
         )}
       </div>
 
-      {/* GitHub-specific: Web URL */}
       {formData.type === "github" && (
         <div className="grid gap-2">
           <Label htmlFor="ci-github-url">GitHub Web URL</Label>
@@ -708,7 +698,6 @@ function InstanceForm({
         />
       </div>
 
-      {/* Access Token */}
       <div className="grid gap-2">
         <Label htmlFor="ci-access-token">
           Access Token {isEdit ? "(leave empty to keep current)" : ""}
@@ -740,7 +729,6 @@ function InstanceForm({
         </p>
       </div>
 
-      {/* Toggle switches */}
       <div className="space-y-4 pt-2">
         <div className="flex items-center justify-between">
           <Label htmlFor="ci-is-active">Active</Label>
@@ -753,7 +741,6 @@ function InstanceForm({
           />
         </div>
 
-        {/* GitLab-specific: Default Instance */}
         {formData.type === "gitlab" && (
           <div className="flex items-center justify-between">
             <Label htmlFor="ci-is-default">Default Instance</Label>
@@ -783,7 +770,6 @@ function InstanceForm({
           />
         </div>
 
-        {/* GitLab-specific: Sync Teams */}
         {formData.type === "gitlab" && (
           <>
             <div className="flex items-center justify-between">

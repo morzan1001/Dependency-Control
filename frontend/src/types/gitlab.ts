@@ -1,9 +1,3 @@
-/**
- * GitLab Instance Types
- *
- * Types for multi-GitLab instance management
- */
-
 export interface GitLabInstance {
   id: string;
   name: string;

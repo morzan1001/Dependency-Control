@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useCallback, useMemo } from 'react'
+import React, { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { jwtDecode } from 'jwt-decode'
 
@@ -35,8 +35,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return checkPermission(permissions, permission)
   }, [permissions])
 
+  // Ref keeps the latest logout so the mount-only init effect stays stable across navigation.
+  const logoutRef = useRef(logout)
   useEffect(() => {
-    setLogoutCallback(logout)
+    logoutRef.current = logout
+  }, [logout])
+
+  useEffect(() => {
+    setLogoutCallback(() => logoutRef.current())
 
     const initAuth = async () => {
       const token = localStorage.getItem('token')
@@ -61,7 +67,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     initAuth()
-  }, [logout])
+    // Mount-only: logout is read via logoutRef so navigation identity changes don't re-fire getMe.
+  }, [])
 
   const login = useCallback((accessToken: string, refreshToken: string, skipNavigation = false) => {
     localStorage.setItem('token', accessToken)
@@ -72,7 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const perms = decoded.permissions || []
       setPermissions(perms)
 
-      // Check if this is a limited token for 2FA setup
+      // Limited token issued for 2FA setup only.
       if (perms.length === 1 && perms[0] === 'auth:setup_2fa') {
         setIsAuthenticated(true)
         if (!skipNavigation) {

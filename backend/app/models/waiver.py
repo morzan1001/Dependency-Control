@@ -12,12 +12,7 @@ from app.models.types import PyObjectId
 
 
 def is_waiver_active(expiration_date: Optional[datetime], now: Optional[datetime] = None) -> bool:
-    """Return True if a waiver with the given expiration_date is still active.
-
-    Mirrors ``WaiverRepository._non_expired_filter`` so server-side reads,
-    Pydantic responses and the apply path share one rule. Tolerates
-    timezone-naive expiration_dates (treats them as UTC).
-    """
+    """Return True if the waiver is still active. Mirrors WaiverRepository._non_expired_filter; treats naive datetimes as UTC."""
     if expiration_date is None:
         return True
     reference = now or datetime.now(timezone.utc)
@@ -44,7 +39,7 @@ class Waiver(CreatedAtModel):
     rule_id: Optional[str] = None  # e.g. "javascript_lang_insufficiently_random_values"
     match: Optional[MatchSignature] = None  # snapshot of the matched finding's signature
     last_eval_scan_id: Optional[str] = None  # scan the signature path last evaluated this waiver against
-    last_match_count: Optional[int] = None   # #findings this waiver currently suppresses; None = not yet evaluated
+    last_match_count: Optional[int] = None  # #findings this waiver currently suppresses; None = not yet evaluated
 
     reason: str
     status: str = WAIVER_STATUS_ACCEPTED_RISK

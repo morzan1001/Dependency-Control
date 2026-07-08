@@ -11,18 +11,11 @@ class GrypeAnalyzer(CLIAnalyzer):
     cli_command = "grype"
     empty_result_key = "matches"
 
-    # Grype reads its ~1.8 GB vulnerability DB from a shared, read-only GCSFuse
-    # mount (GRYPE_DB_SHARED=true) that the grype-db-updater CronJob refreshes
-    # periodically. During that refresh window — and on occasional transient
-    # GCSFuse read glitches — grype exits non-zero with "failed to load
-    # vulnerability db: database does not exist" even though the rest of the
-    # pipeline (trivy via its remote server, osv) runs cleanly. A quick retry
-    # almost always succeeds, so mirror trivy's retry policy.
+    # Grype's shared read-only vuln DB can briefly disappear during its refresh CronJob;
+    # such transient DB errors almost always succeed on retry.
     max_retries = 3
     retry_delay = 3.0
-    # Large Java SBOMs (~600+ deps) can legitimately need more than the 5-min
-    # CLIAnalyzer default; the successful baseline scans on the affected project
-    # ran up to ~10 min, so cap at 600 s before declaring the run dead.
+    # Large Java SBOMs can exceed the 5-min default.
     cli_timeout = 600
 
     _RETRYABLE_PATTERNS = (
@@ -40,10 +33,8 @@ class GrypeAnalyzer(CLIAnalyzer):
 
     def _is_retryable_error(self, stderr: bytes) -> bool:
         msg = stderr.decode(errors="replace").strip().lower()
-        # A non-zero exit with empty stderr means grype was killed before it
-        # could report anything (signal/OOM) or had its output otherwise
-        # swallowed. Both are transient, so retry instead of surfacing an
-        # empty SCAN-ERROR-grype finding.
+        # Empty stderr on a non-zero exit means grype was killed (signal/OOM) before
+        # reporting; treat as transient rather than surfacing an empty error finding.
         if not msg:
             return True
         return any(p in msg for p in self._RETRYABLE_PATTERNS)
@@ -51,16 +42,8 @@ class GrypeAnalyzer(CLIAnalyzer):
     def _build_command_args(self, sbom_path: str, settings: Optional[Dict[str, Any]]) -> List[str]:
         """Build Grype command arguments.
 
-        The Grype DB path is controlled via GRYPE_DB_CACHE_DIR environment variable,
-        which is set in docker-entrypoint.sh or by the Kubernetes volume mount.
-        No need to set it here - the CLI reads it from the environment.
-
-        ``--quiet`` is intentionally NOT passed: it suppresses grype's stderr,
-        including the fatal "failed to load vulnerability db" message that
-        ``_is_retryable_error`` inspects to decide whether a transient failure
-        is retryable. With ``--quiet`` the stderr arrives empty, the retry never
-        fires, and the failure surfaces as an empty SCAN-ERROR-grype finding.
-        The JSON report goes to stdout regardless, so omitting it is safe.
+        Do not add ``--quiet``: it suppresses the stderr that ``_is_retryable_error``
+        inspects, so transient DB failures would never be retried.
         """
         return [
             "grype",
@@ -133,7 +116,6 @@ class GrypeAnalyzer(CLIAnalyzer):
         return normalized
 
     def _map_severity(self, grype_severity: str) -> str:
-        """Map Grype severity to our Severity enum."""
         return map_vendor_severity(grype_severity)
 
     def _create_message(

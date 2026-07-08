@@ -29,7 +29,6 @@ def test_iso_control_ids_rewritten():
     fw = Iso19790Framework()
     for c in fw.controls:
         assert c.control_id.startswith("ISO-19790-")
-    # Mirror of FIPS controls (ECDSA phantom control removed upstream).
     assert len(fw.controls) >= 4
 
 

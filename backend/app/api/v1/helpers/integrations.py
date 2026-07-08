@@ -1,8 +1,4 @@
-"""
-Integration Helper Functions
-
-Helper functions for external service integrations (Slack, etc.).
-"""
+"""Helper functions for external service integrations (Slack, etc.)."""
 
 import logging
 from typing import Any, Dict
@@ -13,7 +9,6 @@ from app.core.http_utils import InstrumentedAsyncClient
 
 logger = logging.getLogger(__name__)
 
-# Slack API endpoints
 SLACK_OAUTH_URL = "https://slack.com/api/oauth.v2.access"
 
 
@@ -34,27 +29,7 @@ async def exchange_slack_code_for_token(
     client_id: str,
     client_secret: str,
 ) -> Dict[str, Any]:
-    """
-    Exchange a Slack OAuth code for access and refresh tokens.
-
-    Args:
-        code: The OAuth authorization code from Slack callback
-        client_id: Slack application client ID
-        client_secret: Slack application client secret
-
-    Returns:
-        Dict containing token data:
-        {
-            "access_token": str,
-            "refresh_token": str | None,
-            "expires_in": int | None,
-            "team": {...},
-            ...
-        }
-
-    Raises:
-        SlackOAuthError: If the token exchange fails
-    """
+    """Exchange a Slack OAuth code for token data, raising SlackOAuthError on failure."""
     try:
         async with InstrumentedAsyncClient("Slack OAuth", timeout=_SLACK_OAUTH_TIMEOUT) as client:
             response = await client.post(
@@ -110,20 +85,7 @@ async def exchange_slack_code_for_token(
 
 
 def extract_slack_tokens(oauth_response: Dict[str, Any]) -> Dict[str, Any]:
-    """
-    Extract token data from Slack OAuth response.
-
-    Args:
-        oauth_response: The full OAuth response from Slack
-
-    Returns:
-        Dict with extracted token data ready for database update:
-        {
-            "slack_bot_token": str,
-            "slack_refresh_token": str | None,
-            "slack_token_expires_at": float | None,
-        }
-    """
+    """Extract token data from a Slack OAuth response, ready for a database update."""
     import time
 
     update_data: Dict[str, Any] = {

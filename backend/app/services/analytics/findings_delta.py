@@ -1,11 +1,7 @@
-"""
-Findings-delta computation: matches findings across two scans by a
-type-specific semantic key (CVE id, secret pattern hash, SAST rule id, …)
-and produces the unified envelope.
+"""Findings-delta: match findings across two scans by a type-specific semantic key
+(CVE id, secret finding_id, SAST rule id, ...) into the unified envelope.
 
-The on-disk `severity` field is stored UPPERCASE (per the Severity enum);
-the envelope lower-cases it and `_SEVERITY_RANK` keys are lowercase so
-ordering works regardless of the caller's case.
+Stored `severity` is UPPERCASE; the envelope and `_SEVERITY_RANK` keys are lowercase.
 """
 
 from __future__ import annotations
@@ -50,45 +46,96 @@ def _sast_identifier(details: Dict[str, Any]) -> str:
     return f"{rule}:{line}" if line is not None else rule
 
 
-# Each entry returns the type-specific identifier or "" when no stable id
-# is present (callers fall back to the description+found_in hash).
+def _vulnerability_identifier(finding: Dict[str, Any]) -> str:
+    """Identity for an aggregated vulnerability record.
+
+    CVE/advisory ids live in ``details.vulnerabilities[].id`` and version is top-level;
+    key on the sorted id set plus version so adding/dropping a CVE or a version bump reads
+    as a change, not "unchanged".
+    """
+    details = finding.get("details") or {}
+    version = finding.get("version") or ""
+    vulns = details.get("vulnerabilities") or []
+    ids = sorted(str(v.get("id")) for v in vulns if isinstance(v, dict) and v.get("id"))
+    if not ids:
+        # Fall back to flat id fields for the non-aggregated shape.
+        legacy = _first_id(details, "cve_id", "vuln_id")
+        ids = [legacy] if legacy else []
+    if not ids:
+        return ""
+    joined = ",".join(ids)
+    return f"{version}|{joined}" if version else joined
+
+
+def _secret_identifier(finding: Dict[str, Any]) -> str:
+    """Secrets carry a deterministic cross-scan-stable ``finding_id``, so key on it."""
+    return str(finding.get("finding_id") or finding.get("_id") or "")
+
+
+# Extractors reading only ``details``; return "" when no stable id is present.
 _FINDING_TYPE_IDENTIFIER: Dict[str, Callable[[Dict[str, Any]], str]] = {
-    "vulnerability": lambda d: _first_id(d, "cve_id", "vuln_id"),
-    "secret": lambda d: _first_id(d, "pattern_hash", "rule_id"),
     "sast": _sast_identifier,
     "iac": lambda d: _first_id(d, "rule_id"),
     "license": lambda d: _first_id(d, "license_id", "license"),
     "malware": lambda d: _first_id(d, "signature", "rule_id"),
     "eol": lambda d: _first_id(d, "eol_date", "version"),
-    "outdated": lambda d: _first_id(d, "latest_version"),
+    "outdated": lambda d: _first_id(d, "fixed_version"),
+}
+
+# Extractors needing top-level finding fields (version, finding_id), not just details.
+_FINDING_TYPE_IDENTIFIER_FULL: Dict[str, Callable[[Dict[str, Any]], str]] = {
+    "vulnerability": _vulnerability_identifier,
+    "secret": _secret_identifier,
 }
 
 
 def _fallback_identifier(finding: Dict[str, Any]) -> str:
-    """Deterministic hash of description + found_in so an unidentifiable
-    finding at least matches itself across scans if those are stable."""
+    """Hash of description + found_in so an unidentifiable finding matches itself across scans."""
     digest_src = (finding.get("description") or "") + "|" + "|".join(finding.get("found_in") or [])
-    # Non-cryptographic identity hash — collision resistance not required.
     return hashlib.sha1(digest_src.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
 
 def finding_identity_key(finding: Dict[str, Any]) -> Tuple[str, str, str]:
-    """Stable identity for matching the 'same' finding across two scans.
-
-    finding_id is per-scan and unusable; we derive a semantic key from
-    type-specific identifier fields, with a description-hash fallback for
-    finding types that lack a stable identifier in their details dict.
-    """
+    """Stable identity for matching the same finding across two scans (finding_id is per-scan)."""
     ftype = finding.get("type") or ""
     component = finding.get("component") or ""
     details = finding.get("details") or {}
 
-    extractor = _FINDING_TYPE_IDENTIFIER.get(ftype)
-    identifier = extractor(details) if extractor else ""
+    full_extractor = _FINDING_TYPE_IDENTIFIER_FULL.get(ftype)
+    if full_extractor:
+        identifier = full_extractor(finding)
+    else:
+        extractor = _FINDING_TYPE_IDENTIFIER.get(ftype)
+        identifier = extractor(details) if extractor else ""
     if not identifier:
         identifier = _fallback_identifier(finding)
 
     return (ftype, component, identifier)
+
+
+# Fields consumed by finding_identity_key and _to_item. Projecting
+# details.vulnerabilities to .id avoids pulling the full per-CVE payload (hundreds of
+# MB on large scans) into the worker. All keys are inclusions (valid Mongo projection).
+_FETCH_PROJECTION: Dict[str, int] = {
+    "type": 1,
+    "component": 1,
+    "version": 1,
+    "severity": 1,
+    "description": 1,
+    "found_in": 1,
+    "finding_id": 1,
+    "created_at": 1,
+    "details.vulnerabilities.id": 1,
+    "details.cve_id": 1,
+    "details.vuln_id": 1,
+    "details.rule_id": 1,
+    "details.line": 1,
+    "details.license_id": 1,
+    "details.license": 1,
+    "details.signature": 1,
+    "details.eol_date": 1,
+    "details.fixed_version": 1,
+}
 
 
 async def _fetch_scan_findings(
@@ -102,11 +149,29 @@ async def _fetch_scan_findings(
     if finding_type:
         query["type"] = {"$in": list(finding_type)}
     if severity:
-        # Severity enum values are stored UPPERCASE; normalise the
-        # (case-insensitive) caller input here so the $in matches.
+        # Severity is stored UPPERCASE; normalise case-insensitive caller input for $in.
         query["severity"] = {"$in": [s.upper() for s in severity]}
-    cursor = db["findings"].find(query).limit(MAX_FETCH)
+    cursor = db["findings"].find(query, projection=_FETCH_PROJECTION).limit(MAX_FETCH)
     return [doc async for doc in cursor]
+
+
+def _doc_severity(doc: dict) -> str:
+    return (doc.get("severity") or "unknown").lower()
+
+
+def _doc_type(doc: dict) -> str:
+    return doc.get("type") or ""
+
+
+def _item_cve_id(details: Dict[str, Any]) -> Optional[str]:
+    """Best display CVE id: flat ``details.cve_id`` else first ``details.vulnerabilities[].id``."""
+    cve = details.get("cve_id")
+    if cve:
+        return str(cve)
+    for entry in details.get("vulnerabilities") or []:
+        if isinstance(entry, dict) and entry.get("id"):
+            return str(entry["id"])
+    return None
 
 
 def _to_item(doc: dict, change: str) -> FindingDeltaItem:
@@ -115,13 +180,11 @@ def _to_item(doc: dict, change: str) -> FindingDeltaItem:
     return FindingDeltaItem(
         change=change,
         finding_id=str(doc.get("finding_id") or doc.get("_id") or ""),
-        finding_type=doc.get("type") or "",
-        # Normalise to lowercase so the envelope is consistent regardless of
-        # how the underlying storage cased the value.
-        severity=(doc.get("severity") or "unknown").lower(),
+        finding_type=_doc_type(doc),
+        severity=_doc_severity(doc),
         title=doc.get("description") or "",
         component=doc.get("component"),
-        cve_id=details.get("cve_id"),
+        cve_id=_item_cve_id(details),
         file_path=(found_in[0] if found_in else None),
         first_seen=doc.get("created_at"),
     )
@@ -139,12 +202,7 @@ async def compute_findings_delta(
     severity: Optional[List[str]],
     finding_type: Optional[List[str]],
 ) -> ScanDeltaResponse:
-    """Compute the delta between two scans' findings.
-
-    Fetches findings for both scans (optionally filtered by type/severity),
-    matches them via the semantic identity key, and produces an envelope
-    summarising added/removed/unchanged counts plus a paginated item list.
-    """
+    """Compute the delta between two scans' findings as a paginated envelope."""
     from_docs = await _fetch_scan_findings(db, project_id, from_scan, finding_type, severity)
     to_docs = await _fetch_scan_findings(db, project_id, to_scan, finding_type, severity)
 
@@ -155,21 +213,28 @@ async def compute_findings_delta(
     removed_keys = from_map.keys() - to_map.keys()
     unchanged_count = len(to_map.keys() & from_map.keys())
 
+    # Breakdowns cover the full added+removed populations so they reconcile with
+    # totals.added + totals.removed, independent of the `change` filter that only scopes
+    # the item list. Count from raw docs to avoid materialising MAX_FETCH Pydantic items.
+    by_severity: Dict[str, int] = {}
+    by_type: Dict[str, int] = {}
+    for k in added_keys:
+        doc = to_map[k]
+        by_severity[_doc_severity(doc)] = by_severity.get(_doc_severity(doc), 0) + 1
+        by_type[_doc_type(doc)] = by_type.get(_doc_type(doc), 0) + 1
+    for k in removed_keys:
+        doc = from_map[k]
+        by_severity[_doc_severity(doc)] = by_severity.get(_doc_severity(doc), 0) + 1
+        by_type[_doc_type(doc)] = by_type.get(_doc_type(doc), 0) + 1
+
+    # Build Pydantic items only for the change-filtered set that is returned.
     items: List[FindingDeltaItem] = []
     if change in (None, "all", "added"):
         items.extend(_to_item(to_map[k], "added") for k in added_keys)
     if change in (None, "all", "removed"):
         items.extend(_to_item(from_map[k], "removed") for k in removed_keys)
 
-    by_severity: Dict[str, int] = {}
-    by_type: Dict[str, int] = {}
-    for item in items:
-        by_severity[item.severity] = by_severity.get(item.severity, 0) + 1
-        by_type[item.finding_type] = by_type.get(item.finding_type, 0) + 1
-
-    # Stable sort: added before removed, then by severity (critical first), then title,
-    # then finding_id as a final tiebreaker so pagination is deterministic regardless
-    # of set-iteration order.
+    # Stable sort (added first, then severity, title, finding_id) for deterministic pagination.
     items.sort(
         key=lambda i: (
             i.change != "added",

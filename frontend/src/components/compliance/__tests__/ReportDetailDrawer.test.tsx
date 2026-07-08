@@ -7,7 +7,7 @@ import type { ComplianceReportMeta } from "@/types/compliance";
 
 vi.mock("@/api/compliance", () => ({
   deleteReport: vi.fn().mockResolvedValue(undefined),
-  downloadReportUrl: (id: string) => `/api/v1/compliance/reports/${id}/download`,
+  downloadReport: vi.fn().mockResolvedValue(undefined),
 }));
 
 function withClient(ui: React.ReactElement) {
@@ -37,6 +37,15 @@ describe("ReportDetailDrawer", () => {
     expect(deleteBtn).toBeInTheDocument();
     fireEvent.click(deleteBtn);
     expect(await screen.findByText(/Delete this report\?/i)).toBeInTheDocument();
+  });
+
+  it("calls downloadReport with the report id when the download button is clicked", async () => {
+    const { downloadReport } = await import("@/api/compliance");
+    withClient(<ReportDetailDrawer report={sampleReport} onClose={() => {}} />);
+    const downloadBtn = await screen.findByRole("button", { name: /Download/i });
+    fireEvent.click(downloadBtn);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(downloadReport).toHaveBeenCalledWith("r1", "report.pdf");
   });
 
   it("calls deleteReport when confirmed", async () => {

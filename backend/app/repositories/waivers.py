@@ -20,8 +20,6 @@ def _non_expired_filter(now: Optional[datetime] = None) -> Dict[str, Any]:
 
 
 class WaiverRepository:
-    """Repository for waiver database operations."""
-
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self.collection = db.waivers
@@ -34,7 +32,6 @@ class WaiverRepository:
         return None
 
     async def get_raw_by_id(self, waiver_id: str) -> Optional[Dict[str, Any]]:
-        """Get raw waiver document by ID."""
         with track_db_operation(_COL, "find_one"):
             return await self.collection.find_one({"_id": waiver_id})
 
@@ -64,19 +61,7 @@ class WaiverRepository:
         skip: int = 0,
         limit: int = 1000,
     ) -> List[Dict[str, Any]]:
-        """Find waivers for a project.
-
-        Returns raw dicts (not Waiver models) for performance in bulk operations.
-        When listing many waivers, avoiding model instantiation reduces overhead.
-
-        Args:
-            project_id: The project ID to filter waivers by.
-            skip: Number of documents to skip (for pagination).
-            limit: Maximum number of documents to return.
-
-        Returns:
-            List[Dict[str, Any]]: Raw MongoDB documents as dictionaries.
-        """
+        """Returns raw dicts (not Waiver models) to avoid model overhead in bulk listings."""
         with track_db_operation(_COL, "find"):
             cursor = self.collection.find({"project_id": project_id}).skip(skip).limit(limit)
             return await cursor.to_list(limit)
@@ -89,22 +74,7 @@ class WaiverRepository:
         sort_by: str = "created_at",
         sort_order: int = -1,
     ) -> List[Dict[str, Any]]:
-        """Find multiple waivers matching query.
-
-        Returns raw dicts (not Waiver models) for performance in bulk operations.
-        This method is used for paginated listings and search results where
-        constructing full Waiver model instances would add unnecessary overhead.
-
-        Args:
-            query: MongoDB query filter.
-            skip: Number of documents to skip (for pagination).
-            limit: Maximum number of documents to return.
-            sort_by: Field name to sort by.
-            sort_order: Sort direction (1 for ascending, -1 for descending).
-
-        Returns:
-            List[Dict[str, Any]]: Raw MongoDB documents as dictionaries.
-        """
+        """Returns raw dicts (not Waiver models) to avoid model overhead in bulk listings."""
         with track_db_operation(_COL, "find"):
             cursor = self.collection.find(query).sort(sort_by, sort_order).skip(skip).limit(limit)
             return await cursor.to_list(limit)
@@ -114,19 +84,7 @@ class WaiverRepository:
             return await self.collection.count_documents(query or {})
 
     async def find_active_for_project(self, project_id: str, include_global: bool = True) -> List[Waiver]:
-        """
-        Find all active (non-expired) waivers for a project.
-
-        Includes both project-specific and global waivers (project_id=None).
-        This is the standard method used by scan_manager and stats modules.
-
-        Args:
-            project_id: Project ID to find waivers for
-            include_global: Whether to include global waivers (default: True)
-
-        Returns:
-            List of validated Waiver model instances.
-        """
+        """Active (non-expired) waivers for a project; include_global also matches global waivers (project_id=None)."""
         now = datetime.now(timezone.utc)
 
         project_filter = (
@@ -142,19 +100,6 @@ class WaiverRepository:
         return [Waiver(**doc) for doc in docs]
 
     async def find_by_finding(self, project_id: str, finding_id: str) -> Optional[Waiver]:
-        """Find waiver for a specific finding.
-
-        Returns a Waiver model instance (not a raw dict) because this is a
-        single-item lookup where the caller typically needs the full validated
-        model for business logic (e.g., checking expiration, applying waiver).
-
-        Args:
-            project_id: The project ID to scope the search.
-            finding_id: The finding ID to match.
-
-        Returns:
-            Optional[Waiver]: The Waiver model instance, or None if not found.
-        """
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one(
                 {

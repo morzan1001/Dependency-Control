@@ -13,7 +13,7 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
-from app.core.constants import get_severity_value
+from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
 from app.core.permissions import Permissions
 from app.repositories import (
     DependencyRepository,
@@ -141,7 +141,7 @@ async def search_dependencies_advanced(
         "name": "name",
         "version": "version",
         "type": "type",
-        "project_name": "project_id",  # close enough — sorts by project_id, not name.
+        "project_name": "project_id",  # sorts by project_id, not name
         "license": "license",
         "direct": "direct",
     }
@@ -199,16 +199,15 @@ def _get_description(vuln: dict, finding: Any) -> str | None:
 
 
 def _aggregate_kev_status(details: Dict[str, Any], nested_vulns: List[Dict[str, Any]]) -> tuple[bool, bool, Any]:
-    """Return (in_kev_status, kev_ransomware, kev_due_date) merged from finding details
-    and nested vulnerabilities."""
-    in_kev_status = details.get("kev", False)
-    kev_ransomware = details.get("kev_ransomware", False)
+    """Return (in_kev_status, kev_ransomware, kev_due_date) merged across nested vulns."""
+    in_kev_status = details.get(DETAILS_KEY_IN_KEV, False)
+    kev_ransomware = details.get(DETAILS_KEY_KEV_RANSOMWARE, False)
     kev_due_date = details.get("kev_due_date")
 
     for vuln in nested_vulns:
-        if vuln.get("kev"):
+        if vuln.get(DETAILS_KEY_IN_KEV):
             in_kev_status = True
-        if vuln.get("kev_ransomware"):
+        if vuln.get(DETAILS_KEY_KEV_RANSOMWARE):
             kev_ransomware = True
         if vuln.get("kev_due_date") and (not kev_due_date or vuln["kev_due_date"] < kev_due_date):
             kev_due_date = vuln["kev_due_date"]
@@ -285,8 +284,8 @@ def _build_nested_vuln_result(
         cvss_score=(vuln.get("cvss_score") or details.get("cvss_score")),
         epss_score=(vuln.get("epss_score") or details.get("epss_score")),
         epss_percentile=(vuln.get("epss_percentile") or details.get("epss_percentile")),
-        in_kev=vuln.get("kev", False) or in_kev_status,
-        kev_ransomware=(vuln.get("kev_ransomware", False) or kev_ransomware),
+        in_kev=vuln.get(DETAILS_KEY_IN_KEV, False) or in_kev_status,
+        kev_ransomware=(vuln.get(DETAILS_KEY_KEV_RANSOMWARE, False) or kev_ransomware),
         kev_due_date=vuln.get("kev_due_date") or kev_due_date,
         component=finding.component or "",
         version=finding.version or "",
@@ -399,10 +398,7 @@ async def search_vulnerabilities(
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> VulnerabilitySearchResponse:
-    """Search for vulnerabilities/CVEs across accessible projects.
-
-    Searches finding id, aliases, nested vulnerability ids, and description text.
-    """
+    """Search vulnerabilities across accessible projects by id, aliases, nested ids, and description."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
     accessible_project_ids = await get_user_project_ids(current_user, db)

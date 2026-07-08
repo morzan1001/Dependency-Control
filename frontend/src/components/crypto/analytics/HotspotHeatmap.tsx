@@ -1,6 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { getCryptoHotspots } from "@/api/cryptoAnalytics";
+import { useProjectsDropdown } from "@/hooks/queries/use-projects";
 import type { AnalyticsScope, GroupingDimension } from "@/types/cryptoAnalytics";
+import { heatmapBgClass, heatmapCell } from "./heatmap-utils";
+
+const MAX_COLUMNS = 30;
 
 interface Props {
   scope: AnalyticsScope;
@@ -9,28 +13,30 @@ interface Props {
   scanId?: string;
 }
 
-function bgClass(count: number, max: number): string {
-  if (count === 0) return "bg-muted/30";
-  const ratio = count / Math.max(max, 1);
-  if (ratio >= 0.8) return "bg-red-500/80 text-white";
-  if (ratio >= 0.5) return "bg-orange-500/70";
-  if (ratio >= 0.25) return "bg-yellow-500/50";
-  return "bg-yellow-500/20";
-}
-
 export function HotspotHeatmap({ scope, scopeId, groupBy, scanId }: Props) {
   const { data, isLoading, isError } = useQuery({
     queryKey: ["crypto-hotspots", scope, scopeId, groupBy, scanId],
     queryFn: () => getCryptoHotspots({ scope, scopeId, groupBy, scanId }),
   });
+  const { data: projectsData } = useProjectsDropdown();
 
   if (isLoading) return <div className="p-4 text-sm text-muted-foreground">Loading heatmap…</div>;
   if (isError || !data) return <div className="p-4 text-sm text-destructive">Failed to load heatmap data.</div>;
 
+  // Capped so a tenant with many projects/locations never renders an unbounded grid.
   const columns =
     scope === "project"
-      ? Array.from(new Set(data.items.flatMap((e) => e.locations))).slice(0, 30)
-      : Array.from(new Set(data.items.flatMap((e) => e.project_ids)));
+      ? Array.from(new Set(data.items.flatMap((e) => e.locations))).slice(0, MAX_COLUMNS)
+      : Array.from(new Set(data.items.flatMap((e) => e.project_ids))).slice(0, MAX_COLUMNS);
+
+  const projectNameById = new Map((projectsData?.items ?? []).map((p) => [p.id, p.name]));
+
+  const columnLabel = (c: string): string => {
+    if (scope === "project") return c;
+    const name = projectNameById.get(c);
+    if (name) return name;
+    return c.length > 10 ? `${c.slice(0, 8)}…` : c;
+  };
 
   const max = Math.max(...data.items.map((e) => e.asset_count), 1);
 
@@ -41,8 +47,12 @@ export function HotspotHeatmap({ scope, scopeId, groupBy, scanId }: Props) {
           <tr>
             <th className="sticky left-0 bg-background p-1 text-left">Key</th>
             {columns.map((c) => (
-              <th key={c} className="p-1 font-mono text-muted-foreground whitespace-nowrap">
-                {c}
+              <th
+                key={c}
+                className="p-1 font-mono text-muted-foreground whitespace-nowrap"
+                title={scope === "project" ? c : (projectNameById.get(c) ?? c)}
+              >
+                {columnLabel(c)}
               </th>
             ))}
           </tr>
@@ -50,20 +60,18 @@ export function HotspotHeatmap({ scope, scopeId, groupBy, scanId }: Props) {
         <tbody>
           {data.items.map((e) => (
             <tr key={e.key}>
-              <td className="sticky left-0 bg-background p-1 font-mono">{e.key}</td>
+              <td className="sticky left-0 bg-background p-1 font-mono whitespace-nowrap">
+                {e.key} <span className="text-muted-foreground">({e.asset_count})</span>
+              </td>
               {columns.map((c) => {
-                const present =
-                  scope === "project"
-                    ? e.locations.includes(c)
-                    : e.project_ids.includes(c);
-                const count = present ? e.asset_count : 0;
+                const cell = heatmapCell(e, c, scope, max);
                 return (
                   <td
                     key={c}
-                    className={`p-1 text-center min-w-6 ${bgClass(count, max)}`}
-                    title={`${e.key} × ${c}: ${count}`}
+                    className={`p-1 text-center min-w-6 ${heatmapBgClass(cell.present, cell.intensityRatio)}`}
+                    title={cell.title}
                   >
-                    {count > 0 ? count : ""}
+                    {cell.label}
                   </td>
                 );
               })}

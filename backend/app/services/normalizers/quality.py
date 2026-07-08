@@ -8,19 +8,14 @@ if TYPE_CHECKING:
 
 
 def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
-    """
-    Process OpenSSF Scorecard results and package metadata from deps_dev scanner.
-    Also stores scorecard data for component enrichment.
-    """
-    # Process package metadata (not findings, but enrichment data)
+    """Turn deps_dev OpenSSF Scorecard results into findings and enrichment data."""
+    # Package metadata is enrichment data, not findings.
     for key, metadata in (result.get("package_metadata") or {}).items():
-        # Populate the DependencyEnrichment structure
         name = metadata.get("name", "")
         version = metadata.get("version", "")
         if name and version:
             aggregator.enrich_from_deps_dev(name, version, metadata)
 
-    # Process scorecard issues (these become findings)
     for item in result.get("scorecard_issues") or []:
         scorecard = item.get("scorecard") or {}
         overall = scorecard.get("overallScore", 0)
@@ -30,10 +25,8 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], 
         component = safe_get(item, "component", "unknown")
         version = item.get("version") or ""
 
-        # Store scorecard data for component enrichment
         component_key = f"{component}@{version}" if version else component
 
-        # Store in aggregator's scorecard cache (use public method if available)
         scorecard_data = {
             "overall_score": overall,
             "failed_checks": failed_checks,
@@ -42,13 +35,8 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], 
             "checks": scorecard.get("checks") or [],
         }
 
-        # Use public property if available, otherwise fall back to private
-        if hasattr(aggregator, "scorecard_cache"):
-            aggregator.scorecard_cache[component_key] = scorecard_data
-        elif hasattr(aggregator, "_scorecard_cache"):
-            aggregator._scorecard_cache[component_key] = scorecard_data
+        aggregator.record_scorecard(component_key, scorecard_data)
 
-        # Determine severity based on score and critical issues
         if overall < 3.0 or "Maintained" in critical_issues or "Vulnerabilities" in critical_issues:
             severity = Severity.HIGH
         elif overall < 5.0 or critical_issues:
@@ -56,7 +44,6 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], 
         else:
             severity = Severity.LOW
 
-        # Build detailed description
         description_parts = [f"OpenSSF Scorecard score: {overall:.1f}/10"]
 
         if critical_issues:
@@ -70,7 +57,6 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], 
 
         description = ". ".join(description_parts)
 
-        # Build recommendation based on issues
         recommendations: List[str] = []
         for check in failed_checks:
             check_name = check.get("name", "")
@@ -119,7 +105,6 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], 
 def normalize_typosquatting(
     aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
 ) -> None:
-    """Normalize typosquatting detection findings."""
     for item in result.get("typosquatting_issues") or []:
         similarity = item.get("similarity", 0)
         imitated = item.get("imitated_package") or "unknown"
@@ -128,7 +113,7 @@ def normalize_typosquatting(
         aggregator.add_finding(
             Finding(
                 id=build_finding_id("TYPO", component),
-                type=FindingType.MALWARE,  # Typosquatting is a form of malware/attack
+                type=FindingType.MALWARE,  # typosquatting is an attack, not a quality issue
                 severity=Severity.CRITICAL,
                 component=component,
                 version=item.get("version"),
@@ -146,19 +131,17 @@ def normalize_typosquatting(
 def normalize_maintainer_risk(
     aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
 ) -> None:
-    """Normalize maintainer risk results into findings."""
     for item in result.get("maintainer_issues") or []:
         risks: List[Dict[str, Any]] = item.get("risks") or []
         component = safe_get(item, "component", "unknown")
 
-        # Create a combined description from all risks
         risk_messages = [r.get("message", "") for r in risks if r.get("message")]
         description = "; ".join(risk_messages) if risk_messages else "Maintainer risk detected"
 
         aggregator.add_finding(
             Finding(
                 id=build_finding_id("MAINT", component),
-                type=FindingType.QUALITY,  # Supply chain quality issue
+                type=FindingType.QUALITY,
                 severity=safe_severity(item.get("severity"), default=Severity.MEDIUM),
                 component=component,
                 version=item.get("version"),

@@ -13,6 +13,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip"
 import { formatEpssScore } from '@/lib/finding-utils'
+import { EpssCell, KevCell } from '@/components/findings/enrichment-cells'
 
 interface ImpactAnalysisProps {
   onSelectComponent?: (result: ImpactAnalysisResult) => void;
@@ -21,7 +22,6 @@ interface ImpactAnalysisProps {
 export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisProps>) {
   const { data: results, isLoading } = useImpactAnalysis(20)
 
-  // Calculate max impact score for relative sizing
   const maxImpact = results?.reduce((max, r) => Math.max(max, r.fix_impact_score), 0) || 1
 
   const getExploitMaturityColor = (maturity?: string) => {
@@ -36,7 +36,6 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
     return colors[maturity] || 'text-muted-foreground'
   }
 
-  // Helper to render priority reason with icon instead of emoji
   const renderPriorityReason = (reason: string) => {
     const [type, ...rest] = reason.includes(':') ? reason.split(':') : ['', reason]
     const text = rest.join(':').trim() // Rejoin in case text contains colons
@@ -66,6 +65,7 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
   }
 
   return (
+    <TooltipProvider>
     <Card>
       <CardHeader>
         <div className="flex items-center gap-2">
@@ -88,7 +88,6 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
         )}
         {!isLoading && results && results.length > 0 && (
           <div className="space-y-4">
-            {/* Top 3 Priority Fixes */}
             <div className="grid gap-4 md:grid-cols-3">
               {results.slice(0, 3).map((r, index) => {
                 let borderClass = 'border-yellow-500 border-2'
@@ -131,10 +130,8 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                         </Badge>
                       )}
                     </div>
-                    {/* EPSS/KEV indicators */}
                     <div className="flex items-center gap-2 mt-2 flex-wrap">
                       {r.has_kev && (
-                        <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Badge variant="destructive" className="text-xs gap-1">
@@ -146,10 +143,8 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                               <p>CISA Known Exploited Vulnerability</p>
                             </TooltipContent>
                           </Tooltip>
-                        </TooltipProvider>
                       )}
                       {r.max_epss_score !== undefined && r.max_epss_score !== null && r.max_epss_score >= 0.01 && (
-                        <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Badge variant="outline" className={`text-xs ${
@@ -163,10 +158,8 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                               <p>Probability of exploitation in 30 days</p>
                             </TooltipContent>
                           </Tooltip>
-                        </TooltipProvider>
                       )}
                       {r.has_fix && (
-                        <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <Badge variant="outline" className="text-xs gap-1 border-green-500 text-green-500">
@@ -178,10 +171,8 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                               <p>Fix versions: {r.fix_versions?.join(', ') || 'Available'}</p>
                             </TooltipContent>
                           </Tooltip>
-                        </TooltipProvider>
                       )}
                     </div>
-                    {/* Priority Reasons */}
                     {r.priority_reasons && r.priority_reasons.length > 0 && (
                       <div className="mt-2 pt-2 border-t border-muted">
                         <ul className="text-xs text-muted-foreground space-y-0.5">
@@ -197,7 +188,6 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
               })}
             </div>
 
-            {/* Full Table */}
             <Table>
               <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
                 <TableRow>
@@ -256,73 +246,27 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                       </div>
                     </TableCell>
                     <TableCell className="text-center">
-                      {r.max_epss_score !== undefined && r.max_epss_score !== null ? (
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <div className="flex flex-col items-center">
-                                {(() => {
-                                  let epssColorClass = 'text-muted-foreground'
-                                  if (r.max_epss_score >= 0.1) epssColorClass = 'text-severity-critical'
-                                  else if (r.max_epss_score >= 0.01) epssColorClass = 'text-severity-high'
-                                  return (
-                                    <span className={`font-medium ${epssColorClass}`}>
-                                      {formatEpssScore(r.max_epss_score)}
-                                    </span>
-                                  )
-                                })()}
-                              </div>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>Probability of exploitation in next 30 days</p>
-                              {r.epss_percentile !== undefined && (
-                                <p className="text-xs">Percentile: {r.epss_percentile.toFixed(1)}%</p>
-                              )}
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">-</span>
-                      )}
+                      <EpssCell
+                        score={r.max_epss_score}
+                        percentile={r.epss_percentile}
+                        variant="impact"
+                      />
                     </TableCell>
                     <TableCell className="text-center">
-                      {r.has_kev ? (
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <div className="flex flex-col items-center gap-1">
-                                <Badge variant="destructive" className="text-xs gap-1">
-                                  <Shield className="h-3 w-3" />
-                                  KEV{r.kev_count && r.kev_count > 1 ? ` (${r.kev_count})` : ''}
-                                </Badge>
-                                {r.kev_ransomware_use && (
-                                  <Badge className="text-xs bg-purple-600 gap-1"><Lock className="h-3 w-3" />Ransomware</Badge>
-                                )}
-                              </div>
-                            </TooltipTrigger>
-                            <TooltipContent className="max-w-xs">
-                              <p className="font-medium">CISA Known Exploited Vulnerability</p>
-                              <p className="text-xs">Actively exploited in the wild</p>
-                              {r.kev_ransomware_use && (
-                                <p className="text-xs text-purple-400 mt-1 flex items-center gap-1"><AlertTriangle className="h-3 w-3" />Used in ransomware campaigns</p>
-                              )}
-                              {r.kev_due_date && (
-                                <p className="text-xs mt-1 flex items-center gap-1"><Calendar className="h-3 w-3" />Remediation due: {r.kev_due_date}</p>
-                              )}
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      ) : (
-                        <span className="text-muted-foreground text-xs">-</span>
-                      )}
+                      <KevCell
+                        hasKev={r.has_kev}
+                        kevCount={r.kev_count}
+                        ransomwareUse={r.kev_ransomware_use}
+                        dueDate={r.kev_due_date}
+                        ransomwareLabel
+                      />
                     </TableCell>
                     <TableCell>
-                      <TooltipProvider>
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <div className="w-24">
-                              <Progress 
-                                value={(r.fix_impact_score / maxImpact) * 100} 
+                              <Progress
+                                value={(r.fix_impact_score / maxImpact) * 100}
                                 className="h-2"
                               />
                               <span className="text-xs text-muted-foreground">
@@ -345,11 +289,9 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                             )}
                           </TooltipContent>
                         </Tooltip>
-                      </TooltipProvider>
                     </TableCell>
                     <TableCell>
                       {r.has_fix ? (
-                        <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <div className="flex items-center gap-1 text-success">
@@ -360,7 +302,6 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                               <p>Fix versions: {r.fix_versions?.join(', ') || r.recommended_version || 'Available'}</p>
                             </TooltipContent>
                           </Tooltip>
-                        </TooltipProvider>
                       ) : (
                         <div className="flex items-center gap-1 text-muted-foreground">
                           <XCircle className="h-4 w-4" />
@@ -369,7 +310,6 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                     </TableCell>
                     <TableCell>
                       {r.priority_reasons && r.priority_reasons.length > 0 ? (
-                        <TooltipProvider>
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <div className="max-w-[200px]">
@@ -390,7 +330,6 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
                               </ul>
                             </TooltipContent>
                           </Tooltip>
-                        </TooltipProvider>
                       ) : (
                         <span className="text-muted-foreground text-xs">-</span>
                       )}
@@ -409,5 +348,6 @@ export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisPro
         )}
       </CardContent>
     </Card>
+    </TooltipProvider>
   )
 }

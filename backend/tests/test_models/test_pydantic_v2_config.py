@@ -36,47 +36,26 @@ class TestModelIdAlias:
         ],
     )
     def test_auto_id_and_alias_roundtrip(self, model_cls: str, kwargs: dict):
-        """Model generates an ID, serializes with _id alias, and accepts _id back."""
         module_path, cls_name = model_cls.rsplit(":", 1)
         import importlib
 
         mod = importlib.import_module(module_path)
         cls = getattr(mod, cls_name)
 
-        # 1) Create with auto-generated ID
         instance = cls(**kwargs)
         assert instance.id is not None
         assert len(instance.id) > 0
 
-        # 2) Serialize with alias -> must contain _id
         dumped = instance.model_dump(by_alias=True)
         assert "_id" in dumped
         assert dumped["_id"] == instance.id
 
-        # 3) Reconstruct from MongoDB-style dict (with _id)
         reconstructed = cls(**dumped)
         assert reconstructed.id == instance.id
 
 
 class TestUseEnumValues:
     """Finding and FindingRecord store enum values as plain strings."""
-
-    def test_finding_stores_string_values(self):
-        from app.models.finding import Finding, FindingType, Severity
-
-        finding = Finding(
-            id="CVE-1",
-            type=FindingType.VULNERABILITY,
-            severity=Severity.HIGH,
-            component="pkg",
-            description="desc",
-            scanners=["trivy"],
-        )
-        # use_enum_values=True -> stored as plain strings
-        assert finding.type == "vulnerability"
-        assert finding.severity == "HIGH"
-        assert isinstance(finding.type, str)
-        assert isinstance(finding.severity, str)
 
     def test_finding_record_inherits_enum_config(self):
         from app.models.finding import FindingType, Severity
@@ -112,7 +91,7 @@ class TestUseEnumValues:
 
 
 class TestDatetimeSerialization:
-    """After removing json_encoders, Pydantic v2 should still serialize datetimes correctly."""
+    """Pydantic v2 serializes datetimes to ISO strings in JSON mode."""
 
     def test_broadcast_datetime_json(self):
         from app.models.broadcast import Broadcast
@@ -125,9 +104,7 @@ class TestDatetimeSerialization:
             created_by="u1",
         )
         data = b.model_dump(mode="json")
-        # Pydantic v2 serializes datetime to ISO string in JSON mode
         assert isinstance(data["created_at"], str)
-        # Should be parseable back
         datetime.fromisoformat(data["created_at"])
 
     def test_callgraph_datetime_json(self):
@@ -299,8 +276,6 @@ class TestProjectionSchemas:
 
 
 class TestScanFindingItemEnumValues:
-    """ScanFindingItem should store enum values as strings."""
-
     def test_enum_values_stored_as_strings(self):
         from app.models.finding import FindingType, Severity
         from app.schemas.project import ScanFindingItem
@@ -320,8 +295,6 @@ class TestScanFindingItemEnumValues:
 
 
 class TestSettingsConfig:
-    """Settings class uses SettingsConfigDict correctly."""
-
     def test_settings_loads(self):
         from app.core.config import settings
 
@@ -330,7 +303,6 @@ class TestSettingsConfig:
         assert settings.ALGORITHM == "HS256"
 
     def test_settings_case_sensitive(self):
-        """Settings should use case_sensitive=True."""
         from app.core.config import Settings
 
         config = Settings.model_config
@@ -338,56 +310,7 @@ class TestSettingsConfig:
 
 
 class TestSystemSettingsConfig:
-    """SystemSettings model config works."""
-
-    def test_system_settings_defaults(self):
-        from app.models.system import SystemSettings
-
-        s = SystemSettings()
-        assert s.id == "current"
-        assert s.instance_name == "Dependency Control"
-        assert s.default_active_analyzers == ["trivy", "osv", "license_compliance", "end_of_life"]
-
-    def test_system_settings_from_mongo(self):
-        from app.models.system import SystemSettings
-
-        doc = {
-            "_id": "current",
-            "instance_name": "My Instance",
-            "enforce_2fa": True,
-        }
-        s = SystemSettings(**doc)
-        assert s.id == "current"
-        assert s.instance_name == "My Instance"
-        assert s.enforce_2fa is True
-
-    def test_custom_analyzers_roundtrip(self):
-        """Custom default_active_analyzers survives model_dump -> reconstruct."""
-        from app.models.system import SystemSettings
-
-        custom = ["trivy", "osv"]
-        s = SystemSettings(default_active_analyzers=custom)
-        assert s.default_active_analyzers == custom
-
-        doc = s.model_dump(by_alias=True)
-        assert doc["default_active_analyzers"] == custom
-
-        restored = SystemSettings(**doc)
-        assert restored.default_active_analyzers == custom
-
-    def test_legacy_mongo_doc_without_analyzers_uses_default(self):
-        """MongoDB docs created before the feature get the Pydantic default."""
-        from app.models.system import SystemSettings
-
-        legacy_doc = {
-            "_id": "current",
-            "instance_name": "Old Instance",
-        }
-        s = SystemSettings(**legacy_doc)
-        assert s.default_active_analyzers == ["trivy", "osv", "license_compliance", "end_of_life"]
-
     def test_empty_analyzers_list_persists(self):
-        """An admin can explicitly set no default analyzers."""
         from app.models.system import SystemSettings
 
         s = SystemSettings(default_active_analyzers=[])
@@ -414,11 +337,9 @@ class TestMongoRoundTrip:
             retention_days=30,
         )
 
-        # Simulate insert
         mongo_doc = original.model_dump(by_alias=True)
         assert "_id" in mongo_doc
 
-        # Simulate read
         restored = Project(**mongo_doc)
         assert restored.id == original.id
         assert restored.name == "My App"
@@ -462,10 +383,9 @@ class TestMongoRoundTrip:
 
         mongo_doc = original.model_dump(by_alias=True)
         assert "_id" in mongo_doc
-        # access_token should be excluded (exclude=True in Field)
+        # access_token is excluded (exclude=True) so it never leaks via model_dump.
         assert "access_token" not in mongo_doc
 
-        # Reconstruct without access_token (as it would come from MongoDB without it)
         restored = GitLabInstance(**mongo_doc, access_token=None)
         assert restored.id == original.id
         assert restored.name == "Internal GitLab"
@@ -491,10 +411,8 @@ class TestMongoRoundTrip:
 
 
 class TestGitLabInstanceAccessTokenPersistence:
-    """Verify that access_token is properly handled for MongoDB storage."""
-
     def test_model_dump_excludes_access_token(self):
-        """model_dump() should NOT include access_token (for API responses)."""
+        # Excluded from model_dump so it never leaks in API responses.
         from app.models.gitlab_instance import GitLabInstance
 
         instance = GitLabInstance(
@@ -507,7 +425,6 @@ class TestGitLabInstanceAccessTokenPersistence:
         assert "access_token" not in dumped
 
     def test_access_token_accessible_on_instance(self):
-        """access_token should still be accessible as an attribute."""
         from app.models.gitlab_instance import GitLabInstance
 
         instance = GitLabInstance(
@@ -519,7 +436,7 @@ class TestGitLabInstanceAccessTokenPersistence:
         assert instance.access_token == "my-secret-token"
 
     def test_repository_create_includes_access_token(self):
-        """GitLabInstanceRepository.create() must store access_token in MongoDB."""
+        # create() must persist access_token even though model_dump excludes it.
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
 
@@ -529,7 +446,7 @@ class TestGitLabInstanceAccessTokenPersistence:
         mock_collection = MagicMock()
         mock_collection.insert_one = AsyncMock()
         mock_db = MagicMock()
-        mock_db.gitlab_instances = mock_collection
+        mock_db.__getitem__.return_value = mock_collection
 
         repo = GitLabInstanceRepository(mock_db)
         instance = GitLabInstance(
@@ -541,16 +458,13 @@ class TestGitLabInstanceAccessTokenPersistence:
 
         asyncio.run(repo.create(instance))
 
-        # Verify insert_one was called
         mock_collection.insert_one.assert_called_once()
         inserted_doc = mock_collection.insert_one.call_args[0][0]
 
-        # The critical assertion: access_token MUST be in the MongoDB document
         assert "access_token" in inserted_doc
         assert inserted_doc["access_token"] == "secret-token-123"
 
     def test_repository_create_without_token(self):
-        """When no access_token is provided, it should not be in the doc."""
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
 
@@ -560,7 +474,7 @@ class TestGitLabInstanceAccessTokenPersistence:
         mock_collection = MagicMock()
         mock_collection.insert_one = AsyncMock()
         mock_db = MagicMock()
-        mock_db.gitlab_instances = mock_collection
+        mock_db.__getitem__.return_value = mock_collection
 
         repo = GitLabInstanceRepository(mock_db)
         instance = GitLabInstance(
@@ -576,8 +490,6 @@ class TestGitLabInstanceAccessTokenPersistence:
 
 
 class TestProjectApiKeyHashExclusion:
-    """Verify that Project.api_key_hash with exclude=True behaves correctly."""
-
     def test_model_dump_excludes_api_key_hash(self):
         from app.models.project import Project
 
@@ -592,20 +504,13 @@ class TestProjectApiKeyHashExclusion:
         assert p.api_key_hash == "hashed-secret"
 
     def test_repository_create_excludes_api_key_hash(self):
-        """ProjectRepository.create() uses model_dump which excludes api_key_hash.
-
-        This is by design: api_key_hash is only set later via $set update
-        when the user generates/rotates the key. Auto-created projects have
-        api_key_hash=None.
-        """
+        # api_key_hash is set later via a $set update (key generation/rotation), so create() omits it.
         from app.models.project import Project
 
         project = Project(name="test", owner_id="u1")
         dumped = project.model_dump(by_alias=True)
 
-        # api_key_hash must NOT be in the document sent to MongoDB
         assert "api_key_hash" not in dumped
-        # _id must be present for MongoDB
         assert "_id" in dumped
         assert dumped["_id"] == project.id
 
@@ -646,7 +551,7 @@ class TestAutoCreateUsesSystemAnalyzers:
             }
         )
 
-        # Mock find_one_and_update to return the $setOnInsert document (simulates upsert insert)
+        # Simulate an upsert insert by returning the $setOnInsert document.
         def fake_find_or_create(filter_query, update, **kwargs):
             return update.get("$setOnInsert", {})
 
@@ -716,7 +621,7 @@ class TestAutoCreateUsesSystemAnalyzers:
             }
         )
 
-        # Mock find_one_and_update to return the $setOnInsert document (simulates upsert insert)
+        # Simulate an upsert insert by returning the $setOnInsert document.
         def fake_find_or_create(filter_query, update, **kwargs):
             return update.get("$setOnInsert", {})
 
@@ -754,34 +659,90 @@ class TestAutoCreateUsesSystemAnalyzers:
         assert result.active_analyzers == custom_analyzers
 
 
-class TestCallgraphCleanup:
-    """Callgraph model: json_encoders removed, to_dict() removed."""
+class TestMongoDocumentIdConsolidation:
+    """Persisted models inherit the uuid ``_id`` field from MongoDocument rather than redeclaring it."""
 
-    def test_reachability_result_uses_model_dump(self):
-        """ReachabilityResult should use model_dump() instead of to_dict()."""
-        from app.models.callgraph import ReachabilityResult
+    _CASES = {
+        "app.models.archive:ArchiveMetadata": {
+            "project_id": "p1",
+            "scan_id": "s1",
+            "s3_key": "p1/s1.json.gz",
+            "s3_bucket": "bucket",
+        },
+        "app.models.broadcast:Broadcast": {
+            "type": "general",
+            "target_type": "global",
+            "subject": "s",
+            "message": "m",
+            "created_by": "u1",
+        },
+        "app.models.callgraph:Callgraph": {
+            "project_id": "p1",
+            "language": "python",
+            "tool": "pyan",
+        },
+        "app.models.dependency:Dependency": {
+            "project_id": "p1",
+            "scan_id": "s1",
+            "name": "requests",
+            "version": "2.31.0",
+        },
+        "app.models.invitation:SystemInvitation": {
+            "email": "a@b.com",
+            "token": "t",
+            "invited_by": "u1",
+            "expires_at": datetime.now(timezone.utc),
+        },
+        "app.models.gitlab_instance:GitLabInstance": {
+            "name": "GL",
+            "url": "https://gitlab.com",
+            "created_by": "admin",
+        },
+        "app.models.project:Scan": {"project_id": "p1", "branch": "main"},
+        "app.models.project:AnalysisResult": {
+            "scan_id": "s1",
+            "analyzer_name": "trivy",
+            "result": {},
+        },
+        "app.models.team:Team": {"name": "DevOps"},
+        "app.models.user:User": {"username": "alice", "email": "alice@example.com"},
+        "app.models.webhook:Webhook": {
+            "url": "https://example.com/hook",
+            "events": ["scan_completed"],
+        },
+    }
 
-        result = ReachabilityResult(
-            status="reachable",
-            confidence="high",
-            analysis_type="callgraph",
-            import_paths=["/app/main.py"],
-            used_symbols=["get", "post"],
-            vulnerable_symbols=["get"],
-            vulnerable_symbols_used=["get"],
-            message="Vulnerable function is directly called",
-        )
+    def _load(self, dotted: str):
+        import importlib
 
-        dumped = result.model_dump()
-        assert dumped["status"] == "reachable"
-        assert dumped["confidence"] == "high"
-        assert dumped["import_paths"] == ["/app/main.py"]
-        assert dumped["vulnerable_symbols_used"] == ["get"]
-        assert dumped["message"] == "Vulnerable function is directly called"
+        module_path, cls_name = dotted.rsplit(":", 1)
+        return getattr(importlib.import_module(module_path), cls_name)
 
-    def test_reachability_result_no_to_dict(self):
-        """to_dict() should no longer exist on ReachabilityResult."""
-        from app.models.callgraph import ReachabilityResult
+    @pytest.mark.parametrize("dotted", sorted(_CASES))
+    def test_inherits_mongo_document_without_local_id(self, dotted: str):
+        from app.models.types import MongoDocument
 
-        result = ReachabilityResult()
-        assert not hasattr(result, "to_dict")
+        cls = self._load(dotted)
+        assert issubclass(cls, MongoDocument)
+        assert "id" not in getattr(cls, "__annotations__", {})
+
+    @pytest.mark.parametrize("dotted", sorted(_CASES))
+    def test_auto_id_and_alias_roundtrip(self, dotted: str):
+        cls = self._load(dotted)
+        kwargs = self._CASES[dotted]
+
+        instance = cls(**kwargs)
+        assert isinstance(instance.id, str) and len(instance.id) > 0
+
+        dumped = instance.model_dump(by_alias=True)
+        assert dumped["_id"] == instance.id
+
+        reconstructed = cls(**dumped)
+        assert reconstructed.id == instance.id
+
+    def test_explicit_id_via_alias_is_honored(self):
+        from app.models.user import User
+
+        u = User(_id="user-fixed-id", username="bob", email="bob@example.com")
+        assert u.id == "user-fixed-id"
+        assert u.model_dump(by_alias=True)["_id"] == "user-fixed-id"

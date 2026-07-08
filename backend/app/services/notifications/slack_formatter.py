@@ -1,9 +1,4 @@
-"""
-Slack Block Kit message formatting.
-
-Builds rich, visually appealing Slack messages using Block Kit.
-See: https://api.slack.com/block-kit
-"""
+"""Slack Block Kit message formatting."""
 
 from typing import Any, Dict, List, Optional
 
@@ -22,11 +17,7 @@ _SEVERITY_EMOJI = {
 
 
 def build_generic_blocks(subject: str, message: str) -> List[Dict[str, Any]]:
-    """
-    Build a clean Block Kit layout from any subject + message.
-
-    Used as the default formatter when no specific blocks are provided.
-    """
+    """Default Block Kit layout built from subject + message."""
     blocks: List[Dict[str, Any]] = [
         {
             "type": "header",
@@ -182,7 +173,6 @@ def build_vulnerability_found_blocks(
         {"type": "divider"},
     ]
 
-    # Stats fields
     fields: List[Dict[str, str]] = []
     if kev_count:
         fields.append({"type": "mrkdwn", "text": f"\u26a0\ufe0f *KEV Vulnerabilities:* {kev_count}"})
@@ -192,7 +182,6 @@ def build_vulnerability_found_blocks(
 
     blocks.append({"type": "section", "fields": fields[:_MAX_FIELDS]})
 
-    # Top vulnerabilities
     if top_vulns:
         vuln_lines = [_format_vuln_line(i, v) for i, v in enumerate(top_vulns[:10], 1)]
         blocks.append(

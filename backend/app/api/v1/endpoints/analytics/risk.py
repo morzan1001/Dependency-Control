@@ -37,18 +37,11 @@ logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
 
-# Severity buckets surfaced in the analytics severity breakdown. Computed as
-# scalar $sum/$cond accumulators in the $group stage instead of $push-ing the
-# raw per-finding severity array, which would grow with the (unbounded) group.
 _SEVERITY_BUCKETS = ("critical", "high", "medium", "low")
 
 
 def _severity_count_accumulators() -> Dict[str, Any]:
-    """$group accumulators counting findings per severity (case-insensitive).
-
-    Replaces ``severities: {$push: "$severity"}`` so the group working set holds
-    four integers per group instead of one entry per finding.
-    """
+    """$group accumulators counting findings per severity (case-insensitive)."""
     return {
         bucket: {"$sum": {"$cond": [{"$eq": [{"$toLower": "$severity"}, bucket]}, 1, 0]}}
         for bucket in _SEVERITY_BUCKETS
@@ -60,10 +53,8 @@ def _severity_counts_from_row(row: Dict[str, Any]) -> Dict[str, int]:
     return {bucket: int(row.get(bucket) or 0) for bucket in _SEVERITY_BUCKETS}
 
 
-# Slimmed projection of the analyzer ``$details`` blob. Only fix-version data is
-# consumed downstream (by ``extract_fix_versions``), so we project ``details``
-# down to those fields BEFORE the $group instead of $push-ing the arbitrarily
-# large raw payload. ``vulnerabilities`` is mapped down to just ``fixed_version``.
+# Project $details down to fix-version fields before $group so the group never
+# accumulates the raw analyzer payload; only extract_fix_versions reads these.
 _SLIM_DETAILS_EXPR: Dict[str, Any] = {
     "fixed_version": "$details.fixed_version",
     "vulnerabilities": {
@@ -97,8 +88,6 @@ async def get_impact_analysis(
 
     pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
-        # Slim $details to only the fix-version fields BEFORE grouping so the
-        # group never accumulates the arbitrarily large raw analyzer payload.
         {
             "$project": {
                 "component": 1,
@@ -116,19 +105,9 @@ async def get_impact_analysis(
                 "project_ids": {"$addToSet": "$project_id"},
                 "total_findings": {"$sum": 1},
                 **_severity_count_accumulators(),
-                # $addToSet (not $push) so the CVE/finding ids collapse to the
-                # DISTINCT set per (component, version). The same CVEs repeat
-                # across projects, so this is naturally bounded by the real
-                # number of distinct CVEs — without arbitrarily dropping a
-                # high-EPSS/KEV CVE the way a post-$group $slice cap would (and
-                # thereby changing enrichment output).
+                # $addToSet dedupes to distinct CVEs per (component, version).
                 "finding_ids": {"$addToSet": "$finding_id"},
                 "first_seen": {"$min": "$created_at"},
-                # Likewise dedupe the slimmed fix-version details: identical
-                # {fixed_version, vulnerabilities} shapes collapse, so the array
-                # is bounded by the number of distinct fix-version shapes rather
-                # than one entry per finding. extract_fix_versions still sees
-                # every distinct fix version.
                 "details_list": {"$addToSet": "$details"},
             }
         },
@@ -181,8 +160,7 @@ async def get_impact_analysis(
             days_known,
         )
 
-        # Filter to accessible projects only — prevents leaking project names
-        # the user doesn't have access to.
+        # Filter to accessible projects to avoid leaking project names.
         accessible_impact_project_ids = [pid for pid in r["project_ids"] if pid in project_ids]
 
         priority_reasons = build_priority_reasons(
@@ -320,7 +298,6 @@ async def get_vulnerability_hotspots(
 
     pipeline: List[Dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
-        # Slim $details to only fix-version fields BEFORE grouping (see /impact).
         {
             "$project": {
                 "component": 1,
@@ -339,11 +316,7 @@ async def get_vulnerability_hotspots(
                 "finding_count": {"$sum": 1},
                 **_severity_count_accumulators(),
                 "first_seen": {"$min": "$created_at"},
-                # Dedupe CVE/finding ids and slimmed fix-version details with
-                # $addToSet (see /impact): both collapse to the DISTINCT set per
-                # (component, version), naturally bounding the per-group arrays
-                # by the real number of distinct CVEs / fix-version shapes while
-                # preserving full enrichment input (no CVE arbitrarily dropped).
+                # $addToSet dedupes to distinct CVEs per (component, version).
                 "finding_ids": {"$addToSet": "$finding_id"},
                 "details_list": {"$addToSet": "$details"},
             }
@@ -352,9 +325,9 @@ async def get_vulnerability_hotspots(
     ]
 
     if post_sort_by:
-        # epss/risk live in enrichment data, so we re-sort post-fetch in Python
-        # and over-fetch to keep page sizes meaningful after the re-sort.
-        pipeline.append({"$limit": limit * 3})
+        # epss/risk come from enrichment, not Mongo, so every group must be
+        # enriched before ordering; skip/limit is applied in Python below.
+        pass
     else:
         pipeline.append({"$skip": skip})
         pipeline.append({"$limit": limit})

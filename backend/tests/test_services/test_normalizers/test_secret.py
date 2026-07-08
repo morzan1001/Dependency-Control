@@ -6,8 +6,6 @@ from app.services.aggregation import ResultAggregator
 
 
 class TestNormalizeTrufflehog:
-    """Tests for normalize_trufflehog - TruffleHog secret detection normalization."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -128,6 +126,26 @@ class TestNormalizeTrufflehog:
         }
         self.agg.aggregate("trufflehog", result)
         assert len(self.agg.findings) == 2
+
+    def test_prefers_detector_name_over_numeric_detector_type(self):
+        """Prefer DetectorName over numeric DetectorType so the credential type stays recoverable."""
+        result = {
+            "findings": [
+                {
+                    "DetectorName": "AWS",
+                    "DetectorType": "2",
+                    "Raw": "AKIAIOSFODNN7EXAMPLE",
+                    "SourceMetadata": {"Data": {"Filesystem": {"file": "config/aws.env"}}},
+                }
+            ]
+        }
+        self.agg.aggregate("trufflehog", result)
+        f = list(self.agg.findings.values())[0]
+        assert f.details["detector"] == "AWS"
+        assert "AWS" in f.description
+        assert "AWS" in f.id
+        # The numeric ordinal must not leak into user-visible fields.
+        assert f.description == "Secret detected: AWS"
 
     def test_empty_raw_uses_nohash(self):
         result = {

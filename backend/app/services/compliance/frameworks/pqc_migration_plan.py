@@ -1,17 +1,4 @@
-"""
-PQC Migration Plan as a compliance "framework".
-
-Delegates control-list generation to PQCMigrationPlanGenerator. Each plan
-item becomes one ControlResult:
-  - migrate_now    -> failed (HIGH severity)
-  - migrate_soon   -> failed (MEDIUM severity)
-  - plan_migration -> not_applicable (informational)
-  - monitor        -> not_applicable
-
-This framework is async-only because the underlying generator issues DB
-queries. The sync `evaluate(...)` entry point raises RuntimeError — callers
-must dispatch on `hasattr(framework, "evaluate_async")` and await it.
-"""
+"""PQC Migration Plan framework; async-only (generator issues DB queries), one ControlResult per plan item."""
 
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
@@ -61,13 +48,7 @@ class PQCMigrationPlanFramework:
     controls: List[ControlDefinition] = []
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
-        """Sync entry point is not supported — see module docstring.
-
-        Callers must dispatch on ``hasattr(framework, "evaluate_async")`` and
-        await the async variant. Keeping a loud error here protects against
-        accidental sync use from a running event loop, where the previous
-        ``asyncio.run(...)`` implementation would crash with RuntimeError.
-        """
+        """Sync entry point unsupported; dispatch via evaluate_async."""
         raise RuntimeError("Use evaluate_async for PQC framework")
 
     async def evaluate_async(self, data: EvaluationInput) -> FrameworkEvaluation:

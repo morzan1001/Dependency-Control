@@ -70,6 +70,46 @@ async def test_generate_sorts_items_descending_priority():
 
 
 @pytest.mark.asyncio
+async def test_list_vulnerable_assets_global_scope_enumerates_all_projects():
+    # global scope has project_ids=None ("all projects"); it must not be coerced to [] (empty plan) — enumerate every project with a usable scan.
+    db = MagicMock()
+    db.scans.distinct = AsyncMock(return_value=["p1", "p2"])
+    gen = PQCMigrationPlanGenerator(db)
+
+    repo = MagicMock()
+    repo.list_by_scan = AsyncMock(return_value=[_asset(name="RSA", primitive=CryptoPrimitive.PKE)])
+
+    async def _latest(pid):
+        return {"_id": f"scan-{pid}"}
+
+    with (
+        patch.object(gen, "_latest_scan_for_project", new=AsyncMock(side_effect=_latest)),
+        patch(
+            "app.services.pqc_migration.generator.CryptoAssetRepository",
+            return_value=repo,
+        ),
+    ):
+        assets = await gen._list_vulnerable_assets(ResolvedScope(scope="global", scope_id=None, project_ids=None))
+
+    db.scans.distinct.assert_awaited_once()
+    assert len(assets) == 2  # one vulnerable RSA asset per enumerated project
+
+
+@pytest.mark.asyncio
+async def test_list_vulnerable_assets_empty_project_ids_stays_empty():
+    # an explicit empty list means "no projects" and must not fall through to enumerating everything.
+    db = MagicMock()
+    db.scans.distinct = AsyncMock(return_value=["p1", "p2"])
+    gen = PQCMigrationPlanGenerator(db)
+
+    with patch.object(gen, "_latest_scan_for_project", new=AsyncMock(return_value={"_id": "s"})):
+        assets = await gen._list_vulnerable_assets(ResolvedScope(scope="team", scope_id="t1", project_ids=[]))
+
+    db.scans.distinct.assert_not_awaited()
+    assert assets == []
+
+
+@pytest.mark.asyncio
 async def test_generate_alias_resolution():
     db = MagicMock()
     gen = PQCMigrationPlanGenerator(db)

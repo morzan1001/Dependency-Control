@@ -1,4 +1,4 @@
-"""Tests for CryptoRule expiry and weakness extensions (Phase 2)."""
+"""Tests for CryptoRule expiry and weakness extensions."""
 
 import pytest
 from pydantic import ValidationError

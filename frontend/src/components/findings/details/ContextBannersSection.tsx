@@ -25,7 +25,6 @@ export function ContextBannersSection({ finding }: Readonly<ContextBannersSectio
     Array.isArray((finding.details as Record<string, unknown> | undefined)?.quality_issues) &&
     ((finding.details as Record<string, unknown>).quality_issues as unknown[]).length > 0
 
-  // 1. Outdated Package Info
   if (finding.details?.outdated_info?.is_outdated) {
     const info = finding.details.outdated_info
     banners.push(
@@ -43,7 +42,6 @@ export function ContextBannersSection({ finding }: Readonly<ContextBannersSectio
     )
   }
 
-  // 2. Quality Issues
   if (finding.details?.quality_info?.has_quality_issues && !hasAggregatedQualityIssues) {
     const info = finding.details.quality_info
     banners.push(
@@ -63,7 +61,6 @@ export function ContextBannersSection({ finding }: Readonly<ContextBannersSectio
     )
   }
 
-  // 3. License Issues
   if (finding.details?.license_info?.has_license_issue) {
     const info = finding.details.license_info
     banners.push(
@@ -76,7 +73,6 @@ export function ContextBannersSection({ finding }: Readonly<ContextBannersSectio
     )
   }
 
-  // 4. End of Life
   if (finding.details?.eol_info?.is_eol) {
     const info = finding.details.eol_info
     banners.push(
@@ -98,7 +94,6 @@ export function ContextBannersSection({ finding }: Readonly<ContextBannersSectio
     )
   }
 
-  // 5. Vulnerability Info (when primary finding is NOT vulnerability)
   if (finding.type !== 'vulnerability' && finding.details?.vulnerability_info?.has_vulnerabilities) {
     const info = finding.details.vulnerability_info
     const criticalCount = info.critical_count ?? 0
@@ -121,7 +116,6 @@ export function ContextBannersSection({ finding }: Readonly<ContextBannersSectio
     )
   }
 
-  // 6. OpenSSF Scorecard Context (for vulnerabilities)
   if (finding.details?.scorecard_context) {
     const ctx = finding.details.scorecard_context as {
       overall_score?: number

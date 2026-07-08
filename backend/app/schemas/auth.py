@@ -1,8 +1,4 @@
-"""
-Auth Schema Definitions
-
-Pydantic models for authentication API endpoints.
-"""
+"""Pydantic models for authentication API endpoints."""
 
 from pydantic import BaseModel
 

@@ -10,11 +10,7 @@ def normalize_component(component: str) -> str:
 
 
 def extract_artifact_name(component: str) -> str:
-    """Extract artifact name from qualified component names for grouping.
-
-    Handles Maven-style 'org.postgresql:postgresql' → 'postgresql'
-    and scoped packages '@angular/core' → 'core'.
-    """
+    """Extract the bare artifact name from Maven-style or scoped component names for grouping."""
     name = component.lower().strip() if component else "unknown"
     if ":" in name:
         name = name.rsplit(":", 1)[-1]

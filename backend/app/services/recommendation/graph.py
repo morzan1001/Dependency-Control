@@ -12,22 +12,16 @@ from app.services.recommendation.common import get_attr, ModelOrDict
 def analyze_deep_dependency_chains(
     dependencies: List[ModelOrDict], max_dependency_depth: int = 8
 ) -> List[Recommendation]:
-    """
-    Identify dependencies with very deep transitive chains.
-    Deep chains increase supply chain risk and make updates harder.
-    Also detects circular dependencies.
-    """
+    """Identify dependencies with very deep transitive chains, and detect cycles."""
     if not dependencies:
         return []
 
     recommendations = []
 
-    # Build a simple depth map based on parent_components
-    depth_map: Dict[str, int] = {}  # purl/name -> estimated depth
-    in_cycle: set = set()  # Track nodes that are part of cycles
+    depth_map: Dict[str, int] = {}
+    in_cycle: set = set()
 
-    # Build adjacency list for cycle detection
-    children_map: Dict[str, List[str]] = {}  # parent -> list of children
+    children_map: Dict[str, List[str]] = {}
     for dep in dependencies:
         key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
         parents = get_attr(dep, "parent_components", [])
@@ -36,41 +30,42 @@ def analyze_deep_dependency_chains(
                 children_map[parent] = []
             children_map[parent].append(key)
 
-    # Detect cycles using DFS with coloring (white=0, gray=1, black=2)
+    # DFS coloring: 0=unseen, 1=on stack, 2=done.
     color: Dict[str, int] = {}
 
-    def has_cycle(node: str, path: set) -> bool:
-        if node in path:
-            in_cycle.update(path)
+    def has_cycle(node: str, path: List[str], on_path: set) -> bool:
+        if node in on_path:
+            # Only nodes from the first occurrence of node onward are in the cycle.
+            start = path.index(node)
+            in_cycle.update(path[start:])
             return True
-        if color.get(node, 0) == 2:  # Already fully processed
+        if color.get(node, 0) == 2:
             return False
 
-        color[node] = 1  # Mark as being processed
-        path.add(node)
+        color[node] = 1
+        path.append(node)
+        on_path.add(node)
 
         for child in children_map.get(node, []):
-            if has_cycle(child, path):
-                in_cycle.add(node)
+            has_cycle(child, path, on_path)
 
-        path.remove(node)
-        color[node] = 2  # Mark as fully processed
+        path.pop()
+        on_path.discard(node)
+        color[node] = 2
         return False
 
-    # Run cycle detection from all direct dependencies
     for dep in dependencies:
         key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
         if get_attr(dep, "direct", False) and color.get(key, 0) == 0:
-            has_cycle(key, set())
+            has_cycle(key, [], set())
 
-    # First pass: direct deps have depth 1
     for dep in dependencies:
         key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
         if get_attr(dep, "direct", False):
             depth_map[key] = 1
 
-    # Iterative depth calculation (skip nodes in cycles to avoid infinite loops)
-    for _ in range(10):  # Max iterations
+    # Skip nodes in cycles to avoid infinite loops.
+    for _ in range(10):
         changed = False
         for dep in dependencies:
             key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
@@ -79,7 +74,6 @@ def analyze_deep_dependency_chains(
             if key in depth_map or key in in_cycle:
                 continue
 
-            # Calculate depth from parents (excluding those in cycles)
             parent_depths = []
             for parent in parents:
                 if parent in depth_map and parent not in in_cycle:
@@ -92,7 +86,6 @@ def analyze_deep_dependency_chains(
         if not changed:
             break
 
-    # Warn about circular dependencies if any detected
     if in_cycle:
         cycle_packages = []
         for dep in dependencies:
@@ -130,7 +123,6 @@ def analyze_deep_dependency_chains(
                 )
             )
 
-    # Find deeply nested deps
     deep_deps = []
     for dep in dependencies:
         key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
@@ -147,7 +139,6 @@ def analyze_deep_dependency_chains(
             )
 
     if deep_deps:
-        # Sort by depth
         deep_deps.sort(key=lambda x: x["depth"], reverse=True)
         max_depth = deep_deps[0]["depth"] if deep_deps else 0
 
@@ -196,9 +187,7 @@ def analyze_deep_dependency_chains(
 def analyze_duplicate_packages(
     dependencies: List[ModelOrDict],
 ) -> List[Recommendation]:
-    """
-    Detect packages that likely provide similar/duplicate functionality.
-    """
+    """Detect packages that likely provide similar/duplicate functionality."""
     if not dependencies:
         return []
 

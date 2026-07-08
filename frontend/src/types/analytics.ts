@@ -56,7 +56,12 @@ export interface DependencyTreeNode {
   source_target?: string;
   layer_digest?: string;
   locations?: string[];
-  children: DependencyTreeNode[];
+  child_ids: string[];
+}
+
+export interface DependencyGraph {
+  nodes: DependencyTreeNode[];
+  roots: string[];
 }
 
 export interface ImpactAnalysisResult {
@@ -427,8 +432,6 @@ export interface AdvancedSearchOptions {
     skip?: number;
     limit?: number;
 }
-
-// --- Update Frequency Analysis ---
 
 export interface DependencyUpdateEvent {
     package_name: string;

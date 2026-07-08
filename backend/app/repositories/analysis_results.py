@@ -7,8 +7,6 @@ from app.repositories.base import BaseRepository
 
 
 class AnalysisResultRepository(BaseRepository[AnalysisResult]):
-    """Repository for analysis result database operations."""
-
     collection_name = "analysis_results"
     model_class = AnalysisResult
 

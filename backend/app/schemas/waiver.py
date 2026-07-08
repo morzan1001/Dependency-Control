@@ -4,6 +4,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK, WAIVER_STATUSES
+from app.models.finding import FindingType
 from app.models.types import PyObjectId
 
 WAIVER_SCOPES = ("finding", "file", "rule")
@@ -21,7 +22,7 @@ class WaiverCreate(BaseModel):
     )
     package_name: Optional[str] = None
     package_version: Optional[str] = None
-    finding_type: Optional[str] = None
+    finding_type: Optional[FindingType] = None
     scope: Literal["finding", "file", "rule"] = Field(
         "finding",
         description="'finding' = exact match, 'file' = same rule in same file, 'rule' = same rule project-wide",
@@ -64,8 +65,6 @@ class WaiverUpdate(BaseModel):
 
 
 class WaiverResponse(WaiverCreate):
-    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    # PyObjectId handles ObjectId to string conversion
     id: PyObjectId = Field(validation_alias="_id")
     created_by: str
     created_at: datetime

@@ -5,9 +5,7 @@ import { describe, it, expect, vi } from "vitest";
 import { PolicyAuditTimeline } from "../PolicyAuditTimeline";
 
 vi.mock("@/api/policyAudit", () => {
-  // 50 entries, versions 100..51 (newest first). More entries (1..50) exist
-  // in the DB beyond the loaded window — so the last entry on the page has
-  // an un-loaded previous.
+  // A full page of 50 entries (versions 100..51); older versions exist beyond the loaded window.
   const entries = Array.from({ length: 50 }, (_, i) => {
     const version = 100 - i;
     return {
@@ -46,14 +44,11 @@ describe("PolicyAuditTimeline pagination boundary", () => {
   it("shows a 'beyond the loaded window' hint for the last entry when full page", async () => {
     withClient(<PolicyAuditTimeline policyScope="system" />);
 
-    // Wait for render of the newest entry.
     await screen.findByText("v100 change");
 
-    // The oldest shown entry is version 51 — expand it.
     const lastSummary = await screen.findByText("v51 change");
     fireEvent.click(lastSummary);
 
-    // The truncated-window hint should appear (not a full diff).
     expect(
       screen.getByText(/Previous version is beyond the loaded window/i),
     ).toBeInTheDocument();

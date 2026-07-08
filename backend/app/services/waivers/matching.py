@@ -1,8 +1,4 @@
-"""Two-pass waiver matching: strong-exact (Pass 1) then content/proximity re-anchor (Pass 2).
-
-Operates on MatchSignatures so both the dict-based recalc path and the Finding-based ingest
-path can share one source of truth. See the design spec for the decision table.
-"""
+"""Two-pass waiver matching: strong-exact (Pass 1) then content/proximity re-anchor (Pass 2)."""
 
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Sequence
@@ -10,9 +6,8 @@ from typing import Any, Dict, List, Optional, Sequence
 from app.core.constants import WAIVER_STATUS_FALSE_POSITIVE
 from app.models.match_signature import MatchSignature
 
-# Re-anchoring thresholds (conservative defaults; see spec §8).
-REANCHOR_WINDOW = 50   # max line distance to consider a candidate "the moved instance"
-REANCHOR_MARGIN = 3    # nearest must beat second-nearest by this many lines to be unambiguous
+REANCHOR_WINDOW = 50  # max line distance to consider a candidate the moved instance
+REANCHOR_MARGIN = 3  # nearest must beat second-nearest by this many lines to be unambiguous
 
 
 def _content_equal(a: Optional[str], b: Optional[str]) -> bool:
@@ -35,8 +30,7 @@ def waiver_strong_match(finding_sig: MatchSignature, waiver_sig: MatchSignature,
         return False
     if status == WAIVER_STATUS_FALSE_POSITIVE:
         return True
-    # accepted_risk: content-bearing anchors (scanner_fp / secret_hash) already imply content equality;
-    # content-independent anchors (similarity_id / search_key) require explicit content_hash match.
+    # accepted_risk: content-bearing anchors imply content equality; others need explicit content_hash match.
     if waiver_sig.anchor_kind in ("scanner_fp", "secret_hash"):
         return True
     return _content_equal(finding_sig.content_hash, waiver_sig.content_hash)
@@ -44,17 +38,16 @@ def waiver_strong_match(finding_sig: MatchSignature, waiver_sig: MatchSignature,
 
 @dataclass
 class MatchFinding:
-    """A finding reduced to what matching needs."""
     id: str
     sig: Optional[MatchSignature]
 
 
 @dataclass
 class WaiverApplication:
-    waived: Dict[str, str] = field(default_factory=dict)          # finding_id -> waiver_id
-    lapsed: Dict[str, str] = field(default_factory=dict)          # finding_id -> waiver_id (re-review)
+    waived: Dict[str, str] = field(default_factory=dict)  # finding_id -> waiver_id
+    lapsed: Dict[str, str] = field(default_factory=dict)  # finding_id -> waiver_id (re-review)
     reanchored: Dict[str, MatchSignature] = field(default_factory=dict)  # waiver_id -> new signature
-    dormant: Dict[str, str] = field(default_factory=dict)         # waiver_id -> reason (bound nothing)
+    dormant: Dict[str, str] = field(default_factory=dict)  # waiver_id -> reason (bound nothing)
 
 
 def _waiver_status(w: Any) -> str:
@@ -66,11 +59,7 @@ def _group_key(s: MatchSignature) -> str:
 
 
 def apply_waivers_to_findings(findings: Sequence[MatchFinding], waivers: Sequence) -> WaiverApplication:
-    """Assign waivers to findings via Pass-1 strong-exact, then Pass-2 re-anchoring.
-
-    Invariants: a finding is claimed by at most one waiver; a waiver binds at most one finding;
-    on ambiguity or accepted_risk content change, the finding is marked lapsed (fail-closed).
-    """
+    """Assign each finding to at most one waiver via Pass-1 strong-exact then Pass-2 re-anchoring; lapse on ambiguity."""
     app = WaiverApplication()
     located = [f for f in findings if f.sig is not None]
     claimed: set = set()
@@ -79,7 +68,7 @@ def apply_waivers_to_findings(findings: Sequence[MatchFinding], waivers: Sequenc
 
     by_group: Dict[str, List[MatchFinding]] = {}
     for f in located:
-        assert f.sig is not None  # invariant: `located` excludes findings without a signature
+        assert f.sig is not None
         by_group.setdefault(_group_key(f.sig), []).append(f)
 
     _pass1_strong_exact(app, waivers_with_sig, by_group, claimed, matched_waivers)
@@ -106,9 +95,8 @@ def _pass1_strong_exact(
         if not wsig.is_strong:
             continue
         status = _waiver_status(w)
-        # rule-key intersection + anchor equality are enforced by waiver_strong_match below
         for f in by_group.get(_group_key(wsig), []):
-            if f.id in claimed or f.sig is None:  # by_group holds only located findings; guard for the type checker
+            if f.id in claimed or f.sig is None:
                 continue
             if waiver_strong_match(f.sig, wsig, status):
                 app.waived[f.id] = w.id
@@ -131,7 +119,8 @@ def _pass2_reanchor(
         wsig = w.match
         status = _waiver_status(w)
         candidates = [
-            f for f in by_group.get(_group_key(wsig), [])
+            f
+            for f in by_group.get(_group_key(wsig), [])
             if f.id not in claimed and f.sig is not None and _rule_keys_intersect(f.sig, wsig)
         ]
         if not candidates:
@@ -176,25 +165,16 @@ def _line_distance(f: MatchFinding, last_line: Optional[int]) -> float:
 
 
 def _pick_unique_content_match(candidates: List[MatchFinding], last_line: Optional[int]) -> Optional[MatchFinding]:
-    """Return the unambiguous same-content candidate, else None.
-
-    For a single candidate, content identity alone is sufficient (no window required).
-    For multiple candidates, fall back to proximity disambiguation within WINDOW.
-    """
+    """Return the unambiguous same-content candidate, else None; a lone candidate needs no window."""
     if not candidates:
         return None
     if len(candidates) == 1:
         return candidates[0]
-    # Multiple same-content instances => need proximity to disambiguate
     return _pick_unique_nearest(candidates, last_line)
 
 
 def _pick_unique_nearest(candidates: List[MatchFinding], last_line: Optional[int]) -> Optional[MatchFinding]:
-    """Return the unambiguous nearest candidate within WINDOW, else None.
-
-    Unambiguous = exactly one candidate, or nearest beats second-nearest by >= MARGIN.
-    If last_line is unknown, only a single candidate is acceptable (still within reason).
-    """
+    """Return the nearest candidate within WINDOW when unambiguous (lone candidate, or beats runner-up by MARGIN)."""
     if not candidates:
         return None
     if len(candidates) == 1:
@@ -213,14 +193,14 @@ def _pick_unique_nearest(candidates: List[MatchFinding], last_line: Optional[int
 def _bind_reanchor(app: WaiverApplication, claimed: set, w: Any, finding: MatchFinding) -> None:
     app.waived[finding.id] = w.id
     claimed.add(finding.id)
-    # capture the finding's current signature with its line as the waiver's new anchor
-    assert finding.sig is not None  # invariant: only located findings are ever bound here
-    new_sig = finding.sig.model_copy(update={"last_line": finding.sig.last_line})
+    assert finding.sig is not None
+    new_sig = finding.sig.model_copy()
     app.reanchored[w.id] = new_sig
 
 
-def _mark_lapsed(app: WaiverApplication, candidates: List[MatchFinding], last_line: Optional[int],
-                 waiver_id: str) -> None:
+def _mark_lapsed(
+    app: WaiverApplication, candidates: List[MatchFinding], last_line: Optional[int], waiver_id: str
+) -> None:
     """Flag the most-likely former location(s) as lapsed so the UI can prompt re-review."""
     in_window = [f for f in candidates if _line_distance(f, last_line) <= REANCHOR_WINDOW] or candidates
     nearest = min(in_window, key=lambda f: _line_distance(f, last_line))

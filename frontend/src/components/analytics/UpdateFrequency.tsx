@@ -330,7 +330,6 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
 
   return (
     <div className="space-y-6">
-      {/* Project Selector */}
       {!initialProjectId && (
         <Card>
           <CardHeader>
@@ -351,7 +350,6 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
         </Card>
       )}
 
-      {/* Loading State */}
       {isLoading && selectedProjectId && (
         <div className="space-y-4">
           <div className="grid gap-4 md:grid-cols-4">
@@ -363,7 +361,6 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
         </div>
       )}
 
-      {/* Error State */}
       {error && (
         <Card>
           <CardContent className="py-8">
@@ -375,7 +372,6 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
         </Card>
       )}
 
-      {/* Empty State - no project selected */}
       {!selectedProjectId && !initialProjectId && (
         <Card>
           <CardContent className="py-12">
@@ -387,7 +383,6 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
         </Card>
       )}
 
-      {/* Not enough scans */}
       {data && data.scan_count < 2 && (
         <Card>
           <CardContent className="py-12">
@@ -400,7 +395,6 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
         </Card>
       )}
 
-      {/* Results */}
       {data && data.scan_count >= 2 && (
         <>
           <SummaryCards data={data} />

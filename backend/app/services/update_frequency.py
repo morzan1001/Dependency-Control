@@ -34,18 +34,11 @@ from app.services.release_history import (
 
 logger = logging.getLogger(__name__)
 
-# Lazy-init: pytest-asyncio creates a fresh loop per test, so binding the
-# semaphore to whichever loop is currently running matters.
+# asyncio.Semaphore binds to the running loop on first use. Creating it per
+# call (inside compute_update_frequency_comparison) keeps it tied to the loop
+# actually running the gather, so reuse across event loops (e.g. successive
+# pytest-asyncio tests) can't raise "bound to a different event loop".
 _COMPARISON_CONCURRENCY = 3
-_comparison_semaphore: Optional[asyncio.Semaphore] = None
-
-
-def _get_comparison_semaphore() -> asyncio.Semaphore:
-    global _comparison_semaphore
-    if _comparison_semaphore is None:
-        _comparison_semaphore = asyncio.Semaphore(_COMPARISON_CONCURRENCY)
-    return _comparison_semaphore
-
 
 _DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "purl": 1, "scan_id": 1}
 
@@ -76,8 +69,8 @@ def classify_version_change(old_version: str, new_version: str) -> str:
     if old_v == new_v:
         return "none"
 
-    old_major, old_minor, old_patch = _release_tuple(old_v)
-    new_major, new_minor, new_patch = _release_tuple(new_v)
+    old_major, old_minor, _ = _release_tuple(old_v)
+    new_major, new_minor, _ = _release_tuple(new_v)
 
     if new_major != old_major:
         return "major"
@@ -452,17 +445,20 @@ async def _load_completed_scans(
     ``hard_limit``) and ``max_scans`` is ignored.
     """
     fetch_limit = hard_limit if since is not None else max_scans
-    scans_raw = await scan_repo.find_by_project(
-        project_id,
+    # Filter status in the query so the limit counts only completed scans; filtering after
+    # the limit would empty the window when the newest scans are failed/processing.
+    # find_many returns Scan models, so project the fields Scan requires (project_id, branch).
+    scans = await scan_repo.find_many(
+        {"project_id": project_id, "status": "completed"},
+        sort=[("created_at", -1)],
         limit=fetch_limit,
-        sort_by="created_at",
-        sort_order=-1,
-        projection={"_id": 1, "created_at": 1, "status": 1},
+        projection={"_id": 1, "created_at": 1, "status": 1, "project_id": 1, "branch": 1},
     )
+    scans_raw: List[Dict[str, Any]] = [{"_id": s.id, "created_at": s.created_at, "status": s.status} for s in scans]
     if since is not None:
         scans_raw = [s for s in scans_raw if s["created_at"] >= since]
     scans_raw.reverse()
-    return [s for s in scans_raw if s.get("status") == "completed"]
+    return scans_raw
 
 
 async def compute_update_frequency(
@@ -559,13 +555,21 @@ async def _maybe_fetch_upstream_cadence(
     if release_fetcher is None:
         return None
 
+    # deps.dev keys packages by "group:artifact" (Maven), "scope/name" (npm),
+    # etc. — ParsedPURL.deps_dev_name — not the bare DB dependency name. Using
+    # the raw name 404s every Maven lookup. The fetcher returns history keyed by
+    # the name we pass, so remember dep_name -> deps_dev_name to re-key
+    # observations and keep adoption-latency matching intact.
     package_specs: List[Tuple[str, str]] = []
     seen: set = set()
+    name_to_registry_name: Dict[str, str] = {}
     for name, purl in package_purls.items():
         parsed = parse_purl(purl)
         if parsed is None or not parsed.registry_system:
             continue
-        spec = (parsed.registry_system, name)
+        registry_name = parsed.deps_dev_name
+        name_to_registry_name[name] = registry_name
+        spec = (parsed.registry_system, registry_name)
         if spec in seen:
             continue
         seen.add(spec)
@@ -581,7 +585,8 @@ async def _maybe_fetch_upstream_cadence(
         return None
 
     observations: List[Observation] = [
-        (pkg, version, scan_date) for (pkg, version), scan_date in first_seen_versions.items()
+        (name_to_registry_name.get(pkg, pkg), version, scan_date)
+        for (pkg, version), scan_date in first_seen_versions.items()
     ]
     return aggregate_upstream_metrics(history, observations=observations)
 
@@ -601,7 +606,9 @@ async def compute_update_frequency_comparison(
     to align projects on the same calendar window; otherwise scan-cadence
     differences make the comparison apples-to-oranges.
     """
-    semaphore = _get_comparison_semaphore()
+    # Created per call so it binds to the loop running this gather (see note
+    # at module top); a module-global semaphore would pin to the first loop.
+    semaphore = asyncio.Semaphore(_COMPARISON_CONCURRENCY)
 
     async def _compute_single(project: Dict[str, Any]) -> Optional[ProjectUpdateSummary]:
         project_id = project.get("_id") or project.get("id", "")

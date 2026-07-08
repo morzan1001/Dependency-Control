@@ -30,7 +30,7 @@ declare global {
   }
 }
 
-const getBaseUrl = () => {
+export const getBaseUrl = () => {
   if (window.__RUNTIME_CONFIG__?.VITE_API_URL) {
     return window.__RUNTIME_CONFIG__.VITE_API_URL;
   }
@@ -62,7 +62,7 @@ export const setLogoutCallback = (callback: () => void) => {
 let refreshPromise: Promise<string | null> | null = null;
 let isRefreshing = false;
 
-const refreshAccessToken = async (): Promise<string | null> => {
+export const refreshAccessToken = async (): Promise<string | null> => {
   const refreshToken = localStorage.getItem('refresh_token');
   if (!refreshToken) {
     return null;
@@ -91,9 +91,15 @@ const refreshAccessToken = async (): Promise<string | null> => {
     })
     .catch((err) => {
       logger.error('Token refresh failed', err instanceof Error ? err.message : 'Unknown error');
-      localStorage.removeItem('token');
-      localStorage.removeItem('refresh_token');
-      return null;
+      const status = axios.isAxiosError(err) ? err.response?.status : undefined;
+      // 4xx: refresh token is dead — clear tokens and signal logout via null.
+      if (status !== undefined && status >= 400 && status < 500) {
+        localStorage.removeItem('token');
+        localStorage.removeItem('refresh_token');
+        return null;
+      }
+      // Transient failure (network/timeout/5xx): keep tokens and re-throw so no forced logout.
+      throw err;
     })
     .finally(() => {
       refreshPromise = null;
@@ -103,10 +109,7 @@ const refreshAccessToken = async (): Promise<string | null> => {
   return refreshPromise;
 };
 
-/**
- * Build URLSearchParams from an object, skipping null/undefined/empty values.
- * Arrays are joined with commas.
- */
+// Build URLSearchParams, skipping null/undefined/empty values; arrays joined with commas.
 export function buildQueryParams(obj: Record<string, string | number | boolean | string[] | undefined | null>): URLSearchParams {
   const params = new URLSearchParams();
   for (const [key, value] of Object.entries(obj)) {
@@ -120,10 +123,7 @@ export function buildQueryParams(obj: Record<string, string | number | boolean |
   return params;
 }
 
-/**
- * Generic CRUD API factory for SCM instance resources.
- * Eliminates duplication between GitHub/GitLab instance APIs.
- */
+// Generic CRUD API factory for SCM instance resources.
 export function createInstanceApi<
   TInstance,
   TCreate,
@@ -191,7 +191,8 @@ api.interceptors.response.use(
             return api(originalRequest);
           }
         } catch {
-          // refresh failed; fall through to logout
+          // Transient refresh failure: keep tokens, reject without forcing logout.
+          throw error;
         }
       }
 

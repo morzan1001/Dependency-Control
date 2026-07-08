@@ -20,7 +20,6 @@ export default function AnalyticsPage() {
   const [showFindingsModal, setShowFindingsModal] = useState(false)
   const { hasPermission } = useAuth()
 
-  // Check individual tab permissions
   const canViewSummary = hasPermission('analytics:read') || hasPermission('analytics:summary')
   const canViewTree = hasPermission('analytics:read') || hasPermission('analytics:tree')
   const canViewImpact = hasPermission('analytics:read') || hasPermission('analytics:impact')
@@ -29,7 +28,6 @@ export default function AnalyticsPage() {
   const canViewRecommendations = hasPermission('analytics:read') || hasPermission('analytics:recommendations')
   const canViewCrypto = hasPermission('analytics:read')
 
-  // Determine available tabs
   const availableTabs = useMemo(() => {
     const tabs: { id: string; label: string; icon: typeof BarChart3 }[] = []
     if (canViewSummary) tabs.push({ id: 'overview', label: 'Overview', icon: BarChart3 })
@@ -60,10 +58,8 @@ export default function AnalyticsPage() {
         </p>
       </div>
 
-      {/* Summary Cards - only show if user has summary permission */}
       {canViewSummary && <AnalyticsSummaryCards />}
 
-      {/* Main Content Tabs */}
       <Tabs defaultValue={defaultTab} className="space-y-6">
         <TabsList>
           {availableTabs.map((tab) => {
@@ -77,7 +73,6 @@ export default function AnalyticsPage() {
           })}
         </TabsList>
 
-        {/* Overview Tab */}
         {canViewSummary && (
           <TabsContent value="overview" className="space-y-6">
             <div className="grid gap-6 md:grid-cols-2">
@@ -90,7 +85,6 @@ export default function AnalyticsPage() {
           </TabsContent>
         )}
 
-        {/* Dependency Tree Tab */}
         {canViewTree && (
           <TabsContent value="tree">
             <DependencyTree 
@@ -99,7 +93,6 @@ export default function AnalyticsPage() {
           </TabsContent>
         )}
 
-        {/* Impact Analysis Tab */}
         {canViewImpact && (
           <TabsContent value="impact">
             <ImpactAnalysis 
@@ -108,7 +101,6 @@ export default function AnalyticsPage() {
           </TabsContent>
         )}
 
-        {/* Vulnerability Hotspots Tab */}
         {canViewHotspots && (
           <TabsContent value="hotspots">
             <VulnerabilityHotspots 
@@ -117,14 +109,12 @@ export default function AnalyticsPage() {
           </TabsContent>
         )}
 
-        {/* Recommendations Tab */}
         {canViewRecommendations && (
           <TabsContent value="recommendations">
             <Recommendations />
           </TabsContent>
         )}
 
-        {/* Update Frequency Tab */}
         {canViewRecommendations && (
           <TabsContent value="update-frequency" className="space-y-8">
             <UpdateFrequencyComparison />
@@ -134,7 +124,6 @@ export default function AnalyticsPage() {
           </TabsContent>
         )}
 
-        {/* Cross-Project Dependency Search Tab */}
         {canViewSearch && (
           <TabsContent value="search-deps">
             <CrossProjectSearch 
@@ -143,14 +132,12 @@ export default function AnalyticsPage() {
           </TabsContent>
         )}
 
-        {/* Vulnerability Search Tab */}
         {canViewSearch && (
           <TabsContent value="search-vulns">
             <VulnerabilitySearch />
           </TabsContent>
         )}
 
-        {/* Cryptography Tab */}
         {canViewCrypto && (
           <TabsContent value="cryptography">
             <CryptoAnalyticsTab />
@@ -158,7 +145,6 @@ export default function AnalyticsPage() {
         )}
       </Tabs>
 
-      {/* Component Details Modal */}
       <AnalyticsDependencyModal
         component={selectedComponent?.name || ''}
         version={selectedComponent?.version}

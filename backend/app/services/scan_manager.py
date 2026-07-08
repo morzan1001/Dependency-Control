@@ -1,13 +1,4 @@
-"""
-ScanManager - Centralized service for scan lifecycle management.
-
-This service handles:
-- Finding or creating scans based on pipeline data
-- Applying waivers to findings
-- Storing analysis results
-- Computing statistics
-- Triggering aggregation jobs
-"""
+"""ScanManager - scan lifecycle: find/create scans, apply waivers, store results, compute stats, trigger aggregation."""
 
 import logging
 import uuid
@@ -27,26 +18,13 @@ logger = logging.getLogger(__name__)
 
 
 class ScanManager:
-    """
-    Manages the lifecycle of scans.
-
-    Usage:
-        manager = ScanManager(db, project)
-        ctx = await manager.find_or_create_scan(data)
-
-        # Process findings...
-
-        await manager.store_results("trufflehog", result_dict, ctx.scan_id)
-        findings = await manager.apply_waivers(findings)
-        await manager.trigger_aggregation(ctx.scan_id)
-    """
+    """Manages the lifecycle of scans."""
 
     def __init__(self, db: AsyncIOMotorDatabase, project: Project):
         self.db = db
         self.project = project
-        self._waivers_cache: Optional[List[Waiver]] = None
-        self._waivers_cache_time: Optional[datetime] = None
-        self._cache_ttl_minutes = 5  # Cache TTL in minutes
+        # Memoized for this request-scoped instance; no cross-request cache/TTL.
+        self._waivers: Optional[List[Waiver]] = None
 
     def build_pipeline_url(self, data: BaseIngest) -> Optional[str]:
         """Construct pipeline URL if not provided."""
@@ -59,35 +37,25 @@ class ScanManager:
         return None
 
     async def find_or_create_scan(self, data: BaseIngest) -> ScanContext:
+        """Find or create the scan for this pipeline, returning a ScanContext.
+
+        Uses deterministic UUID5 scan_ids so all scanners for the same commit+pipeline
+        share one scan across pods.
         """
-        Find an existing scan for this pipeline or create a new one.
-
-        Uses DETERMINISTIC scan_id generation (UUID5) to ensure consistency
-        across all ingest endpoints in multi-pod environments.
-
-        Returns a ScanContext with the scan_id and whether it's new.
-        """
-        import uuid
-
         pipeline_url = self.build_pipeline_url(data)
 
-        # Generate DETERMINISTIC scan_id (same logic as SBOM endpoint)
-        # This ensures all scanners (TruffleHog, OpenGrep, SBOM, etc.) use the SAME scan
-        # for the same commit in the same pipeline
         if data.pipeline_id and data.commit_hash:
-            # Deterministic: Same commit + pipeline = same scan
             scan_id_seed = f"{self.project.id}-{data.pipeline_id}-{data.commit_hash}"
             scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
         elif data.pipeline_id:
-            # No commit_hash: Use pipeline_id only (less precise)
+            # No commit_hash: pipeline_id only (less precise).
             scan_id_seed = f"{self.project.id}-{data.pipeline_id}"
             scan_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
         else:
-            # No pipeline_id: Use random UUID (manual upload)
+            # Manual upload: random UUID.
             scan_id = str(uuid.uuid4())
 
-        # Atomic upsert: Create scan if doesn't exist, update if it does
-        # This prevents race conditions when multiple scanners run concurrently
+        # Atomic upsert to avoid races between concurrent scanners.
         now = datetime.now(timezone.utc)
 
         scan_update = {
@@ -115,55 +83,54 @@ class ScanManager:
             },
         }
 
-        # Atomic upsert via ScanRepository
+        # Capture the raw result so is_new reflects insert (upserted_id set) vs update.
+        from app.core.metrics import track_db_operation
         from app.repositories import ScanRepository
 
         scan_repo = ScanRepository(self.db)
-        await scan_repo.upsert({"_id": scan_id}, scan_update)
+        with track_db_operation("scans", "update_one"):
+            upsert_result = await scan_repo.collection.update_one({"_id": scan_id}, scan_update, upsert=True)
 
-        # Check if new scan was created
-        is_new = True  # This is a simplification - could be improved
+        is_new = upsert_result.upserted_id is not None
 
         return ScanContext(scan_id=scan_id, is_new=is_new, pipeline_url=pipeline_url)
 
     async def _get_waivers(self) -> List[Waiver]:
-        """
-        Fetch and cache active waivers for this project.
-        Cache is invalidated after TTL expires.
+        """Fetch active waivers for this project, memoized for this request-scoped instance."""
+        if self._waivers is None:
+            from app.repositories import WaiverRepository
 
-        Uses WaiverRepository for consistent data access.
-        """
-        from app.repositories import WaiverRepository
+            waiver_repo = WaiverRepository(self.db)
+            self._waivers = await waiver_repo.find_active_for_project(str(self.project.id), include_global=True)
 
-        now = datetime.now(timezone.utc)
-
-        # Check if cache is valid
-        if self._waivers_cache is not None and self._waivers_cache_time is not None:
-            cache_age = (now - self._waivers_cache_time).total_seconds() / 60
-            if cache_age < self._cache_ttl_minutes:
-                return self._waivers_cache
-            else:
-                logger.debug(f"Waiver cache expired (age: {cache_age:.1f} min, TTL: {self._cache_ttl_minutes} min)")
-
-        # Fetch fresh waivers from database via repository
-        waiver_repo = WaiverRepository(self.db)
-        self._waivers_cache = await waiver_repo.find_active_for_project(str(self.project.id), include_global=True)
-        self._waivers_cache_time = now
-
-        return self._waivers_cache
+        return self._waivers
 
     def _finding_matches_waiver(self, finding: Finding, waiver: Waiver) -> bool:
         """Best-effort exact match at ingest. Location-based findings use the strong-anchor
         signature (no re-anchoring here — the recalc is authoritative for that)."""
         if finding.match is not None and waiver.match is not None:
             from app.services.waivers.matching import waiver_strong_match
+
             return waiver_strong_match(finding.match, waiver.match, waiver.status or "false_positive")
-        # Legacy path for non-location findings (license/eol/vuln-by-type/component)
-        if waiver.finding_type and waiver.finding_type == finding.type:
-            return True
-        if waiver.package_name and waiver.package_name == finding.component:
-            return True
-        return False
+        # Legacy path for non-location findings (license/eol/vuln-by-type/component).
+        # Mirror _build_waiver_query's AND semantics (services/stats.py): every field the
+        # waiver sets must match the finding; an unset (or "Unknown") field is a wildcard.
+        # Using OR here over-waives, e.g. a secret waiver scoped to one file would suppress
+        # every secret in the whole upload.
+        field_pairs = (
+            (waiver.finding_id, finding.id),
+            (waiver.package_name, finding.component),
+            (waiver.package_version, finding.version),
+            (waiver.finding_type, finding.type),
+        )
+        matched_any = False
+        for waiver_value, finding_value in field_pairs:
+            if not waiver_value or waiver_value == "Unknown":
+                continue
+            if waiver_value != finding_value:
+                return False
+            matched_any = True
+        return matched_any
 
     async def apply_waivers(self, findings: List[Finding]) -> Tuple[List[Finding], int]:
         """
@@ -210,24 +177,13 @@ class ScanManager:
         await worker_manager.add_job(scan_id)
 
     async def register_result(self, scan_id: str, analyzer_name: str, trigger_analysis: bool = False) -> None:
-        """
-        Register that a scanner has submitted results.
+        """Record a scanner's submission; if the scan was completed, reset to pending and re-aggregate.
 
-        This method:
-        1. Updates last_result_at timestamp
-        2. Adds analyzer_name to received_results list
-        3. If scan was 'completed', resets status to 'pending' and triggers re-aggregation
-        4. Optionally triggers the aggregation (for SBOM scanner)
-
-        Args:
-            scan_id: The scan ID
-            analyzer_name: Name of the analyzer that submitted results
-            trigger_analysis: If True, trigger the aggregation worker
+        Triggers aggregation when ``trigger_analysis`` is set or a late result reopened the scan.
         """
         now = datetime.now(timezone.utc)
 
-        # Atomic update: Update scan and retrieve new state in one operation
-        # This prevents race conditions in multi-pod environments
+        # Atomic update to avoid races across pods.
         update_ops: Dict[str, Any] = {
             "$set": {
                 "last_result_at": now,
@@ -236,7 +192,6 @@ class ScanManager:
             "$addToSet": {"received_results": analyzer_name},
         }
 
-        # Use find_one_and_update for atomic operation via repository
         from app.repositories import ScanRepository
 
         scan_repo = ScanRepository(self.db)
@@ -254,7 +209,6 @@ class ScanManager:
         current_status = scan.get("status", "pending")
         should_reaggregate = False
 
-        # If scan is completed, reset to pending and trigger re-aggregation
         if current_status == "completed":
             logger.info(
                 f"Late result from {analyzer_name} for completed scan {scan_id}. "
@@ -266,9 +220,6 @@ class ScanManager:
             )
             should_reaggregate = True
 
-        # Trigger aggregation if:
-        # 1. Explicitly requested (SBOM scanner), OR
-        # 2. Late result arrived after completion
         if trigger_analysis or should_reaggregate:
             await self.trigger_aggregation(scan_id)
 

@@ -1,17 +1,4 @@
-"""
-Integration test: embedded CBOM persisted during regular SBOM ingest.
-
-Exercises the path where a CycloneDX 1.6 SBOM that contains both
-``library`` and ``cryptographic-asset`` components is submitted to
-``POST /api/v1/ingest``.  After ingest the engine is called directly
-(bypassing the background worker queue) to confirm that:
-
-  - Dependency records are created for the library components.
-  - CryptoAsset records are created for the cryptographic-asset components.
-
-Auth and database dependencies are overridden via the shared conftest so
-no live MongoDB is required.
-"""
+"""Embedded CBOM in a CycloneDX SBOM: _process_sbom persists both dependency and CryptoAsset records."""
 
 import json
 from pathlib import Path
@@ -29,13 +16,8 @@ def _load(name):
         return json.load(f)
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 class _MinimalAggregator:
-    """Stub aggregator that discards results — we only care about DB side-effects."""
+    """Stub aggregator that discards results — the test only checks DB side-effects."""
 
     def aggregate(self, *args, **kwargs):
         pass
@@ -47,27 +29,15 @@ class _MinimalAggregator:
         return {}
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_cyclonedx_sbom_with_crypto_persists_crypto_assets(db):
-    """
-    Calling _process_sbom with a CycloneDX 1.6 SBOM that contains a
-    cryptographic-asset component results in a CryptoAsset being stored.
-
-    ``cyclonedx_1_6_with_crypto_assets.json`` contains:
-      - 1 library component  (openssl)
-      - 1 cryptographic-asset component  (SHA-1)
-    """
+    """_process_sbom on a CycloneDX 1.6 SBOM containing a cryptographic-asset component stores a CryptoAsset."""
     sbom = _load("cyclonedx_1_6_with_crypto_assets.json")
     project_id = "test-project-id"
     scan_id = "scan-embedded-cbom-001"
     aggregator = _MinimalAggregator()
 
-    # _process_sbom needs a minimal fs mock for GridFS (not used for inline dicts)
+    # _process_sbom needs a minimal fs mock for GridFS (unused for inline dicts).
     from unittest.mock import MagicMock, AsyncMock
 
     fs = MagicMock()
@@ -80,7 +50,7 @@ async def test_cyclonedx_sbom_with_crypto_persists_crypto_assets(db):
         db=db,
         fs=fs,
         aggregator=aggregator,
-        active_analyzers=[],  # no vuln analyzers needed for this test
+        active_analyzers=[],
         system_settings=None,
         project_id=project_id,
     )
@@ -91,9 +61,6 @@ async def test_cyclonedx_sbom_with_crypto_persists_crypto_assets(db):
 
 @pytest.mark.asyncio
 async def test_sbom_without_crypto_components_persists_no_crypto_assets(db):
-    """A plain SBOM with no cryptographic-asset components leaves crypto_assets empty."""
-    # Use the legacy_crypto_mixed fixture but wrapped as a non-crypto SBOM —
-    # easier: just use a minimal CycloneDX SBOM with only library components.
     sbom = {
         "bomFormat": "CycloneDX",
         "specVersion": "1.5",

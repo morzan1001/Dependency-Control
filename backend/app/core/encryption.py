@@ -57,12 +57,7 @@ SinkFn = Callable[[bytes], Awaitable[None]]
 
 
 class EncryptionStreamWriter:
-    """Streaming AES-GCM encryptor.
-
-    Buffers plaintext until CHUNK_SIZE bytes have accumulated, then emits an
-    encrypted chunk to the sink. Call ``aclose()`` to flush any partial
-    chunk and emit the terminator.
-    """
+    """Streaming AES-GCM encryptor; buffers to CHUNK_SIZE then emits chunks. aclose() flushes."""
 
     def __init__(self, sink: SinkFn, chunk_size: int = ENCRYPTION_CHUNK_SIZE):
         self._sink = sink
@@ -133,13 +128,7 @@ class _StreamReader:
 
 
 async def decrypt_stream(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
-    """Decrypt a chunked AES-GCM stream, yielding plaintext chunks.
-
-    Wire format reminder:
-        header = 9 bytes (4 magic + 1 version + 4 chunk_size)
-        per chunk: LEN(4) || NONCE(12) || PAYLOAD(LEN bytes ciphertext+tag)
-        LEN excludes the nonce.
-    """
+    """Decrypt a chunked AES-GCM stream, yielding plaintext chunks."""
     aesgcm = AESGCM(_get_key())
     reader = _StreamReader(source)
 

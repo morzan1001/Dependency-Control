@@ -14,14 +14,7 @@ interface WaivedFindingsSectionProps {
     stickyHeaderTop?: number;
 }
 
-/**
- * Renders a secondary, visually de-emphasised list of waived findings beneath
- * the primary list. Self-hides when there are zero waived findings in scope so
- * users only see the section when there's something to look at.
- *
- * Stats elsewhere already exclude waived findings (see backend stats.py); this
- * is purely for transparency — "what is currently being suppressed?".
- */
+/** Secondary, de-emphasised list of waived findings; self-hides when none are in scope. Stats exclude waived findings, so this is purely for transparency. */
 export function WaivedFindingsSection({
     scanId,
     projectId,
@@ -30,8 +23,7 @@ export function WaivedFindingsSection({
     scanContext,
     stickyHeaderTop,
 }: Readonly<WaivedFindingsSectionProps>) {
-    // Cheap probe: limit=1 just to learn whether any waived finding matches
-    // the active category filter. The full table below paginates separately.
+    // Cheap probe (limit=1) to learn whether any waived finding matches the active filter.
     const { data: probe } = useQuery({
         queryKey: ['waived-findings-probe', scanId, category, licenseCategory],
         queryFn: () =>

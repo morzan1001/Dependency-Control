@@ -1,17 +1,4 @@
-"""Endpoint-level authz tests for the project WRITE paths (Finding 22 / W2).
-
-These verify the duplicated inline ``project:update`` bypass blocks have been
-removed and every write path now routes uniformly through
-``check_project_access(required_role="admin")``:
-
-* ``rotate_api_key``
-* ``update_project`` (via ``_load_project_for_update``)
-* team transfer (via ``_assert_can_transfer_team``)
-* ``delete_project``
-
-A ``project:update`` holder (non-member) must pass all of them identically;
-a non-member without it must be denied (403) by the gate.
-"""
+"""Endpoint-level authz tests for the project write paths: every write path routes through check_project_access(required_role="admin"), so a project:update holder passes all and a plain reader is denied 403."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -72,9 +59,7 @@ class TestRotateApiKeyRoutesThroughGate:
         mock_repo.update = AsyncMock(return_value=None)
 
         with patch(f"{ENDPOINTS}.ProjectRepository", return_value=mock_repo):
-            with patch(
-                f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project
-            ) as mock_gate:
+            with patch(f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project) as mock_gate:
                 result = asyncio.run(rotate_api_key("proj-1", user, MagicMock()))
 
         # The gate must be invoked at admin level even for a project:update holder.
@@ -106,9 +91,7 @@ class TestLoadProjectForUpdateRoutesThroughGate:
         user = _update_user()
         project = _project(members=[])
 
-        with patch(
-            f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project
-        ) as mock_gate:
+        with patch(f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project) as mock_gate:
             result = asyncio.run(_load_project_for_update("proj-1", user, MagicMock()))
 
         mock_gate.assert_awaited_once()
@@ -142,15 +125,12 @@ class TestTransferTeamSuperuser:
         team_repo = MagicMock()
         team_repo.is_member = AsyncMock(return_value=False)
 
-        # Should NOT raise — project:update bypasses target-team membership.
+        # project:update bypasses target-team membership.
         asyncio.run(_assert_can_transfer_team(project, project_in, user, team_repo))
         team_repo.is_member.assert_not_called()
 
     def test_delete_only_holder_can_transfer_without_target_membership(self):
-        """A non-member with ONLY project:delete is a write superuser too, so it
-        must be allowed to transfer the team — parity with the gate's
-        ``_WRITE_SUPERUSER_PERMISSIONS`` set (PROJECT_UPDATE *and* PROJECT_DELETE).
-        """
+        """project:delete is part of the write-superuser set, so a delete-only non-member may also transfer the team."""
         from app.api.v1.endpoints.projects import _assert_can_transfer_team
         from app.schemas.project import ProjectUpdate
 
@@ -161,7 +141,6 @@ class TestTransferTeamSuperuser:
         team_repo = MagicMock()
         team_repo.is_member = AsyncMock(return_value=False)
 
-        # Should NOT raise — project:delete is part of the write-superuser set.
         asyncio.run(_assert_can_transfer_team(project, project_in, user, team_repo))
         team_repo.is_member.assert_not_called()
 
@@ -185,7 +164,6 @@ class TestDeleteProjectRoutesThroughGate:
     def test_update_holder_routes_through_gate(self):
         from app.api.v1.endpoints.projects import delete_project
 
-        # A project:update holder, non-member, must be able to delete via the gate.
         user = _update_user()
         project = _project(members=[])
 
@@ -199,7 +177,6 @@ class TestDeleteProjectRoutesThroughGate:
             "InvitationRepository": MagicMock(),
             "CallgraphRepository": MagicMock(),
         }
-        # Configure the async methods used by delete_project.
         scan_repo = repos["ScanRepository"]
 
         async def _empty_iter(*args, **kwargs):
@@ -248,15 +225,10 @@ class TestDeleteProjectRoutesThroughGate:
 
 
 class TestUpdateProjectTeamSourceProvenance:
-    """W9: stamping team_source='manual' must only happen when team_id actually changes.
-
-    A frontend that echoes back the current (sync-assigned) team_id on any
-    unrelated edit must NOT flip provenance to 'manual' and opt the project out
-    of GitLab-sync-managed assignment.
-    """
+    """team_source='manual' must be stamped only when team_id actually changes, so echoing back the current team_id on an unrelated edit does not flip provenance."""
 
     def _build_update_project_mocks(self, project: "Project"):
-        """Return a context-manager stack that patches update_project's collaborators."""
+        """Return the mocked collaborators for update_project."""
         project_repo = MagicMock()
         project_repo.update = AsyncMock(return_value=None)
         project_repo.get_by_id = AsyncMock(return_value=project)
@@ -291,10 +263,9 @@ class TestUpdateProjectTeamSourceProvenance:
         return project_repo.update
 
     def test_same_team_id_does_not_stamp_manual(self):
-        """PATCHing with the SAME team_id as the current project must leave team_source unchanged (W9)."""
+        """PATCHing with the same team_id must leave team_source unchanged."""
         from app.schemas.project import ProjectUpdate
 
-        # A gitlab-synced project has team_source="gitlab"
         project = Project(
             id="proj-1",
             name="Test",
@@ -304,20 +275,17 @@ class TestUpdateProjectTeamSourceProvenance:
             team_source="gitlab",
         )
         user = _update_user()
-        # Frontend echoes back the same team_id it already has
+        # Frontend echoes back the same team_id it already has.
         project_in = ProjectUpdate(name="Renamed", team_id="team-abc")
 
         mock_update = self._run_update(project, project_in, user)
 
-        # update must have been called
         mock_update.assert_awaited_once()
         call_kwargs = mock_update.call_args[0][1]  # second positional arg is the update dict
-        assert "team_source" not in call_kwargs, (
-            "team_source must NOT be written when team_id is unchanged"
-        )
+        assert "team_source" not in call_kwargs, "team_source must NOT be written when team_id is unchanged"
 
     def test_different_team_id_stamps_manual(self):
-        """PATCHing with a DIFFERENT team_id must set team_source='manual' (W9)."""
+        """PATCHing with a different team_id must set team_source='manual'."""
         from app.schemas.project import ProjectUpdate
 
         project = Project(
@@ -335,12 +303,10 @@ class TestUpdateProjectTeamSourceProvenance:
 
         mock_update.assert_awaited_once()
         call_kwargs = mock_update.call_args[0][1]
-        assert call_kwargs.get("team_source") == "manual", (
-            "team_source must be set to 'manual' when team_id changes"
-        )
+        assert call_kwargs.get("team_source") == "manual", "team_source must be set to 'manual' when team_id changes"
 
     def test_no_team_id_in_payload_does_not_stamp_manual(self):
-        """PATCHing with no team_id field at all must not touch team_source (W9)."""
+        """PATCHing with no team_id field must not touch team_source."""
         from app.schemas.project import ProjectUpdate
 
         project = Project(

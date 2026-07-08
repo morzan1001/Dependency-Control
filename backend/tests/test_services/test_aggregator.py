@@ -18,11 +18,7 @@ from app.services.aggregation.versions import (
 
 
 class TestParseVersionKey:
-    """Tests for _parse_version_key - converts version strings to comparable tuples.
-
-    Each element is a (type_flag, value) pair: (0, int) for numeric, (1, str) for text.
-    Mixed alphanumeric tokens like 'rc1' are split into separate elements.
-    """
+    """Tests for parse_version_key."""
 
     def setup_method(self):
         self.agg = ResultAggregator()
@@ -42,7 +38,7 @@ class TestParseVersionKey:
 
     def test_prerelease_with_number(self):
         result = parse_version_key("1.2.3-rc1")
-        # "rc1" is now split into "rc" + "1" for safe comparison
+        # "rc1" splits into "rc" + "1" for safe comparison
         assert result == ((0, 1), (0, 2), (0, 3), (1, "rc"), (0, 1))
 
     def test_numeric_parts_have_int_values(self):
@@ -70,7 +66,6 @@ class TestParseVersionKey:
         """Comparing '3.0.0a1' with '3.0.0' must not raise TypeError."""
         v1 = parse_version_key("3.0.0")
         v2 = parse_version_key("3.0.0a1")
-        # Should not raise - this was the bug
         assert (v2 > v1) or (v2 <= v1)
 
     def test_prerelease_vs_release_comparison_safe(self):
@@ -712,3 +707,44 @@ class TestAggregateDispatch:
         f = list(self.agg.findings.values())[0]
         assert f.type == "system_warning"
         assert "trivy" in f.description
+
+
+class TestCrossLinkPrimaries:
+    """Tests for _cross_link_primaries (delegates to cross_link_pair)."""
+
+    def setup_method(self):
+        self.agg = ResultAggregator()
+
+    @staticmethod
+    def _finding(fid: str) -> Finding:
+        return Finding(
+            id=fid,
+            type=FindingType.VULNERABILITY,
+            severity=Severity.HIGH,
+            component=fid,
+            version="1.0.0",
+            description="",
+            scanners=["trivy"],
+            details={},
+        )
+
+    def test_pairwise_bidirectional_links(self):
+        """Every primary should reference every other primary in both directions."""
+        p1, p2, p3 = self._finding("a"), self._finding("b"), self._finding("c")
+        self.agg._cross_link_primaries([p1, p2, p3])
+        assert set(p1.related_findings) == {"b", "c"}
+        assert set(p2.related_findings) == {"a", "c"}
+        assert set(p3.related_findings) == {"a", "b"}
+
+    def test_no_duplicate_links(self):
+        """Pre-existing links must not be duplicated (idempotent append guard)."""
+        p1, p2 = self._finding("a"), self._finding("b")
+        p1.related_findings.append("b")
+        self.agg._cross_link_primaries([p1, p2])
+        assert p1.related_findings == ["b"]
+        assert p2.related_findings == ["a"]
+
+    def test_single_primary_noop(self):
+        p1 = self._finding("a")
+        self.agg._cross_link_primaries([p1])
+        assert p1.related_findings == []

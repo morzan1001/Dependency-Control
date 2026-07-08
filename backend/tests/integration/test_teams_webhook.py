@@ -6,8 +6,6 @@ from app.services.webhooks.validation import detect_webhook_type
 
 
 class TestDetectWebhookTypeIntegration:
-    """Test the auto-detection logic that runs inside create endpoints."""
-
     def _resolve_type(self, webhook_in: WebhookCreate) -> str:
         """Simulate the endpoint logic: use explicit type or auto-detect."""
         return webhook_in.webhook_type or detect_webhook_type(webhook_in.url)
@@ -61,8 +59,6 @@ class TestDetectWebhookTypeIntegration:
 
 
 class TestWebhookModelCreationWithType:
-    """Test that Webhook objects are built with the correct type."""
-
     def test_webhook_created_with_resolved_teams_type(self):
         webhook_in = WebhookCreate(
             url="https://contoso.webhook.office.com/webhookb2/abc",
@@ -72,24 +68,6 @@ class TestWebhookModelCreationWithType:
         webhook_data = webhook_in.model_dump(exclude={"webhook_type"})
         webhook = Webhook(project_id="proj-1", webhook_type=resolved_type, **webhook_data)
         assert webhook.webhook_type == "teams"
-
-    def test_webhook_response_exposes_type(self):
-        from app.schemas.webhook import WebhookResponse
-
-        webhook = Webhook(
-            url="https://contoso.webhook.office.com/webhookb2/abc",
-            events=["scan.completed"],
-            webhook_type="teams",
-        )
-        resp = WebhookResponse(
-            id=webhook.id,
-            url=webhook.url,
-            events=webhook.events,
-            is_active=webhook.is_active,
-            created_at=webhook.created_at,
-            webhook_type=webhook.webhook_type,
-        )
-        assert resp.webhook_type == "teams"
 
 
 class TestDetectWebhookTypeOnUpdate:

@@ -1,9 +1,4 @@
-"""
-Scan Delta Schema Definitions
-
-Pydantic response envelopes for the unified scan-delta API that covers
-findings, components, and crypto changes between two scans.
-"""
+"""Response envelopes for the unified scan-delta API (findings, components, crypto)."""
 
 from __future__ import annotations
 

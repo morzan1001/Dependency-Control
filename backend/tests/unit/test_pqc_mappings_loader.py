@@ -34,18 +34,21 @@ def test_family_alias_normalises():
     assert normalise_family("Kyber", m) == "Kyber"
 
 
+def test_family_alias_normalises_case_insensitively():
+    """Alias resolution must be case-insensitive, or a quantum-vulnerable asset misses both the alias and the canonical set and is dropped from the migration plan."""
+    m = load_mappings()
+    assert normalise_family("diffie-hellman", m) == "DH"
+    assert normalise_family("DIFFIE-HELLMAN", m) == "DH"
+    assert normalise_family("EC-dsa", m) == "ECDSA"
+    assert normalise_family("ECDSA", m) == "ECDSA"
+
+
 def test_clear_mappings_cache_forces_reload():
-    """``load_mappings`` is ``@lru_cache(maxsize=1)``. Without an explicit
-    cache-clear, tests that patch the YAML or _MAPPINGS_PATH would keep
-    seeing the first-process result. ``clear_mappings_cache`` exposes the
-    underlying ``cache_clear`` so test setup can invalidate stale results."""
-    # Prime the cache.
+    """clear_mappings_cache exposes lru_cache's cache_clear so tests can invalidate a stale load_mappings result."""
     first = load_mappings()
     assert load_mappings.cache_info().currsize == 1
-    # Clear — next call repopulates.
     clear_mappings_cache()
     assert load_mappings.cache_info().currsize == 0
     second = load_mappings()
-    # Same content (YAML unchanged), fresh object with full population.
     assert second.version == first.version
     assert load_mappings.cache_info().currsize == 1

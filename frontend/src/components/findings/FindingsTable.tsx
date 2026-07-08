@@ -20,12 +20,11 @@ import { SeverityBadge } from './SeverityBadge'
 import { FindingTypeBadge } from './FindingTypeBadge'
 import { getSourceInfo } from '@/lib/finding-utils'
 import { ScanContext } from './details/SastDetailsView'
+import { resolveRelatedFindingInRows, fetchRelatedFinding } from './related-finding-rows'
 
-// Stable keys for the loading skeleton rows. Using fixed string keys avoids
-// the "array index as key" anti-pattern while still rendering a stable list.
+// Fixed string keys avoid the array-index-as-key anti-pattern.
 const SKELETON_ROW_KEYS = Array.from({ length: 10 }, (_, i) => `skeleton-row-${i}`)
 
-// Sub-shape of `Finding.details` we touch when computing the display ID.
 type FindingWithDetails = {
     id: string
     type?: string
@@ -35,13 +34,7 @@ type FindingWithDetails = {
     }
 }
 
-/**
- * Compute the user-visible ID for a finding row.
- *
- * Vulnerability and quality findings can aggregate multiple underlying issues;
- * we show "Multiple …" when there is more than one, the single issue's id when
- * there is exactly one, and otherwise fall back to the finding's own id.
- */
+// Aggregated findings show "Multiple …"; a single issue shows its id; else the finding's own id.
 function getDisplayId(finding: FindingWithDetails): string | undefined {
     const vulnCount = finding.details?.vulnerabilities?.length ?? 0
     if (finding.type === 'vulnerability') {
@@ -169,16 +162,13 @@ interface FindingsTableProps {
     readonly licenseCategory?: string;
     /** Hide INFO-level findings */
     readonly hideInfo?: boolean;
-    /**
-     * Which side of the active/waived split this table shows.
-     * - "active" (default): only un-waived findings — the main list users care about.
-     * - "waived": only waived findings — used for the secondary "what is being suppressed" list.
-     * - "all": both. Kept as an escape hatch; not used by the standard scan view.
-     */
+    /** Active/waived split: "active" (default) un-waived only, "waived" waived only, "all" both. */
     readonly waivedFilter?: "active" | "waived" | "all";
+    /** Hide findings on transitive dependencies (direct and non-dependency findings stay). */
+    readonly directOnly?: boolean;
 }
 
-export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0, licenseCategory, hideInfo, waivedFilter = "active" }: FindingsTableProps) {
+export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0, licenseCategory, hideInfo, waivedFilter = "active", directOnly = false }: FindingsTableProps) {
     const sentinelRef = useRef<HTMLDivElement>(null)
     const scrollTargetRef = useRef<HTMLTableRowElement | null>(null)
     const hasScrolledRef = useRef(false)
@@ -238,7 +228,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         isError
     } = useInfiniteQuery({
         // severity is NOT passed to API - we show all findings but scroll to the target
-        queryKey: ['findings', scanId, category, search, sortBy, sortOrder, licenseCategory, hideInfo, waivedFilter],
+        queryKey: ['findings', scanId, category, search, sortBy, sortOrder, licenseCategory, hideInfo, waivedFilter, directOnly],
         queryFn: async ({ pageParam = 0 }) => {
             const res = await scanApi.getFindings(scanId, {
                 skip: pageParam,
@@ -249,10 +239,10 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                 sort_order: sortOrder,
                 ...(licenseCategory ? { license_category: licenseCategory } : {}),
                 ...(hideInfo ? { hide_info: true } : {}),
-                // "all" is the escape hatch — omit the param so the backend
-                // returns both waived and active findings.
+                // "all": omit the param so the backend returns both waived and active.
                 ...(waivedFilter === "active" ? { waived: false } : {}),
                 ...(waivedFilter === "waived" ? { waived: true } : {}),
+                ...(directOnly ? { direct_only: true } : {}),
             });
             return res;
         },
@@ -272,7 +262,6 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         ? allRows.findIndex(f => f.severity?.toUpperCase() === severity.toUpperCase())
         : -1
 
-    // Scroll to first finding matching the target severity (from URL param)
     useEffect(() => {
         if (!severity || hasScrolledRef.current || scrollTargetIndex < 0) return
         const targetRow = scrollTargetRef.current
@@ -284,8 +273,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         }
     }, [severity, scrollTargetIndex])
 
-    // IntersectionObserver on sentinel element triggers loading the next page
-    // when the user scrolls near the bottom of the table.
+    // Load the next page when the sentinel nears the viewport.
     useEffect(() => {
         const sentinel = sentinelRef.current
         if (!sentinel) return
@@ -382,9 +370,6 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                     <TableBody>
                         {allRows.map((finding, index) => {
                             const sourceInfo = getSourceInfo(finding?.source_type)
-                            // Attach the scroll-to ref to the first row whose severity matches
-                            // the URL param. The index is derived purely from `allRows` above
-                            // (no ref reads during render).
                             const isScrollTarget = index === scrollTargetIndex
                             const rowClass = `border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer ${
                                 finding.type === 'system_warning' ? 'bg-destructive/5 hover:bg-destructive/10 border-l-2 border-l-destructive' : ''
@@ -461,87 +446,17 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                     isOpen={!!selectedFinding}
                     onClose={closeSelectedFinding}
                     onSelectFinding={async (id) => {
-                        // First try exact match by ID
-                        let found = allRows.find(f => f.id === id);
-
-                        if (!found) {
-                            // Handle OUTDATED-{component} format
-                            if (id.startsWith("OUTDATED-")) {
-                                const component = id.replace("OUTDATED-", "");
-                                found = allRows.find(f =>
-                                    f.type === "outdated" &&
-                                    f.component?.toLowerCase() === component.toLowerCase()
-                                );
-                            }
-                            // Handle QUALITY:{component}:{version} format
-                            else if (id.startsWith("QUALITY:")) {
-                                const parts = id.split(":");
-                                if (parts.length >= 2) {
-                                    const component = parts[1];
-                                    const version = parts[2];
-                                    found = allRows.find(f =>
-                                        f.type === "quality" &&
-                                        f.component?.toLowerCase() === component?.toLowerCase() &&
-                                        (!version || f.version === version)
-                                    );
-                                }
-                            }
-                            // Handle LIC-{license} format
-                            else if (id.startsWith("LIC-")) {
-                                found = allRows.find(f => f.id === id || f.type === "license");
-                            }
-                            // Handle EOL-{component}-{cycle} format
-                            else if (id.startsWith("EOL-")) {
-                                const parts = id.replace("EOL-", "").split("-");
-                                const component = parts[0];
-                                found = allRows.find(f =>
-                                    f.type === "eol" &&
-                                    f.component?.toLowerCase() === component?.toLowerCase()
-                                );
-                            }
-                            // Handle component:version format (vulnerabilities)
-                            else if (id.includes(":") && !id.startsWith("AGG:")) {
-                                const [component, version] = id.split(":");
-                                found = allRows.find(f =>
-                                    f.component?.toLowerCase() === component?.toLowerCase() &&
-                                    f.version === version
-                                );
-                            }
-                        }
-
-                        // If not found in the currently loaded rows (e.g., switching between quality/security), fetch from API
+                        // Prefer a match among the already-loaded rows.
+                        let found = resolveRelatedFindingInRows(allRows, id)
+                        // If not present locally (e.g. switching between
+                        // quality/security tabs), fall back to the API.
                         if (!found) {
                             try {
-                                if (id.startsWith("OUTDATED-")) {
-                                    const component = id.replace("OUTDATED-", "")
-                                    const res = await scanApi.getFindings(scanId, { type: 'outdated', search: component, skip: 0, limit: 200 })
-                                    found = res.items.find(f => f.type === 'outdated' && f.component?.toLowerCase() === component.toLowerCase())
-                                } else if (id.startsWith("QUALITY:")) {
-                                    const parts = id.split(":")
-                                    const component = parts[1]
-                                    const version = parts[2]
-                                    const res = await scanApi.getFindings(scanId, { type: 'quality', search: component, skip: 0, limit: 200 })
-                                    found = res.items.find(f => f.type === 'quality' && f.component?.toLowerCase() === component?.toLowerCase() && (!version || f.version === version))
-                                } else if (id.startsWith("LIC-")) {
-                                    const res = await scanApi.getFindings(scanId, { type: 'license', search: id, skip: 0, limit: 200 })
-                                    found = res.items.find(f => f.id === id) || res.items[0]
-                                } else if (id.startsWith("EOL-")) {
-                                    const component = id.replace("EOL-", "").split("-")[0]
-                                    const res = await scanApi.getFindings(scanId, { type: 'eol', search: component, skip: 0, limit: 200 })
-                                    found = res.items.find(f => f.type === 'eol' && f.component?.toLowerCase() === component?.toLowerCase())
-                                } else if (id.includes(":") && !id.startsWith("AGG:")) {
-                                    const [component, version] = id.split(":")
-                                    const res = await scanApi.getFindings(scanId, { type: 'vulnerability', search: component, skip: 0, limit: 200 })
-                                    found = res.items.find(f => f.type === 'vulnerability' && f.component?.toLowerCase() === component?.toLowerCase() && f.version === version)
-                                } else {
-                                    const res = await scanApi.getFindings(scanId, { search: id, skip: 0, limit: 200 })
-                                    found = res.items.find(f => f.id === id) || res.items[0]
-                                }
+                                found = await fetchRelatedFinding(scanId, id)
                             } catch (err) {
                                 console.error('Failed to fetch finding details:', err)
                             }
                         }
-
                         if (found) setSelectedFinding(found);
                     }}
                 />

@@ -1,14 +1,7 @@
-"""
-Mattermost message attachment formatting.
-
-Builds rich messages using Mattermost's message attachments feature.
-Attachments support color sidebars, structured fields, and markdown text.
-See: https://developers.mattermost.com/integrate/webhooks/incoming/#parameters
-"""
+"""Mattermost message attachment formatting."""
 
 from typing import Any, Dict, List, Optional
 
-# Colour palette
 _COLOR_SUCCESS = "#36a64f"
 _COLOR_DANGER = "#dc3545"
 _COLOR_WARNING = "#ffc107"
@@ -23,11 +16,7 @@ _SEVERITY_EMOJI = {
 
 
 def build_generic_props(subject: str, message: str) -> Dict[str, Any]:
-    """
-    Build Mattermost props with a simple attachment from any subject + message.
-
-    Used as the default formatter when no specific props are provided.
-    """
+    """Default Mattermost props: a simple attachment from subject + message."""
     return {
         "attachments": [
             {

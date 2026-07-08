@@ -1,19 +1,4 @@
-"""
-REST endpoint for the unified scan-delta API.
-
-GET /api/v1/analytics/scan-delta dispatches across findings, components, and
-crypto categories via ``compute_scan_delta_dispatch`` and returns a uniform
-``ScanDeltaResponse`` envelope.
-
-Notes
------
-* ``category`` is typed as ``str`` (not the ``DeltaCategory`` enum) so that
-  invalid values surface as HTTP 400 through ``InvalidDeltaQuery`` instead of
-  FastAPI's automatic 422. This keeps a single consistent error path through
-  the orchestrator.
-* Project authorization runs first; the cross-project scan guard runs after
-  so the endpoint does not leak scan existence to non-members.
-"""
+"""Unified scan-delta endpoint dispatching across findings, components, and crypto."""
 
 from typing import List, Optional
 
@@ -27,7 +12,7 @@ from app.services.analytics.scan_delta import (
     InvalidDeltaQuery,
     compute_scan_delta_dispatch,
 )
-from app.services.analytics.scopes import ScopeResolutionError, ScopeResolver
+from app.services.analytics.scopes import ScopeResolver
 
 router = CustomAPIRouter()
 
@@ -45,25 +30,20 @@ async def get_scan_delta(
     project_id: str = Query(...),
     from_scan_id: str = Query(...),
     to_scan_id: str = Query(...),
-    category: str = Query(...),
+    category: str = Query(...),  # str not enum: invalid values 400 via InvalidDeltaQuery, not 422
     page: int = Query(1),
     page_size: int = Query(50),
     change: Optional[str] = Query(None),
     severity: Optional[str] = Query(None, description="csv: critical,high,medium,low"),
     finding_type: Optional[str] = Query(None, description="csv finding types"),
 ) -> ScanDeltaResponse:
-    # 1. Project-level authorization (403 on non-membership).
-    try:
-        await ScopeResolver(db, current_user).resolve(
-            scope="project",
-            scope_id=project_id,
-        )
-    except ScopeResolutionError as e:
-        raise HTTPException(status_code=403, detail=str(e))
+    await ScopeResolver(db, current_user).resolve(
+        scope="project",
+        scope_id=project_id,
+    )
 
-    # 2. Cross-project scan guard — both scans MUST belong to project_id.
-    #    Runs AFTER auth to avoid leaking scan existence to non-members.
-    #    Skip when from==to (orchestrator will 400 that with a clearer message).
+    # Both scans must belong to project_id; runs after auth to avoid leaking
+    # scan existence to non-members.
     if from_scan_id != to_scan_id:
         found = await db["scans"].count_documents(
             {"_id": {"$in": [from_scan_id, to_scan_id]}, "project_id": project_id},
@@ -71,7 +51,6 @@ async def get_scan_delta(
         if found != 2:
             raise HTTPException(status_code=400, detail="scan not in project")
 
-    # 3. Dispatch — also validates category, change, and filter combinations.
     try:
         return await compute_scan_delta_dispatch(
             db=db,

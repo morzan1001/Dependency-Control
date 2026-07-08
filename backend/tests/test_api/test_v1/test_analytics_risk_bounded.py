@@ -1,32 +1,4 @@
-"""Tests for Task W8: bounding the unbounded analytics aggregations.
-
-Findings 9 & 10 — the /impact and /hotspots pipelines $group over up to
-ANALYTICS_MAX_QUERY_LIMIT scans worth of vuln findings and $push the FULL
-$details blob (plus raw severities/finding_id arrays) into per-group arrays,
-with no allowDiskUse. That working set is unbounded.
-
-The working set is reduced by three legitimate mechanisms (not a post-$group
-$slice, which can't shrink an accumulator Mongo has already materialized):
-  * the per-finding ``$details`` blob is $project-slimmed to only the
-    fix-version fields BEFORE the $group, so the group accumulates the slim
-    shape rather than the arbitrary raw analyzer payload,
-  * raw per-finding severity arrays are replaced by four scalar $sum/$cond
-    severity counts,
-  * the surviving arrays (CVE/finding ids, slimmed details) are accumulated
-    with ``$addToSet`` rather than ``$push``, so they collapse to the DISTINCT
-    set per (component, version). That naturally bounds them by the real number
-    of distinct CVEs / fix-version shapes (the same CVEs repeat across projects
-    and dedupe) WITHOUT arbitrarily dropping a high-EPSS/KEV CVE past some
-    position — which a post-$group ``$slice`` cap would do, in MATCH order, and
-    would silently change enrichment output.
-  * ``allow_disk_use=True`` is threaded through to ``aggregate`` so genuinely
-    pathological groups spill to disk.
-
-These tests assert the above structurally, execute the scalar severity-count
-expressions through the in-process FakeCollection to confirm they equal the old
-``count_severities`` output, and verify (via a focused unit test) that
-``extract_fix_versions`` still reads from the slimmed ``details`` shape.
-"""
+"""Tests that /impact and /hotspots analytics aggregations stay bounded: details slimmed before $group, scalar severity counts, id/detail sets deduped via $addToSet (not $slice-capped), and allow_disk_use threaded through."""
 
 import asyncio
 from typing import Any, Dict, List, Tuple
@@ -47,11 +19,6 @@ def _admin_user() -> User:
         email="admin@test.com",
         permissions=list(ALL_PERMISSIONS),
     )
-
-
-# ---------------------------------------------------------------------------
-# Pipeline introspection helpers
-# ---------------------------------------------------------------------------
 
 
 def _iter_push_exprs(pipeline: List[Dict[str, Any]]):
@@ -84,13 +51,7 @@ def _group_stage(pipeline: List[Dict[str, Any]]) -> Dict[str, Any]:
 
 
 def _sliced_fields_after_group(pipeline: List[Dict[str, Any]]) -> List[str]:
-    """Return the names of fields $slice-capped in a $project AFTER the $group.
-
-    A post-$group $slice can't shrink an accumulator Mongo has already
-    materialized, and (when applied to enrichment-input arrays in MATCH order)
-    silently drops CVEs past the cap — changing max_epss/has_kev/etc. We assert
-    enrichment-input arrays are NOT among the post-group $slice fields.
-    """
+    """Names of fields $slice-capped in a $project after the $group."""
     seen_group = False
     sliced: List[str] = []
     for stage in pipeline:
@@ -109,19 +70,15 @@ def _sliced_fields_after_group(pipeline: List[Dict[str, Any]]) -> List[str]:
 
 
 def _details_is_slimmed_before_group(pipeline: List[Dict[str, Any]]) -> bool:
-    """True if a $project slims ``details`` (to fix-version fields only) before
-    the first $group. That makes any later ``$push: "$details"`` push the slim
-    shape, not the arbitrary raw analyzer blob."""
+    """True if a $project slims ``details`` to fix-version fields before the first $group."""
     for stage in pipeline:
         if "$group" in stage:
-            # reached the group without finding a slimming projection first
             return False
         project = stage.get("$project")
         if not project:
             continue
         details_spec = project.get("details")
-        # A slimming projection maps details to a dict expression keyed on the
-        # fix-version fields — NOT a passthrough (``1``/``True``) of the raw blob.
+        # slimming projection maps details to a fix-version-keyed dict, not a passthrough
         if isinstance(details_spec, dict):
             keys = set(details_spec.keys())
             if keys and keys <= {"fixed_version", "vulnerabilities"}:
@@ -179,6 +136,7 @@ def _run_hotspots(
     agg_results: List[Dict[str, Any]],
     limit: int = 20,
     sort_by: str = "finding_count",
+    skip: int = 0,
 ) -> Tuple[Any, List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Run /hotspots with patched helpers. Returns (response, finding_pipeline, agg_kwargs)."""
     from app.api.v1.endpoints.analytics.risk import get_vulnerability_hotspots
@@ -219,7 +177,7 @@ def _run_hotspots(
             get_vulnerability_hotspots(
                 current_user=user,
                 db=db,
-                skip=0,
+                skip=skip,
                 limit=limit,
                 sort_by=sort_by,
                 sort_order="desc",
@@ -238,8 +196,6 @@ def _run_hotspots(
 class TestImpactPipelineBounded:
     def test_no_full_details_push(self):
         _, pipeline, _ = _run_impact(agg_results=[])
-        # details must be slimmed (to fix-version fields) BEFORE the $group, so
-        # the group never accumulates the arbitrary raw analyzer blob.
         assert _details_is_slimmed_before_group(pipeline), (
             "details must be $project-slimmed to fix-version fields before $group"
         )
@@ -258,8 +214,6 @@ class TestImpactPipelineBounded:
     def test_finding_ids_deduped_with_add_to_set(self):
         _, pipeline, _ = _run_impact(agg_results=[])
         group = _group_stage(pipeline)
-        # CVE/finding ids must be accumulated as a DISTINCT set (bounded by the
-        # real number of distinct CVEs), not $push-ed and then $slice-capped.
         assert "finding_ids" in group, "expected finding_ids accumulator in $group"
         assert "$addToSet" in group["finding_ids"], "finding_ids must use $addToSet (dedupe), not $push"
         assert "$push" not in group["finding_ids"]
@@ -269,15 +223,11 @@ class TestImpactPipelineBounded:
     def test_details_not_pushed_and_not_sliced(self):
         _, pipeline, _ = _run_impact(agg_results=[])
         group = _group_stage(pipeline)
-        # Slimmed details must be deduped too (no $push), so identical fix-version
-        # shapes collapse rather than growing one entry per finding.
         assert "details_list" in group, "expected details_list accumulator in $group"
         assert "$addToSet" in group["details_list"], "details_list must use $addToSet, not $push"
 
     def test_no_arbitrary_slice_on_enrichment_arrays(self):
         _, pipeline, _ = _run_impact(agg_results=[])
-        # A post-$group $slice on enrichment-input arrays would drop high-EPSS/KEV
-        # CVEs in MATCH order and change enrichment output. Must not happen.
         sliced = _sliced_fields_after_group(pipeline)
         assert "finding_ids" not in sliced, "finding_ids must NOT be $slice-truncated (drops CVEs in match order)"
         assert "details_list" not in sliced, "details_list must NOT be $slice-truncated (drops fix versions)"
@@ -343,7 +293,7 @@ class TestHotspotsPipelineBounded:
 
 class TestImpactResponseShape:
     def _group_row(self) -> Dict[str, Any]:
-        """A group row matching the NEW (bounded) pipeline output shape."""
+        """A group row matching the bounded pipeline output shape."""
         return {
             "_id": {"component": "lodash", "version": "4.17.11"},
             "component": "lodash",
@@ -410,34 +360,57 @@ class TestHotspotsResponseShape:
         assert "CVE-2021-1" in item.top_cves
 
 
-# ---------------------------------------------------------------------------
-# Executed equivalence — run the REAL $group accumulators through the
-# in-process FakeCollection over a small seeded dataset and assert:
-#   * the scalar $sum/$cond severity counts equal the old count_severities() output,
-#   * $addToSet collapses repeated CVEs to the DISTINCT set (the bound that
-#     replaces the arbitrary $slice cap).
-# ---------------------------------------------------------------------------
+# Run real $group accumulators through FakeCollection: scalar counts must equal count_severities() and $addToSet must dedupe CVEs.
 
 
 class TestSeverityCountAccumulatorsExecuted:
     def _findings(self) -> List[Dict[str, Any]]:
-        # One (component, version) group with the SAME CVE repeated across three
-        # projects (so $addToSet must collapse it) plus a mix of severities.
+        # same CVE repeated across three projects so $addToSet must collapse it
         return [
-            {"_id": "f1", "component": "lodash", "version": "4.17.11", "project_id": "p1",
-             "severity": "CRITICAL", "finding_id": "CVE-2021-1"},
-            {"_id": "f2", "component": "lodash", "version": "4.17.11", "project_id": "p2",
-             "severity": "critical", "finding_id": "CVE-2021-1"},  # dup CVE, diff project
-            {"_id": "f3", "component": "lodash", "version": "4.17.11", "project_id": "p3",
-             "severity": "High", "finding_id": "CVE-2021-2"},
-            {"_id": "f4", "component": "lodash", "version": "4.17.11", "project_id": "p1",
-             "severity": "medium", "finding_id": "CVE-2021-3"},
-            {"_id": "f5", "component": "lodash", "version": "4.17.11", "project_id": "p1",
-             "severity": "low", "finding_id": None},  # non-CVE / no id
+            {
+                "_id": "f1",
+                "component": "lodash",
+                "version": "4.17.11",
+                "project_id": "p1",
+                "severity": "CRITICAL",
+                "finding_id": "CVE-2021-1",
+            },
+            {
+                "_id": "f2",
+                "component": "lodash",
+                "version": "4.17.11",
+                "project_id": "p2",
+                "severity": "critical",
+                "finding_id": "CVE-2021-1",
+            },  # dup CVE, diff project
+            {
+                "_id": "f3",
+                "component": "lodash",
+                "version": "4.17.11",
+                "project_id": "p3",
+                "severity": "High",
+                "finding_id": "CVE-2021-2",
+            },
+            {
+                "_id": "f4",
+                "component": "lodash",
+                "version": "4.17.11",
+                "project_id": "p1",
+                "severity": "medium",
+                "finding_id": "CVE-2021-3",
+            },
+            {
+                "_id": "f5",
+                "component": "lodash",
+                "version": "4.17.11",
+                "project_id": "p1",
+                "severity": "low",
+                "finding_id": None,
+            },  # non-CVE / no id
         ]
 
     def _group_spec(self) -> Dict[str, Any]:
-        # The REAL accumulators from the production module — imported, not copied.
+        # accumulators imported from the production module, not copied
         from app.api.v1.endpoints.analytics.risk import _severity_count_accumulators
 
         return {
@@ -470,7 +443,53 @@ class TestSeverityCountAccumulatorsExecuted:
         rows = asyncio.run(col.aggregate([{"$group": self._group_spec()}]).to_list())
         finding_ids = rows[0]["finding_ids"]
 
-        # The CVE that appears in three projects collapses to ONE entry; the set
-        # is bounded by the number of DISTINCT ids, not the finding count.
+        # the CVE in three projects collapses to one entry; bounded by distinct ids
         cve_ids = sorted(fid for fid in finding_ids if fid and fid.startswith("CVE-"))
         assert cve_ids == ["CVE-2021-1", "CVE-2021-2", "CVE-2021-3"]
+
+
+# epss/risk come from enrichment, not Mongo, so the endpoint re-sorts in Python; the pipeline must not cap the fetch below skip+limit.
+
+
+def _limit_values_after_group(pipeline: List[Dict[str, Any]]) -> List[int]:
+    """Return every ``$limit`` value in a stage at/after the first ``$group``."""
+    seen_group = False
+    limits: List[int] = []
+    for stage in pipeline:
+        if "$group" in stage:
+            seen_group = True
+        if seen_group and "$limit" in stage:
+            limits.append(stage["$limit"])
+    return limits
+
+
+class TestHotspotsPostSortPagination:
+    def test_epss_deep_page_pipeline_not_truncated(self):
+        # skip=60/limit=20 needs the first 80 epss-ranked groups; fetch must not cap below skip+limit
+        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="epss", skip=60, limit=20)
+        for lim in _limit_values_after_group(pipeline):
+            assert lim >= 60 + 20, (
+                f"post-sort pipeline caps fetch at {lim}, dropping rows needed for "
+                "skip=60/limit=20 (needs >= 80 or no cap)"
+            )
+
+    def test_risk_deep_page_pipeline_not_truncated(self):
+        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="risk", skip=60, limit=20)
+        for lim in _limit_values_after_group(pipeline):
+            assert lim >= 60 + 20, (
+                f"post-sort pipeline caps fetch at {lim}, dropping rows needed for "
+                "skip=60/limit=20 (needs >= 80 or no cap)"
+            )
+
+    def test_epss_pipeline_has_no_premature_mongo_skip(self):
+        # a Mongo $skip would drop rows in finding_count order before the Python epss re-rank
+        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="epss", skip=60, limit=20)
+        assert not any("$skip" in stage for stage in pipeline), (
+            "post-sort pipeline must not $skip in Mongo; pagination is applied in Python after the epss/risk re-sort"
+        )
+
+    def test_finding_count_sort_still_paginates_in_mongo(self):
+        # the finding_count path is globally ordered in Mongo, so $skip/$limit stay in the pipeline
+        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="finding_count", skip=40, limit=20)
+        assert any(stage.get("$skip") == 40 for stage in pipeline), "expected $skip in Mongo pipeline"
+        assert any(stage.get("$limit") == 20 for stage in pipeline), "expected $limit in Mongo pipeline"

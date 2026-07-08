@@ -19,7 +19,6 @@ export function Recommendations({ projectId: initialProjectId, scanId }: Recomme
 
   return (
     <div className="space-y-6">
-      {/* Project Selector */}
       {!initialProjectId && (
         <Card>
           <CardHeader>
@@ -40,7 +39,6 @@ export function Recommendations({ projectId: initialProjectId, scanId }: Recomme
         </Card>
       )}
 
-      {/* Loading State */}
       {isLoading && selectedProjectId && (
         <div className="space-y-4">
           <Skeleton className="h-32 w-full" />
@@ -49,7 +47,6 @@ export function Recommendations({ projectId: initialProjectId, scanId }: Recomme
         </div>
       )}
 
-      {/* Error State */}
       {error && (
         <Card>
           <CardContent className="py-8">
@@ -61,7 +58,6 @@ export function Recommendations({ projectId: initialProjectId, scanId }: Recomme
         </Card>
       )}
 
-      {/* Empty State */}
       {!selectedProjectId && !initialProjectId && (
         <Card>
           <CardContent className="py-12">
@@ -73,13 +69,10 @@ export function Recommendations({ projectId: initialProjectId, scanId }: Recomme
         </Card>
       )}
 
-      {/* Results */}
       {data && (
         <>
-          {/* Summary */}
           <SummaryCard data={data} />
 
-          {/* Recommendations List */}
           {data.recommendations.length > 0 ? (
             <div className="space-y-4">
               <h3 className="text-lg font-semibold">

@@ -4,8 +4,6 @@ from app.services.aggregation import ResultAggregator
 
 
 class TestNormalizeKics:
-    """Tests for normalize_kics - KICS IaC scanner normalization."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -34,7 +32,6 @@ class TestNormalizeKics:
         assert "Container Not Limited Memory" in f.description
 
     def test_per_file_findings(self):
-        """Each file in a query should create a separate finding."""
         result = {
             "queries": [
                 {

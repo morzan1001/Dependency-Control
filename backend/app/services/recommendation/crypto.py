@@ -1,13 +1,4 @@
-"""Recommendations for cryptographic findings.
-
-The crypto analyzers emit one of five FindingType values; each maps to
-a different remediation pattern, which in turn maps to one of the
-crypto RecommendationType values defined in app.schemas.recommendation.
-
-Findings are grouped by `(finding_type, asset_name)` so multiple
-occurrences of the same weakness on the same asset collapse into a
-single recommendation instead of flooding the dashboard.
-"""
+"""Recommendations for crypto findings, grouped by (finding_type, asset_name)."""
 
 from collections import defaultdict
 from typing import Dict, List, Optional, Tuple
@@ -32,8 +23,7 @@ CRYPTO_FINDING_TYPES = {
     "crypto_key_management",
 }
 
-# A few well-known modern replacements; the recommendation falls back
-# to a generic phrasing when the source family isn't in this map.
+# Well-known modern replacements; falls back to generic phrasing when absent.
 _MODERN_HASH = "SHA-256 or SHA-3"
 _MODERN_BLOCK_CIPHER = "AES-256-GCM"
 _ALGORITHM_REPLACEMENTS: Dict[str, str] = {
@@ -71,8 +61,7 @@ _SEVERITY_TO_PRIORITY: Dict[str, Priority] = {
     "LOW": Priority.LOW,
 }
 
-# Most crypto fixes need code/config + redeployment, so default to MEDIUM.
-# Cert rotation is operational (low effort), PQC is a multi-quarter project.
+# Effort defaults to MEDIUM; cert rotation is operational (low), PQC is high.
 _TYPE_TO_EFFORT: Dict[str, str] = {
     "crypto_weak_algorithm": Effort.MEDIUM,
     "crypto_weak_key": Effort.MEDIUM,
@@ -222,9 +211,7 @@ def _suggested_replacement(finding_type: str, asset_name: str, findings: List[Mo
     if finding_type == "crypto_weak_algorithm":
         return _ALGORITHM_REPLACEMENTS.get(asset_name.upper())
     if finding_type == "crypto_weak_key":
-        # Pick the first non-null key_size_bits and recommend a doubling
-        # bumped to the next NIST-friendly tier. For RSA <2048 -> 3072,
-        # otherwise leave to policy.
+        # RSA/DSA below policy get bumped to the next NIST tier (3072); others defer to policy.
         for f in findings:
             details = get_attr(f, "details", {}) or {}
             if isinstance(details, dict):

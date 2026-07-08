@@ -1,9 +1,4 @@
-"""
-Pydantic models for GitHub Actions OIDC token payloads.
-
-These models represent claims from GitHub Actions OIDC JWT tokens.
-Uses extra="ignore" to silently discard claims we don't use.
-"""
+"""Pydantic models for GitHub Actions OIDC token payloads (extra="ignore" discards unused claims)."""
 
 from typing import Optional
 

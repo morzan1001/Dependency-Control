@@ -129,8 +129,7 @@ class TestBuildScanCompletedCard:
         assert "actions" not in card
 
     def test_nested_dict_stats_do_not_raise(self):
-        # Real scan documents contain nested dicts in stats (threat_intel, reachability,
-        # prioritized). The formatter must skip those and only render severity counts.
+        # Real scan stats contain nested dicts; the formatter must skip them and render only severity counts.
         stats_with_nested = {
             "critical": 3,
             "high": 60,
@@ -153,11 +152,9 @@ class TestBuildScanCompletedCard:
         )
         factset = next(b for b in card["body"] if b["type"] == "FactSet")
         titles = [f["title"] for f in factset["facts"]]
-        # Nested dict keys must not appear as fact titles
         assert "Threat Intel" not in titles
         assert "Reachability" not in titles
         assert "Prioritized" not in titles
-        # Severity keys must still appear
         assert "Critical" in titles
         assert "High" in titles
 

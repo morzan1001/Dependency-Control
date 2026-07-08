@@ -8,20 +8,21 @@ import ResendVerification from './pages/ResendVerification'
 import Setup2FA from './pages/Setup2FA'
 import AcceptInvite from './pages/AcceptInvite'
 import LoginCallback from './pages/LoginCallback'
-import Dashboard from './pages/Dashboard'
-import UsersPage from './pages/Users'
-import TeamsPage from './pages/Teams'
-import ProjectsPage from './pages/Projects'
-import ProjectDetails from './pages/ProjectDetails'
-import ScanDetails from './pages/ScanDetails'
-import ProfilePage from './pages/Profile'
-import SystemSettings from './pages/SystemSettings'
-import Broadcasts from './pages/Broadcasts'
-import SearchPage from './pages/Search'
-import AnalyticsPage from './pages/Analytics'
-import ArchivesPage from './pages/Archives'
-import GlobalWaivers from './pages/GlobalWaivers'
-import Chat from './pages/Chat'
+// Authenticated pages are code-split to keep chart/markdown deps out of the initial bundle.
+const Dashboard = lazy(() => import('./pages/Dashboard'))
+const UsersPage = lazy(() => import('./pages/Users'))
+const TeamsPage = lazy(() => import('./pages/Teams'))
+const ProjectsPage = lazy(() => import('./pages/Projects'))
+const ProjectDetails = lazy(() => import('./pages/ProjectDetails'))
+const ScanDetails = lazy(() => import('./pages/ScanDetails'))
+const ProfilePage = lazy(() => import('./pages/Profile'))
+const SystemSettings = lazy(() => import('./pages/SystemSettings'))
+const Broadcasts = lazy(() => import('./pages/Broadcasts'))
+const SearchPage = lazy(() => import('./pages/Search'))
+const AnalyticsPage = lazy(() => import('./pages/Analytics'))
+const ArchivesPage = lazy(() => import('./pages/Archives'))
+const GlobalWaivers = lazy(() => import('./pages/GlobalWaivers'))
+const Chat = lazy(() => import('./pages/Chat'))
 
 import DashboardLayout from './layouts/DashboardLayout'
 import { AuthProvider, RequirePermission, useAuth } from './context'
@@ -31,12 +32,12 @@ import { ThemeProvider } from "next-themes"
 import { Skeleton } from "@/components/ui/skeleton"
 import { ErrorBoundary } from "@/components/ErrorBoundary"
 import { systemApi } from '@/api/system'
-import { useState, useEffect } from 'react'
+import { ANALYTICS_ROUTE_PERMISSIONS } from '@/lib/constants'
+import { lazy, Suspense, useState, useEffect } from 'react'
 
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
     onError: (error: Error) => {
-      // Check for server errors (5xx) using error response structure
       const axiosError = error as { response?: { status?: number } }
       if (axiosError.response?.status && axiosError.response.status >= 500) {
         toast.error("Server Error", { description: "Something went wrong on the server." })
@@ -45,7 +46,7 @@ const queryClient = new QueryClient({
   }),
   mutationCache: new MutationCache({
     onError: (_error: Error) => {
-      // Mutations handle their own error display
+      // Mutations handle their own error display.
     }
   }),
   defaultOptions: {
@@ -60,7 +61,6 @@ function Force2FAGuard({ children }: { children: React.ReactNode }) {
   const { permissions } = useAuth();
   const location = useLocation();
 
-  // Check for limited token first
   if (permissions.length === 1 && permissions[0] === 'auth:setup_2fa') {
       if (location.pathname === '/setup-2fa') {
           return <>{children}</>;
@@ -68,7 +68,6 @@ function Force2FAGuard({ children }: { children: React.ReactNode }) {
       return <Navigate to="/setup-2fa" replace />;
   }
 
-  // If we are on setup page but have full permissions, redirect to dashboard
   if (location.pathname === '/setup-2fa' && !(permissions.length === 1 && permissions[0] === 'auth:setup_2fa')) {
       return <Navigate to="/dashboard" replace />;
   }
@@ -119,8 +118,20 @@ function SignupRoute() {
   return <Signup />;
 }
 
+function PageLoader() {
+  return (
+    <div className="flex h-screen items-center justify-center">
+      <div className="space-y-4 flex flex-col items-center">
+        <Skeleton className="h-12 w-12 rounded-full" />
+        <Skeleton className="h-4 w-32" />
+      </div>
+    </div>
+  );
+}
+
 function AppRoutes() {
   return (
+    <Suspense fallback={<PageLoader />}>
     <Routes>
       <Route path="/login" element={<Login />} />
       <Route path="/reset-password" element={<ResetPassword />} />
@@ -175,7 +186,7 @@ function AppRoutes() {
           </RequirePermission>
         } />
         <Route path="/analytics" element={
-          <RequirePermission permission={['analytics:read', 'analytics:summary', 'analytics:dependencies', 'analytics:tree', 'analytics:impact', 'analytics:hotspots', 'analytics:search']}>
+          <RequirePermission permission={[...ANALYTICS_ROUTE_PERMISSIONS]}>
             <AnalyticsPage />
           </RequirePermission>
         } />
@@ -204,9 +215,9 @@ function AppRoutes() {
             <Chat />
           </RequirePermission>
         } />
-        {/* Add other routes here */}
       </Route>
     </Routes>
+    </Suspense>
   );
 }
 

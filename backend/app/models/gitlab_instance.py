@@ -1,29 +1,14 @@
-import uuid
 from datetime import datetime
 from typing import Optional
 
 from pydantic import ConfigDict, Field
 
 from app.models.base import CreatedAtModel
-from app.models.types import PyObjectId
+from app.models.types import MongoDocument
 
 
-class GitLabInstance(CreatedAtModel):
-    """
-    Represents a configured GitLab instance.
-
-    Each instance has its own:
-    - URL and OIDC issuer
-    - Access token for API operations
-    - Configuration flags (auto-create, team sync)
-    - Unique identifier for project references
-    """
-
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
+class GitLabInstance(MongoDocument, CreatedAtModel):
+    """A configured GitLab instance."""
 
     # Identity
     name: str = Field(..., description="Human-readable name (e.g. 'GitLab.com', 'Internal GitLab')")
@@ -38,11 +23,8 @@ class GitLabInstance(CreatedAtModel):
         exclude=True,  # Never expose in API responses
         description="Personal or Group Access Token with 'api' scope for GitLab API operations",
     )
-    # SECURITY (Finding 7 / W1.1): oidc_audience is effectively REQUIRED. The
-    # create/update API schemas reject empty/missing values (422), and OIDC
-    # token validation fails closed when it is unset (403 on ingest). The stored
-    # field stays Optional ONLY so legacy DB documents written before this change
-    # still hydrate (and remain visible/fixable) rather than crashing on read.
+    # oidc_audience is effectively required (enforced by API schemas and fail-closed
+    # OIDC validation); stored Optional only so legacy documents still hydrate.
     oidc_audience: Optional[str] = Field(None, description="Expected 'aud' claim for OIDC tokens from this instance")
 
     # Features
@@ -62,4 +44,4 @@ class GitLabInstance(CreatedAtModel):
     created_by: str = Field(..., description="User ID of the admin who created this instance")
     last_modified_at: Optional[datetime] = None
 
-    model_config = ConfigDict(populate_by_name=True, arbitrary_types_allowed=True)
+    model_config = ConfigDict(arbitrary_types_allowed=True)

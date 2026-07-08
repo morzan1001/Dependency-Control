@@ -1,9 +1,4 @@
-"""
-Integration tests for POST /api/v1/ingest/cbom.
-
-Authentication and database dependencies are overridden in conftest.py, so no
-live MongoDB or API key infrastructure is required.
-"""
+"""Integration tests for POST /api/v1/ingest/cbom."""
 
 import asyncio
 import json
@@ -22,7 +17,6 @@ def _load(name):
 
 
 async def _wait_for_scan(db, scan_id: str, timeout: float = 5.0) -> None:
-    """Poll the scans collection until scan status is non-pending, or timeout."""
     deadline = asyncio.get_event_loop().time() + timeout
     while asyncio.get_event_loop().time() < deadline:
         scan = await db.scans.find_one({"_id": scan_id})
@@ -33,7 +27,6 @@ async def _wait_for_scan(db, scan_id: str, timeout: float = 5.0) -> None:
 
 @pytest.mark.asyncio
 async def test_ingest_cbom_creates_assets(client, db, api_key_headers):
-    """Submitting a valid CBOM returns 202 and eventually creates CryptoAsset records."""
     payload = {
         "scan_metadata": {"git_ref": "main", "commit_sha": "abc123"},
         "cbom": _load("legacy_crypto_mixed.json"),
@@ -44,10 +37,9 @@ async def test_ingest_cbom_creates_assets(client, db, api_key_headers):
     scan_id = body["scan_id"]
     assert body["status"] in ("accepted", "completed")
 
-    # Background task runs in-process; wait briefly for it to complete
     await _wait_for_scan(db, scan_id)
 
-    # legacy_crypto_mixed.json has 3 cryptographic-asset components
+    # legacy_crypto_mixed.json has 3 cryptographic-asset components.
     project_id = "test-project-id"
     count = await CryptoAssetRepository(db).count_by_scan(project_id, scan_id)
     assert count == 3, f"Expected 3 crypto assets, got {count}"
@@ -55,7 +47,6 @@ async def test_ingest_cbom_creates_assets(client, db, api_key_headers):
 
 @pytest.mark.asyncio
 async def test_ingest_cbom_rejects_empty_cbom(client, db, api_key_headers):
-    """A CBOM with no cryptographic-asset components returns 400."""
     payload = {
         "cbom": {"bomFormat": "CycloneDX", "specVersion": "1.6", "components": []},
     }
@@ -65,15 +56,13 @@ async def test_ingest_cbom_rejects_empty_cbom(client, db, api_key_headers):
 
 @pytest.mark.asyncio
 async def test_ingest_cbom_rejects_unauthenticated(db):
-    """Requests without auth credentials must be rejected with 401 or 403."""
     from app.main import app
     from app.api.deps import get_system_settings
     from app.db.mongodb import get_database
     from app.models.system import SystemSettings
     from httpx import AsyncClient, ASGITransport
 
-    # Override only the DB and system-settings deps; leave auth dep real so it
-    # enforces credential checking.
+    # Override only the DB and system-settings deps; leave the auth dep real so it enforces credential checking.
     saved = dict(app.dependency_overrides)
     app.dependency_overrides.clear()
 

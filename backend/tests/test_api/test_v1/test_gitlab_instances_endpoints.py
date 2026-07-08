@@ -65,7 +65,6 @@ MODULE = "app.api.v1.endpoints.gitlab_instances"
 
 
 def _make_repo_mock(**method_returns):
-    """Create a mock GitLabInstanceRepository with configured async return values."""
     mock_repo = MagicMock()
     for method_name, return_value in method_returns.items():
         setattr(mock_repo, method_name, AsyncMock(return_value=return_value))
@@ -73,7 +72,7 @@ def _make_repo_mock(**method_returns):
 
 
 def _patch_response():
-    """Context manager that injects a mock Response into the module (missing import)."""
+    """Inject a mock Response into the module under test, which lacks the import."""
     import contextlib
 
     import app.api.v1.endpoints.gitlab_instances as mod
@@ -95,7 +94,6 @@ def _patch_response():
 
 
 def _make_gitlab_service_mock(response):
-    """Create a patched GitLabService whose _api_client returns the given response."""
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=response)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -173,6 +171,27 @@ class TestListInstances:
         mock_repo.list_all.assert_called_once_with(skip=20, limit=10)
         assert result["total"] == 50
 
+    def test_pagination_response_page_reflects_requested_page(self, admin_user):
+        """build_pagination_response must receive skip, not the 1-based page (else page=2/size=100 collapses to 1)."""
+        from app.api.v1.endpoints.gitlab_instances import list_instances
+
+        mock_repo = _make_repo_mock(list_all=[], count_all=250)
+
+        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
+            result = asyncio.run(
+                list_instances(
+                    page=2,
+                    size=100,
+                    active_only=False,
+                    db=MagicMock(),
+                    current_user=admin_user,
+                )
+            )
+
+        assert result["page"] == 2
+        assert result["size"] == 100
+        assert result["pages"] == 3
+
     def test_empty_list(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import list_instances
 
@@ -237,7 +256,7 @@ class TestCreateInstance:
             "name": "New GL",
             "url": "https://new-gitlab.com",
             "access_token": "glpat-new-token",
-            # oidc_audience is now required (Finding 7 / W1.1).
+            # oidc_audience is required
             "oidc_audience": "https://app.example.com",
         }
         defaults.update(overrides)
@@ -315,6 +334,27 @@ class TestCreateInstance:
 
         assert result.name == "New GL"
         mock_repo.create.assert_called_once()
+
+    def test_create_persists_and_returns_team_sync_depth(self, admin_user):
+        from app.api.v1.endpoints.gitlab_instances import create_instance
+
+        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False)
+        mock_repo.create = AsyncMock(side_effect=lambda inst: inst)
+        mock_response = MagicMock(status_code=200)
+
+        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
+            with patch(f"{MODULE}.GitLabService", return_value=_make_gitlab_service_mock(mock_response)):
+                result = asyncio.run(
+                    create_instance(
+                        instance_data=self._make_create_data(team_sync_depth=3),
+                        db=MagicMock(),
+                        current_user=admin_user,
+                    )
+                )
+
+        persisted = mock_repo.create.call_args.args[0]
+        assert persisted.team_sync_depth == 3
+        assert result.team_sync_depth == 3
 
 
 class TestUpdateInstance:
@@ -423,6 +463,28 @@ class TestUpdateInstance:
 
         assert result.is_default is True
         mock_repo.set_as_default.assert_called_once_with("inst-1")
+
+    def test_update_applies_and_returns_team_sync_depth(self, admin_user):
+        from app.api.v1.endpoints.gitlab_instances import update_instance
+
+        existing = make_gitlab_instance(id="inst-1", team_sync_depth=1)
+        updated = make_gitlab_instance(id="inst-1", team_sync_depth=2)
+        mock_repo = _make_repo_mock(update=True)
+        mock_repo.get_by_id = AsyncMock(side_effect=[existing, updated])
+
+        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
+            result = asyncio.run(
+                update_instance(
+                    instance_id="inst-1",
+                    update_data=self._make_update_data(team_sync_depth=2),
+                    db=MagicMock(),
+                    current_user=admin_user,
+                )
+            )
+
+        update_dict = mock_repo.update.call_args.args[1]
+        assert update_dict["team_sync_depth"] == 2
+        assert result.team_sync_depth == 2
 
 
 class TestDeleteInstance:
@@ -598,7 +660,6 @@ class TestTestConnection:
 
         mock_response = MagicMock()
         mock_svc = _make_gitlab_service_mock(mock_response)
-        # Override client.get to raise instead of returning a response
         mock_svc._api_client.return_value.__aenter__.return_value.get = AsyncMock(
             side_effect=ConnectionError("DNS resolution failed")
         )

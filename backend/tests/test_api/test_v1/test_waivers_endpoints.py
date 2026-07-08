@@ -23,12 +23,10 @@ _LIST_DEFAULTS = {
 
 
 def _make_waiver(id="waiver-1", project_id="proj-1", reason="Accepted risk", created_by="admin", **kwargs):
-    """Create a Waiver with sensible defaults."""
     return Waiver(id=id, project_id=project_id, reason=reason, created_by=created_by, **kwargs)
 
 
 def _call_list_waivers(current_user, db=None, **overrides):
-    """Call list_waivers with sensible defaults, overriding as needed."""
     from app.api.v1.endpoints.waivers import list_waivers
 
     kwargs = {**_LIST_DEFAULTS, "project_id": None, "current_user": current_user, "db": db or MagicMock()}
@@ -88,14 +86,10 @@ class TestCreateWaiver:
 
 
 class TestCreateWaiverValidatesFindingMatch:
-    """A finding-scope waiver must match at least one finding in the project's
-    latest scan; otherwise it is a zombie waiver that will never apply."""
+    """A finding-scope waiver must match at least one finding in the project's latest scan, else it is a zombie waiver that never applies."""
 
     @staticmethod
     def _mock_db_with_latest_scan(scan_id="scan-1", project_id="proj-1"):
-        """Build a MagicMock db whose .projects.find_one returns a project
-        with the given latest_scan_id."""
-
         async def _project_find_one(query, projection=None):
             return {"_id": project_id, "latest_scan_id": scan_id}
 
@@ -136,9 +130,7 @@ class TestCreateWaiverValidatesFindingMatch:
                         )
 
         assert exc_info.value.status_code == 422
-        # The error message should be actionable — name what to verify.
         assert "finding_id" in exc_info.value.detail or "match" in exc_info.value.detail.lower()
-        # The waiver must NOT have been written.
         mock_repo.create.assert_not_called()
 
     def test_finding_scope_waiver_with_match_succeeds(self, admin_user):
@@ -307,9 +299,7 @@ class TestCreateWaiverValidatesFindingMatch:
         db.findings.find_one.assert_not_called()
 
     def test_vulnerability_id_scoped_waiver_skips_finding_id_check(self, admin_user):
-        """Waivers targeted at a specific CVE go through apply_vulnerability_waiver,
-        which matches by vulnerability_id rather than finding_id, so the finding_id
-        format mismatch is irrelevant. Don't 422 these."""
+        """CVE-targeted waivers match by vulnerability_id, not finding_id, so the finding_id format mismatch must not 422."""
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
@@ -342,8 +332,7 @@ class TestCreateWaiverValidatesFindingMatch:
         mock_repo.create.assert_called_once()
 
     def test_create_waiver_copies_match_signature(self, admin_user):
-        """A finding-scope project waiver should snapshot the matched finding's
-        MatchSignature so it can be used for line-drift matching later."""
+        """A finding-scope project waiver snapshots the matched finding's MatchSignature for later line-drift matching."""
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
@@ -439,6 +428,55 @@ class TestGetWaiver:
         assert exc_info.value.detail == "Waiver not found"
 
 
+class TestUpdateWaiverRecalc:
+    """update_waiver must re-run stats recalc whenever a field gating waiver application changes; active state is driven by expiration_date, so expiring/extending must trigger recalculation."""
+
+    def _run_update(self, admin_user, update_kwargs):
+        from app.api.v1.endpoints.waivers import update_waiver
+        from app.schemas.waiver import WaiverUpdate
+
+        existing = _make_waiver(id="waiver-1", project_id="proj-1")
+        updated = _make_waiver(id="waiver-1", project_id="proj-1", **update_kwargs)
+        mock_repo = MagicMock()
+        mock_repo.get_by_id = AsyncMock(return_value=existing)
+        mock_repo.update = AsyncMock(return_value=updated)
+        bg_tasks = BackgroundTasks()
+
+        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+            with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
+                with patch(f"{MODULE}.recalculate_project_stats") as mock_recalc:
+                    asyncio.run(
+                        update_waiver(
+                            waiver_id="waiver-1",
+                            waiver_in=WaiverUpdate(**update_kwargs),
+                            background_tasks=bg_tasks,
+                            current_user=admin_user,
+                            db=MagicMock(),
+                        )
+                    )
+        return bg_tasks, mock_recalc
+
+    def test_expiration_date_change_triggers_recalc(self, admin_user):
+        """Expiring/extending a waiver changes the active set and must schedule recalculate_project_stats."""
+        new_expiry = datetime.now(timezone.utc) - timedelta(days=1)
+        bg_tasks, mock_recalc = self._run_update(admin_user, {"expiration_date": new_expiry})
+
+        scheduled = [t.func for t in bg_tasks.tasks]
+        assert mock_recalc in scheduled
+
+    def test_status_change_still_triggers_recalc(self, admin_user):
+        bg_tasks, mock_recalc = self._run_update(admin_user, {"status": "false_positive"})
+
+        scheduled = [t.func for t in bg_tasks.tasks]
+        assert mock_recalc in scheduled
+
+    def test_reason_only_change_does_not_trigger_recalc(self, admin_user):
+        bg_tasks, mock_recalc = self._run_update(admin_user, {"reason": "Updated reason"})
+
+        scheduled = [t.func for t in bg_tasks.tasks]
+        assert mock_recalc not in scheduled
+
+
 class TestListWaivers:
     def test_admin_sees_all_waivers(self, admin_user):
         waiver_docs = [
@@ -472,7 +510,6 @@ class TestListWaivers:
         assert count_query["project_id"] == "proj-1"
 
     def test_no_permission_raises_403(self, viewer_user):
-        # Remove waiver:read permissions
         viewer_user.permissions = []
 
         with pytest.raises(HTTPException) as exc_info:
@@ -480,8 +517,7 @@ class TestListWaivers:
         assert exc_info.value.status_code == 403
 
     def test_includes_is_active_flag_per_waiver(self, admin_user):
-        """Listed waivers must expose is_active so callers can distinguish
-        live waivers from expired ones without re-deriving the rule."""
+        """Listed waivers must expose is_active so callers can distinguish live from expired without re-deriving the rule."""
         now = datetime.now(timezone.utc)
         expired = _make_waiver(id="w-expired", expiration_date=now - timedelta(days=5))
         active = _make_waiver(id="w-active", expiration_date=now + timedelta(days=5))
@@ -501,9 +537,7 @@ class TestListWaivers:
 
 class TestOrphanedFilter:
     def test_orphaned_filter_lists_only_orphaned_waivers(self, admin_user):
-        """orphaned=True must return only waivers with last_match_count==0 AND
-        last_eval_scan_id!=None; response items must expose last_eval_scan_id
-        and last_match_count."""
+        """orphaned=True returns only waivers with last_match_count==0 and last_eval_scan_id!=None; items must expose both fields."""
         orphaned_waiver = _make_waiver(
             id="w-orphaned",
             last_eval_scan_id="s1",
@@ -545,16 +579,12 @@ class TestOrphanedFilter:
         assert result_orphaned["total"] == 1
         assert len(result_orphaned["items"]) == 1
 
-        # The Mongo query passed to count must include the orphaned filter
         count_query = mock_repo2.count.call_args[0][0]
         assert count_query.get("last_eval_scan_id") == {"$ne": None}, (
             "count query must filter last_eval_scan_id != None"
         )
-        assert count_query.get("last_match_count") == 0, (
-            "count query must filter last_match_count == 0"
-        )
+        assert count_query.get("last_match_count") == 0, "count query must filter last_match_count == 0"
 
-        # Same filter must be in find_many query
         find_query = mock_repo2.find_many.call_args[0][0]
         assert find_query.get("last_eval_scan_id") == {"$ne": None}
         assert find_query.get("last_match_count") == 0
@@ -566,7 +596,6 @@ class TestOrphanedFilter:
         assert {"expiration_date": None} in or_clause
         assert "$gt" in or_clause[-1]["expiration_date"]
 
-        # Without orphaned flag: both docs present, no orphan filter
         mock_repo3 = MagicMock()
         mock_repo3.count = AsyncMock(return_value=2)
         mock_repo3.find_many = AsyncMock(return_value=both_docs)
@@ -575,9 +604,7 @@ class TestOrphanedFilter:
             result_all = _call_list_waivers(admin_user)
 
         count_query_all = mock_repo3.count.call_args[0][0]
-        assert "last_eval_scan_id" not in count_query_all, (
-            "plain call must NOT add orphaned filter"
-        )
+        assert "last_eval_scan_id" not in count_query_all, "plain call must NOT add orphaned filter"
         assert result_all["total"] == 2
         assert len(result_all["items"]) == 2
 
@@ -629,7 +656,6 @@ class TestCreateWaiverPermissions:
     """create_waiver checks editor access for project, waiver:manage for global."""
 
     def test_project_waiver_requires_editor_role(self, regular_user):
-        """Verify that check_project_access is called with editor role."""
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
@@ -679,7 +705,6 @@ class TestDeleteWaiverPermissions:
     """delete_waiver has dual-path logic for project vs global waivers."""
 
     def test_project_waiver_with_delete_perm_bypasses_project_check(self, admin_user):
-        """User with waiver:delete does not need project admin role."""
         from app.api.v1.endpoints.waivers import delete_waiver
 
         waiver = _make_waiver(project_id="proj-1")
@@ -700,12 +725,11 @@ class TestDeleteWaiverPermissions:
                         )
                     )
 
-        # Admin has waiver:delete, so check_project_access should NOT be called
+        # admin has waiver:delete, so project access is not checked
         mock_access.assert_not_called()
         mock_repo.delete.assert_called_once()
 
     def test_project_waiver_without_delete_perm_requires_project_admin(self, regular_user):
-        """User without waiver:delete needs project admin role."""
         from app.api.v1.endpoints.waivers import delete_waiver
 
         waiver = _make_waiver(project_id="proj-1")
@@ -727,12 +751,10 @@ class TestDeleteWaiverPermissions:
                     )
 
         assert exc_info.value.status_code == 403
-        # Verify PROJECT_ROLE_ADMIN was required
         call_kwargs = mock_access.call_args
         assert call_kwargs.kwargs["required_role"] == "admin"
 
     def test_global_waiver_needs_manage_or_delete(self, viewer_user):
-        """Global waiver deletion needs either waiver:manage or waiver:delete."""
         from app.api.v1.endpoints.waivers import delete_waiver
 
         waiver = _make_waiver(project_id=None)
@@ -758,7 +780,6 @@ class TestListWaiversPermissions:
     """list_waivers checks waiver:read_all vs waiver:read."""
 
     def test_read_all_skips_project_filter(self, admin_user):
-        """User with waiver:read_all sees all waivers without $or filter."""
         mock_repo = MagicMock()
         mock_repo.count = AsyncMock(return_value=0)
         mock_repo.find_many = AsyncMock(return_value=[])
@@ -766,12 +787,10 @@ class TestListWaiversPermissions:
         with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
             _call_list_waivers(admin_user)
 
-        # Query should NOT have $or filter for accessible projects
         count_query = mock_repo.count.call_args[0][0]
         assert "$or" not in count_query
 
     def test_read_only_gets_own_projects_plus_global(self, regular_user):
-        """User with waiver:read but not waiver:read_all gets filtered view."""
         mock_repo = MagicMock()
         mock_repo.count = AsyncMock(return_value=0)
         mock_repo.find_many = AsyncMock(return_value=[])
@@ -782,7 +801,6 @@ class TestListWaiversPermissions:
 
         count_query = mock_repo.count.call_args[0][0]
         assert "$or" in count_query
-        # Should include global waivers (project_id=None) and user's projects
         or_clauses = count_query["$or"]
         assert {"project_id": None} in or_clauses
         assert {"project_id": {"$in": ["proj-1", "proj-2"]}} in or_clauses

@@ -1,10 +1,4 @@
-"""Unit tests for the crypto-asset MCP tool functions.
-
-These standalone async functions live in app.services.chat.tools and are
-callable directly (without going through ChatToolRegistry) — useful both for
-unit testing and for future callers that want to invoke them outside the
-chat-tool dispatch path.
-"""
+"""Unit tests for the standalone crypto-asset MCP tool functions in app.services.chat.tools."""
 
 from unittest.mock import MagicMock
 

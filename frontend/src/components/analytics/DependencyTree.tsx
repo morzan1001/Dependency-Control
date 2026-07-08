@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useDependencyTree } from '@/hooks/queries/use-analytics'
 import { DependencyTreeNode } from '@/types/analytics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
@@ -12,22 +12,30 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip"
-import { ChevronRight, ChevronDown, Package, AlertTriangle, Shield, Layers } from 'lucide-react'
+import { ChevronRight, ChevronDown, Package, AlertTriangle, Shield, Layers, RotateCcw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { getSourceInfo } from '@/lib/finding-utils'
 
 interface DependencyNodeProps {
   node: DependencyTreeNode;
+  nodeById: Map<string, DependencyTreeNode>;
+  ancestorIds: Set<string>;
   level: number;
   onSelect?: (node: DependencyTreeNode) => void;
+  hideChildren?: boolean;
+  isCycleRef?: boolean;
 }
 
 const DEP_TREE_SKELETON_IDS = ['dt1', 'dt2', 'dt3', 'dt4', 'dt5', 'dt6', 'dt7', 'dt8']
 
-function DependencyNode({ node, level, onSelect }: Readonly<DependencyNodeProps>) {
+function DependencyNode({ node, nodeById, ancestorIds, level, onSelect, hideChildren, isCycleRef }: Readonly<DependencyNodeProps>) {
   const [isExpanded, setIsExpanded] = useState(false)
-  const hasChildren = node.children && node.children.length > 0
+  // Children are resolved from the flat node map only when this node is expanded (lazy render);
+  // a cycle-ref node is a leaf — its subtree is reachable higher up on the same path.
+  const hasChildren = !hideChildren && !isCycleRef && node.child_ids.length > 0
   const sourceInfo = getSourceInfo(node.source_type)
+
+  const childAncestors = useMemo(() => new Set(ancestorIds).add(node.id), [ancestorIds, node.id])
 
   const getSeverityBorder = () => {
     if (!node.findings_severity) return ''
@@ -39,7 +47,6 @@ function DependencyNode({ node, level, onSelect }: Readonly<DependencyNodeProps>
   }
 
   return (
-    <TooltipProvider>
       <div>
         <div
           className={cn(
@@ -71,9 +78,9 @@ function DependencyNode({ node, level, onSelect }: Readonly<DependencyNodeProps>
             </Button>
           )}
           {!hasChildren && <div className="w-5" />}
-          
+
           <Package className="h-4 w-4 text-muted-foreground" />
-          
+
           <div className="flex-1 flex items-center gap-2">
             <span className="font-medium">{node.name}</span>
             <Badge variant="outline" className="text-xs">{node.version}</Badge>
@@ -93,8 +100,20 @@ function DependencyNode({ node, level, onSelect }: Readonly<DependencyNodeProps>
                 )}
               </Tooltip>
             )}
-            
-            {/* Source information */}
+
+            {isCycleRef && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge variant="outline" className="text-xs text-muted-foreground cursor-help">
+                    <RotateCcw className="h-3 w-3 mr-1" />cycle
+                  </Badge>
+                </TooltipTrigger>
+                <TooltipContent side="top">
+                  <p className="text-xs">Cyclic dependency — already shown higher on this path</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
+
             {sourceInfo && (
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -129,9 +148,9 @@ function DependencyNode({ node, level, onSelect }: Readonly<DependencyNodeProps>
               </Tooltip>
             )}
           </div>
-          
+
           <Badge variant="secondary" className="text-xs">{node.type}</Badge>
-          
+
           {node.has_findings && (
             <div className="flex items-center gap-1">
               <AlertTriangle className="h-4 w-4 text-destructive" />
@@ -139,21 +158,27 @@ function DependencyNode({ node, level, onSelect }: Readonly<DependencyNodeProps>
             </div>
           )}
         </div>
-        
+
         {isExpanded && hasChildren && (
           <div>
-            {node.children.map((child) => (
-              <DependencyNode
-                key={child.id}
-                node={child}
-                level={level + 1}
-                onSelect={onSelect}
-              />
-            ))}
+            {node.child_ids.map((childId) => {
+              const child = nodeById.get(childId)
+              if (!child) return null
+              return (
+                <DependencyNode
+                  key={childId}
+                  node={child}
+                  nodeById={nodeById}
+                  ancestorIds={childAncestors}
+                  level={level + 1}
+                  onSelect={onSelect}
+                  isCycleRef={childAncestors.has(childId)}
+                />
+              )
+            })}
           </div>
         )}
       </div>
-    </TooltipProvider>
   )
 }
 
@@ -161,21 +186,31 @@ interface DependencyTreeProps {
   onSelectNode?: (node: DependencyTreeNode) => void;
 }
 
+const EMPTY_ANCESTORS: ReadonlySet<string> = new Set()
+
 export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) {
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [showDirectOnly, setShowDirectOnly] = useState(false)
 
-  const { data: tree, isLoading: isLoadingTree } = useDependencyTree(selectedProjectId)
+  const { data: graph, isLoading: isLoadingTree } = useDependencyTree(selectedProjectId)
 
-  const filteredTree = showDirectOnly 
-    ? tree?.filter(n => n.direct) 
-    : tree
+  const nodes = useMemo(() => graph?.nodes ?? [], [graph])
+  const nodeById = useMemo(() => new Map(nodes.map((n) => [n.id, n])), [nodes])
+  const roots = useMemo(
+    () => (graph?.roots ?? []).map((id) => nodeById.get(id)).filter((n): n is DependencyTreeNode => !!n),
+    [graph, nodeById],
+  )
 
-  // Separate direct and transitive for display
-  const directDeps = filteredTree?.filter(n => n.direct) || []
-  const transitiveDeps = filteredTree?.filter(n => !n.direct) || []
+  // The node list is already deduplicated, so counts read straight off it.
+  const directRoots = roots.filter((n) => n.direct)
+  const orphanRoots = roots.filter((n) => !n.direct)
+  const directCount = nodes.filter((n) => n.direct).length
+  const transitiveCount = nodes.filter((n) => !n.direct).length
+  const vulnerableCount = nodes.filter((n) => n.has_findings).length
+  const hasDependencies = nodes.length > 0
 
   return (
+    <TooltipProvider>
     <Card>
       <CardHeader>
         <div className="flex items-center justify-between">
@@ -184,8 +219,8 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
             <CardDescription>View dependencies and their relationship to vulnerabilities</CardDescription>
           </div>
           <div className="flex items-center gap-2">
-            <ProjectCombobox 
-              value={selectedProjectId} 
+            <ProjectCombobox
+              value={selectedProjectId}
               onValueChange={setSelectedProjectId}
               className="w-[300px]"
             />
@@ -219,57 +254,62 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
               </div>
             )
           }
-          if (filteredTree && filteredTree.length > 0) {
+          if (hasDependencies) {
             return (
             <div className="space-y-4">
-              {/* Summary */}
               <div className="flex items-center gap-4 p-4 bg-muted rounded-lg">
                 <div className="flex items-center gap-2">
                   <Shield className="h-5 w-5 text-green-500" />
                   <span className="text-sm font-medium">
-                    {directDeps.length} direct dependencies
+                    {directCount} direct dependencies
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Layers className="h-5 w-5 text-blue-500" />
                   <span className="text-sm font-medium">
-                    {transitiveDeps.length} transitive dependencies
+                    {transitiveCount} transitive dependencies
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <AlertTriangle className="h-5 w-5 text-destructive" />
                   <span className="text-sm font-medium">
-                    {filteredTree.filter(n => n.has_findings).length} with vulnerabilities
+                    {vulnerableCount} with vulnerabilities
                   </span>
                 </div>
               </div>
 
-              {/* Direct Dependencies Section */}
-              {directDeps.length > 0 && (
+              {directRoots.length > 0 && (
                 <div>
                   <h4 className="text-sm font-medium text-muted-foreground mb-2">Direct Dependencies</h4>
                   <div className="border rounded-lg divide-y">
-                    {directDeps.map((node) => (
+                    {directRoots.map((node) => (
                       <DependencyNode
                         key={node.id}
                         node={node}
+                        nodeById={nodeById}
+                        ancestorIds={EMPTY_ANCESTORS as Set<string>}
                         level={0}
                         onSelect={onSelectNode}
+                        hideChildren={showDirectOnly}
                       />
                     ))}
                   </div>
                 </div>
               )}
 
-              {/* Transitive Dependencies Section */}
-              {!showDirectOnly && transitiveDeps.length > 0 && (
+              {!showDirectOnly && orphanRoots.length > 0 && (
                 <div>
                   <h4 className="text-sm font-medium text-muted-foreground mb-2">Transitive Dependencies</h4>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Not linked to a parent package (SBOM had no dependency graph, or its parents use a non-PURL identifier).
+                  </p>
                   <div className="border rounded-lg divide-y max-h-[400px] overflow-y-auto">
-                    {transitiveDeps.map((node) => (
+                    {orphanRoots.map((node) => (
                       <DependencyNode
                         key={node.id}
                         node={node}
+                        nodeById={nodeById}
+                        ancestorIds={EMPTY_ANCESTORS as Set<string>}
                         level={0}
                         onSelect={onSelectNode}
                       />
@@ -289,5 +329,6 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
         })()}
       </CardContent>
     </Card>
+    </TooltipProvider>
   )
 }

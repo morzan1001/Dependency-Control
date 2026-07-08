@@ -38,7 +38,14 @@
         "protocolProperties": {
           "type": "tls",
           "version": "1.0",
-          "cipherSuites": ["TLS_RSA_WITH_RC4_128_SHA"]
+          "cipherSuites": [
+            {
+              "name": "TLS_RSA_WITH_RC4_128_SHA",
+              "algorithms": ["algo-rsa1024"],
+              "identifiers": ["0x00,0x05"]
+            },
+            "TLS_LEGACY_STRING"
+          ]
         }
       }
     }

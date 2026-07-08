@@ -11,7 +11,6 @@ export const teamKeys = {
 };
 
 interface UseTeamsOptions {
-  /** Set to false to disable the query until needed (e.g., dialog is open) */
   enabled?: boolean;
 }
 

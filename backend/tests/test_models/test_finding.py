@@ -95,5 +95,4 @@ class TestFindingModel:
             Finding(
                 id="test",
                 type=FindingType.VULNERABILITY,
-                # missing severity, component, description, scanners
             )

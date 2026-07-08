@@ -1,9 +1,4 @@
-"""
-CryptoRule → CryptoAsset matcher.
-
-Pure function, no I/O. AND semantics: every criterion set on the rule must
-match the asset. Glob matching is case-insensitive.
-"""
+"""CryptoRule -> CryptoAsset matcher. AND semantics; glob matching is case-insensitive."""
 
 from fnmatch import fnmatchcase
 from typing import Any, List, Optional
@@ -20,19 +15,28 @@ _QUANTUM_VULNERABLE_PRIMITIVES = {
 
 
 def rule_matches(asset: CryptoAsset, rule: CryptoRule) -> bool:
-    if rule.match_primitive is not None:
-        asset_prim = _coerce_primitive(asset.primitive)
-        if asset_prim != _coerce_primitive(rule.match_primitive):
-            return False
-
-    if rule.match_name_patterns:
-        if not _name_or_variant_matches(asset, rule.match_name_patterns):
-            return False
+    """True when the asset violates the rule: in scope AND below a threshold criterion."""
+    if not asset_in_rule_scope(asset, rule):
+        return False
 
     if rule.match_min_key_size_bits is not None:
         if asset.key_size_bits is None:
             return False
         if asset.key_size_bits >= rule.match_min_key_size_bits:
+            return False
+
+    return True
+
+
+def asset_in_rule_scope(asset: CryptoAsset, rule: CryptoRule) -> bool:
+    """True when the asset is within the rule's subject scope (primitive/name/curve/
+    protocol/quantum class), ignoring threshold criteria; used for compliance applicability."""
+    if rule.match_primitive is not None:
+        if _coerce_primitive(asset.primitive) != _coerce_primitive(rule.match_primitive):
+            return False
+
+    if rule.match_name_patterns:
+        if not _name_or_variant_matches(asset, rule.match_name_patterns):
             return False
 
     if rule.match_curves:
@@ -44,11 +48,9 @@ def rule_matches(asset: CryptoAsset, rule: CryptoRule) -> bool:
             return False
 
     if rule.quantum_vulnerable is True:
-        # CryptoRule's validator guarantees match_name_patterns is non-empty
-        # when quantum_vulnerable=True, so the pattern match was already
-        # enforced above. We only need the primitive gate here.
-        asset_prim = _coerce_primitive(asset.primitive)
-        if asset_prim not in _QUANTUM_VULNERABLE_PRIMITIVES:
+        # match_name_patterns is validator-guaranteed non-empty here, so only the
+        # primitive gate remains.
+        if _coerce_primitive(asset.primitive) not in _QUANTUM_VULNERABLE_PRIMITIVES:
             return False
 
     return True

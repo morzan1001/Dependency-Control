@@ -1,8 +1,5 @@
-"""
-Crypto-delta computation: matches crypto assets across two scans by their
-semantic identity ``(name, variant, primitive)`` rather than ``bom_ref``,
-which is regenerated per scan and therefore unusable for cross-scan
-matching. Produces the unified ``ScanDeltaResponse`` envelope.
+"""Crypto-delta: match crypto assets across two scans by ``(name, variant, primitive)``
+(``bom_ref`` is regenerated per scan and unusable for matching), as a ScanDeltaResponse.
 """
 
 from typing import List, Optional, Tuple
@@ -77,8 +74,7 @@ async def compute_crypto_delta_envelope(
     if change in (None, "all", "removed"):
         items.extend(_asset_to_envelope_item(from_map[k], "removed") for k in removed_keys)
 
-    # Sort by (change, name) with variant + primitive as final tiebreakers
-    # so pagination is deterministic regardless of set-iteration order.
+    # Sort with variant/primitive tiebreakers so pagination is deterministic across set-iteration order.
     items.sort(key=lambda i: (i.change, i.name, i.variant or "", i.primitive or ""))
     paged, total_pages = paginate(items, page, page_size)
 

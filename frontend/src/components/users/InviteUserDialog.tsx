@@ -21,7 +21,6 @@ export function InviteUserDialog() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteLink, setInviteLink] = useState<string | null>(null);
 
-  // Only fetch app config when dialog is open - we only need it after submit
   const { data: appConfig } = useAppConfig({ enabled: isOpen });
 
   const inviteUserMutation = useInviteUser();
@@ -30,7 +29,6 @@ export function InviteUserDialog() {
     e.preventDefault();
     inviteUserMutation.mutate(inviteEmail, {
       onSuccess: (data) => {
-        // Show invitation link if email is not configured
         if (!appConfig?.notifications.email && data.link) {
           setInviteLink(data.link);
           toast.success("Invitation created", {

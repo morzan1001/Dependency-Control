@@ -3,7 +3,7 @@ import pytest_asyncio
 
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
-from app.services.stats import _is_signature_waiver
+from app.services.stats import _is_signature_waiver, recalculate_project_stats
 
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -14,7 +14,7 @@ def _waiver(finding_type=None, match=None, scope="finding"):
 
 class TestIsSignatureWaiver:
     def test_untyped_non_location_waiver_goes_legacy(self):
-        # finding_type=None, no match -> must NOT be routed to the signature path (regression guard)
+        # finding_type=None, no match -> must NOT be routed to the signature path
         assert _is_signature_waiver(_waiver(finding_type=None, match=None)) is False
 
     def test_typed_license_waiver_goes_legacy(self):
@@ -40,14 +40,9 @@ class TestIsSignatureWaiver:
 
 
 # ---------------------------------------------------------------------------
-# recalculate_project_stats — unified stats pipeline (Task W4)
-#
-# recalc must produce the SAME authoritative Stats as
-# calculate_comprehensive_stats: severity counts excluding waived findings,
-# the avg-based risk_score, plus the populated adjusted_risk_score /
-# threat_intel / reachability / prioritized fields. The old partial path
-# (_build_stats_pipeline + _stats_from_result) left the enrichment fields at
-# their defaults (0.0 / None) and computed a $sum risk_score, corrupting stats.
+# recalculate_project_stats must produce the same authoritative Stats as
+# calculate_comprehensive_stats (severity counts excluding waived, avg-based
+# risk_score, populated enrichment fields).
 # ---------------------------------------------------------------------------
 
 PROJECT_ID = "proj-w4"
@@ -74,7 +69,7 @@ def _finding(
     if epss_score is not None:
         details["epss_score"] = epss_score
     if is_kev:
-        details["is_kev"] = True
+        details["in_kev"] = True
     doc = {
         "_id": _id,
         "finding_id": _id,
@@ -155,7 +150,7 @@ class TestRecalculateUnifiedStats:
 
     @pytest.mark.asyncio
     async def test_recalc_populates_enrichment_fields(self, seeded_db):
-        """The partial path left these at defaults; the unified path must populate them."""
+        """The unified path must populate the enrichment fields, not leave them at defaults."""
         from app.services.stats import recalculate_project_stats
 
         result = await recalculate_project_stats(PROJECT_ID, seeded_db)
@@ -182,3 +177,107 @@ class TestRecalculateUnifiedStats:
         assert scan_doc["stats"]["adjusted_risk_score"] != 0.0
         assert project_doc["stats"]["reachability"] is not None
         assert scan_doc["ignored_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# A waiver with no matching criteria must NOT waive every finding: an empty
+# _build_waiver_query ({}) would match all findings, so _apply_waivers must
+# skip criteria-less waivers.
+# ---------------------------------------------------------------------------
+
+
+class TestEmptyCriteriaWaiverDoesNotWaiveEverything:
+    @pytest.mark.asyncio
+    async def test_criteria_less_waiver_is_skipped(self, seeded_db):
+        # A criteria-less waiver: only reason/created_by set. Goes to the legacy
+        # path (finding_type None -> not a signature waiver, no vulnerability_id).
+        await seeded_db.waivers.insert_one(
+            {
+                "_id": "w-empty",
+                "project_id": PROJECT_ID,
+                "scope": "finding",
+                "reason": "blank automation payload",
+                "created_by": "tester",
+            }
+        )
+
+        result = await recalculate_project_stats(PROJECT_ID, seeded_db)
+
+        assert result is not None
+        # Only the properly-targeted waiver (w-1 -> f-waived) suppresses a finding.
+        # The empty-criteria waiver must be skipped, NOT applied as match-all.
+        assert result.critical == 1
+        assert result.high == 1
+        assert result.medium == 1
+
+        scan_doc = await seeded_db.scans.find_one({"_id": SCAN_ID})
+        assert scan_doc["ignored_count"] == 1
+
+        # The non-targeted findings stay un-waived.
+        for fid in ("f-crit", "f-high", "f-med"):
+            doc = await seeded_db.findings.find_one({"_id": fid})
+            assert doc["waived"] is False, f"{fid} was wrongly waived by empty-criteria waiver"
+
+
+# ---------------------------------------------------------------------------
+# Lock contention must be retried (bounded backoff), not dropped.
+# ---------------------------------------------------------------------------
+
+
+class TestLockContentionRetry:
+    @pytest.mark.asyncio
+    async def test_recalc_retries_lock_then_succeeds(self, seeded_db, monkeypatch):
+        from app.repositories import DistributedLocksRepository
+
+        calls = {"n": 0}
+        real_acquire = DistributedLocksRepository.acquire_lock
+
+        async def flaky_acquire(self, lock_name, holder_id, ttl_seconds=30):
+            calls["n"] += 1
+            if calls["n"] < 3:  # fail the first two attempts, succeed on the third
+                return False
+            return await real_acquire(self, lock_name, holder_id, ttl_seconds)
+
+        monkeypatch.setattr(DistributedLocksRepository, "acquire_lock", flaky_acquire)
+
+        slept = []
+
+        async def fake_sleep(delay):
+            slept.append(delay)
+
+        monkeypatch.setattr("app.services.stats.asyncio.sleep", fake_sleep)
+
+        result = await recalculate_project_stats(PROJECT_ID, seeded_db)
+
+        assert result is not None  # recalc completed despite initial contention
+        assert calls["n"] == 3  # retried until it won the lock
+        # Backed off between the two failed attempts with exponential delays. (Filter
+        # to our backoff values: patching asyncio.sleep is process-wide, so unrelated
+        # asyncio.sleep(0) calls during recalc may also be recorded.)
+        backoff_delays = [d for d in slept if d in (0.2, 0.4, 0.8, 1.6, 3.2)]
+        assert backoff_delays == [pytest.approx(0.2), pytest.approx(0.4)]
+
+    @pytest.mark.asyncio
+    async def test_recalc_returns_none_after_exhausting_retries(self, seeded_db, monkeypatch):
+        from app.repositories import DistributedLocksRepository
+
+        calls = {"n": 0}
+
+        async def always_fail(self, lock_name, holder_id, ttl_seconds=30):
+            calls["n"] += 1
+            return False
+
+        monkeypatch.setattr(DistributedLocksRepository, "acquire_lock", always_fail)
+
+        async def fake_sleep(delay):
+            return None
+
+        monkeypatch.setattr("app.services.stats.asyncio.sleep", fake_sleep)
+
+        result = await recalculate_project_stats(PROJECT_ID, seeded_db)
+
+        assert result is None  # gives up gracefully
+        # Initial attempt + _LOCK_MAX_RETRIES retries.
+        from app.services.stats import _LOCK_MAX_RETRIES
+
+        assert calls["n"] == _LOCK_MAX_RETRIES + 1

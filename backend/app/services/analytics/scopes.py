@@ -75,10 +75,7 @@ class ScopeResolver:
         return ResolvedScope(scope="global", scope_id=None, project_ids=None)
 
     async def _resolve_user(self) -> ResolvedScope:
-        # Super-users with PROJECT_READ_ALL see every project under the user
-        # scope. This matches the long-standing SBOM-analytics semantics so
-        # migrating SBOM endpoints to ScopeResolver causes no behaviour
-        # change for those callers.
+        # Super-users with PROJECT_READ_ALL see every project under the user scope.
         from app.core.permissions import Permissions, has_permission
 
         perms = getattr(self.user, "permissions", None)
@@ -104,9 +101,7 @@ class ScopeResolver:
         except HTTPException:
             return False  # legitimate 403/404 access denial
         except Exception:
-            logger.warning(
-                "check_project_access failed unexpectedly for project %s", project_id, exc_info=True
-            )
+            logger.warning("check_project_access failed unexpectedly for project %s", project_id, exc_info=True)
             return False
 
     async def _check_team_member(self, team_id: str) -> bool:

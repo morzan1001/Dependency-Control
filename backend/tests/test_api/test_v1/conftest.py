@@ -9,7 +9,6 @@ from tests.helpers.permission_presets import PRESET_USER, PRESET_VIEWER
 
 @pytest.fixture
 def admin_user():
-    """User with all permissions (admin)."""
     return User(
         id="admin-1",
         username="admin",
@@ -20,7 +19,6 @@ def admin_user():
 
 @pytest.fixture
 def regular_user():
-    """User with standard user permissions."""
     return User(
         id="user-1",
         username="user",
@@ -31,7 +29,6 @@ def regular_user():
 
 @pytest.fixture
 def viewer_user():
-    """User with viewer-only permissions."""
     return User(
         id="viewer-1",
         username="viewer",
@@ -42,7 +39,6 @@ def viewer_user():
 
 @pytest.fixture
 def no_perms_user():
-    """User with zero permissions."""
     return User(
         id="noperm-1",
         username="noperm",

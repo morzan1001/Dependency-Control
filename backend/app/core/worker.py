@@ -190,6 +190,38 @@ class AnalysisWorkerManager:
 
         return True
 
+    async def _notify_analysis_failed(self, db: AsyncIOMotorDatabase, scan: Dict[str, Any], error: str) -> None:
+        """Fire the analysis_failed webhook + project notification for a failed scan.
+
+        Best-effort: any error here is logged and swallowed so it never masks the
+        original failure. Shared by the exception path and the retry-ceiling path so
+        every terminal 'failed' transition alerts owners who configured it.
+        """
+        scan_id = str(scan.get("_id"))
+        try:
+            project = await db.projects.find_one({"_id": scan.get("project_id")})
+            if not project:
+                return
+            project_id_str = str(project["_id"])
+            project_name = project.get("name", "Unknown")
+            await webhook_service.trigger_analysis_failed(
+                db=db,
+                scan_id=scan_id,
+                project_id=project_id_str,
+                project_name=project_name,
+                error_message=error,
+            )
+            await safe_notify_project_event(
+                db,
+                project_id=project_id_str,
+                event_type="analysis_failed",
+                subject=f"Scan failed: {project_name}",
+                message=f"Scan {scan_id} for project {project_name} failed: {error}",
+                context="worker.analysis_failed",
+            )
+        except Exception as webhook_err:
+            logger.exception("Failed to trigger analysis_failed webhook: %s", webhook_err)
+
     async def _handle_failed_analysis(self, scan: Dict[str, Any], scan_id: str, db: AsyncIOMotorDatabase) -> bool:
         """Apply the retry ceiling. Engine owns status and retry_count writes."""
         max_retries = 5
@@ -200,15 +232,17 @@ class AnalysisWorkerManager:
             logger.error(
                 f"Scan {scan_id} failed after {retry_count} retries due to persistent race conditions. Marking as failed."
             )
+            error_message = f"Analysis failed after {retry_count} retry attempts due to race conditions."
             await db.scans.update_one(
                 {"_id": scan_id},
                 {
                     "$set": {
                         "status": "failed",
-                        "error": f"Analysis failed after {retry_count} retry attempts due to race conditions.",
+                        "error": error_message,
                     }
                 },
             )
+            await self._notify_analysis_failed(db, scan, error_message)
             return True
 
         logger.info(
@@ -275,7 +309,6 @@ class AnalysisWorkerManager:
                 # Track this scan as actively processing (for graceful shutdown)
                 self._active_scans.add(scan_id)
 
-                # Fetch project config (for active analyzers)
                 project = await db.projects.find_one({"_id": scan["project_id"]})
                 if not project:
                     logger.error(f"Project for scan {scan_id} not found, skipping.")
@@ -318,28 +351,7 @@ class AnalysisWorkerManager:
                     if worker_jobs_processed_total:
                         worker_jobs_processed_total.labels(status="failed").inc()
 
-                    try:
-                        project = await db.projects.find_one({"_id": scan.get("project_id")})
-                        if project:
-                            project_id_str = str(project["_id"])
-                            project_name = project.get("name", "Unknown")
-                            await webhook_service.trigger_analysis_failed(
-                                db=db,
-                                scan_id=scan_id,
-                                project_id=project_id_str,
-                                project_name=project_name,
-                                error_message=str(e),
-                            )
-                            await safe_notify_project_event(
-                                db,
-                                project_id=project_id_str,
-                                event_type="analysis_failed",
-                                subject=f"Scan failed: {project_name}",
-                                message=f"Scan {scan_id} for project {project_name} failed: {e}",
-                                context="worker.analysis_failed",
-                            )
-                    except Exception as webhook_err:
-                        logger.exception("Failed to trigger analysis_failed webhook: %s", webhook_err)
+                    await self._notify_analysis_failed(db, scan, str(e))
 
                 self._active_scans.discard(scan_id)
                 self.queue.task_done()

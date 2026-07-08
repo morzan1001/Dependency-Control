@@ -13,7 +13,7 @@ export default function LoginCallback() {
     
     const hash = globalThis.location.hash
     if (!hash) {
-      navigate('/login', { state: { error: 'No token provided' }, replace: true })
+      navigate('/login', { state: { message: 'No token provided' }, replace: true })
       return
     }
 
@@ -26,7 +26,7 @@ export default function LoginCallback() {
       globalThis.history.replaceState(null, '', globalThis.location.pathname)
       login(accessToken, refreshToken, true)
     } else {
-      navigate('/login', { state: { error: 'Invalid token response' }, replace: true })
+      navigate('/login', { state: { message: 'Invalid token response' }, replace: true })
     }
   }, [navigate, login])
 

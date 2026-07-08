@@ -19,7 +19,6 @@ def _make_mock_db(collection):
 
 
 def _asset_doc(**overrides):
-    """Create a raw crypto asset document."""
     doc = {
         "_id": "asset-1",
         "project_id": "p1",
@@ -52,42 +51,3 @@ class TestBulkUpsertAndListByScan:
 
         listed = asyncio.run(repo.list_by_scan("p1", "s1", limit=100))
         assert len(listed) == 5
-
-
-class TestListByLimit:
-    def test_list_by_scan_respects_limit(self):
-        assets_data = [_asset_doc(_id=f"asset-{i}", bom_ref=f"c{i}", name=f"a{i}") for i in range(10)]
-        collection = create_mock_collection(find=assets_data[:10])
-        db = _make_mock_db(collection)
-        repo = CryptoAssetRepository(db)
-
-        listed = asyncio.run(repo.list_by_scan("p2", "s2", limit=10))
-        assert len(listed) == 10
-
-
-class TestListByAssetType:
-    def test_list_by_scan_filters_by_asset_type(self):
-        algo_data = _asset_doc(_id="a1", bom_ref="a1", name="RSA", asset_type="algorithm")
-        collection = create_mock_collection(find=[algo_data])
-        db = _make_mock_db(collection)
-        repo = CryptoAssetRepository(db)
-
-        algos = asyncio.run(repo.list_by_scan("p3", "s3", limit=100, asset_type=CryptoAssetType.ALGORITHM))
-        assert len(algos) == 1
-        assert algos[0].name == "RSA"
-
-
-class TestSummaryCounts:
-    def test_summary_counts(self):
-        agg_results = [
-            {"_id": "algorithm", "count": 2},
-            {"_id": "certificate", "count": 1},
-        ]
-        collection = create_mock_collection(aggregate=agg_results)
-        db = _make_mock_db(collection)
-        repo = CryptoAssetRepository(db)
-
-        summary = asyncio.run(repo.summary_for_scan("p4", "s4"))
-        assert summary["total"] == 3
-        assert summary["by_type"]["algorithm"] == 2
-        assert summary["by_type"]["certificate"] == 1

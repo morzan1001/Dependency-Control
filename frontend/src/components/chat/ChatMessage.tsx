@@ -1,4 +1,4 @@
-import { useMemo, type ComponentProps } from 'react';
+import { memo, useMemo, type ComponentProps } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
@@ -63,9 +63,7 @@ function MessageBody({
   className?: string;
   toolCalls?: ReadonlyArray<ToolCall>;
 }>) {
-  // Turn known project / team names into router links, and CVE IDs into NVD
-  // links — only for entities we actually saw in a tool result. Entities the
-  // model invents stay plain text.
+  // Only link entities seen in a tool result, so invented names stay plain text.
   const linkified = useMemo(() => {
     if (!toolCalls || toolCalls.length === 0) return content;
     const entities = collectEntitiesFromToolCalls(toolCalls);
@@ -80,8 +78,6 @@ function MessageBody({
         'prose-code:rounded prose-code:bg-muted prose-code:px-1 prose-code:py-0.5 prose-code:font-mono prose-code:text-xs prose-code:before:content-none prose-code:after:content-none',
         'prose-p:my-1 prose-ul:my-1 prose-ol:my-1',
         'prose-a:text-primary prose-a:no-underline hover:prose-a:underline',
-        // Table styling — react-markdown + remark-gfm renders <table> from
-        // GFM tables; default prose styles are too tight, so override here.
         'prose-table:my-3 prose-table:w-full prose-table:border-collapse prose-table:overflow-hidden prose-table:rounded-md prose-table:border',
         'prose-thead:bg-muted/60',
         'prose-th:px-3 prose-th:py-2 prose-th:text-left prose-th:font-semibold prose-th:border-b',
@@ -114,7 +110,7 @@ interface ChatMessageProps {
   readonly message: Message;
 }
 
-export function ChatMessage({ message }: ChatMessageProps) {
+function ChatMessageImpl({ message }: ChatMessageProps) {
   const isUser = message.role === 'user';
 
   if (isUser) {
@@ -159,6 +155,9 @@ export function ChatMessage({ message }: ChatMessageProps) {
   );
 }
 
+// Memoized so a completed message doesn't re-parse markdown on every streaming re-render.
+export const ChatMessage = memo(ChatMessageImpl);
+
 interface StreamingMessageProps {
   readonly content: string;
   readonly toolCalls: ToolCall[];
@@ -172,10 +171,7 @@ export function StreamingMessage({
   activeToolCall,
   info,
 }: StreamingMessageProps) {
-  // Show typing dots whenever the assistant has nothing visible right now:
-  //   - before any token / tool has come back (cold start)
-  //   - between rounds: a tool call just ended but the next content/tool is
-  //     still being decided by the model. Without this, the UI looks frozen.
+  // Show typing dots when nothing is visible yet (cold start or between tool rounds).
   const isThinking = !content && !activeToolCall;
   return (
     <div className="flex gap-3">

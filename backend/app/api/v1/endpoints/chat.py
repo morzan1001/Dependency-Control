@@ -164,7 +164,6 @@ async def send_message(
     _check_permission(current_user, Permissions.CHAT_ACCESS)
     system_settings = await _get_system_settings(db)
 
-    # Rate limiting (uses SystemSettings values — admin-tunable)
     try:
         async with redis.from_url(settings.REDIS_URL) as redis_client:
             limiter = ChatRateLimiter(redis_client)
@@ -182,7 +181,6 @@ async def send_message(
     except redis.RedisError:
         logger.warning("Redis unavailable for rate limiting, allowing request")
 
-    # Verify conversation exists and belongs to user
     service = ChatService(db)
     conv = await service.get_conversation(conversation_id, current_user)
     if not conv:

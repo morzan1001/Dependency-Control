@@ -1,13 +1,4 @@
-"""
-SBOM Parser Module
-
-Provides unified parsing for multiple SBOM formats:
-- CycloneDX (1.4, 1.5, 1.6)
-- SPDX (2.2, 2.3)
-- Syft JSON (native format)
-
-Normalizes all formats to a common internal representation.
-"""
+"""Unified parsing of CycloneDX, SPDX, and Syft JSON SBOMs into a common representation."""
 
 import logging
 import re
@@ -26,71 +17,10 @@ from app.core.constants import (
     SPDX_ORGANIZATION_PREFIX,
 )
 from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
+from app.services.analyzers.purl_utils import get_purl_type
 from app.services.cbom_parser import parse_crypto_components
 
 logger = logging.getLogger(__name__)
-
-
-class DependencyGraphAnalyzer:
-    """
-    Reusable dependency graph analysis logic for all SBOM formats.
-    Implements DRY principle by centralizing common graph operations.
-    """
-
-    @staticmethod
-    def build_reverse_dependency_graph(
-        relationships: List[Dict[str, Any]],
-        child_key: str = "child",
-        parent_key: str = "parent",
-    ) -> Dict[str, List[str]]:
-        """
-        Build a reverse dependency graph (child -> list of parents).
-
-        Args:
-            relationships: List of relationship objects
-            child_key: Key name for child reference in relationship dict
-            parent_key: Key name for parent reference in relationship dict
-
-        Returns:
-            Dictionary mapping child IDs to list of parent IDs
-        """
-        reverse_graph: Dict[str, List[str]] = {}
-
-        for rel in relationships:
-            child = rel.get(child_key)
-            parent = rel.get(parent_key)
-
-            if child and parent:
-                if child not in reverse_graph:
-                    reverse_graph[child] = []
-                reverse_graph[child].append(parent)
-
-        return reverse_graph
-
-    @staticmethod
-    def identify_direct_dependencies(
-        all_refs: set,
-        transitive_refs: set,
-        root_deps: Optional[set] = None,
-    ) -> set:
-        """
-        Identify direct dependencies based on dependency graph analysis.
-
-        Args:
-            all_refs: Set of all component references
-            transitive_refs: Set of components that are dependencies of other components
-            root_deps: Optional set of dependencies explicitly marked as direct by root
-
-        Returns:
-            Set of component references that are direct dependencies
-        """
-        if root_deps:
-            return root_deps
-
-        # Components that have dependencies but are not themselves depended upon
-        # are likely direct dependencies
-        direct = all_refs - transitive_refs
-        return direct
 
 
 def is_url(value: str) -> bool:
@@ -119,9 +49,7 @@ def extract_license_from_url(url: str) -> Optional[str]:
 
 
 class SBOMParser:
-    """
-    Universal SBOM parser that handles multiple formats and normalizes output.
-    """
+    """Universal SBOM parser that handles multiple formats and normalizes output."""
 
     def __init__(self) -> None:
         self.format_handlers = {
@@ -144,7 +72,7 @@ class SBOMParser:
 
         # CycloneDX by structure (has components array with purl)
         components = sbom.get("components")
-        if isinstance(components, list) and components and "purl" in components[0]:
+        if isinstance(components, list) and components and isinstance(components[0], dict) and "purl" in components[0]:
             return SBOMFormat.CYCLONEDX, sbom.get("specVersion")
 
         return None
@@ -171,7 +99,8 @@ class SBOMParser:
                 return SBOMFormat.SYFT, None
 
         # Fallback: Check for common Syft patterns
-        if sbom.get("source", {}).get("type") in [
+        source = sbom.get("source")
+        if isinstance(source, dict) and source.get("type") in [
             SOURCE_TYPE_IMAGE,
             SOURCE_TYPE_DIRECTORY,
             SOURCE_TYPE_FILE,
@@ -373,39 +302,6 @@ class SBOMParser:
 
         return source_type, source_target
 
-    @staticmethod
-    def _extract_purl_type(purl: str) -> Optional[str]:
-        """Extract the package type from a PURL string."""
-        if purl and purl.startswith("pkg:"):
-            purl_parts = purl[4:].split("/", 1)
-            if purl_parts:
-                return purl_parts[0].lower()
-        return None
-
-    _APP_LOCATION_PATTERNS = (
-        "node_modules",
-        "site-packages",
-        ".venv",
-        "vendor",
-        "requirements",
-        "package.json",
-        "go.mod",
-        "cargo.toml",
-        "pom.xml",
-        "build.gradle",
-        "gemfile",
-        ".csproj",
-    )
-
-    @staticmethod
-    def _has_app_location(locations: List[str]) -> bool:
-        """Check if any location looks like an application dependency path."""
-        for loc in locations:
-            loc_lower = loc.lower()
-            if any(pattern in loc_lower for pattern in SBOMParser._APP_LOCATION_PATTERNS):
-                return True
-        return False
-
     def _determine_component_source(
         self,
         purl: str,
@@ -413,38 +309,24 @@ class SBOMParser:
         layer_digest: Optional[str],
         global_source_type: Optional[str],
     ) -> Optional[str]:
-        """
-        Determine the most likely source of a component.
-
-        Returns:
-            - "image": OS package from container base image
-            - "application": Application dependency from source code
-            - "file": From a specific file
-            - None: Unknown
-        """
-        purl_type = self._extract_purl_type(purl)
+        """Determine a component's likely source: image, application, file, or None."""
+        purl_type = get_purl_type(purl)
         effective_type = (purl_type or pkg_type or "").lower()
 
-        # OS packages with layer info are definitely from the container image
         if effective_type in OS_PACKAGE_TYPES:
             if layer_digest or global_source_type == SOURCE_TYPE_IMAGE:
                 return SOURCE_TYPE_IMAGE
 
-        # Application packages are typically from source code, not the base image
         if effective_type in APP_PACKAGE_TYPES:
-            # Even without location hints, app packages are usually from the app
             return SOURCE_TYPE_APPLICATION
 
-        # If we have layer info, it's from the image
         if layer_digest:
             return SOURCE_TYPE_IMAGE
 
-        # Fallback to global source type
         return global_source_type
 
     def _construct_purl(self, pkg_type: str, name: str, version: str, group: Optional[str] = None) -> str:
         """Construct a PURL from component metadata."""
-        # Normalize type to PURL namespace
         type_mapping = {
             "library": "generic",
             "application": "generic",
@@ -457,7 +339,6 @@ class SBOMParser:
         }
         purl_type = type_mapping.get(pkg_type, pkg_type)
 
-        # Construct PURL: pkg:type/namespace/name@version
         if group:
             return f"pkg:{purl_type}/{group}/{name}@{version}"
         else:
@@ -594,7 +475,15 @@ class SBOMParser:
 
         layer_digest, found_by, locations, properties = self._extract_cyclonedx_properties(comp)
 
-        cpes = [c.get("cpe") for c in comp.get("cpes", []) if c.get("cpe")]
+        # CycloneDX defines a single string field `cpe` (there is no `cpes` array in
+        # the 1.4-1.6 spec). Read the spec field; also accept a non-standard `cpes`
+        # list (dict- or string-form) as a defensive fallback.
+        cpe = comp.get("cpe")
+        cpes = [cpe] if cpe else []
+        for c in comp.get("cpes") or []:
+            val = c.get("cpe") if isinstance(c, dict) else c
+            if val and val not in cpes:
+                cpes.append(val)
 
         hashes: Dict[str, str] = {}
         for h in comp.get("hashes", []):
@@ -708,11 +597,6 @@ class SBOMParser:
                     license_url = new_url
 
         return ", ".join(filter(None, license_names)), license_url
-
-    def _extract_cyclonedx_licenses(self, licenses: List[Any]) -> str:
-        """Extract license string from CycloneDX license array."""
-        license_str, _ = self._extract_cyclonedx_licenses_full(licenses)
-        return license_str
 
     _SYFT_APP_PACKAGE_TYPES = (
         "npm",
@@ -904,7 +788,11 @@ class SBOMParser:
 
         license_str, license_url = self._extract_syft_licenses_full(artifact.get("licenses", []))
         locations, layer_digest = self._extract_syft_locations(artifact.get("locations", []))
-        cpes = [c.get("cpe") for c in artifact.get("cpes", []) if c.get("cpe")]
+        # Syft JSON schema < 16.0 emits `cpes` as a list of plain strings; newer
+        # releases use a list of dicts ({"cpe": "..."}). Handle both so a legacy
+        # SBOM does not crash the artifact loop and silently drop dependencies.
+        cpes = [(c.get("cpe") if isinstance(c, dict) else c) for c in artifact.get("cpes") or [] if c]
+        cpes = [c for c in cpes if c]
         found_by = artifact.get("foundBy")
         pkg_type = artifact.get("type", "unknown")
 
@@ -1016,43 +904,63 @@ class SBOMParser:
 
         return ", ".join(unique), license_url
 
-    def _extract_syft_licenses(self, licenses: List[Any]) -> str:
-        """Extract license string from Syft license array."""
-        license_str, _ = self._extract_syft_licenses_full(licenses)
-        return license_str
-
     def _build_spdx_dependency_graph(
         self, relationships: List[Dict[str, Any]], doc_spdx_id: str
-    ) -> tuple[set, set, Dict[str, list], set]:
+    ) -> Tuple[set, Dict[str, list]]:
         """
-        Build dependency graph data from SPDX relationships.
+        Build SPDX dependency-graph data used to classify direct vs transitive deps.
+
+        In the canonical SPDX layout (e.g. a GitHub SBOM export) the document
+        DESCRIBES a root package (the application/repo); that root's DEPENDS_ON
+        children are the DIRECT dependencies and the root package itself is NOT a
+        dependency. Only when a DESCRIBES target has no DEPENDS_ON children (minimal
+        SBOMs) is the described package itself the direct dep. Packages the document
+        points at directly via CONTAINS/DEPENDS_ON are treated as direct.
 
         Returns:
-            Tuple of (direct_package_ids, all_dependency_targets, reverse_deps_graph, packages_with_deps)
+            Tuple of (direct_package_ids, reverse_deps_graph)
         """
-        direct_package_ids: set = set()
-        all_dependency_targets: set = set()
+        described_roots: set = set()  # application roots (DOCUMENT DESCRIBES ...)
+        doc_direct_targets: set = set()  # packages the DOCUMENT points at directly
+        forward_deps: Dict[str, list] = {}  # element -> [children] via DEPENDS_ON
+        all_dependency_targets: set = set()  # every DEPENDS_ON target (transitive candidates)
+        packages_with_deps: set = set()  # elements that declare DEPENDS_ON edges
         reverse_deps_graph: Dict[str, list] = {}
-        packages_with_deps: set = set()
 
         for rel in relationships:
             rel_type = rel.get("relationshipType", "")
             element_id = rel.get("spdxElementId", "")
             related_id = rel.get("relatedSpdxElement", "")
 
-            # Root package relationships - these are direct deps
-            if element_id == doc_spdx_id and rel_type in ["DESCRIBES", "CONTAINS", "DEPENDS_ON"]:
-                direct_package_ids.add(related_id)
+            if element_id == doc_spdx_id:
+                if rel_type in ("DESCRIBES", "DOCUMENT_DESCRIBES"):
+                    described_roots.add(related_id)
+                elif rel_type in ("CONTAINS", "DEPENDS_ON"):
+                    doc_direct_targets.add(related_id)
 
-            # Track all dependency targets (transitive) and build reverse graph
             if rel_type == "DEPENDS_ON":
+                forward_deps.setdefault(element_id, []).append(related_id)
                 all_dependency_targets.add(related_id)
                 packages_with_deps.add(element_id)
-                if related_id not in reverse_deps_graph:
-                    reverse_deps_graph[related_id] = []
-                reverse_deps_graph[related_id].append(element_id)
+                reverse_deps_graph.setdefault(related_id, []).append(element_id)
 
-        return direct_package_ids, all_dependency_targets, reverse_deps_graph, packages_with_deps
+        # Direct deps = (a) packages the document points at directly, plus (b) the
+        # DEPENDS_ON children of each described root (or the root itself if it has none).
+        direct_package_ids: set = set(doc_direct_targets)
+        for root in described_roots:
+            children = forward_deps.get(root)
+            if children:
+                direct_package_ids.update(children)
+            else:
+                direct_package_ids.add(root)
+
+        # Fallback for SBOMs with no document-level roots: infer roots as packages that
+        # have deps but are not themselves depended upon, and take their children.
+        if not direct_package_ids and packages_with_deps:
+            for root in packages_with_deps - all_dependency_targets:
+                direct_package_ids.update(forward_deps.get(root, []))
+
+        return direct_package_ids, reverse_deps_graph
 
     def _parse_spdx(self, sbom: Dict[str, Any], result: ParsedSBOM) -> None:
         """Parse SPDX format SBOM."""
@@ -1064,9 +972,7 @@ class SBOMParser:
         relationships = sbom.get("relationships", [])
         doc_spdx_id = sbom.get("SPDXID", "SPDXRef-DOCUMENT")
 
-        direct_package_ids, all_dependency_targets, reverse_deps_graph, packages_with_deps = (
-            self._build_spdx_dependency_graph(relationships, doc_spdx_id)
-        )
+        direct_package_ids, reverse_deps_graph = self._build_spdx_dependency_graph(relationships, doc_spdx_id)
 
         packages = sbom.get("packages", [])
         inferred = not bool(relationships)
@@ -1074,11 +980,7 @@ class SBOMParser:
         for pkg in packages:
             pkg_spdx_id = pkg.get("SPDXID", "")
 
-            is_direct = (
-                inferred
-                or pkg_spdx_id in direct_package_ids
-                or (pkg_spdx_id in packages_with_deps and pkg_spdx_id not in all_dependency_targets)
-            )
+            is_direct = inferred or pkg_spdx_id in direct_package_ids
 
             parent_components = reverse_deps_graph.get(pkg_spdx_id, [])
 

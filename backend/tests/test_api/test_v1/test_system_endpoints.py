@@ -1,7 +1,4 @@
-"""Tests for system settings API endpoints.
-
-Tests get/update settings, public config, app config, and notification channels.
-"""
+"""Tests for system settings API endpoints (get/update settings, public config, app config, notification channels)."""
 
 import asyncio
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
@@ -12,7 +9,6 @@ MODULE = "app.api.v1.endpoints.system"
 
 
 def _make_settings(**overrides):
-    """Create SystemSettings with optional overrides."""
     return SystemSettings(**overrides)
 
 
@@ -97,7 +93,6 @@ class TestUpdateSettings:
                 )
             )
 
-        # Verify refresh fields are cleared in the update call
         call_args = mock_repo.update.call_args[0][0]
         assert call_args["slack_refresh_token"] is None
         assert call_args["slack_token_expires_at"] is None
@@ -193,7 +188,7 @@ class TestGetAppConfig:
     def test_no_smtp_means_no_email_channel(self, regular_user):
         from app.api.v1.endpoints.system import get_app_config
 
-        settings = _make_settings()  # No SMTP configured
+        settings = _make_settings()
 
         with patch(f"{MODULE}.deps.get_system_settings", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = settings

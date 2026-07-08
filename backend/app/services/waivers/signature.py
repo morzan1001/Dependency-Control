@@ -1,9 +1,7 @@
 """Compute a line-independent MatchSignature for location-based findings.
 
-Dispatch is by ANCHOR SHAPE (finding_id prefix / details structure), NOT by FindingType,
-so crypto-misuse SAST findings (type=crypto_key_management, id OPENGREP-...) are covered.
-See the design spec for the exact field paths and why we do not reuse
-findings_delta._FINDING_TYPE_IDENTIFIER.
+Dispatch is by anchor shape (finding_id prefix / details structure), not by FindingType,
+so crypto-misuse SAST findings (id OPENGREP-...) are also covered.
 """
 
 import hashlib
@@ -20,11 +18,7 @@ _WS = re.compile(r"\s+")
 
 
 class SignatureSource(Protocol):
-    """Structural view of the fields signature derivation needs.
-
-    Satisfied by both the `Finding` model (ingest path) and `_DocSignatureSource`
-    (recalc self-heal from a raw persisted finding document).
-    """
+    """Structural view of the fields signature derivation needs."""
 
     @property
     def id(self) -> Optional[str]: ...
@@ -82,12 +76,24 @@ def _sast_signature(finding: SignatureSource) -> Optional[MatchSignature]:
     rule_keys = sorted({f"{e.get('scanner') or 'unknown'}:{e.get('id') or 'unknown'}" for e in entries})
 
     if fingerprint:
-        return MatchSignature(rule_key=f"{scanner}:{rule_id}", file_key=finding.component,
-                              anchor=fingerprint, anchor_kind="scanner_fp",
-                              content_hash=content_hash, last_line=line, rule_keys=rule_keys)
-    return MatchSignature(rule_key=f"{scanner}:{rule_id}", file_key=finding.component,
-                          anchor=content_hash, anchor_kind="content_hash",
-                          content_hash=content_hash, last_line=line, rule_keys=rule_keys)
+        return MatchSignature(
+            rule_key=f"{scanner}:{rule_id}",
+            file_key=finding.component,
+            anchor=fingerprint,
+            anchor_kind="scanner_fp",
+            content_hash=content_hash,
+            last_line=line,
+            rule_keys=rule_keys,
+        )
+    return MatchSignature(
+        rule_key=f"{scanner}:{rule_id}",
+        file_key=finding.component,
+        anchor=content_hash,
+        anchor_kind="content_hash",
+        content_hash=content_hash,
+        last_line=line,
+        rule_keys=rule_keys,
+    )
 
 
 def _iac_signature(finding: SignatureSource) -> Optional[MatchSignature]:
@@ -100,16 +106,34 @@ def _iac_signature(finding: SignatureSource) -> Optional[MatchSignature]:
 
     kics_key = f"KICS:{rule_id}"
     if similarity_id:
-        return MatchSignature(rule_key=kics_key, file_key=finding.component,
-                              anchor=similarity_id, anchor_kind="similarity_id",
-                              content_hash=content_hash, last_line=line, rule_keys=[kics_key])
+        return MatchSignature(
+            rule_key=kics_key,
+            file_key=finding.component,
+            anchor=similarity_id,
+            anchor_kind="similarity_id",
+            content_hash=content_hash,
+            last_line=line,
+            rule_keys=[kics_key],
+        )
     if search_key:
-        return MatchSignature(rule_key=kics_key, file_key=finding.component,
-                              anchor=search_key, anchor_kind="search_key",
-                              content_hash=content_hash, last_line=line, rule_keys=[kics_key])
-    return MatchSignature(rule_key=kics_key, file_key=finding.component,
-                          anchor=content_hash, anchor_kind="content_hash",
-                          content_hash=content_hash, last_line=line, rule_keys=[kics_key])
+        return MatchSignature(
+            rule_key=kics_key,
+            file_key=finding.component,
+            anchor=search_key,
+            anchor_kind="search_key",
+            content_hash=content_hash,
+            last_line=line,
+            rule_keys=[kics_key],
+        )
+    return MatchSignature(
+        rule_key=kics_key,
+        file_key=finding.component,
+        anchor=content_hash,
+        anchor_kind="content_hash",
+        content_hash=content_hash,
+        last_line=line,
+        rule_keys=[kics_key],
+    )
 
 
 def _secret_signature(finding: SignatureSource) -> Optional[MatchSignature]:
@@ -118,17 +142,19 @@ def _secret_signature(finding: SignatureSource) -> Optional[MatchSignature]:
     secret_hash = finding.id.rsplit("-", 1)[-1] if finding.id else None
     if not secret_hash:
         return None
-    return MatchSignature(rule_key=detector, file_key=finding.component,
-                          anchor=secret_hash, anchor_kind="secret_hash",
-                          content_hash=secret_hash, last_line=None, rule_keys=[detector])
+    return MatchSignature(
+        rule_key=detector,
+        file_key=finding.component,
+        anchor=secret_hash,
+        anchor_kind="secret_hash",
+        content_hash=secret_hash,
+        last_line=None,
+        rule_keys=[detector],
+    )
 
 
 def compute_match_signature(finding: SignatureSource) -> Optional[MatchSignature]:
-    """Return a MatchSignature for SAST/IaC/Secret findings, else None.
-
-    Shape-based dispatch: SAST = has sast_findings OR id startswith a SAST prefix;
-    IaC = id startswith KICS-; Secret = id startswith SECRET-.
-    """
+    """Return a MatchSignature for SAST/IaC/Secret findings (dispatched by id prefix / details), else None."""
     fid = finding.id or ""
     details = finding.details or {}
 
@@ -142,12 +168,7 @@ def compute_match_signature(finding: SignatureSource) -> Optional[MatchSignature
 
 
 def compute_match_signature_from_doc(doc: Mapping[str, Any]) -> Optional[MatchSignature]:
-    """Recompute a MatchSignature from a raw persisted finding document.
-
-    Used by the recalc self-heal when the stored `match` field is missing, so an
-    ingest/persistence gap cannot silently orphan a waiver. Reads only finding_id,
-    details and component — the same inputs compute_match_signature uses on a Finding.
-    """
+    """Recompute a MatchSignature from a raw persisted finding document when the stored `match` field is missing."""
     return compute_match_signature(
         _DocSignatureSource(
             id=doc.get("finding_id"),

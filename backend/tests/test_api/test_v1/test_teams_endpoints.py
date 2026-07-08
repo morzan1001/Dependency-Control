@@ -13,7 +13,6 @@ MODULE = "app.api.v1.endpoints.teams"
 
 
 def _make_team(id="team-1", name="Test Team", members=None):
-    """Create a Team with sensible defaults."""
     if members is None:
         members = [TeamMember(user_id="user-1", role=TEAM_ROLE_ADMIN)]
     return Team(id=id, name=name, members=members)
@@ -139,7 +138,6 @@ class TestReadTeams:
     def test_viewer_without_read_perm_raises_403(self, viewer_user):
         from app.api.v1.endpoints.teams import read_teams
 
-        # Remove team:read permission from viewer
         viewer_user.permissions = []
 
         with pytest.raises(HTTPException) as exc_info:
@@ -458,8 +456,7 @@ class TestRemoveTeamMember:
     def test_raises_400_when_removing_last_admin_self(self, admin_user):
         from app.api.v1.endpoints.teams import remove_team_member
 
-        # admin_user has id="admin-1"; make them the only admin
-        # triggers the "Cannot remove yourself as the last admin" guard
+        # admin_user (id="admin-1") is the only admin, triggering the last-admin removal guard
         team = _make_team(
             members=[
                 TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN),
@@ -508,7 +505,6 @@ class TestDeleteTeamPermissions:
     """delete_team has dual-path permission logic: team:delete OR owner role."""
 
     def test_user_with_team_delete_bypasses_ownership_check(self, admin_user):
-        """Admin with team:delete can delete any team without being a member."""
         from app.api.v1.endpoints.teams import delete_team
 
         mock_team_repo = MagicMock()
@@ -536,7 +532,6 @@ class TestDeleteTeamPermissions:
         mock_team_repo.delete.assert_called_once()
 
     def test_user_without_team_delete_must_be_owner(self, regular_user):
-        """User without team:delete falls through to owner role check."""
         from app.api.v1.endpoints.teams import delete_team
 
         with patch(f"{MODULE}.check_team_access", new_callable=AsyncMock) as mock_access:
@@ -551,7 +546,6 @@ class TestDeleteTeamPermissions:
                 )
 
         assert exc_info.value.status_code == 403
-        # Verify the required_role=TEAM_ROLE_ADMIN was passed
         call_kwargs = mock_access.call_args
         assert call_kwargs.kwargs["required_role"] == TEAM_ROLE_ADMIN
 
@@ -592,6 +586,5 @@ class TestUpdateTeamMemberOwnerProtection:
                         )
 
         assert exc_info.value.status_code == 403
-        # Verify owner role was required
         call_kwargs = mock_access.call_args
         assert call_kwargs.kwargs["required_role"] == TEAM_ROLE_ADMIN

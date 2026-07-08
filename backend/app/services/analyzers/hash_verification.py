@@ -1,14 +1,4 @@
-"""
-Hash Verification Analyzer
-
-Verifies package integrity by comparing SBOM hashes against known-good hashes
-from package registries (PyPI, npm, Maven Central, etc.).
-
-Detects:
-- Tampered packages (hash mismatch)
-- Potentially compromised packages
-- Supply chain attacks where package content was modified
-"""
+"""Verifies package integrity by comparing SBOM hashes against registry hashes (PyPI, npm)."""
 
 import asyncio
 import base64
@@ -31,11 +21,10 @@ logger = logging.getLogger(__name__)
 class HashVerificationAnalyzer(Analyzer):
     name = "hash_verification"
 
-    # Registry APIs for hash verification
+    # Maven Central omitted: its checksums are served as separate files, not inline.
     REGISTRY_APIS = {
         "pypi": f"{PYPI_API_URL}/{{package}}/{{version}}/json",
         "npm": f"{NPM_REGISTRY_URL}/{{package}}/{{version}}",
-        # Maven Central uses a different approach (checksums as separate files)
     }
 
     async def analyze(
@@ -44,12 +33,7 @@ class HashVerificationAnalyzer(Analyzer):
         settings: Optional[Dict[str, Any]] = None,
         parsed_components: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
-        """
-        Analyze packages by verifying their hashes against official registries.
-
-        If SBOM contains hashes: verifies them against registry
-        If SBOM has no hashes: fetches hashes from registry for enrichment
-        """
+        """Verify component hashes against registries; fetch registry hashes when the SBOM has none."""
         components = self._get_components(sbom, parsed_components)
         issues = []
         verified_count = 0
@@ -73,14 +57,13 @@ class HashVerificationAnalyzer(Analyzer):
                 elif result.get("mismatch"):
                     issues.append(result)
                 elif result.get("fetched_hashes"):
-                    # We fetched hashes from registry (no hash in SBOM)
                     no_hash_in_sbom_count += 1
                     key = f"{result['component']}@{result['version']}"
                     fetched_hashes[key] = result["fetched_hashes"]
 
         return {
             "hash_issues": issues,
-            "fetched_hashes": fetched_hashes,  # For enrichment
+            "fetched_hashes": fetched_hashes,
             "summary": {
                 "verified_count": verified_count,
                 "unverifiable_count": unverifiable_count,
@@ -198,7 +181,7 @@ class HashVerificationAnalyzer(Analyzer):
 
     @staticmethod
     def _evaluate_registry_hashes(
-        registry_hashes_flat: Optional[Dict[str, str]],
+        registry_hashes_flat: Optional[Dict[str, Any]],
         sbom_hashes: Dict[str, str],
         name: str,
         version: str,
@@ -208,7 +191,11 @@ class HashVerificationAnalyzer(Analyzer):
         if registry_hashes_flat is None or not registry_hashes_flat:
             return None
 
-        registry_hashes = {k: {v} for k, v in registry_hashes_flat.items()}
+        # A registry value may be a single digest (npm) or a list (PyPI, one per file);
+        # normalize both into a set so any legitimate file hash matches.
+        registry_hashes: Dict[str, set] = {}
+        for k, v in registry_hashes_flat.items():
+            registry_hashes[k] = set(v) if isinstance(v, (list, tuple, set)) else {v}
 
         if not sbom_hashes:
             return {
@@ -222,8 +209,12 @@ class HashVerificationAnalyzer(Analyzer):
 
     async def _fetch_pypi_registry_hashes(
         self, client: InstrumentedAsyncClient, name: str, version: str
-    ) -> Optional[Dict[str, str]]:
-        """Fetch PyPI registry hashes; empty dict = negative cache, None = transient error."""
+    ) -> Optional[Dict[str, List[str]]]:
+        """Fetch PyPI registry hashes; empty dict = negative cache, None = transient error.
+
+        Collect every file's digest per algorithm (sdist plus each platform wheel) so an
+        SBOM built on any platform verifies against the matching wheel.
+        """
         try:
             url = self.REGISTRY_APIS["pypi"].format(package=name, version=version)
             response = await client.get(url)
@@ -231,12 +222,14 @@ class HashVerificationAnalyzer(Analyzer):
                 return {}
 
             data = response.json()
-            registry_hashes_flat: Dict[str, str] = {}
+            registry_hashes_flat: Dict[str, List[str]] = {}
             for url_info in data.get("urls", []):
                 for alg, value in url_info.get("digests", {}).items():
                     alg_normalized = normalize_hash_algorithm(alg)
-                    if alg_normalized not in registry_hashes_flat:
-                        registry_hashes_flat[alg_normalized] = value.lower()
+                    digest = value.lower()
+                    digests = registry_hashes_flat.setdefault(alg_normalized, [])
+                    if digest not in digests:
+                        digests.append(digest)
             return registry_hashes_flat or {}
         except httpx.TimeoutException:
             logger.debug(f"PyPI API timeout for {name}@{version}")
@@ -259,7 +252,7 @@ class HashVerificationAnalyzer(Analyzer):
 
         cache_key = CacheKeys.package_hash("pypi", name, version)
 
-        async def fetch_pypi_hashes() -> Optional[Dict[str, str]]:
+        async def fetch_pypi_hashes() -> Optional[Dict[str, List[str]]]:
             return await self._fetch_pypi_registry_hashes(client, name, version)
 
         registry_hashes_flat = await cache_service.get_or_fetch_with_lock(

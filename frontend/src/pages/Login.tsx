@@ -10,7 +10,6 @@ import { Link, useLocation } from 'react-router-dom'
 import { getErrorMessage } from '@/lib/utils'
 
 export default function Login() {
-  const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showOTP, setShowOTP] = useState(false)
   const [showResendLink, setShowResendLink] = useState(false)
@@ -28,10 +27,10 @@ export default function Login() {
   const location = useLocation()
   const message = location.state?.message
   const loginMutation = useLogin();
+  const isLoading = loginMutation.isPending
 
   async function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
-    setIsLoading(true)
     setError(null)
     setShowResendLink(false)
 
@@ -41,10 +40,8 @@ export default function Login() {
     loginMutation.mutate({ username, password, otp }, {
       onSuccess: (data) => {
         login(data.access_token, data.refresh_token)
-        setIsLoading(false)
       },
       onError: (err) => {
-        setIsLoading(false)
         const axiosError = err as { response?: { status?: number; data?: { detail?: string } | string } }
 
         if (axiosError.response?.status === 401) {

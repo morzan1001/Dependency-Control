@@ -17,11 +17,7 @@ logger = logging.getLogger(__name__)
 
 
 def _extract_products_from_cpes(cpes: List[str]) -> Set[str]:
-    """Map CPE strings to endoflife.date product IDs.
-
-    Accepts the standard ``cpe:2.3:a:`` form, the rarely-seen
-    ``cpe:/2.3:a:`` variant, and legacy ``cpe:/a:`` (CPE 2.2).
-    """
+    """Map CPE strings to endoflife.date product IDs (accepts cpe:2.3:a:, cpe:/2.3:a:, and legacy cpe:/a:)."""
     products: Set[str] = set()
     for cpe in cpes:
         match = re.match(r"cpe:/?2\.3:a:([^:]+):([^:]+)", cpe) or re.match(r"cpe:/a:([^:]+):([^:]+)", cpe)
@@ -50,11 +46,7 @@ def _resolve_eol_products(name: str, cpes: List[str]) -> Set[str]:
 def collect_products_to_check(
     components: List[Dict[str, Any]],
 ) -> Dict[str, List[Tuple[str, str]]]:
-    """Build ``product -> [(component_name, version), ...]`` from SBOM components.
-
-    Each (product, version) pair is checked independently so the same
-    runtime at multiple versions doesn't mask the older one.
-    """
+    """Build ``product -> [(component_name, version), ...]``; each version is checked independently."""
     out: Dict[str, List[Tuple[str, str]]] = {}
     for component in components:
         name = component.get("name", "").lower()
@@ -82,9 +74,6 @@ class EndOfLifeAnalyzer(Analyzer):
         components = self._get_components(sbom, parsed_components)
         self._apply_settings(settings)
 
-        # Collect all (product, component_name, version) triples. Multiple
-        # components of the same product appear together so we can check
-        # each version against the same EOL dataset (one HTTP call per product).
         products_to_check: Dict[str, List[Tuple[str, str]]] = collect_products_to_check(components)
         if not products_to_check:
             return {"eol_issues": []}
@@ -101,7 +90,7 @@ class EndOfLifeAnalyzer(Analyzer):
         return {"eol_issues": results}
 
     def _apply_settings(self, settings: Optional[Dict[str, Any]]) -> None:
-        """Stash configurable thresholds on the instance (defaults preserve behaviour)."""
+        """Stash configurable thresholds on the instance."""
         s = settings or {}
         self._high_after_days = int(s.get("eol_high_after_days", 365))
         self._medium_after_days = int(s.get("eol_medium_after_days", 180))
@@ -113,8 +102,7 @@ class EndOfLifeAnalyzer(Analyzer):
         cycles: List[Dict[str, Any]],
         results: List[Dict[str, Any]],
     ) -> None:
-        """Apply ``cycles`` against every (component, version) for ``product``,
-        appending an EOL issue for each EOL match."""
+        """Append an EOL issue for each (component, version) of ``product`` that matches an EOL cycle."""
         for comp_name, version in occurrences:
             eol_info = self._check_version(version, cycles)
             if eol_info:
@@ -164,8 +152,7 @@ class EndOfLifeAnalyzer(Analyzer):
         product: str,
         client: InstrumentedAsyncClient,
     ) -> Any:
-        """Bind ``product`` and ``client`` into the closure that ``cache_service``
-        will call on a miss."""
+        """Build the closure ``cache_service`` calls on a miss for ``product``."""
 
         async def fetch_eol_data() -> Optional[List[Dict[str, Any]]]:
             try:
@@ -238,11 +225,7 @@ class EndOfLifeAnalyzer(Analyzer):
             return False
 
     def _check_version(self, version: str, cycles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """Match a version to its most-specific EOL cycle, with LTS preferred on ties.
-
-        When EOL, enriches the result with the newest active cycle as the
-        recommended upgrade target.
-        """
+        """Match a version to its most-specific EOL cycle (LTS wins ties); if EOL, add the recommended upgrade cycle."""
         if not version:
             return None
 
@@ -251,7 +234,7 @@ class EndOfLifeAnalyzer(Analyzer):
 
         clean_version = version.lstrip("v").lower()
 
-        # Rank by (specificity desc, LTS desc, original-order asc); deterministic.
+        # Rank by (specificity desc, LTS desc, original-order asc) for determinism.
         matches: List[Tuple[int, int, int, Dict[str, Any]]] = []
         for idx, cycle in enumerate(cycles):
             cycle_version = str(cycle.get("cycle", ""))
@@ -295,20 +278,16 @@ class EndOfLifeAnalyzer(Analyzer):
         if not version or not cycle:
             return False
 
-        # Direct match
         if version == cycle:
             return True
 
-        # Version starts with cycle (e.g., "3.8.5" matches cycle "3.8")
         if version.startswith(f"{cycle}."):
             return True
 
-        # Major version match (e.g., "3" matches "3.x")
         if "." in version:
             major = version.split(".")[0]
             if cycle == major:
                 return True
-            # Check major.minor match
             if version.count(".") >= 1:
                 major_minor = ".".join(version.split(".")[:2])
                 if cycle == major_minor:

@@ -1,9 +1,3 @@
-/**
- * GitHub Instance Types
- *
- * Types for multi-GitHub instance management (GitHub Actions OIDC)
- */
-
 export interface GitHubInstance {
   id: string;
   name: string;

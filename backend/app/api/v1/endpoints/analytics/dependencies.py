@@ -23,6 +23,7 @@ from app.repositories import (
     ProjectRepository,
 )
 from app.schemas.analytics import (
+    DependencyGraph,
     DependencyMetadata,
     DependencyTreeNode,
     SeverityBreakdown,
@@ -33,6 +34,115 @@ from ._shared import _MSG_ACCESS_DENIED, _get_enrichment_info, _resolve_scan_id
 
 router = CustomAPIRouter()
 
+def _dep_key(dep: Any) -> str:
+    """Node identity for parent matching: PURL (parent_components hold PURLs, as in graph.py), else name@version."""
+    return get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
+
+
+def _build_tree_node(dep: Any, findings_map: Dict[str, Dict[str, int]]) -> DependencyTreeNode:
+    """Build one node without its children; the graph builder fills in child_ids."""
+    name = get_attr(dep, "name", "")
+    finding_info = findings_map.get(name, {})
+
+    return DependencyTreeNode(
+        # The document id (uuid) is unique per dependency; PURL only backstops dict inputs in tests.
+        id=str(get_attr(dep, "id") or get_attr(dep, "purl", "")),
+        name=name,
+        version=get_attr(dep, "version", ""),
+        purl=get_attr(dep, "purl", ""),
+        type=get_attr(dep, "type", "unknown"),
+        direct=get_attr(dep, "direct", False),
+        direct_inferred=get_attr(dep, "direct_inferred", False),
+        has_findings=finding_info.get("total", 0) > 0,
+        findings_count=finding_info.get("total", 0),
+        findings_severity=(
+            SeverityBreakdown(
+                critical=finding_info.get("critical", 0),
+                high=finding_info.get("high", 0),
+                medium=finding_info.get("medium", 0),
+                low=finding_info.get("low", 0),
+            )
+            if finding_info
+            else None
+        ),
+        source_type=get_attr(dep, "source_type"),
+        source_target=get_attr(dep, "source_target"),
+        layer_digest=get_attr(dep, "layer_digest"),
+        locations=get_attr(dep, "locations", []),
+        child_ids=[],
+    )
+
+
+def _build_dependency_graph(
+    dependencies: List[Any], findings_map: Dict[str, Dict[str, int]]
+) -> DependencyGraph:
+    """Flatten deps into unique nodes + per-node child_ids and roots so the client nests lazily."""
+    node_by_key: Dict[str, DependencyTreeNode] = {}
+    order: List[str] = []
+    # A purl can appear in several docs (e.g. one per container layer) with different
+    # parent_components; merge every doc's parents so no parent -> child edge is lost.
+    parents_by_key: Dict[str, List[str]] = {}
+    for dep in dependencies:
+        key = _dep_key(dep)
+        if key not in node_by_key:
+            node_by_key[key] = _build_tree_node(dep, findings_map)
+            order.append(key)
+        known = parents_by_key.setdefault(key, [])
+        for parent in get_attr(dep, "parent_components", []) or []:
+            if parent not in known:
+                known.append(parent)
+
+    children_by_parent: Dict[str, List[str]] = {}
+    for key in order:
+        for parent in parents_by_key.get(key, []):
+            siblings = children_by_parent.setdefault(parent, [])
+            if key not in siblings:
+                siblings.append(key)
+
+    for key in order:
+        child_keys = [ck for ck in children_by_parent.get(key, []) if ck in node_by_key]
+        child_keys.sort(key=lambda ck: node_by_key[ck].findings_count, reverse=True)
+        node_by_key[key].child_ids = [node_by_key[ck].id for ck in child_keys]
+
+    def _closure(start: str) -> set:
+        seen: set = set()
+        stack = [start]
+        while stack:
+            key = stack.pop()
+            if key in seen:
+                continue
+            seen.add(key)
+            stack.extend(ck for ck in children_by_parent.get(key, []) if ck in node_by_key)
+        return seen
+
+    def _has_resolvable_parent(key: str) -> bool:
+        return any(p in node_by_key for p in parents_by_key.get(key, []))
+
+    reachable: set = set()
+    root_keys = [
+        key for key in order if node_by_key[key].direct or not _has_resolvable_parent(key)
+    ]
+    for key in root_keys:
+        reachable |= _closure(key)
+
+    # Whatever is still unreachable belongs to a component with no natural entry (a fully
+    # disconnected cycle). Promote one entry per component and drop any extra root its subtree
+    # already covers, so a descendant seen before its component's entry is not left as a root.
+    extra_roots: List[str] = []
+    for key in order:
+        if key not in reachable:
+            component = _closure(key)
+            extra_roots = [r for r in extra_roots if r not in component]
+            extra_roots.append(key)
+            reachable |= component
+
+    root_keys += extra_roots
+    root_keys.sort(key=lambda k: node_by_key[k].findings_count, reverse=True)
+    return DependencyGraph(
+        nodes=[node_by_key[key] for key in order],
+        roots=[node_by_key[key].id for key in root_keys],
+    )
+
 
 @router.get("/projects/{project_id}/dependency-tree", responses=RESP_AUTH)
 async def get_dependency_tree(
@@ -40,8 +150,8 @@ async def get_dependency_tree(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     scan_id: Annotated[Optional[str], Query(description="Specific scan ID, defaults to latest")] = None,
-) -> List[DependencyTreeNode]:
-    """Get dependency tree for a project showing direct and transitive dependencies."""
+) -> DependencyGraph:
+    """Get the dependency graph for a project as flat nodes + roots (client nests lazily)."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_TREE)
 
     dep_repo = DependencyRepository(db)
@@ -55,12 +165,12 @@ async def get_dependency_tree(
         scan_id = await _resolve_scan_id(project_id, db)
 
     if not scan_id:
-        return []
+        return DependencyGraph()
 
     dependencies = await dep_repo.find_by_scan(scan_id)
 
     if not dependencies:
-        return []
+        return DependencyGraph()
 
     findings = await finding_repo.find_many(
         {"scan_id": scan_id, "type": "vulnerability"},
@@ -68,44 +178,7 @@ async def get_dependency_tree(
     )
     findings_map = build_findings_severity_map(findings)
 
-    def build_node(dep: Any) -> DependencyTreeNode:
-        name = get_attr(dep, "name", "")
-        finding_info = findings_map.get(name, {})
-
-        return DependencyTreeNode(
-            id=str(get_attr(dep, "_id") or get_attr(dep, "purl", "")),
-            name=name,
-            version=get_attr(dep, "version", ""),
-            purl=get_attr(dep, "purl", ""),
-            type=get_attr(dep, "type", "unknown"),
-            direct=get_attr(dep, "direct", False),
-            has_findings=finding_info.get("total", 0) > 0,
-            findings_count=finding_info.get("total", 0),
-            findings_severity=(
-                SeverityBreakdown(
-                    critical=finding_info.get("critical", 0),
-                    high=finding_info.get("high", 0),
-                    medium=finding_info.get("medium", 0),
-                    low=finding_info.get("low", 0),
-                )
-                if finding_info
-                else None
-            ),
-            source_type=get_attr(dep, "source_type"),
-            source_target=get_attr(dep, "source_target"),
-            layer_digest=get_attr(dep, "layer_digest"),
-            locations=get_attr(dep, "locations", []),
-            children=[],
-        )
-
-    direct_deps = [build_node(d) for d in dependencies if get_attr(d, "direct", False)]
-    transitive_deps = [build_node(d) for d in dependencies if not get_attr(d, "direct", False)]
-
-    # Sort most-problematic-first.
-    direct_deps.sort(key=lambda x: x.findings_count, reverse=True)
-    transitive_deps.sort(key=lambda x: x.findings_count, reverse=True)
-
-    return direct_deps + transitive_deps
+    return _build_dependency_graph(dependencies, findings_map)
 
 
 @router.get("/component-findings", responses=RESP_AUTH)
@@ -185,8 +258,7 @@ async def get_dependency_metadata_endpoint(
     version: Annotated[Optional[str], Query(description="Specific version")] = None,
     type: Annotated[Optional[str], Query(description="Package type")] = None,
 ) -> Optional[DependencyMetadata]:
-    """Aggregated dependency-specific metadata across accessible projects
-    (excludes project-specific data like Docker layers)."""
+    """Aggregated dependency metadata across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
     project_ids = await get_user_project_ids(current_user, db)

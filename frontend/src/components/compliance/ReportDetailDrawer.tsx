@@ -4,7 +4,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { deleteReport, downloadReportUrl } from "@/api/compliance";
+import { deleteReport, downloadReport } from "@/api/compliance";
 import { useDialogState } from "@/hooks/use-dialog-state";
 import { extractErrorMessage } from "@/lib/errors";
 import { formatDateTime } from "@/lib/utils";
@@ -27,6 +27,14 @@ export function ReportDetailDrawer({ report, onClose }: Props) {
     },
     onError: (e: unknown) => {
       toast.error(`Failed to delete: ${extractErrorMessage(e)}`);
+    },
+  });
+
+  const dl = useMutation({
+    mutationFn: (r: ComplianceReportMeta) =>
+      downloadReport(r._id, r.artifact_filename ?? `compliance-report-${r._id}`),
+    onError: (e: unknown) => {
+      toast.error(`Failed to download: ${extractErrorMessage(e)}`);
     },
   });
 
@@ -68,11 +76,14 @@ export function ReportDetailDrawer({ report, onClose }: Props) {
                 )}
                 {report.status === "completed" && report.artifact_filename && (
                   <div className="mt-4">
-                    <a href={downloadReportUrl(report._id)} target="_blank" rel="noopener noreferrer">
-                      <Button size="sm" variant="default">
-                        Download {report.format.toUpperCase()} · {report.artifact_filename}
-                      </Button>
-                    </a>
+                    <Button
+                      size="sm"
+                      variant="default"
+                      onClick={() => dl.mutate(report)}
+                      disabled={dl.isPending}
+                    >
+                      Download {report.format.toUpperCase()} · {report.artifact_filename}
+                    </Button>
                     {report.artifact_size_bytes && (
                       <span className="ml-2 text-xs text-muted-foreground">
                         {(report.artifact_size_bytes / 1024).toFixed(1)} KB

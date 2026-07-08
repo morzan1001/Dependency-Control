@@ -20,18 +20,11 @@ def _license(
 
 
 class TestProcessLicensesEmpty:
-    """Edge case: no findings."""
-
     def test_empty_list_returns_empty(self):
-        assert process_licenses([]) == []
-
-    def test_empty_iterable(self):
         assert process_licenses([]) == []
 
 
 class TestProcessLicensesSingleFinding:
-    """A single license finding produces exactly one recommendation."""
-
     def test_returns_one_recommendation(self):
         result = process_licenses([_license()])
         assert len(result) == 1
@@ -54,8 +47,6 @@ class TestProcessLicensesSingleFinding:
 
 
 class TestProcessLicensesPriorityCritical:
-    """CRITICAL severity findings yield CRITICAL priority."""
-
     def test_single_critical(self):
         rec = process_licenses([_license(severity="CRITICAL")])[0]
         assert rec.priority == Priority.CRITICAL
@@ -71,8 +62,6 @@ class TestProcessLicensesPriorityCritical:
 
 
 class TestProcessLicensesPriorityHigh:
-    """HIGH severity findings without CRITICAL yield HIGH priority."""
-
     def test_single_high(self):
         rec = process_licenses([_license(severity="HIGH")])[0]
         assert rec.priority == Priority.HIGH
@@ -87,8 +76,6 @@ class TestProcessLicensesPriorityHigh:
 
 
 class TestProcessLicensesPriorityMedium:
-    """Only MEDIUM (or lower) severity -> MEDIUM priority."""
-
     def test_only_medium(self):
         findings = [
             _license(severity="MEDIUM", finding_id="l1"),
@@ -111,8 +98,6 @@ class TestProcessLicensesPriorityMedium:
 
 
 class TestProcessLicensesGroupedByType:
-    """Multiple license types are grouped correctly."""
-
     def test_single_license_in_description(self):
         rec = process_licenses([_license(license_name="GPL-3.0")])[0]
         assert "GPL-3.0" in rec.description
@@ -144,18 +129,13 @@ class TestProcessLicensesGroupedByType:
         assert len(rec.action["problematic_licenses"]) <= 10
 
     def test_description_limited_to_five_license_names(self):
-        """Description should show at most 5 license names."""
         findings = [_license(license_name=f"License-{i}", finding_id=f"l{i}") for i in range(8)]
         rec = process_licenses(findings)[0]
-        # The description joins at most 5 via problematic_licenses[:5]
-        # Count occurrences of "License-" in description
         count = rec.description.count("License-")
         assert count <= 5
 
 
 class TestProcessLicensesComponentsTracked:
-    """Components are tracked correctly."""
-
     def test_unique_components(self):
         findings = [
             _license(component="lib-a", finding_id="l1"),
@@ -188,8 +168,6 @@ class TestProcessLicensesComponentsTracked:
 
 
 class TestProcessLicensesImpact:
-    """Impact dict contains correct severity counts."""
-
     def test_severity_counts(self):
         findings = [
             _license(severity="CRITICAL", finding_id="l1"),
@@ -207,7 +185,7 @@ class TestProcessLicensesImpact:
 
 
 class TestProcessLicensesLicenseIdFallback:
-    """license_id is used as fallback when license key is missing."""
+    """license_id is used when the license key is missing."""
 
     def test_license_id_fallback(self):
         finding = {
@@ -233,8 +211,6 @@ class TestProcessLicensesLicenseIdFallback:
 
 
 class TestProcessLicensesAction:
-    """Action dict structure."""
-
     def test_action_type(self):
         rec = process_licenses([_license()])[0]
         assert rec.action["type"] == "license_compliance"
@@ -245,8 +221,6 @@ class TestProcessLicensesAction:
 
 
 class TestProcessLicensesPriorityLow:
-    """INFO-only findings yield LOW priority."""
-
     def test_info_only_returns_low(self):
         rec = process_licenses([_license(severity="INFO")])[0]
         assert rec.priority == Priority.LOW
@@ -267,8 +241,6 @@ def _drift_finding(component, version, license_name, category="permissive"):
 
 
 class TestDetectLicenseDrift:
-    """Tests for detect_license_drift."""
-
     def test_empty_previous_returns_empty(self):
         assert detect_license_drift([_drift_finding("a", "1.0", "MIT")], []) == []
 
@@ -296,7 +268,7 @@ class TestDetectLicenseDrift:
         assert result[0].priority == Priority.MEDIUM
 
     def test_copyleft_to_permissive_not_flagged(self):
-        """Drift to less restrictive license is not a problem."""
+        # Drift to a less restrictive license is not a problem.
         prev = [_drift_finding("a", "1.0", "GPL-3.0", "strong_copyleft")]
         curr = [_drift_finding("a", "1.0", "MIT", "permissive")]
         assert detect_license_drift(curr, prev) == []

@@ -1,8 +1,7 @@
 """Standalone async tool functions for crypto / CBOM / compliance / PQC migration.
 
-External collaborators (``ScopeResolver``, ``ComplianceReportEngine``, …) are
-resolved through the parent package namespace at call time so test patches on
-``app.services.chat.tools.<NAME>`` keep working.
+Collaborators are resolved through the parent package namespace at call time so
+test patches on ``app.services.chat.tools.<NAME>`` keep working.
 """
 
 from datetime import datetime, timedelta, timezone
@@ -14,8 +13,7 @@ from app.models.user import User
 
 
 def _pkg() -> Any:
-    """Return the parent package module so collaborators resolve via the namespace
-    that tests patch."""
+    """Return the parent package module so collaborators resolve via the namespace tests patch."""
     from app.services.chat import tools as _tools_pkg
 
     return _tools_pkg
@@ -109,8 +107,7 @@ async def suggest_crypto_policy_override(
     project_id: str,
     scan_id: str,
 ) -> Dict[str, Any]:
-    """Advisory only — returns rule_ids producing the most findings; caller
-    decides whether to craft an override (this function does not write)."""
+    """Advisory only — returns rule_ids producing the most findings; does not write."""
     cursor = db.findings.aggregate(
         [
             {"$match": {"project_id": project_id, "scan_id": scan_id, "type": {"$regex": "^crypto_"}}},
@@ -185,9 +182,7 @@ async def generate_pqc_migration_plan(
     project_id: str,
     limit: int = 500,
 ) -> Dict[str, Any]:
-    """Generate the PQC migration plan for one project. ScopeResolver re-runs
-    the project-member check so scope construction stays consistent with every
-    other analytics path."""
+    """Generate the PQC migration plan for one project; ScopeResolver re-runs the project-member check."""
     pkg = _pkg()
     resolved = await pkg.ScopeResolver(db, user).resolve(scope="project", scope_id=project_id)
     gen = pkg.PQCMigrationPlanGenerator(db)

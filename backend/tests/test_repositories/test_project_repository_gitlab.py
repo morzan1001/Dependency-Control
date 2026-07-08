@@ -1,7 +1,4 @@
-"""Tests for ProjectRepository GitLab multi-instance methods.
-
-Tests composite key lookups, instance-based queries, and pagination using mocked MongoDB.
-"""
+"""Tests for ProjectRepository GitLab multi-instance methods with mocked MongoDB."""
 
 import asyncio
 

@@ -5,6 +5,7 @@ import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { advisoryUrl } from '@/lib/finding-utils'
 import {
   Tooltip,
   TooltipContent,
@@ -57,13 +58,9 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
         aria-expanded={expanded}
         onClick={() => setExpanded(!expanded)}
       >
-        <div className="flex items-start gap-4">
-          {/* Type Icon */}
-          <div className={cn("p-2 rounded-lg", typeInfo.bgColor)}>
+        <div className="flex items-start gap-4">          <div className={cn("p-2 rounded-lg", typeInfo.bgColor)}>
             <TypeIcon className={cn("h-5 w-5", typeInfo.color)} />
           </div>
-
-          {/* Main Content */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-2 mb-1">
               <h4 className="font-semibold truncate">{recommendation.title}</h4>
@@ -81,8 +78,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
             <p className="text-sm text-muted-foreground line-clamp-2">
               {recommendation.description}
             </p>
-
-            {/* Impact Summary */}
             <div className="flex items-center gap-4 mt-2">
               <TooltipProvider>
                 <Tooltip>
@@ -117,8 +112,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
               </div>
             </div>
           </div>
-
-          {/* Expand Toggle */}
           <span className="shrink-0 inline-flex items-center justify-center h-10 w-10 rounded-md hover:bg-accent hover:text-accent-foreground">
             {expanded ? (
               <ChevronDown className="h-4 w-4" />
@@ -128,13 +121,9 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
           </span>
         </div>
       </button>
-
-      {/* Expanded Details */}
       {expanded && (
         <CardContent className="pt-0 border-t">
-          <div className="space-y-4 pt-4">
-            {/* Action Details */}
-            {recommendation.action.type === 'update_dependency' && (
+          <div className="space-y-4 pt-4">            {recommendation.action.type === 'update_dependency' && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
                   <ArrowUpCircle className="h-4 w-4" />
@@ -227,8 +216,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </ul>
               </div>
             )}
-
-            {/* Secrets Action */}
             {(recommendation.action.type === 'rotate_credential' || recommendation.action.type === 'remove_secret') && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -259,8 +246,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
               </div>
             )}
-
-            {/* SAST Action */}
             {recommendation.action.type === 'fix_code' && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -294,8 +279,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
               </div>
             )}
-
-            {/* IAC Action */}
             {recommendation.action.type === 'fix_iac' && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -330,8 +313,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
               </div>
             )}
-
-            {/* License Action */}
             {recommendation.action.type === 'review_license' && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -363,8 +344,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
               </div>
             )}
-
-            {/* Supply Chain Action */}
             {recommendation.action.type === 'review_package' && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -385,8 +364,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
               </div>
             )}
-
-            {/* Outdated Dependencies Action */}
             {recommendation.action.type === 'upgrade_outdated' && recommendation.action.packages && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -407,8 +384,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
               </div>
             )}
-
-            {/* Version Fragmentation Action */}
             {recommendation.action.type === 'deduplicate_versions' && recommendation.action.packages && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -445,8 +420,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 )}
               </div>
             )}
-
-            {/* Regression Detected Action */}
             {recommendation.action.type === 'investigate_regression' && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -470,8 +443,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
               </div>
             )}
-
-            {/* Recurring Issues Action */}
             {recommendation.action.type === 'address_recurring' && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -500,8 +471,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
               </div>
             )}
-
-            {/* Deep Dependency Chain Action */}
             {recommendation.action.type === 'reduce_chain_depth' && recommendation.action.deepest_chains && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -532,8 +501,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
               </div>
             )}
-
-            {/* Duplicate Functionality Action */}
             {recommendation.action.type === 'consolidate_packages' && recommendation.action.duplicates && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -555,8 +522,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
               </div>
             )}
-
-            {/* Cross-Project / Shared Vulnerability Action */}
             {recommendation.action.type === 'fix_cross_project_vuln' && recommendation.action.cves && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -585,8 +550,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
               </div>
             )}
-
-            {/* Project Priority Action */}
             {recommendation.action.type === 'prioritize_projects' && recommendation.action.priority_projects && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -606,8 +569,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
               </div>
             )}
-
-            {/* Version Standardization Action */}
             {recommendation.action.type === 'standardize_versions' && recommendation.action.packages && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -646,19 +607,15 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
               </div>
             )}
 
-            {/* CVEs */}
-            {recommendation.action.cves && recommendation.action.cves.length > 0 && (
+            {/* CVEs (skip when the action type already renders its own CVE list) */}
+            {!['address_recurring', 'fix_cross_project_vuln'].includes(recommendation.action.type) &&
+              recommendation.action.cves && recommendation.action.cves.length > 0 && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium">Related Vulnerabilities</h5>
                 <div className="flex flex-wrap gap-1">
                   {recommendation.action.cves.map((cveItem) => {
                     const cve = typeof cveItem === 'string' ? cveItem : cveItem.cve
-                    let link: string | null = null
-                    if (cve.startsWith('CVE-')) {
-                      link = `https://nvd.nist.gov/vuln/detail/${cve}`
-                    } else if (cve.startsWith('GHSA-')) {
-                      link = `https://github.com/advisories/${cve}`
-                    }
+                    const link = advisoryUrl(cve)
 
                     return link ? (
                       <a
@@ -681,8 +638,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
               </div>
             )}
-
-            {/* Affected Projects */}
             {recommendation.affected_projects && recommendation.affected_projects.length > 0 && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium flex items-center gap-2">
@@ -709,8 +664,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
               </div>
             )}
-
-            {/* Affected Components */}
             {recommendation.affected_components.length > 0 && recommendation.affected_components.length <= 10 && (
               <div className="space-y-2">
                 <h5 className="text-sm font-medium">Affected Components</h5>

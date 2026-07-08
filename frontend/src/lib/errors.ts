@@ -1,14 +1,38 @@
-export function extractErrorMessage(err: unknown): string {
-  if (err && typeof err === "object") {
-    const e = err as {
-      response?: { data?: { detail?: string | { msg?: string }[] | Record<string, unknown> } };
-      message?: string;
+interface ValidationError {
+  msg: string;
+  type?: string;
+  loc?: (string | number)[];
+}
+
+interface ErrorWithResponse {
+  response?: {
+    data?: {
+      detail?: string | ValidationError[] | Record<string, unknown>;
     };
-    const detail = e.response?.data?.detail;
-    if (typeof detail === "string") return detail;
-    if (Array.isArray(detail) && detail[0]?.msg) return String(detail[0].msg);
-    if (detail) return JSON.stringify(detail);
-    if (e.message) return e.message;
+  };
+  message?: string;
+}
+
+// Human-readable message from an unknown error: joins FastAPI validation arrays
+// (stripping the "Value error, " prefix), passes string details through, and
+// serializes object details.
+export function extractErrorMessage(err: unknown): string {
+  if (typeof err !== "object" || err === null) {
+    return "An unknown error occurred";
   }
-  return "Unknown error";
+
+  const e = err as ErrorWithResponse;
+  const detail = e.response?.data?.detail;
+  if (detail) {
+    if (Array.isArray(detail)) {
+      return detail
+        .map((validationErr: ValidationError) => (validationErr.msg ?? String(validationErr)).replace("Value error, ", ""))
+        .join("\n");
+    }
+    if (typeof detail === "string") {
+      return detail;
+    }
+    return JSON.stringify(detail);
+  }
+  return e.message || "An unknown error occurred";
 }

@@ -167,7 +167,6 @@ async def test_write_after_aclose_raises(encryption_key):
 
 @pytest.mark.asyncio
 async def test_decrypt_wrong_key_raises(encryption_key):
-    """Encrypt with key A, attempt to decrypt with key B -> InvalidTag."""
     from app.core.encryption import EncryptionStreamWriter, decrypt_stream
 
     plaintext = b"secret payload"

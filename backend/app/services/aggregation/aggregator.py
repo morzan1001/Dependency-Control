@@ -155,6 +155,10 @@ class ResultAggregator:
         self._apply_deps_dev_flags(enrichment, metadata)
         self._apply_deps_dev_licenses(enrichment, metadata.get("licenses", []))
 
+    def record_scorecard(self, component_key: str, data: Dict[str, Any]) -> None:
+        """Cache OpenSSF Scorecard data (keyed by ``name@version``) applied to findings during finalization."""
+        self._scorecard_cache[component_key] = data
+
     def enrich_from_license_scanner(self, name: str, version: str, license_info: Dict[str, Any]) -> None:
         """Enrich dependency with data from license compliance scanner."""
         enrichment = self._get_or_create_enrichment(name, version)
@@ -163,7 +167,6 @@ class ResultAggregator:
 
         spdx_id = license_info.get("license")
         if spdx_id:
-            # License scanner provides detailed analysis - use as primary
             enrichment.primary_license = spdx_id
             enrichment.license_category = license_info.get("category")
             enrichment.licenses.append(
@@ -189,7 +192,6 @@ class ResultAggregator:
         if not result:
             return
 
-        # Check for scanner errors
         if "error" in result:
             self.add_finding(
                 Finding(
@@ -291,10 +293,7 @@ class ResultAggregator:
             return
         for i, p1 in enumerate(primaries):
             for p2 in primaries[i + 1 :]:
-                if p2.id not in p1.related_findings:
-                    p1.related_findings.append(p2.id)
-                if p1.id not in p2.related_findings:
-                    p2.related_findings.append(p1.id)
+                cross_link_pair(p1, p2)
 
     def _reduce_vuln_group(self, group: List[Finding]) -> List[Finding]:
         """Cluster findings in a vuln group by artifact and return primaries."""
@@ -322,8 +321,7 @@ class ResultAggregator:
         for group in sast_groups.values():
             if not group:
                 continue
-            # Single-item groups still go through merge_sast_findings to ensure
-            # a consistent sast_findings list structure on all SAST findings.
+            # Single-item groups still pass through so every SAST finding gets a consistent sast_findings list.
             merged_f = merge_sast_findings(group)
             if merged_f:
                 final_findings.append(merged_f)
@@ -344,10 +342,6 @@ class ResultAggregator:
             f.match = compute_match_signature(f)
 
         return final_findings
-
-    @staticmethod
-    def _cross_link_pair(f1: Finding, f2: Finding) -> None:
-        cross_link_pair(f1, f2)
 
     def _link_finding_group(self, component_findings: List[Finding]) -> None:
         for i, f1 in enumerate(component_findings):
@@ -374,9 +368,6 @@ class ResultAggregator:
             if len(component_findings) > 1:
                 self._link_finding_group(component_findings)
 
-    def _add_context_to_vulnerability(self, vuln_finding: Finding, other_finding: Finding) -> None:
-        add_context_to_vulnerability(vuln_finding, other_finding)
-
     def get_dependency_enrichments(self) -> Dict[str, Dict[str, Any]]:
         """Return enrichment data keyed by ``package_name@version`` for MongoDB updates."""
         result = {}
@@ -387,9 +378,6 @@ class ResultAggregator:
     def get_license_data(self) -> Dict[str, Dict[str, Any]]:
         """Return detailed license analysis data per package."""
         return self._license_data
-
-    def _enrich_with_scorecard(self, findings: List[Finding]) -> None:
-        enrich_with_scorecard(findings, self._scorecard_cache)
 
     def add_finding(self, finding: Finding, source: Optional[str] = None) -> None:
         """Add a finding, merging if one already exists for the same key."""
@@ -570,9 +558,6 @@ class ResultAggregator:
             details=agg_details,
             found_in=[source] if source else [],
         )
-
-    def _update_quality_description(self, finding: Finding) -> None:
-        update_quality_description(finding)
 
     def _lookup_existing_key(self, finding: Finding, comp_key: str, lookup_key_id: str) -> Optional[str]:
         """Resolve an existing aggregate key for the finding via id or aliases."""

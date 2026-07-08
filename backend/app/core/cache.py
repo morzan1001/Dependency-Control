@@ -1,7 +1,6 @@
 """Async Redis-backed cache for cross-pod deduplication of external API calls.
 
-Use this for results that have calendar-time cost or upstream rate limits;
-for in-process memoization of cheap MongoDB aggregations use
+For in-process memoization of cheap MongoDB aggregations use
 ``app.services.analytics.cache.TTLCache`` instead.
 """
 
@@ -10,6 +9,7 @@ import hashlib
 import json
 import logging
 import time
+import uuid
 from typing import Any, Callable, Dict, List, Optional, TypeVar
 
 import redis.asyncio as redis
@@ -25,6 +25,10 @@ T = TypeVar("T")
 
 REDIS_CONNECTION_LOST_MSG = "Redis connection lost, disabling cache temporarily"
 REDIS_OPERATION_TIMEOUT_SECONDS = 5.0
+
+# Atomic compare-and-delete: release the lock only if the value still matches our
+# token, so a slow fetch can't delete a lock re-acquired by another pod.
+_UNLOCK_LUA = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
 
 cache_hits_total: Optional[Counter] = None
 cache_misses_total: Optional[Counter] = None
@@ -51,9 +55,6 @@ except ImportError:
 class CacheTTL:
     """Standard TTL values for different types of cached data."""
 
-    # Lock TTL for distributed locking (prevents deadlock on pod crash)
-    LOCK_DEFAULT = 30  # 30 seconds
-
     # Global catalogs that update daily
     KEV_CATALOG = 24 * 3600  # 24 hours
     POPULAR_PACKAGES = 24 * 3600  # 24 hours
@@ -65,7 +66,6 @@ class CacheTTL:
 
     # Package metadata
     DEPS_DEV_METADATA = 12 * 3600  # 12 hours
-    DEPS_DEV_SCORECARD = 24 * 3600  # 24 hours
     LATEST_VERSION = 12 * 3600  # 12 hours
     EOL_STATUS = 24 * 3600  # 24 hours
 
@@ -84,9 +84,11 @@ class CacheTTL:
     # Update frequency analysis (changes only on new scan completion)
     UPDATE_FREQUENCY = 30 * 60  # 30 minutes
 
-    # Per-package release history (publishedAt for each version) — drives
-    # upstream-cadence metrics. Long TTL: full version histories almost
-    # never change retroactively; new releases just append.
+    # Keyed by scan_id (auto-invalidates on new scan); TTL only bounds staleness
+    # of the cross-project signal woven in.
+    RECOMMENDATIONS = 10 * 60  # 10 minutes
+
+    # Long TTL: version histories almost never change retroactively; new releases append.
     RELEASE_HISTORY = 24 * 3600  # 24 hours
 
 
@@ -114,10 +116,6 @@ class CacheKeys:
     @staticmethod
     def deps_dev(system: str, package: str, version: str) -> str:
         return f"deps:{system}:{package}:{version}"
-
-    @staticmethod
-    def deps_dev_scorecard(project_id: str) -> str:
-        return f"scorecard:{project_id}"
 
     @staticmethod
     def latest_version(system: str, package: str) -> str:
@@ -155,10 +153,15 @@ class CacheKeys:
     def update_frequency_comparison(user_id: str, team_id: str = "all") -> str:
         return f"update_freq_cmp:{user_id}:{team_id}"
 
+    @staticmethod
+    def recommendations(project_id: str, scan_id: str, scope_hash: str) -> str:
+        # scope_hash (digest of caller's accessible project ids) prevents cross-project
+        # recommendation data leaking across users with different project access.
+        return f"recommendations:{project_id}:{scan_id}:{scope_hash}"
+
 
 class CacheService:
-    """Distributed cache service using Redis — all pods share the same store
-    so duplicate external API calls stay deduplicated horizontally."""
+    """Distributed Redis cache shared across pods for horizontal dedup of external API calls."""
 
     RECONNECT_INTERVAL_SECONDS = 30
 
@@ -170,8 +173,7 @@ class CacheService:
         self._unavailable_since: float = 0
 
     async def get_client(self) -> redis.Redis:
-        """Get or create the Redis client. Locked to avoid races when several
-        coroutines hit the first call simultaneously."""
+        """Get or create the Redis client, locked against concurrent first-call races."""
         if self._client is not None and self._pool is not None:
             return self._client
 
@@ -401,24 +403,6 @@ class CacheService:
                 cache_operation_duration_seconds.labels(operation="mset").observe(time.time() - _start)
         return success
 
-    async def get_or_fetch(
-        self,
-        key: str,
-        fetch_fn: Callable[[], Any],
-        ttl_seconds: Optional[int] = None,
-    ) -> Any:
-        """Cache-through: return cached value, otherwise call fetch_fn and cache the result."""
-        cached = await self.get(key)
-        if cached is None:
-            try:
-                cached = await fetch_fn()
-            except Exception as e:
-                logger.warning(f"Fetch function failed for {key}: {e}")
-                raise
-            if cached is not None:
-                await self.set(key, cached, ttl_seconds)
-        return cached
-
     async def get_or_fetch_with_lock(
         self,
         key: str,
@@ -427,11 +411,8 @@ class CacheService:
         lock_ttl_seconds: int = 30,
         max_wait_seconds: float = 5.0,
     ) -> Optional[Any]:
-        """Cache-through with a distributed lock so only one pod fetches on miss
-        while peers wait for the result. Prevents cache-stampede on multi-pod deploys.
-
-        Flow: check cache → try lock → if locked: fetch+cache+release; else wait+retry cache.
-        """
+        """Cache-through with a distributed lock so only one pod fetches on miss while
+        peers wait, preventing cache-stampede on multi-pod deploys."""
         cached = await self.get(key)
         if cached is not None:
             return cached
@@ -444,12 +425,14 @@ class CacheService:
                 return None
 
         lock_key = f"lock:{key}"
+        # Unique per-acquisition token so we only release a lock we still own.
+        lock_token = uuid.uuid4().hex
         try:
             client = await self.get_client()
 
             lock_acquired = await client.set(
                 self._make_key(lock_key),
-                "1",
+                lock_token,
                 nx=True,
                 ex=lock_ttl_seconds,  # Auto-expire to prevent deadlock on pod crash.
             )
@@ -464,7 +447,7 @@ class CacheService:
                         await self.set(key, {}, CacheTTL.NEGATIVE_RESULT)
                     return data
                 finally:
-                    await client.delete(self._make_key(lock_key))
+                    await self._release_lock(client, self._make_key(lock_key), lock_token)
             else:
                 wait_interval = 0.1
                 waited = 0.0
@@ -506,6 +489,13 @@ class CacheService:
             except Exception:
                 return None
 
+    async def _release_lock(self, client: "redis.Redis", full_lock_key: str, token: str) -> None:
+        """Release the stampede lock only if we still hold it (value == token)."""
+        try:
+            await client.eval(_UNLOCK_LUA, 1, full_lock_key, token)
+        except Exception as e:
+            logger.warning(f"Failed to release cache lock {full_lock_key}: {e}")
+
     async def health_check(self) -> Dict[str, Any]:
         try:
             client = await self.get_client()
@@ -543,32 +533,6 @@ class CacheService:
         if total == 0:
             return 0.0
         return round((hits / total) * 100, 2)
-
-    async def invalidate_pattern(self, pattern: str) -> int:
-        """Delete all keys matching `pattern` (e.g. "epss:*"). Returns count deleted."""
-        if not self._available:
-            return 0
-
-        try:
-            client = await self.get_client()
-            full_pattern = self._make_key(pattern)
-
-            # SCAN avoids blocking on large keyspaces.
-            deleted = 0
-            cursor = 0
-            while True:
-                cursor, keys = await client.scan(cursor, match=full_pattern, count=100)
-                if keys:
-                    await client.delete(*keys)
-                    deleted += len(keys)
-                if cursor == 0:
-                    break
-
-            logger.info(f"Invalidated {deleted} keys matching pattern: {pattern}")
-            return deleted
-        except Exception as e:
-            logger.warning(f"Pattern invalidation error for {pattern}: {e}")
-            return 0
 
 
 cache_service = CacheService()

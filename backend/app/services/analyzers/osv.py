@@ -52,6 +52,10 @@ class OSVAnalyzer(Analyzer):
     name = "osv"
     api_url = OSV_BATCH_API_URL
 
+    # Bounded retry on HTTP 429 so a throttled chunk isn't silently dropped.
+    max_retries: int = 3
+    retry_base_delay: float = 5.0  # seconds, doubles each attempt
+
     async def analyze(
         self,
         sbom: Dict[str, Any],
@@ -86,7 +90,22 @@ class OSVAnalyzer(Analyzer):
                 payload, valid_components = _build_batch_payload(chunk)
                 if not payload["queries"]:
                     continue
-                await self._post_and_handle(client, payload, valid_components, results, chunk_start)
+                for attempt in range(1 + self.max_retries):
+                    rate_limited = await self._post_and_handle(client, payload, valid_components, results, chunk_start)
+                    if not rate_limited:
+                        break
+                    if attempt < self.max_retries:
+                        delay = self.retry_base_delay * (2**attempt)
+                        logger.warning(
+                            f"OSV API rate limit hit for batch starting at {chunk_start} "
+                            f"(attempt {attempt + 1}/{1 + self.max_retries}), retrying in {delay:.1f}s"
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.error(
+                            f"OSV API rate limit persisted after {1 + self.max_retries} attempts; "
+                            f"dropping batch starting at {chunk_start} ({len(valid_components)} components)"
+                        )
                 if chunk_start + batch_size < len(uncached_components):
                     await asyncio.sleep(0.2)
 
@@ -97,28 +116,32 @@ class OSVAnalyzer(Analyzer):
         valid_components: List[Dict[str, Any]],
         results: List[Dict[str, Any]],
         chunk_start: int,
-    ) -> None:
-        """POST one batch and dispatch on response status."""
+    ) -> bool:
+        """POST one batch and dispatch on response status.
+
+        Returns ``True`` if the request was rate-limited (HTTP 429) and the
+        caller should retry the same chunk; ``False`` otherwise.
+        """
         try:
             response = await client.post(self.api_url, json=payload)
         except httpx.TimeoutException:
             logger.warning(f"OSV API timeout for batch starting at {chunk_start}")
-            return
+            return False
         except httpx.ConnectError:
             logger.warning("OSV API connection error")
-            return
+            return False
         except Exception as e:
             logger.warning(f"OSV Analysis Exception: {type(e).__name__}: {e}")
-            return
+            return False
 
         if response.status_code == 200:
             await self._handle_success(response, valid_components, results)
         elif response.status_code == 429:
             external_api_rate_limit_hits_total.labels(service="OSV API").inc()
-            logger.warning("OSV API rate limit hit, waiting...")
-            await asyncio.sleep(5)
+            return True
         else:
             logger.warning(f"OSV Batch API error: {response.status_code}")
+        return False
 
     async def _handle_success(
         self,
@@ -272,37 +295,30 @@ class OSVAnalyzer(Analyzer):
 
     def _extract_severity(self, vuln: Dict[str, Any]) -> str:
         """Extract severity from OSV vulnerability data."""
-        # Check database_specific first (e.g., GitHub advisories)
         db_sev = self._severity_from_map(vuln.get("database_specific", {}).get("severity"))
         if db_sev:
             return db_sev
 
-        # Check severity array (CVSS scores)
         cvss_sev = self._severity_from_cvss_array(vuln.get("severity", []))
         if cvss_sev:
             return cvss_sev
 
-        # Check affected entries for severity
         for affected in vuln.get("affected", []):
             eco_sev = self._severity_from_map(affected.get("ecosystem_specific", {}).get("severity"))
             if eco_sev:
                 return eco_sev
 
-        # Default to MEDIUM if no severity found
         return Severity.MEDIUM.value
 
     def _parse_cvss_score(self, score: str) -> Optional[float]:
         """Parse CVSS score from numeric value or vector string."""
         try:
-            # Try direct numeric conversion first
             return float(score)
         except ValueError:
             pass
 
-        # Try to extract base score from CVSS vector
         if "/" in score:
             parts = score.split("/")
-            # Check last part for numeric score
             try:
                 return float(parts[-1])
             except ValueError:

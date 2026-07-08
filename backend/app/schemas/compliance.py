@@ -33,8 +33,7 @@ class ReportFramework(str, Enum):
     CNSA_2_0 = "cnsa-2.0"
     FIPS_140_3 = "fips-140-3"
     ISO_19790 = "iso-19790"
-    PQC_MIGRATION_PLAN = "pqc-migration-plan"  # meta-framework, used in PR E
-    # SBOM-side meta-frameworks (Phase 4 extension)
+    PQC_MIGRATION_PLAN = "pqc-migration-plan"
     LICENSE_AUDIT = "license-audit"
     CVE_REMEDIATION_SLA = "cve-remediation-sla"
 
@@ -55,8 +54,7 @@ class ControlDefinition:
     remediation: str
     maps_to_rule_ids: List[str] = field(default_factory=list)
     maps_to_finding_types: List[FindingType] = field(default_factory=list)
-    # Optional override of the default evaluator. If set, this callable is
-    # responsible for producing a ControlResult given the evaluation input.
+    # If set, produces a ControlResult in place of the default evaluator.
     custom_evaluator: Optional[Callable[..., "ControlResult"]] = None
 
 

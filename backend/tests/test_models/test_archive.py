@@ -1,7 +1,4 @@
-"""Tests for ArchiveMetadata model.
-
-Tests validation, defaults, and serialization.
-"""
+"""Tests for ArchiveMetadata model."""
 
 from datetime import datetime, timezone
 

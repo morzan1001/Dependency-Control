@@ -81,7 +81,8 @@ class FindingRepository(BaseRepository[FindingRecord]):
         """Raw docs for location-based findings of a scan (waiver-matchable)."""
         cursor = self.collection.find(
             {"scan_id": scan_id, "type": {"$in": list(self._LOCATION_TYPES)}},
-            {"_id": 1, "finding_id": 1, "type": 1, "component": 1, "match": 1, "details": 1},  # "details" is required by _apply_waivers_signature to recompute a missing match signature (self-heal); do not remove
+            # "details" is needed to recompute a missing match signature.
+            {"_id": 1, "finding_id": 1, "type": 1, "component": 1, "match": 1, "details": 1},
         )
         return await cursor.to_list(None)
 
@@ -96,8 +97,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
 
     async def set_lapsed(self, scan_id: str, mapping: Dict[str, str]) -> int:
         ops = [
-            UpdateOne({"scan_id": scan_id, "_id": fid},
-                      {"$set": {"waiver_lapsed": True, "lapsed_waiver_id": wid}})
+            UpdateOne({"scan_id": scan_id, "_id": fid}, {"$set": {"waiver_lapsed": True, "lapsed_waiver_id": wid}})
             for fid, wid in mapping.items()
         ]
         if not ops:
@@ -130,13 +130,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         project_ids: List[str],
         component_names: List[str],
     ) -> Dict[str, int]:
-        """Returns {component_name: non_waived_vulnerability_count} scoped to `scan_ids`.
-
-        Both ``scan_ids`` (active scan restriction) and ``project_ids`` are
-        applied so the result is limited to findings that belong to the
-        currently-active scans — historical findings from prior scans of the
-        same projects are excluded.
-        """
+        """{component_name: non_waived_vulnerability_count}; scan_ids+project_ids exclude prior-scan findings."""
         pipeline: List[Dict[str, Any]] = [
             {
                 "$match": {

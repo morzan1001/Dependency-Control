@@ -1,8 +1,3 @@
-/**
- * Copyable code/text components
- * Reusable component for displaying copyable code blocks
- */
-
 import { Button } from '@/components/ui/button'
 import { Copy, Check } from 'lucide-react'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
@@ -33,32 +28,5 @@ export function CopyableCode({ value, className = '' }: CopyableCodeProps) {
         {copied ? <Check className="h-3 w-3 text-green-500" /> : <Copy className="h-3 w-3" />}
       </Button>
     </div>
-  )
-}
-
-/**
- * Inline copyable text (smaller, inline usage)
- */
-export function CopyableText({ value, className = '' }: CopyableCodeProps) {
-  const { copied, copy } = useCopyToClipboard()
-
-  const handleCopy = (e: React.MouseEvent<HTMLButtonElement>) => {
-    copy(value, e)
-  }
-
-  return (
-    <button
-      type="button"
-      className={`inline-flex items-center gap-1 cursor-pointer hover:bg-muted/50 rounded px-1 ${className}`}
-      aria-label="Copy to clipboard"
-      onClick={handleCopy}
-    >
-      <code className="text-xs font-mono">{value}</code>
-      {copied ? (
-        <Check className="h-3 w-3 text-green-500" />
-      ) : (
-        <Copy className="h-3 w-3 opacity-50 hover:opacity-100" />
-      )}
-    </button>
   )
 }

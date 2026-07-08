@@ -8,15 +8,15 @@ from app.models.finding import FindingType, Severity
 from app.schemas.compliance import (
     ControlDefinition,
     ControlResult,
-    ControlStatus,
     FrameworkEvaluation,
     ReportFramework,
 )
 from app.services.compliance.frameworks.base import (
     EvaluationInput,
+    _classify,
+    _waiver_reason,
     build_residual_risks,
     build_summary,
-    extract_finding_id,
 )
 
 
@@ -48,11 +48,7 @@ class CveRemediationSlaFramework:
         self,
         sla_days_by_severity: Optional[Dict[Severity, int]] = None,
     ) -> None:
-        """``sla_days_by_severity`` overrides any subset of ``DEFAULT_SLA_DAYS``.
-
-        Values must be strictly positive; a zero/negative window would
-        instantly mark every finding as overdue.
-        """
+        """sla_days_by_severity overrides a subset of DEFAULT_SLA_DAYS; values must be > 0."""
         merged: Dict[Severity, int] = dict(DEFAULT_SLA_DAYS)
         if sla_days_by_severity:
             for sev, days in sla_days_by_severity.items():
@@ -65,10 +61,7 @@ class CveRemediationSlaFramework:
         raise RuntimeError("CveRemediationSlaFramework is async-only; callers must dispatch via evaluate_async()")
 
     async def evaluate_async(self, data: EvaluationInput) -> FrameworkEvaluation:
-        # The framework is purely computational, but the engine's dispatcher
-        # always awaits this call — yielding once keeps the coroutine signature
-        # honest and lets other tasks make progress when many frameworks run in
-        # the same scope.
+        # yield once so sibling framework tasks can progress
         await asyncio.sleep(0)
         findings = data.findings or []
         now = datetime.now(timezone.utc)
@@ -138,21 +131,6 @@ def _is_overdue(
     age = now - first_seen
     if age < timedelta(days=sla_days):
         return False
-    # Not yet fixed — finding still open
     if finding.get("status") == "fixed":
         return False
     return True
-
-
-def _classify(overdue: List[Dict[str, Any]]) -> tuple[ControlStatus, List[str]]:
-    if not overdue:
-        return ControlStatus.PASSED, []
-    active = [f for f in overdue if not f.get("waived")]
-    evidence_ids = [extract_finding_id(f) for f in overdue if f.get("_id") or f.get("id")]
-    if active:
-        return ControlStatus.FAILED, evidence_ids
-    return ControlStatus.WAIVED, evidence_ids
-
-
-def _waiver_reason(f: Dict[str, Any]) -> str:
-    return str(f.get("waiver_reason") or "")

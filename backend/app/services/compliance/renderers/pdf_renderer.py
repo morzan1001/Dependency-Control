@@ -1,10 +1,4 @@
-"""
-PDF renderer using WeasyPrint.
-
-Loads a Jinja2 template + CSS, substitutes evaluation data, calls WeasyPrint
-to produce A4 PDF bytes. Template path is relative to the file so it works
-the same way inside Docker and locally.
-"""
+"""PDF renderer: renders a Jinja2 template with evaluation data to PDF bytes via WeasyPrint."""
 
 from pathlib import Path
 from typing import Optional, Tuple

@@ -1,8 +1,3 @@
-/**
- * FindingTypeBadge component
- * Displays finding type with consistent color coding
- */
-
 import { Badge } from '@/components/ui/badge'
 import { 
   ShieldAlert, 
@@ -106,25 +101,5 @@ export function FindingTypeBadge({ type, className = '' }: FindingTypeBadgeProps
       {Icon && <Icon className="h-3 w-3" />}
       <span className="capitalize">{style.label}</span>
     </Badge>
-  )
-}
-
-/**
- * Displays multiple finding types as a row of badges
- */
-interface FindingTypeBadgesProps {
-  primaryType: string
-  additionalTypes?: Array<{ type: string; severity?: string }>
-  className?: string
-}
-
-export function FindingTypeBadges({ primaryType, additionalTypes, className = '' }: FindingTypeBadgesProps) {
-  return (
-    <div className={`flex flex-wrap gap-1 ${className}`}>
-      <FindingTypeBadge type={primaryType} />
-      {additionalTypes?.map((addType) => (
-        <FindingTypeBadge key={addType.type} type={addType.type} />
-      ))}
-    </div>
   )
 }

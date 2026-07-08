@@ -20,8 +20,8 @@ import type { ArchiveFilters } from '@/types/archive'
 function formatBytes(bytes: number): string {
   if (bytes === 0) return '0 B'
   const k = 1024
-  const sizes = ['B', 'KB', 'MB', 'GB']
-  const i = Math.floor(Math.log(bytes) / Math.log(k))
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(k)), sizes.length - 1)
   return `${(bytes / Math.pow(k, i)).toFixed(1)} ${sizes[i]}`
 }
 
@@ -37,7 +37,7 @@ export default function ArchivesPage() {
   const filters: (ArchiveFilters & { project_id?: string }) | undefined = useMemo(() => {
     const f: ArchiveFilters & { project_id?: string } = {}
     if (branchFilter) f.branch = branchFilter
-    if (dateFrom) f.date_from = new Date(dateFrom).toISOString()
+    if (dateFrom) f.date_from = new Date(dateFrom + 'T00:00:00').toISOString()
     if (dateTo) f.date_to = new Date(dateTo + 'T23:59:59').toISOString()
     return Object.keys(f).length > 0 ? f : undefined
   }, [branchFilter, dateFrom, dateTo])
@@ -231,7 +231,6 @@ export default function ArchivesPage() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          {/* Filters */}
           <div className="flex flex-wrap items-end gap-3 mb-4">
             <div>
               <label htmlFor="admin-branch-filter" className="text-xs font-medium text-muted-foreground mb-1 block">Branch</label>

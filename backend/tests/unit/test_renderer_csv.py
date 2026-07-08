@@ -19,10 +19,7 @@ def test_csv_renderer_outputs_rows_per_control():
     assert rows[0]["control_id"] == "NIST-131A-01"
     assert rows[0]["status"] == "failed"
     assert rows[0]["severity"] == "HIGH"
-    # Fixture has evidence_finding_ids=["f1"] + evidence_asset_bom_refs=["a1"].
-    # Custom evaluators (e.g. FIPS disallowed categories) emit evidence only
-    # in evidence_asset_bom_refs — the CSV renderer must sum both lists so
-    # FAILED controls with real evidence don't show as "0".
+    # evidence_count must sum finding_ids and asset_bom_refs, since some evaluators emit only the latter.
     assert rows[0]["evidence_count"] == "2"
 
 
@@ -38,11 +35,7 @@ def test_csv_header_present():
 
 
 def test_csv_renderer_includes_disclaimer_comment():
-    """FIPS/ISO frameworks carry a disclaimer (e.g. "algorithm-level
-    conformance only; module-level CMVP out of scope"). The PDF/JSON/SARIF
-    renderers embed it; CSV used to silently drop it, so a bare CSV export
-    read like a full certification pass. Now we prepend it as a CSV comment
-    line so humans see it at a glance and pandas/Excel skip it by default."""
+    """A framework disclaimer must be prepended as a CSV comment block so the export isn't read as a full certification pass."""
     r = CsvRenderer()
     rep = _report()
     rep.format = ReportFormat.CSV
@@ -52,14 +45,11 @@ def test_csv_renderer_includes_disclaimer_comment():
     out, _, _ = r.render(_evaluation(), rep, disclaimer=disclaimer)
     text = out.decode("utf-8")
     lines = text.splitlines()
-    # Disclaimer must come BEFORE the header row.
     assert lines[0].startswith("# Disclaimer:")
     assert "Algorithm-level conformance only" in lines[0]
-    # Framework + generation metadata should also land in the comment block.
     comment_block = [ln for ln in lines if ln.startswith("#")]
     assert any("# Framework:" in ln for ln in comment_block)
     assert any("# Generated:" in ln for ln in comment_block)
-    # Header and rows must still be present and parseable after the comments.
     header_idx = next(i for i, ln in enumerate(lines) if ln.startswith("control_id"))
     body = "\n".join(lines[header_idx:])
     reader = csv.DictReader(io.StringIO(body))
@@ -69,8 +59,6 @@ def test_csv_renderer_includes_disclaimer_comment():
 
 
 def test_csv_renderer_omits_disclaimer_when_none():
-    """When no framework disclaimer is supplied the output must remain a
-    plain CSV — header on line 1, no leading comment."""
     r = CsvRenderer()
     rep = _report()
     rep.format = ReportFormat.CSV

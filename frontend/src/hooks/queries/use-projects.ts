@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { projectApi } from '@/api/projects';
-import { ProjectCreate, ProjectUpdate, ProjectNotificationSettings } from '@/types/project';
+import { ProjectCreate, ProjectNotificationSettings } from '@/types/project';
 import type { ArchiveFilters } from '@/types/archive';
 import type { ApiError } from '@/api/client';
 import { DROPDOWN_PAGE_SIZE } from '@/lib/constants';
@@ -61,29 +61,6 @@ export const useCreateProject = () => {
   });
 };
 
-export const useUpdateProject = () => {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: ({ id, data }: { id: string; data: ProjectUpdate }) => projectApi.update(id, data),
-    onSuccess: (_, variables) => {
-      queryClient.invalidateQueries({ queryKey: projectKeys.detail(variables.id) });
-      queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
-    },
-  });
-};
-
-export const useDeleteProject = () => {
-  const queryClient = useQueryClient();
-
-  return useMutation({
-    mutationFn: (id: string) => projectApi.delete(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
-    },
-  });
-};
-
 export const useProjectBranches = (id: string) => {
   return useQuery({
     queryKey: projectKeys.branches(id),
@@ -95,16 +72,20 @@ export const useProjectBranches = (id: string) => {
 export const useProjectsDropdown = () => {
   return useQuery({
     queryKey: projectKeys.dropdown(),
-    queryFn: () => projectApi.getAll(undefined, 0, DROPDOWN_PAGE_SIZE),
+    // Page through all projects so dropdowns are not truncated to the first page.
+    queryFn: async () => {
+      const first = await projectApi.getAll(undefined, 0, DROPDOWN_PAGE_SIZE, 'name', 'asc');
+      const items = [...first.items];
+      while (items.length < first.total) {
+        const next = await projectApi.getAll(undefined, items.length, DROPDOWN_PAGE_SIZE, 'name', 'asc');
+        if (next.items.length === 0) break;
+        items.push(...next.items);
+      }
+      return { ...first, items, total: first.total };
+    },
     staleTime: 5 * 60 * 1000,
   });
 };
-
-export const useRotateProjectApiKey = () => {
-    return useMutation({
-        mutationFn: (id: string) => projectApi.rotateApiKey(id),
-    })
-}
 
 export const useUpdateProjectNotifications = () => {
     const queryClient = useQueryClient();
@@ -112,47 +93,6 @@ export const useUpdateProjectNotifications = () => {
         mutationFn: ({ id, settings }: { id: string, settings: ProjectNotificationSettings }) => projectApi.updateNotificationSettings(id, settings),
         onSuccess: (_, { id }) => {
             queryClient.invalidateQueries({ queryKey: projectKeys.detail(id) });
-        }
-    })
-}
-
-export const useInviteProjectMember = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: ({ id, email, role }: { id: string, email: string, role: string }) => projectApi.inviteMember(id, email, role),
-        onSuccess: (_, { id }) => {
-            queryClient.invalidateQueries({ queryKey: projectKeys.detail(id) });
-        }
-    })
-}
-
-export const useUpdateProjectMember = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: ({ id, userId, role }: { id: string, userId: string, role: string }) => projectApi.updateMember(id, userId, role),
-        onSuccess: (_, { id }) => {
-            queryClient.invalidateQueries({ queryKey: projectKeys.detail(id) });
-        }
-    })
-}
-
-export const useRemoveProjectMember = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: ({ id, userId }: { id: string, userId: string }) => projectApi.removeMember(id, userId),
-        onSuccess: (_, { id }) => {
-            queryClient.invalidateQueries({ queryKey: projectKeys.detail(id) });
-        }
-    })
-}
-
-export const useTransferOwnership = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: ({ id, newOwnerId }: { id: string, newOwnerId: string }) => projectApi.transferOwnership(id, newOwnerId),
-        onSuccess: (_, { id }) => {
-            queryClient.invalidateQueries({ queryKey: projectKeys.detail(id) });
-            queryClient.invalidateQueries({ queryKey: projectKeys.lists() });
         }
     })
 }
@@ -183,28 +123,6 @@ export const useRestoreArchive = () => {
         onSuccess: (_, { projectId }) => {
             queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) });
             queryClient.invalidateQueries({ queryKey: [...projectKeys.detail(projectId), 'archives'] });
-        },
-    });
-};
-
-export const usePinScan = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: ({ projectId, scanId }: { projectId: string; scanId: string }) =>
-            projectApi.pinScan(projectId, scanId),
-        onSuccess: (_, { projectId }) => {
-            queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) });
-        },
-    });
-};
-
-export const useUnpinScan = () => {
-    const queryClient = useQueryClient();
-    return useMutation({
-        mutationFn: ({ projectId, scanId }: { projectId: string; scanId: string }) =>
-            projectApi.unpinScan(projectId, scanId),
-        onSuccess: (_, { projectId }) => {
-            queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) });
         },
     });
 };

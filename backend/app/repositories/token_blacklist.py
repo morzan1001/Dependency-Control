@@ -12,21 +12,11 @@ class TokenBlacklistRepository:
         self.collection = db.token_blacklist
 
     async def blacklist_token(self, jti: str, expires_at: datetime, reason: str = "logout") -> bool:
-        """
-        Add a token to the blacklist.
-
-        Args:
-            jti: JWT ID (jti claim from token)
-            expires_at: Token expiration datetime
-            reason: Reason for blacklisting (logout, password_change, etc.)
-
-        Returns:
-            True if token was blacklisted, False if already blacklisted
-        """
+        """Returns False if the token is already blacklisted."""
         try:
             await self.collection.insert_one(
                 {
-                    "_id": jti,  # Use jti as primary key for uniqueness
+                    "_id": jti,  # jti as _id enforces dedup
                     "jti": jti,
                     "blacklisted_at": datetime.now(),
                     "expires_at": expires_at,
@@ -39,40 +29,7 @@ class TokenBlacklistRepository:
             return False
 
     async def is_blacklisted(self, jti: str) -> bool:
-        """
-        Check if a token is blacklisted.
-
-        Args:
-            jti: JWT ID to check
-
-        Returns:
-            True if token is blacklisted, False otherwise
-        """
-        # Security: a just-revoked token must not slip through on a stale Secondary.
+        # A just-revoked token must not slip through on a stale Secondary.
         primary = self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
         result = await primary.find_one({"_id": jti})
         return result is not None
-
-    async def remove_from_blacklist(self, jti: str) -> bool:
-        """
-        Remove a token from blacklist (rarely needed).
-
-        Args:
-            jti: JWT ID to remove
-
-        Returns:
-            True if token was removed, False if wasn't blacklisted
-        """
-        result = await self.collection.delete_one({"_id": jti})
-        return result.deleted_count > 0
-
-    async def cleanup_expired(self) -> int:
-        """
-        Manually cleanup expired tokens (TTL index does this automatically).
-
-        Returns:
-            Number of tokens removed
-        """
-        now = datetime.now()
-        result = await self.collection.delete_many({"expires_at": {"$lt": now}})
-        return result.deleted_count

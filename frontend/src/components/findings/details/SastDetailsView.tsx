@@ -13,7 +13,7 @@ import {
 } from "./shared"
 import { getSeverityBadgeVariant } from '@/lib/finding-utils'
 
-// Markdown component overrides - defined outside component to avoid re-creation
+// Defined outside the component to avoid re-creation on each render.
 const markdownComponents: Partial<Components> = {
     code: ({ className, children, ...props }) => {
         const isInline = !className
@@ -83,12 +83,9 @@ interface SastDetailsViewProps {
 export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) {
     const details = (finding.details || {}) as SastDetails
     const [expandedIssues, setExpandedIssues] = useState<Set<string>>(new Set())
-    
-    // Check for aggregated SAST findings
+
     const sastFindings = details.sast_findings || []
-    
-    // Only show aggregated view if there are actually multiple scanner results
-    // If only one scanner found the issue, show the detailed single view instead
+
     const hasMultipleScanners = sastFindings.length > 1 || (finding.scanners?.length ?? 0) > 1
     const showAggregatedView = sastFindings.length > 0 && hasMultipleScanners
     
@@ -105,7 +102,6 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
         setExpandedIssues(newExpanded)
     }
 
-    // Single Finding View
     const renderSingleFindingDetails = (details: SastDetails, findingDesc: string | undefined, scannerList: string[]) => {
        const localIsBearer = scannerList.includes('bearer')
        const localIsOpenGrep = scannerList.includes('opengrep')
@@ -115,7 +111,6 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
        
        return (
          <div className="space-y-4">
-            {/* Rule Info */}
             <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
                 <DetailSection label="Rule ID" compact>
                     <code className="font-mono text-sm bg-background px-2 py-0.5 rounded">{localRuleId}</code>
@@ -131,14 +126,12 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 </DetailSection>
             </div>
 
-            {/* Bearer/OpenGrep: Title */}
             {(localIsBearer || localIsOpenGrep) && details.title && details.title !== findingDesc && (
                 <DetailSection label="Issue" compact>
                     <p className="text-sm font-medium">{details.title}</p>
                 </DetailSection>
             )}
 
-            {/* CWE IDs */}
             {details.cwe_ids && details.cwe_ids.length > 0 && (
                 <DetailSection label="CWE References">
                     <BadgeList
@@ -151,7 +144,6 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 </DetailSection>
             )}
 
-            {/* OWASP References (OpenGrep) */}
             {details.owasp && details.owasp.length > 0 && (
                 <DetailSection label="OWASP References">
                     <BadgeList
@@ -163,14 +155,12 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 </DetailSection>
             )}
 
-            {/* Category Groups */}
             {details.category_groups && details.category_groups.length > 0 && (
                 <DetailSection label="Categories">
                     <BadgeList items={details.category_groups} variant="secondary" />
                 </DetailSection>
             )}
 
-            {/* Risk Assessment (OpenGrep) */}
             {localIsOpenGrep && (details.confidence || details.likelihood || details.impact) && (
                 <div className="grid grid-cols-3 gap-4 p-4 bg-muted/50 rounded-lg border">
                     {details.confidence && (
@@ -191,7 +181,6 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 </div>
             )}
 
-            {/* Vulnerability Class, Technology, Subcategory (OpenGrep) */}
             {localIsOpenGrep && (
                 ((details.vulnerability_class?.length ?? 0) > 0) ||
                 ((details.technology?.length ?? 0) > 0) ||
@@ -220,7 +209,6 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 </div>
             )}
 
-            {/* Code Extract */}
             {details.code_extract && (
                 <DetailSection label="Code">
                     <pre className="bg-muted p-4 rounded-lg overflow-auto text-xs font-mono border">
@@ -229,7 +217,6 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 </DetailSection>
             )}
 
-            {/* Description - use findingDesc or full_description from details */}
             {(findingDesc || details.full_description) && (
                 <DetailSection label="Description & Remediation">
                     <div className="prose prose-sm dark:prose-invert max-w-none bg-muted/30 p-4 rounded-lg border">
@@ -240,14 +227,12 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 </DetailSection>
             )}
 
-            {/* References */}
             {details.references && details.references.length > 0 && (
                 <DetailSection label="References">
                     <ReferencesList urls={details.references} />
                 </DetailSection>
             )}
 
-            {/* Source Rule URL */}
             {localIsOpenGrep && details.source_rule_url && (
                 <DetailSection label="Rule Source">
                     <a
@@ -262,14 +247,12 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 </DetailSection>
             )}
              
-            {/* License (OpenGrep) */}
             {localIsOpenGrep && details.license && (
                 <DetailSection label="Rule License" compact>
                     <p className="text-xs text-muted-foreground">{details.license}</p>
                 </DetailSection>
             )}
 
-            {/* Documentation Link */}
             {details.documentation_url && (
                 <div className="pt-2">
                     <Button variant="outline" size="sm" asChild>
@@ -287,7 +270,6 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                 </div>
             )}
 
-            {/* KICS-specific fields */}
             {localIsKics && (
                 <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
                     {details.category && (
@@ -317,10 +299,8 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
     }
 
     if (showAggregatedView) {
-        // Aggregated view - only when multiple scanners found issues at this location
         return (
              <div className="space-y-6">
-                 {/* File and Location with Source Link (Common) */}
                 <FileLocation
                     filePath={finding.component || "Unknown"}
                     startLine={startLine}
@@ -334,7 +314,6 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
                     Aggregated findings from <strong>{finding.scanners?.length || sastFindings.length}</strong> scanners at this location.
                 </p>
 
-                {/* List of individual findings */}
                 <div className="space-y-3">
                     {sastFindings.map((issue) => {
                         const isExpanded = expandedIssues.has(issue.id)
@@ -381,15 +360,12 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
         )
     }
 
-    // Default: Single finding view
-    // If there's exactly one sast_finding entry, use its details instead of the parent details
     const singleFindingDetails = sastFindings.length === 1 ? sastFindings[0].details : details
     const singleFindingDescription = sastFindings.length === 1 ? sastFindings[0].description : finding.description
     const singleFindingScanners = sastFindings.length === 1 ? [sastFindings[0].scanner] : (finding.scanners || [])
     
     return (
         <div className="space-y-4">
-            {/* File and Location with Source Link */}
             <FileLocation
                 filePath={finding.component || "Unknown"}
                 startLine={startLine}
@@ -401,7 +377,6 @@ export function SastDetailsView({ finding, scanContext }: SastDetailsViewProps) 
             
             {renderSingleFindingDetails(singleFindingDetails, singleFindingDescription, singleFindingScanners)}
 
-            {/* Fingerprint for debugging/reference (Classic view only) */}
             {(details.fingerprint || singleFindingDetails.fingerprint) && (
                 <div className="pt-2 border-t">
                     <p className="text-xs text-muted-foreground">

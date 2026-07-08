@@ -81,21 +81,19 @@ class TestCalculateRiskScore:
         assert score <= 45.0  # 20 (default CVSS) + max 25 (EPSS)
 
     def test_epss_contribution_continuous_at_medium_boundary(self):
-        # B1: no jump at the 0.01 boundary. Difference between just-below and
-        # just-above must be tiny (no >1-point cliff).
+        # EPSS contribution must be continuous at the 0.01 boundary (no cliff).
         below = calculate_risk_score(None, 0.0099, False, False)
         above = calculate_risk_score(None, 0.0101, False, False)
         assert abs(above - below) < 0.5
 
     def test_epss_contribution_continuous_at_high_boundary(self):
-        # B1: no jump at the 0.1 boundary either.
+        # Continuous at the 0.1 boundary too.
         below = calculate_risk_score(None, 0.099, False, False)
         above = calculate_risk_score(None, 0.101, False, False)
         assert abs(above - below) < 0.5
 
     def test_epss_contribution_monotonic(self):
-        # Higher EPSS must always yield >= contribution. Spot-check across
-        # the full range, including both former cliffs.
+        # Higher EPSS must always yield a >= contribution across the full range.
         epss_grid = [0.0, 0.005, 0.0099, 0.01, 0.05, 0.099, 0.1, 0.3, 0.7, 1.0]
         scores = [calculate_risk_score(None, e, False, False) for e in epss_grid]
         for i in range(1, len(scores)):
@@ -125,19 +123,11 @@ class TestCalculateRiskScore:
 
     def test_score_capped_at_100(self):
         score = calculate_risk_score(10.0, 0.95, True, True, reachability_level="confirmed")
-        assert score <= 100.0
-
-    def test_full_score_worst_case(self):
-        score = calculate_risk_score(10.0, 0.95, True, True, reachability_level="confirmed")
-        assert score >= 80.0  # Should be very high
+        assert 80.0 <= score <= 100.0
 
 
 class TestMapReachabilityLevelToModifier:
-    """The reachability enrichment vocabulary (none/import/symbol + is_reachable)
-    must map onto the modifier vocabulary (unreachable/confirmed/None) that the
-    scoring functions expect. Only an unambiguous high-confidence reachable hit
-    becomes 'confirmed'; a definitively-not-reachable verdict becomes
-    'unreachable'; everything else stays identity (None)."""
+    """Maps the reachability enrichment vocabulary onto the scoring modifier vocabulary."""
 
     def test_not_reachable_maps_to_unreachable(self):
         assert map_reachability_level_to_modifier("import", is_reachable=False) == "unreachable"

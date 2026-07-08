@@ -1,7 +1,9 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from 'react'
+import { useState, useMemo } from 'react'
 import { useDependencyMetadata, useComponentFindings } from '@/hooks/queries/use-analytics'
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { DependencyMetadata, ComponentFinding } from '@/types/analytics'
 import { FindingDetailsModal } from '@/components/findings/FindingDetailsModal'
+import { resolveRelatedFinding } from './related-finding'
 import {
   Dialog,
   DialogContent,
@@ -53,15 +55,12 @@ import {
   Copy,
   Check,
 } from "lucide-react"
-import { getSeverityBgColor } from '@/lib/finding-utils'
+import { getSeverityBgColor, advisoryUrl, SEVERITY_ORDER, type Severity } from '@/lib/finding-utils'
 
-// Severity order for sorting
-const severityOrder: Record<string, number> = {
-  'CRITICAL': 4,
-  'HIGH': 3,
-  'MEDIUM': 2,
-  'LOW': 1,
-  'UNKNOWN': 0,
+// Higher = more severe; derived from SEVERITY_ORDER to stay in sync with the shared palette.
+function severityRank(severity?: string): number {
+  const idx = SEVERITY_ORDER.indexOf((severity?.toUpperCase() ?? 'UNKNOWN') as Severity)
+  return idx === -1 ? 0 : SEVERITY_ORDER.length - idx
 }
 
 type SortField = 'id' | 'type' | 'severity' | 'project_name'
@@ -89,30 +88,10 @@ interface AnalyticsDependencyModalProps {
 }
 
 function CopyButton({ text }: { text: string }) {
-  const [copied, setCopied] = useState(false)
-  const timeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // Cleanup timeout on unmount
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) {
-        clearTimeout(timeoutRef.current)
-      }
-    }
-  }, [])
-
-  const handleCopy = useCallback(async () => {
-    await navigator.clipboard.writeText(text)
-    setCopied(true)
-    // Clear any existing timeout before setting a new one
-    if (timeoutRef.current) {
-      clearTimeout(timeoutRef.current)
-    }
-    timeoutRef.current = setTimeout(() => setCopied(false), 2000)
-  }, [text])
+  const { copied, copy } = useCopyToClipboard()
 
   return (
-    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={handleCopy}>
+    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={(e) => copy(text, e)}>
       {copied ? (
         <Check className="h-3 w-3 text-green-500" />
       ) : (
@@ -120,6 +99,11 @@ function CopyButton({ text }: { text: string }) {
       )}
     </Button>
   )
+}
+
+// Only allow http(s) hrefs; metadata URLs come from untrusted registries (block javascript:/data:).
+function safeHref(url?: string | null): string | undefined {
+  return url && (url.startsWith('http://') || url.startsWith('https://')) ? url : undefined
 }
 
 function InfoRow({
@@ -137,8 +121,7 @@ function InfoRow({
 }) {
   if (!value) return null
 
-  // Only use href if it's a valid absolute URL
-  const validHref = href && (href.startsWith('http://') || href.startsWith('https://')) ? href : undefined
+  const validHref = safeHref(href)
 
   return (
     <div className="flex items-start gap-3 py-1.5">
@@ -165,7 +148,6 @@ function InfoRow({
   )
 }
 
-/** Resolve the badge variant for a license category */
 function getLicenseBadgeVariant(category?: string): 'default' | 'secondary' | 'destructive' | 'outline' {
   if (category === 'permissive' || category === 'public_domain') return 'default'
   if (category === 'weak_copyleft') return 'secondary'
@@ -173,19 +155,6 @@ function getLicenseBadgeVariant(category?: string): 'default' | 'secondary' | 'd
   return 'outline'
 }
 
-/** Build the URL for a security advisory identifier */
-function getAdvisoryUrl(advisory: string): string | undefined {
-  if (advisory.startsWith('GHSA-')) return `https://github.com/advisories/${advisory}`
-  if (advisory.startsWith('CVE-')) return `https://nvd.nist.gov/vuln/detail/${advisory}`
-  return undefined
-}
-
-/** Determine whether an advisory identifier is linkable */
-function isLinkableAdvisory(advisory: string): boolean {
-  return advisory.startsWith('GHSA-') || advisory.startsWith('CVE-')
-}
-
-/** Scorecard display sub-component */
 function ScorecardDisplay({ metadata }: { metadata: DependencyMetadata }) {
   const scorecard = metadata.deps_dev?.scorecard
   if (!scorecard) return null
@@ -228,17 +197,25 @@ function ScorecardDisplay({ metadata }: { metadata: DependencyMetadata }) {
   )
 }
 
-// Dependency Metadata Section Component
 function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata }) {
   const [showDetails, setShowDetails] = useState(false)
-  
-  const hasExternalLinks = metadata.homepage || metadata.repository_url || metadata.download_url
+
+  const homepageHref = safeHref(metadata.homepage)
+  const repositoryHref = safeHref(metadata.repository_url)
+  const downloadHref = safeHref(metadata.download_url)
+  const licenseHref = safeHref(metadata.license_url)
+  const depsDevLinks = metadata.deps_dev?.links
+    ? Object.entries(metadata.deps_dev.links)
+        .map(([label, url]) => [label, safeHref(url)] as const)
+        .filter((entry): entry is readonly [string, string] => Boolean(entry[1]))
+    : []
+
+  const hasExternalLinks = homepageHref || repositoryHref || downloadHref
   const hasDepsDevData = metadata.deps_dev
   const hasMaintainerInfo = metadata.author || metadata.publisher
   
   return (
     <div className="space-y-4 border rounded-lg p-4 bg-muted/30">
-      {/* Header */}
       <div className="flex items-start justify-between gap-4">
         <div className="space-y-1 min-w-0 flex-1">
           <div className="flex items-center gap-2 flex-wrap">
@@ -261,7 +238,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
           )}
         </div>
         
-        {/* Quick Stats - Only vulnerability count (project count shown in table) */}
         <div className="flex items-center gap-3 flex-shrink-0">
           {metadata.total_vulnerability_count > 0 && (
             <div className="text-center text-destructive">
@@ -272,7 +248,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
         </div>
       </div>
 
-      {/* Known Advisories Warning - Always visible when present */}
       {metadata.deps_dev?.known_advisories && metadata.deps_dev.known_advisories.length > 0 && (
         <div className="flex items-start gap-2 p-3 bg-red-500/10 border border-red-500/30 rounded-md">
           <AlertOctagon className="h-5 w-5 text-red-500 flex-shrink-0 mt-0.5" />
@@ -281,28 +256,30 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
               {metadata.deps_dev.known_advisories.length} Known Security {metadata.deps_dev.known_advisories.length === 1 ? "Advisory" : "Advisories"}
             </p>
             <div className="flex flex-wrap gap-1 mt-1">
-              {metadata.deps_dev.known_advisories.map((advisory) => (
-                <a
-                  key={advisory}
-                  href={getAdvisoryUrl(advisory)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className={isLinkableAdvisory(advisory) ? 'cursor-pointer' : ''}
-                >
-                  <Badge variant="destructive" className="text-xs hover:opacity-80">
-                    {advisory}
-                    {isLinkableAdvisory(advisory) && (
-                      <ExternalLink className="h-2.5 w-2.5 ml-1" />
-                    )}
-                  </Badge>
-                </a>
-              ))}
+              {metadata.deps_dev.known_advisories.map((advisory) => {
+                const advisoryHref = advisoryUrl(advisory)
+                return (
+                  <a
+                    key={advisory}
+                    href={advisoryHref ?? undefined}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className={advisoryHref ? 'cursor-pointer' : ''}
+                  >
+                    <Badge variant="destructive" className="text-xs hover:opacity-80">
+                      {advisory}
+                      {advisoryHref && (
+                        <ExternalLink className="h-2.5 w-2.5 ml-1" />
+                      )}
+                    </Badge>
+                  </a>
+                )
+              })}
             </div>
           </div>
         </div>
       )}
 
-      {/* deps.dev Stats Grid - Always visible */}
       {hasDepsDevData && (
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
           {metadata.deps_dev?.stars !== undefined && (
@@ -344,15 +321,13 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
         </div>
       )}
 
-      {/* Scorecard - Always visible */}
       <ScorecardDisplay metadata={metadata} />
 
-      {/* External Links - Always visible */}
       {hasExternalLinks && (
         <div className="flex flex-wrap gap-2">
-          {metadata.homepage && (
+          {homepageHref && (
             <a
-              href={metadata.homepage}
+              href={homepageHref}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-background hover:bg-muted rounded-md transition-colors border"
@@ -362,9 +337,9 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
               <ExternalLink className="h-3 w-3" />
             </a>
           )}
-          {metadata.repository_url && (
+          {repositoryHref && (
             <a
-              href={metadata.repository_url}
+              href={repositoryHref}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-background hover:bg-muted rounded-md transition-colors border"
@@ -374,9 +349,9 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
               <ExternalLink className="h-3 w-3" />
             </a>
           )}
-          {metadata.download_url && (
+          {downloadHref && (
             <a
-              href={metadata.download_url}
+              href={downloadHref}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-sm bg-background hover:bg-muted rounded-md transition-colors border"
@@ -389,7 +364,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
         </div>
       )}
 
-      {/* License Risks - Always visible when present */}
       {metadata.license_risks && metadata.license_risks.length > 0 && (
         <div className="flex items-start gap-2 p-3 bg-amber-500/10 border border-amber-500/30 rounded-md">
           <AlertTriangle className="h-5 w-5 text-amber-500 flex-shrink-0 mt-0.5" />
@@ -409,7 +383,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
         </div>
       )}
 
-      {/* Collapsible Details - For less important info */}
       <Collapsible open={showDetails} onOpenChange={setShowDetails}>
         <CollapsibleTrigger asChild>
           <Button variant="ghost" size="sm" className="w-full justify-between">
@@ -420,7 +393,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
           </Button>
         </CollapsibleTrigger>
         <CollapsibleContent className="space-y-4 pt-4">
-          {/* Package Identity */}
           {metadata.purl && (
             <div className="space-y-1">
               <h4 className="text-sm font-medium flex items-center gap-2">
@@ -433,12 +405,10 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
             </div>
           )}
 
-          {/* Group */}
           {metadata.group && (
             <InfoRow icon={Tag} label="Group" value={metadata.group} />
           )}
 
-          {/* Maintainers */}
           {hasMaintainerInfo && (
             <div className="space-y-1">
               <h4 className="text-sm font-medium flex items-center gap-2">
@@ -449,12 +419,11 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
             </div>
           )}
 
-          {/* deps.dev Links */}
-          {metadata.deps_dev?.links && Object.keys(metadata.deps_dev.links).length > 0 && (
+          {depsDevLinks.length > 0 && (
             <div className="space-y-2">
               <h4 className="text-sm font-medium">Additional Links</h4>
               <div className="flex flex-wrap gap-2">
-                {Object.entries(metadata.deps_dev.links).map(([label, url]) => (
+                {depsDevLinks.map(([label, url]) => (
                   <a
                     key={label}
                     href={url}
@@ -471,15 +440,14 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
             </div>
           )}
 
-          {/* License Details */}
-          {metadata.license && metadata.license_url && (
+          {metadata.license && licenseHref && (
             <div className="space-y-1">
               <h4 className="text-sm font-medium flex items-center gap-2">
                 <FileText className="h-4 w-4" /> License Details
               </h4>
               <div className="ml-6">
                 <a
-                  href={metadata.license_url}
+                  href={licenseHref}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-sm text-primary hover:underline flex items-center gap-1"
@@ -490,7 +458,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
             </div>
           )}
 
-          {/* Published Date */}
           {metadata.deps_dev?.published_at && (
             <InfoRow
               icon={Calendar}
@@ -503,7 +470,6 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
             />
           )}
 
-          {/* Enrichment Sources */}
           {metadata.enrichment_sources && metadata.enrichment_sources.length > 0 && (
             <p className="text-xs text-muted-foreground pt-2 border-t">
               Data enriched from: {metadata.enrichment_sources.map(formatEnrichmentSource).join(", ")}
@@ -515,8 +481,7 @@ function DependencyMetadataSection({ metadata }: { metadata: DependencyMetadata 
   )
 }
 
-// Main Modal Component
-export function AnalyticsDependencyModal({ 
+export function AnalyticsDependencyModal({
   component, 
   version,
   type,
@@ -546,9 +511,7 @@ export function AnalyticsDependencyModal({
           comparison = (a.type || '').localeCompare(b.type || '')
           break
         case 'severity': {
-          const sevA = severityOrder[a.severity?.toUpperCase() || 'UNKNOWN'] || 0
-          const sevB = severityOrder[b.severity?.toUpperCase() || 'UNKNOWN'] || 0
-          comparison = sevA - sevB
+          comparison = severityRank(a.severity) - severityRank(b.severity)
           break
         }
         case 'project_name':
@@ -584,7 +547,6 @@ export function AnalyticsDependencyModal({
         </DialogHeader>
 
         <div className="flex-1 overflow-y-auto space-y-6 pr-2">
-          {/* Metadata Section */}
           {isLoadingMetadata ? (
             <div className="space-y-3">
               <Skeleton className="h-8 w-3/4" />
@@ -594,7 +556,6 @@ export function AnalyticsDependencyModal({
             <DependencyMetadataSection metadata={metadata} />
           ) : null}
 
-          {/* Findings Section */}
           <div className="space-y-3">
             <h3 className="text-lg font-medium flex items-center gap-2">
               <Shield className="h-5 w-5" />
@@ -699,7 +660,6 @@ export function AnalyticsDependencyModal({
           </div>
         </div>
 
-        {/* Finding Details Modal */}
         {selectedFinding && (
           <FindingDetailsModal
             finding={selectedFinding}
@@ -711,60 +671,12 @@ export function AnalyticsDependencyModal({
             projectId={selectedFinding.project_id}
             scanId={selectedFinding.scan_id}
             onSelectFinding={(id) => {
-              // First try exact match by ID
-              let found = sortedFindings.find(f => f.id === id);
-              
-              if (!found) {
-                // Handle OUTDATED-{component} format
-                if (id.startsWith("OUTDATED-")) {
-                  const comp = id.replace("OUTDATED-", "");
-                  found = sortedFindings.find(f => 
-                    f.type === "outdated" && 
-                    f.component?.toLowerCase() === comp.toLowerCase()
-                  );
-                }
-                // Handle QUALITY:{component}:{version} format
-                else if (id.startsWith("QUALITY:")) {
-                  const parts = id.split(":");
-                  if (parts.length >= 2) {
-                    const comp = parts[1];
-                    const ver = parts[2];
-                    found = sortedFindings.find(f => 
-                      f.type === "quality" && 
-                      f.component?.toLowerCase() === comp?.toLowerCase() &&
-                      (!ver || f.version === ver)
-                    );
-                  }
-                }
-                // Handle LIC-{license} format
-                else if (id.startsWith("LIC-")) {
-                  found = sortedFindings.find(f => f.id === id || f.type === "license");
-                }
-                // Handle EOL-{component}-{cycle} format
-                else if (id.startsWith("EOL-")) {
-                  const parts = id.replace("EOL-", "").split("-");
-                  const comp = parts[0];
-                  found = sortedFindings.find(f => 
-                    f.type === "eol" && 
-                    f.component?.toLowerCase() === comp?.toLowerCase()
-                  );
-                }
-                // Handle component:version format (vulnerabilities)
-                else if (id.includes(":") && !id.startsWith("AGG:")) {
-                  const [comp, ver] = id.split(":");
-                  found = sortedFindings.find(f => 
-                    f.component?.toLowerCase() === comp?.toLowerCase() && 
-                    f.version === ver
-                  );
-                }
-              }
-              
+              const found = resolveRelatedFinding(sortedFindings, id);
               if (found) {
                 setSelectedFinding(found);
               }
             }}
             onNavigate={() => {
-              // Close both modals when navigating
               setFindingModalOpen(false)
               setSelectedFinding(null)
               onOpenChange(false)

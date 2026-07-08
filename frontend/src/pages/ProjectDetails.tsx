@@ -35,9 +35,11 @@ export default function ProjectDetails() {
   const [isBranchFilterOpen, setIsBranchFilterOpen] = useState(false)
   const [activeTab, setActiveTab] = useState("overview")
 
+  const [hasInitializedBranches, setHasInitializedBranches] = useState(false)
+
   const { data: project, isLoading: isLoadingProject } = useProject(id!)
 
-  const { data: branches } = useProjectBranches(id!)
+  const { data: branches, isSuccess: branchesSuccess } = useProjectBranches(id!)
 
   const { data: user } = useCurrentUser()
 
@@ -45,11 +47,11 @@ export default function ProjectDetails() {
   const activeBranchNames = useMemo(() => branches?.filter(b => b.is_active).map(b => b.name) || [], [branches])
   const deletedBranchNames = useMemo(() => branches?.filter(b => !b.is_active).map(b => b.name) || [], [branches])
 
-  // Initialize selected branches once the branches query resolves. Setting
-  // state during render is safe here because the `selectedBranches.length === 0`
-  // guard short-circuits on the very next render — no infinite loop.
-  // See https://react.dev/learn/you-might-not-need-an-effect#initializing-the-application
-  if (activeBranchNames.length > 0 && selectedBranches.length === 0) {
+  // Initialize selected branches once, after both queries settle — else a branches-before-project
+  // race would select all active branches. The flag (not length===0) preserves an intentionally
+  // empty selection and short-circuits next render, so this render-phase set doesn't loop.
+  if (branchesSuccess && !isLoadingProject && !hasInitializedBranches) {
+    setHasInitializedBranches(true)
     if (project?.default_branch && activeBranchNames.includes(project.default_branch)) {
       setSelectedBranches([project.default_branch])
     } else {

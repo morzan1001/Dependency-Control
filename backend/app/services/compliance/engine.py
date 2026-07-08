@@ -1,16 +1,8 @@
-"""
-ComplianceReportEngine — orchestrates report generation.
-
-Workflow (idempotent, fail-safe):
-    pending -> generating -> (completed | failed)
-
-Renderers are invoked in-memory; artifact bytes go to GridFS. Metadata
-persists even if the artifact is later pruned.
-"""
+"""Orchestrates compliance report generation: pending -> generating -> completed|failed."""
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
@@ -24,6 +16,7 @@ from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.compliance import (
     FrameworkEvaluation,
     ReportFormat,
+    ReportFramework,
     ReportStatus,
 )
 from app.services.analytics.scopes import ResolvedScope, ScopeResolver
@@ -38,17 +31,6 @@ _FINDINGS_LIMIT = 20000
 
 
 class ComplianceReportEngine:
-    """Thin orchestrator. Renderers + frameworks live elsewhere.
-
-    `_gather_inputs` is responsible for:
-        1. Loading crypto_assets / findings / policy rules for the resolved scope.
-        2. Returning an `EvaluationInput` for the framework to evaluate.
-
-    The framework evaluation itself happens in `generate()` after `_gather_inputs`,
-    so unit tests can mock each seam (scope resolver, inputs, framework, render,
-    store) independently.
-    """
-
     async def generate(
         self,
         *,
@@ -63,8 +45,8 @@ class ComplianceReportEngine:
                 scope=report.scope,
                 scope_id=report.scope_id,
             )
-            inputs = await self._gather_inputs(db, resolved)
             framework = FRAMEWORK_REGISTRY[report.framework]
+            inputs = await self._gather_inputs(db, resolved, framework)
             if hasattr(framework, "evaluate_async"):
                 evaluation = await framework.evaluate_async(inputs)  # type: ignore[attr-defined]
             else:
@@ -116,14 +98,21 @@ class ComplianceReportEngine:
         self,
         db: AsyncIOMotorDatabase,
         resolved: ResolvedScope,
+        framework: Optional[ComplianceFramework] = None,
     ) -> EvaluationInput:
-        scan_ids = await self._pick_scan_ids(db, resolved)
-        assets = await self._collect_crypto_assets(db, resolved, scan_ids)
-        findings = await self._collect_findings(db, resolved, scan_ids)
+        scan_pairs = await self._pick_scan_ids(db, resolved)
+        scan_ids = [sid for _, sid in scan_pairs]
+        assets = await self._collect_crypto_assets(db, scan_pairs)
+        findings = await self._collect_findings(db, resolved, scan_ids, framework)
         policy_repo = CryptoPolicyRepository(db)
         system = await policy_repo.get_system_policy()
         policy_version = getattr(system, "version", None) if system else None
         policy_rules = [r.model_dump() for r in system.rules] if system else []
+        # License Audit reads its toggles from policy_rules[0]; prepend the
+        # project license policy there. Crypto frameworks key by rule_id and ignore it.
+        license_policy = await self._resolve_license_policy(db, resolved, framework)
+        if license_policy is not None:
+            policy_rules = [license_policy, *policy_rules]
         scope_desc = self._scope_description(resolved)
         return EvaluationInput(
             resolved=resolved,
@@ -137,7 +126,7 @@ class ComplianceReportEngine:
             db=db,
         )
 
-    async def _pick_scan_ids(self, db: AsyncIOMotorDatabase, resolved: ResolvedScope) -> List[str]:
+    async def _pick_scan_ids(self, db: AsyncIOMotorDatabase, resolved: ResolvedScope) -> List[Tuple[str, str]]:
         match: dict[str, Any] = {"status": {"$in": ["completed", "partial"]}}
         if resolved.project_ids is not None:
             match["project_id"] = {"$in": resolved.project_ids}
@@ -146,30 +135,29 @@ class ComplianceReportEngine:
             {"$sort": {"created_at": -1}},
             {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
         ]
-        return [row["scan_id"] async for row in db.scans.aggregate(pipeline)]
+        # Return (project_id, scan_id) pairs so callers avoid re-querying each scan's project.
+        return [(row["_id"], row["scan_id"]) async for row in db.scans.aggregate(pipeline)]
 
-    async def _collect_crypto_assets(
-        self, db: AsyncIOMotorDatabase, resolved: ResolvedScope, scan_ids: List[str]
-    ) -> List[Any]:
+    async def _collect_crypto_assets(self, db: AsyncIOMotorDatabase, scan_pairs: List[Tuple[str, str]]) -> List[Any]:
         repo = CryptoAssetRepository(db)
         out: List[Any] = []
-        for sid in scan_ids:
-            scan_doc = await db.scans.find_one({"_id": sid}, {"project_id": 1})
-            if not scan_doc:
-                continue
-            pid = scan_doc.get("project_id")
-            if pid is None:
+        for pid, sid in scan_pairs:
+            if pid is None or sid is None:
                 continue
             assets = await repo.list_by_scan(pid, sid, limit=10000)
             out.extend(assets)
         return out
 
     async def _collect_findings(
-        self, db: AsyncIOMotorDatabase, resolved: ResolvedScope, scan_ids: List[str]
+        self,
+        db: AsyncIOMotorDatabase,
+        resolved: ResolvedScope,
+        scan_ids: List[str],
+        framework: Optional[ComplianceFramework] = None,
     ) -> List[dict]:
         query: dict[str, Any] = {
             "scan_id": {"$in": scan_ids},
-            "type": {"$regex": "^crypto_"},
+            "type": self._finding_type_filter(framework),
         }
         if resolved.project_ids is not None:
             query["project_id"] = {"$in": resolved.project_ids}
@@ -191,6 +179,59 @@ class ComplianceReportEngine:
                 self._scope_description(resolved),
             )
         return results
+
+    def _finding_type_filter(self, framework: Optional[ComplianceFramework]) -> Any:
+        """Findings-query `type` clause per framework; unknown framework loads the union."""
+        key = getattr(framework, "key", None)
+        if key == ReportFramework.CVE_REMEDIATION_SLA:
+            return "vulnerability"
+        if key == ReportFramework.LICENSE_AUDIT:
+            return "license"
+        if key is None:
+            return {"$regex": "^crypto_|^vulnerability$|^license$"}
+        return {"$regex": "^crypto_"}
+
+    async def _resolve_license_policy(
+        self,
+        db: AsyncIOMotorDatabase,
+        resolved: ResolvedScope,
+        framework: Optional[ComplianceFramework],
+    ) -> Optional[Dict[str, Any]]:
+        """Effective project license policy; None unless scope is a single project carrying the toggles."""
+        key = getattr(framework, "key", None)
+        if key not in (ReportFramework.LICENSE_AUDIT, None):
+            return None
+        project_ids = resolved.project_ids
+        if resolved.scope != "project" or not project_ids or len(project_ids) != 1:
+            return None
+        doc = await db["projects"].find_one(
+            {"_id": project_ids[0]},
+            {"license_policy": 1, "analyzer_settings": 1},
+        )
+        if not doc:
+            return None
+        return self._effective_license_policy(doc)
+
+    @staticmethod
+    def _effective_license_policy(project_doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Precedence: analyzer_settings.license_compliance (or its nested license_policy) over top-level project.license_policy."""
+        license_keys = ("allow_strong_copyleft", "allow_network_copyleft", "distribution_model")
+
+        def _matches(candidate: Any) -> bool:
+            return isinstance(candidate, dict) and any(k in candidate for k in license_keys)
+
+        analyzer_settings = project_doc.get("analyzer_settings") or {}
+        settings = analyzer_settings.get("license_compliance") if isinstance(analyzer_settings, dict) else None
+        if isinstance(settings, dict):
+            nested = settings.get("license_policy")
+            if _matches(nested):
+                return nested
+            if _matches(settings):
+                return settings
+        legacy = project_doc.get("license_policy")
+        if _matches(legacy):
+            return legacy
+        return None
 
     def _scope_description(self, resolved: ResolvedScope) -> str:
         if resolved.scope == "project":

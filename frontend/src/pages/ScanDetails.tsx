@@ -8,17 +8,18 @@ import { WaivedFindingsSection } from '@/components/findings/WaivedFindingsSecti
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, RefreshCw, Loader2, Tag, Folder } from 'lucide-react'
+import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, RefreshCw, Loader2, Tag, Folder, X } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
 import { CodeBlock } from '@/components/ui/code-block'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
 import { toast } from "sonner"
-// PostProcessorResultCard removed - now showing raw JSON in Raw Data tab
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { logger } from '@/lib/logger'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
+import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
 import { ScanContext } from '@/components/findings/details/SastDetailsView'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 
@@ -28,7 +29,6 @@ interface ScanHistoryItem {
   created_at: string;
 }
 
-/** Renders an SCM link (branch, commit, etc.) with an optional external link, or plain text if no URL is available. */
 function ScmLink({ href, children }: { href: string | undefined | null; children: React.ReactNode }) {
   if (href) {
     return (
@@ -41,7 +41,6 @@ function ScmLink({ href, children }: { href: string | undefined | null; children
   return <>{children}</>
 }
 
-/** Renders the SBOM tool name extraction logic */
 function extractSbomToolName(sbom: SbomResponse['sbom']): string {
   if (!sbom?.metadata?.tools) return ''
   try {
@@ -57,7 +56,6 @@ function extractSbomToolName(sbom: SbomResponse['sbom']): string {
   return ''
 }
 
-/** Resolves the display name for an SBOM */
 function resolveSbomName(sbomResponse: SbomResponse): string {
   const fallback = sbomResponse.filename || `SBOM #${sbomResponse.index + 1}`
   const sbom = sbomResponse.sbom
@@ -80,9 +78,10 @@ export default function ScanDetails() {
   const sbomParam = searchParams.get('sbom');
   const severityFilter = searchParams.get('severity') || undefined;
 
-  // Compliance tab filters
   const [complianceLicenseCategory, setComplianceLicenseCategory] = useState<string | undefined>(undefined);
-  const [complianceHideInfo, setComplianceHideInfo] = useState(false);
+  const [directOnly, setDirectOnly] = useState(false);
+  const [hideInfo, setHideInfo] = useState(false);
+  const hasFindingsFilter = directOnly || hideInfo;
 
   const handleTabChange = (val: string) => {
     setSearchParams(prev => {
@@ -102,7 +101,6 @@ export default function ScanDetails() {
   const scrollToSbom = useCallback((index: number) => {
     const sbomElement = sbomRefs.current[index]
     if (sbomElement) {
-      // Get the scrollable container (look for overflow-y-auto class or nearest scrollable parent)
       let scrollContainer = sbomElement.parentElement
       while (scrollContainer && scrollContainer !== document.body) {
         const overflowY = globalThis.getComputedStyle(scrollContainer).overflowY
@@ -112,14 +110,12 @@ export default function ScanDetails() {
         scrollContainer = scrollContainer.parentElement
       }
 
-      // If we found a scroll container, scroll within it
       if (scrollContainer && scrollContainer !== document.body) {
         const containerRect = scrollContainer.getBoundingClientRect()
         const elementRect = sbomElement.getBoundingClientRect()
         const scrollOffset = elementRect.top - containerRect.top + scrollContainer.scrollTop - 20
         scrollContainer.scrollTo({ top: scrollOffset, behavior: 'smooth' })
       } else {
-        // Fallback to regular scrollIntoView if no scrollable container found
         sbomElement.scrollIntoView({ behavior: 'smooth', block: 'start' })
       }
 
@@ -184,12 +180,12 @@ export default function ScanDetails() {
   const stats = scan.stats || { critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0 };
   
   const severityData = [
-      { name: 'Critical', value: stats.critical || 0, color: '#ef4444' },
-      { name: 'High', value: stats.high || 0, color: '#f97316' },
-      { name: 'Medium', value: stats.medium || 0, color: '#eab308' },
-      { name: 'Low', value: stats.low || 0, color: '#3b82f6' },
-      { name: 'Info', value: stats.info || 0, color: '#60a5fa' },
-      { name: 'Unknown', value: stats.unknown || 0, color: '#9ca3af' },
+      { name: 'Critical', value: stats.critical || 0, color: SEVERITY_CHART_COLORS.CRITICAL },
+      { name: 'High', value: stats.high || 0, color: SEVERITY_CHART_COLORS.HIGH },
+      { name: 'Medium', value: stats.medium || 0, color: SEVERITY_CHART_COLORS.MEDIUM },
+      { name: 'Low', value: stats.low || 0, color: SEVERITY_CHART_COLORS.LOW },
+      { name: 'Info', value: stats.info || 0, color: SEVERITY_CHART_COLORS.INFO },
+      { name: 'Unknown', value: stats.unknown || 0, color: SEVERITY_CHART_COLORS.UNKNOWN },
   ].filter(d => d.value > 0);
 
   const categoryData = categoryStats ? [
@@ -482,28 +478,47 @@ export default function ScanDetails() {
             <TabsTrigger value="raw">Raw Data</TabsTrigger>
         </TabsList>
 
+        {activeTab !== 'raw' && (
+            <div className="flex items-center gap-4 flex-wrap">
+                <span className="text-sm text-muted-foreground">Filter:</span>
+                <div className="flex items-center space-x-2">
+                    <Checkbox id="filter-direct-only" checked={directOnly} onCheckedChange={(c) => setDirectOnly(c === true)} />
+                    <label htmlFor="filter-direct-only" className="text-sm cursor-pointer">Only direct dependencies</label>
+                </div>
+                <div className="flex items-center space-x-2">
+                    <Checkbox id="filter-hide-info" checked={hideInfo} onCheckedChange={(c) => setHideInfo(c === true)} />
+                    <label htmlFor="filter-hide-info" className="text-sm cursor-pointer">Hide informational</label>
+                </div>
+                {hasFindingsFilter && (
+                    <Button variant="ghost" size="sm" onClick={() => { setDirectOnly(false); setHideInfo(false); }} className="gap-1">
+                        <X className="h-3 w-3" /> Clear
+                    </Button>
+                )}
+            </div>
+        )}
+
         <TabsContent value="overview" className="space-y-4">
-            <FindingsTable scanId={scanId!} projectId={projectId!} severity={severityFilter} scanContext={scanContext} stickyHeaderTop={0} />
+            <FindingsTable scanId={scanId!} projectId={projectId!} severity={severityFilter} scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
             <WaivedFindingsSection scanId={scanId!} projectId={projectId!} scanContext={scanContext} />
         </TabsContent>
 
         {showSecurity && (
             <TabsContent value="security" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="security" scanContext={scanContext} stickyHeaderTop={0} />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="security" scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
                 <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="security" scanContext={scanContext} />
             </TabsContent>
         )}
 
         {showSecrets && (
             <TabsContent value="secrets" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} stickyHeaderTop={0} />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
                 <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} />
             </TabsContent>
         )}
 
         {showSast && (
             <TabsContent value="sast" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="sast" scanContext={scanContext} stickyHeaderTop={0} />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="sast" scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
                 <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="sast" scanContext={scanContext} />
             </TabsContent>
         )}
@@ -527,10 +542,6 @@ export default function ScanDetails() {
                             <SelectItem value="unknown">Unknown</SelectItem>
                         </SelectContent>
                     </Select>
-                    <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-                        <input type="checkbox" checked={complianceHideInfo} onChange={(e) => setComplianceHideInfo(e.target.checked)} className="rounded border-gray-300" />
-                        {"Hide informational findings"}
-                    </label>
                 </div>
                 <FindingsTable
                     scanId={scanId!}
@@ -539,7 +550,8 @@ export default function ScanDetails() {
                     scanContext={scanContext}
                     stickyHeaderTop={0}
                     licenseCategory={complianceLicenseCategory}
-                    hideInfo={complianceHideInfo}
+                    hideInfo={hideInfo}
+                    directOnly={directOnly}
                 />
                 <WaivedFindingsSection
                     scanId={scanId!}
@@ -553,7 +565,7 @@ export default function ScanDetails() {
 
         {showQuality && (
             <TabsContent value="quality" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="quality" scanContext={scanContext} stickyHeaderTop={0} />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="quality" scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
                 <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="quality" scanContext={scanContext} />
             </TabsContent>
         )}
@@ -566,7 +578,6 @@ export default function ScanDetails() {
                 </div>
             ) : (
                 <div className="space-y-8">
-                    {/* Post-Processor Results (EPSS/KEV, Reachability) - RAW JSON */}
                     {scanResults?.some(r => isPostProcessorResult(r.analyzer_name)) && (
                         <div className="space-y-4">
                             <h3 className="text-lg font-medium">Post-Processor Results</h3>
@@ -590,7 +601,6 @@ export default function ScanDetails() {
                         </div>
                     )}
 
-                    {/* Analysis Results (non-post-processor) */}
                     {scanResults?.some(r => !isPostProcessorResult(r.analyzer_name)) && (
                         <div className="space-y-4">
                             <h3 className="text-lg font-medium">Scanner Results</h3>
@@ -614,7 +624,6 @@ export default function ScanDetails() {
                         </div>
                     )}
 
-                    {/* Raw SBOMs */}
                     <div className="space-y-4">
                         <h3 className="text-lg font-medium flex items-center gap-2">
                             <FileJson className="h-5 w-5" />

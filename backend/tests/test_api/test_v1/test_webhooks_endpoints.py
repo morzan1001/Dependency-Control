@@ -1,8 +1,4 @@
-"""Tests for webhook API endpoints.
-
-Tests CRUD operations for project and global webhooks, update validation,
-and test-webhook functionality.
-"""
+"""Tests for webhook API endpoints (CRUD for project/global webhooks, update validation, test-webhook)."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch

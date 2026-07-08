@@ -1,12 +1,7 @@
-"""
-Findings Helper Functions
-
-Shared utilities for finding-related operations.
-"""
+"""Shared utilities for finding-related operations."""
 
 from typing import Any, Dict, Optional
 
-# Category to finding types mapping
 CATEGORY_TYPE_MAP: Dict[str, Any] = {
     "security": {"$in": ["vulnerability", "malware", "typosquatting"]},
     "secret": "secret",
@@ -15,7 +10,6 @@ CATEGORY_TYPE_MAP: Dict[str, Any] = {
     "quality": {"$in": ["outdated", "quality"]},
 }
 
-# Reverse mapping: finding type to category
 TYPE_CATEGORY_MAP: Dict[str, str] = {
     "vulnerability": "security",
     "malware": "security",
@@ -31,41 +25,17 @@ TYPE_CATEGORY_MAP: Dict[str, str] = {
 
 
 def get_category_type_filter(category: str) -> Optional[Any]:
-    """
-    Get the MongoDB type filter for a finding category.
-
-    Args:
-        category: The category name (security, secret, sast, compliance, quality)
-
-    Returns:
-        MongoDB filter value for the 'type' field, or None if category not found
-    """
+    """Get the MongoDB 'type' filter for a finding category, or None if unknown."""
     return CATEGORY_TYPE_MAP.get(category)
 
 
 def get_category_for_type(finding_type: str) -> str:
-    """
-    Get the category for a finding type.
-
-    Args:
-        finding_type: The finding type (vulnerability, secret, sast, etc.)
-
-    Returns:
-        Category name (security, secret, sast, compliance, quality, or 'other')
-    """
+    """Get the category for a finding type, or 'other' if unknown."""
     return TYPE_CATEGORY_MAP.get(finding_type, "other")
 
 
 def aggregate_stats_by_category(type_counts: list) -> Dict[str, int]:
-    """
-    Aggregate finding counts by category from type counts.
-
-    Args:
-        type_counts: List of dicts with '_id' (type) and 'count' keys
-
-    Returns:
-        Dictionary with category counts
-    """
+    """Aggregate finding counts by category from a list of {_id: type, count} dicts."""
     stats = {
         "security": 0,
         "secret": 0,

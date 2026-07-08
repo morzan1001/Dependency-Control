@@ -22,13 +22,11 @@ async def test_revert_system_policy_creates_new_version(
     db,
     admin_auth_headers,
 ):
-    # v1: rules=[alpha]
     await client.put(
         "/api/v1/crypto-policies/system",
         json={"rules": [_rule_dict("alpha")]},
         headers=admin_auth_headers,
     )
-    # v2: rules=[beta]
     await client.put(
         "/api/v1/crypto-policies/system",
         json={"rules": [_rule_dict("beta")]},
@@ -37,7 +35,6 @@ async def test_revert_system_policy_creates_new_version(
     system = await CryptoPolicyRepository(db).get_system_policy()
     v2 = system.version
     entries = await PolicyAuditRepository(db).list(policy_scope="system", limit=10)
-    # Find the version with the "alpha" rule
     target_version = next(
         e.version for e in entries if any(r.get("rule_id") == "alpha" for r in e.snapshot.get("rules", []))
     )

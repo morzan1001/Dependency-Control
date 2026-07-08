@@ -27,8 +27,6 @@ class TeamUpdate(BaseModel):
 
 
 class TeamResponse(TeamBase):
-    # Use validation_alias so _id is accepted from MongoDB, but 'id' is used in JSON output
-    # PyObjectId handles ObjectId to string conversion
     id: PyObjectId = Field(validation_alias="_id")
     members: List[TeamMemberSchema]
     created_at: datetime

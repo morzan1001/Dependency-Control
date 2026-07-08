@@ -32,22 +32,25 @@ export default function UsersPage() {
 
   const isLoading = isLoadingUsers || isLoadingInvitations;
 
-  const filteredInvitations = invitations?.filter(invite => 
+  const filteredInvitations = invitations?.filter(invite =>
     !debouncedSearch || invite.email.toLowerCase().includes(debouncedSearch.toLowerCase())
   ) || [];
 
-  const allUsers: User[] = [
-    ...filteredInvitations.map(invite => ({
-      id: invite.id,
-      email: invite.email,
-      username: invite.email,
-      is_active: false,
-      permissions: [],
-      totp_enabled: false,
-      status: 'invited' as const
-    })),
-    ...(users || []).map(u => ({ ...u, status: 'active' as const }))
-  ];
+  // Invitations are a global non-paginated list; kept separate from the paginated
+  // users so they don't skew UserTable's `length >= limit` has-next check. Shown only on page 1.
+  const invitationUsers: User[] = filteredInvitations.map(invite => ({
+    id: invite.id,
+    email: invite.email,
+    username: invite.email,
+    is_active: false,
+    permissions: [],
+    totp_enabled: false,
+    status: 'invited' as const
+  }));
+
+  const activeUsers: User[] = (users || []).map(u => ({ ...u, status: 'active' as const }));
+
+  const showInvitations = page === 1 && invitationUsers.length > 0;
 
   if (error) {
     return <div className="text-destructive">Error loading users</div>;
@@ -99,30 +102,48 @@ export default function UsersPage() {
           </CardContent>
         </Card>
       ) : (
-        <Card>
-          <CardHeader>
-            <CardTitle>All Users</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <UserTable
-              users={allUsers}
-              page={page - 1}
-              limit={limit}
-              onPageChange={(p) => setPage(p + 1)}
-              onSelectUser={setSelectedUser}
-              sortBy={sortBy}
-              sortOrder={sortOrder}
-              onSort={(column) => {
-                if (sortBy === column) {
-                  setSortOrder(sortOrder === "asc" ? "desc" : "asc");
-                } else {
-                  setSortBy(column);
-                  setSortOrder("desc");
-                }
-              }}
-            />
-          </CardContent>
-        </Card>
+        <>
+          {showInvitations && (
+            <Card>
+              <CardHeader>
+                <CardTitle>Pending Invitations</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <UserTable
+                  users={invitationUsers}
+                  page={0}
+                  limit={limit}
+                  onPageChange={() => {}}
+                  onSelectUser={setSelectedUser}
+                />
+              </CardContent>
+            </Card>
+          )}
+          <Card>
+            <CardHeader>
+              <CardTitle>All Users</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <UserTable
+                users={activeUsers}
+                page={page - 1}
+                limit={limit}
+                onPageChange={(p) => setPage(p + 1)}
+                onSelectUser={setSelectedUser}
+                sortBy={sortBy}
+                sortOrder={sortOrder}
+                onSort={(column) => {
+                  if (sortBy === column) {
+                    setSortOrder(sortOrder === "asc" ? "desc" : "asc");
+                  } else {
+                    setSortBy(column);
+                    setSortOrder("desc");
+                  }
+                }}
+              />
+            </CardContent>
+          </Card>
+        </>
       )}
 
       <UserDetailsDialog 

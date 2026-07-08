@@ -1,12 +1,7 @@
-"""
-Common framework machinery.
-
-`ComplianceFramework` is a Protocol-style interface. Concrete implementations
-live in sibling modules; each defines its control list + optional custom
-evaluators and delegates everything else to the default evaluator here.
-"""
+"""Common framework machinery: the ComplianceFramework protocol and default evaluator."""
 
 import hashlib
+import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
@@ -22,24 +17,24 @@ from app.schemas.compliance import (
     ReportFramework,
     ResidualRisk,
 )
+from app.schemas.crypto_policy import CryptoRule
 from app.services.analytics.scopes import ResolvedScope
+from app.services.analyzers.crypto.matcher import asset_in_rule_scope
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
 class EvaluationInput:
-    """Data bag passed into framework.evaluate()."""
-
     resolved: ResolvedScope
     scope_description: str
     crypto_assets: List[CryptoAsset]
-    findings: List[dict]  # persisted finding docs (kept dict for flexibility)
+    findings: List[dict]
     policy_rules: List[dict]  # CryptoRule dumps from the effective policy
     policy_version: Optional[int]
     iana_catalog_version: Optional[int]
     scan_ids: List[str]
-    # Populated by engine._gather_inputs for meta-frameworks that need to run
-    # their own queries (e.g. PQC migration plan delegates to a generator).
-    # Typed precisely so consumers (notably PQC) don't need runtime casts.
+    # Set for meta-frameworks that run their own DB queries (e.g. PQC).
     db: Optional[AsyncIOMotorDatabase[Any]] = None
 
 
@@ -53,7 +48,7 @@ class ComplianceFramework(Protocol):
     source_url: str
 
     @property
-    def disclaimer(self) -> Optional[str]:  # shown on report cover (e.g. FIPS)
+    def disclaimer(self) -> Optional[str]:  # shown on report cover
         ...
 
     @property
@@ -66,26 +61,8 @@ def default_evaluator(
     control: ControlDefinition,
     data: EvaluationInput,
 ) -> ControlResult:
-    """Default rule-based evaluator.
-
-    Control is FAILED if any non-waived finding exists whose type is in
-    `maps_to_finding_types` AND whose rule_id is in `maps_to_rule_ids`
-    (if that list is non-empty).
-
-    If all matching findings are waived -> WAIVED. If no crypto assets of the
-    relevant primitive/asset-type exist -> NOT_APPLICABLE. Otherwise PASSED.
-    """
-    matching: List[dict] = []
-    for f in data.findings:
-        ft = f.get("type")
-        if not any(ft == (t.value if hasattr(t, "value") else t) for t in control.maps_to_finding_types):
-            continue
-        if control.maps_to_rule_ids:
-            details = f.get("details") or {}
-            rule_id = details.get("rule_id")
-            if rule_id not in control.maps_to_rule_ids:
-                continue
-        matching.append(f)
+    """FAILED if any active matching finding, WAIVED if all matched are waived, NOT_APPLICABLE if the subject is absent, else PASSED."""
+    matching = [f for f in data.findings if _finding_matches_control(f, control)]
 
     waived_findings = [f for f in matching if f.get("waived")]
     active_findings = [f for f in matching if not f.get("waived")]
@@ -112,15 +89,75 @@ def default_evaluator(
     )
 
 
+def _finding_rule_ids(finding: dict) -> set:
+    """All rule_ids a finding attributes itself to (lead details.rule_id plus details.matched_rules)."""
+    details = finding.get("details") or {}
+    ids: set = set()
+    if lead_id := details.get("rule_id"):
+        ids.add(lead_id)
+    for m in details.get("matched_rules") or []:
+        if isinstance(m, dict) and m.get("rule_id"):
+            ids.add(m["rule_id"])
+    return ids
+
+
+def _finding_matches_control(finding: dict, control: ControlDefinition) -> bool:
+    ft = finding.get("type")
+    if not any(ft == (t.value if hasattr(t, "value") else t) for t in control.maps_to_finding_types):
+        return False
+    if control.maps_to_rule_ids:
+        return bool(_finding_rule_ids(finding) & set(control.maps_to_rule_ids))
+    return True
+
+
+def _rules_for_control(
+    control: ControlDefinition,
+    policy_rules: List[dict],
+) -> List[CryptoRule]:
+    """Reconstruct the CryptoRule objects this control maps to from policy_rules dumps; skip absent/unparseable rules."""
+    if not control.maps_to_rule_ids:
+        return []
+    wanted = set(control.maps_to_rule_ids)
+    rules: List[CryptoRule] = []
+    for raw in policy_rules:
+        if raw.get("rule_id") in wanted:
+            try:
+                rules.append(CryptoRule.model_validate(raw))
+            except Exception:  # pragma: no cover
+                continue
+    return rules
+
+
 def _is_applicable(
     control: ControlDefinition,
     data: EvaluationInput,
 ) -> bool:
-    """Heuristic: if no assets exist for this framework's scope,
-    mark as NOT_APPLICABLE instead of PASSED. Currently we consider the
-    control applicable if there are any crypto_assets at all - more
-    sophisticated per-primitive filtering can be added later."""
-    return bool(data.crypto_assets)
+    """Applicable (eligible for PASSED) only when at least one crypto asset falls within a mapped rule's scope; falls back to inventory presence when the rules can't be resolved."""
+    if not data.crypto_assets:
+        return False
+    rules = _rules_for_control(control, data.policy_rules)
+    if not rules:
+        # Declared rule_ids resolve to none -> possible policy drift; warn rather
+        # than silently degrade to the any-asset fallback.
+        if control.maps_to_rule_ids:
+            logger.warning(
+                "compliance: control %s maps to rule_ids %s but none resolve from the system "
+                "policy; falling back to inventory presence (possible policy drift)",
+                control.control_id,
+                control.maps_to_rule_ids,
+            )
+        return True  # cannot scope to a primitive; fall back to inventory presence
+    enabled_rules = [rule for rule in rules if rule.enabled]
+    if not enabled_rules:
+        # Every backing rule is disabled, so no finding can ever exist; PASSED
+        # would be a false attestation -> NOT_APPLICABLE.
+        logger.info(
+            "compliance: control %s is backed only by disabled rules %s; reporting NOT_APPLICABLE rather than PASSED",
+            control.control_id,
+            control.maps_to_rule_ids,
+        )
+        return False
+    return any(asset_in_rule_scope(asset, rule) for asset in data.crypto_assets for rule in enabled_rules)
 
 
 def _extract_bom_refs(findings: List[dict]) -> List[str]:
@@ -136,8 +173,7 @@ def evaluate_framework(
     framework: ComplianceFramework,
     data: EvaluationInput,
 ) -> FrameworkEvaluation:
-    """Shared entry point: run every control and build the top-level
-    FrameworkEvaluation. Framework modules call this from their `evaluate`."""
+    """Run every control and build the FrameworkEvaluation."""
     control_results: List[ControlResult] = []
     for control in framework.controls:
         if control.custom_evaluator is not None:
@@ -146,8 +182,8 @@ def evaluate_framework(
             result = default_evaluator(control, data)
         control_results.append(result)
 
-    summary = _build_summary(control_results)
-    residuals = _build_residual_risks(control_results)
+    summary = build_summary(control_results)
+    residuals = build_residual_risks(control_results)
     fingerprint = _inputs_fingerprint(data)
     return FrameworkEvaluation(
         framework_key=framework.key,
@@ -163,28 +199,35 @@ def evaluate_framework(
 
 
 def status_value(status: Any) -> str:
-    """Return the plain-string form of a ControlStatus / Severity / etc.
-
-    Centralises the ``x.value if hasattr(x, 'value') else x`` pattern that
-    otherwise gets repeated across every framework and renderer.  Accepts
-    enums, plain strings, or None (returns empty string).
-    """
+    """Plain-string form of a ControlStatus/Severity/enum ('' for None)."""
     if status is None:
         return ""
     return status.value if hasattr(status, "value") else str(status)
 
 
 def extract_finding_id(finding: Dict[str, Any]) -> str:
-    """Best-effort finding ID accessor with _id/id fallback.
-
-    Findings sourced from MongoDB carry ``_id``; in-memory test dicts
-    sometimes carry ``id``. Returns '' when neither is present.
-    """
+    """Finding ID from _id or id ('' when neither is present)."""
     return str(finding.get("_id") or finding.get("id") or "")
 
 
+def _classify(matching: List[Dict[str, Any]]) -> tuple[ControlStatus, List[str]]:
+    """Map matched findings to (status, evidence_ids): empty -> PASSED, any active -> FAILED, else WAIVED."""
+    if not matching:
+        return ControlStatus.PASSED, []
+    active = [f for f in matching if not f.get("waived")]
+    evidence_ids = [extract_finding_id(f) for f in matching if f.get("_id") or f.get("id")]
+    if active:
+        return ControlStatus.FAILED, evidence_ids
+    return ControlStatus.WAIVED, evidence_ids
+
+
+def _waiver_reason(f: Dict[str, Any]) -> str:
+    """Best-effort waiver-reason accessor ('' when absent/None)."""
+    return str(f.get("waiver_reason") or "")
+
+
 def build_summary(results: List[ControlResult]) -> Dict[str, int]:
-    """Count controls by status bucket (shared across frameworks)."""
+    """Count controls by status bucket."""
     counts = {"passed": 0, "failed": 0, "waived": 0, "not_applicable": 0, "total": len(results)}
     for r in results:
         key = status_value(r.status)
@@ -204,12 +247,6 @@ def build_residual_risks(results: List[ControlResult]) -> List[ResidualRisk]:
         for r in results
         if status_value(r.status) == "failed"
     ]
-
-
-# Private aliases kept for backwards compatibility with existing callers
-# inside this module.
-_build_summary = build_summary
-_build_residual_risks = build_residual_risks
 
 
 def _inputs_fingerprint(data: EvaluationInput) -> str:

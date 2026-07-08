@@ -1,8 +1,4 @@
-"""
-External integrations for scan results.
-
-Handles posting scan results to GitLab MRs and other external services.
-"""
+"""External integrations for scan results (GitLab MR comments)."""
 
 from __future__ import annotations
 
@@ -24,18 +20,7 @@ def _build_mr_comment(
     stats: Stats,
     scan_url: Optional[str],
 ) -> str:
-    """
-    Build the MR comment body for scan results.
-
-    Args:
-        scan_id: The scan ID
-        stats: The scan statistics
-        scan_url: Optional URL to the scan report
-
-    Returns:
-        The formatted comment body
-    """
-    # Determine status label based on findings
+    """Build the MR comment body for scan results."""
     status_label = "[OK]"
     if stats.risk_score > 0:
         status_label = "[WARNING]"
@@ -75,16 +60,7 @@ async def decorate_gitlab_mr(
     project: Project,
     db: AsyncIOMotorDatabase,
 ) -> None:
-    """
-    Post a comment to the GitLab Merge Request with scan results.
-
-    Args:
-        scan_id: The scan ID
-        stats: The scan statistics
-        scan_doc: The scan model
-        project: The project model
-        db: Database connection for fetching GitLab instance
-    """
+    """Post a comment to the GitLab Merge Request with scan results."""
     if not project.gitlab_mr_comments_enabled:
         return
     if not project.gitlab_instance_id or not project.gitlab_project_id:

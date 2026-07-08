@@ -17,18 +17,12 @@ def correlate_scorecard_with_vulnerabilities(
     vulnerability_findings: List[ModelOrDict],
     quality_findings: List[ModelOrDict],
 ) -> List[Recommendation]:
-    """
-    Correlate vulnerability findings with OpenSSF Scorecard quality data.
-
-    Identifies high-risk situations where vulnerabilities exist in packages
-    that also have poor maintenance or quality scores.
-    """
+    """Flag vulnerabilities in packages that also have poor OpenSSF Scorecard ratings."""
     recommendations: List[Recommendation] = []
 
     if not vulnerability_findings or not quality_findings:
         return recommendations
 
-    # Build scorecard lookup by component
     scorecard_by_component: Dict[str, Dict[str, Any]] = {}
     for qf in quality_findings:
         component = get_attr(qf, "component", "")
@@ -42,14 +36,12 @@ def correlate_scorecard_with_vulnerabilities(
             "failed_checks": details.get("failed_checks", []) if isinstance(details, dict) else [],
         }
 
-    # Find vulnerabilities in poorly maintained packages
     high_risk_vulns: List[Dict[str, Any]] = []
 
     for vf in vulnerability_findings:
         component = get_attr(vf, "component", "")
         severity = str(get_attr(vf, "severity", "")).upper()
 
-        # Check if this component has scorecard data
         scorecard = scorecard_by_component.get(component)
         if not scorecard:
             continue
@@ -58,7 +50,6 @@ def correlate_scorecard_with_vulnerabilities(
         critical_issues = scorecard.get("critical_issues", [])
         is_unmaintained = "Maintained" in critical_issues
 
-        # High risk: Critical/High vuln in unmaintained or low-score package
         if severity in ["CRITICAL", "HIGH"] and (is_unmaintained or score < SCORECARD_UNMAINTAINED_THRESHOLD):
             vf_details = get_attr(vf, "details", {})
             high_risk_vulns.append(
@@ -77,7 +68,6 @@ def correlate_scorecard_with_vulnerabilities(
             )
 
     if high_risk_vulns:
-        # Sort by risk (unmaintained first, then by score)
         high_risk_vulns.sort(key=lambda x: (not x["unmaintained"], x["scorecard_score"]))
 
         unmaintained_count = sum(1 for v in high_risk_vulns if v["unmaintained"])
@@ -165,9 +155,7 @@ def analyze_cross_project_patterns(
     dependencies: List[ModelOrDict],
     cross_project_data: Dict[str, Any],
 ) -> List[Recommendation]:
-    """
-    Analyze patterns across multiple projects owned by the same user/team.
-    """
+    """Analyze patterns across multiple projects owned by the same user/team."""
     recommendations: List[Recommendation] = []
 
     if not cross_project_data or not cross_project_data.get("projects"):
@@ -178,7 +166,6 @@ def analyze_cross_project_patterns(
 
     cve_project_map = _build_cve_project_map(projects)
 
-    # CVEs affecting multiple projects
     widespread_cves = [
         {"cve": cve, "projects": proj_list, "count": len(proj_list)}
         for cve, proj_list in cve_project_map.items()
@@ -226,7 +213,6 @@ def analyze_cross_project_patterns(
 
     package_usage = _build_package_usage(projects)
 
-    # Packages with multiple versions across projects
     inconsistent_packages: List[Dict[str, Any]] = [
         {
             "name": name,
@@ -239,7 +225,6 @@ def analyze_cross_project_patterns(
     ]
 
     if inconsistent_packages:
-        # Sort by spread (how many different versions)
         inconsistent_packages.sort(key=lambda x: int(cast(int, x["version_count"])), reverse=True)
 
         recommendations.append(

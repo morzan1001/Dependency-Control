@@ -1,6 +1,6 @@
 from typing import List, Optional
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 class SystemSettingsBase(BaseModel):
@@ -82,7 +82,70 @@ class SystemSettingsUpdate(SystemSettingsBase):
 
 
 class SystemSettingsResponse(SystemSettingsBase):
-    pass
+    """Response schema for GET/PUT /system/settings.
+
+    Secret credentials are never echoed back: each is redeclared with
+    ``exclude=True`` (still readable to derive the ``*_configured`` flags) and
+    exposed only as a boolean ``<field>_configured``.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    # Secret fields: accepted from the stored model, excluded from output.
+    github_token: Optional[str] = Field(default=None, exclude=True)
+    smtp_password: Optional[str] = Field(default=None, exclude=True)
+    open_source_malware_api_key: Optional[str] = Field(default=None, exclude=True)
+    slack_bot_token: Optional[str] = Field(default=None, exclude=True)
+    slack_client_secret: Optional[str] = Field(default=None, exclude=True)
+    slack_refresh_token: Optional[str] = Field(default=None, exclude=True)
+    oidc_client_secret: Optional[str] = Field(default=None, exclude=True)
+    gitlab_access_token: Optional[str] = Field(default=None, exclude=True)
+    mattermost_bot_token: Optional[str] = Field(default=None, exclude=True)
+
+    @computed_field
+    @property
+    def github_token_configured(self) -> bool:
+        return bool(self.github_token)
+
+    @computed_field
+    @property
+    def smtp_password_configured(self) -> bool:
+        return bool(self.smtp_password)
+
+    @computed_field
+    @property
+    def open_source_malware_api_key_configured(self) -> bool:
+        return bool(self.open_source_malware_api_key)
+
+    @computed_field
+    @property
+    def slack_bot_token_configured(self) -> bool:
+        return bool(self.slack_bot_token)
+
+    @computed_field
+    @property
+    def slack_client_secret_configured(self) -> bool:
+        return bool(self.slack_client_secret)
+
+    @computed_field
+    @property
+    def slack_refresh_token_configured(self) -> bool:
+        return bool(self.slack_refresh_token)
+
+    @computed_field
+    @property
+    def oidc_client_secret_configured(self) -> bool:
+        return bool(self.oidc_client_secret)
+
+    @computed_field
+    @property
+    def gitlab_access_token_configured(self) -> bool:
+        return bool(self.gitlab_access_token)
+
+    @computed_field
+    @property
+    def mattermost_bot_token_configured(self) -> bool:
+        return bool(self.mattermost_bot_token)
 
 
 class NotificationChannels(BaseModel):

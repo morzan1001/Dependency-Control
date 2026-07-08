@@ -54,9 +54,7 @@ async def test_prune_denied_for_non_admin(client, db, member_auth_headers):
 
 @pytest.mark.asyncio
 async def test_audit_prune_enforces_min_cutoff(client, db, admin_auth_headers):
-    """Pruning with a cutoff less than POLICY_AUDIT_MIN_PRUNE_DAYS (default
-    90 d) must be rejected so an admin cannot wipe recent forensic history
-    in a single call."""
+    """A cutoff nearer than POLICY_AUDIT_MIN_PRUNE_DAYS is rejected so an admin cannot wipe recent forensic history."""
     yesterday = datetime.now(timezone.utc) - timedelta(days=1)
     resp = await client.delete(
         f"/api/v1/crypto-policies/system/audit?before={yesterday.isoformat()}",
@@ -82,8 +80,7 @@ async def test_project_audit_prune_enforces_min_cutoff(client, db, owner_auth_he
 
 @pytest.mark.asyncio
 async def test_audit_prune_allows_cutoff_at_minimum_boundary(client, db, admin_auth_headers):
-    """An explicit 90-day-old cutoff (== the boundary) is accepted — the
-    check is strictly-greater-than, not greater-or-equal."""
+    """The min-cutoff check is strictly-greater-than, so a boundary cutoff is accepted."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=91)
     resp = await client.delete(
         f"/api/v1/crypto-policies/system/audit?before={cutoff.isoformat()}",

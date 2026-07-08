@@ -14,7 +14,7 @@ MODULE = "app.services.archive"
 
 
 # ---------------------------------------------------------------------------
-# Helpers — copy these verbatim from the existing test_archive.py
+# Helpers
 # ---------------------------------------------------------------------------
 
 
@@ -347,11 +347,6 @@ async def test_restore_scan_returns_none_when_no_metadata(archive_env):
     assert result is None
 
 
-# ---------------------------------------------------------------------------
-# Regression tests for follow-up review bugs #2–#5
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_replay_labels_mongo_error_not_as_s3_error():
     """A PyMongoError during replay must produce reason=UNKNOWN, not S3_ERROR."""
@@ -402,7 +397,7 @@ async def test_replay_labels_invalid_tag_as_encryption():
 
 @pytest.mark.asyncio
 async def test_restore_deletes_metadata_even_when_s3_delete_fails(archive_env):
-    """Bug #3: S3 delete failure must NOT leave a zombie metadata record."""
+    """S3 delete failure must NOT leave a zombie metadata record."""
     scan_doc = _make_scan_doc()
     findings = [{"_id": "f1", "scan_id": "scan-1", "severity": "CRITICAL"}]
     db = _make_mock_db(scan_doc=scan_doc, findings=findings)
@@ -435,7 +430,7 @@ async def test_restore_deletes_metadata_even_when_s3_delete_fails(archive_env):
 
 @pytest.mark.asyncio
 async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, monkeypatch):
-    """Bug #4: when _replay_bundle fails, partial scan + collections must be cleaned up."""
+    """When _replay_bundle fails, partial scan + collections must be cleaned up."""
     meta = _make_archive_metadata()
     db = _make_mock_db()
     db.scans.find_one = AsyncMock(return_value=None)  # scan not yet present
@@ -473,7 +468,7 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
 
 @pytest.mark.asyncio
 async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, monkeypatch):
-    """Bug #5: a DuplicateKeyError from repo.create must be labeled ALREADY_EXISTS, not UNKNOWN."""
+    """A DuplicateKeyError from repo.create must be labeled ALREADY_EXISTS, not UNKNOWN."""
     from pymongo.errors import DuplicateKeyError
 
     from app.core.metrics import archive_failures_total
@@ -508,14 +503,9 @@ async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, 
     assert "unknown" not in seen_reasons
 
 
-# ---------------------------------------------------------------------------
-# Regression tests for follow-up review bugs #6–#7
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_restore_rolls_back_when_gridfs_restore_fails(archive_env, monkeypatch):
-    """Bug #6: GridFS-fail path must also trigger _rollback_partial_restore."""
+    """GridFS-fail path must also trigger _rollback_partial_restore."""
     meta = _make_archive_metadata()
     db = _make_mock_db()
     db.scans.find_one = AsyncMock(return_value=None)  # no pre-existing scan
@@ -560,7 +550,7 @@ async def test_restore_rolls_back_when_gridfs_restore_fails(archive_env, monkeyp
 
 @pytest.mark.asyncio
 async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypatch):
-    """Bug #7: delete_by_scan_id failure after restore must NOT bubble up — log and return success."""
+    """delete_by_scan_id failure after restore must NOT bubble up — log and return success."""
     meta = _make_archive_metadata()
     db = _make_mock_db()
     db.scans.find_one = AsyncMock(return_value=None)
@@ -588,3 +578,112 @@ async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypa
     # Restore still reports success despite the metadata-delete glitch
     assert result is not None
     assert result.scan_id == "scan-1"
+
+
+async def _aiter(items):
+    for item in items:
+        yield item
+
+
+@pytest.mark.asyncio
+async def test_archive_aborts_when_gridfs_read_fails(archive_env, monkeypatch):
+    """A GridFS read failure must fail the archive, not silently drop the SBOM and let housekeeping delete the source scan."""
+    scan_doc = _make_scan_doc(
+        sbom_refs=[
+            {
+                "type": "gridfs_reference",
+                "gridfs_id": "507f1f77bcf86cd799439011",
+                "filename": "sbom.json",
+            }
+        ]
+    )
+    db = _make_mock_db(scan_doc=scan_doc)
+
+    class _BrokenGridFS:
+        def __init__(self, _db):
+            pass
+
+        async def open_download_stream(self, _oid):
+            raise RuntimeError("missing chunk / transient GridFS error")
+
+    monkeypatch.setattr(f"{MODULE}.AsyncIOMotorGridFSBucket", _BrokenGridFS)
+
+    with _patch_repos()() as (RepoCls, _):
+        result = await archive_scan(db, "scan-1")
+
+    assert result is None
+    # No metadata written -> housekeeping will NOT delete the source scan.
+    RepoCls.return_value.create.assert_not_awaited()
+    # The failed multipart upload was aborted (nothing left in S3).
+    assert archive_env.objects == {}
+
+
+@pytest.mark.asyncio
+async def test_restore_succeeds_when_encryption_flag_toggled_after_plaintext_archive(archive_env, monkeypatch):
+    """Restore must sniff the bundle, not the live global flag: a plaintext bundle must still restore after encryption is enabled."""
+    scan_doc = _make_scan_doc()
+    findings = [{"_id": "f1", "scan_id": "scan-1", "severity": "CRITICAL"}]
+    db = _make_mock_db(scan_doc=scan_doc, findings=findings)
+
+    # 1. Archive with encryption OFF (archive_env sets is_encryption_enabled -> False).
+    with _patch_repos()() as (RepoCls, _):
+        meta = await archive_scan(db, "scan-1")
+        assert meta is not None
+
+    # 2. Operator enables encryption AFTER the plaintext bundle was written.
+    db.scans.find_one = AsyncMock(return_value=None)
+    monkeypatch.setattr(f"{MODULE}.is_encryption_enabled", lambda: True)
+
+    with (
+        patch(f"{MODULE}.ArchiveMetadataRepository") as RepoCls,
+        patch(f"{MODULE}.DistributedLocksRepository") as LockCls,
+    ):
+        RepoCls.return_value.find_by_scan_id = AsyncMock(return_value=meta)
+        RepoCls.return_value.delete_by_scan_id = AsyncMock(return_value=True)
+        LockCls.return_value.acquire_lock = AsyncMock(return_value=True)
+        LockCls.return_value.release_lock = AsyncMock(return_value=True)
+
+        result = await restore_scan(db, "scan-1")
+
+    assert result is not None
+    assert result.scan_id == "scan-1"
+    db.findings.insert_many.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_replay_rejects_unknown_collection_marker():
+    """A marker naming a non-allowlisted collection must abort: the footer is a plain sha256 (not HMAC), so a crafted marker must not be replayed into arbitrary collections."""
+    from app.services.archive import _replay_bundle
+    from app.services.archive_bundle import BundleFrames, BundleStats
+
+    async def bundle():
+        async for chunk in BundleFrames.write(
+            scan_doc={"_id": "scan-1", "project_id": "p"},
+            collections={"users": _aiter([{"_id": "u1", "username": "attacker"}])},
+            stats=BundleStats(),
+        ):
+            yield chunk
+
+    db = _make_mock_db(scan_doc={"_id": "scan-1"})
+
+    reason, collections_restored, gridfs_entries = await _replay_bundle(db, "scan-1", bundle())
+
+    assert reason == "integrity"
+    # Nothing was written into the forbidden collection.
+    db.users.insert_many.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_replay_maps_bad_version_to_version_mismatch():
+    """An unsupported header version must surface as VERSION_MISMATCH via the reader's ValueError."""
+    from app.services.archive import _replay_bundle
+
+    header = json.dumps({"version": 99, "scan": {"_id": "x"}}).encode() + b"\n"
+
+    async def src():
+        yield header
+
+    db = _make_mock_db()
+
+    reason, _, _ = await _replay_bundle(db, "x", src())
+    assert reason == "version_mismatch"

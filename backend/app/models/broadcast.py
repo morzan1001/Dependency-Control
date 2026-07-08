@@ -1,18 +1,10 @@
-import uuid
 from typing import List, Optional
 
-from pydantic import ConfigDict, Field
-
 from app.models.base import CreatedAtModel
-from app.models.types import PyObjectId
+from app.models.types import MongoDocument
 
 
-class Broadcast(CreatedAtModel):
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
+class Broadcast(MongoDocument, CreatedAtModel):
     type: str  # 'general' or 'advisory'
     target_type: str  # 'global', 'teams', 'advisory'
     subject: str
@@ -27,5 +19,3 @@ class Broadcast(CreatedAtModel):
     packages: Optional[List[dict]] = None
     channels: Optional[List[str]] = None
     teams: Optional[List[str]] = None
-
-    model_config = ConfigDict(populate_by_name=True)

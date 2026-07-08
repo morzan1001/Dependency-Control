@@ -69,7 +69,7 @@ export const useDeleteWebhook = () => {
   return useMutation<void, Error, string>({
     mutationFn: (id: string) => webhookApi.delete(id),
     onSuccess: () => {
-      // Invalidate all webhooks as we don't know if it was global or project from ID
+      // Scope is unknown from the id, so invalidate all webhooks.
       queryClient.invalidateQueries({ queryKey: webhookKeys.all });
     },
   });

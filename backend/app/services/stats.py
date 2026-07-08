@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 import re
@@ -8,9 +9,18 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.stats import Stats
 from app.models.waiver import Waiver
+from app.repositories.scans import ScanRepository
 from app.services.analysis.stats import calculate_comprehensive_stats
 
 logger = logging.getLogger(__name__)
+
+# Lock-acquisition retry policy for recalculate_project_stats. Recalc is triggered
+# fire-and-forget from waiver CRUD endpoints, so a dropped run (None return) leaves
+# stats stale until an unrelated event re-triggers it. Bounded exponential backoff
+# lets a contending run wait for the current holder to finish and then recompute
+# against the fully-committed waiver set. Total worst-case wait ~= 0.2*(2^5-1) = 6.2s.
+_LOCK_MAX_RETRIES = 5
+_LOCK_RETRY_BASE_DELAY = 0.2
 
 # Waiver field mapping: waiver field -> finding query field
 _WAIVER_FIELD_MAP = {
@@ -71,12 +81,12 @@ async def _resolve_active_scan_id(
     if not scan_doc or scan_doc.get("branch") not in deleted_branches:
         return scan_id
 
-    active_scan = await db.scans.find_one(
-        {"project_id": project_id, "branch": {"$nin": deleted_branches}, "status": "completed"},
-        sort=[("created_at", -1)],
-        projection={"_id": 1},
+    # Delegate the "latest scan on a non-deleted branch" selection to the
+    # canonical ScanRepository method (single source of truth).
+    active_scan = await ScanRepository(db).get_latest_active_scan(
+        {"_id": project_id, "deleted_branches": deleted_branches}
     )
-    return active_scan["_id"] if active_scan else None
+    return active_scan.id if active_scan else None
 
 
 def _resolve_finding_id_query(
@@ -132,8 +142,6 @@ def _build_waiver_query(waiver: Waiver) -> Dict[str, str | Dict[str, str]]:
 async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: List[Waiver]) -> None:
     """Apply all waivers for a scan."""
     for waiver in waivers:
-        query = _build_waiver_query(waiver)
-
         if waiver.vulnerability_id:
             await finding_repo.apply_vulnerability_waiver(
                 scan_id=scan_id,
@@ -141,13 +149,29 @@ async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: List[Waiver])
                 waived=True,
                 waiver_reason=waiver.reason,
             )
-        else:
-            await finding_repo.apply_finding_waiver(
-                scan_id=scan_id,
-                query=query,
-                waived=True,
-                waiver_reason=waiver.reason,
+            continue
+
+        query = _build_waiver_query(waiver)
+
+        # A waiver with no concrete matching criteria produces an empty query. Passing
+        # {} to apply_finding_waiver would match (and waive) EVERY finding in the scan,
+        # silently suppressing all security findings. Skip and log instead. Legitimate
+        # waivers always carry at least one of finding_id/package_name/package_version/
+        # finding_type (or a vulnerability_id, handled above).
+        if not query:
+            logger.warning(
+                "Skipping waiver %s: no matching criteria (empty query) — refusing to waive every finding in scan %s",
+                getattr(waiver, "id", "?"),
+                scan_id,
             )
+            continue
+
+        await finding_repo.apply_finding_waiver(
+            scan_id=scan_id,
+            query=query,
+            waived=True,
+            waiver_reason=waiver.reason,
+        )
 
 
 def _is_signature_waiver(waiver: Any) -> bool:
@@ -169,9 +193,8 @@ def _is_signature_waiver(waiver: Any) -> bool:
 def _safe_match_signature(raw: dict, context: str) -> Optional[Any]:
     """Build a MatchSignature from a stored dict, returning None (and logging) if malformed.
 
-    Legacy data can carry a `match` sub-document that no longer satisfies the current
-    schema. Skipping the malformed one keeps the recalc reset+reapply from aborting and
-    leaving findings transiently un-waived (Finding 4).
+    Skipping a malformed sub-document keeps the recalc reset+reapply from aborting and
+    leaving findings transiently un-waived.
     """
     from pydantic import ValidationError
 
@@ -240,7 +263,13 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
 
     logger.info(
         "waiver signature apply: scan=%s waivers=%d waived=%d reanchored=%d lapsed=%d dormant=%d recomputed_sig=%d",
-        scan_id, len(enriched), len(app.waived), len(app.reanchored), len(app.lapsed), len(app.dormant), recomputed,
+        scan_id,
+        len(enriched),
+        len(app.waived),
+        len(app.reanchored),
+        len(app.lapsed),
+        len(app.dormant),
+        recomputed,
     )
     if app.dormant:
         group_sizes: Dict[str, int] = {}
@@ -256,7 +285,12 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
             fk = getattr(m, "file_key", None)
             logger.warning(
                 "waiver dormant: waiver=%s scan=%s reason=%s rule_key=%s file_key=%s last_line=%s group_findings=%d",
-                wid, scan_id, dormant_reason, rk, fk, getattr(m, "last_line", None),
+                wid,
+                scan_id,
+                dormant_reason,
+                rk,
+                fk,
+                getattr(m, "last_line", None),
                 group_sizes.get(f"{rk}\x00{fk}", 0),
             )
 
@@ -286,20 +320,10 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
 
 
 async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -> Optional[Stats]:
-    """
-    Recalculates statistics for a project based on its latest scan and active waivers.
-    This should be called whenever waivers are added, updated, or removed.
+    """Recalculate a project's stats from its latest scan and active waivers.
 
-    WARNING: This function resets ALL waivers for the scan and re-applies them.
-    This is a CRITICAL operation protected by distributed locking to prevent
-    race conditions when multiple pods modify waivers concurrently.
-
-    Args:
-        project_id: The ID of the project to recalculate stats for
-        db: Database connection
-
-    Returns:
-        The calculated Stats object, or None if project not found
+    Resets ALL waivers for the scan and re-applies them under a distributed lock to
+    prevent races when pods modify waivers concurrently. Returns None if project not found.
     """
     from app.repositories import (
         DistributedLocksRepository,
@@ -326,11 +350,27 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
     lock_name = f"stats_recalc:{project_id}"
     holder_id = f"pod-{os.getenv('HOSTNAME', 'unknown')}-{os.getpid()}"
 
-    lock_acquired = await lock_repo.acquire_lock(lock_name, holder_id, 300)
+    # Retry with bounded exponential backoff instead of dropping the recalc on the
+    # first contention. Two concurrent waiver changes must both end up reflected: the
+    # loser of the lock waits for the holder to release, then recomputes against the
+    # now-committed waiver set (avoids stale stats / stale ignored_count).
+    lock_acquired = False
+    for attempt in range(_LOCK_MAX_RETRIES + 1):
+        lock_acquired = await lock_repo.acquire_lock(lock_name, holder_id, 300)
+        if lock_acquired:
+            break
+        if attempt < _LOCK_MAX_RETRIES:
+            delay = _LOCK_RETRY_BASE_DELAY * (2**attempt)
+            logger.debug(
+                f"Lock contention for stats recalculation of project {project_id}; "
+                f"retrying in {delay:.2f}s (attempt {attempt + 1}/{_LOCK_MAX_RETRIES})."
+            )
+            await asyncio.sleep(delay)
     if not lock_acquired:
         logger.warning(
-            f"Could not acquire lock for stats recalculation of project {project_id}. "
-            f"Another process is already recalculating stats."
+            f"Could not acquire lock for stats recalculation of project {project_id} "
+            f"after {_LOCK_MAX_RETRIES} retries. Another process is holding it; "
+            f"stats may be stale until the next recalculation."
         )
         return None
 
@@ -348,8 +388,10 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         for waiver in waivers:
             if waiver.vulnerability_id:
                 await finding_repo.apply_vulnerability_waiver(
-                    scan_id=scan_id, vulnerability_id=waiver.vulnerability_id,
-                    waived=True, waiver_reason=waiver.reason,
+                    scan_id=scan_id,
+                    vulnerability_id=waiver.vulnerability_id,
+                    waived=True,
+                    waiver_reason=waiver.reason,
                 )
         non_vuln = [w for w in waivers if not w.vulnerability_id]
         legacy = [w for w in non_vuln if not _is_signature_waiver(w)]
@@ -357,11 +399,8 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         await _apply_waivers(finding_repo, scan_id, legacy)
         await _apply_waivers_signature(finding_repo, waiver_repo, scan_id, loc_waivers)
 
-        # 3. Compute the authoritative full Stats (severity counts, avg risk_score,
-        #    adjusted_risk_score, threat_intel, reachability, prioritized) from the
-        #    single canonical pipeline. This replaces the old partial $sum pipeline
-        #    so recalc no longer clobbers the comprehensive stats. calculate_comprehensive_stats
-        #    reads from PRIMARY for read-after-write consistency.
+        # 3. Compute the authoritative full Stats from the single canonical pipeline.
+        #    calculate_comprehensive_stats reads from PRIMARY for read-after-write consistency.
         stats = await calculate_comprehensive_stats(db, scan_id)
 
         # 4. Calculate ignored count (read from PRIMARY after waiver writes)
@@ -388,16 +427,7 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
 
 
 async def recalculate_all_projects(db: AsyncIOMotorDatabase) -> int:
-    """
-    Recalculates statistics for ALL projects.
-    Use with caution, as this can be resource intensive.
-
-    Args:
-        db: Database connection
-
-    Returns:
-        Number of projects recalculated
-    """
+    """Recalculate stats for ALL projects; returns the number processed. Resource intensive."""
     logger.info("Starting global stats recalculation")
     count = 0
     async for project in db.projects.find({}, {"_id": 1}):

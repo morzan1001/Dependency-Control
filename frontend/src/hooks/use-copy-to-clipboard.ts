@@ -7,9 +7,6 @@ interface UseCopyToClipboardReturn {
   copy: (text: string, e?: MouseEvent<HTMLElement>) => Promise<void>
 }
 
-/**
- * Hook for copying text to clipboard with automatic reset
- */
 export function useCopyToClipboard(): UseCopyToClipboardReturn {
   const [copied, setCopied] = useState(false)
 

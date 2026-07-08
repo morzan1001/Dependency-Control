@@ -9,10 +9,7 @@ STRONG_ANCHOR_KINDS = ("scanner_fp", "similarity_id", "search_key", "secret_hash
 
 
 class MatchSignature(BaseModel):
-    """Line-independent identity of a location-based finding, used to match waivers.
-
-    See docs/superpowers/specs/2026-06-01-waiver-scanner-finding-matching-design.md.
-    """
+    """Line-independent identity of a location-based finding, used to match waivers."""
 
     rule_key: str
     file_key: str

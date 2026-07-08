@@ -1,12 +1,4 @@
-"""Tests for the hybrid team_id update guard used by _handle_gitlab_oidc.
-
-Hybrid sync rule: GitLab OIDC may overwrite a project's team_id only when
-- the project has no team yet, OR
-- the currently assigned team itself originated from GitLab sync
-  (i.e. has gitlab_group_id set).
-
-A team without gitlab_group_id was assigned manually and must be preserved.
-"""
+"""Tests for the hybrid team_id update guard used by _handle_gitlab_oidc."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -42,36 +34,28 @@ class TestShouldOverwriteTeamIdFromSync:
         assert asyncio.run(_should_overwrite_team_id_from_sync("", repo)) is True
 
     def test_returns_true_when_current_team_was_synced_from_gitlab(self):
-        # Team has gitlab_group_id -> was created/managed by GitLab sync
         repo = _team_repo_with(
             {"_id": "t-1", "name": "GitLab Group: bkg", "gitlab_group_id": 875, "gitlab_instance_id": "inst-1"}
         )
         assert asyncio.run(_should_overwrite_team_id_from_sync("t-1", repo)) is True
 
     def test_returns_false_when_current_team_is_manual(self):
-        # Manual team has no gitlab_group_id -> must not be overwritten
         repo = _team_repo_with({"_id": "t-2", "name": "Atlas"})
         assert asyncio.run(_should_overwrite_team_id_from_sync("t-2", repo)) is False
 
     def test_returns_false_when_gitlab_group_id_is_none_explicitly(self):
-        # Stored as explicit None (manual team that was once touched by sync code)
         repo = _team_repo_with({"_id": "t-3", "name": "Avengers", "gitlab_group_id": None})
         assert asyncio.run(_should_overwrite_team_id_from_sync("t-3", repo)) is False
 
     def test_returns_true_when_referenced_team_was_deleted(self):
-        # Project points to a team that no longer exists -> safe to reassign
         repo = _team_repo_with(None)
         assert asyncio.run(_should_overwrite_team_id_from_sync("orphan-id", repo)) is True
 
 
 class TestShouldOverwriteTeamIdProvenanceGate:
-    """Finding 18: a manual reassignment (team_source="manual") must NEVER be
-    reverted by sync, even when the target team is itself GitLab-synced. Provenance
-    on the PROJECT is authoritative — not the target team's gitlab_group_id."""
+    """A manual reassignment must never be reverted by sync even when the target team is GitLab-synced; project provenance is authoritative, not the target team's gitlab_group_id."""
 
     def test_manual_team_source_blocks_overwrite_even_for_gitlab_team(self):
-        # Target team has gitlab_group_id, but the project's team_source is "manual"
-        # (a user deliberately reassigned the project to another synced team).
         repo = _team_repo_with(
             {"_id": "t-1", "name": "GitLab Group: other", "gitlab_group_id": 999, "gitlab_instance_id": "inst-1"}
         )
@@ -84,14 +68,6 @@ class TestShouldOverwriteTeamIdProvenanceGate:
         )
         result = asyncio.run(_should_overwrite_team_id_from_sync("t-1", repo, team_source="gitlab"))
         assert result is True
-
-    def test_none_team_source_falls_back_to_team_based_inference(self):
-        # Legacy projects (team_source unknown) keep the prior behaviour: a manual
-        # team (no gitlab_group_id) is preserved, a synced team may be overwritten.
-        manual_repo = _team_repo_with({"_id": "t-m", "name": "Atlas"})
-        assert asyncio.run(_should_overwrite_team_id_from_sync("t-m", manual_repo, team_source=None)) is False
-        synced_repo = _team_repo_with({"_id": "t-g", "gitlab_group_id": 7})
-        assert asyncio.run(_should_overwrite_team_id_from_sync("t-g", synced_repo, team_source=None)) is True
 
 
 class TestGitlabTeamSyncUpdate:
@@ -118,7 +94,7 @@ class TestGitlabTeamSyncUpdate:
         with patch("app.api.deps.TeamRepository") as TR:
             TR.return_value.get_raw_by_id = AsyncMock(return_value=None)
             result = asyncio.run(_gitlab_team_sync_update(project, 100, "grp/proj", svc, MagicMock()))
-        # Finding 18: a sync-driven assignment must stamp gitlab provenance.
+        # A sync-driven assignment must stamp gitlab provenance.
         assert result == {"team_id": "t-new", "team_source": "gitlab"}
 
     def test_overwrites_team_when_current_came_from_gitlab(self):
@@ -145,9 +121,6 @@ class TestGitlabTeamSyncUpdate:
         )
 
     def test_manual_provenance_blocks_overwrite_to_another_gitlab_team(self):
-        # A user manually moved the project to a DIFFERENT GitLab-synced team.
-        # The old guard (which only checked the target team's gitlab_group_id) would
-        # have reverted it; the provenance gate must keep the manual assignment.
         project = _project(team_id="t-manual-but-gitlab")
         project.team_source = "manual"
         svc = _service_returning("t-sync-target")

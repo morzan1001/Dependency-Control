@@ -36,9 +36,7 @@ async def get_settings(
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     db: DatabaseDep,
 ) -> SystemSettings:
-    """
-    Get system settings. Requires 'system:manage' permission.
-    """
+    """Get system settings. Requires 'system:manage' permission."""
     return await deps.get_system_settings(db, auto_init=True)
 
 
@@ -49,20 +47,16 @@ async def update_settings(
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     db: DatabaseDep,
 ) -> SystemSettings:
-    """
-    Update system settings. Requires 'system:manage' permission.
-    """
+    """Update system settings. Requires 'system:manage' permission."""
     repo = SystemSettingsRepository(db)
     update_data = settings_in.model_dump(exclude_unset=True)
 
-    # Check if slack_bot_token is being manually updated
     if "slack_bot_token" in update_data:
         current_settings = await repo.get()
         current_token = current_settings.slack_bot_token
         new_token = update_data.get("slack_bot_token")
 
-        # If the token has changed (and it's not just a re-save of the existing one),
-        # we assume it's a manual update and clear the OAuth rotation fields.
+        # A changed token is a manual update; clear the OAuth rotation fields.
         if new_token != current_token:
             update_data["slack_refresh_token"] = None
             update_data["slack_token_expires_at"] = None
@@ -75,10 +69,7 @@ async def update_settings(
     summary="Get public system configuration",
 )
 async def get_public_config(db: DatabaseDep) -> PublicConfig:
-    """
-    Returns public configuration flags (e.g. if registration is allowed).
-    No authentication required.
-    """
+    """Public configuration flags (e.g. whether registration is allowed). No authentication required."""
     settings = await deps.get_system_settings(db)
     return PublicConfig(
         allow_public_registration=settings.allow_public_registration,
@@ -98,14 +89,9 @@ async def get_app_config(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> AppConfig:
-    """
-    Returns lightweight, non-sensitive configuration for authenticated users.
-    This endpoint provides only the data needed by frontend components
-    without exposing secrets like API keys or passwords.
-    """
+    """Lightweight, non-sensitive configuration for authenticated frontend components."""
     settings = await deps.get_system_settings(db)
 
-    # Determine available notification channels using helper
     channels = get_available_channels(settings)
     notifications = NotificationChannels(
         email=NOTIFICATION_CHANNEL_EMAIL in channels,
@@ -138,9 +124,6 @@ async def get_notification_channels(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> List[str]:
-    """
-    Returns a list of available notification channels based on the server configuration.
-    Requires authentication.
-    """
+    """Available notification channels based on the server configuration."""
     settings = await deps.get_system_settings(db)
     return get_available_channels(settings)

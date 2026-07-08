@@ -20,9 +20,8 @@ def _vuln(
     risk_score=None,
     finding_id="CVE-2024-001",
 ):
-    """Build a vulnerability finding dict."""
     details = {
-        "is_kev": is_kev,
+        "in_kev": is_kev,
         "epss_score": epss_score,
     }
     if fixed_version is not None:
@@ -341,7 +340,7 @@ class TestDetectCriticalHotspotsSkipsEmptyComponent:
                 "type": "vulnerability",
                 "severity": "CRITICAL",
                 "component": "",
-                "details": {"is_kev": True},
+                "details": {"in_kev": True},
                 "id": "CVE-2024-001",
             },
         ]
@@ -482,7 +481,7 @@ class TestDetectToxicDependenciesDeduplication:
         findings = [
             _vuln("pkg", "HIGH", finding_id="CVE-2024-001"),
             _eol("pkg"),
-            _eol("pkg"),  # duplicate
+            _eol("pkg"),
         ]
         result = detect_toxic_dependencies(findings, [])
         assert len(result) == 1
@@ -573,7 +572,6 @@ class TestAnalyzeAttackSurfaceCombined:
             _vuln("transitive-0", "MEDIUM", finding_id="CVE-2024-002"),
         ]
         result = analyze_attack_surface(deps, findings)
-        # Should get 2 recommendations: transitive vulns + large tree
         assert len(result) == 2
         types = {r.title for r in result}
         assert any("Transitive" in t for t in types)

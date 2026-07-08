@@ -29,9 +29,7 @@ async def read_system_invitations(
     skip: int = 0,
     limit: int = 100,
 ) -> List[Dict[str, Any]]:
-    """
-    List all pending system invitations. Requires 'user:create' permission.
-    """
+    """List all pending system invitations. Requires 'user:create' permission."""
     invitation_repo = InvitationRepository(db)
     invitations = await invitation_repo.find_active_system_invitations(skip=skip, limit=limit)
     return invitations
@@ -44,24 +42,19 @@ async def create_system_invitation(
     current_user: Annotated[User, Depends(deps.PermissionChecker("user:create"))],
     email: Annotated[str, Body(..., embed=True)],
 ) -> Dict[str, Any]:
-    """
-    Create a system invitation for a new user. Requires 'user:create' permission.
-    """
+    """Create a system invitation for a new user. Requires 'user:create' permission."""
     user_repo = UserRepository(db)
     invitation_repo = InvitationRepository(db)
 
-    # Check if user already exists
     if await user_repo.exists_by_email(email):
         raise HTTPException(status_code=400, detail="User with this email already exists")
 
-    # Check if valid invitation already exists
     existing_invite = await invitation_repo.get_system_invitation_by_email(email)
 
     if existing_invite:
-        # Resend existing invite
         token = existing_invite["token"]
     else:
-        token = secrets.token_urlsafe(32)  # 32 bytes = 256 bits of entropy
+        token = secrets.token_urlsafe(32)
         invitation = SystemInvitation(
             email=email,
             token=token,
@@ -70,7 +63,6 @@ async def create_system_invitation(
         )
         await invitation_repo.create_system_invitation(invitation)
 
-    # Send invitation email
     link = f"{settings.FRONTEND_BASE_URL}/accept-invite?token={token}"
     email_sent = True
 
@@ -95,9 +87,7 @@ async def create_system_invitation(
 
 @router.get("/system/{token}", responses=RESP_404)
 async def validate_system_invitation(token: str, db: DatabaseDep) -> Dict[str, Any]:
-    """
-    Validate a system invitation token.
-    """
+    """Validate a system invitation token."""
     invitation_repo = InvitationRepository(db)
     invitation = await invitation_repo.get_system_invitation_by_token(token)
 
@@ -114,9 +104,7 @@ async def accept_system_invitation(
     username: Annotated[str, Body(...)],
     password: Annotated[str, Body(...)],
 ) -> User:
-    """
-    Accept a system invitation and create a user account.
-    """
+    """Accept a system invitation and create a user account."""
     user_repo = UserRepository(db)
     invitation_repo = InvitationRepository(db)
 
@@ -125,28 +113,24 @@ async def accept_system_invitation(
     if not invitation:
         raise HTTPException(status_code=400, detail="Invalid or expired invitation token")
 
-    # Check if username is taken
     if await user_repo.exists_by_username(username):
         raise HTTPException(status_code=400, detail="Username already taken")
 
-    # Check if email is taken (shouldn't happen if invite logic is correct, but good to check)
     if await user_repo.exists_by_email(invitation["email"]):
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    # Create user
     hashed_password = security.get_password_hash(password)
     new_user = User(
         username=username,
         email=invitation["email"],
         hashed_password=hashed_password,
         is_active=True,
-        is_verified=True,  # Email is verified via invitation
+        is_verified=True,  # verified via invitation
         permissions=[],
     )
 
     await user_repo.create(new_user)
 
-    # Mark invitation as used
     await invitation_repo.mark_system_invitation_used(invitation["_id"])
 
     return new_user

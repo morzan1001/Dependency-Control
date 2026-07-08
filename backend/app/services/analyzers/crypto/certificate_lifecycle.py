@@ -1,9 +1,4 @@
-"""
-CertificateLifecycleAnalyzer
-
-One class, seven check methods. Each check is independent and fail-soft:
-a failure in one check does not block the others.
-"""
+"""Certificate lifecycle checks; each check is independent and fail-soft."""
 
 import logging
 import uuid
@@ -18,16 +13,70 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoRule
 from app.services.analyzers.base import Analyzer
+from app.services.analyzers.crypto.matcher import rule_matches
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 logger = logging.getLogger(__name__)
 
+# Static NIST baseline used only when the effective policy defines no matching rule.
 _WEAK_HASH_NAMES = {"MD5", "MD-5", "SHA-1", "SHA1"}
 
 _MIN_KEY_SIZES = {
     CryptoPrimitive.PKE: 2048,
     CryptoPrimitive.SIGNATURE: 2048,
 }
+
+
+def _coerce_primitive(prim: Any) -> Optional[CryptoPrimitive]:
+    if isinstance(prim, CryptoPrimitive):
+        return prim
+    if isinstance(prim, str):
+        try:
+            return CryptoPrimitive(prim)
+        except ValueError:
+            return None
+    return None
+
+
+def _rule_severity(rule: CryptoRule) -> Severity:
+    raw = rule.default_severity
+    try:
+        return Severity(raw) if isinstance(raw, str) else raw
+    except ValueError:
+        return Severity.MEDIUM
+
+
+def _matching_hash_rule(algo: CryptoAsset, rules: List[CryptoRule]) -> Optional[CryptoRule]:
+    """First enabled hash-primitive rule matching this algorithm via glob-aware matcher."""
+    for rule in rules:
+        if not rule.enabled or _coerce_primitive(rule.match_primitive) != CryptoPrimitive.HASH:
+            continue
+        if rule_matches(algo, rule):
+            return rule
+    return None
+
+
+def _has_hash_rule(rules: List[CryptoRule]) -> bool:
+    return any(r.enabled and _coerce_primitive(r.match_primitive) == CryptoPrimitive.HASH for r in rules)
+
+
+def _is_static_weak_hash(algo: CryptoAsset) -> bool:
+    return bool(algo.name and algo.name.upper() in {n.upper() for n in _WEAK_HASH_NAMES})
+
+
+def _min_key_sizes(rules: List[CryptoRule]) -> Dict[CryptoPrimitive, int]:
+    """Per-primitive minimum key sizes: strictest policy rule wins, static baseline fills gaps."""
+    mins: Dict[CryptoPrimitive, int] = {}
+    for rule in rules:
+        if not rule.enabled or rule.match_min_key_size_bits is None:
+            continue
+        prim = _coerce_primitive(rule.match_primitive)
+        if prim is None:
+            continue
+        mins[prim] = max(mins.get(prim, 0), rule.match_min_key_size_bits)
+    for prim, size in _MIN_KEY_SIZES.items():
+        mins.setdefault(prim, size)
+    return mins
 
 
 class CertificateLifecycleAnalyzer(Analyzer):
@@ -99,7 +148,7 @@ class CertificateLifecycleAnalyzer(Analyzer):
         if cert.not_valid_after is None:
             return []
         na = _ensure_aware(cert.not_valid_after)
-        delta = now - na  # positive when expired
+        delta = now - na
         if delta.total_seconds() <= 0:
             return []
         days_expired = int(delta.total_seconds() // 86400)
@@ -187,27 +236,31 @@ class CertificateLifecycleAnalyzer(Analyzer):
         algo = algo_by_ref.get(cert.signature_algorithm_ref)
         if algo is None:
             return []
-        prim = algo.primitive
-        if isinstance(prim, str):
-            try:
-                prim = CryptoPrimitive(prim)
-            except ValueError:
-                prim = None
-        is_hash = prim == CryptoPrimitive.HASH
-        if is_hash and algo.name and algo.name.upper() in {n.upper() for n in _WEAK_HASH_NAMES}:
-            return [
-                _build(
-                    cert,
-                    type_=FindingType.CRYPTO_CERT_WEAK_SIGNATURE,
-                    severity=Severity.HIGH,
-                    description=f"Certificate signed with weak hash algorithm: {algo.name}",
-                    details={
-                        "algorithm_name": algo.name,
-                        "related_algo_bom_ref": algo.bom_ref,
-                    },
-                )
-            ]
-        return []
+        if _coerce_primitive(algo.primitive) != CryptoPrimitive.HASH:
+            return []
+
+        matched = _matching_hash_rule(algo, rules)
+        if matched is not None:
+            severity = _rule_severity(matched)
+            rule_id: Optional[str] = matched.rule_id
+        elif not _has_hash_rule(rules) and _is_static_weak_hash(algo):
+            severity = Severity.HIGH
+            rule_id = None
+        else:
+            return []
+
+        details: Dict[str, Any] = {"algorithm_name": algo.name, "related_algo_bom_ref": algo.bom_ref}
+        if rule_id:
+            details["rule_id"] = rule_id
+        return [
+            _build(
+                cert,
+                type_=FindingType.CRYPTO_CERT_WEAK_SIGNATURE,
+                severity=severity,
+                description=f"Certificate signed with weak hash algorithm: {algo.name}",
+                details=details,
+            )
+        ]
 
     def _check_weak_key(
         self,
@@ -216,20 +269,16 @@ class CertificateLifecycleAnalyzer(Analyzer):
         rules: List[CryptoRule],
         algo_by_ref: Dict[str, CryptoAsset],
     ) -> List[Dict[str, Any]]:
-        if not cert.signature_algorithm_ref:
+        # Judge the cert's own subject public key, not the CA's signing key.
+        if not cert.subject_public_key_ref:
             return []
-        algo = algo_by_ref.get(cert.signature_algorithm_ref)
+        algo = algo_by_ref.get(cert.subject_public_key_ref)
         if algo is None or algo.key_size_bits is None:
             return []
-        prim = algo.primitive
-        if isinstance(prim, str):
-            try:
-                prim = CryptoPrimitive(prim)
-            except ValueError:
-                return []
+        prim = _coerce_primitive(algo.primitive)
         if prim is None:
             return []
-        min_size = _MIN_KEY_SIZES.get(prim)
+        min_size = _min_key_sizes(rules).get(prim)
         if min_size is None or algo.key_size_bits >= min_size:
             return []
         return [

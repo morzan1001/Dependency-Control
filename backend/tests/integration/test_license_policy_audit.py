@@ -1,6 +1,4 @@
-"""Integration test: PUT /api/v1/projects/{id} records a license-policy
-audit entry when license_policy or analyzer_settings.license_compliance
-changes."""
+"""PUT /api/v1/projects/{id} records a license-policy audit entry when the license policy changes."""
 
 import pytest
 
@@ -77,8 +75,6 @@ async def test_project_update_without_license_change_creates_no_audit_entry(clie
 
 @pytest.mark.asyncio
 async def test_license_policy_audit_list_endpoint(client, db, owner_auth_headers_proj):
-    """GET /projects/{id}/license-policy/audit returns the entries."""
-    # Seed via project update
     await client.put(
         "/api/v1/projects/p",
         json={"license_policy": {"distribution_model": "distributed"}},
@@ -98,7 +94,6 @@ async def test_license_policy_audit_list_endpoint(client, db, owner_auth_headers
 
 @pytest.mark.asyncio
 async def test_license_policy_audit_get_by_version_endpoint(client, db, owner_auth_headers_proj):
-    """GET /projects/{id}/license-policy/audit/{version} returns one entry."""
     await client.put(
         "/api/v1/projects/p",
         json={"license_policy": {"distribution_model": "distributed"}},
@@ -125,8 +120,6 @@ async def test_license_policy_audit_404_on_unknown_version(client, db, owner_aut
 
 @pytest.mark.asyncio
 async def test_license_policy_entries_isolated_from_crypto(client, db, owner_auth_headers_proj):
-    """A license-policy write must NOT appear in the crypto-policy audit
-    timeline and vice versa."""
     resp = await client.put(
         "/api/v1/projects/p",
         json={

@@ -35,7 +35,6 @@ export interface ConversationDetailResponse {
   messages: Message[];
 }
 
-// SSE event types
 export type ChatSSEEvent =
   | { type: 'token'; content: string }
   | { type: 'tool_call_start'; tool_name: string }

@@ -8,7 +8,6 @@ if TYPE_CHECKING:
 
 
 def normalize_outdated(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
-    """Normalize outdated package findings."""
     for item in result.get("outdated_dependencies") or []:
         component = safe_get(item, "component", "unknown")
 
@@ -48,7 +47,6 @@ def normalize_outdated(aggregator: "ResultAggregator", result: Dict[str, Any], s
 
 
 def normalize_eol(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
-    """Normalize end-of-life findings."""
     for item in result.get("eol_issues") or []:
         eol_info = item.get("eol_info") or {}
         eol_date = eol_info.get("eol")
@@ -56,8 +54,6 @@ def normalize_eol(aggregator: "ResultAggregator", result: Dict[str, Any], source
         latest = eol_info.get("latest")
         component = safe_get(item, "component", "unknown")
 
-        # Use recommended version from active cycle if available,
-        # otherwise fall back to latest within same cycle
         recommended = eol_info.get("recommended_version") or latest
         recommended_cycle = eol_info.get("recommended_cycle")
 

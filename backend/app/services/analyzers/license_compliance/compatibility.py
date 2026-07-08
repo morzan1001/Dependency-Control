@@ -5,13 +5,58 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from app.models.finding import Severity
+from app.models.license import LicenseCategory
 
 from .constants import LICENSE_DATABASE, LICENSE_INCOMPATIBILITIES
-from .normalizer import extract_licenses, normalize_license
+from .normalizer import (
+    extract_licenses,
+    has_spdx_expression,
+    normalize_license,
+    parse_spdx_expression,
+)
+
+# Restrictiveness ranking for choosing the least-restrictive OR alternative.
+_CATEGORY_RANK: Dict[LicenseCategory, int] = {
+    LicenseCategory.PERMISSIVE: 0,
+    LicenseCategory.PUBLIC_DOMAIN: 0,
+    LicenseCategory.WEAK_COPYLEFT: 1,
+    LicenseCategory.STRONG_COPYLEFT: 2,
+    LicenseCategory.NETWORK_COPYLEFT: 3,
+    LicenseCategory.PROPRIETARY: 4,
+}
 
 
-def check_pair_conflict(a: Dict[str, str], b: Dict[str, str], seen: set) -> Optional[Dict[str, Any]]:
+def _least_restrictive_group(or_groups: List[List[str]]) -> List[str]:
+    """Pick the OR-alternative with the lowest restrictiveness (ranked by its most-restrictive AND-member)."""
+    best_rank: Optional[int] = None
+    best_group: List[str] = []
+    for group in or_groups:
+        worst_rank = 0
+        for lic_id in group:
+            info = LICENSE_DATABASE.get(normalize_license(lic_id))
+            if info:
+                worst_rank = max(worst_rank, _CATEGORY_RANK.get(info.category, 5))
+        if best_rank is None or worst_rank < best_rank:
+            best_rank = worst_rank
+            best_group = group
+    return best_group
+
+
+def _resolve_component_license_ids(comp: Dict[str, Any]) -> List[str]:
+    """Return the license IDs that apply, resolving OR-expressions to the least-restrictive alternative."""
+    spdx_expr = has_spdx_expression(comp)
+    if spdx_expr:
+        or_groups = parse_spdx_expression(spdx_expr)
+        return _least_restrictive_group(or_groups)
+    return [lic_id for lic_id, _ in extract_licenses(comp)]
+
+
+def check_pair_conflict(a: Dict[str, Any], b: Dict[str, Any], seen: set) -> Optional[Dict[str, Any]]:
     """Check if two component-license entries conflict. Returns an issue dict or None."""
+    # Licenses from the same component are a packaging reality, not a cross-component conflict.
+    if a.get("component_id") is not None and a.get("component_id") == b.get("component_id"):
+        return None
+
     if a["license"] == b["license"]:
         return None
 
@@ -54,14 +99,14 @@ def check_pair_conflict(a: Dict[str, str], b: Dict[str, str], seen: set) -> Opti
 def collect_component_licenses(
     components: List[Dict[str, Any]],
     ignore_dev: bool,
-) -> List[Dict[str, str]]:
+) -> List[Dict[str, Any]]:
     """Collect resolved licenses per non-dev component."""
-    result: List[Dict[str, str]] = []
-    for comp in components:
+    result: List[Dict[str, Any]] = []
+    for idx, comp in enumerate(components):
         comp_scope = (comp.get("scope") or "").lower()
         if ignore_dev and comp_scope in ("dev", "development", "test", "optional"):
             continue
-        for lic_id, _ in extract_licenses(comp):
+        for lic_id in _resolve_component_license_ids(comp):
             normalized = normalize_license(lic_id)
             if normalized in LICENSE_DATABASE:
                 result.append(
@@ -70,13 +115,14 @@ def collect_component_licenses(
                         "version": comp.get("version", "unknown"),
                         "license": normalized,
                         "purl": comp.get("purl", ""),
+                        "component_id": idx,
                     }
                 )
     return result
 
 
 def find_license_conflicts(
-    component_licenses: List[Dict[str, str]],
+    component_licenses: List[Dict[str, Any]],
 ) -> List[Dict[str, Any]]:
     """Find known incompatibilities between license pairs."""
     issues: List[Dict[str, Any]] = []

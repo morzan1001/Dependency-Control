@@ -1,14 +1,4 @@
-"""
-License Audit — SBOM-side compliance "framework".
-
-Evaluates the project's SBOM dependencies against its current license
-policy (``project.license_policy`` or ``analyzer_settings.license_compliance``).
-Each license category gets one control; findings with
-``FindingType.LICENSE_VIOLATION`` drive the FAILED/PASSED verdict.
-
-Async-only — the evaluator loads findings from MongoDB via EvaluationInput.
-Callers must dispatch on ``hasattr(framework, 'evaluate_async')``.
-"""
+"""License Audit: evaluates SBOM licenses against the project license policy; async-only."""
 
 import asyncio
 from datetime import datetime, timezone
@@ -24,15 +14,14 @@ from app.schemas.compliance import (
 )
 from app.services.compliance.frameworks.base import (
     EvaluationInput,
+    _classify,
+    _waiver_reason,
     build_residual_risks,
     build_summary,
-    extract_finding_id,
 )
 
 
-# Licence-policy setting keys and the control they expand to. The key
-# points to the boolean on the resolved policy; when False, any finding
-# with the corresponding license_category becomes a FAILED control.
+# License-policy toggle -> control; when the toggle is False, matching-category findings FAIL.
 _POLICY_TO_CATEGORY: Dict[str, Dict[str, Any]] = {
     "allow_strong_copyleft": {
         "control_id": "LICENSE-AUDIT-STRONG-COPYLEFT",
@@ -73,9 +62,7 @@ class LicenseAuditFramework:
         raise RuntimeError("LicenseAuditFramework is async-only; callers must dispatch via evaluate_async()")
 
     async def evaluate_async(self, data: EvaluationInput) -> FrameworkEvaluation:
-        # Yield once so the dispatcher's `await` stays meaningful even though
-        # the body is purely computational; lets sibling framework tasks
-        # progress when several run for the same scope.
+        # yield once so sibling framework tasks can progress
         await asyncio.sleep(0)
         policy = _extract_license_policy(data)
         findings = data.findings or []
@@ -84,8 +71,7 @@ class LicenseAuditFramework:
         for policy_key, cfg in _POLICY_TO_CATEGORY.items():
             allowed = bool(policy.get(policy_key, False))
             if allowed:
-                # The policy explicitly permits this category — control is
-                # NOT_APPLICABLE because we deliberately tolerate it.
+                # policy permits this category -> NOT_APPLICABLE
                 controls.append(
                     ControlResult(
                         control_id=cfg["control_id"],
@@ -120,7 +106,6 @@ class LicenseAuditFramework:
                 )
             )
 
-        # "All components have an identified license" — catch-all hygiene
         unknown = [f for f in findings if _is_license_violation(f, ["unknown"])]
         status, evidence = _classify(unknown)
         controls.append(
@@ -155,15 +140,9 @@ class LicenseAuditFramework:
 
 
 def _extract_license_policy(data: EvaluationInput) -> Dict[str, Any]:
-    """Pull the license policy from EvaluationInput's policy_rules dump.
-
-    Falls back to permissive defaults when the policy isn't set.
-    """
+    """Pull the license policy from policy_rules; permissive defaults when unset."""
     rules = data.policy_rules or []
-    # EvaluationInput.policy_rules is a list of dicts. License policy is
-    # stored as a single dict (flat, not rule-based), so the convention
-    # used by compliance endpoints is to place it as the first element
-    # when license framework is targeted.
+    # License policy is a single flat dict placed first in policy_rules.
     if rules and isinstance(rules[0], dict):
         first = rules[0]
         if any(k in first for k in ("allow_strong_copyleft", "allow_network_copyleft", "distribution_model")):
@@ -179,17 +158,3 @@ def _is_license_violation(f: Dict[str, Any], categories: List[str]) -> bool:
     details = f.get("details") or {}
     observed_category = details.get("license_category")
     return observed_category in categories
-
-
-def _classify(matching: List[Dict[str, Any]]) -> tuple[ControlStatus, List[str]]:
-    if not matching:
-        return ControlStatus.PASSED, []
-    active = [f for f in matching if not f.get("waived")]
-    evidence_ids = [extract_finding_id(f) for f in matching if f.get("_id") or f.get("id")]
-    if active:
-        return ControlStatus.FAILED, evidence_ids
-    return ControlStatus.WAIVED, evidence_ids
-
-
-def _waiver_reason(f: Dict[str, Any]) -> str:
-    return str(f.get("waiver_reason") or "")

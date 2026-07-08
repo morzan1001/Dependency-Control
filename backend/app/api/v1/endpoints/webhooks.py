@@ -1,9 +1,4 @@
-"""
-Webhook API endpoints for managing webhook configurations.
-
-Provides CRUD operations for project-specific and global webhooks,
-plus webhook testing functionality.
-"""
+"""CRUD and test endpoints for project, team, and global webhook configurations."""
 
 from typing import Annotated, Any, Dict, Optional
 
@@ -47,11 +42,7 @@ async def create_webhook(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Webhook:
-    """
-    Create a webhook for a project.
-
-    Requires 'webhook:create' permission with project access, or project admin role.
-    """
+    """Create a webhook for a project."""
     await check_webhook_create_permission(project_id, current_user, db)
 
     resolved_type = webhook_in.webhook_type or detect_webhook_type(webhook_in.url)
@@ -70,11 +61,7 @@ async def list_webhooks(
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=100, description="Number of items to return")] = 50,
 ) -> Dict[str, Any]:
-    """
-    List all webhooks for a project with pagination.
-
-    Requires 'webhook:read' permission with project access, or project admin role.
-    """
+    """List all webhooks for a project with pagination."""
     await check_webhook_list_permission(project_id, current_user, db)
 
     webhook_repo = WebhookRepository(db)
@@ -91,12 +78,7 @@ async def create_global_webhook(
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     db: DatabaseDep,
 ) -> Webhook:
-    """
-    Create a global webhook.
-
-    Global webhooks are triggered for all projects.
-    Requires 'system:manage' permission.
-    """
+    """Create a global webhook, triggered for all projects."""
     resolved_type = webhook_in.webhook_type or detect_webhook_type(webhook_in.url)
     webhook_data = webhook_in.model_dump(exclude={"webhook_type"})
     webhook = Webhook(project_id=None, webhook_type=resolved_type, **webhook_data)
@@ -112,11 +94,7 @@ async def list_global_webhooks(
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=100, description="Number of items to return")] = 50,
 ) -> Dict[str, Any]:
-    """
-    List global webhooks with pagination.
-
-    Requires 'system:manage' permission.
-    """
+    """List global webhooks with pagination."""
     webhook_repo = WebhookRepository(db)
     total = await webhook_repo.count_global()
     webhooks = await webhook_repo.find_global(skip=skip, limit=limit)
@@ -132,12 +110,7 @@ async def create_team_webhook(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Webhook:
-    """
-    Create a webhook for a team.
-
-    Team webhooks are triggered for all projects belonging to the team.
-    Requires 'webhook:create' permission with team membership, or team admin+ role.
-    """
+    """Create a webhook for a team, triggered for all projects belonging to the team."""
     await check_team_webhook_create_permission(team_id, current_user, db)
 
     resolved_type = webhook_in.webhook_type or detect_webhook_type(webhook_in.url)
@@ -156,11 +129,7 @@ async def list_team_webhooks(
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=100, description="Number of items to return")] = 50,
 ) -> Dict[str, Any]:
-    """
-    List all webhooks for a team with pagination.
-
-    Requires 'webhook:read' permission with team membership, or team admin+ role.
-    """
+    """List all webhooks for a team with pagination."""
     await check_team_webhook_list_permission(team_id, current_user, db)
 
     webhook_repo = WebhookRepository(db)
@@ -177,12 +146,7 @@ async def get_webhook(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Webhook:
-    """
-    Get a specific webhook by ID.
-
-    Requires 'webhook:read' permission with project access, or project admin role.
-    For global webhooks: requires 'system:manage' permission.
-    """
+    """Get a specific webhook by ID."""
     webhook_repo = WebhookRepository(db)
     webhook = await get_webhook_or_404(webhook_repo, webhook_id)
     await check_webhook_permission(webhook, current_user, db, Permissions.WEBHOOK_READ)
@@ -196,13 +160,7 @@ async def update_webhook(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Optional[Webhook]:
-    """
-    Update a webhook configuration.
-
-    Only provided fields will be updated.
-    Requires 'webhook:update' permission with project access, or project admin role.
-    For global webhooks: requires 'system:manage' permission.
-    """
+    """Update a webhook configuration; only provided fields are changed."""
     webhook_repo = WebhookRepository(db)
     webhook = await get_webhook_or_404(webhook_repo, webhook_id)
     await check_webhook_permission(webhook, current_user, db, Permissions.WEBHOOK_UPDATE)
@@ -225,12 +183,7 @@ async def delete_webhook(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> None:
-    """
-    Delete a webhook.
-
-    Requires 'webhook:delete' permission with project access, or project admin role.
-    For global webhooks: requires 'system:manage' permission.
-    """
+    """Delete a webhook."""
     webhook_repo = WebhookRepository(db)
     webhook = await get_webhook_or_404(webhook_repo, webhook_id)
     await check_webhook_permission(webhook, current_user, db, Permissions.WEBHOOK_DELETE)
@@ -245,14 +198,7 @@ async def test_webhook(
     db: DatabaseDep,
     test_request: WebhookTestRequest = WebhookTestRequest(),
 ) -> WebhookTestResponse:
-    """
-    Send a test webhook to verify the configuration.
-
-    Sends a test payload to the webhook URL and returns the result.
-    Useful for verifying webhook configuration before relying on it.
-    Requires 'webhook:update' permission with project access, or project admin role.
-    For global webhooks: requires 'system:manage' permission.
-    """
+    """Send a test payload to the webhook URL and return the result."""
     webhook_repo = WebhookRepository(db)
     webhook = await get_webhook_or_404(webhook_repo, webhook_id)
     await check_webhook_permission(webhook, current_user, db, Permissions.WEBHOOK_UPDATE)

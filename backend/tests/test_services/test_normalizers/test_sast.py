@@ -4,8 +4,6 @@ from app.services.aggregation import ResultAggregator
 
 
 class TestNormalizeOpengrep:
-    """Tests for normalize_opengrep - OpenGrep/Semgrep SAST normalization."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -159,7 +157,7 @@ class TestNormalizeOpengrep:
         assert f.details["end"] == {"line": 15, "column": 20}
 
     def test_fingerprint_and_lines_survive_ingest(self):
-        """extra.fingerprint and extra.lines must reach details (regression: schema dropped them)."""
+        """extra.fingerprint and extra.lines must reach details."""
         from app.schemas.opengrep import OpenGrepFinding
 
         raw = {
@@ -193,8 +191,13 @@ class TestNormalizeOpengrep:
                     "path": "app/util.py",
                     "start": {"line": 10, "col": 5},
                     "end": {"line": 10, "col": 20},
-                    "extra": {"severity": "WARNING", "message": "m", "metadata": {},
-                              "fingerprint": "fp-xyz", "lines": "random.random()"},
+                    "extra": {
+                        "severity": "WARNING",
+                        "message": "m",
+                        "metadata": {},
+                        "fingerprint": "fp-xyz",
+                        "lines": "random.random()",
+                    },
                 }
             ]
         )
@@ -206,8 +209,6 @@ class TestNormalizeOpengrep:
 
 
 class TestNormalizeBearer:
-    """Tests for normalize_bearer - Bearer SAST normalization."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -258,7 +259,6 @@ class TestNormalizeBearer:
             assert f.severity == expected, f"Bearer {bearer_sev} should map to {expected}"
 
     def test_grouped_by_severity_dict(self):
-        """Bearer can group findings by severity key in a dict."""
         result = {
             "findings": {
                 "high": [{"id": "rule1", "title": "High issue", "full_filename": "a.py", "line_number": 1}],
@@ -310,7 +310,6 @@ class TestNormalizeBearer:
         assert f.component == "fallback.py"
 
     def test_source_line_numbers(self):
-        """Line numbers from source object."""
         result = {
             "findings": [
                 {

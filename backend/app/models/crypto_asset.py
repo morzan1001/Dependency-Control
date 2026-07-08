@@ -1,26 +1,15 @@
-"""
-CryptoAsset MongoDB model.
+"""CryptoAsset model (collection `crypto_assets`): one document per detected cryptographic component per scan."""
 
-Stored in collection `crypto_assets`. One document per detected cryptographic
-component (algorithm, certificate, protocol, related-crypto-material) per scan.
-"""
-
-import uuid
 from datetime import datetime, timezone
 from typing import Dict, List, Optional
 
 from pydantic import Field
 
-from app.models.types import MongoDocument, PyObjectId
+from app.models.types import MongoDocument
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 
 
 class CryptoAsset(MongoDocument):
-    id: PyObjectId = Field(
-        default_factory=lambda: str(uuid.uuid4()),
-        validation_alias="_id",
-        serialization_alias="_id",
-    )
     project_id: str = Field(..., description="Reference to the project")
     scan_id: str = Field(..., description="Reference to the scan where this was found")
 
@@ -49,7 +38,10 @@ class CryptoAsset(MongoDocument):
     not_valid_before: Optional[datetime] = Field(None, description="Certificate validity start timestamp")
     not_valid_after: Optional[datetime] = Field(None, description="Certificate validity end timestamp")
     signature_algorithm_ref: Optional[str] = Field(
-        None, description="bom-ref of the algorithm used to sign this certificate"
+        None, description="bom-ref of the algorithm used to sign this certificate (the CA's signing key)"
+    )
+    subject_public_key_ref: Optional[str] = Field(
+        None, description="bom-ref of the algorithm asset representing this certificate's own subject public key"
     )
     certificate_format: Optional[str] = Field(None, description="Certificate format identifier (e.g. X.509)")
 

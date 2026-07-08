@@ -35,8 +35,8 @@ def _vuln(component, severity="CRITICAL", is_kev=False, kev_ransomware=False, ep
         "severity": severity,
         "component": component,
         "details": {
-            "is_kev": is_kev,
-            "kev_ransomware": kev_ransomware,
+            "in_kev": is_kev,
+            "kev_ransomware_use": kev_ransomware,
             "epss_score": epss_score,
             "cve_id": cve_id,
         },
@@ -185,8 +185,6 @@ class TestProcessTyposquattingEmptyComponent:
             {"type": "typosquatting", "severity": "HIGH", "component": "", "details": {}},
         ]
         result = process_typosquatting(findings)
-        # The function still creates a recommendation (1 finding) but affected_components
-        # will not include empty string (the loop skips empty pkg)
         if result:
             assert "" not in result[0].affected_components
 
@@ -220,7 +218,6 @@ class TestDetectKnownExploitsRansomware:
     def test_kev_ransomware_produces_ransomware_risk(self):
         findings = [_vuln("pkg", is_kev=True, kev_ransomware=True)]
         result = detect_known_exploits(findings)
-        # Should produce RANSOMWARE_RISK, not KNOWN_EXPLOIT
         ransomware_recs = [r for r in result if r.type == RecommendationType.RANSOMWARE_RISK]
         kev_recs = [r for r in result if r.type == RecommendationType.KNOWN_EXPLOIT]
         assert len(ransomware_recs) == 1

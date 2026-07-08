@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import quote
 
 import httpx
@@ -49,7 +49,11 @@ def is_version_withdrawn(versions_info: List[Any], target_version: str) -> bool:
 
 
 class OutdatedAnalyzer(Analyzer):
-    """Outdated / ahead-of-default / yanked detection via deps.dev (cached)."""
+    """Outdated / ahead-of-default / yanked detection via deps.dev.
+
+    Each package document is fetched at most once per scan; its default version and
+    isWithdrawn flags drive all three classifications from that single fetch.
+    """
 
     name = "outdated_packages"
     base_url = f"{DEPS_DEV_API_URL}/systems"
@@ -63,18 +67,28 @@ class OutdatedAnalyzer(Analyzer):
         components = self._get_components(sbom, parsed_components)
         outdated: List[Dict[str, Any]] = []
         ahead: List[Dict[str, Any]] = []
+        yanked: List[Dict[str, Any]] = []
 
-        cached_versions, uncached_components = await self._get_cached_latest_versions(components)
-        for component, latest_version in cached_versions:
-            if latest_version:
-                self._classify_version(component, latest_version, outdated, ahead)
+        # Resolve one deps.dev document per distinct package, then classify every component
+        # against it (keyed by package so multiple installed versions each get classified).
+        package_infos = await self._resolve_package_infos(components)
 
-        logger.debug(f"Outdated: {len(cached_versions)} from cache, {len(uncached_components)} to fetch")
+        for component in components:
+            parsed = parse_purl(component.get("purl", ""))
+            if not parsed or not parsed.registry_system:
+                continue
 
-        if uncached_components:
-            await self._fetch_and_classify(uncached_components, outdated, ahead)
+            info = package_infos.get(CacheKeys.latest_version(parsed.registry_system, parsed.deps_dev_name))
+            if not info:
+                continue
 
-        yanked = await self._check_yanked(components)
+            default_version = info.get("default")
+            if default_version:
+                self._classify_version(component, default_version, outdated, ahead)
+
+            yanked_finding = self._build_yanked_finding(component, info.get("withdrawn") or [])
+            if yanked_finding is not None:
+                yanked.append(yanked_finding)
 
         return {
             "outdated_dependencies": outdated,
@@ -82,90 +96,145 @@ class OutdatedAnalyzer(Analyzer):
             "yanked_versions": yanked,
         }
 
-    async def _check_yanked_component(
+    async def _resolve_package_infos(self, components: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+        """Return ``{cache_key: {"default": str|None, "withdrawn": [str, ...]}}``.
+
+        Warm entries come from a batched ``mget``; misses are fetched concurrently with a
+        distributed lock, so each package document is requested at most once.
+        """
+        # Dedupe by cache key so a package at several versions is fetched only once.
+        key_targets: Dict[str, Tuple[str, str]] = {}
+        skipped_count = 0
+
+        for component in components:
+            parsed = parse_purl(component.get("purl", ""))
+            if not parsed or not parsed.registry_system:
+                skipped_count += 1
+                continue
+            cache_key = CacheKeys.latest_version(parsed.registry_system, parsed.deps_dev_name)
+            key_targets.setdefault(cache_key, (parsed.registry_system, parsed.deps_dev_name))
+
+        if skipped_count > 0:
+            logger.debug(f"Outdated: Skipped {skipped_count} components without valid registry system")
+
+        if not key_targets:
+            return {}
+
+        infos: Dict[str, Dict[str, Any]] = {}
+        missing: List[str] = []
+
+        cached_data: Dict[str, Any] = await cache_service.mget(list(key_targets.keys()))
+        for cache_key in key_targets:
+            normalized = self._normalize_cached_info(cached_data.get(cache_key))
+            if normalized is None:
+                missing.append(cache_key)
+            else:
+                infos[cache_key] = normalized
+
+        logger.debug(f"Outdated: {len(infos)} packages from cache, {len(missing)} to fetch")
+
+        if missing:
+            await self._fetch_missing_infos(missing, key_targets, infos)
+
+        return infos
+
+    @staticmethod
+    def _normalize_cached_info(value: Any) -> Optional[Dict[str, Any]]:
+        """Coerce a cached value into a package-info dict.
+
+        ``None`` means the key is absent (needs fetching); an empty dict is a negative cache.
+        A bare string is a legacy cache entry holding just the version.
+        """
+        if value is None:
+            return None
+        if isinstance(value, dict):
+            return value
+        if isinstance(value, str):
+            # Legacy entries stored just the latest version string ("" = negative).
+            if not value:
+                return {}
+            return {"default": value, "withdrawn": []}
+        return {}
+
+    async def _fetch_missing_infos(
         self,
-        client: InstrumentedAsyncClient,
-        component: Dict[str, Any],
-    ) -> Optional[Dict[str, Any]]:
-        """Return a finding dict if the component's version was withdrawn, else None."""
-        purl_str = component.get("purl", "")
-        version = component.get("version", "")
-        name = component.get("name", "")
-        if not version or not purl_str:
-            return None
-
-        parsed = parse_purl(purl_str)
-        if not parsed or not parsed.registry_system:
-            return None
-
-        withdrawn_versions = await self._get_withdrawn_versions(client, parsed.registry_system, parsed.deps_dev_name)
-        if withdrawn_versions is None:
-            return None
-
-        if version.lstrip("v") not in withdrawn_versions:
-            return None
-
-        return {
-            "component": name,
-            "current_version": version,
-            "purl": purl_str,
-            "severity": Severity.HIGH.value,
-            "message": (
-                f"Version {version} was withdrawn from the registry. "
-                "Installations should be replaced with a non-yanked release."
-            ),
-        }
-
-    async def _check_yanked(self, components: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """Flag components whose installed version was withdrawn upstream."""
-        findings: List[Dict[str, Any]] = []
+        missing_keys: List[str],
+        key_targets: Dict[str, Tuple[str, str]],
+        infos: Dict[str, Dict[str, Any]],
+    ) -> None:
+        """Fetch package documents for uncached packages, concurrently in batches."""
         timeout = ANALYZER_TIMEOUTS.get("outdated", ANALYZER_TIMEOUTS["default"])
+        batch_size = ANALYZER_BATCH_SIZES.get("outdated", 25)
 
         async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
-            for component in components:
-                finding = await self._check_yanked_component(client, component)
-                if finding is not None:
-                    findings.append(finding)
-        return findings
+            for i in range(0, len(missing_keys), batch_size):
+                batch = missing_keys[i : i + batch_size]
+                tasks = [self._fetch_package_info(client, cache_key, *key_targets[cache_key]) for cache_key in batch]
+                results: List[Any] = await asyncio.gather(*tasks, return_exceptions=True)
 
-    async def _get_withdrawn_versions(
+                for cache_key, result in zip(batch, results):
+                    if isinstance(result, Exception) or result is None:
+                        # Transient failure this scan: treat as "no signal".
+                        infos[cache_key] = {}
+                    else:
+                        infos[cache_key] = result
+
+                # Small delay between batches to avoid rate limits.
+                if i + batch_size < len(missing_keys):
+                    await asyncio.sleep(0.1)
+
+    async def _fetch_package_info(
+        self,
+        client: InstrumentedAsyncClient,
+        cache_key: str,
+        system: str,
+        deps_dev_name: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Fetch (once, cached, lock-protected) a package's default + withdrawn versions."""
+
+        async def fetch() -> Optional[Dict[str, Any]]:
+            data = await self._get_package_document(client, system, deps_dev_name)
+            if data is None:
+                return None
+            if not data:
+                return {}  # Negative cache for "package not found".
+            versions = data.get("versions", [])
+            return {
+                "default": self._find_default_version(versions),
+                "withdrawn": self._collect_withdrawn_versions(versions),
+            }
+
+        # Distributed lock prevents multiple pods fetching the same package.
+        info = await cache_service.get_or_fetch_with_lock(
+            key=cache_key,
+            fetch_fn=fetch,
+            ttl_seconds=CacheTTL.LATEST_VERSION,
+        )
+        return self._normalize_cached_info(info)
+
+    async def _get_package_document(
         self,
         client: InstrumentedAsyncClient,
         system: str,
-        package_name: str,
-    ) -> Optional[List[str]]:
-        """Cached list of withdrawn versions for a package.
+        deps_dev_name: str,
+    ) -> Optional[Dict[str, Any]]:
+        """Return the raw deps.dev package document.
 
-        Returns ``None`` on lookup failure so callers skip yanked detection
-        for that component rather than treating it as "not yanked".
+        ``None`` signals a transient failure (skip this scan); an empty dict
+        signals a definitive "not found" (safe to negative-cache).
         """
-        cache_key = f"yanked:{system}:{package_name}"
-        cached = await cache_service.get(cache_key)
-        if cached is not None:
-            return list(cached) if isinstance(cached, list) else []
-
-        url = f"{self.base_url}/{system}/packages/{quote(package_name, safe='')}"
+        url = f"{self.base_url}/{system}/packages/{quote(deps_dev_name, safe='')}"
         try:
             response = await client.get(url, follow_redirects=True)
             if response.status_code != 200:
-                return None
-            data = response.json()
+                return {}
+            return response.json()
         except (httpx.TimeoutException, httpx.ConnectError):
+            logger.debug(f"Timeout/connection error checking outdated for {deps_dev_name}")
             return None
-        except Exception:
-            logger.debug(f"Yanked check failed for {system}:{package_name}", exc_info=True)
+        except Exception as e:
+            logger.debug(f"Error checking outdated for {deps_dev_name}: {e}")
             return None
-
-        withdrawn = [
-            v
-            for entry in data.get("versions", [])
-            if entry.get("isWithdrawn") and (v := (entry.get("versionKey") or {}).get("version", ""))
-        ]
-        try:
-            await cache_service.set(cache_key, withdrawn, ttl_seconds=CacheTTL.LATEST_VERSION)
-        except Exception:
-            logger.debug("Cache set failed for yanked versions", exc_info=True)
-        return withdrawn
 
     def _classify_version(
         self,
@@ -178,6 +247,9 @@ class OutdatedAnalyzer(Analyzer):
         name = component.get("name", "")
         version = component.get("version", "")
         purl = component.get("purl", "")
+
+        if not version:
+            return
 
         if _is_older_than(version, latest_version):
             outdated.append(
@@ -206,87 +278,28 @@ class OutdatedAnalyzer(Analyzer):
                 }
             )
 
-    async def _fetch_and_classify(
-        self,
-        uncached_components: List[Dict[str, Any]],
-        outdated: List[Dict[str, Any]],
-        ahead: List[Dict[str, Any]],
-    ) -> None:
-        """Fetch latest versions for uncached components and classify them."""
-        timeout = ANALYZER_TIMEOUTS.get("outdated", ANALYZER_TIMEOUTS["default"])
+    def _build_yanked_finding(
+        self, component: Dict[str, Any], withdrawn_versions: List[str]
+    ) -> Optional[Dict[str, Any]]:
+        """Return a finding dict if the component's installed version was withdrawn, else None."""
+        version = component.get("version", "")
+        purl_str = component.get("purl", "")
+        if not version or not purl_str or not withdrawn_versions:
+            return None
 
-        async with InstrumentedAsyncClient("deps.dev API", timeout=timeout) as client:
-            batch_size = ANALYZER_BATCH_SIZES.get("outdated", 25)
-            for i in range(0, len(uncached_components), batch_size):
-                batch = uncached_components[i : i + batch_size]
-                tasks = [self._check_component_for_batch(client, comp) for comp in batch]
+        if version.lstrip("v") not in withdrawn_versions:
+            return None
 
-                component_results: List[Any] = await asyncio.gather(*tasks, return_exceptions=True)
-
-                for comp, result in zip(batch, component_results):
-                    if isinstance(result, Exception) or not result:
-                        continue
-                    # Remove internal fields before adding to results
-                    result_clean = {k: v for k, v in result.items() if not k.startswith("_")}
-                    if not result_clean:
-                        continue
-                    if result.get("_ahead"):
-                        ahead.append(result_clean)
-                    else:
-                        outdated.append(result_clean)
-
-                # Small delay between batches to avoid rate limits
-                if i + batch_size < len(uncached_components):
-                    await asyncio.sleep(0.1)
-
-    async def _get_cached_latest_versions(
-        self, components: List[Dict[str, Any]]
-    ) -> tuple[List[tuple[Dict[str, Any], str]], List[Dict[str, Any]]]:
-        """Check cache for latest versions, return cached and uncached components."""
-        cached_results = []
-        uncached_components = []
-
-        # Build cache keys
-        cache_keys = []
-        component_map: Dict[str, Any] = {}
-        skipped_count = 0
-
-        for component in components:
-            purl = component.get("purl", "")
-
-            parsed = parse_purl(purl)
-            if not parsed or not parsed.registry_system:
-                skipped_count += 1
-                continue
-
-            cache_key = CacheKeys.latest_version(parsed.registry_system, parsed.deps_dev_name)
-            cache_keys.append(cache_key)
-            component_map[cache_key] = component
-
-        if skipped_count > 0:
-            logger.debug(f"Outdated: Skipped {skipped_count} components without valid registry system")
-
-        if not cache_keys:
-            return [], components
-
-        # Batch get from Redis
-        cached_data: Dict[str, Any] = await cache_service.mget(cache_keys)
-
-        for cache_key, latest_version in cached_data.items():
-            cached_comp = component_map.get(cache_key)
-            if not cached_comp:
-                continue
-
-            # Distinguish between "not cached" (None) and "cached empty" ("")
-            if latest_version is not None:
-                if latest_version:  # Non-empty cached value
-                    cached_results.append((cached_comp, latest_version))
-                # Empty string = negative cache, skip without re-fetching
-            else:
-                # None = not in cache, need to fetch
-                uncached_components.append(cached_comp)
-
-        return cached_results, uncached_components
+        return {
+            "component": component.get("name", ""),
+            "current_version": version,
+            "purl": purl_str,
+            "severity": Severity.HIGH.value,
+            "message": (
+                f"Version {version} was withdrawn from the registry. "
+                "Installations should be replaced with a non-yanked release."
+            ),
+        }
 
     def _find_default_version(self, versions_info: List[Any]) -> Optional[str]:
         """Find the version marked as default (usually the latest stable)."""
@@ -296,91 +309,11 @@ class OutdatedAnalyzer(Analyzer):
                 return str(version) if version is not None else None
         return None
 
-    def _build_outdated_result(
-        self, name: str, version: str, latest_version: Optional[str], purl_str: str, cache_key: str
-    ) -> Optional[Dict[str, Any]]:
-        """Build result dict based on whether the version is outdated or ahead."""
-        if not latest_version:
-            return None
-
-        base = {"_cache_key": cache_key, "_latest_version": latest_version}
-
-        if _is_older_than(version, latest_version):
-            return {
-                **base,
-                "component": name,
-                "current_version": version,
-                "latest_version": latest_version,
-                "purl": purl_str,
-                "severity": Severity.INFO.value,
-                "message": f"Update available: {latest_version}",
-            }
-
-        if _is_ahead_of(version, latest_version):
-            return {
-                **base,
-                "_ahead": True,
-                "component": name,
-                "current_version": version,
-                "default_version": latest_version,
-                "purl": purl_str,
-                "severity": Severity.INFO.value,
-                "message": (
-                    f"Installed {version} is newer than the registry default "
-                    f"{latest_version}. The registry may not have flagged this "
-                    f"release as default yet."
-                ),
-            }
-
-        # Version matches default — metadata only
-        return base
-
-    async def _check_component_for_batch(
-        self, client: InstrumentedAsyncClient, component: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
-        """Check component and return result with distributed lock to prevent stampede."""
-        purl_str = component.get("purl", "")
-        # Fallback name/version if parse fails (though parse is better)
-        name = component.get("name", "")
-        version = component.get("version", "")
-
-        parsed = parse_purl(purl_str)
-        if not parsed:
-            return None
-
-        system = parsed.registry_system
-        if not system or not version:
-            return None
-
-        cache_key = CacheKeys.latest_version(system, parsed.deps_dev_name)
-
-        async def fetch_latest_version() -> Optional[str]:
-            """Fetch latest version from deps.dev API."""
-            encoded_name = quote(parsed.deps_dev_name, safe="")
-            url = f"{self.base_url}/{system}/packages/{encoded_name}"
-
-            try:
-                response = await client.get(url, follow_redirects=True)
-                if response.status_code == 200:
-                    data = response.json()
-                    latest = self._find_default_version(data.get("versions", []))
-                    return latest if latest else ""
-                return ""  # Empty string for negative cache
-            except httpx.TimeoutException:
-                logger.debug(f"Timeout checking outdated for {name}")
-                return None
-            except httpx.ConnectError:
-                logger.debug(f"Connection error checking outdated for {name}")
-                return None
-            except Exception as e:
-                logger.debug(f"Error checking outdated for {name}: {e}")
-                return None
-
-        # Use distributed lock to prevent multiple pods fetching same package
-        latest_version = await cache_service.get_or_fetch_with_lock(
-            key=cache_key,
-            fetch_fn=fetch_latest_version,
-            ttl_seconds=CacheTTL.LATEST_VERSION,
-        )
-
-        return self._build_outdated_result(name, version, latest_version, purl_str, cache_key)
+    @staticmethod
+    def _collect_withdrawn_versions(versions_info: List[Any]) -> List[str]:
+        """Collect the version strings marked ``isWithdrawn`` in a deps.dev payload."""
+        return [
+            v
+            for entry in versions_info or []
+            if entry.get("isWithdrawn") and (v := (entry.get("versionKey") or {}).get("version", ""))
+        ]

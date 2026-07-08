@@ -1,8 +1,5 @@
-"""
-CryptoHotspotService
-
-Aggregates crypto_assets + findings into HotspotResponse for α/β/γ scopes.
-Five grouping dimensions: name, primitive, asset_type, weakness_tag, severity.
+"""Aggregate crypto_assets + findings into HotspotResponse, grouped by one of
+name, primitive, asset_type, weakness_tag, or severity.
 """
 
 import hashlib
@@ -87,9 +84,8 @@ class CryptoHotspotService:
         group_by: GroupBy,
         limit: int,
     ) -> List[HotspotEntry]:
-        # severity and weakness_tag are properties of findings, not assets,
-        # so the aggregation pivots accordingly. Asset-bound dimensions
-        # (name/primitive/asset_type) keep the asset-first pipeline.
+        # severity/weakness_tag live on findings, not assets, so they use a
+        # finding-first pipeline; the rest stay asset-first.
         if group_by in ("severity", "weakness_tag"):
             return await self._aggregate_by_finding_dimension(
                 project_ids=project_ids,
@@ -98,7 +94,9 @@ class CryptoHotspotService:
                 limit=limit,
             )
 
-        match: Dict[str, Any] = {"scan_id": {"$in": scan_ids}} if scan_ids else {}
+        # Empty scan_ids must match nothing ($in: []), not disable the filter
+        # (which would aggregate every historical scan).
+        match: Dict[str, Any] = {"scan_id": {"$in": scan_ids}}
         if project_ids is not None:
             match["project_id"] = {"$in": project_ids}
 
@@ -110,7 +108,10 @@ class CryptoHotspotService:
                     "_id": group_key,
                     "asset_count": {"$sum": 1},
                     "project_ids": {"$addToSet": "$project_id"},
-                    "locations": {"$push": "$occurrence_locations"},
+                    # Cap locations in-pipeline: $push of every occurrence_locations array
+                    # can exceed MongoDB's 16MB group-doc limit on hot groups, and we only
+                    # surface 20. $firstN (MongoDB 5.2+) keeps <=20 arrays, flattened below.
+                    "locations": {"$firstN": {"input": "$occurrence_locations", "n": 20}},
                     "first_seen": {"$min": "$created_at"},
                     "last_seen": {"$max": "$created_at"},
                 }
@@ -122,7 +123,7 @@ class CryptoHotspotService:
         now = datetime.now(timezone.utc)
         out: List[HotspotEntry] = []
         async for row in self.db.crypto_assets.aggregate(asset_pipeline):
-            key = self._key_from_row(row, group_by)
+            key = self._key_from_row(row)
             if key is None:
                 continue
             locations_flat: List[str] = []
@@ -156,17 +157,17 @@ class CryptoHotspotService:
         group_by: GroupBy,
         limit: int,
     ) -> List[HotspotEntry]:
-        """Aggregate hotspots whose grouping dimension lives on findings.
+        """Aggregate hotspots whose grouping dimension lives on findings (severity/weakness_tag).
 
-        For 'severity' we group findings by severity. For 'weakness_tag'
-        we unwind details.weakness_tags (populated by the protocol_cipher
-        analyzer) and group by tag. asset_count is the number of distinct
-        bom_refs contributing to the group, finding_count the raw match
-        count.
+        asset_count is the count of distinct bom_refs; finding_count the raw match count.
         """
-        match: Dict[str, Any] = {"type": {"$regex": "^crypto_"}}
-        if scan_ids:
-            match["scan_id"] = {"$in": scan_ids}
+        # Exclude waived findings (a risk decision, not current posture) so hotspots
+        # agree with crypto_trends. Empty scan_ids matches nothing ($in: []).
+        match: Dict[str, Any] = {
+            "type": {"$regex": "^crypto_"},
+            "waived": {"$ne": True},
+            "scan_id": {"$in": scan_ids},
+        }
         if project_ids is not None:
             match["project_id"] = {"$in": project_ids}
 
@@ -245,20 +246,17 @@ class CryptoHotspotService:
 
     def _group_key_stage(self, group_by: GroupBy) -> Any:
         if group_by == "name":
-            return {"name": "$name", "variant": "$variant"}
+            # Group on the bare asset name: findings carry details.asset_name == asset.name
+            # (no variant), and _enrich_with_findings must join on the same bare name.
+            return "$name"
         if group_by == "primitive":
             return "$primitive"
         if group_by == "asset_type":
             return "$asset_type"
-        # severity / weakness_tag take the finding-based path; not used here.
         return None
 
-    def _key_from_row(self, row: Dict[str, Any], group_by: GroupBy) -> Optional[str]:
+    def _key_from_row(self, row: Dict[str, Any]) -> Optional[str]:
         key = row.get("_id")
-        if group_by == "name" and isinstance(key, dict):
-            name = key.get("name") or ""
-            variant = key.get("variant") or ""
-            return f"{name}-{variant}".rstrip("-") if name else None
         if isinstance(key, str) and key:
             return key
         return None
@@ -274,12 +272,13 @@ class CryptoHotspotService:
             return
         join_field = self._finding_join_field(group_by)
         if join_field is None:
-            # severity/weakness_tag don't have a clean per-asset join into findings;
-            # leave finding_count/severity_mix at their defaults.
+            # severity/weakness_tag have no clean per-asset join; leave defaults.
             return
         match: Dict[str, Any] = {
             "scan_id": {"$in": scan_ids},
             "type": {"$regex": "^crypto_"},
+            # Exclude waived findings to match crypto_trends posture semantics.
+            "waived": {"$ne": True},
         }
         if project_ids is not None:
             match["project_id"] = {"$in": project_ids}
@@ -312,12 +311,7 @@ class CryptoHotspotService:
 
     @staticmethod
     def _finding_join_field(group_by: GroupBy) -> Optional[str]:
-        """Map a hotspot grouping dimension to the matching findings field.
-
-        The crypto analyzer copies asset_name / asset_type / primitive into
-        finding.details, so we group findings on the same dimension as the
-        asset aggregation to make the enrichment join cleanly.
-        """
+        """Map a hotspot grouping dimension to the matching findings.details field."""
         if group_by == "name":
             return "$details.asset_name"
         if group_by == "primitive":

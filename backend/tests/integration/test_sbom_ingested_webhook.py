@@ -1,9 +1,4 @@
-"""Integration test: SBOM ingest fires an ``sbom.ingested`` webhook event.
-
-Mirrors test_crypto_asset_ingested_webhook for the SBOM ingest path. We
-monkeypatch ``webhook_service.trigger_webhooks`` with a spy to assert the
-correct event name and payload shape without making real HTTP calls.
-"""
+"""SBOM ingest fires an sbom.ingested webhook; trigger_webhooks is spied to assert event name and payload shape."""
 
 from unittest.mock import patch
 
@@ -12,7 +7,6 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_sbom_ingested_dispatches_webhook(client, db, api_key_headers):
-    """POST /api/v1/ingest fires sbom.ingested with the scan summary."""
     dispatched_calls: list = []
 
     def _capture_trigger(inner_db, event_type, payload, project_id=None):

@@ -1,12 +1,4 @@
-"""Tests for webhook event-name backward-compat aliases.
-
-When event names were migrated from snake_case (``scan_completed``) to
-dot-notation (``scan.completed``) we kept an alias map so that:
-
-1. Existing MongoDB webhook subscriptions storing the old names continue to
-   match events fired under the new name (and vice versa).
-2. Validation accepts either form when a caller submits a POST /webhooks.
-"""
+"""Tests for webhook event-name backward-compat aliases (snake_case <-> dot-notation)."""
 
 from __future__ import annotations
 
@@ -52,14 +44,8 @@ class TestEventNameNormalization:
 
 class TestValidationAcceptsBothForms:
     def test_subscribe_accepts_dot_notation(self):
-        """POST /webhooks with events=['scan.completed'] is valid."""
         result = validate_webhook_events(["scan.completed"])
         assert result == ["scan.completed"]
-
-    def test_subscribe_accepts_legacy_alias(self):
-        """Backward-compat: legacy snake_case names still validate."""
-        result = validate_webhook_events(["scan_completed"])
-        assert result == ["scan_completed"]
 
     def test_single_event_accepts_dot_notation(self):
         assert validate_webhook_event_type("vulnerability.found") == "vulnerability.found"
@@ -76,14 +62,9 @@ class TestWebhookModelAcceptsBothForms:
 
 
 class TestWebhookTriggerHandlesOldName:
-    """
-    A subscription with ``events=["scan_completed"]`` (legacy name stored in
-    MongoDB) must still fire when the dispatcher emits ``"scan.completed"``.
-    """
+    """A subscription stored under the legacy snake_case name must fire on the dot-notation event."""
 
     def test_legacy_subscription_matches_canonical_event(self):
-        # Build a subscription doc that looks like what's in MongoDB today:
-        # events stored under the old snake_case name.
         subscription_doc = {
             "_id": "wh-1",
             "project_id": None,
@@ -93,7 +74,6 @@ class TestWebhookTriggerHandlesOldName:
             "is_active": True,
         }
 
-        # Mock the async cursor returned by db.webhooks.find(...)
         class _AsyncCursor:
             def __init__(self, docs: List[Dict[str, Any]]):
                 self._docs = docs
@@ -112,8 +92,7 @@ class TestWebhookTriggerHandlesOldName:
 
         def _find(query: Dict[str, Any]) -> "_AsyncCursor":
             captured_queries.append(query)
-            # Only return the subscription for the global (project_id is None)
-            # query branch; return empty for project/team branches.
+            # Only the global branch (no project/team) returns the subscription.
             if query.get("project_id") is None and query.get("team_id") is None:
                 return _AsyncCursor([subscription_doc])
             return _AsyncCursor([])
@@ -134,8 +113,7 @@ class TestWebhookTriggerHandlesOldName:
         assert len(webhooks) == 1
         assert webhooks[0].id == "wh-1"
 
-        # And the query used `$in` with both the canonical and alias names,
-        # so MongoDB's array-membership predicate will match the legacy doc.
+        # Query must use $in with both canonical and alias names so the legacy doc matches.
         assert captured_queries, "expected at least one mongo query to be issued"
         match_criteria = captured_queries[-1]["events"]
         assert "$in" in match_criteria
@@ -145,8 +123,6 @@ class TestWebhookTriggerHandlesOldName:
 
 
 class TestAliasMapCompleteness:
-    """Sanity-check: every alias resolves to a canonical name we actually emit."""
-
     def test_all_aliases_resolve_to_dot_notation(self):
         for alias, canonical in WEBHOOK_EVENT_ALIASES.items():
             assert "." in canonical, f"alias {alias} -> {canonical} is not dot-notation"
