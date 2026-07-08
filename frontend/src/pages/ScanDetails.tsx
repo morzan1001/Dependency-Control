@@ -467,35 +467,37 @@ export default function ScanDetails() {
       </div>
 
             <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-4">
-        <TabsList>
-            <TabsTrigger value="overview">All Findings</TabsTrigger>
-            {showSecurity && <TabsTrigger value="security">Security</TabsTrigger>}
-            {showSecrets && <TabsTrigger value="secrets">Secrets</TabsTrigger>}
-            {showSast && <TabsTrigger value="sast">SAST</TabsTrigger>}
-            {showCompliance && <TabsTrigger value="compliance">Compliance</TabsTrigger>}
-            {showQuality && <TabsTrigger value="quality">Quality</TabsTrigger>}
+        <div className="flex items-center justify-between gap-4 flex-wrap">
+            <TabsList>
+                <TabsTrigger value="overview">All Findings</TabsTrigger>
+                {showSecurity && <TabsTrigger value="security">Security</TabsTrigger>}
+                {showSecrets && <TabsTrigger value="secrets">Secrets</TabsTrigger>}
+                {showSast && <TabsTrigger value="sast">SAST</TabsTrigger>}
+                {showCompliance && <TabsTrigger value="compliance">Compliance</TabsTrigger>}
+                {showQuality && <TabsTrigger value="quality">Quality</TabsTrigger>}
 
-            <TabsTrigger value="raw">Raw Data</TabsTrigger>
-        </TabsList>
+                <TabsTrigger value="raw">Raw Data</TabsTrigger>
+            </TabsList>
 
-        {activeTab !== 'raw' && (
-            <div className="flex items-center gap-4 flex-wrap">
-                <span className="text-sm text-muted-foreground">Filter:</span>
-                <div className="flex items-center space-x-2">
-                    <Checkbox id="filter-direct-only" checked={directOnly} onCheckedChange={(c) => setDirectOnly(c === true)} />
-                    <label htmlFor="filter-direct-only" className="text-sm cursor-pointer">Only direct dependencies</label>
+            {activeTab !== 'raw' && (
+                <div className="flex items-center gap-4 flex-wrap">
+                    <span className="text-sm text-muted-foreground">Filter:</span>
+                    <div className="flex items-center space-x-2">
+                        <Checkbox id="filter-direct-only" checked={directOnly} onCheckedChange={(c) => setDirectOnly(c === true)} />
+                        <label htmlFor="filter-direct-only" className="text-sm cursor-pointer">Only direct dependencies</label>
+                    </div>
+                    <div className="flex items-center space-x-2">
+                        <Checkbox id="filter-hide-info" checked={hideInfo} onCheckedChange={(c) => setHideInfo(c === true)} />
+                        <label htmlFor="filter-hide-info" className="text-sm cursor-pointer">Hide informational</label>
+                    </div>
+                    {hasFindingsFilter && (
+                        <Button variant="ghost" size="sm" onClick={() => { setDirectOnly(false); setHideInfo(false); }} className="gap-1">
+                            <X className="h-3 w-3" /> Clear
+                        </Button>
+                    )}
                 </div>
-                <div className="flex items-center space-x-2">
-                    <Checkbox id="filter-hide-info" checked={hideInfo} onCheckedChange={(c) => setHideInfo(c === true)} />
-                    <label htmlFor="filter-hide-info" className="text-sm cursor-pointer">Hide informational</label>
-                </div>
-                {hasFindingsFilter && (
-                    <Button variant="ghost" size="sm" onClick={() => { setDirectOnly(false); setHideInfo(false); }} className="gap-1">
-                        <X className="h-3 w-3" /> Clear
-                    </Button>
-                )}
-            </div>
-        )}
+            )}
+        </div>
 
         <TabsContent value="overview" className="space-y-4">
             <FindingsTable scanId={scanId!} projectId={projectId!} severity={severityFilter} scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
