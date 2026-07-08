@@ -4,7 +4,7 @@ import {
     SearchResult,
     AnalyticsSummary,
     DependencyUsage,
-    DependencyTreeNode,
+    DependencyGraph,
     ImpactAnalysisResult,
     VulnerabilityHotspot,
     HotspotsQueryParams,
@@ -43,9 +43,9 @@ export const analyticsApi = {
         return response.data;
     },
 
-    getDependencyTree: async (projectId: string, scanId?: string): Promise<DependencyTreeNode[]> => {
+    getDependencyTree: async (projectId: string, scanId?: string): Promise<DependencyGraph> => {
         const params = buildQueryParams({ scan_id: scanId });
-        const response = await api.get<DependencyTreeNode[]>(`/analytics/projects/${projectId}/dependency-tree`, { params });
+        const response = await api.get<DependencyGraph>(`/analytics/projects/${projectId}/dependency-tree`, { params });
         return response.data;
     },
 

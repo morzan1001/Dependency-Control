@@ -23,6 +23,7 @@ from app.repositories import (
     ProjectRepository,
 )
 from app.schemas.analytics import (
+    DependencyGraph,
     DependencyMetadata,
     DependencyTreeNode,
     SeverityBreakdown,
@@ -33,18 +34,13 @@ from ._shared import _MSG_ACCESS_DENIED, _get_enrichment_info, _resolve_scan_id
 
 router = CustomAPIRouter()
 
-# Bounds the emitted tree: a package pulled in by many parents duplicates its subtree
-# under each, so a dense graph could otherwise blow up the response.
-_MAX_TREE_NODES = 5000
-
-
 def _dep_key(dep: Any) -> str:
     """Node identity for parent matching: PURL (parent_components hold PURLs, as in graph.py), else name@version."""
     return get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
 
 
 def _build_tree_node(dep: Any, findings_map: Dict[str, Dict[str, int]]) -> DependencyTreeNode:
-    """Build one tree node without children; the recursive builder attaches children."""
+    """Build one node without its children; the graph builder fills in child_ids."""
     name = get_attr(dep, "name", "")
     finding_info = findings_map.get(name, {})
 
@@ -73,72 +69,76 @@ def _build_tree_node(dep: Any, findings_map: Dict[str, Dict[str, int]]) -> Depen
         source_target=get_attr(dep, "source_target"),
         layer_digest=get_attr(dep, "layer_digest"),
         locations=get_attr(dep, "locations", []),
-        children=[],
+        child_ids=[],
     )
 
 
-def _build_dependency_tree(
+def _build_dependency_graph(
     dependencies: List[Any], findings_map: Dict[str, Dict[str, int]]
-) -> List[DependencyTreeNode]:
-    """Nest transitive deps under their direct-dep roots via parent_components; unreached deps become flat roots."""
-    nodes_by_key: Dict[str, Any] = {}
+) -> DependencyGraph:
+    """Flatten deps into unique nodes + child_ids so the client nests them lazily on expand.
+
+    parent_components hold parent PURLs (as in graph.py), so a node's children are the deps
+    that name it as a parent. roots collects direct deps, deps whose parent does not resolve,
+    and any node not reachable from those — so every node stays reachable, none is dropped.
+    """
+    node_by_key: Dict[str, DependencyTreeNode] = {}
+    dep_by_key: Dict[str, Any] = {}
     order: List[str] = []
     for dep in dependencies:
         key = _dep_key(dep)
-        if key not in nodes_by_key:
-            nodes_by_key[key] = dep
+        if key not in node_by_key:
+            node_by_key[key] = _build_tree_node(dep, findings_map)
+            dep_by_key[key] = dep
             order.append(key)
 
     children_by_parent: Dict[str, List[str]] = {}
-    for dep in dependencies:
-        child_key = _dep_key(dep)
-        for parent in get_attr(dep, "parent_components", []) or []:
+    for key in order:
+        for parent in get_attr(dep_by_key[key], "parent_components", []) or []:
             siblings = children_by_parent.setdefault(parent, [])
-            if child_key not in siblings:
-                siblings.append(child_key)
+            if key not in siblings:
+                siblings.append(key)
 
-    placed: set = set()
-    emitted = {"count": 0}
+    for key in order:
+        child_keys = [ck for ck in children_by_parent.get(key, []) if ck in node_by_key]
+        child_keys.sort(key=lambda ck: node_by_key[ck].findings_count, reverse=True)
+        node_by_key[key].child_ids = [node_by_key[ck].id for ck in child_keys]
 
-    def build(key: str, on_path: frozenset) -> DependencyTreeNode:
-        placed.add(key)
-        node = _build_tree_node(nodes_by_key[key], findings_map)
-        emitted["count"] += 1
-        children: List[DependencyTreeNode] = []
-        for child_key in children_by_parent.get(key, []):
-            if child_key in on_path:  # cycle: child is already an ancestor on this path
-                continue
-            if emitted["count"] >= _MAX_TREE_NODES:
-                break
-            children.append(build(child_key, on_path | {child_key}))
-        children.sort(key=lambda n: n.findings_count, reverse=True)
-        node.children = children
-        return node
+    def _has_resolvable_parent(key: str) -> bool:
+        return any(p in node_by_key for p in (get_attr(dep_by_key[key], "parent_components", []) or []))
 
-    direct_keys = [key for key in order if get_attr(nodes_by_key[key], "direct", False)]
-    roots = [build(key, frozenset({key})) for key in direct_keys]
-
-    # Deps not reached from any direct root: unresolved parent, no dependency graph, or a
-    # disconnected cycle. Build the subtree roots among them so resolvable descendants still
-    # nest; a dep whose parent is itself such an orphan nests under it rather than twice.
-    unreached = [
-        key for key in order if key not in placed and not get_attr(nodes_by_key[key], "direct", False)
+    root_keys = [
+        key
+        for key in order
+        if get_attr(dep_by_key[key], "direct", False) or not _has_resolvable_parent(key)
     ]
-    unreached_set = set(unreached)
-    orphans: List[DependencyTreeNode] = []
-    for key in unreached:
-        parents = get_attr(nodes_by_key[key], "parent_components", []) or []
-        if key in placed or any(p in unreached_set for p in parents):
-            continue
-        orphans.append(build(key, frozenset({key})))
-    # Disconnected cycles have no entry point above; emit the remainder so nothing is dropped.
-    for key in unreached:
-        if key not in placed:
-            orphans.append(build(key, frozenset({key})))
 
-    roots.sort(key=lambda n: n.findings_count, reverse=True)
-    orphans.sort(key=lambda n: n.findings_count, reverse=True)
-    return roots + orphans
+    # Keep every node reachable: pull in any node not reachable from the roots above (e.g. a
+    # fully disconnected cycle) as an extra root, then walk its component so its descendants
+    # are not added again.
+    reachable: set = set()
+
+    def _mark_reachable(start: str) -> None:
+        stack = [start]
+        while stack:
+            key = stack.pop()
+            if key in reachable:
+                continue
+            reachable.add(key)
+            stack.extend(ck for ck in children_by_parent.get(key, []) if ck in node_by_key)
+
+    for key in root_keys:
+        _mark_reachable(key)
+    for key in order:
+        if key not in reachable:
+            root_keys.append(key)
+            _mark_reachable(key)
+
+    root_keys.sort(key=lambda k: node_by_key[k].findings_count, reverse=True)
+    return DependencyGraph(
+        nodes=[node_by_key[key] for key in order],
+        roots=[node_by_key[key].id for key in root_keys],
+    )
 
 
 @router.get("/projects/{project_id}/dependency-tree", responses=RESP_AUTH)
@@ -147,8 +147,8 @@ async def get_dependency_tree(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     scan_id: Annotated[Optional[str], Query(description="Specific scan ID, defaults to latest")] = None,
-) -> List[DependencyTreeNode]:
-    """Get dependency tree for a project showing direct and transitive dependencies."""
+) -> DependencyGraph:
+    """Get the dependency graph for a project as flat nodes + roots (client nests lazily)."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_TREE)
 
     dep_repo = DependencyRepository(db)
@@ -162,12 +162,12 @@ async def get_dependency_tree(
         scan_id = await _resolve_scan_id(project_id, db)
 
     if not scan_id:
-        return []
+        return DependencyGraph()
 
     dependencies = await dep_repo.find_by_scan(scan_id)
 
     if not dependencies:
-        return []
+        return DependencyGraph()
 
     findings = await finding_repo.find_many(
         {"scan_id": scan_id, "type": "vulnerability"},
@@ -175,7 +175,7 @@ async def get_dependency_tree(
     )
     findings_map = build_findings_severity_map(findings)
 
-    return _build_dependency_tree(dependencies, findings_map)
+    return _build_dependency_graph(dependencies, findings_map)
 
 
 @router.get("/component-findings", responses=RESP_AUTH)

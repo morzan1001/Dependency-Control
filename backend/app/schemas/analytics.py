@@ -42,7 +42,7 @@ class DependencyUsage(BaseModel):
 
 
 class DependencyTreeNode(BaseModel):
-    """Node in a dependency tree with findings info."""
+    """A dependency and the ids of its direct children; the client expands children lazily."""
 
     id: str
     name: str
@@ -54,11 +54,22 @@ class DependencyTreeNode(BaseModel):
     has_findings: bool
     findings_count: int
     findings_severity: Optional[SeverityBreakdown] = None
-    children: List["DependencyTreeNode"] = []
+    child_ids: List[str] = []
     source_type: Optional[str] = None
     source_target: Optional[str] = None
     layer_digest: Optional[str] = None
     locations: List[str] = []
+
+
+class DependencyGraph(BaseModel):
+    """Flat set of unique dependency nodes plus the ids to render at the top level.
+
+    Every node is reachable from ``roots`` (direct deps, deps with an unresolved parent, and
+    any otherwise-disconnected node), so the client can render the whole graph without the
+    server pre-nesting or capping it — nothing is dropped or hidden."""
+
+    nodes: List[DependencyTreeNode] = []
+    roots: List[str] = []
 
 
 class ImpactAnalysisResult(BaseModel):
