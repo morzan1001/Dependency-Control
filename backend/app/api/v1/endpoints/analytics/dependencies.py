@@ -76,25 +76,25 @@ def _build_tree_node(dep: Any, findings_map: Dict[str, Dict[str, int]]) -> Depen
 def _build_dependency_graph(
     dependencies: List[Any], findings_map: Dict[str, Dict[str, int]]
 ) -> DependencyGraph:
-    """Flatten deps into unique nodes + child_ids so the client nests them lazily on expand.
-
-    parent_components hold parent PURLs (as in graph.py), so a node's children are the deps
-    that name it as a parent. roots collects direct deps, deps whose parent does not resolve,
-    and any node not reachable from those — so every node stays reachable, none is dropped.
-    """
+    """Flatten deps into unique nodes + per-node child_ids and roots so the client nests lazily."""
     node_by_key: Dict[str, DependencyTreeNode] = {}
-    dep_by_key: Dict[str, Any] = {}
     order: List[str] = []
+    # A purl can appear in several docs (e.g. one per container layer) with different
+    # parent_components; merge every doc's parents so no parent -> child edge is lost.
+    parents_by_key: Dict[str, List[str]] = {}
     for dep in dependencies:
         key = _dep_key(dep)
         if key not in node_by_key:
             node_by_key[key] = _build_tree_node(dep, findings_map)
-            dep_by_key[key] = dep
             order.append(key)
+        known = parents_by_key.setdefault(key, [])
+        for parent in get_attr(dep, "parent_components", []) or []:
+            if parent not in known:
+                known.append(parent)
 
     children_by_parent: Dict[str, List[str]] = {}
     for key in order:
-        for parent in get_attr(dep_by_key[key], "parent_components", []) or []:
+        for parent in parents_by_key.get(key, []):
             siblings = children_by_parent.setdefault(parent, [])
             if key not in siblings:
                 siblings.append(key)
@@ -104,36 +104,39 @@ def _build_dependency_graph(
         child_keys.sort(key=lambda ck: node_by_key[ck].findings_count, reverse=True)
         node_by_key[key].child_ids = [node_by_key[ck].id for ck in child_keys]
 
-    def _has_resolvable_parent(key: str) -> bool:
-        return any(p in node_by_key for p in (get_attr(dep_by_key[key], "parent_components", []) or []))
-
-    root_keys = [
-        key
-        for key in order
-        if get_attr(dep_by_key[key], "direct", False) or not _has_resolvable_parent(key)
-    ]
-
-    # Keep every node reachable: pull in any node not reachable from the roots above (e.g. a
-    # fully disconnected cycle) as an extra root, then walk its component so its descendants
-    # are not added again.
-    reachable: set = set()
-
-    def _mark_reachable(start: str) -> None:
+    def _closure(start: str) -> set:
+        seen: set = set()
         stack = [start]
         while stack:
             key = stack.pop()
-            if key in reachable:
+            if key in seen:
                 continue
-            reachable.add(key)
+            seen.add(key)
             stack.extend(ck for ck in children_by_parent.get(key, []) if ck in node_by_key)
+        return seen
 
+    def _has_resolvable_parent(key: str) -> bool:
+        return any(p in node_by_key for p in parents_by_key.get(key, []))
+
+    reachable: set = set()
+    root_keys = [
+        key for key in order if node_by_key[key].direct or not _has_resolvable_parent(key)
+    ]
     for key in root_keys:
-        _mark_reachable(key)
+        reachable |= _closure(key)
+
+    # Whatever is still unreachable belongs to a component with no natural entry (a fully
+    # disconnected cycle). Promote one entry per component and drop any extra root its subtree
+    # already covers, so a descendant seen before its component's entry is not left as a root.
+    extra_roots: List[str] = []
     for key in order:
         if key not in reachable:
-            root_keys.append(key)
-            _mark_reachable(key)
+            component = _closure(key)
+            extra_roots = [r for r in extra_roots if r not in component]
+            extra_roots.append(key)
+            reachable |= component
 
+    root_keys += extra_roots
     root_keys.sort(key=lambda k: node_by_key[k].findings_count, reverse=True)
     return DependencyGraph(
         nodes=[node_by_key[key] for key in order],

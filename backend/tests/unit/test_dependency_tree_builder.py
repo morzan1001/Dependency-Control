@@ -92,7 +92,7 @@ class TestDependencyGraphBuilder:
 
         graph = _build_dependency_graph([a, b, c], {})
 
-        assert len(graph.roots) >= 1
+        assert len(graph.roots) == 1  # one entry for the component, not every node
         assert _reachable_ids(graph) == {n.id for n in graph.nodes}
 
     def test_unresolved_parent_becomes_a_root(self):
@@ -162,4 +162,42 @@ class TestDependencyGraphBuilder:
         graph = _build_dependency_graph([a, b, c, orphan], {})
 
         assert _reachable_ids(graph) == {n.id for n in graph.nodes}
+        # Resolvable transitives (b, c) must not leak into roots.
+        assert set(_root_names(graph)) == {"a", "orphan"}
         assert _child_names(graph, _by_name(graph)["b"]) == ["c"]
+
+    def test_disconnected_cycle_with_tail_yields_single_root(self):
+        # d hangs off a cycle a->b->c->a; even when d precedes its component entry in input
+        # order, d must not be promoted to a top-level root (it is reachable via a).
+        d = _dep("d", parents=["pkg:pypi/a@1.0.0"])
+        a = _dep("a", parents=["pkg:pypi/c@1.0.0"])
+        b = _dep("b", parents=[a["purl"]])
+        c = _dep("c", parents=[b["purl"]])
+
+        graph = _build_dependency_graph([d, a, b, c], {})
+
+        assert len(graph.roots) == 1
+        assert "d" not in _root_names(graph)
+        assert _reachable_ids(graph) == {n.id for n in graph.nodes}
+
+    def test_duplicate_purl_across_sboms_merges_parent_edges(self):
+        # The same purl can arrive in several SBOMs (e.g. container layers) with different
+        # parents; every parent -> child edge must survive the per-purl dedup.
+        a = _dep("a", direct=True)
+        c = _dep("c", direct=True)
+        x_from_sbom1 = _dep("x", parents=[a["purl"]])
+        x_from_sbom2 = _dep("x", parents=[c["purl"]])
+
+        graph = _build_dependency_graph([a, c, x_from_sbom1, x_from_sbom2], {})
+
+        by_name = _by_name(graph)
+        assert sum(1 for n in graph.nodes if n.name == "x") == 1  # x deduped to one node
+        assert _child_names(graph, by_name["a"]) == ["x"]
+        assert _child_names(graph, by_name["c"]) == ["x"]
+
+    def test_findings_absent_yields_no_severity(self):
+        node = _by_name(_build_dependency_graph([_dep("a", direct=True)], {}))["a"]
+
+        assert node.has_findings is False
+        assert node.findings_count == 0
+        assert node.findings_severity is None

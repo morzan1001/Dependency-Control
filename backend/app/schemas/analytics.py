@@ -62,12 +62,10 @@ class DependencyTreeNode(BaseModel):
 
 
 class DependencyGraph(BaseModel):
-    """Flat set of unique dependency nodes plus the ids to render at the top level.
+    """Flat unique dependency nodes + the ids to render at top level; the client nests lazily."""
 
-    Every node is reachable from ``roots`` (direct deps, deps with an unresolved parent, and
-    any otherwise-disconnected node), so the client can render the whole graph without the
-    server pre-nesting or capping it — nothing is dropped or hidden."""
-
+    # Every node is reachable from roots (direct deps, unresolved-parent deps, one entry per
+    # otherwise-disconnected component), so the graph is rendered whole without server nesting.
     nodes: List[DependencyTreeNode] = []
     roots: List[str] = []
 
