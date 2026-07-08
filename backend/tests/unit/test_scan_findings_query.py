@@ -92,3 +92,30 @@ class TestScanFindingsPipelineKeepsId:
         assert data_project.get("_id") == 0
         # first_scanner sort-helper must not leak into the response
         assert data_project.get("first_scanner") == 0
+
+
+class TestScanFindingsDirectOnly:
+    """direct_only drops findings on transitive dependencies but keeps direct and non-dependency findings."""
+
+    def _pipeline(self, direct_only: bool):
+        from app.api.v1.endpoints.projects import _build_scan_findings_pipeline
+
+        return _build_scan_findings_pipeline(
+            {"scan_id": "s"}, sort_by="severity", sort_order="desc", skip=0, limit=50, direct_only=direct_only
+        )
+
+    def test_direct_only_adds_direct_match_after_addfields(self):
+        pipeline = self._pipeline(True)
+        addfields_idx = next(i for i, st in enumerate(pipeline) if "$addFields" in st)
+        direct_matches = [
+            i for i, st in enumerate(pipeline) if st.get("$match", {}).get("direct") == {"$ne": False}
+        ]
+        assert direct_matches, "expected a $match on direct when direct_only is set"
+        # Must run after direct is computed and before pagination.
+        assert direct_matches[0] > addfields_idx
+        facet_idx = next(i for i, st in enumerate(pipeline) if "$facet" in st)
+        assert direct_matches[0] < facet_idx
+
+    def test_default_keeps_transitive_findings(self):
+        pipeline = self._pipeline(False)
+        assert not any(st.get("$match", {}).get("direct") == {"$ne": False} for st in pipeline)

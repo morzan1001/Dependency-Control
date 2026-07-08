@@ -414,6 +414,8 @@ export interface ScanFindingsParams {
   hide_info?: boolean;
   /** True: only waived findings; False: only active; omitted: both. */
   waived?: boolean;
+  /** True: hide findings on transitive dependencies (keeps direct and non-dependency findings). */
+  direct_only?: boolean;
 }
 
 export interface ScanFindingsResponse {

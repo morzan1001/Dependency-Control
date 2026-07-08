@@ -1213,12 +1213,18 @@ def _build_scan_findings_pipeline(
     sort_order: str,
     skip: int,
     limit: int,
+    direct_only: bool = False,
 ) -> List[Dict[str, Any]]:
     """Compose the full aggregation pipeline used by ``read_scan_findings``."""
-    return [
+    stages: List[Dict[str, Any]] = [
         {"$match": query},
         _scan_findings_lookup_stage(),
         _scan_findings_add_fields_stage(),
+    ]
+    if direct_only:
+        # Drop known-transitive findings; direct=null (code findings / unmatched packages) stays visible.
+        stages.append({"$match": {"direct": {"$ne": False}}})
+    stages += [
         # Keep _id through the $sort as the unique tiebreaker; it's dropped from output in the $facet below.
         {"$project": {"dependency_info": 0}},
         _scan_findings_sort_stage(sort_by, sort_order),
@@ -1230,6 +1236,7 @@ def _build_scan_findings_pipeline(
             }
         },
     ]
+    return stages
 
 
 def _unpack_scan_findings_facet(result: List[Dict[str, Any]]) -> tuple:
@@ -1278,6 +1285,7 @@ async def read_scan_findings(
     license_category: Optional[str] = None,  # permissive, weak_copyleft, strong_copyleft, etc.
     hide_info: Optional[bool] = None,  # Hide INFO severity findings
     waived: Optional[bool] = None,  # True: only waived; False: only active; None: both
+    direct_only: Optional[bool] = None,  # Hide findings on transitive dependencies
 ) -> Dict[str, Any]:
     """Get paginated findings for a scan."""
     await _resolve_scan_for_findings(scan_id, current_user, db)
@@ -1298,6 +1306,7 @@ async def read_scan_findings(
         sort_order=sort_order,
         skip=skip,
         limit=limit,
+        direct_only=bool(direct_only),
     )
 
     finding_repo = FindingRepository(db)

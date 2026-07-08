@@ -164,9 +164,11 @@ interface FindingsTableProps {
     readonly hideInfo?: boolean;
     /** Active/waived split: "active" (default) un-waived only, "waived" waived only, "all" both. */
     readonly waivedFilter?: "active" | "waived" | "all";
+    /** Hide findings on transitive dependencies (direct and non-dependency findings stay). */
+    readonly directOnly?: boolean;
 }
 
-export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0, licenseCategory, hideInfo, waivedFilter = "active" }: FindingsTableProps) {
+export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0, licenseCategory, hideInfo, waivedFilter = "active", directOnly = false }: FindingsTableProps) {
     const sentinelRef = useRef<HTMLDivElement>(null)
     const scrollTargetRef = useRef<HTMLTableRowElement | null>(null)
     const hasScrolledRef = useRef(false)
@@ -226,7 +228,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         isError
     } = useInfiniteQuery({
         // severity is NOT passed to API - we show all findings but scroll to the target
-        queryKey: ['findings', scanId, category, search, sortBy, sortOrder, licenseCategory, hideInfo, waivedFilter],
+        queryKey: ['findings', scanId, category, search, sortBy, sortOrder, licenseCategory, hideInfo, waivedFilter, directOnly],
         queryFn: async ({ pageParam = 0 }) => {
             const res = await scanApi.getFindings(scanId, {
                 skip: pageParam,
@@ -240,6 +242,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                 // "all": omit the param so the backend returns both waived and active.
                 ...(waivedFilter === "active" ? { waived: false } : {}),
                 ...(waivedFilter === "waived" ? { waived: true } : {}),
+                ...(directOnly ? { direct_only: true } : {}),
             });
             return res;
         },

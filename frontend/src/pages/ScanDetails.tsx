@@ -8,7 +8,8 @@ import { WaivedFindingsSection } from '@/components/findings/WaivedFindingsSecti
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, RefreshCw, Loader2, Tag, Folder } from 'lucide-react'
+import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, RefreshCw, Loader2, Tag, Folder, X } from 'lucide-react'
+import { Checkbox } from '@/components/ui/checkbox'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Badge } from '@/components/ui/badge'
@@ -78,7 +79,9 @@ export default function ScanDetails() {
   const severityFilter = searchParams.get('severity') || undefined;
 
   const [complianceLicenseCategory, setComplianceLicenseCategory] = useState<string | undefined>(undefined);
-  const [complianceHideInfo, setComplianceHideInfo] = useState(false);
+  const [directOnly, setDirectOnly] = useState(false);
+  const [hideInfo, setHideInfo] = useState(false);
+  const hasFindingsFilter = directOnly || hideInfo;
 
   const handleTabChange = (val: string) => {
     setSearchParams(prev => {
@@ -475,28 +478,47 @@ export default function ScanDetails() {
             <TabsTrigger value="raw">Raw Data</TabsTrigger>
         </TabsList>
 
+        {activeTab !== 'raw' && (
+            <div className="flex items-center gap-4 flex-wrap">
+                <span className="text-sm text-muted-foreground">Filter:</span>
+                <div className="flex items-center space-x-2">
+                    <Checkbox id="filter-direct-only" checked={directOnly} onCheckedChange={(c) => setDirectOnly(c === true)} />
+                    <label htmlFor="filter-direct-only" className="text-sm cursor-pointer">Only direct dependencies</label>
+                </div>
+                <div className="flex items-center space-x-2">
+                    <Checkbox id="filter-hide-info" checked={hideInfo} onCheckedChange={(c) => setHideInfo(c === true)} />
+                    <label htmlFor="filter-hide-info" className="text-sm cursor-pointer">Hide informational</label>
+                </div>
+                {hasFindingsFilter && (
+                    <Button variant="ghost" size="sm" onClick={() => { setDirectOnly(false); setHideInfo(false); }} className="gap-1">
+                        <X className="h-3 w-3" /> Clear
+                    </Button>
+                )}
+            </div>
+        )}
+
         <TabsContent value="overview" className="space-y-4">
-            <FindingsTable scanId={scanId!} projectId={projectId!} severity={severityFilter} scanContext={scanContext} stickyHeaderTop={0} />
+            <FindingsTable scanId={scanId!} projectId={projectId!} severity={severityFilter} scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
             <WaivedFindingsSection scanId={scanId!} projectId={projectId!} scanContext={scanContext} />
         </TabsContent>
 
         {showSecurity && (
             <TabsContent value="security" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="security" scanContext={scanContext} stickyHeaderTop={0} />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="security" scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
                 <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="security" scanContext={scanContext} />
             </TabsContent>
         )}
 
         {showSecrets && (
             <TabsContent value="secrets" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} stickyHeaderTop={0} />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
                 <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} />
             </TabsContent>
         )}
 
         {showSast && (
             <TabsContent value="sast" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="sast" scanContext={scanContext} stickyHeaderTop={0} />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="sast" scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
                 <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="sast" scanContext={scanContext} />
             </TabsContent>
         )}
@@ -520,10 +542,6 @@ export default function ScanDetails() {
                             <SelectItem value="unknown">Unknown</SelectItem>
                         </SelectContent>
                     </Select>
-                    <label className="flex items-center gap-2 text-sm text-muted-foreground cursor-pointer">
-                        <input type="checkbox" checked={complianceHideInfo} onChange={(e) => setComplianceHideInfo(e.target.checked)} className="rounded border-gray-300" />
-                        {"Hide informational findings"}
-                    </label>
                 </div>
                 <FindingsTable
                     scanId={scanId!}
@@ -532,7 +550,8 @@ export default function ScanDetails() {
                     scanContext={scanContext}
                     stickyHeaderTop={0}
                     licenseCategory={complianceLicenseCategory}
-                    hideInfo={complianceHideInfo}
+                    hideInfo={hideInfo}
+                    directOnly={directOnly}
                 />
                 <WaivedFindingsSection
                     scanId={scanId!}
@@ -546,7 +565,7 @@ export default function ScanDetails() {
 
         {showQuality && (
             <TabsContent value="quality" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="quality" scanContext={scanContext} stickyHeaderTop={0} />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="quality" scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
                 <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="quality" scanContext={scanContext} />
             </TabsContent>
         )}
