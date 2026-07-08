@@ -1,4 +1,12 @@
-# Release 1.7.7
+# Release 1.7.8
+
+## 🐛 Fixes
+
+- fix(scan): align the findings filter to the right of the tab bar (#0)
+
+
+
+# Release 1.7.8
 
 
 
