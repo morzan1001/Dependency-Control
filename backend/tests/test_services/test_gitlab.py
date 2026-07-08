@@ -1,7 +1,4 @@
-"""Tests for GitLabService multi-instance support.
-
-Tests instance-aware initialization, cache key generation, auth headers, and OIDC validation.
-"""
+"""Tests for GitLabService multi-instance support."""
 
 import asyncio
 from unittest.mock import AsyncMock, patch
@@ -101,8 +98,7 @@ class TestGitLabServiceOIDC:
                     assert call_kwargs["audience"] == "https://app.example.com"
 
     def test_rejected_when_no_audience_configured(self):
-        """SECURITY (Finding 7 / W1.1): an instance without a configured
-        oidc_audience must reject any token (fail closed), never decode it."""
+        """An instance without a configured oidc_audience must reject any token (fail closed), never decode it."""
         instance = GitLabInstance(
             name="No Audience",
             url="https://gitlab.com",
@@ -159,14 +155,12 @@ class TestGitLabServiceOIDC:
                     assert result.project_path == "group/proj"
 
     def test_issuer_uses_normalized_url(self):
-        """Issuer verification must use URL without trailing slash,
-        even if the stored instance URL has one."""
+        """Issuer verification must use URL without trailing slash, even if the stored instance URL has one."""
         instance = GitLabInstance(
             name="Trailing Slash",
             url="https://gitlab.com/",
             access_token="token",
-            # oidc_audience must be set, otherwise validation fails closed
-            # before decode (Finding 7 / W1.1). This test is about issuer norm.
+            # oidc_audience must be set, otherwise validation fails closed before decode; this test is about issuer normalization.
             oidc_audience="https://app.example.com",
             created_by="test",
         )

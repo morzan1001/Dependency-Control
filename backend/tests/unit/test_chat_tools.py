@@ -6,7 +6,6 @@ from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER
 
 
 def test_tool_definitions_valid_json_schema():
-    """Every tool definition must be a valid Ollama tool schema."""
     tools = get_tool_definitions()
     assert len(tools) > 0
     for tool in tools:
@@ -20,7 +19,6 @@ def test_tool_definitions_valid_json_schema():
 
 
 def test_admin_tools_require_admin_permission():
-    """Admin-only tools must not be available to regular users."""
     registry = ChatToolRegistry()
     admin_tools = {"get_system_settings", "get_system_health", "list_global_waivers"}
 
@@ -34,7 +32,6 @@ def test_admin_tools_require_admin_permission():
 
 
 def test_user_with_chat_access_gets_basic_tools():
-    """A user with chat:access + standard permissions gets project/finding tools."""
     registry = ChatToolRegistry()
     permissions = PRESET_USER + [Permissions.CHAT_ACCESS]
     available = registry.get_available_tool_names(permissions)
@@ -49,7 +46,6 @@ def test_user_with_chat_access_gets_basic_tools():
 
 
 def test_tool_definitions_match_registry():
-    """All registered tools must appear in the Ollama tool definitions."""
     registry = ChatToolRegistry()
     definitions = get_tool_definitions()
     definition_names = {t["function"]["name"] for t in definitions}

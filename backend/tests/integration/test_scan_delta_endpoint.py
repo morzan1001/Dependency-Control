@@ -1,11 +1,4 @@
-"""
-Integration tests for the unified scan-delta REST endpoint.
-
-GET /api/v1/analytics/scan-delta covers findings, components, and crypto
-deltas under a single envelope. These tests verify the endpoint layer:
-project authorization, cross-project scan guards, and InvalidDeltaQuery
-mapping to HTTP 400.
-"""
+"""Endpoint tests for GET /api/v1/analytics/scan-delta: authorization, cross-project scan guards, and 400 mapping for invalid queries."""
 
 from datetime import datetime, timezone
 
@@ -26,7 +19,6 @@ def _scan_doc(scan_id: str, project_id: str) -> dict:
 
 @pytest.mark.asyncio
 async def test_returns_403_for_non_member(client, db, owner_auth_headers_proj_p2):
-    """User who is a member of project p2 must NOT see scan-delta for project p."""
     await db["scans"].insert_one(_scan_doc("s1", "p"))
     await db["scans"].insert_one(_scan_doc("s2", "p"))
 
@@ -45,7 +37,6 @@ async def test_returns_403_for_non_member(client, db, owner_auth_headers_proj_p2
 
 @pytest.mark.asyncio
 async def test_returns_400_when_scan_not_in_project(client, db, owner_auth_headers_proj):
-    """If either scan belongs to another project, return 400."""
     await db["scans"].insert_one(_scan_doc("in1", "p"))
     await db["scans"].insert_one(_scan_doc("out1", "p_other"))
 
@@ -65,7 +56,6 @@ async def test_returns_400_when_scan_not_in_project(client, db, owner_auth_heade
 
 @pytest.mark.asyncio
 async def test_returns_400_for_identical_scan_ids(client, owner_auth_headers_proj):
-    """from_scan_id == to_scan_id is rejected by the orchestrator."""
     resp = await client.get(
         BASE,
         params={
@@ -81,7 +71,7 @@ async def test_returns_400_for_identical_scan_ids(client, owner_auth_headers_pro
 
 @pytest.mark.asyncio
 async def test_returns_400_for_unknown_category(client, db, owner_auth_headers_proj):
-    """Unknown category value should surface as 400 (not 422) per spec."""
+    """An unknown category surfaces as 400, not 422."""
     await db["scans"].insert_one(_scan_doc("u1", "p"))
     await db["scans"].insert_one(_scan_doc("u2", "p"))
 
@@ -120,7 +110,6 @@ async def test_returns_400_for_severity_with_components(client, db, owner_auth_h
 
 @pytest.mark.asyncio
 async def test_returns_200_findings(client, db, owner_auth_headers_proj):
-    """Happy path: one added finding between two scans of project p."""
     await db["scans"].insert_one(_scan_doc("ok1", "p"))
     await db["scans"].insert_one(_scan_doc("ok2", "p"))
     await db["findings"].insert_one(
@@ -159,7 +148,6 @@ async def test_returns_200_findings(client, db, owner_auth_headers_proj):
 
 @pytest.mark.asyncio
 async def test_returns_200_components_with_version_change(client, db, owner_auth_headers_proj):
-    """category=components surfaces version_changed entries with from/to versions."""
     await db["scans"].insert_one(_scan_doc("cmp_a", "p"))
     await db["scans"].insert_one(_scan_doc("cmp_b", "p"))
     await db["dependencies"].insert_many(
@@ -233,7 +221,6 @@ async def test_returns_200_components_with_version_change(client, db, owner_auth
 
 @pytest.mark.asyncio
 async def test_returns_200_crypto(client, db, owner_auth_headers_proj):
-    """category=crypto returns the crypto envelope with added/removed asset items."""
     from app.models.crypto_asset import CryptoAsset
     from app.repositories.crypto_asset import CryptoAssetRepository
     from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
@@ -310,7 +297,7 @@ async def test_returns_400_for_unknown_severity(client, db, owner_auth_headers_p
 
 @pytest.mark.asyncio
 async def test_returns_400_for_page_size_above_max(client, db, owner_auth_headers_proj):
-    """page_size > 200 returns 400 via the orchestrator (not FastAPI auto-422)."""
+    """page_size > 200 returns 400, not FastAPI's auto-422."""
     await db["scans"].insert_many([_scan_doc("ps1", "p"), _scan_doc("ps2", "p")])
     resp = await client.get(
         BASE,

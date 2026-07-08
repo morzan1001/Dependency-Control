@@ -27,7 +27,6 @@ describe("CryptoPolicyEditor prop resync", () => {
   it("resyncs local rules when initialRules changes (e.g. after 'Reset all overrides' refetch)", async () => {
     const sys = systemRule();
     const systemRules = [sys];
-    // Effective rules currently show an override (different name).
     const overridden = [{ ...sys, name: "Block RC4 (custom)" }];
 
     const onSave = vi.fn().mockResolvedValue(undefined);
@@ -40,12 +39,10 @@ describe("CryptoPolicyEditor prop resync", () => {
       />,
     );
 
-    // Overridden value is shown, status badge is "Overridden".
     expect(screen.getByDisplayValue("Block RC4 (custom)")).toBeInTheDocument();
     expect(screen.getByText("Overridden")).toBeInTheDocument();
 
-    // Simulate the parent refetching after reset: it now passes the system
-    // rules as the effective list. A new array reference is passed.
+    // Parent refetches after reset and passes the system rules as the effective list.
     rerender(
       <CryptoPolicyEditor
         initialRules={[{ ...sys }]}
@@ -54,14 +51,11 @@ describe("CryptoPolicyEditor prop resync", () => {
       />,
     );
 
-    // The editor must now reflect the refetched (system) value, not the stale
-    // override.
     expect(screen.getByDisplayValue("Block RC4")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("Block RC4 (custom)")).not.toBeInTheDocument();
     expect(screen.getByText("System default")).toBeInTheDocument();
 
-    // Saving now must emit an empty delta (the rule matches system), NOT
-    // re-create the just-deleted override.
+    // Rule now matches system, so save must emit an empty delta.
     fireEvent.click(screen.getByRole("button", { name: "Save" }));
     await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1));
     expect(onSave).toHaveBeenCalledWith([]);

@@ -1,5 +1,4 @@
-"""Tests for upstream release-history analytics — the pure math used to
-build the "release cadence" metrics that complement team update-velocity."""
+"""Tests for upstream release-history analytics (release-cadence metrics)."""
 
 from datetime import datetime, timedelta, timezone
 from typing import List
@@ -272,10 +271,7 @@ class TestAggregateUpstreamMetrics:
 
 
 class TestDepsDevFetcherIntegration:
-    """The fetcher's pure helpers (parse, serialize) are well-covered. These
-    drive the cache-miss and cache-hit branches end-to-end so a regression
-    in the fetcher's orchestration would surface at the unit level rather
-    than waiting for a full deps.dev integration test."""
+    """Drive the fetcher's cache-miss and cache-hit branches end-to-end."""
 
     def test_cache_miss_fetches_parses_and_caches(self):
         import asyncio
@@ -383,15 +379,10 @@ class TestDepsDevFetcherIntegration:
 
 
 class TestEcosystemKeyingNoConflation:
-    """Regression tests for finding #1: history/observations were keyed by the
-    bare package name, so a package named "foo" in two ecosystems (e.g. npm and
-    PyPI) collided — one ecosystem's history silently overwrote the other, and
-    adoption-latency matching conflated their versions. Keying by ``(system,
-    name)`` fixes both."""
+    """Keying history/observations by (system, name) keeps same-named packages in different ecosystems separate."""
 
     def test_fetch_keeps_same_name_across_ecosystems_separate(self):
-        # Two packages share the bare name "foo" but live in different
-        # ecosystems. Pre-fix, the name-keyed result dict dropped one of them.
+        # Two packages share the bare name "foo" but live in different ecosystems.
         import asyncio
         from app.services.release_history import DepsDevReleaseHistoryFetcher
 
@@ -443,9 +434,7 @@ class TestEcosystemKeyingNoConflation:
         assert sorted(latencies) == [10, 50]
 
     def test_name_only_history_and_observations_still_work(self):
-        # Backward compatibility: legacy name-keyed history + 3-tuple
-        # observations (what the update_frequency caller passes today) must keep
-        # working unchanged, so no cross-file integration break is introduced.
+        # Name-keyed history + 3-tuple observations (what update_frequency passes) must resolve.
         history = {
             "pkg-a": [ReleaseInfo(version="1.1.0", published_at=_REF - timedelta(days=30))],
         }
@@ -453,8 +442,7 @@ class TestEcosystemKeyingNoConflation:
         assert compute_adoption_latencies(history, observations) == [25]
 
     def test_system_observation_falls_back_to_name_keyed_history(self):
-        # A system-aware observation against legacy name-keyed history (no
-        # system) still matches via the name+version fallback.
+        # A system-aware observation matches name-keyed history via the name+version fallback.
         history = {
             "pkg-a": [ReleaseInfo(version="1.0.0", published_at=_REF - timedelta(days=40))],
         }

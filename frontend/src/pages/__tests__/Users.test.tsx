@@ -5,8 +5,6 @@ import UsersPage from '../Users'
 import type { User, SystemInvitation } from '@/types/user'
 import { SMALL_PAGE_SIZE } from '@/lib/constants'
 
-// --- Mocks -----------------------------------------------------------------
-
 const mockUseUsers = vi.fn()
 const mockUsePendingInvitations = vi.fn()
 const noopMutation = () => ({ mutate: vi.fn(), isPending: false })
@@ -61,8 +59,6 @@ beforeEach(() => {
 describe('UsersPage - invitations & pagination', () => {
   it('does not render a phantom Next button when the real user page is not full', () => {
     // (limit - 2) real users (< limit) + 3 pending invitations on page 1.
-    // Merging invitations into the paginated array previously pushed the
-    // length to >= limit, producing a phantom Next button.
     const users = Array.from({ length: SMALL_PAGE_SIZE - 2 }, (_, i) => makeUser(i))
     mockUseUsers.mockReturnValue({ data: users, isLoading: false, error: null })
     mockUsePendingInvitations.mockReturnValue({
@@ -72,11 +68,8 @@ describe('UsersPage - invitations & pagination', () => {
 
     render(<UsersPage />)
 
-    // Invitations are visible on page 1.
     expect(screen.getAllByText('Invited')).toHaveLength(3)
-    // Real users are visible.
     expect(screen.getByText('user0')).toBeInTheDocument()
-    // No phantom "Next": there is no further page of real users.
     expect(screen.queryByRole('button', { name: /Next/i })).not.toBeInTheDocument()
   })
 
@@ -86,7 +79,6 @@ describe('UsersPage - invitations & pagination', () => {
     const secondPage = Array.from({ length: 5 }, (_, i) => makeUser(limit + i))
     const invitations = [makeInvitation(0), makeInvitation(1), makeInvitation(2)]
 
-    // Return page-specific data based on the `skip` argument.
     mockUseUsers.mockImplementation((skip: number) => ({
       data: skip === 0 ? fullPage : secondPage,
       isLoading: false,
@@ -96,15 +88,12 @@ describe('UsersPage - invitations & pagination', () => {
 
     render(<UsersPage />)
 
-    // Page 1: full page -> Next is offered; invitations shown once.
     expect(screen.getAllByText('Invited')).toHaveLength(3)
     const nextButton = screen.getByRole('button', { name: /Next/i })
 
     fireEvent.click(nextButton)
 
-    // Page 2: invitations must NOT be repeated.
     expect(screen.queryAllByText('Invited')).toHaveLength(0)
-    // Page-2 real users render.
     expect(screen.getByText(`user${limit}`)).toBeInTheDocument()
   })
 })

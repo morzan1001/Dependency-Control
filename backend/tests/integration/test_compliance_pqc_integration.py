@@ -1,18 +1,4 @@
-"""
-Integration smoke test for the PQC migration plan compliance framework.
-
-Regression for the critical `asyncio.run()` in running loop bug: the PQC
-framework's sync ``evaluate()`` used to call ``asyncio.run(...)`` from the
-FastAPI BackgroundTask event loop, which raises RuntimeError and flipped
-every PQC report to status=failed. After the fix the engine dispatches on
-``evaluate_async``; this test drives the full HTTP + BackgroundTask path and
-asserts status != "failed".
-
-The fake DB used in integration tests does not implement GridFS or the full
-scan/crypto_asset query surface. We therefore accept ``completed`` as the
-happy path and also accept any terminal state *other than* ``failed`` —
-what we specifically guard against is the RuntimeError regression.
-"""
+"""A PQC migration-plan report completes over the HTTP + BackgroundTask path without failing on an asyncio.run-in-running-loop error."""
 
 import asyncio
 
@@ -51,9 +37,7 @@ async def test_pqc_report_does_not_crash_with_asyncio_run(
         await asyncio.sleep(0.1)
 
     assert data is not None
-    # The critical assertion: no RuntimeError("asyncio.run() cannot be called
-    # from a running event loop") should leak through. Accept completed; skip
-    # if the fake DB couldn't satisfy the data path for some unrelated reason.
+    # Guard against the asyncio.run-in-running-loop RuntimeError; skip on unrelated fake-DB data-path limitations.
     if data["status"] == "failed":
         err = (data.get("error_message") or "").lower()
         if "asyncio.run" in err or "running event loop" in err:

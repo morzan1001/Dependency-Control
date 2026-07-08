@@ -1,8 +1,4 @@
-"""Tests for archive API endpoints.
-
-Tests list, restore, download, pin/unpin, branches, admin list,
-and permission enforcement with mocked dependencies.
-"""
+"""Tests for archive API endpoints (list, restore, download, pin/unpin, branches, admin list, permissions)."""
 
 import asyncio
 from datetime import datetime, timezone
@@ -22,7 +18,6 @@ MODULE = "app.api.v1.endpoints.archives"
 
 
 def _make_archive_metadata(**overrides):
-    """Create an ArchiveMetadata instance for testing."""
     defaults = {
         "id": "archive-1",
         "project_id": "proj-1",
@@ -46,7 +41,6 @@ def _make_archive_metadata(**overrides):
 
 
 def _assert_501_without_s3(endpoint, **call_kwargs):
-    """Assert endpoint raises 501 when S3 is not configured."""
     with (
         patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
         patch(f"{MODULE}.is_archive_enabled", return_value=False),
@@ -58,7 +52,6 @@ def _assert_501_without_s3(endpoint, **call_kwargs):
 
 
 def _assert_404_when_archive_missing(endpoint, *, metadata, **call_kwargs):
-    """Assert endpoint raises 404 when archive lookup returns metadata (or None)."""
     mock_repo = MagicMock()
     mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
 
@@ -179,7 +172,6 @@ class TestListArchives:
                 )
             )
 
-        # Verify filters were passed to repo methods
         count_kwargs = mock_repo.count_by_project.call_args
         assert count_kwargs[1]["branch"] == "develop" or count_kwargs[0][1] == "develop"
         find_kwargs = mock_repo.find_by_project.call_args
@@ -346,7 +338,7 @@ class TestRestoreArchive:
         mock_repo = MagicMock()
         mock_repo.find_by_scan_id = AsyncMock(return_value=metadata)
 
-        # db.scans.find_one must return None so the endpoint maps to 500, not 409
+        # find_one None so the endpoint maps to 500, not 409
         mock_db = MagicMock()
         mock_db.scans.find_one = AsyncMock(return_value=None)
 
@@ -637,7 +629,6 @@ class TestListAllArchives:
         mock_repo.count_all = AsyncMock(return_value=2)
         mock_repo.find_all = AsyncMock(return_value=archives)
 
-        # Mock DB for project name lookup
         mock_db = MagicMock()
         project_docs = [
             {"_id": "proj-1", "name": "Project Alpha"},
@@ -711,7 +702,6 @@ class TestListAllArchives:
                 )
             )
 
-        # Verify project_id and branch were passed to count_all
         count_kwargs = mock_repo.count_all.call_args[1]
         assert count_kwargs.get("project_id") == "proj-1"
         assert count_kwargs.get("branch") == "main"
@@ -739,14 +729,8 @@ class TestRestoreArchivePermissions:
         assert exc_info.value.status_code == 403
 
 
-# ---------------------------------------------------------------------------
-# Task-10 new tests
-# ---------------------------------------------------------------------------
-
-
 class TestDownloadStreamChunks:
     def test_download_stream_passes_bucket_and_yields_chunks(self, admin_user):
-        """download_archive must use download_stream with bucket= and yield all chunks."""
         from app.api.v1.endpoints.archives import download_archive
 
         metadata = _make_archive_metadata(
@@ -765,7 +749,7 @@ class TestDownloadStreamChunks:
             yield b"BBB"
 
         async def run_download():
-            """Build the response and consume the stream inside the same event loop."""
+            # build the response and consume the stream in the same event loop
             response = await download_archive(
                 project_id="proj-1",
                 scan_id="scan-1",
@@ -794,7 +778,6 @@ class TestDownloadStreamChunks:
 
 class TestRestoreReturns409WhenScanAlreadyExists:
     def test_returns_409_when_scan_already_exists_in_mongo(self, admin_user):
-        """restore_archive returns 409 when restore_scan returns None and scan is in db."""
         from app.api.v1.endpoints.archives import restore_archive
 
         metadata = _make_archive_metadata()
@@ -826,7 +809,6 @@ class TestRestoreReturns409WhenScanAlreadyExists:
 
 class TestPinEmitsAuditLog:
     def test_pin_emits_structured_audit_log(self, admin_user, caplog):
-        """pin_scan must emit a structured archive.pin log record."""
         import logging
         from app.api.v1.endpoints.archives import pin_scan
 

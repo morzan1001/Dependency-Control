@@ -6,8 +6,6 @@ from app.services.aggregation import ResultAggregator
 
 
 class TestNormalizeTrufflehog:
-    """Tests for normalize_trufflehog - TruffleHog secret detection normalization."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -130,9 +128,7 @@ class TestNormalizeTrufflehog:
         assert len(self.agg.findings) == 2
 
     def test_prefers_detector_name_over_numeric_detector_type(self):
-        """TruffleHog v3 emits DetectorType as a numeric enum ordinal and the
-        human-readable name in DetectorName. The normalizer must prefer
-        DetectorName so the leaked credential type stays recoverable."""
+        """Prefer DetectorName over numeric DetectorType so the credential type stays recoverable."""
         result = {
             "findings": [
                 {

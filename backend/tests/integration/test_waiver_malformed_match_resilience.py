@@ -1,12 +1,4 @@
-"""Finding 4: a malformed stored `match` dict for ONE waiver/finding must not abort recalc.
-
-Regression guard: legacy data can carry a `match` sub-document that no longer satisfies
-the current MatchSignature schema (e.g. missing required keys or an invalid anchor_kind).
-Constructing MatchSignature(**bad) raises pydantic.ValidationError. Before the fix this
-propagated out of _apply_waivers_signature mid reset+reapply, leaving the scan's findings
-transiently un-waived. The orchestrator must log and skip the malformed entry and still
-apply the well-formed waivers.
-"""
+"""A malformed stored `match` dict for one waiver/finding is logged and skipped; well-formed waivers still apply during recalc."""
 
 import pytest
 
@@ -100,7 +92,7 @@ async def test_malformed_waiver_match_dict_is_skipped_others_applied():
     # Must NOT raise; the malformed one is skipped, the good one is applied.
     await _apply_waivers_signature(repo, wrepo, scan, [w_bad, w_good])
 
-    assert "f2" in repo.waived  # well-formed waiver still applied
+    assert "f2" in repo.waived
     assert repo.waived.get("f2") is not None or "f2" in repo.waived
 
 

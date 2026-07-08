@@ -1,10 +1,4 @@
-"""Unit tests for crypto asset endpoints.
-
-Integration tests via HTTP are complex due to auth setup. These tests verify that:
-1. The repository methods work correctly with the endpoints
-2. Filtering and pagination logic works
-3. Summary aggregation works
-"""
+"""Repository-level tests for crypto asset filtering, pagination, and summary aggregation."""
 
 import pytest
 
@@ -15,7 +9,6 @@ from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 
 @pytest.mark.asyncio
 async def test_list_crypto_assets_pagination(db):
-    """Test that pagination works correctly."""
     await CryptoAssetRepository(db).bulk_upsert(
         "proj",
         "scan",
@@ -41,7 +34,6 @@ async def test_list_crypto_assets_pagination(db):
 
 @pytest.mark.asyncio
 async def test_list_filters_by_asset_type(db):
-    """Test filtering by asset_type."""
     await CryptoAssetRepository(db).bulk_upsert(
         "proj2",
         "sc",
@@ -64,7 +56,6 @@ async def test_list_filters_by_asset_type(db):
 
 @pytest.mark.asyncio
 async def test_list_filters_by_primitive(db):
-    """Test filtering by primitive."""
     await CryptoAssetRepository(db).bulk_upsert(
         "proj3",
         "sc",
@@ -97,7 +88,6 @@ async def test_list_filters_by_primitive(db):
 
 @pytest.mark.asyncio
 async def test_list_filters_by_name_search(db):
-    """Test filtering by name_search (case-insensitive regex)."""
     await CryptoAssetRepository(db).bulk_upsert(
         "proj4",
         "sc",
@@ -120,7 +110,6 @@ async def test_list_filters_by_name_search(db):
 
 @pytest.mark.asyncio
 async def test_get_single_crypto_asset(db):
-    """Test get method for a single asset using the composite key that FakeDb uses."""
     asset = CryptoAsset(
         project_id="proj5",
         scan_id="sc",
@@ -133,7 +122,7 @@ async def test_get_single_crypto_asset(db):
     await CryptoAssetRepository(db).bulk_upsert("proj5", "sc", [asset])
 
     repo = CryptoAssetRepository(db)
-    # In the FakeDb, the _id is a composite key of project:scan:bom_ref
+    # In the FakeDb the _id is a composite key of project:scan:bom_ref.
     composite_id = "proj5:sc:x"
     fetched = await repo.get("proj5", composite_id)
 
@@ -145,7 +134,6 @@ async def test_get_single_crypto_asset(db):
 
 @pytest.mark.asyncio
 async def test_get_nonexistent_asset_returns_none(db):
-    """Test get method returns None for nonexistent asset."""
     repo = CryptoAssetRepository(db)
     asset = await repo.get("proj_missing", "nonexistent-id")
 
@@ -154,7 +142,6 @@ async def test_get_nonexistent_asset_returns_none(db):
 
 @pytest.mark.asyncio
 async def test_summary_endpoint(db):
-    """Test summary method groups by asset_type correctly."""
     await CryptoAssetRepository(db).bulk_upsert(
         "proj6",
         "sc",

@@ -24,7 +24,6 @@ function renderExpanded(recommendation: Recommendation) {
       <RecommendationCard recommendation={recommendation} />
     </MemoryRouter>,
   )
-  // Expand the card to reveal the details.
   fireEvent.click(screen.getByRole('button', { expanded: false }))
 }
 

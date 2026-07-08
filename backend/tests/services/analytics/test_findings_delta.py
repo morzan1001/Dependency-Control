@@ -10,7 +10,7 @@ from app.services.analytics.findings_delta import (
 
 
 def test_identity_key_vulnerability_uses_cve_id():
-    # Legacy/flat shape still supported via fallback.
+    # Flat shape supported via fallback.
     f = {
         "type": "vulnerability",
         "component": "log4j-core@2.17.1",
@@ -20,9 +20,7 @@ def test_identity_key_vulnerability_uses_cve_id():
 
 
 def test_identity_key_vulnerability_uses_aggregated_shape():
-    """Regression for the persisted AGGREGATED shape: ids live under
-    details.vulnerabilities[].id (no flat details.cve_id) and version is a
-    top-level field. The key must reflect the sorted id set plus the version."""
+    """Aggregated shape: ids live under details.vulnerabilities[].id and version is top-level; key is the sorted id set plus version."""
     f = {
         "type": "vulnerability",
         "component": "lodash",
@@ -40,8 +38,7 @@ def test_identity_key_vulnerability_uses_aggregated_shape():
 
 
 def test_identity_key_secret_uses_finding_id():
-    """Persisted secret findings carry no pattern_hash/rule_id in details; the
-    stable identity is the deterministic finding_id (SECRET-<detector>-<hash8>)."""
+    """Secret findings carry no pattern_hash/rule_id in details; identity is the deterministic finding_id."""
     f = {
         "type": "secret",
         "component": "src/api/keys.py",
@@ -52,8 +49,7 @@ def test_identity_key_secret_uses_finding_id():
 
 
 def test_identity_key_outdated_uses_fixed_version():
-    """Persisted outdated findings store details.fixed_version (the latest
-    version), never details.latest_version."""
+    """Outdated findings store the latest version in details.fixed_version, not details.latest_version."""
     f = {
         "type": "outdated",
         "component": "requests",
@@ -163,7 +159,7 @@ async def test_findings_delta_added_and_removed(db):
     assert resp.totals.added == 1
     assert resp.totals.removed == 1
     assert resp.totals.unchanged == 1
-    assert resp.totals.by_severity["medium"] == 1  # added
+    assert resp.totals.by_severity["medium"] == 1
     assert resp.totals.by_type["vulnerability"] == 1
     added = [i for i in resp.items if i.change == "added"]
     removed = [i for i in resp.items if i.change == "removed"]
@@ -228,8 +224,7 @@ async def _seed_added_removed(db):
 
 @pytest.mark.asyncio
 async def test_breakdowns_decompose_full_totals_under_change_filter(db):
-    """by_severity/by_type must decompose the FULL added+removed totals, even when
-    the `change` filter scopes the paginated item list (audit #12)."""
+    """by_severity/by_type decompose the full added+removed totals even when the change filter scopes the paginated item list."""
     await _seed_added_removed(db)
     resp = await compute_findings_delta(
         db,
@@ -355,8 +350,7 @@ def _agg_vuln_doc(_id, scan_id, component, version, cve_ids, severity="CRITICAL"
 
 @pytest.mark.asyncio
 async def test_aggregated_vuln_cve_swap_is_added_and_removed(db):
-    """Real-shape regression: a component that drops CVE-A and gains CVE-B at the
-    same version must report added=1/removed=1, not 'unchanged'."""
+    """Dropping CVE-A and gaining CVE-B at the same version is added=1/removed=1, not unchanged."""
     await db["findings"].insert_many(
         [
             _agg_vuln_doc("a", "sa", "lodash", "4.17.20", ["CVE-A"]),
@@ -383,7 +377,6 @@ async def test_aggregated_vuln_cve_swap_is_added_and_removed(db):
 
 @pytest.mark.asyncio
 async def test_aggregated_vuln_version_bump_is_added_and_removed(db):
-    """Same CVE but a version bump must be detected as a change."""
     await db["findings"].insert_many(
         [
             _agg_vuln_doc("a", "sa", "lodash", "4.17.20", ["CVE-A"]),
@@ -408,7 +401,6 @@ async def test_aggregated_vuln_version_bump_is_added_and_removed(db):
 
 @pytest.mark.asyncio
 async def test_aggregated_vuln_unchanged_when_cve_set_identical(db):
-    """Identical CVE set at the same version stays 'unchanged'."""
     await db["findings"].insert_many(
         [
             _agg_vuln_doc("a", "sa", "lodash", "4.17.20", ["CVE-A", "CVE-B"]),
@@ -433,8 +425,7 @@ async def test_aggregated_vuln_unchanged_when_cve_set_identical(db):
 
 @pytest.mark.asyncio
 async def test_secret_identity_stable_across_scans_by_finding_id(db):
-    """A secret with the same deterministic finding_id in both scans is
-    'unchanged' even though per-scan _id differs and details carry no hash."""
+    """Same finding_id in both scans stays unchanged even though per-scan _id differs and details carry no hash."""
     await db["findings"].insert_many(
         [
             {
@@ -481,8 +472,7 @@ async def test_secret_identity_stable_across_scans_by_finding_id(db):
 
 @pytest.mark.asyncio
 async def test_fetch_uses_projection(db, monkeypatch):
-    """The fetch must request a projection (RAM hot-spot fix) rather than pull
-    full documents. Verify a projection is passed and covers the read fields."""
+    """Fetch must pass a projection covering the read fields rather than pulling full documents."""
     captured = {}
     coll = db["findings"]
     original_find = coll.find

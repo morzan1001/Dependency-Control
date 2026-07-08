@@ -4,8 +4,6 @@ from app.services.aggregation import ResultAggregator
 
 
 class TestNormalizeScorecard:
-    """Tests for normalize_scorecard - OpenSSF Scorecard normalization."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -117,19 +115,12 @@ class TestNormalizeScorecard:
         assert "3.5" in f.description
 
     def test_record_scorecard_public_method(self):
-        """ResultAggregator exposes a public record_scorecard method that stores data."""
         assert hasattr(ResultAggregator, "record_scorecard")
         self.agg.record_scorecard("pkg@2.0", {"overall_score": 4.2})
         assert self.agg._scorecard_cache["pkg@2.0"] == {"overall_score": 4.2}
 
     def test_scorecard_recorded_end_to_end(self):
-        """normalize_scorecard must actually record scorecard data (no silent loss).
-
-        Reproduces audit finding eleg-quality-scorecard: previously quality.py
-        relied on a hasattr fallback dance targeting a public attribute that
-        never existed. This asserts the recorded payload is complete and keyed
-        by component@version so downstream enrichment can use it.
-        """
+        """Recorded scorecard payload is complete and keyed by component@version."""
         result = {
             "scorecard_issues": [
                 {
@@ -159,7 +150,6 @@ class TestNormalizeScorecard:
         assert len(self.agg.findings) == 0
 
     def test_package_metadata_enrichment(self):
-        """Package metadata should be used for DependencyEnrichment."""
         result = {
             "package_metadata": {
                 "lodash@4.17.21": {
@@ -176,8 +166,6 @@ class TestNormalizeScorecard:
 
 
 class TestNormalizeTyposquatting:
-    """Tests for normalize_typosquatting - typosquatting detection."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -196,13 +184,12 @@ class TestNormalizeTyposquatting:
         findings = self.agg.get_findings()
         assert len(findings) == 1
         f = findings[0]
-        assert f.type == "malware"  # Typosquatting treated as malware
+        assert f.type == "malware"
         assert f.severity == "CRITICAL"
         assert "lodassh" in f.description
         assert "lodash" in f.description
 
     def test_similarity_in_description(self):
-        """Similarity percentage should be in the description."""
         result = {
             "typosquatting_issues": [
                 {
@@ -237,8 +224,6 @@ class TestNormalizeTyposquatting:
 
 
 class TestNormalizeMaintainerRisk:
-    """Tests for normalize_maintainer_risk."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -280,7 +265,6 @@ class TestNormalizeMaintainerRisk:
         assert "Single maintainer" in f.description
 
     def test_default_severity_medium(self):
-        """When no severity specified, should default to MEDIUM."""
         result = {
             "maintainer_issues": [
                 {

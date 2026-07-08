@@ -4,8 +4,6 @@ from app.services.aggregation import ResultAggregator
 
 
 class TestNormalizeOutdated:
-    """Tests for normalize_outdated - outdated package normalization."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -32,7 +30,6 @@ class TestNormalizeOutdated:
         assert "outdated_packages" in f.scanners
 
     def test_default_severity_info(self):
-        """Outdated findings should default to INFO severity."""
         result = {"outdated_dependencies": [{"component": "pkg", "current_version": "1.0"}]}
         self.agg.aggregate("outdated_packages", result)
         f = list(self.agg.findings.values())[0]
@@ -45,7 +42,6 @@ class TestNormalizeOutdated:
         assert f.severity == "MEDIUM"
 
     def test_default_description(self):
-        """Without message, should generate default description."""
         result = {"outdated_dependencies": [{"component": "lodash", "current_version": "1.0"}]}
         self.agg.aggregate("outdated_packages", result)
         f = list(self.agg.findings.values())[0]
@@ -67,8 +63,6 @@ class TestNormalizeOutdated:
 
 
 class TestNormalizeEol:
-    """Tests for normalize_eol - end-of-life normalization."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -91,7 +85,7 @@ class TestNormalizeEol:
         assert len(findings) == 1
         f = findings[0]
         assert f.type == "eol"
-        assert f.severity == "HIGH"  # EOL is always HIGH
+        assert f.severity == "HIGH"
         assert f.component == "nodejs"
         assert "end_of_life" in f.scanners
 
@@ -160,7 +154,6 @@ class TestNormalizeEol:
         assert len(self.agg.findings) == 0
 
     def test_missing_eol_info(self):
-        """Gracefully handle missing eol_info."""
         result = {"eol_issues": [{"component": "pkg", "version": "1.0"}]}
         self.agg.aggregate("end_of_life", result)
         f = list(self.agg.findings.values())[0]

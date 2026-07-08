@@ -13,23 +13,18 @@ from app.models.callgraph import (
 
 
 class TestImportEntry:
-    """ImportEntry sub-model validation and defaults."""
-
     def test_minimal_valid(self):
-        """ImportEntry requires module, file, and line."""
         entry = ImportEntry(module="requests", file="app/main.py", line=3)
         assert entry.module == "requests"
         assert entry.file == "app/main.py"
         assert entry.line == 3
 
     def test_defaults(self):
-        """imported_symbols defaults to empty list, is_dynamic to False."""
         entry = ImportEntry(module="os", file="util.py", line=1)
         assert entry.imported_symbols == []
         assert entry.is_dynamic is False
 
     def test_with_symbols_and_dynamic(self):
-        """ImportEntry accepts imported_symbols and is_dynamic."""
         entry = ImportEntry(
             module="lodash",
             file="src/index.js",
@@ -41,16 +36,12 @@ class TestImportEntry:
         assert entry.is_dynamic is True
 
     def test_missing_required_field_rejected(self):
-        """Omitting 'module' raises ValidationError."""
         with pytest.raises(ValidationError):
             ImportEntry(file="a.py", line=1)
 
 
 class TestCallEdge:
-    """CallEdge sub-model validation and defaults."""
-
     def test_minimal_valid(self):
-        """CallEdge requires caller, callee, file, and line."""
         edge = CallEdge(
             caller="app/main.py:main",
             callee="requests:get",
@@ -63,26 +54,20 @@ class TestCallEdge:
         assert edge.line == 10
 
     def test_default_call_type(self):
-        """call_type defaults to 'direct'."""
         edge = CallEdge(caller="a:f", callee="b:g", file="a.py", line=1)
         assert edge.call_type == "direct"
 
     def test_custom_call_type(self):
-        """call_type can be set to async, callback, or conditional."""
         edge = CallEdge(caller="a:f", callee="b:g", file="a.py", line=1, call_type="async")
         assert edge.call_type == "async"
 
 
 class TestModuleUsage:
-    """ModuleUsage sub-model validation and defaults."""
-
     def test_minimal_valid(self):
-        """ModuleUsage requires only module."""
         usage = ModuleUsage(module="requests")
         assert usage.module == "requests"
 
     def test_defaults(self):
-        """Numeric and list defaults are correct."""
         usage = ModuleUsage(module="pkg")
         assert usage.import_count == 0
         assert usage.call_count == 0
@@ -91,7 +76,6 @@ class TestModuleUsage:
         assert usage.is_direct_dependency is True
 
     def test_fully_populated(self):
-        """All fields can be set."""
         usage = ModuleUsage(
             module="express",
             import_count=5,
@@ -107,10 +91,7 @@ class TestModuleUsage:
 
 
 class TestCallgraphModel:
-    """Callgraph model creation, defaults, and required fields."""
-
     def _make_callgraph(self, **overrides):
-        """Factory for a valid Callgraph with minimal required fields."""
         defaults = {
             "project_id": "proj-1",
             "language": "python",
@@ -120,14 +101,12 @@ class TestCallgraphModel:
         return Callgraph(**defaults)
 
     def test_minimal_valid(self):
-        """Callgraph can be created with only required fields."""
         cg = self._make_callgraph()
         assert cg.project_id == "proj-1"
         assert cg.language == "python"
         assert cg.tool == "pyan"
 
     def test_id_auto_generated(self):
-        """Each Callgraph gets a unique auto-generated id."""
         a = self._make_callgraph()
         b = self._make_callgraph()
         assert a.id is not None
@@ -135,7 +114,6 @@ class TestCallgraphModel:
         assert a.id != b.id
 
     def test_optional_fields_default_none(self):
-        """Optional scalar fields default to None."""
         cg = self._make_callgraph()
         assert cg.pipeline_id is None
         assert cg.branch is None
@@ -145,21 +123,18 @@ class TestCallgraphModel:
         assert cg.analysis_duration_ms is None
 
     def test_list_and_dict_defaults_empty(self):
-        """List and dict fields default to empty."""
         cg = self._make_callgraph()
         assert cg.imports == []
         assert cg.calls == []
         assert cg.module_usage == {}
 
     def test_numeric_defaults_zero(self):
-        """Numeric metadata fields default to zero."""
         cg = self._make_callgraph()
         assert cg.source_files_analyzed == 0
         assert cg.total_imports == 0
         assert cg.total_calls == 0
 
     def test_timestamps_auto_set(self):
-        """created_at and updated_at are set to UTC datetimes by default."""
         before = datetime.now(timezone.utc)
         cg = self._make_callgraph()
         after = datetime.now(timezone.utc)
@@ -167,7 +142,6 @@ class TestCallgraphModel:
         assert before <= cg.updated_at <= after
 
     def test_with_nested_imports_and_calls(self):
-        """Callgraph accepts nested ImportEntry and CallEdge objects."""
         cg = self._make_callgraph(
             imports=[
                 ImportEntry(module="requests", file="main.py", line=1),
@@ -182,7 +156,6 @@ class TestCallgraphModel:
         assert cg.calls[0].callee == "requests:get"
 
     def test_with_module_usage_dict(self):
-        """Callgraph accepts module_usage as a dict of ModuleUsage."""
         cg = self._make_callgraph(
             module_usage={
                 "requests": ModuleUsage(module="requests", import_count=3),
@@ -192,16 +165,12 @@ class TestCallgraphModel:
         assert cg.module_usage["requests"].import_count == 3
 
     def test_missing_required_field_rejected(self):
-        """Omitting project_id raises ValidationError."""
         with pytest.raises(ValidationError):
             Callgraph(language="python", tool="pyan")
 
 
 class TestCallgraphIdAlias:
-    """Callgraph _id alias round-trip for MongoDB compatibility."""
-
     def _make_callgraph(self, **overrides):
-        """Factory for a valid Callgraph with minimal required fields."""
         defaults = {
             "project_id": "proj-1",
             "language": "python",
@@ -211,14 +180,12 @@ class TestCallgraphIdAlias:
         return Callgraph(**defaults)
 
     def test_model_dump_by_alias_contains_id(self):
-        """model_dump(by_alias=True) produces '_id' key."""
         cg = self._make_callgraph()
         dumped = cg.model_dump(by_alias=True)
         assert "_id" in dumped
         assert dumped["_id"] == cg.id
 
     def test_accepts_id_from_mongo(self):
-        """Callgraph accepts _id via validation_alias."""
         cg = Callgraph(
             _id="cg-custom-id",
             project_id="p1",
@@ -228,7 +195,6 @@ class TestCallgraphIdAlias:
         assert cg.id == "cg-custom-id"
 
     def test_roundtrip_via_model_dump(self):
-        """Callgraph survives model_dump -> reconstruct cycle."""
         original = self._make_callgraph(
             pipeline_id=42,
             branch="main",

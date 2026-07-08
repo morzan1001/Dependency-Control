@@ -21,7 +21,7 @@ def test_bsi_framework_identity():
     fw = BsiTr02102Framework()
     assert fw.key == ReportFramework.BSI_TR_02102
     assert "BSI TR-02102" in fw.name
-    assert len(fw.controls) >= 2  # Phase-1 seed has 3 rules
+    assert len(fw.controls) >= 2
 
 
 def test_bsi_evaluation_runs():

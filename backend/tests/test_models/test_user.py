@@ -89,8 +89,7 @@ class TestNotificationPreferencesValidator:
         assert user.notification_preferences == {}
 
     def test_channels_not_list_rejected_by_pydantic(self):
-        # Pydantic validates type before field_validator runs,
-        # so a string value for list[str] raises ValidationError
+        # Pydantic validates the list[str] type before the field_validator runs.
         with pytest.raises(ValidationError):
             User(
                 username="test",
@@ -126,6 +125,5 @@ class TestNotificationPreferencesValidator:
                 "vulnerability_found": ["telegram"],  # all invalid
             },
         )
-        # Events with no valid channels are skipped
         assert "analysis_completed" not in user.notification_preferences
         assert "vulnerability_found" not in user.notification_preferences

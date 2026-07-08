@@ -189,7 +189,7 @@ class TestIngestOidcInstanceRouting:
         settings = _make_system_settings()
 
         with patch("jose.jwt.get_unverified_claims") as mock_claims:
-            mock_claims.return_value = {}  # No 'iss' claim
+            mock_claims.return_value = {}
 
             with pytest.raises(HTTPException) as exc_info:
                 asyncio.run(
@@ -204,7 +204,6 @@ class TestIngestOidcInstanceRouting:
             assert "issuer" in exc_info.value.detail.lower()
 
     def test_raises_403_on_malformed_token(self):
-        """Malformed JWT that can't be decoded should raise 403."""
         from app.api.deps import get_project_for_ingest
 
         db = MagicMock()
@@ -345,7 +344,6 @@ class TestIngestOidcProjectLookup:
             "sync_teams": False,
         }
 
-        # Project not found via composite key lookup, but find_or_create succeeds
         admin_doc = {"_id": "admin-id", "username": "admin", "is_superuser": True}
 
         gitlab_instances_coll = create_mock_collection(find_one=instance_doc)
@@ -445,10 +443,8 @@ class TestIngestOidcProjectLookup:
                 assert "auto-creation is disabled" in exc_info.value.detail
 
     def test_same_project_id_different_instances_returns_correct_project(self):
-        """Two instances with same gitlab_project_id=42 should resolve to different projects."""
         from app.api.deps import get_project_for_ingest
 
-        # Instance A
         instance_a_doc = {
             "_id": "inst-a",
             "name": "A",
@@ -466,7 +462,6 @@ class TestIngestOidcProjectLookup:
             "gitlab_project_id": 42,
         }
 
-        # Instance B
         instance_b_doc = {
             "_id": "inst-b",
             "name": "B",
@@ -689,7 +684,6 @@ class TestIngestGitHubOidcProjectLookup:
         }
         admin_doc = {"_id": "admin-id", "username": "admin", "is_superuser": True}
 
-        # Project not found via composite key lookup, but find_or_create succeeds
         gitlab_instances_coll = create_mock_collection(find_one=None)
         github_instances_coll = create_mock_collection(find_one=github_instance_doc)
         projects_coll = create_mock_collection(find_one=None)
@@ -781,7 +775,6 @@ class TestIngestGitHubOidcProjectLookup:
                 assert "auto-creation is disabled" in exc_info.value.detail
 
     def test_gitlab_takes_priority_over_github(self):
-        """If a GitLab instance matches the issuer, GitHub should NOT be tried."""
         from app.api.deps import get_project_for_ingest
 
         gitlab_instance_doc = {
@@ -832,6 +825,5 @@ class TestIngestGitHubOidcProjectLookup:
                     )
                 )
 
-        # GitLab was used, not GitHub
         assert result.name == "GL Project"
         assert result.id == "proj-gl"

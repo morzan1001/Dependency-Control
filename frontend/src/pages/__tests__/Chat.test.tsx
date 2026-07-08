@@ -9,12 +9,10 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
 });
 
-// --- toast (sonner) --------------------------------------------------------
 vi.mock('sonner', () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }));
 
-// --- auth ------------------------------------------------------------------
 vi.mock('@/context', () => ({
   useAuth: () => ({
     isAuthenticated: true,
@@ -26,7 +24,6 @@ vi.mock('@/context', () => ({
   }),
 }));
 
-// --- chat stream -----------------------------------------------------------
 const sendMessage = vi.fn();
 vi.mock('@/hooks/useChatStream', () => ({
   useChatStream: () => ({
@@ -43,7 +40,6 @@ vi.mock('@/hooks/useChatStream', () => ({
   }),
 }));
 
-// --- chat queries ----------------------------------------------------------
 const createMutateAsync = vi.fn();
 const deleteMutateAsync = vi.fn();
 vi.mock('@/hooks/queries/use-chat', () => ({
@@ -73,8 +69,7 @@ describe('Chat error handling', () => {
 
     renderChat();
 
-    // Empty state renders the suggested-prompt buttons; clicking one calls
-    // handleSend with no active conversation -> createConversation rejects.
+    // Clicking a suggested prompt with no active conversation triggers createConversation, which rejects.
     const prompt = screen.getByText('Critical vulnerabilities');
     fireEvent.click(prompt);
 
@@ -84,7 +79,6 @@ describe('Chat error handling', () => {
         expect.objectContaining({ description: 'backend down' }),
       );
     });
-    // The rejected create must not have led to a sendMessage call.
     expect(sendMessage).not.toHaveBeenCalled();
   });
 

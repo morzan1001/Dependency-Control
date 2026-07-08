@@ -31,15 +31,11 @@ def _quality(
 
 
 class TestProcessQualityEmpty:
-    """Edge case: no findings."""
-
     def test_empty_list_returns_empty(self):
         assert process_quality([]) == []
 
 
 class TestProcessQualityUnmaintained:
-    """Unmaintained package produces SUPPLY_CHAIN_RISK recommendation."""
-
     def test_returns_recommendation(self):
         finding = _quality(critical_issues=["Maintained"])
         result = process_quality([finding])
@@ -104,8 +100,6 @@ class TestProcessQualityUnmaintained:
 
 
 class TestProcessQualityVulnerabilities:
-    """Vulnerabilities critical issue produces separate recommendation."""
-
     def test_vulnerabilities_issue_produces_recommendation(self):
         finding = _quality(
             critical_issues=["Vulnerabilities"],
@@ -144,8 +138,6 @@ class TestProcessQualityVulnerabilities:
 
 
 class TestProcessQualityLowScorecard:
-    """Low scorecard without unmaintained generates 'Review Low-Quality'."""
-
     def test_low_score_generates_review_recommendation(self):
         finding = _quality(overall_score=2.0)
         recs = process_quality([finding])
@@ -194,8 +186,6 @@ class TestProcessQualityLowScorecard:
 
 
 class TestProcessQualityLowScoreWithUnmaintained:
-    """Low scorecard WITH unmaintained should NOT generate 'Review Low-Quality'."""
-
     def test_no_low_quality_when_unmaintained_present(self):
         finding = _quality(
             overall_score=2.0,
@@ -234,8 +224,6 @@ class TestProcessQualityLowScoreWithUnmaintained:
 
 
 class TestProcessQualityCodeReview:
-    """Code-Review failed check produces specific recommendation."""
-
     def test_code_review_check_generates_recommendation(self):
         finding = _quality(
             overall_score=5.0,
@@ -316,8 +304,6 @@ class TestProcessQualityScoreNone:
 
 
 class TestProcessQualityHighScore:
-    """Packages with good scores should not generate low-quality recs."""
-
     def test_high_score_no_low_quality_rec(self):
         finding = _quality(overall_score=8.0)
         recs = process_quality([finding])
@@ -337,8 +323,6 @@ class TestProcessQualityHighScore:
 
 
 class TestProcessQualityCombinedScenarios:
-    """Complex scenarios with multiple issue types."""
-
     def test_unmaintained_and_vulnerabilities(self):
         finding = _quality(
             critical_issues=["Maintained", "Vulnerabilities"],
@@ -410,8 +394,6 @@ class TestProcessQualityCombinedScenarios:
 
 
 class TestProcessQualityActionStructure:
-    """Verify action dict content for each recommendation type."""
-
     def test_unmaintained_action_type(self):
         finding = _quality(critical_issues=["Maintained"])
         recs = process_quality([finding])

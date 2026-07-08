@@ -1,16 +1,4 @@
-"""Tests for shared OIDC token validation utilities.
-
-These tests exercise the *real* JWT decode path with a genuine RS256
-keypair and JWKS (no mocking of ``jwt.decode``), so they verify actual
-cryptographic / claim-verification behavior rather than mocks asserting
-mocks.
-
-Security focus (Finding 7 / W1.1): OIDC audience verification is now
-hard-required and fail-closed. A token must be REJECTED when:
-  - the instance has no expected audience configured (fail closed), and
-  - the token's ``aud`` claim does not match the configured audience.
-A token with a matching ``aud`` is accepted (regression guard).
-"""
+"""Tests for shared OIDC token validation, exercising the real RS256 decode/claim-verification path (no jwt.decode mocking)."""
 
 import asyncio
 from datetime import datetime, timezone
@@ -104,8 +92,7 @@ class TestOIDCAudienceFailClosed:
     """Audience is hard-required and verification fails closed."""
 
     def test_no_audience_configured_is_rejected(self, rsa_keypair, jwks):
-        """A validly-signed token MUST be rejected when the instance has no
-        configured audience (fail closed), even though the signature is valid."""
+        """A validly-signed token must be rejected when the instance has no configured audience (fail closed)."""
         private_pem, _ = rsa_keypair
         token = _make_token(private_pem, aud="some-audience")
 
@@ -128,8 +115,7 @@ class TestOIDCAudienceFailClosed:
         mock_decode.assert_not_called()
 
     def test_audience_mismatch_is_rejected(self, rsa_keypair, jwks):
-        """A real token whose 'aud' does not match the configured audience
-        MUST be rejected by genuine claim verification."""
+        """A real token whose 'aud' does not match the configured audience must be rejected."""
         private_pem, _ = rsa_keypair
         token = _make_token(private_pem, aud="attacker-audience")
 
@@ -138,7 +124,7 @@ class TestOIDCAudienceFailClosed:
         assert result is None
 
     def test_matching_audience_is_accepted(self, rsa_keypair, jwks):
-        """Regression guard: a real token with a matching 'aud' is accepted."""
+        """A real token with a matching 'aud' is accepted."""
         private_pem, _ = rsa_keypair
         token = _make_token(private_pem, aud="dependency-control")
 
@@ -149,8 +135,7 @@ class TestOIDCAudienceFailClosed:
         assert result.project_path == "group/project"
 
     def test_token_without_aud_claim_is_rejected_when_audience_required(self, rsa_keypair, jwks):
-        """A token missing the 'aud' claim entirely is rejected when an
-        audience is configured (verify_aud=True is always enforced)."""
+        """A token missing the 'aud' claim entirely is rejected when an audience is configured."""
         private_pem, _ = rsa_keypair
         token = _make_token(private_pem, aud=None)
 
@@ -160,9 +145,7 @@ class TestOIDCAudienceFailClosed:
 
 
 class _FakeCooldownCache:
-    """In-memory stand-in for the Redis-backed ``cache_service`` used by
-    ``find_jwks_key`` to rate-limit forced JWKS refreshes. TTL is ignored
-    (tests run well inside any realistic cooldown window)."""
+    """In-memory stand-in for the Redis-backed cache_service (TTL ignored)."""
 
     def __init__(self):
         self.store = {}
@@ -176,16 +159,12 @@ class _FakeCooldownCache:
 
 
 class TestJwksForcedRefreshCooldown:
-    """Finding 1 (bug/low): an unknown ``kid`` must not be able to force an
-    unbounded number of JWKS cache invalidations + upstream refetches. Once a
-    forced refresh has happened, further unknown-kid lookups within the cooldown
-    fail fast without invalidating the cache or refetching."""
+    """An unknown kid must not force unbounded JWKS invalidations/refetches: after one forced refresh, further unknown-kid lookups within the cooldown fail fast."""
 
     _KNOWN_KEY = {"kid": "known", "kty": "RSA", "n": "n", "e": "AQAB"}
 
     def test_unknown_kid_forces_refresh_only_once_within_cooldown(self):
-        """Reproduces the cache-busting DoS: repeated unknown kids should trigger
-        at most ONE forced refresh per provider within the cooldown window."""
+        """Repeated unknown kids trigger at most ONE forced refresh per provider within the cooldown window."""
         jwks_without_target = {"keys": [self._KNOWN_KEY]}
         get_jwks = AsyncMock(return_value=jwks_without_target)
         invalidate = AsyncMock()
@@ -208,8 +187,7 @@ class TestJwksForcedRefreshCooldown:
             assert get_jwks.await_count == 3
 
     def test_legitimate_rotation_still_refreshes_when_cooldown_clear(self):
-        """Regression guard: with the cooldown clear, a genuine key rotation is
-        still resolved by invalidating and refetching the JWKS."""
+        """With the cooldown clear, a genuine key rotation is still resolved by invalidating and refetching the JWKS."""
         rotated_key = {"kid": "rotated", "kty": "RSA", "n": "n2", "e": "AQAB"}
         jwks_old = {"keys": [self._KNOWN_KEY]}
         jwks_new = {"keys": [self._KNOWN_KEY, rotated_key]}
@@ -225,8 +203,7 @@ class TestJwksForcedRefreshCooldown:
         assert get_jwks.await_count == 2
 
     def test_cooldown_is_per_provider(self):
-        """A cooldown set by traffic to one provider must not throttle a
-        different provider's legitimate forced refresh."""
+        """A cooldown set by one provider must not throttle a different provider's legitimate forced refresh."""
         jwks_without_target = {"keys": [self._KNOWN_KEY]}
         get_jwks = AsyncMock(return_value=jwks_without_target)
         invalidate = AsyncMock()
@@ -321,10 +298,7 @@ class TestGitHubInstanceSchemaRequiresAudience:
 
 
 class TestInstanceResponseAllowsNullAudience:
-    """Response schemas MUST serialize legacy instances whose oidc_audience is
-    null (created before the field became required), so admins can see and fix
-    them. The blank-check belongs only on Create/Update — never on the Response.
-    """
+    """Response schemas must serialize instances whose oidc_audience is null so admins can see and fix them; the blank-check belongs only on Create/Update."""
 
     def test_gitlab_response_allows_explicit_null_audience(self):
         response = GitLabInstanceResponse(
@@ -350,8 +324,7 @@ class TestInstanceResponseAllowsNullAudience:
         assert response.oidc_audience is None
 
     def test_gitlab_to_response_helper_serializes_legacy_null_audience(self):
-        """Exercise the real GET-endpoint helper for a legacy instance with a
-        null audience: it must build a Response, not raise (which would 500)."""
+        """The GET-endpoint helper for an instance with a null audience must build a Response, not raise (which would 500)."""
         from app.api.v1.endpoints.gitlab_instances import _to_response
 
         legacy = SimpleNamespace(

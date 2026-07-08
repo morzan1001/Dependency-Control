@@ -35,11 +35,7 @@ def test_family_alias_normalises():
 
 
 def test_family_alias_normalises_case_insensitively():
-    """CBOM tools emit inconsistent casing for the same family. Alias
-    resolution must be case-insensitive like the canonical fallback, or a
-    quantum-vulnerable asset (e.g. ``diffie-hellman``) silently misses the
-    alias, misses the canonical set (DH != DIFFIE-HELLMAN), and is dropped
-    from the migration plan by ``generator._filter_vulnerable``."""
+    """Alias resolution must be case-insensitive, or a quantum-vulnerable asset misses both the alias and the canonical set and is dropped from the migration plan."""
     m = load_mappings()
     assert normalise_family("diffie-hellman", m) == "DH"
     assert normalise_family("DIFFIE-HELLMAN", m) == "DH"
@@ -48,17 +44,11 @@ def test_family_alias_normalises_case_insensitively():
 
 
 def test_clear_mappings_cache_forces_reload():
-    """``load_mappings`` is ``@lru_cache(maxsize=1)``. Without an explicit
-    cache-clear, tests that patch the YAML or _MAPPINGS_PATH would keep
-    seeing the first-process result. ``clear_mappings_cache`` exposes the
-    underlying ``cache_clear`` so test setup can invalidate stale results."""
-    # Prime the cache.
+    """clear_mappings_cache exposes lru_cache's cache_clear so tests can invalidate a stale load_mappings result."""
     first = load_mappings()
     assert load_mappings.cache_info().currsize == 1
-    # Clear — next call repopulates.
     clear_mappings_cache()
     assert load_mappings.cache_info().currsize == 0
     second = load_mappings()
-    # Same content (YAML unchanged), fresh object with full population.
     assert second.version == first.version
     assert load_mappings.cache_info().currsize == 1

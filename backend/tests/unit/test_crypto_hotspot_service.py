@@ -130,9 +130,7 @@ def _crypto_finding(_id, *, asset_name, project_id, scan_id, severity="HIGH", wa
 
 @pytest.mark.asyncio
 async def test_group_by_name_enrichment_joins_on_bare_name_despite_variants(db):
-    """Finding #1: hotspot rows must key on bare asset name so the findings
-    enrichment (which only has details.asset_name == asset.name) joins cleanly.
-    Previously the key was "name-variant" and every join missed → finding_count 0."""
+    """Hotspot rows must key on the bare asset name so findings enrichment joins on details.asset_name."""
     await CryptoAssetRepository(db).bulk_upsert(
         "pv",
         "sv",
@@ -163,7 +161,7 @@ async def test_group_by_name_enrichment_joins_on_bare_name_despite_variants(db):
 
 @pytest.mark.asyncio
 async def test_group_by_name_enrichment_excludes_waived_findings(db):
-    """Finding #3: waived crypto findings must not inflate finding_count/severity_mix."""
+    """Waived crypto findings must not inflate finding_count or severity_mix."""
     await CryptoAssetRepository(db).bulk_upsert(
         "pw",
         "sw",
@@ -189,7 +187,6 @@ async def test_group_by_name_enrichment_excludes_waived_findings(db):
 
 @pytest.mark.asyncio
 async def test_group_by_severity_excludes_waived_findings(db):
-    """Finding #3 on the finding-dimension path (severity)."""
     for f in [
         _crypto_finding("f1", asset_name="MD5", project_id="ps", scan_id="ss", severity="HIGH"),
         _crypto_finding("f2", asset_name="MD5", project_id="ps", scan_id="ss", severity="HIGH", waived=True),
@@ -204,14 +201,13 @@ async def test_group_by_severity_excludes_waived_findings(db):
     result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="severity", limit=10)
 
     by_key = {e.key: e for e in result.items}
-    assert by_key["HIGH"].finding_count == 1  # waived HIGH excluded
+    assert by_key["HIGH"].finding_count == 1
     assert by_key["LOW"].finding_count == 1
 
 
 @pytest.mark.asyncio
 async def test_no_completed_scans_returns_empty_not_all_history(db):
-    """Finding #2: when _pick_scan_ids finds no completed/partial scan the
-    aggregation must match nothing rather than fall back to every scan."""
+    """With no completed/partial scan the aggregation must match nothing, not fall back to every scan."""
     await CryptoAssetRepository(db).bulk_upsert(
         "pn",
         "srun",

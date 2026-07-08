@@ -11,12 +11,7 @@ from app.db.mongodb import get_database
 
 @pytest_asyncio.fixture
 async def client():
-    # Patch startup-event side-effects so the test process doesn't block
-    # trying to reach a real MongoDB or Redis instance.
-    # Override get_database via FastAPI's dependency_overrides so that
-    # route handlers receive a mock DB instead of raising RuntimeError.
-    # The OAuth2PasswordBearer dependency still returns 401 for bearer-less
-    # requests before any real DB interaction occurs.
+    # Override startup side-effects and get_database so no real Mongo/Redis is needed; auth still 401s before any DB access.
     mock_db = MagicMock()
 
     def override_get_database():

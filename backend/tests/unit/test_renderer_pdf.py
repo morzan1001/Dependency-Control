@@ -6,9 +6,7 @@ _weasyprint_spec = importlib.util.find_spec("weasyprint")
 _weasyprint_usable = False
 if _weasyprint_spec is not None:
     try:
-        # WeasyPrint's top-level import dlopens Cairo/Pango; if the native
-        # libraries are absent the import raises OSError. Treat that as
-        # "not usable" so tests skip gracefully on dev machines that lack them.
+        # WeasyPrint's import dlopens Cairo/Pango; a missing native lib raises, so treat it as unusable.
         importlib.import_module("weasyprint")
         _weasyprint_usable = True
     except Exception:  # pragma: no cover - environment-dependent

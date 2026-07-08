@@ -1,5 +1,4 @@
-"""Tests for the central EPSS bucketing function — single source of truth
-shared between risk scoring (services/enrichment) and analysis stats."""
+"""Tests for the shared EPSS bucketing function bucket_epss."""
 
 from app.core.epss import bucket_epss
 
@@ -12,7 +11,7 @@ class TestBucketEpss:
         assert bucket_epss(0.0099) == "low"
 
     def test_at_medium_threshold_is_medium(self):
-        # Inclusive: 0.01 lands in "medium" (matches EPSS_MEDIUM_THRESHOLD docstring)
+        # Inclusive: 0.01 lands in "medium".
         assert bucket_epss(0.01) == "medium"
 
     def test_just_above_medium_is_medium(self):
@@ -22,7 +21,7 @@ class TestBucketEpss:
         assert bucket_epss(0.099) == "medium"
 
     def test_at_high_threshold_is_high(self):
-        # Inclusive: 0.1 lands in "high" (matches EPSS_HIGH_THRESHOLD docstring)
+        # Inclusive: 0.1 lands in "high".
         assert bucket_epss(0.1) == "high"
 
     def test_above_high_is_high(self):

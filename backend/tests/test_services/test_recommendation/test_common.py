@@ -22,8 +22,6 @@ class _SampleModel(BaseModel):
 
 
 class TestGetAttr:
-    """Tests for get_attr - unified accessor for Pydantic models and dicts."""
-
     def test_dict_returns_value(self):
         assert get_attr({"key": "val"}, "key") == "val"
 
@@ -73,8 +71,6 @@ class TestGetAttr:
 
 
 class TestExtractCveId:
-    """Tests for extract_cve_id - extracts CVE ID from finding via multiple strategies."""
-
     def test_direct_id_field(self):
         finding = {"id": "CVE-2024-0001"}
         assert extract_cve_id(finding) == "CVE-2024-0001"
@@ -84,7 +80,6 @@ class TestExtractCveId:
         assert extract_cve_id(finding) == "CVE-2024-9999"
 
     def test_direct_id_non_cve_skipped(self):
-        """Non-CVE IDs in the id field should fall through to other strategies."""
         finding = {"id": "GHSA-1234-abcd-5678"}
         assert extract_cve_id(finding) is None
 
@@ -132,19 +127,15 @@ class TestExtractCveId:
         assert extract_cve_id(finding) is None
 
     def test_none_aliases_handled(self):
-        """aliases field is None instead of a list."""
         finding = {"id": "nope", "aliases": None}
         assert extract_cve_id(finding) is None
 
     def test_details_not_dict_ignored(self):
-        """If details is not a dict, strategies 2 and 3 should not crash."""
         finding = {"id": "nope", "details": "a string"}
         assert extract_cve_id(finding) is None
 
 
 class TestParseVersionTuple:
-    """Tests for parse_version_tuple - parses version string into comparable tuple."""
-
     def test_simple_semver(self):
         assert parse_version_tuple("1.2.3") == (1, 2, 3)
 
@@ -158,7 +149,6 @@ class TestParseVersionTuple:
         assert parse_version_tuple("42") == (42,)
 
     def test_prerelease_beta(self):
-        """'1.2.0-beta.1' should parse numeric parts: (1, 2, 0, 1)."""
         assert parse_version_tuple("1.2.0-beta.1") == (1, 2, 0, 1)
 
     def test_prerelease_rc(self):
@@ -178,8 +168,6 @@ class TestParseVersionTuple:
 
 
 class TestCalculateBestFixVersion:
-    """Tests for calculate_best_fix_version - picks highest version from a list."""
-
     def test_empty_list_returns_unknown(self):
         assert calculate_best_fix_version([]) == "unknown"
 
@@ -191,9 +179,7 @@ class TestCalculateBestFixVersion:
         assert result == "2.0.0"
 
     def test_comma_separated_versions(self):
-        """A single string with comma-separated versions is returned as-is (not split)."""
         result = calculate_best_fix_version(["1.0.0, 2.0.0"])
-        # Current implementation does not split comma-separated strings
         assert result == "1.0.0, 2.0.0"
 
     def test_whitespace_only_filtered(self):
@@ -208,7 +194,6 @@ class TestCalculateBestFixVersion:
         assert result == "2.0.0"
 
     def test_none_values_filtered(self):
-        """None values should be skipped (they are falsy)."""
         result = calculate_best_fix_version([None, "1.0.0"])
         assert result == "1.0.0"
 
@@ -224,7 +209,6 @@ class TestCalculateBestFixVersion:
         assert result == "2.0.0"
 
     def test_single_comma_separated_entry_returned_as_is(self):
-        """Comma-separated versions in a single string are not parsed individually."""
         result = calculate_best_fix_version(["1.0.0, 3.0.0, 2.0.0"])
         assert result == "1.0.0, 3.0.0, 2.0.0"
 
@@ -235,7 +219,6 @@ def _make_recommendation(
     impact=None,
     effort="medium",
 ) -> Recommendation:
-    """Helper factory for creating minimal Recommendation objects."""
     return Recommendation(
         type=rec_type,
         priority=priority,
@@ -249,8 +232,6 @@ def _make_recommendation(
 
 
 class TestCalculateScore:
-    """Tests for calculate_score - produces numeric score for recommendation sorting."""
-
     def test_basic_medium_priority(self):
         rec = _make_recommendation(priority=Priority.MEDIUM)
         score = calculate_score(rec)
@@ -283,7 +264,6 @@ class TestCalculateScore:
         assert calculate_score(with_impact) > calculate_score(no_impact)
 
     def test_kev_bonus(self):
-        """KEV count in impact should boost the score."""
         without_kev = _make_recommendation(
             impact={"critical": 1, "high": 0, "medium": 0, "low": 0, "total": 1, "kev_count": 0}
         )
@@ -347,7 +327,7 @@ class TestCalculateScore:
         assert calculate_score(with_reach) > calculate_score(without)
 
     def test_unreachable_penalty_high_ratio(self):
-        """When >80% unreachable, score should be reduced significantly."""
+        # >80% unreachable reduces the score significantly.
         normal = _make_recommendation(
             priority=Priority.HIGH,
             impact={"critical": 0, "high": 5, "medium": 0, "low": 0, "total": 5},
@@ -366,7 +346,7 @@ class TestCalculateScore:
         assert calculate_score(unreachable) < calculate_score(normal)
 
     def test_unreachable_penalty_medium_ratio(self):
-        """When >50% but <=80% unreachable, score should be moderately reduced."""
+        # >50% but <=80% unreachable reduces the score moderately.
         normal = _make_recommendation(
             priority=Priority.HIGH,
             impact={"critical": 0, "high": 10, "medium": 0, "low": 0, "total": 10},
@@ -385,7 +365,6 @@ class TestCalculateScore:
         assert calculate_score(partial_unreach) < calculate_score(normal)
 
     def test_effort_low_bonus(self):
-        """Low effort should score higher than high effort."""
         low_effort = _make_recommendation(effort="low")
         high_effort = _make_recommendation(effort="high")
         assert calculate_score(low_effort) > calculate_score(high_effort)
@@ -396,7 +375,6 @@ class TestCalculateScore:
         assert calculate_score(medium_effort) > calculate_score(high_effort)
 
     def test_type_bonus_malware_highest(self):
-        """Malware detected type should have highest type bonus."""
         malware = _make_recommendation(rec_type=RecommendationType.MALWARE_DETECTED)
         direct = _make_recommendation(rec_type=RecommendationType.DIRECT_DEPENDENCY_UPDATE)
         assert calculate_score(malware) > calculate_score(direct)
@@ -421,7 +399,6 @@ class TestCalculateScore:
         assert calculate_score(with_actionable) > calculate_score(without)
 
     def test_combined_threat_intel(self):
-        """Multiple threat intel signals should stack."""
         single = _make_recommendation(
             impact={
                 "critical": 1,
@@ -447,7 +424,7 @@ class TestCalculateScore:
         assert calculate_score(combined) > calculate_score(single)
 
     def test_zero_total_no_crash(self):
-        """If total is 0 in impact, should not divide by zero."""
+        # total=0 must not cause a division by zero.
         rec = _make_recommendation(
             impact={
                 "critical": 0,
@@ -458,6 +435,5 @@ class TestCalculateScore:
                 "unreachable_count": 5,
             }
         )
-        # total defaults to 1 in the code, so this should not crash
         score = calculate_score(rec)
         assert isinstance(score, int)

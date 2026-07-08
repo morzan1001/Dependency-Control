@@ -1,5 +1,4 @@
-"""Finding 6 / M2: _aggregate_external_results must skip malformed results and keep the rest,
-and must emit a SYSTEM_WARNING finding when a result fails to aggregate."""
+"""_aggregate_external_results skips malformed results and emits a SYSTEM_WARNING when one fails to aggregate."""
 
 import asyncio
 from types import SimpleNamespace
@@ -19,20 +18,18 @@ class FakeResult:
 
 
 class TestAggregateExternalResultsResilience:
-    """_aggregate_external_results must be per-result isolated."""
+    """_aggregate_external_results is isolated per result."""
 
     def _make_aggregator(self):
         return ResultAggregator()
 
     def test_good_results_aggregated_when_one_malformed(self, monkeypatch):
-        """Finding 6: a malformed stored result must be skipped; the rest must aggregate."""
         aggregator = self._make_aggregator()
         results_summary: list = []
 
-        # Patch analyzers so the 'trivy' key is NOT in it (external results path)
+        # 'trivy' absent from analyzers -> external results path
         monkeypatch.setattr("app.services.analysis.engine.analyzers", {})
 
-        # Arrange: good trivy result + one that will raise when aggregate() is called
         good_result = FakeResult(
             "trivy",
             {
@@ -53,17 +50,15 @@ class TestAggregateExternalResultsResilience:
             },
         )
 
-        # A result whose aggregation will explode (simulates corrupt stored data)
+        # simulates corrupt stored data
         class BoomResult:
             analyzer_name = "bad_analyzer"
             result = {"corrupt": object()}  # not JSON-serialisable, triggers normaliser errors
 
         bad_result = BoomResult()
 
-        # Make result_repo return [bad_result, good_result] to test both orderings
         result_repo = SimpleNamespace(find_by_scan=AsyncMock(return_value=[bad_result, good_result]))
 
-        # Force the bad result to raise during aggregate by monkeypatching aggregate
         original_aggregate = aggregator.aggregate
 
         def patched_aggregate(analyzer_name, result, source=None):
@@ -77,16 +72,13 @@ class TestAggregateExternalResultsResilience:
 
         findings = aggregator.get_findings()
 
-        # Good finding must survive
         components = [f.component for f in findings]
         assert "requests" in components or any("CVE-2023-GOOD" in str(f.details) for f in findings), (
             f"Expected 'requests' finding to survive; got components={components}"
         )
-        # Scan must not have completely failed
         assert len(findings) >= 1
 
-        # M2: a SYSTEM_WARNING finding must have been emitted for the failed result,
-        # providing a user-visible signal that a scanner result was dropped.
+        # a SYSTEM_WARNING gives a user-visible signal that a result was dropped
         warning_findings = [f for f in findings if f.type == FindingType.SYSTEM_WARNING]
         assert len(warning_findings) >= 1, (
             "Expected at least one SYSTEM_WARNING finding when a result fails to aggregate; "
@@ -98,7 +90,6 @@ class TestAggregateExternalResultsResilience:
         )
 
     def test_results_summary_still_populated_after_bad_result(self, monkeypatch):
-        """A skipped malformed result must not prevent good results from being logged."""
         aggregator = self._make_aggregator()
         results_summary: list = []
 
@@ -143,5 +134,4 @@ class TestAggregateExternalResultsResilience:
 
         asyncio.run(_aggregate_external_results(aggregator, result_repo, "scan-2", results_summary))
 
-        # Good result should be in summary
         assert any("trivy" in s for s in results_summary), f"Expected trivy in results_summary; got {results_summary}"

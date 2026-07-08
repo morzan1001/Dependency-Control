@@ -1,11 +1,4 @@
-"""Dispatch-level tests for waiver-related chat tools.
-
-Verify that the MCP-exposed chat tools honour ``expiration_date``: an expired
-waiver must not appear as active. The application path
-(``find_active_for_project``) already filters expired waivers; the read path
-(``get_waiver_status``, ``list_project_waivers``, ``list_global_waivers``) must
-match that contract or the user sees a stale picture.
-"""
+"""Waiver chat tool read paths must honour expiration_date so expired waivers never appear active."""
 
 from datetime import datetime, timedelta, timezone
 
@@ -75,8 +68,7 @@ class TestGetWaiverStatusExpiry:
 
     @pytest.mark.asyncio
     async def test_active_waiver_no_finding_doc_reports_present_but_not_suppressing(self, db, admin_user):
-        # No finding doc in latest scan → active waiver exists but is NOT suppressing anything.
-        # Old assertion (waived:true) encoded the bug; new contract: waived:false, waiver_present:true.
+        # No finding doc in the latest scan: the active waiver is present but suppresses nothing.
         _seed_project(db)
         future = datetime.now(timezone.utc) + timedelta(days=30)
         _seed_waiver(db, expiration_date=future)
@@ -91,13 +83,12 @@ class TestGetWaiverStatusExpiry:
         assert result["waived"] is False
         assert result["waiver_present"] is True
         assert result["suppressing"] is False
-        assert result["reason"]  # reason text must be non-empty
+        assert result["reason"]
         assert result["waiver"]["id"] == "w-1"
 
     @pytest.mark.asyncio
     async def test_waiver_without_expiry_no_finding_doc_reports_present_but_not_suppressing(self, db, admin_user):
-        # No finding doc in latest scan → no-expiry waiver exists but is NOT suppressing anything.
-        # Old assertion (waived:true) encoded the bug; new contract: waived:false, waiver_present:true.
+        # No finding doc in the latest scan: the no-expiry waiver is present but suppresses nothing.
         _seed_project(db)
         _seed_waiver(db, expiration_date=None)
 
@@ -116,11 +107,7 @@ class TestGetWaiverStatusExpiry:
 class TestGetWaiverStatusNoFindingDoc:
     @pytest.mark.asyncio
     async def test_get_waiver_status_no_latest_scan_id_reports_present_but_not_suppressing(self, db, admin_user):
-        # Scenario: project has NO latest_scan_id at all (never scanned or scan id cleared).
-        # finding stays None because latest_scan_id is falsy → skip the DB lookup entirely.
-        # An active waiver exists, but with nothing to suppress it should report present-but-not-suppressing.
-        # This is distinct from the TestGetWaiverStatusExpiry cases where a scan exists but the
-        # finding doc is simply absent from it.
+        # A falsy latest_scan_id skips the finding lookup, so the active waiver is present but suppresses nothing.
         _seed_project(db)  # deliberately omits latest_scan_id
         future = datetime.now(timezone.utc) + timedelta(days=30)
         _seed_waiver(db, expiration_date=future)
@@ -135,13 +122,13 @@ class TestGetWaiverStatusNoFindingDoc:
         assert result["waived"] is False
         assert result["waiver_present"] is True
         assert result["suppressing"] is False
-        assert result["reason"]  # reason text must be non-empty
+        assert result["reason"]
 
 
 class TestGetWaiverStatusFindingFlags:
     @pytest.mark.asyncio
     async def test_reports_waived_from_finding_flag(self, db, admin_user):
-        # finding waived in latest scan by recalc; waiver may have a different/old finding_id
+        # The finding is waived in the latest scan even though the waiver's finding_id differs.
         await db["findings"].insert_one(
             {
                 "_id": "x",

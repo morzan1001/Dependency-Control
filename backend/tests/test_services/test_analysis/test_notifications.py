@@ -1,13 +1,4 @@
-"""Tests for scan-completion notification building/sending.
-
-Covers two audit findings for app/services/analysis/notifications.py:
-
-  #1 (elegance): the private inverted SEVERITY_ORDER map was replaced with the
-     canonical app.core.constants.get_severity_value. The top-priority sort must
-     still order most-severe-first (as a tiebreak after KEV and EPSS).
-  #2 (bug): the plain-text "View full report" line must contain the report URL,
-     not the raw scan UUID.
-"""
+"""Scan-completion notification building/sending: top-priority sort ordering and report-URL rendering."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -22,14 +13,8 @@ from app.services.analysis.notifications import (
 )
 
 
-# ---------------------------------------------------------------------------
-# _build_vulnerability_message — finding #2 (report URL, not raw scan_id)
-# ---------------------------------------------------------------------------
-
-
 class TestBuildVulnerabilityMessageReportLink:
     def test_view_full_report_uses_url_not_raw_uuid(self):
-        """The 'View full report' line must render the passed report URL."""
         scan_link = "https://app.example.com/projects/p1/scans/3f2a-uuid"
         _subject, message = _build_vulnerability_message(
             "proj",
@@ -40,13 +25,8 @@ class TestBuildVulnerabilityMessageReportLink:
             scan_link=scan_link,
         )
         assert f"View full report: {scan_link}" in message
-        # A bare UUID with no scheme/path must NOT be what we emit.
+        # a bare UUID with no scheme/path must not be emitted
         assert "View full report: 3f2a-uuid" not in message
-
-
-# ---------------------------------------------------------------------------
-# send_scan_notifications — end-to-end message assembly
-# ---------------------------------------------------------------------------
 
 
 def _finding(fid, severity, epss=None, in_kev=False):
@@ -82,7 +62,7 @@ class _FakeDB:
 
 
 async def _capture_vuln_message(findings):
-    """Drive send_scan_notifications, returning the vulnerability_found message."""
+    """Drive send_scan_notifications and return the vulnerability_found message."""
     project = SimpleNamespace(id="proj-1", name="MyProject")
     captured = {}
 
@@ -114,7 +94,6 @@ async def _capture_vuln_message(findings):
 class TestSendScanNotificationsMessage:
     @pytest.mark.asyncio
     async def test_report_link_is_full_url(self):
-        """finding #2: the emitted message links to the full scan URL."""
         findings = [_finding("CVE-1", "CRITICAL")]
         captured = await _capture_vuln_message(findings)
         expected = f"{settings.FRONTEND_BASE_URL}/projects/proj-1/scans/scan-abc-123"
@@ -123,7 +102,7 @@ class TestSendScanNotificationsMessage:
 
     @pytest.mark.asyncio
     async def test_top_vulns_sorted_most_severe_first(self):
-        """finding #1: with equal KEV/EPSS, severity orders most-severe-first."""
+        """With equal KEV/EPSS, severity orders most-severe-first."""
         findings = [
             _finding("CVE-LOW", "LOW"),
             _finding("CVE-CRIT", "CRITICAL"),
@@ -131,14 +110,13 @@ class TestSendScanNotificationsMessage:
         ]
         captured = await _capture_vuln_message(findings)
         msg = captured["message"]
-        # Only CRITICAL/HIGH are in critical_vulns; both should appear, CRIT first.
+        # only CRITICAL/HIGH are in critical_vulns; both appear, CRIT first
         crit_idx = msg.index("CVE-CRIT")
         high_idx = msg.index("CVE-HIGH")
         assert crit_idx < high_idx
 
     @pytest.mark.asyncio
     async def test_kev_sorts_before_more_severe_non_kev(self):
-        """KEV remains the primary sort key ahead of raw severity."""
         findings = [
             _finding("CVE-CRIT", "CRITICAL"),
             _finding("CVE-KEVHIGH", "HIGH", in_kev=True),

@@ -56,7 +56,7 @@ async def _seed_findings(db, findings):
 
 @pytest.mark.asyncio
 async def test_trend_excludes_waived_findings(db):
-    """Waived/accepted crypto findings must not inflate the trend (audit #11)."""
+    """Waived crypto findings must not inflate the trend."""
     now = datetime.now(timezone.utc)
     ts = now - timedelta(days=2)
     resolved = ResolvedScope(scope="project", scope_id="p", project_ids=["p"])
@@ -65,7 +65,7 @@ async def test_trend_excludes_waived_findings(db):
         [
             _crypto_finding("a1", "scanA", ts, waived=False),
             _crypto_finding("a2", "scanA", ts, waived=False),
-            _crypto_finding("a3", "scanA", ts, waived=True),  # must be excluded
+            _crypto_finding("a3", "scanA", ts, waived=True),
         ],
     )
     points = await CryptoTrendService(db)._finding_buckets(
@@ -76,8 +76,7 @@ async def test_trend_excludes_waived_findings(db):
 
 @pytest.mark.asyncio
 async def test_trend_dedups_rescans_in_same_bucket(db):
-    """Two scans of the same project in one bucket must not double-count the same
-    persistent issue — count the latest scan, not every scan (audit #11)."""
+    """Two scans in one bucket count the latest scan, not every scan."""
     now = datetime.now(timezone.utc)
     ts = now - timedelta(days=2)
     resolved = ResolvedScope(scope="project", scope_id="p", project_ids=["p"])
@@ -85,7 +84,7 @@ async def test_trend_dedups_rescans_in_same_bucket(db):
         db,
         [
             _crypto_finding("s1", "scanA", ts),
-            _crypto_finding("s2", "scanB", ts),  # re-scan of the same issue
+            _crypto_finding("s2", "scanB", ts),
         ],
     )
     points = await CryptoTrendService(db)._finding_buckets(
@@ -96,9 +95,7 @@ async def test_trend_dedups_rescans_in_same_bucket(db):
 
 @pytest.mark.asyncio
 async def test_trend_buckets_by_month_and_latest_scan_wins(db):
-    """Discriminating end-to-end check (audit SC#2): two scans in the same month
-    must collapse to the LATEST scan's count, and different months must produce
-    distinct buckets. Requires FakeMongo to actually truncate $dateTrunc."""
+    """Two scans in a month collapse to the latest scan's count; distinct months stay separate."""
     resolved = ResolvedScope(scope="project", scope_id="p", project_ids=["p"])
     jan_old = datetime(2026, 1, 10, tzinfo=timezone.utc)
     jan_new = datetime(2026, 1, 20, tzinfo=timezone.utc)
@@ -106,12 +103,10 @@ async def test_trend_buckets_by_month_and_latest_scan_wins(db):
     await _seed_findings(
         db,
         [
-            # January, older scan: 2 findings
             _crypto_finding("jo1", "jold", jan_old),
             _crypto_finding("jo2", "jold", jan_old),
-            # January, newer scan: 1 finding (the latest scan in the Jan bucket)
+            # jnew is the latest scan in the January bucket.
             _crypto_finding("jn1", "jnew", jan_new),
-            # February: 3 findings
             _crypto_finding("f1", "feb", feb),
             _crypto_finding("f2", "feb", feb),
             _crypto_finding("f3", "feb", feb),
@@ -124,15 +119,13 @@ async def test_trend_buckets_by_month_and_latest_scan_wins(db):
         datetime(2025, 12, 1, tzinfo=timezone.utc),
         datetime(2026, 3, 1, tzinfo=timezone.utc),
     )
-    assert len(points) == 2  # exactly one bucket per month, not one per scan
+    assert len(points) == 2  # one bucket per month, not one per scan
     by_month = {p.timestamp.month: p.value for p in points}
-    assert by_month == {1: 1.0, 2: 3.0}  # Jan = latest scan (1), not 2 or 3; Feb = 3
+    assert by_month == {1: 1.0, 2: 3.0}  # Jan = latest scan count (1); Feb = 3
 
 
 def test_cache_key_distinguishes_users_under_user_scope(db):
-    """Two different users querying scope='user' both resolve to scope_id=None
-    but to DIFFERENT project_ids. Their cache keys must differ, otherwise the
-    shared process cache leaks user A's series to user B (tenant isolation)."""
+    """User-scope keys must differ by project_ids so the shared cache can't leak across tenants."""
     svc = CryptoTrendService(db)
     now = datetime.now(timezone.utc)
     rs, re = now - timedelta(days=30), now
@@ -144,8 +137,7 @@ def test_cache_key_distinguishes_users_under_user_scope(db):
 
 
 def test_cache_key_stable_regardless_of_project_order(db):
-    """The project fingerprint is order-independent so an equivalent project set
-    still hits the cache."""
+    """The project fingerprint is order-independent so an equivalent set still hits the cache."""
     svc = CryptoTrendService(db)
     now = datetime.now(timezone.utc)
     rs, re = now - timedelta(days=30), now
@@ -157,8 +149,7 @@ def test_cache_key_stable_regardless_of_project_order(db):
 
 
 def test_cache_key_global_none_distinct_from_empty(db):
-    """global scope (project_ids=None → all projects) must not alias an empty
-    project set."""
+    """Global scope (project_ids=None) must not alias an empty project set."""
     svc = CryptoTrendService(db)
     now = datetime.now(timezone.utc)
     rs, re = now - timedelta(days=30), now

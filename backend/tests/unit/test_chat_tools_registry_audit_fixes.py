@@ -1,16 +1,4 @@
-"""Regression tests for audit fixes in the chat tool registry.
-
-Covers three findings:
-
-1. Findings must be ranked by NUMERIC severity, not the lexicographic order of
-   the severity string (which put MEDIUM/LOW above HIGH/CRITICAL and dropped
-   CRITICAL findings past the limit cutoff). Also verifies the
-   get_top_priority_findings tiebreak reads ``details.epss_score``.
-2. ``list_policy_audit_entries`` with ``policy_scope="system"`` must require
-   ``system:manage`` (mirrors the HTTP endpoint's admin gate).
-3. ``list_compliance_reports`` without a project_id must apply a visibility
-   filter instead of listing every scope's reports org-wide.
-"""
+"""Tests for chat tool registry: numeric severity ranking, the system-scope gate on list_policy_audit_entries, and the visibility filter on list_compliance_reports."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -64,9 +52,7 @@ def _seed_finding(db, fid, severity, scan_id="scan-1", project_id="proj-1", **de
 class TestSeverityRanking:
     @pytest.mark.asyncio
     async def test_critical_not_dropped_below_medium(self, db, admin_user):
-        # 12 MEDIUM + 3 CRITICAL; default limit is 10. Lexicographic descending
-        # sort ("MEDIUM" > "CRITICAL") would fill all 10 slots with MEDIUM and
-        # omit every CRITICAL — the exact bug.
+        # 12 MEDIUM + 3 CRITICAL, limit 10: a lexicographic sort would drop every CRITICAL.
         _seed_project(db)
         for i in range(12):
             _seed_finding(db, f"med-{i}", "MEDIUM")

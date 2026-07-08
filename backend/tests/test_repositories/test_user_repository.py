@@ -1,8 +1,4 @@
-"""Unit tests for UserRepository lookup/existence helpers.
-
-These pin the behavior of ``exists_by_*`` and ``get_raw_by_*`` after they were
-reduced to delegations onto ``BaseRepository.exists``/``find_one_raw``.
-"""
+"""Unit tests for UserRepository lookup/existence helpers."""
 
 import pytest
 import pytest_asyncio

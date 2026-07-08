@@ -5,8 +5,6 @@ import { describe, it, expect, vi } from 'vitest'
 import { UserDetailsDialog } from '../UserDetailsDialog'
 import type { User } from '@/types/user'
 
-// --- Mocks -----------------------------------------------------------------
-
 interface ProjectStub {
   id: string
   name: string
@@ -15,10 +13,7 @@ interface ProjectStub {
   team_id?: string
 }
 
-// The user under review owns "Project 150", which lives BEYOND the first
-// page of 100 projects. useProjects('', 1, 100) only returns the first page
-// (which does NOT contain it), while useProjectsDropdown() paginates through
-// every project (which DOES contain it). The dialog must use the full list.
+// useProjects returns only the first 100-project page (no Project 150); useProjectsDropdown paginates the full list, so the dialog must use the latter.
 const targetUserId = 'user-target'
 const firstPage: ProjectStub[] = Array.from({ length: 100 }, (_, i) => ({
   id: `p-${i}`,
@@ -33,7 +28,7 @@ const projectBeyondFirstPage: ProjectStub = {
 const allProjects: ProjectStub[] = [...firstPage, projectBeyondFirstPage]
 
 vi.mock('@/hooks/queries/use-projects', () => ({
-  // Truncated to the first page only (bug reproduction): omits Project 150.
+  // First page only: omits Project 150.
   useProjects: () => ({
     data: { items: firstPage, total: allProjects.length },
     isLoading: false,
@@ -86,8 +81,6 @@ describe('UserDetailsDialog - project membership', () => {
       </MemoryRouter>,
     )
 
-    // Project 150 is owned by the user but only present in the full project
-    // list. It must appear rather than falling back to "No projects found."
     expect(screen.getByText('Project 150')).toBeInTheDocument()
     expect(screen.queryByText('No projects found.')).not.toBeInTheDocument()
   })

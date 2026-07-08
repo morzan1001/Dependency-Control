@@ -4,8 +4,6 @@ from app.services.aggregation import ResultAggregator
 
 
 class TestNormalizeLicense:
-    """Tests for normalize_license - license compliance normalization."""
-
     def setup_method(self):
         self.agg = ResultAggregator()
 
@@ -55,7 +53,6 @@ class TestNormalizeLicense:
         assert f.details["risks"] == ["viral licensing"]
 
     def test_default_severity_medium(self):
-        """License issues should default to MEDIUM severity."""
         result = {"license_issues": [{"component": "pkg", "version": "1.0", "license": "MIT"}]}
         self.agg.aggregate("license_compliance", result)
         f = list(self.agg.findings.values())[0]
@@ -68,7 +65,6 @@ class TestNormalizeLicense:
         assert "GPL-2.0" in f.description
 
     def test_enrichment_called(self):
-        """License scanner should enrich dependency data."""
         result = {
             "license_issues": [
                 {

@@ -1,11 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { ChatSSEEvent } from '@/types/chat';
 
-// The finding (Elegance #162): chat.ts must NOT re-implement token refresh with a
-// private, non-deduped copy. It must delegate to the single-flight
-// `refreshAccessToken` exported from `@/api/client`. We mock the client module so
-// we can assert that chat.ts calls the SHARED refresh helper rather than issuing
-// its own refresh fetch.
+// Mock the client module to assert chat.ts delegates to the shared refreshAccessToken.
 const clientMocks = vi.hoisted(() => ({
   getBaseUrl: vi.fn(() => '/api/v1'),
   refreshAccessToken: vi.fn<() => Promise<string | null>>(),
@@ -68,7 +64,6 @@ describe('chatApi.sendMessage token refresh (delegates to shared client helper)'
 
   it('on a 401 it calls the SHARED refreshAccessToken and retries with the new token', async () => {
     const fetchMock = vi.fn();
-    // First send -> 401, second send (after refresh) -> streaming success.
     fetchMock
       .mockResolvedValueOnce(new Response('unauthorized', { status: 401 }))
       .mockResolvedValueOnce(sseResponse([{ type: 'done' } as ChatSSEEvent]));
@@ -78,9 +73,7 @@ describe('chatApi.sendMessage token refresh (delegates to shared client helper)'
 
     const events = await drain(chatApi.sendMessage('conv-1', 'hi'));
 
-    // The shared, single-flight refresh helper from client.ts must be used.
     expect(clientMocks.refreshAccessToken).toHaveBeenCalledTimes(1);
-    // The request was retried after the refresh (two fetches total).
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(events).toEqual([{ type: 'done' }]);
 
@@ -98,7 +91,6 @@ describe('chatApi.sendMessage token refresh (delegates to shared client helper)'
     const events = await drain(chatApi.sendMessage('conv-1', 'hi'));
 
     expect(clientMocks.refreshAccessToken).toHaveBeenCalledTimes(1);
-    // No retry: exactly one fetch.
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(events).toEqual([{ type: 'error', message: 'Unauthorized' }]);
 

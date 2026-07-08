@@ -1,8 +1,4 @@
-"""Unit tests for ChatRateLimiter using fakeredis instead of a real Redis.
-
-fakeredis[lua] supports the EVAL pipeline + sorted-set operations the rate limiter
-relies on, so we exercise the actual Lua script — not a mock.
-"""
+"""Unit tests for ChatRateLimiter, exercising the real Lua script via fakeredis."""
 
 import fakeredis.aioredis
 import pytest

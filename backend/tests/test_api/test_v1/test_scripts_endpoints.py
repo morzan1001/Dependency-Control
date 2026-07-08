@@ -1,10 +1,4 @@
-"""Tests for the /api/v1/scripts endpoints (versioned scanner serving).
-
-Covers: whitelist + path-traversal rejection, ?v= regex (Unicode digits,
-extra segments, empty), 404 for unknown versions, hash + content
-endpoints for the latest pointer and frozen releases, manifest
-enumeration, and the lru_cache used for frozen reads.
-"""
+"""Tests for the /api/v1/scripts endpoints (versioned scanner serving): whitelist + path-traversal rejection, ?v= regex, unknown-version 404s, hash/content endpoints, manifest enumeration, and the frozen-read lru_cache."""
 
 import asyncio
 from pathlib import Path
@@ -25,16 +19,14 @@ V_1_1_0_CONTENT = '#!/usr/bin/env bash\nSCRIPT_VERSION="1.1.0"\n# frozen 1.1.0\n
 
 @pytest.fixture
 def scripts_layout(tmp_path: Path):
-    """Build a temp scripts/ + versions/ directory and patch the module
-    constants so handlers operate on it for the duration of the test."""
+    """Build a temp scripts/ + versions/ tree and patch the module constants to it."""
     scripts_dir = tmp_path / "scripts"
     versions_dir = scripts_dir / "versions"
     versions_dir.mkdir(parents=True)
     (scripts_dir / "scanner.sh").write_text(LATEST_CONTENT)
     (versions_dir / "scanner-1.0.0.sh").write_text(V_1_0_0_CONTENT)
     (versions_dir / "scanner-1.1.0.sh").write_text(V_1_1_0_CONTENT)
-    # The lru_cache memoises by absolute path string; clear it so prior
-    # test runs (or other fixtures) don't leak cached bytes.
+    # lru_cache memoises by absolute path string; clear so prior runs don't leak cached bytes
     scripts_module._read_and_describe_frozen.cache_clear()
     with (
         patch.object(scripts_module, "SCRIPTS_DIR", scripts_dir),
@@ -113,11 +105,7 @@ class TestGetScriptContent:
 
 
 class TestPrefixCollisionImmunity:
-    """Regression: an attacker-controlled sibling like
-    /tmp/.../scripts/versions-evil/scanner-1.0.0.sh must not be served
-    when the base is /tmp/.../scripts/versions. The check uses
-    Path.is_relative_to instead of str.startswith, which used to allow
-    the sibling through."""
+    """An attacker sibling dir like scripts/versions-evil/ must not be served when the base is scripts/versions/ (the check uses Path.is_relative_to, not str.startswith)."""
 
     def test_sibling_directory_not_served(self, tmp_path: Path):
         scripts_dir = tmp_path / "scripts"
@@ -133,8 +121,7 @@ class TestPrefixCollisionImmunity:
             patch.object(scripts_module, "SCRIPTS_DIR", scripts_dir),
             patch.object(scripts_module, "VERSIONS_DIR", versions_dir),
         ):
-            # The legitimate versions/ dir has no scanner-1.0.0.sh so the
-            # request must 404 — never resolve into versions-evil/.
+            # versions/ has no scanner-1.0.0.sh, so this must 404, never resolve into versions-evil/
             with pytest.raises(FileNotFoundError):
                 scripts_module.get_script_content("scanner.sh", version="1.0.0")
         scripts_module._read_and_describe_frozen.cache_clear()
@@ -156,9 +143,7 @@ class TestListAvailableVersions:
 
 
 class TestFrozenCacheBehaviour:
-    """The lru_cache around _read_and_describe_frozen treats released
-    bytes as immutable for the process lifetime. Latest-pointer reads
-    must not be cached."""
+    """Frozen reads are lru_cached (released bytes are immutable); latest-pointer reads must not be cached."""
 
     def test_frozen_read_is_cached(self, scripts_layout):
         scripts_module._read_and_describe_frozen.cache_clear()

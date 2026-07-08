@@ -48,13 +48,11 @@ describe("DependencyStats row hover icon", () => {
 
     const nameCell = await screen.findByText("left-pad");
 
-    // The ExternalLink icon relies on `group-hover:opacity-100`; that only works
-    // if an ancestor carries the `group` class. Walk up to the enclosing <tr>.
+    // group-hover:opacity-100 only works if an ancestor carries the `group` class.
     const row = nameCell.closest("tr");
     expect(row).not.toBeNull();
     expect(row).toHaveClass("group");
 
-    // The icon itself must still be the group-hover target within that row.
     const icon = row?.querySelector(".group-hover\\:opacity-100");
     expect(icon).not.toBeNull();
 

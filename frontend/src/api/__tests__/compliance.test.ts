@@ -34,9 +34,7 @@ describe("downloadReport", () => {
 
     await downloadReport("r1");
 
-    // The authenticated axios client (which attaches the bearer token and
-    // resolves the runtime base URL) must be used with a blob responseType,
-    // instead of a bare unauthenticated anchor href.
+    // Must use the authenticated client with a blob responseType, not a bare anchor href.
     expect(mockedGet).toHaveBeenCalledWith("/compliance/reports/r1/download", {
       responseType: "blob",
     });

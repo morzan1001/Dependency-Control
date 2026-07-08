@@ -1,14 +1,4 @@
-"""Composition tests for ``check_project_access`` — the single project gate.
-
-These exercise the consolidated authorization rule (Finding 22 / W2):
-
-* ``project:read_all`` is a READ-ONLY superuser (does NOT satisfy a WRITE role).
-* ``project:update`` is the WRITE superuser ("manage any project"), applied
-  uniformly to every write path.
-* Effective project role = MAX(direct member role, team-derived role) — a
-  direct higher role is never downgraded by team membership.
-* Members still need the ``project:read`` (or ``project:read_all``) feature-gate.
-"""
+"""Composition tests for check_project_access: read_all is read-only, project:update is the write superuser, and effective role = MAX(direct, team)."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -72,7 +62,7 @@ def _run(user, *, required_role=None, project=None, team_doc=None):
 
 
 class TestSeamAReadAllIsReadOnly:
-    """SEAM-A: project:read_all grants READ but NOT write."""
+    """project:read_all grants READ but NOT write."""
 
     def test_read_all_nonmember_read_access_granted(self):
         # User has read + read_all only, is NOT a member.
@@ -99,7 +89,7 @@ class TestSeamAReadAllIsReadOnly:
 
 
 class TestSeamBNoDowngrade:
-    """SEAM-B: effective role = MAX(direct, team) — never downgraded."""
+    """effective role = MAX(direct, team) — never downgraded."""
 
     def test_direct_editor_plus_team_member_keeps_editor(self):
         user = _user("ed-1", [Permissions.PROJECT_READ])
@@ -132,7 +122,7 @@ class TestSeamBNoDowngrade:
 
 
 class TestSeamCWriteSuperuser:
-    """SEAM-C / decision: project:update is the uniform write superuser."""
+    """project:update is the uniform write superuser."""
 
     def test_project_update_nonmember_passes_write(self):
         # project:update holder, NOT a member, passes editor + admin writes.
@@ -187,7 +177,7 @@ class TestRegressions:
             assert exc_info.value.status_code == 403
 
     def test_member_without_read_feature_gate_denied(self):
-        # SEAM-D feature gate: a member lacking project:read is denied.
+        # feature gate: a member lacking project:read is denied.
         user = _user("ng-1", [])
         project = _project(members=[ProjectMember(user_id=str(user.id), role=PROJECT_ROLE_VIEWER)])
         with pytest.raises(HTTPException) as exc_info:

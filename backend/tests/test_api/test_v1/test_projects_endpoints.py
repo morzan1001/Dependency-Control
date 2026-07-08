@@ -29,7 +29,7 @@ def _make_project(admin_id="admin-member-1"):
 
 
 class TestUpdateNotificationSettingsAdmin:
-    """BUG-1: a project admin's own notification_preferences must be persisted."""
+    """A project admin's own notification_preferences must be persisted."""
 
     def _run(self, current_user, project, settings, project_repo):
         from app.api.v1.endpoints.projects import update_notification_settings
@@ -58,7 +58,6 @@ class TestUpdateNotificationSettingsAdmin:
 
         self._run(user, project, settings, project_repo)
 
-        # The admin's own member preferences must be written via update_member.
         project_repo.update_member.assert_awaited_once()
         args = project_repo.update_member.await_args.args
         assert args[0] == "proj-1"
@@ -71,7 +70,7 @@ class TestUpdateNotificationSettingsAdmin:
         project = _make_project(admin_id=user.id)
         settings = ProjectNotificationSettings(
             notification_preferences={"vulnerability_found": ["slack"]},
-            # enforce_notification_settings omitted -> None -> update_data empty
+            # enforce_notification_settings omitted, so update_data is empty
         )
         project_repo = MagicMock()
         project_repo.update = AsyncMock()
@@ -80,9 +79,7 @@ class TestUpdateNotificationSettingsAdmin:
 
         self._run(user, project, settings, project_repo)
 
-        # No enforcement change => no blanket project update.
         project_repo.update.assert_not_awaited()
-        # But the admin's preferences are still saved.
         project_repo.update_member.assert_awaited_once()
         assert project_repo.update_member.await_args.args[2] == {
             "members.0.notification_preferences": {"vulnerability_found": ["slack"]}
@@ -108,7 +105,7 @@ class TestUpdateNotificationSettingsAdmin:
 
 
 class TestExportProjectCsv:
-    """EXTRA NOTE: CSV export must read the complete findings collection."""
+    """CSV export must read the complete findings collection."""
 
     def test_export_reads_findings_collection_not_summary(self):
         from app.api.v1.endpoints.projects import export_project_csv
@@ -161,9 +158,7 @@ class TestExportProjectCsv:
                     )
 
         body = response.body.decode()
-        # Vulnerability id column uses finding_id; fixed_version populated.
         assert "CVE-2021-1" in body
         assert "1.0.1" in body
-        # Non-vulnerability finding is included (complete export).
         assert "SECRET-1" in body
         assert "hardcoded key" in body

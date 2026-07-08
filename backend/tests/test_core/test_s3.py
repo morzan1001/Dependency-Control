@@ -1,7 +1,4 @@
-"""Tests for S3-compatible storage client.
-
-Tests the async S3 client functions with mocked aiobotocore session.
-"""
+"""Tests for the async S3-compatible storage client."""
 
 import asyncio
 from unittest.mock import AsyncMock, patch
@@ -54,12 +51,12 @@ class TestIsArchiveEnabled:
 class TestEnsureBucketExists:
     def test_skips_when_not_enabled(self):
         with patch(f"{MODULE}.is_archive_enabled", return_value=False):
+            # Nothing to assert: the test passes as long as no exception is raised.
             asyncio.run(ensure_bucket_exists())
-            # No error = success (nothing to assert, just verify no exception)
 
     def test_does_not_create_if_bucket_exists(self):
         mock_s3 = AsyncMock()
-        mock_s3.head_bucket = AsyncMock()  # No exception = bucket exists
+        mock_s3.head_bucket = AsyncMock()  # no exception means the bucket exists
 
         mock_ctx = AsyncMock()
         mock_ctx.__aenter__ = AsyncMock(return_value=mock_s3)

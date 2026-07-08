@@ -7,10 +7,7 @@ import {
   SEVERITY_ORDER,
 } from '../finding-utils'
 
-// The backend combined risk score is on a 0-100 scale, so the color bands must
-// be too. The previous 0-10 (CVSS) thresholds painted almost every row
-// critical-red and made a genuinely low score look the most severe
-// (improvement audit #5).
+// Color bands are on the backend's 0-100 combined-risk scale, not the 0-10 CVSS scale.
 describe('getRiskColorClass (0-100 scale)', () => {
   it('paints a high 0-100 score critical', () => {
     expect(getRiskColorClass(85)).toBe('text-severity-critical')
@@ -33,9 +30,6 @@ describe('getRiskColorClass (0-100 scale)', () => {
   })
 })
 
-// advisoryUrl is the single source of truth for CVE/GHSA advisory links that was
-// previously copy-pasted across the analytics components (audit #126). The URL
-// shapes must exactly match the three former local copies.
 describe('advisoryUrl', () => {
   it('maps a CVE id to its NVD detail page', () => {
     expect(advisoryUrl('CVE-2021-44228')).toBe(
@@ -55,8 +49,6 @@ describe('advisoryUrl', () => {
   })
 })
 
-// SEVERITY_CHART_COLORS / SEVERITY_ORDER replace the ad-hoc per-component maps
-// and order arrays that drifted from the design tokens (audit #188).
 describe('severity chart tokens', () => {
   it('exposes a hex colour for every severity, most-severe first', () => {
     expect(SEVERITY_ORDER).toEqual([

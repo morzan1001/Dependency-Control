@@ -1,6 +1,4 @@
-"""
-Integration: registry-resolved ProtocolCipherSuiteAnalyzer produces findings.
-"""
+"""Registry-resolved ProtocolCipherSuiteAnalyzer produces findings."""
 
 import pytest
 

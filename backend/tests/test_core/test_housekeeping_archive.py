@@ -1,8 +1,4 @@
-"""Tests for housekeeping archive integration.
-
-Tests the archive branch in retention logic: _archive_scans_and_delete,
-_handle_retention_action, and run_housekeeping with archive mode.
-"""
+"""Tests for the archive branch of retention housekeeping."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -17,8 +13,7 @@ from app.core.housekeeping import (
 from app.models.archive import ArchiveMetadata
 
 MODULE = "app.core.housekeeping"
-# archive_scan is lazy-imported inside _archive_scans_and_delete,
-# so we patch it at its source module
+# archive_scan is lazy-imported inside _archive_scans_and_delete, so patch it at its source module.
 ARCHIVE_SVC = "app.services.archive"
 
 
@@ -67,12 +62,12 @@ class TestArchiveScansAndDelete:
 
         assert result == 0
         mock_archive.assert_called_once()
-        # Delete should be called with empty list (failed scans excluded)
+        # Delete is called with an empty list because the failed scan is excluded.
         call_args = mock_delete.call_args[0]
-        assert call_args[1] == []  # No scans to delete
+        assert call_args[1] == []
 
     def test_partial_failure_only_deletes_successful(self):
-        # scan-1 archives ok, scan-2 fails
+        # scan-1 archives ok, scan-2 fails.
         async def mock_archive_fn(db, scan_id):
             await asyncio.sleep(0)
             if scan_id == "scan-1":
@@ -86,7 +81,6 @@ class TestArchiveScansAndDelete:
             result = asyncio.run(_archive_scans_and_delete(MagicMock(), ["scan-1", "scan-2"], "test"))
 
         assert result == 1
-        # Only scan-1 should be in the delete list
         call_args = mock_delete.call_args[0]
         assert "scan-1" in call_args[1]
         assert "scan-2" not in call_args[1]
@@ -100,11 +94,10 @@ class TestArchiveScansAndDelete:
 
         assert result == 0
         call_args = mock_delete.call_args[0]
-        assert call_args[1] == []  # No scans to delete
+        assert call_args[1] == []
 
     def test_processes_all_provided_scan_ids(self):
-        # _process_scans_in_batches is responsible for chunking; _archive_scans_and_delete
-        # must process every ID it receives (no internal slicing).
+        # Chunking is _process_scans_in_batches's job; this must process every ID it receives.
         scan_ids = [f"scan-{i}" for i in range(100)]
         metadata = _make_archive_metadata()
 
@@ -189,11 +182,9 @@ class TestRunHousekeepingArchive:
         mock_repo = MagicMock()
         mock_repo.get = AsyncMock(return_value=mock_settings)
 
-        # Mock the cursor for scan IDs (async iteration)
         mock_scan_doc = {"_id": "scan-1"}
         mock_cursor = MagicMock()
 
-        # Make cursor async iterable
         async def async_iter():
             yield mock_scan_doc
 
@@ -211,7 +202,7 @@ class TestRunHousekeepingArchive:
 
         mock_handle.assert_called_once()
         call_args = mock_handle.call_args
-        assert call_args[0][2] == "archive"  # action argument
+        assert call_args[0][2] == "archive"  # positional action argument
 
     def test_global_mode_none_action_skips_cleanup(self):
         from app.core.housekeeping import run_housekeeping
@@ -231,8 +222,7 @@ class TestRunHousekeepingArchive:
         ):
             asyncio.run(run_housekeeping())
 
-        # retention_action is "none" but retention_days > 0, so it enters the block
-        # but the condition `retention_action != "none"` in run_housekeeping prevents it
+        # retention_days > 0 enters the block, but action "none" short-circuits _handle_retention_action.
         mock_handle.assert_not_called()
 
     def test_global_mode_excludes_pinned_scans(self):
@@ -264,7 +254,6 @@ class TestRunHousekeepingArchive:
         ):
             asyncio.run(run_housekeeping())
 
-        # Verify the query includes "pinned": {"$ne": True}
         find_call = mock_db.scans.find.call_args
         query = find_call[0][0]
         assert "pinned" in query
@@ -468,17 +457,13 @@ async def test_reap_orphan_tolerates_list_failure(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Regression tests for follow-up review bug #8
+# Stale metadata reaping
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_reap_stale_metadata_drops_entries_for_restored_scans(monkeypatch):
-    """Bug #8: archive_metadata entries whose scan_id lives in db.scans are stale and must be reaped.
-
-    Elegance #104: this is done in batches — one ``db.scans.find({'_id': {'$in': ...}})``
-    per batch plus a single ``delete_many`` for the restored scan_ids — not N+1 find_one calls.
-    """
+    """archive_metadata entries whose scan_id still exists in db.scans are stale and reaped in batches."""
     from app.core.housekeeping import _reap_stale_metadata
 
     db = MagicMock()
@@ -502,7 +487,7 @@ async def test_reap_stale_metadata_drops_entries_for_restored_scans(monkeypatch)
             if sid == "scan-restored":
                 yield {"_id": "scan-restored"}
 
-    # find_one must NOT be used anymore (would signal the N+1 regression)
+    # find_one must not be used: reap stays batched, not N+1.
     db.scans.find_one = AsyncMock(side_effect=AssertionError("find_one must not be called: reap is batched"))
     db.scans.find = lambda *a, **kw: scans_find(*a, **kw)
 
@@ -511,7 +496,6 @@ async def test_reap_stale_metadata_drops_entries_for_restored_scans(monkeypatch)
     async def fake_delete_many(query):
         delete_many_calls.append(query)
         result = MagicMock()
-        # delete_many removes exactly the rows whose scan_id matches the restored set
         result.deleted_count = len(query["scan_id"]["$in"])
         return result
 
@@ -529,11 +513,7 @@ async def test_reap_stale_metadata_drops_entries_for_restored_scans(monkeypatch)
 
 @pytest.mark.asyncio
 async def test_reap_stale_metadata_batches_one_find_per_batch(monkeypatch):
-    """Elegance #104: reap runs one db.scans.find + one delete_many per batch, not per row.
-
-    With 5 metadata rows and batch_size=2 we expect 3 batches → 3 scans.find calls,
-    and delete_many invoked only for batches that contain a restored scan.
-    """
+    """Reap runs one db.scans.find + one delete_many per batch, not per row."""
     from app.core.housekeeping import _reap_stale_metadata
 
     db = MagicMock()
@@ -582,7 +562,7 @@ async def test_reap_stale_metadata_batches_one_find_per_batch(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_reap_orphan_runs_stale_metadata_pass_first(monkeypatch):
-    """Bug #8: _reap_orphan_s3_objects must call _reap_stale_metadata before listing S3."""
+    """_reap_orphan_s3_objects must call _reap_stale_metadata before listing S3."""
     from app.core.housekeeping import _reap_orphan_s3_objects
 
     monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: True)

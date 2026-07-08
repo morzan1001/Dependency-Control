@@ -1,26 +1,4 @@
-"""Tests for bounded pagination params on core listing endpoints (Finding 11 / W3).
-
-Verifies that ``skip`` / ``limit`` on the four listing endpoints are rejected
-(422 Unprocessable Entity) when out of bounds, and that valid values still work.
-
-Endpoints under test:
-  - GET /projects/               → read_projects
-  - GET /projects/scans          → read_all_scans
-  - GET /projects/{id}/scans     → read_project_scans
-  - GET /projects/scans/{id}/findings → read_scan_findings
-
-Strategy: call the endpoint functions directly (same pattern as
-test_projects_authz.py and test_waivers_endpoints.py) so we don't need a live
-HTTP server. FastAPI validates Annotated Query params **before** the route
-handler runs; we exercise that by calling through the TestClient which runs the
-full request lifecycle, or by inspecting the function signature annotations
-directly via the FastAPI parameter system.
-
-We use the lightweight approach: instantiate a FastAPI TestClient on the real
-app router and fire real (mocked-transport) requests so FastAPI's validation
-runs. If the app fixture isn't available in this test context, we fall back to
-direct FastAPI app construction from the router.
-"""
+"""Tests that skip/limit on the core listing endpoints are bounded and rejected with 422 when out of range."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -29,11 +7,8 @@ import pytest
 ENDPOINTS = "app.api.v1.endpoints.projects"
 
 
-# ---------------------------------------------------------------------------
-# Helper: call the function with keyword args; FastAPI Query validators run
-# at framework level so we can't bypass them by calling the coroutine directly.
-# Instead we inspect the Annotated metadata on each parameter.
-# ---------------------------------------------------------------------------
+# FastAPI Query validators run at framework level, so we inspect the Annotated
+# metadata on each parameter rather than calling the coroutine directly.
 
 
 def _get_query_object(func, param_name: str):
@@ -55,15 +30,11 @@ def _get_query_object(func, param_name: str):
 
 
 def _bound(func, param_name: str, bound: str):
-    """Return ge/le/gt/lt value for *param_name* on *func*, or None.
-
-    FastAPI stores numeric constraints in Query.metadata as annotated_types
-    instances (Ge, Le, Gt, Lt).  We search those for the requested bound.
-    """
+    """Return the ge/le/gt/lt value for *param_name* on *func*, or None."""
     query_obj = _get_query_object(func, param_name)
     if query_obj is None:
         return None
-    # FastAPI/pydantic stores constraints in Query.metadata as Ge/Le/Gt/Lt objects
+    # FastAPI/pydantic stores constraints in Query.metadata as Ge/Le/Gt/Lt objects.
     for item in getattr(query_obj, "metadata", []):
         val = getattr(item, bound, None)
         if val is not None:
@@ -71,14 +42,7 @@ def _bound(func, param_name: str, bound: str):
     return None
 
 
-# ---------------------------------------------------------------------------
-# Tests
-# ---------------------------------------------------------------------------
-
-
 class TestReadProjectsPaginationBounds:
-    """read_projects: skip/limit must be bounded."""
-
     @pytest.fixture
     def endpoint(self):
         from app.api.v1.endpoints.projects import read_projects
@@ -86,25 +50,21 @@ class TestReadProjectsPaginationBounds:
         return read_projects
 
     def test_skip_has_ge_zero(self, endpoint):
-        """skip must not allow negative values."""
         assert _bound(endpoint, "skip", "ge") == 0, (
             "skip should have ge=0 — negative skip is nonsensical and can cause issues"
         )
 
     def test_limit_has_ge_one(self, endpoint):
-        """limit=0 must be rejected."""
         assert _bound(endpoint, "limit", "ge") == 1, (
             "limit should have ge=1 — zero limit would return no rows but still hit DB"
         )
 
     def test_limit_has_le_cap(self, endpoint):
-        """limit must have an upper cap (le) to prevent DoS."""
         cap = _bound(endpoint, "limit", "le")
         assert cap is not None, "limit must have an le= upper cap"
         assert cap <= 1000, f"limit cap {cap} looks too large — keep it ≤ 1000"
 
     def test_default_skip_within_bounds(self, endpoint):
-        """Default skip must satisfy ge=0."""
         import inspect
 
         default = inspect.signature(endpoint).parameters["skip"].default
@@ -113,7 +73,6 @@ class TestReadProjectsPaginationBounds:
             assert default >= ge
 
     def test_default_limit_within_bounds(self, endpoint):
-        """Default limit must satisfy ge=1 and le=cap."""
         import inspect
 
         default = inspect.signature(endpoint).parameters["limit"].default
@@ -126,8 +85,6 @@ class TestReadProjectsPaginationBounds:
 
 
 class TestReadAllScansPaginationBounds:
-    """read_all_scans: skip/limit must be bounded."""
-
     @pytest.fixture
     def endpoint(self):
         from app.api.v1.endpoints.projects import read_all_scans
@@ -155,8 +112,6 @@ class TestReadAllScansPaginationBounds:
 
 
 class TestReadProjectScansPaginationBounds:
-    """read_project_scans: skip/limit must be bounded."""
-
     @pytest.fixture
     def endpoint(self):
         from app.api.v1.endpoints.projects import read_project_scans
@@ -184,8 +139,6 @@ class TestReadProjectScansPaginationBounds:
 
 
 class TestReadScanFindingsPaginationBounds:
-    """read_scan_findings: skip/limit must be bounded."""
-
     @pytest.fixture
     def endpoint(self):
         from app.api.v1.endpoints.projects import read_scan_findings
@@ -212,12 +165,7 @@ class TestReadScanFindingsPaginationBounds:
             assert default <= le
 
     def test_limit_cap_covers_frontend_request_of_200(self, endpoint):
-        """The findings cap must comfortably cover what FindingsTable.tsx sends.
-
-        The frontend ``scanApi.getFindings`` is invoked with ``limit: 200`` in
-        FindingsTable.tsx (deep-link + per-component drilldowns). A cap of 100
-        would 422 those calls. We require >= 500 to leave headroom (W3 regression).
-        """
+        """FindingsTable.tsx requests up to limit=200, so the cap must be >= 500 for headroom."""
         cap = _bound(endpoint, "limit", "le")
         assert cap is not None, "limit must have an le= upper cap"
         assert cap >= 500, (
@@ -226,22 +174,13 @@ class TestReadScanFindingsPaginationBounds:
         )
 
 
-# ---------------------------------------------------------------------------
-# HTTP-level validation tests via FastAPI TestClient
-# FastAPI rejects out-of-bound Query params with 422 before the handler runs.
-# We mount only the projects router with a stub auth dependency so auth does
-# not interfere.
-# ---------------------------------------------------------------------------
-
-
 def _make_test_app():
-    """Build a minimal FastAPI app with the projects router + stub auth."""
+    """Build a minimal FastAPI app with the projects router + stub auth so Query validation runs."""
     from fastapi import FastAPI
     from app.api.v1.endpoints import projects as proj_module
     from app.api.deps import get_current_active_user
     from app.db.mongodb import get_database
 
-    # Stub current user and DB so the router can be registered
     from app.core.permissions import ALL_PERMISSIONS
     from app.models.user import User
 
@@ -254,7 +193,6 @@ def _make_test_app():
 
     app = FastAPI()
 
-    # Override deps
     async def _get_user():
         return stub_user
 
@@ -277,10 +215,6 @@ def test_client():
 
 
 class TestHTTP422OnOutOfBoundsParams:
-    """End-to-end: FastAPI must return 422 for out-of-bound pagination params."""
-
-    # --- read_projects ---
-
     def test_read_projects_limit_too_large_returns_422(self, test_client):
         r = test_client.get("/projects/", params={"limit": 10_000_000})
         assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
@@ -312,8 +246,6 @@ class TestHTTP422OnOutOfBoundsParams:
             r = test_client.get("/projects/", params={"limit": 20, "skip": 0})
         assert r.status_code != 422, f"Valid params should not return 422, got {r.status_code}"
 
-    # --- read_all_scans ---
-
     def test_read_all_scans_limit_too_large_returns_422(self, test_client):
         r = test_client.get("/projects/scans", params={"limit": 10_000_000})
         assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
@@ -325,8 +257,6 @@ class TestHTTP422OnOutOfBoundsParams:
     def test_read_all_scans_skip_negative_returns_422(self, test_client):
         r = test_client.get("/projects/scans", params={"skip": -1})
         assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
-
-    # --- read_project_scans ---
 
     def test_read_project_scans_limit_too_large_returns_422(self, test_client):
         r = test_client.get("/projects/proj-1/scans", params={"limit": 10_000_000})
@@ -340,8 +270,6 @@ class TestHTTP422OnOutOfBoundsParams:
         r = test_client.get("/projects/proj-1/scans", params={"skip": -1})
         assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
 
-    # --- read_scan_findings ---
-
     def test_read_scan_findings_limit_too_large_returns_422(self, test_client):
         r = test_client.get("/projects/scans/scan-1/findings", params={"limit": 10_000_000})
         assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
@@ -354,11 +282,8 @@ class TestHTTP422OnOutOfBoundsParams:
         r = test_client.get("/projects/scans/scan-1/findings", params={"skip": -1})
         assert r.status_code == 422, f"Expected 422, got {r.status_code}: {r.text}"
 
-    # --- read_scan_findings: cap must cover the frontend's limit=200 (W3 regression) ---
-
     def _patched_findings_call(self, test_client, limit):
-        """Fire a findings request with handler internals stubbed so only Query
-        validation decides 422-vs-not. Returns the response."""
+        """Fire a findings request with handler internals stubbed so only Query validation decides 422."""
         with (
             patch(f"{ENDPOINTS}._resolve_scan_for_findings", new_callable=AsyncMock),
             patch(f"{ENDPOINTS}.FindingRepository") as mock_repo_cls,
@@ -378,11 +303,9 @@ class TestHTTP422OnOutOfBoundsParams:
         assert r.status_code != 422, f"limit=200 must be accepted, got {r.status_code}: {r.text}"
 
     def test_read_scan_findings_limit_500_accepted(self, test_client):
-        """The cap is 500; the boundary value must be accepted."""
         r = self._patched_findings_call(test_client, 500)
         assert r.status_code != 422, f"limit=500 must be accepted, got {r.status_code}: {r.text}"
 
     def test_read_scan_findings_limit_501_returns_422(self, test_client):
-        """One past the cap must be rejected."""
         r = test_client.get("/projects/scans/scan-1/findings", params={"limit": 501})
         assert r.status_code == 422, f"Expected 422 for limit=501, got {r.status_code}: {r.text}"

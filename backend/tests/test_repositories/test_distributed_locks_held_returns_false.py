@@ -1,16 +1,4 @@
-"""acquire_lock must return False (not raise) when the lock is already held.
-
-Regression for Finding 1 — the upsert filter matches nothing when a lock doc
-exists and is unexpired, so real MongoDB attempts an INSERT with the same _id
-and raises DuplicateKeyError (E11000). Previously that exception propagated to
-callers (stats recalculation, archive housekeeping, Slack refresh) which all
-expect a boolean contract. The repository must translate the duplicate-key into
-a graceful False.
-
-The in-memory collection here mirrors real MongoDB semantics: an upsert whose
-filter fails to match a present-but-unexpired document raises DuplicateKeyError,
-exactly as the server does.
-"""
+"""acquire_lock must return False (not raise DuplicateKeyError) when the lock is already held."""
 
 import asyncio
 
@@ -20,8 +8,7 @@ from app.repositories.distributed_locks import DistributedLocksRepository
 
 
 class _MongoLikeLockCollection:
-    """Async collection that raises DuplicateKeyError on a conflicting upsert,
-    faithfully reproducing real MongoDB E11000 behavior."""
+    """Async MongoDB-like collection that raises DuplicateKeyError on a conflicting upsert."""
 
     def __init__(self):
         self.docs = {}  # _id -> document
@@ -51,11 +38,9 @@ class _MongoLikeLockCollection:
             if doc["_id"] == filter["_id"] and self._matches(doc, filter):
                 doc.update(update.get("$set", {}))
                 return dict(doc)
-        # No matching existing doc.
         if upsert:
             if filter["_id"] in self.docs:
-                # A doc with this _id exists but did not match the filter:
-                # the upsert insert collides on the unique _id -> E11000.
+                # Present-but-non-matching _id: upsert insert collides on the unique _id -> E11000.
                 raise DuplicateKeyError("E11000 duplicate key error: _id")
             new_doc = {"_id": filter["_id"]}
             new_doc.update(update.get("$set", {}))
@@ -79,11 +64,9 @@ class TestAcquireLockWhenHeld:
         async def scenario():
             repo, _ = _make_repo()
 
-            # A acquires the lock.
             assert await repo.acquire_lock("lock-a", "A", ttl_seconds=300) is True
 
-            # B contends for the same held lock: must get a graceful False,
-            # NOT a propagating DuplicateKeyError.
+            # Contending for a held lock must give a graceful False, not raise.
             assert await repo.acquire_lock("lock-a", "B", ttl_seconds=300) is False
 
         asyncio.run(scenario())
@@ -94,12 +77,11 @@ class TestAcquireLockWhenHeld:
 
             assert await repo.acquire_lock("lock-b", "A", ttl_seconds=300) is True
 
-            # Force the existing lock to be expired.
             from datetime import datetime, timezone
 
+            # Force the existing lock to be expired so a different pod can take it over.
             coll.docs["lock-b"]["expires_at"] = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
-            # A different pod can take over the expired lock.
             assert await repo.acquire_lock("lock-b", "B", ttl_seconds=300) is True
 
         asyncio.run(scenario())

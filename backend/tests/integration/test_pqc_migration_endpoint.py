@@ -10,8 +10,7 @@ from app.services.analytics.cache import get_analytics_cache
 
 @pytest.fixture(autouse=True)
 def _clear_analytics_cache():
-    """Reset the process-level analytics cache between tests so each test
-    observes its own inputs rather than a stale value from another test."""
+    """Reset the process-level analytics cache so each test observes its own inputs."""
     get_analytics_cache().clear()
     yield
     get_analytics_cache().clear()

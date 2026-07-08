@@ -1,8 +1,4 @@
-"""Tests for MR comment building.
-
-Tests the pure _build_mr_comment function that generates GitLab MR comments
-with scan results, severity tables, and status labels.
-"""
+"""Tests for MR comment building."""
 
 from app.models.stats import Stats
 from app.services.analysis.integrations import _build_mr_comment

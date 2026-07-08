@@ -1,12 +1,4 @@
-"""
-Integration tests for compliance report lifecycle endpoints.
-
-The fake DB used in integration tests does not implement GridFS or
-`_id`-projection lookups; the engine's `_store_artifact` and `_pick_scan_ids`
-paths therefore don't produce a real artifact. These tests cover the HTTP
-contract + job-document transitions; the real data path is exercised by the
-unit tests (D.4) and the format tests (D.6).
-"""
+"""HTTP contract and job-document transitions for compliance report lifecycle endpoints."""
 
 import asyncio
 
@@ -46,8 +38,7 @@ async def test_report_post_then_get_then_download(
             break
         await asyncio.sleep(0.1)
 
-    # Lifecycle test: accept completed OR failed - fake DB may not support
-    # the full engine data path. We just assert the job reached a terminal state.
+    # Fake DB may not support the full engine path; assert only that the job reached a terminal state.
     assert data is not None
     assert data["status"] in ("completed", "failed"), data
 

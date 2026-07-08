@@ -1,7 +1,4 @@
-"""Tests that LicensePolicySchema shares a single source of truth with the
-models/license.py enums (Elegance #120) while keeping the JSON
-serialization/validation contract identical to the previous inline Literals.
-"""
+"""LicensePolicySchema reuses the models/license.py enums and serializes to plain strings."""
 
 import pytest
 from pydantic import ValidationError
@@ -11,8 +8,6 @@ from app.schemas.project import LicensePolicySchema
 
 
 def test_schema_fields_reuse_license_enums():
-    """The schema must reference the models/license.py enums directly rather
-    than re-declaring the allowed values as inline Literal strings."""
     fields = LicensePolicySchema.model_fields
     assert fields["distribution_model"].annotation is DistributionModel
     assert fields["deployment_model"].annotation is DeploymentModel
@@ -20,7 +15,6 @@ def test_schema_fields_reuse_license_enums():
 
 
 def test_accepted_values_match_enum_members():
-    """Every enum value (and only those) is accepted, derived from the enum."""
     for value in DistributionModel:
         assert LicensePolicySchema(distribution_model=value.value)
     for value in DeploymentModel:
@@ -35,8 +29,6 @@ def test_invalid_value_rejected():
 
 
 def test_serialization_contract_identical():
-    """Provided and default values serialize to the same plain strings the
-    inline Literal version produced."""
     policy = LicensePolicySchema(
         distribution_model="open_source",
         deployment_model="embedded",
@@ -51,9 +43,8 @@ def test_serialization_contract_identical():
         "allow_network_copyleft": False,
     }
     for key in ("distribution_model", "deployment_model", "library_usage"):
-        assert type(dumped[key]) is str  # noqa: E721 - not an Enum member
+        assert type(dumped[key]) is str  # noqa: E721
 
-    # Defaults must also serialize to plain strings identical to before.
     defaults = LicensePolicySchema().model_dump()
     assert defaults == {
         "distribution_model": "distributed",

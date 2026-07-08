@@ -1,12 +1,4 @@
-"""Tests for the high-confidence reachability gate (B9).
-
-The raw ``is_reachable: bool`` flag mixes two very different signals:
-solid evidence that a vulnerable function is actually called (high
-confidence) vs. "the package is imported, the rest is heuristic" (low
-confidence). Headline counts that don't distinguish the two prioritise
-noise. ``is_high_confidence_reachable`` is the gate that lets call-sites
-opt into the conservative reading without losing the raw boolean.
-"""
+"""Tests for is_high_confidence_reachable — the gate distinguishing solid 'function actually called' evidence from import-only heuristics."""
 
 import pytest
 
@@ -20,14 +12,12 @@ class TestIsHighConfidenceReachable:
         assert is_high_confidence_reachable(data) is True
 
     def test_reachable_at_threshold_returns_true(self):
-        # Inclusive boundary — a finding sitting exactly on the threshold
-        # is considered high-confidence.
+        # Inclusive boundary: a finding exactly on the threshold is high-confidence.
         data = {"is_reachable": True, "confidence_score": REACHABILITY_HIGH_CONFIDENCE_THRESHOLD}
         assert is_high_confidence_reachable(data) is True
 
     def test_reachable_below_threshold_returns_false(self):
-        # Imported-but-no-symbol-info matches sit at 0.5; they should
-        # not feed headline reachable counts.
+        # Imported-but-no-symbol-info matches sit at 0.5; they must not feed headline reachable counts.
         data = {"is_reachable": True, "confidence_score": 0.5}
         assert is_high_confidence_reachable(data) is False
 
@@ -51,16 +41,6 @@ class TestIsHighConfidenceReachable:
         assert is_high_confidence_reachable(None) is False
 
 
-# ---------------------------------------------------------------------------
-# Reachability -> persisted adjusted risk score wiring (W5 / Finding 13)
-#
-# After reachability enrichment determines a finding's reachability, it must
-# persist a per-finding details.adjusted_risk_score derived from the base
-# details.risk_score via the reachability modifier. Previously
-# calculate_adjusted_risk_score was dead code; the persisted adjusted score
-# never reflected reachability.
-# ---------------------------------------------------------------------------
-
 from app.services.reachability_enrichment import (  # noqa: E402
     _build_component_language_map,
     _check_package_in_imports,
@@ -69,17 +49,11 @@ from app.services.reachability_enrichment import (  # noqa: E402
     _match_symbols,
 )
 
-# The pending path no longer has a private summary builder; it now reuses the
-# canonical build_reachability_summary from analysis/stats so the two cannot
-# drift (audit: _build_reachability_summary_for_pending was a drifted copy).
 from app.services.analysis.stats import build_reachability_summary  # noqa: E402
 
 
 class TestPendingSummaryTiers:
-    """The persisted pending summary must map analysis_level (none/import/symbol)
-    onto the display tiers, not increment raw levels against confirmed/likely
-    buckets that never match (audit MF6). run_pending_reachability_for_scan now
-    calls the shared build_reachability_summary, so this exercises that helper."""
+    """The persisted pending summary must map analysis_level (none/import/symbol) onto the display tiers (confirmed/likely/unreachable)."""
 
     @staticmethod
     def _f(_id, reachable, level):
@@ -106,8 +80,7 @@ class TestPendingSummaryTiers:
         assert levels["unknown"] == 0
 
     def test_shared_summary_includes_high_confidence_flag(self):
-        # The drifted pending copy omitted is_high_confidence; the canonical
-        # builder includes it, so the pending path now emits the same shape.
+        # The canonical builder includes is_high_confidence.
         findings = [self._f("a", True, "symbol")]
         cg = [{"language": "python", "module_usage": {}, "import_map": {}}]
         summary = build_reachability_summary(findings, cg, 1)
@@ -115,9 +88,7 @@ class TestPendingSummaryTiers:
 
 
 class TestCheckPackageInImports:
-    """Import matching must be boundary-anchored. A bare `package in imp`
-    substring test spuriously marks unrelated packages as imported, inflating
-    reachability to `likely` and skipping the intended x0.4 down-weight (audit)."""
+    """Import matching must be boundary-anchored; a bare substring test spuriously marks unrelated packages as imported."""
 
     def test_exact_match(self):
         assert _check_package_in_imports("lodash", {"a.js": ["lodash"]}) == ["a.js"]
@@ -145,9 +116,7 @@ class TestCheckPackageInImports:
 
 
 class TestEcosystemFromDependencyMap:
-    """Real vulnerability findings (OSV/Trivy/Grype) carry NO details.purl, so the
-    fail-closed ecosystem gate must derive the ecosystem from the scan's
-    dependencies (name -> type/purl), not from details.purl (audit MF1)."""
+    """Real vulnerability findings carry no details.purl, so the ecosystem gate must derive it from the scan's dependencies, not details.purl."""
 
     def test_downweight_without_purl_via_component_map(self):
         # Real-shape finding: no details.purl. Ecosystem comes from the dep map.
@@ -187,9 +156,7 @@ class TestEcosystemFromDependencyMap:
 
 
 class TestMatchSymbols:
-    """Symbol matching must be conservative: a spurious match promotes a finding
-    to 'confirmed reachable' and boosts its risk x1.1, so substring matching
-    ('get' in 'getUser'/'forget'/'target') is unacceptable (improvement audit #6)."""
+    """Symbol matching must be conservative: a spurious match falsely confirms reachability and boosts risk, so substring matching is unacceptable."""
 
     def test_exact_match(self):
         assert _match_symbols(["SSL_read"], ["SSL_read"]) == ["SSL_read"]
@@ -203,9 +170,7 @@ class TestMatchSymbols:
         assert _match_symbols(["SSL_read"], ["openssl.SSL_read"]) == ["openssl.SSL_read"]
 
     def test_qualified_vuln_matches_bare_used_symbol(self):
-        # Production callgraphs store bare last-segments (e.g. "Read"); an OSV vuln
-        # symbol may be qualified (e.g. "Conn.Read"). The last segment must match
-        # without reintroducing substring false positives (audit SC#7).
+        # Callgraphs store bare last-segments (e.g. "Read"); a qualified vuln symbol (e.g. "Conn.Read") must match on last segment without substring false positives.
         assert _match_symbols(["Conn.Read"], ["Read"]) == ["Read"]
         assert _match_symbols(["pkg.forget"], ["get"]) == []  # not a boundary match
 
@@ -242,8 +207,7 @@ def _vuln_finding(component="requests", risk_score=80.0, cve="CVE-2024-0001"):
 
 class TestReachabilityAdjustedScoreWiring:
     def test_unreachable_persists_reduced_adjusted_score(self):
-        """A package absent from a callgraph THAT COVERS ITS ECOSYSTEM (pypi vs a
-        python callgraph) -> genuinely not reachable -> adjusted = base * 0.4."""
+        """A package absent from a callgraph covering its ecosystem is not reachable -> adjusted = base * 0.4."""
         finding = _vuln_finding(component="not-imported-pkg", risk_score=80.0)
         finding["details"]["purl"] = "pkg:pypi/not-imported-pkg@1.0.0"
         cg = _FakeCallgraph(module_usage={"other": {}}, import_map={"a.py": ["other"]}, language="python")
@@ -256,10 +220,7 @@ class TestReachabilityAdjustedScoreWiring:
 
 
 class TestReachabilityFailClosed:
-    """Absence of evidence is not evidence of unreachability. A package missing
-    from a callgraph that does NOT cover its ecosystem (or when the ecosystem is
-    unknown) must be recorded as unknown (identity modifier), never down-weighted
-    x0.4 (improvement audit #3)."""
+    """Absence of evidence is not evidence of unreachability: a package missing from a callgraph that doesn't cover its ecosystem (or unknown ecosystem) must be recorded as unknown, not down-weighted."""
 
     def test_wrong_language_callgraph_does_not_downweight(self):
         # pypi finding, but only a JS callgraph analyzed -> absence is meaningless.
@@ -320,10 +281,7 @@ class TestReachabilityFailClosed:
 
 
 class TestRunPendingBulkPersist:
-    """run_pending_reachability_for_scan must persist reachability through a
-    chunked bulk_write, not one sequential finding_repo.update per finding: a
-    large scan otherwise fires thousands of serial Mongo round-trips inline in
-    the callgraph-upload request (audit)."""
+    """run_pending_reachability_for_scan must persist via a chunked bulk_write, not one sequential update per finding."""
 
     @pytest.mark.asyncio
     async def test_persists_via_bulk_write_and_writes_summary(self, monkeypatch):
@@ -362,8 +320,7 @@ class TestRunPendingBulkPersist:
                 }
             )
 
-        # Spy: the persist must go through bulk_write. The per-doc repo update
-        # path (finding_repo.update -> update_one) must not be used for the loop.
+        # The persist must go through bulk_write, not per-doc update_one.
         calls = {"bulk": 0, "update_one": 0}
         orig_bulk = db.findings.bulk_write
         orig_update_one = db.findings.update_one

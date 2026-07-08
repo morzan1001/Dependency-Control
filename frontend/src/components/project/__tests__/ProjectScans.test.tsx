@@ -4,8 +4,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ProjectScans } from '../ProjectScans'
 import type { Scan } from '@/types/scan'
 
-// --- Mocks -----------------------------------------------------------------
-
 const mockUseProjectScans = vi.fn()
 const mockUseProjectBranches = vi.fn()
 
@@ -63,8 +61,7 @@ beforeEach(() => {
 
 describe('ProjectScans - Delta comparison partner', () => {
   it('compares against the previous completed scan of the SAME branch, not the adjacent row', () => {
-    // API order (created_at desc) with interleaved branches. The adjacent-row
-    // approach would pair the newest main scan with the feature scan below it.
+    // Branches interleaved in created_at desc order; adjacent-row pairing would wrongly cross branches.
     const newestMain = makeScan({ id: 'main-new', branch: 'main', created_at: '2026-07-03T00:00:00Z' })
     const feature = makeScan({ id: 'feat-1', branch: 'feature', created_at: '2026-07-02T00:00:00Z' })
     const olderMain = makeScan({ id: 'main-old', branch: 'main', created_at: '2026-07-01T00:00:00Z' })

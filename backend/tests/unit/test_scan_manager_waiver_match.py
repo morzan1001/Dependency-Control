@@ -75,9 +75,7 @@ def _legacy_waiver(finding_type=None, package_name=None, package_version=None, f
 
 class TestLegacyWaiverAndSemantics:
     def test_type_match_but_different_component_is_not_waived(self):
-        # Regression: legacy OR semantics waived EVERY secret in the upload when a
-        # single-file secret waiver existed. AND semantics must NOT waive a secret in
-        # a different file.
+        # AND semantics: a type+file secret waiver must not waive a secret in a different file.
         waiver = _legacy_waiver(finding_type="secret", package_name="src/config.js")
         finding = _legacy_finding("SECRET-x", "secret", "src/other.js")
         assert ScanManager._finding_matches_waiver(ScanManager, finding, waiver) is False
@@ -89,7 +87,7 @@ class TestLegacyWaiverAndSemantics:
 
     def test_package_version_must_match(self):
         waiver = _legacy_waiver(package_name="requests", package_version="2.26.0")
-        # component matches but version differs -> not waived (version is ANDed)
+        # version is ANDed: component matches but differing version is not waived
         finding = _legacy_finding("CVE-1", "vulnerability", "requests", version="2.27.0")
         assert ScanManager._finding_matches_waiver(ScanManager, finding, waiver) is False
         finding_ok = _legacy_finding("CVE-1", "vulnerability", "requests", version="2.26.0")

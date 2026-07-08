@@ -8,10 +8,7 @@ from app.models.dependency import Dependency
 
 
 class TestDependencyModel:
-    """Dependency model creation, defaults, and required fields."""
-
     def _make_dependency(self, **overrides):
-        """Factory for a valid Dependency with minimal required fields."""
         defaults = {
             "project_id": "proj-1",
             "scan_id": "scan-1",
@@ -22,7 +19,6 @@ class TestDependencyModel:
         return Dependency(**defaults)
 
     def test_minimal_valid(self):
-        """Dependency can be created with only required fields."""
         dep = self._make_dependency()
         assert dep.project_id == "proj-1"
         assert dep.scan_id == "scan-1"
@@ -30,7 +26,6 @@ class TestDependencyModel:
         assert dep.version == "2.31.0"
 
     def test_id_auto_generated(self):
-        """Each Dependency gets a unique auto-generated id."""
         a = self._make_dependency()
         b = self._make_dependency()
         assert a.id is not None
@@ -38,18 +33,15 @@ class TestDependencyModel:
         assert a.id != b.id
 
     def test_type_defaults_to_unknown(self):
-        """Package type defaults to 'unknown'."""
         dep = self._make_dependency()
         assert dep.type == "unknown"
 
     def test_direct_defaults_to_false(self):
-        """direct and direct_inferred default to False."""
         dep = self._make_dependency()
         assert dep.direct is False
         assert dep.direct_inferred is False
 
     def test_optional_string_fields_default_none(self):
-        """All optional string fields default to None."""
         dep = self._make_dependency()
         assert dep.purl is None
         assert dep.license is None
@@ -68,32 +60,27 @@ class TestDependencyModel:
         assert dep.download_url is None
 
     def test_list_fields_default_empty(self):
-        """List fields default to empty lists."""
         dep = self._make_dependency()
         assert dep.parent_components == []
         assert dep.locations == []
         assert dep.cpes == []
 
     def test_dict_fields_default_empty(self):
-        """Dict fields default to empty dicts."""
         dep = self._make_dependency()
         assert dep.hashes == {}
         assert dep.properties == {}
 
     def test_created_at_auto_set(self):
-        """created_at is set to a UTC datetime by default."""
         before = datetime.now(timezone.utc)
         dep = self._make_dependency()
         after = datetime.now(timezone.utc)
         assert before <= dep.created_at <= after
 
     def test_missing_required_field_rejected(self):
-        """Omitting 'name' raises ValidationError."""
         with pytest.raises(ValidationError):
             Dependency(project_id="p1", scan_id="s1", version="1.0")
 
     def test_fully_populated(self):
-        """All fields can be set explicitly."""
         dep = self._make_dependency(
             purl="pkg:pypi/requests@2.31.0",
             type="pypi",
@@ -127,17 +114,13 @@ class TestDependencyModel:
         assert dep.properties["syft:cataloger"] == "python-pkg-cataloger"
 
     def test_custom_type_value(self):
-        """Package type can be set to any valid string."""
         for pkg_type in ["maven", "npm", "pypi", "rpm", "deb", "go-module"]:
             dep = self._make_dependency(type=pkg_type)
             assert dep.type == pkg_type
 
 
 class TestDependencyIdAlias:
-    """Dependency _id alias round-trip for MongoDB compatibility."""
-
     def _make_dependency(self, **overrides):
-        """Factory for a valid Dependency with minimal required fields."""
         defaults = {
             "project_id": "proj-1",
             "scan_id": "scan-1",
@@ -148,14 +131,12 @@ class TestDependencyIdAlias:
         return Dependency(**defaults)
 
     def test_model_dump_by_alias_contains_id(self):
-        """model_dump(by_alias=True) produces '_id' key."""
         dep = self._make_dependency()
         dumped = dep.model_dump(by_alias=True)
         assert "_id" in dumped
         assert dumped["_id"] == dep.id
 
     def test_accepts_id_from_mongo(self):
-        """Dependency accepts _id via validation_alias."""
         dep = Dependency(
             _id="dep-custom-id",
             project_id="p1",
@@ -166,7 +147,6 @@ class TestDependencyIdAlias:
         assert dep.id == "dep-custom-id"
 
     def test_roundtrip_via_model_dump(self):
-        """Dependency survives model_dump -> reconstruct cycle."""
         original = self._make_dependency(
             purl="pkg:pypi/requests@2.31.0",
             type="pypi",

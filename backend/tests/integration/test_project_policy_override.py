@@ -1,16 +1,4 @@
-"""
-Integration tests: project-level CryptoPolicy overrides.
-
-These tests call CryptoRuleAnalyzer directly against the in-process _FakeDb
-(via the `db` fixture in conftest.py).  They do NOT go through the
-worker→engine pipeline because that path requires a live worker queue and is
-not exercised in the fake-DB environment (see the @pytest.mark.skip test in
-test_crypto_analyzer_pipeline.py for rationale).
-
-Testing at the analyzer layer is the highest layer that actually has real
-behavior in this environment: the fake DB can persist and query crypto assets
-and policies, and CryptoRuleAnalyzer reads both from DB to produce findings.
-"""
+"""Project-level CryptoPolicy overrides tested directly against CryptoRuleAnalyzer with the fake DB."""
 
 import pytest
 
@@ -39,22 +27,10 @@ def _rule(rule_id, enabled=True, **extra):
 
 @pytest.mark.asyncio
 async def test_override_disables_rule_and_suppresses_findings(db):
-    """Project override with enabled=False on a system rule suppresses findings.
-
-    Flow:
-    1. Seed an MD5 asset in the fake DB.
-    2. Seed a system policy with a matching rule (enabled=True).
-    3. Assert the analyzer emits a finding.
-    4. Upsert a project-level override that disables the same rule.
-    5. Assert the analyzer emits no findings (rule is suppressed).
-
-    This exercises CryptoPolicyResolver.resolve(), which merges system and
-    project policies — disabled project rules override enabled system rules.
-    """
+    """A project override with enabled=False suppresses findings from the matching system rule."""
     policy_repo = CryptoPolicyRepository(db)
     asset_repo = CryptoAssetRepository(db)
 
-    # Seed an MD5 asset
     await asset_repo.bulk_upsert(
         "proj",
         "scan",
@@ -70,7 +46,6 @@ async def test_override_disables_rule_and_suppresses_findings(db):
         ],
     )
 
-    # System policy with the rule enabled
     await policy_repo.upsert_system_policy(
         CryptoPolicy(
             scope="system",
@@ -84,7 +59,6 @@ async def test_override_disables_rule_and_suppresses_findings(db):
         finding_types={FindingType.CRYPTO_WEAK_ALGORITHM},
     )
 
-    # Before override: finding emitted
     r1 = await analyzer.analyze(
         sbom={},
         project_id="proj",
@@ -95,7 +69,6 @@ async def test_override_disables_rule_and_suppresses_findings(db):
         "Expected a finding for rule 'md5' before override was applied"
     )
 
-    # Add project override disabling the rule
     await policy_repo.upsert_project_policy(
         CryptoPolicy(
             scope="project",
@@ -105,7 +78,6 @@ async def test_override_disables_rule_and_suppresses_findings(db):
         )
     )
 
-    # After override: rule is disabled → no finding
     r2 = await analyzer.analyze(
         sbom={},
         project_id="proj",
@@ -119,12 +91,7 @@ async def test_override_disables_rule_and_suppresses_findings(db):
 
 @pytest.mark.asyncio
 async def test_override_adds_custom_rule(db):
-    """Project override can add a custom rule not present in the system policy.
-
-    The system policy has no rules, but the project override adds one for
-    BLOWFISH.  After applying the override, the analyzer should emit a finding
-    for the BLOWFISH asset.
-    """
+    """A project override can add a custom rule absent from the system policy."""
     policy_repo = CryptoPolicyRepository(db)
     asset_repo = CryptoAssetRepository(db)
 

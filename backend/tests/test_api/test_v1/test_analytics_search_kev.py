@@ -1,6 +1,4 @@
-"""KEV aggregation in vulnerability search must read the PERSISTED finding detail
-keys (in_kev / kev_ransomware_use) written by the enrichment service — not the
-never-written kev / kev_ransomware keys (improvement audit #1)."""
+"""KEV aggregation in vulnerability search must read the persisted finding detail keys (in_kev / kev_ransomware_use) written by enrichment, not the never-written kev / kev_ransomware keys."""
 
 from app.api.v1.endpoints.analytics.search import _aggregate_kev_status
 

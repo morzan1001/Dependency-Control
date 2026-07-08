@@ -4,8 +4,6 @@ import { describe, it, expect, vi } from 'vitest'
 import { ProjectOverview } from '../ProjectOverview'
 import type { Scan } from '@/types/scan'
 
-// --- Mocks -----------------------------------------------------------------
-
 const mockUseProjectScans = vi.fn()
 const mockUseScanResults = vi.fn()
 const mockUseProjectWaivers = vi.fn()
@@ -69,9 +67,7 @@ function renderOverview(scans: Scan[]) {
 
 describe('ProjectOverview - ThreatIntelligenceDashboard gating', () => {
   it('renders the dashboard when reachability analysis exists with zero KEV/high-EPSS', () => {
-    // Reproduces the bug: a scan with reachability data but no KEV / high-EPSS vulns.
-    // Canonical fields analyzed_count / unreachable_count are populated by the accumulator;
-    // the legacy total_analyzed / reachable fields are never emitted by the backend.
+    // Gating keys off the canonical analyzed_count / unreachable_count fields.
     const scan = makeScan(
       {},
       {

@@ -19,7 +19,6 @@ def _make_mock_db(collection):
 
 
 def _asset_doc(**overrides):
-    """Create a raw crypto asset document."""
     doc = {
         "_id": "asset-1",
         "project_id": "p1",

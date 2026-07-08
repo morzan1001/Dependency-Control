@@ -1,11 +1,4 @@
-"""
-Integration test: OpenGrep findings with crypto-misuse-* rule IDs must be
-tagged as CRYPTO_KEY_MANAGEMENT; regular SAST rule IDs keep the SAST type.
-
-The unit tests in test_sast_normalizer_crypto_misuse.py are the primary proof
-of correctness for the normalizer mapping. This test exercises the full
-ingest→normalize→persist path end-to-end through the mock FastAPI stack.
-"""
+"""SAST findings with crypto-misuse-* rule IDs are tagged CRYPTO_KEY_MANAGEMENT; other SAST rules keep the SAST type."""
 
 import json
 from pathlib import Path
@@ -25,8 +18,6 @@ def _load_fixture(name: str) -> dict:
 )
 @pytest.mark.asyncio
 async def test_sast_ingest_tags_crypto_misuse_findings(client, db, api_key_headers):
-    """Finding with rule_id starting with 'crypto-misuse-' must be tagged
-    as CRYPTO_KEY_MANAGEMENT; regular SAST rules keep the SAST type."""
     sast_payload = _load_fixture("crypto_misuse_findings.json")
 
     resp = await client.post(
@@ -55,7 +46,6 @@ async def test_sast_ingest_tags_crypto_misuse_findings(client, db, api_key_heade
     sast_findings = [f for f in findings if f.get("type") == "sast"]
     assert len(km_findings) == 2
     assert len(sast_findings) == 1
-    # Confirm the right rule_ids ended up in the right bucket
     km_rule_ids = {f.get("details", {}).get("rule_id") for f in km_findings}
     assert "crypto-misuse-hardcoded-keys-python-cryptography" in km_rule_ids
     assert "crypto-misuse-ecb-mode-python" in km_rule_ids

@@ -5,7 +5,7 @@ import logging
 import pytest
 
 from app.models.match_signature import MatchSignature
-from app.services.stats import _apply_waivers_signature  # new orchestrated entry point
+from app.services.stats import _apply_waivers_signature
 
 
 def _finding_doc(scan_id, fid, anchor, ch, line, rule="OPENGREP:r", file="a.py"):
@@ -128,7 +128,7 @@ def _finding_doc_no_match(scan_id, fid, finding_id, fingerprint, line, file="a.p
 @pytest.mark.asyncio
 async def test_self_heals_finding_without_persisted_match():
     scan = "s1"
-    # Re-scanned finding drifted to line 94 and (the bug) has NO stored match signature.
+    # Re-scanned finding drifted to line 94 and has no stored match signature.
     repo = _Repo([_finding_doc_no_match(scan, "f94", "BEARER-r-a.py-94", "fpNEW_2", 94)])
     wrepo = _WRepo()
     # Waiver anchored at the old line 100 with a (now stale) strong anchor.
@@ -145,8 +145,9 @@ async def test_self_heals_finding_without_persisted_match():
         ),
     )
     await _apply_waivers_signature(repo, wrepo, scan, [w])
-    assert "f94" in repo.waived  # recovered: recomputed sig made it a Pass-2 candidate
-    assert "w1" in wrepo.updates  # re-anchored signature persisted
+    # Recovered: the recomputed signature made f94 a Pass-2 candidate and the re-anchored signature is persisted.
+    assert "f94" in repo.waived
+    assert "w1" in wrepo.updates
 
 
 @pytest.mark.asyncio
@@ -154,12 +155,12 @@ async def test_backfill_waiver_without_match_from_current_finding():
     scan = "s1"
     repo = _Repo([_finding_doc(scan, "f1", "fpA", "c1", 10)])
     wrepo = _WRepo()
-    # legacy waiver: no match signature, only legacy finding_id equal to the finding
+    # Legacy waiver: no match signature, only a legacy finding_id equal to the finding.
     w = _Waiver("w1", "false_positive", None)
     w.finding_id = "f1"
     await _apply_waivers_signature(repo, wrepo, scan, [w])
     assert "f1" in repo.waived
-    assert "w1" in wrepo.updates  # signature back-filled and persisted
+    assert "w1" in wrepo.updates
 
 
 @pytest.mark.asyncio
@@ -249,5 +250,6 @@ async def test_outcome_write_skipped_when_unchanged():
     w.last_eval_scan_id = scan
     w.last_match_count = 1
     await _apply_waivers_signature(repo, wrepo, scan, [w])
-    assert "f1" in repo.waived  # still waived
-    assert "wa" not in wrepo.updates  # but NO redundant outcome write (guard skipped it)
+    assert "f1" in repo.waived
+    # No redundant outcome write: the unchanged-outcome guard skips it.
+    assert "wa" not in wrepo.updates

@@ -1,10 +1,4 @@
-"""Unit tests for the crypto-analytics MCP tool functions (D.4).
-
-Tests the three new standalone async functions:
-  - get_crypto_hotspots
-  - get_crypto_trends
-  - get_scan_delta
-"""
+"""Unit tests for the crypto-analytics MCP tool functions."""
 
 from datetime import datetime, timezone
 
@@ -65,12 +59,7 @@ async def test_mcp_get_crypto_trends_empty_range(db):
 
 @pytest.mark.asyncio
 async def test_mcp_get_scan_delta(db):
-    """The MCP get_scan_delta dispatch must return the unified crypto envelope.
-
-    After the scan-delta extension (see plans/2026-05-11-scan-delta-extension.md
-    Task 10), the registry routes through ``compute_crypto_delta_envelope`` and
-    returns ``ScanDeltaResponse.model_dump(mode="json")``.
-    """
+    """The MCP get_scan_delta dispatch must return the unified crypto envelope."""
     from app.models.user import User
     from app.services.chat.tools import ChatToolRegistry
     from tests.helpers.permission_presets import PRESET_ADMIN

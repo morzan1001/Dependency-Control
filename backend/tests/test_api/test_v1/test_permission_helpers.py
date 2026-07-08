@@ -97,7 +97,6 @@ class TestCheckProjectAccess:
 
         with patch(f"{HELPERS_PROJECTS}.ProjectRepository", return_value=mock_proj_repo):
             with patch(f"{HELPERS_PROJECTS}.TeamRepository", return_value=MagicMock()):
-                # Owner can access even with admin role required
                 result = asyncio.run(
                     check_project_access(
                         "proj-1",
@@ -261,7 +260,6 @@ class TestCheckProjectAccess:
 
         with patch(f"{HELPERS_PROJECTS}.ProjectRepository", return_value=mock_proj_repo):
             with patch(f"{HELPERS_PROJECTS}.TeamRepository", return_value=mock_team_repo):
-                # Team member can view...
                 result = asyncio.run(
                     check_project_access(
                         "proj-1",
@@ -271,7 +269,6 @@ class TestCheckProjectAccess:
                 )
                 assert result.id == "proj-1"
 
-                # ...but cannot access as editor
                 with pytest.raises(HTTPException) as exc_info:
                     asyncio.run(
                         check_project_access(
@@ -336,7 +333,7 @@ class TestCheckTeamAccess:
     def test_admin_with_read_all_bypasses_membership(self, admin_user):
         from app.api.v1.helpers.teams import check_team_access
 
-        team = self._make_team(members=[])  # No members
+        team = self._make_team(members=[])
         mock_repo = MagicMock()
         mock_repo.get_by_id = AsyncMock(return_value=team)
 
@@ -500,7 +497,6 @@ class TestGetTeamWithAccess:
         mock_repo.get_by_id = AsyncMock(return_value=team)
 
         with patch(f"{HELPERS_TEAMS}.TeamRepository", return_value=mock_repo):
-            # Admin role satisfies default TEAM_ROLE_ADMIN requirement
             result = asyncio.run(
                 get_team_with_access(
                     "team-1",
@@ -559,7 +555,6 @@ class TestCheckWebhookPermission:
                     Permissions.WEBHOOK_READ,
                 )
             )
-        # Should check project access (at viewer level, no required_role)
         mock_access.assert_called_once()
         call_args = mock_access.call_args
         assert call_args[0][0] == "proj-1"
@@ -578,7 +573,6 @@ class TestCheckWebhookPermission:
                     "webhook:update",
                 )
             )
-        # Should require PROJECT_ROLE_ADMIN
         call_kwargs = mock_access.call_args
         assert call_kwargs.kwargs["required_role"] == "admin"
 
@@ -603,7 +597,6 @@ class TestCheckWebhookPermission:
 
         webhook = self._make_webhook(project_id=None)
 
-        # Should not raise
         asyncio.run(
             check_webhook_permission(
                 webhook,

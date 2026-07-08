@@ -51,8 +51,7 @@ class TestExtractLicenseFromUrl:
         assert extract_license_from_url(None) is None  # type: ignore[arg-type]  # Testing None handling
 
     def test_case_sensitive_patterns_not_matching_uppercase(self):
-        # url.lower() converts MIT to mit, but pattern has uppercase MIT
-        # This is the actual behavior - patterns with uppercase won't match
+        # url.lower() converts MIT to mit, but the pattern has uppercase MIT, so it won't match.
         assert extract_license_from_url("https://opensource.org/licenses/MIT") is None
 
     def test_unlicense_org(self):
@@ -60,9 +59,7 @@ class TestExtractLicenseFromUrl:
 
 
 class TestResolveCyclonedxDirectRefs:
-    """The fallback (SBOM root bom-ref does not match a graph node) must return the
-    root's CHILDREN — the direct deps — not the root nodes themselves (regression: a
-    mismatched main_bom_ref marked every dependency transitive)."""
+    """The fallback (root bom-ref doesn't match a graph node) must return the root's children (direct deps), not the roots themselves."""
 
     def test_fallback_returns_root_children_not_roots(self):
         # app -> [A, B]; A -> [C]. "app" is the root (nothing depends on it).
@@ -385,8 +382,7 @@ class TestParseSBOMConvenience:
 
 
 class TestSyftLegacyStringCpes:
-    """Finding 1: Syft schema < 16.0 emits `cpes` as a list of plain strings.
-    Parsing must not crash (which silently discarded all remaining artifacts)."""
+    """Syft schema < 16.0 emits `cpes` as plain strings; parsing must not crash."""
 
     def test_string_form_cpes_do_not_crash_and_are_captured(self):
         parser = SBOMParser()
@@ -413,7 +409,7 @@ class TestSyftLegacyStringCpes:
         }
         result = parser.parse(sbom)
         deps = {d.name: d for d in result.dependencies}
-        # Both artifacts survive (before the fix the first one crashed the whole loop)
+        # Both artifacts survive.
         assert set(deps) == {"pkg-a", "pkg-b"}
         assert deps["pkg-a"].cpes == ["cpe:2.3:a:pkg-a:pkg-a:1.0:*:*:*:*:*:*:*"]
 
@@ -438,7 +434,7 @@ class TestSyftLegacyStringCpes:
 
 
 class TestCycloneDXCpe:
-    """Finding 3: CycloneDX spec defines a singular `cpe` string, not a `cpes` array."""
+    """CycloneDX spec defines a singular `cpe` string, not a `cpes` array."""
 
     def test_singular_cpe_field_captured(self):
         parser = SBOMParser()
@@ -476,9 +472,7 @@ class TestCycloneDXCpe:
 
 
 class TestSPDXDirectDependencyDetection:
-    """Finding 2: In the canonical GitHub SBOM layout the DESCRIBES target is the
-    application root; its DEPENDS_ON children are the DIRECT deps and the root itself
-    must not be reported as a direct dependency."""
+    """In the canonical GitHub SBOM layout the DESCRIBES target is the app root; its DEPENDS_ON children are the direct deps, and the root itself is not direct."""
 
     def test_github_layout_root_children_are_direct(self):
         parser = SBOMParser()
@@ -593,8 +587,7 @@ class TestSPDXDirectDependencyDetection:
 
 
 class TestDetectFormatMalformed:
-    """Finding 5: detect_format must not raise on structurally odd (but valid JSON)
-    SBOMs; it should fall through to UNKNOWN so the best-effort path runs."""
+    """detect_format must not raise on structurally odd (but valid JSON) SBOMs; it falls through to UNKNOWN."""
 
     def setup_method(self):
         self.parser = SBOMParser()

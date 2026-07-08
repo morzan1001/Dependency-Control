@@ -4,12 +4,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import Broadcasts from '../Broadcasts'
 
-// --- Mocks -----------------------------------------------------------------
-
 const mockSendBroadcast = vi.fn()
 
-// Radix Tabs triggers activate on pointer events, which jsdom does not drive.
-// Replace with a minimal controlled implementation so clicks switch tabs.
+// Radix Tabs use pointer events jsdom can't drive; use a controlled stub.
 const TabsCtx = createContext<{ value: string; onValueChange: (v: string) => void }>({
   value: '',
   onValueChange: () => {},
@@ -44,8 +41,7 @@ vi.mock('@/hooks/queries/use-system', () => ({
   useNotificationChannels: () => ({ data: ['email'] }),
 }))
 
-// Radix Select is not reliably driveable in jsdom (pointer capture). Replace it
-// with a native <select> so we can exercise the "any" -> "" reset mapping.
+// Radix Select isn't driveable in jsdom (pointer capture); use a native select.
 vi.mock('@/components/ui/select', () => ({
   Select: ({ value, onValueChange, children }: {
     value: string
@@ -91,23 +87,18 @@ describe('Broadcasts - advisory package type reset', () => {
   it('can reset the package type back to "Any" (empty) after choosing a concrete type', async () => {
     render(<Broadcasts />)
 
-    // Move to the advisory tab.
     fireEvent.click(screen.getByRole('tab', { name: /Security Advisory/i }))
 
-    // Give the package a name so it counts as a valid package.
     fireEvent.change(screen.getByTestId('pkg-name'), { target: { value: 'log4j-core' } })
 
     const typeSelect = screen.getByTestId('type-select') as HTMLSelectElement
 
-    // Pick a concrete type, then reset back to "Any".
     fireEvent.change(typeSelect, { target: { value: 'maven' } })
     expect(typeSelect.value).toBe('maven')
 
-    // The regression: without an "Any" item mapped to "", there was no way back.
     fireEvent.change(typeSelect, { target: { value: 'any' } })
     expect(typeSelect.value).toBe('any') // shown as "any", stored as ""
 
-    // Calculate impact -> payload must carry an empty (type-agnostic) type.
     fireEvent.click(screen.getByRole('button', { name: /Calculate Impact/i }))
 
     await waitFor(() => expect(mockSendBroadcast).toHaveBeenCalled())

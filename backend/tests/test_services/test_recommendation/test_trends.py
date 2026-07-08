@@ -46,8 +46,6 @@ def _scan_finding(cve_id="CVE-2024-001", severity="CRITICAL", component="pkg"):
 
 
 class TestAnalyzeRegressionsEmpty:
-    """No findings at all."""
-
     def test_empty_both_returns_empty(self):
         assert analyze_regressions([], []) == []
 
@@ -56,8 +54,6 @@ class TestAnalyzeRegressionsEmpty:
 
 
 class TestAnalyzeRegressionsNewCriticalVuln:
-    """New critical vulnerability triggers HIGH priority regression."""
-
     def test_new_critical_vuln_produces_recommendation(self):
         current = [_vuln(severity="CRITICAL", cve_id="CVE-2024-999")]
         previous = []
@@ -96,8 +92,6 @@ class TestAnalyzeRegressionsNewCriticalVuln:
 
 
 class TestAnalyzeRegressionsNewHighVuln:
-    """New high vulnerability (no critical) triggers MEDIUM priority."""
-
     def test_new_high_vuln_produces_recommendation(self):
         current = [_vuln(severity="HIGH", cve_id="CVE-2024-100")]
         previous = []
@@ -155,8 +149,6 @@ class TestAnalyzeRegressionsDeltaThreshold:
 
 
 class TestAnalyzeRegressionsSameFindings:
-    """Same findings in both scans produce no regression."""
-
     def test_same_findings_no_regression(self):
         finding = _vuln(severity="CRITICAL", cve_id="CVE-2024-001")
         result = analyze_regressions([finding], [finding])
@@ -170,8 +162,6 @@ class TestAnalyzeRegressionsSameFindings:
 
 
 class TestAnalyzeRegressionsMixedNewFindings:
-    """Mixed new critical and high together."""
-
     def test_both_critical_and_high_priority_is_high(self):
         current = [
             _vuln(severity="CRITICAL", cve_id="CVE-2024-100"),
@@ -194,8 +184,6 @@ class TestAnalyzeRegressionsMixedNewFindings:
 
 
 class TestAnalyzeRecurringIssuesEmpty:
-    """Empty or insufficient history."""
-
     def test_empty_history_returns_empty(self):
         assert analyze_recurring_issues([]) == []
 
@@ -270,8 +258,6 @@ class TestAnalyzeRecurringIssuesPriority:
 
 
 class TestAnalyzeRecurringIssuesAffectedComponents:
-    """Affected components list should contain CVE and component info."""
-
     def test_affected_components_format(self):
         history = [_scan(f"scan{i}", [_scan_finding(cve_id="CVE-2024-001", component="lodash")]) for i in range(3)]
         rec = analyze_recurring_issues(history)[0]
@@ -284,8 +270,6 @@ class TestAnalyzeRecurringIssuesAffectedComponents:
 
 
 class TestAnalyzeRecurringIssuesNonVulnSkipped:
-    """Non-vulnerability findings are not tracked for recurrence."""
-
     def test_non_vuln_not_counted(self):
         non_vuln_finding = {
             "type": "license",
@@ -301,16 +285,10 @@ class TestAnalyzeRecurringIssuesNonVulnSkipped:
 
 
 class TestRecurringDetectionEndToEndWithPersistedSummary:
-    """Regression for finding #84: recurring-vulnerability recommendations can never
-    fire unless the analysis engine PERSISTS a compact scan.findings_summary at
-    completion (it used to $unset it). This exercises the real engine summary builder
-    (_build_findings_summary) round-tripped through the Scan model — exactly the shape
-    scan_repo.find_many + Scan.model_dump feed into analyze_recurring_issues.
-    """
+    """Recurring-vulnerability recs require the engine to persist a compact scan.findings_summary; exercises the real summary builder round-tripped through the Scan model."""
 
     @staticmethod
     def _aggregated_vuln(cve_id, severity="CRITICAL", component="pkg"):
-        """A Finding as produced by the aggregator (pre-persistence)."""
         from app.models.finding import Finding
 
         return Finding(
@@ -325,8 +303,7 @@ class TestRecurringDetectionEndToEndWithPersistedSummary:
         )
 
     def _persisted_summary_for_scan(self, scan_id, findings):
-        """Run the engine's real prepare + summary builder, then round-trip through the
-        Scan model as the DB read path does."""
+        """Run the engine's real prepare + summary builder, then round-trip through the Scan model as the DB read path does."""
         from app.models.project import Scan
         from app.services.analysis.engine import (
             _build_findings_summary,
@@ -335,8 +312,7 @@ class TestRecurringDetectionEndToEndWithPersistedSummary:
 
         _, vulnerability_findings = _prepare_finding_records(findings, scan_id, "proj-1", None)
         summary = _build_findings_summary(vulnerability_findings)
-        # Round-trip: persisting to Mongo + Scan.model_dump() must preserve the summary
-        # and it must validate as List[Finding].
+        # Scan.model_dump() must preserve the summary and it must validate as List[Finding].
         scan = Scan(id=scan_id, project_id="proj-1", branch="main", findings_summary=summary)
         return scan.model_dump()
 
@@ -345,7 +321,7 @@ class TestRecurringDetectionEndToEndWithPersistedSummary:
             self._persisted_summary_for_scan(f"scan{i}", [self._aggregated_vuln("CVE-2024-999", component="lodash")])
             for i in range(3)
         ]
-        # The persisted summary must be non-empty (the bug persisted nothing / $unset it).
+        # The persisted summary must be non-empty.
         assert all(s["findings_summary"] for s in history)
         result = analyze_recurring_issues(history)
         assert len(result) == 1

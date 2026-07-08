@@ -1,8 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { Finding } from "@/types/scan";
 
-// Mock the scans API before importing the module under test so the module's
-// `scanApi` reference points at the mock.
+// Mock before importing so the module's scanApi reference points at the mock.
 vi.mock("@/api/scans", () => ({
   scanApi: {
     getFindings: vi.fn(),
@@ -35,8 +34,6 @@ beforeEach(() => {
 });
 
 describe("resolveRelatedFindingInRows", () => {
-  // Finding 1: the exact license finding must be opened, not the first license
-  // finding in the list.
   it("resolves a LIC- id to the finding with the matching id, not the first license row", () => {
     const rows = [
       makeFinding({ id: "CVE-1", type: "vulnerability", component: "a" }),
@@ -52,8 +49,6 @@ describe("resolveRelatedFindingInRows", () => {
       makeFinding({ id: "LIC-MIT", type: "license", component: "mitpkg" }),
       makeFinding({ id: "LIC-GPL-3.0", type: "license", component: "gplpkg" }),
     ];
-    // No row has id "LIC-Apache-2.0" — previously this returned the first
-    // license finding (the bug). It must now return undefined.
     expect(resolveRelatedFindingInRows(rows, "LIC-Apache-2.0")).toBeUndefined();
   });
 

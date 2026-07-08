@@ -35,9 +35,7 @@ async def test_engine_marks_report_completed_on_success():
     report = _report()
     user = MagicMock(id="u1", permissions=frozenset())
 
-    # Real EvaluationInput — previously this was a bare MagicMock, so the
-    # engine could have passed anything to framework.evaluate without
-    # detection. Real instance guarantees the engine wires the correct shape.
+    # Real EvaluationInput (not a MagicMock) so the engine must wire the correct shape.
     inputs = EvaluationInput(
         resolved=ResolvedScope(scope="user", scope_id=None, project_ids=[]),
         scope_description="u",
@@ -49,9 +47,7 @@ async def test_engine_marks_report_completed_on_success():
         scan_ids=["s1"],
     )
     evaluation = MagicMock(summary={"total": 0})
-    # Use spec=["evaluate"] so hasattr(fw, "evaluate_async") is False — the
-    # engine dispatches on that attribute (async path is exercised by the
-    # PQC framework unit test).
+    # spec=["evaluate"] makes hasattr(fw, "evaluate_async") False so the engine takes the sync path.
     fw = MagicMock(spec=["evaluate"])
     fw.evaluate = MagicMock(return_value=evaluation)
 
@@ -81,9 +77,7 @@ async def test_engine_marks_report_completed_on_success():
     final_call = update_mock.call_args_list[-1]
     assert final_call.kwargs.get("status") == ReportStatus.COMPLETED
 
-    # Guard the framework contract: the engine must pass a real
-    # EvaluationInput — not an arbitrary object — so framework evaluators
-    # can rely on the documented attributes (resolved, crypto_assets, …).
+    # The engine must pass a real EvaluationInput so evaluators can rely on its attributes.
     fw.evaluate.assert_called_once()
     passed_arg = fw.evaluate.call_args.args[0]
     assert isinstance(passed_arg, EvaluationInput)
@@ -93,9 +87,7 @@ async def test_engine_marks_report_completed_on_success():
 
 @pytest.mark.asyncio
 async def test_engine_awaits_evaluate_async_when_available():
-    """Regression: the PQC framework is async-only. The engine must dispatch
-    on hasattr(framework, "evaluate_async") and await it, not call .evaluate
-    synchronously (which raises RuntimeError on the PQC framework)."""
+    """The engine must await evaluate_async when a framework exposes it."""
     db = MagicMock()
     update_mock = AsyncMock()
     engine = ComplianceReportEngine()
@@ -209,8 +201,7 @@ async def test_engine_gather_inputs_builds_evaluation_input():
 
 
 def _make_engine_db(*, agg_rows, project_doc=None):
-    """Build a MagicMock db that drives _gather_inputs and captures the
-    findings query and per-scan lookups."""
+    """MagicMock db that drives _gather_inputs and captures the findings query and per-scan lookups."""
     db = MagicMock()
 
     async def scan_agg_iter():
@@ -220,7 +211,7 @@ def _make_engine_db(*, agg_rows, project_doc=None):
     scan_aggregate = MagicMock()
     scan_aggregate.__aiter__ = lambda self: scan_agg_iter()
     db.scans.aggregate = MagicMock(return_value=scan_aggregate)
-    # Must NOT be called anymore — project_id comes from the aggregation.
+    # project_id comes from the aggregation, so find_one must not be called.
     db.scans.find_one = AsyncMock(return_value={"project_id": "should-not-be-used"})
 
     captured: dict = {}
@@ -260,9 +251,7 @@ async def _run_gather(engine, db, resolved, framework, asset_repo_mock=None):
 
 @pytest.mark.asyncio
 async def test_gather_inputs_loads_vulnerability_findings_for_cve_sla():
-    """Regression: CVE-SLA reports always PASSED because the engine only
-    queried ^crypto_ findings, so no `vulnerability` finding ever reached the
-    framework. The findings filter must select `vulnerability` for CVE SLA."""
+    """The findings filter must select `vulnerability` for the CVE SLA framework."""
     db, captured, _ = _make_engine_db(agg_rows=[{"_id": "p1", "scan_id": "s1"}])
     resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
     engine = ComplianceReportEngine()
@@ -274,8 +263,7 @@ async def test_gather_inputs_loads_vulnerability_findings_for_cve_sla():
 
 @pytest.mark.asyncio
 async def test_gather_inputs_loads_license_findings_for_license_audit():
-    """Regression: License-Audit reports always PASSED — the ^crypto_ filter
-    excluded every `license` finding."""
+    """The findings filter must select `license` for the License-Audit framework."""
     db, captured, _ = _make_engine_db(agg_rows=[{"_id": "p1", "scan_id": "s1"}])
     resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
     engine = ComplianceReportEngine()
@@ -298,8 +286,7 @@ async def test_gather_inputs_keeps_crypto_filter_for_crypto_framework():
 
 @pytest.mark.asyncio
 async def test_gather_inputs_union_filter_when_framework_unknown():
-    """The chat summary path calls _gather_inputs without a framework; it must
-    load every consumed finding type so CVE/license summaries aren't empty."""
+    """Without a framework, the filter must load every consumed finding type."""
     db, captured, _ = _make_engine_db(agg_rows=[{"_id": "p1", "scan_id": "s1"}])
     resolved = ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"])
     engine = ComplianceReportEngine()
@@ -312,9 +299,7 @@ async def test_gather_inputs_union_filter_when_framework_unknown():
 
 @pytest.mark.asyncio
 async def test_gather_inputs_prepends_project_license_policy():
-    """The project's allow_strong_copyleft / allow_network_copyleft toggles must
-    be honored: the engine plumbs the resolved license policy into
-    policy_rules[0], where license_audit._extract_license_policy reads it."""
+    """The resolved project license policy must be plumbed into policy_rules[0]."""
     license_policy = {"allow_strong_copyleft": True, "allow_network_copyleft": False}
     db, _, projects_mock = _make_engine_db(
         agg_rows=[{"_id": "p1", "scan_id": "s1"}],
@@ -331,8 +316,7 @@ async def test_gather_inputs_prepends_project_license_policy():
 
 @pytest.mark.asyncio
 async def test_gather_inputs_prefers_analyzer_settings_license_policy():
-    """analyzer_settings.license_compliance takes precedence over the legacy
-    top-level project.license_policy."""
+    """analyzer_settings.license_compliance takes precedence over top-level project.license_policy."""
     db, _, _ = _make_engine_db(
         agg_rows=[{"_id": "p1", "scan_id": "s1"}],
         project_doc={
@@ -351,8 +335,7 @@ async def test_gather_inputs_prefers_analyzer_settings_license_policy():
 
 @pytest.mark.asyncio
 async def test_gather_inputs_no_license_policy_for_multi_project_scope():
-    """A single unambiguous project policy only exists for project scope; a
-    team/user scope with multiple projects must not prepend one."""
+    """A multi-project team/user scope must not prepend a single project policy."""
     db, _, projects_mock = _make_engine_db(
         agg_rows=[{"_id": "p1", "scan_id": "s1"}, {"_id": "p2", "scan_id": "s2"}],
     )
@@ -367,8 +350,7 @@ async def test_gather_inputs_no_license_policy_for_multi_project_scope():
 
 @pytest.mark.asyncio
 async def test_collect_crypto_assets_avoids_per_scan_find_one():
-    """Finding #2: _pick_scan_ids already yields project_id; the engine must use
-    it directly instead of issuing one db.scans.find_one per scan (N+1)."""
+    """The engine must reuse the project_id from _pick_scan_ids instead of a find_one per scan."""
     db, _, _ = _make_engine_db(
         agg_rows=[{"_id": "p1", "scan_id": "s1"}, {"_id": "p2", "scan_id": "s2"}],
     )

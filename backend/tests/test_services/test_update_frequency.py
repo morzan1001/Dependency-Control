@@ -1,5 +1,4 @@
-"""Tests for update frequency analysis — version classification, trend, aggregates,
-and the streaming orchestrator."""
+"""Tests for update frequency analysis (version classification, trend, aggregates, streaming orchestrator)."""
 
 import asyncio
 from collections import Counter
@@ -53,14 +52,14 @@ class TestClassifyVersionChange:
     def test_one_unparseable_returns_unknown(self):
         assert classify_version_change("1.0.0", "abc") == "unknown"
 
-    # A2: identical versions must NOT be classified as "patch"
+    # identical versions must NOT be classified as "patch"
     def test_identical_versions_returns_none(self):
         assert classify_version_change("1.0.0", "1.0.0") == "none"
 
     def test_identical_with_v_prefix_returns_none(self):
         assert classify_version_change("v1.0.0", "1.0.0") == "none"
 
-    # A3: pre-release identifiers must be respected
+    # pre-release identifiers must be respected
     def test_stable_to_prerelease_is_not_no_change(self):
         # 1.0.0 -> 1.0.0-beta1 is a real change (downgrade), must not be "none"
         result = classify_version_change("1.0.0", "1.0.0-beta1")
@@ -99,10 +98,7 @@ class TestClassifyVersionChange:
         assert classify_version_change("abc1234", "def5678") == "unknown"
 
     def test_calver_classified_by_release_tuple(self):
-        # CalVer (year.month.day) maps cleanly onto the release tuple. We
-        # don't try to detect "this is a calendar version" heuristically;
-        # we just trust packaging.Version's parse. Pin the expected behavior
-        # so future regex tweaks can't silently change it.
+        # CalVer maps onto the release tuple via packaging.Version; behavior pinned so regex tweaks can't silently change it.
         assert classify_version_change("2024.01.15", "2024.02.01") == "minor"
         assert classify_version_change("2024.01.15", "2025.01.15") == "major"
         assert classify_version_change("2024.01.15", "2024.01.16") == "patch"
@@ -151,7 +147,7 @@ class TestDominantEcosystem:
 
 
 class TestComputeTrend:
-    # A4: trend is "unknown" when there isn't enough data, not "stable"
+    # trend is "unknown" when there isn't enough data, not "stable"
     def test_empty_timeline_returns_unknown(self):
         direction, _ = _compute_trend([])
         assert direction == "unknown"
@@ -176,19 +172,19 @@ class TestComputeTrend:
 
 
 class TestEmptyMetrics:
-    # A4: empty metrics use "unknown" trend, not "stable"
+    # empty metrics use "unknown" trend, not "stable"
     def test_empty_metrics_trend_is_unknown(self):
         m = _empty_metrics("p1", "Project One", 0, "")
         assert m.trend_direction == "unknown"
 
-    # A6: empty metrics have null coverage (no outdated history yet)
+    # empty metrics have null coverage (no outdated history yet)
     def test_empty_metrics_coverage_is_none(self):
         m = _empty_metrics("p1", "Project One", 0, "")
         assert m.update_coverage_pct is None
 
 
 class TestAggregateMetricsCoverage:
-    # A6: coverage is None when nothing has ever been outdated
+    # coverage is None when nothing has ever been outdated
     def test_coverage_none_when_no_outdated(self):
         scans = [
             {"_id": "s1", "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc)},
@@ -421,8 +417,7 @@ class TestStreamingOrchestrator:
         )
 
         assert m.scan_count == 5
-        # If the orchestrator used the oldest 5 (legacy bug), recent_updates would
-        # show versions like 1.0.1..1.0.4. The new behavior must show 1.0.26..1.0.29.
+        # The newest 5 scans must drive recent_updates (1.0.26..1.0.29), not the oldest 5 (1.0.1..1.0.4).
         latest_versions = {e.new_version for e in m.recent_updates}
         assert "1.0.29" in latest_versions
         assert "1.0.0" not in latest_versions
@@ -451,10 +446,7 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_observations_bounded_for_high_churn_history(self):
-        # 200 scans, every scan introduces a new unique version per package,
-        # 5 packages -> 1000 (pkg, version) pairs. Without a bound this lives
-        # forever in memory; with a bound the orchestrator must complete and
-        # produce metrics rather than retaining every pair.
+        # 200 scans x 5 packages = 1000 (pkg, version) pairs; the orchestrator must stay bounded and still produce metrics.
         scans = [_make_scan(f"s{i}", i) for i in range(200)]
         deps: Dict[str, List[Dict[str, Any]]] = {}
         for i in range(200):
@@ -551,10 +543,7 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_since_overrides_max_scans_when_window_holds_more(self):
-        # 30 daily scans, max_scans=5 (default-ish), since=very-old.
-        # Old code: loaded only 5 newest scans, ignored everything older
-        # in the requested window. New code: hard_limit-bounded load so
-        # the entire `since` window is honored.
+        # 30 daily scans, max_scans=5, since=very-old: the entire since window must be honored (hard_limit-bounded load).
         scans = [_make_scan(f"s{i}", i) for i in range(30)]
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(30)}
         scan_repo = FakeScanRepo(scans)
@@ -660,7 +649,7 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_outdated_loaded_per_pair_not_upfront(self):
-        # The streaming refactor must NOT issue a single bulk find_many across all scan_ids.
+        # Must NOT issue a single bulk find_many across all scan_ids.
         scans = [_make_scan(f"s{i}", i) for i in range(5)]
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", "1.0.0")] for i in range(5)}
         results = [_outdated_result(f"s{i}", []) for i in range(5)]
@@ -686,10 +675,7 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_completed_filter_applied_before_limit(self):
-        # Finding 1: the newest max_scans scans are all failed, but a long
-        # completed history exists underneath. Filtering status AFTER the limit
-        # (the bug) would return [] and report "not enough scans"; filtering in
-        # the query must surface the older completed scans.
+        # The newest max_scans scans are all failed with a long completed history underneath; status must be filtered in the query so older completed scans surface.
         completed = [_make_scan(f"c{i}", i) for i in range(6)]  # days 0..5, completed
         failed = [
             {**_make_scan(f"f{i}", 10 + i), "status": "failed"} for i in range(20)
@@ -714,10 +700,7 @@ class TestStreamingOrchestrator:
 
     @pytest.mark.asyncio
     async def test_maven_upstream_uses_deps_dev_name(self):
-        # Finding 2: Maven components store only the artifact as the DB name,
-        # but deps.dev needs "group:artifact" (ParsedPURL.deps_dev_name). The
-        # spec must use that name, and observations must be re-keyed to match
-        # the fetched history so adoption-latency still resolves.
+        # Maven components store only the artifact as the DB name, but deps.dev needs "group:artifact"; the spec must use that name and re-key observations so adoption-latency resolves.
         def _maven_dep(scan_id: str, version: str) -> Dict[str, Any]:
             return {
                 "scan_id": scan_id,
@@ -764,23 +747,11 @@ class TestStreamingOrchestrator:
         assert m.adoption_latency_days_median == 15.0
 
     def test_comparison_semaphore_reusable_across_event_loops(self):
-        # Finding 3: the concurrency semaphore must be created per call so it
-        # binds to the loop actually running the gather. A module-global
-        # semaphore binds to the FIRST loop it blocks on and then raises
-        # "bound to a different event loop" on every later loop.
-        #
-        # asyncio.Semaphore only touches the loop (via _get_loop) when acquire()
-        # has to *wait* on an exhausted counter (see acquire(): _get_loop is
-        # reached only under `if self.locked()`). So the bug is invisible unless
-        # the test creates genuine contention: MORE concurrent projects than the
-        # concurrency limit (_COMPARISON_CONCURRENCY == 3), AND work that truly
-        # suspends while holding the semaphore. Plain in-memory fakes return
-        # without ever yielding, so the counter never hits 0 with a waiter behind
-        # it and the semaphore never binds — which is exactly why the previous
-        # version of this test passed against the buggy code. These fakes await
-        # asyncio.sleep(0) so each project holds the semaphore across a real
-        # suspension point, forcing the 4th and 5th projects to block on (and
-        # bind) the semaphore.
+        # The concurrency semaphore must be created per call so it binds to the
+        # loop running the gather; a module-global one binds to the first loop and
+        # then raises "bound to a different event loop". Reproducing needs genuine
+        # contention: more projects than _COMPARISON_CONCURRENCY AND work that
+        # suspends (asyncio.sleep(0)) while holding the semaphore.
         n_projects = _COMPARISON_CONCURRENCY + 2  # 5 > concurrency limit of 3
 
         class _SuspendingScanRepo(FakeScanRepo):

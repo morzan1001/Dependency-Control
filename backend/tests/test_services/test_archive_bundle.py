@@ -117,13 +117,7 @@ async def test_write_includes_crypto_assets_in_bundle_and_stats():
 
 @pytest.mark.asyncio
 async def test_roundtrip_preserves_datetime_and_objectid_bson_types():
-    """Restore must get real BSON datetime/ObjectId back, not strings.
-
-    Regression: _serialize used to stringify datetimes/ObjectIds at write time and
-    the reader parsed with plain json.loads, so restored scans/findings had
-    string dates -> date-range ($gte) filters and created_at sorts silently
-    failed to match/order restored docs.
-    """
+    """Restore must get real BSON datetime/ObjectId back, not strings, so date-range filters and created_at sorts keep working."""
     import datetime as dt
 
     from bson import ObjectId
@@ -164,7 +158,7 @@ async def test_roundtrip_preserves_datetime_and_objectid_bson_types():
 
     assert header is not None
     restored_scan = header["scan"]
-    # Datetime fields come back as real datetimes so $gte/$lte/sort work again.
+    # Datetime fields come back as real datetimes so $gte/$lte/sort work.
     assert isinstance(restored_scan["created_at"], dt.datetime)
     assert restored_scan["created_at"] == created_utc_naive
     assert isinstance(restored_scan["completed_at"], dt.datetime)
@@ -301,7 +295,6 @@ async def test_header_serializes_objectid_id_and_project_id():
 
 @pytest.mark.asyncio
 async def test_read_raises_when_footer_missing():
-    """A bundle stream that ends without the footer line must raise ValueError."""
     from app.services.archive_bundle import read_bundle_frames
 
     header = json.dumps({"version": 2, "scan_id": "x", "project_id": "y", "scan": {"_id": "x"}}).encode() + b"\n"

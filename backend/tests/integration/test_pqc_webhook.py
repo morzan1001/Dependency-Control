@@ -1,5 +1,4 @@
-"""Verify the PQC migration-plan endpoint fires the
-`pqc_migration_plan.generated` webhook after returning the plan."""
+"""The PQC migration-plan endpoint fires the pqc_migration_plan.generated webhook after returning the plan."""
 
 from unittest.mock import AsyncMock
 
@@ -45,7 +44,7 @@ async def test_pqc_migration_fires_webhook(
     assert "total_items" in payload
     assert "status_counts" in payload
     assert "mappings_version" in payload
-    # Project-scoped call must pass project_id to restrict webhook delivery.
+    # project_id restricts webhook delivery to the scoped project.
     assert call.kwargs.get("project_id") == "p"
 
 
@@ -56,7 +55,6 @@ async def test_pqc_webhook_failure_does_not_fail_request(
     owner_auth_headers_proj,
     monkeypatch,
 ):
-    """A misbehaving webhook must never surface to the caller."""
     from app.services.webhooks import webhook_service
 
     monkeypatch.setattr(

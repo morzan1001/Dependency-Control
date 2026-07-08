@@ -110,21 +110,11 @@ def test_status_buckets():
     assert status_from_score(0) == "monitor"
 
 
-# --- B3: count-formula gives single-asset findings a non-zero baseline ---
-
-
 def test_single_asset_still_contributes_to_count_score():
-    """A single weak RSA cert in production is more dangerous than a thousand
-    weak RSA certs in a sandbox; the count component should not hide it.
-
-    Previously _score_count(1) was hard-coded to 0.0, which meant a lone
-    high-exposure asset got no count contribution at all. The new formula
-    gives a single asset a baseline so the priority_score still reflects
-    its existence."""
+    """A single asset must get a non-zero count baseline so its priority_score reflects it."""
     from app.services.pqc_migration.scoring import _score_count
 
     assert _score_count(1) > 0.0
-    # And it still scales upward with count.
     assert _score_count(10) > _score_count(1)
     assert _score_count(100) > _score_count(10)
 
@@ -143,14 +133,8 @@ def test_count_score_zero_for_non_positive():
     assert _score_count(-1) == 0.0
 
 
-# --- key-weakness ratio branch collapse (no unreachable trailing branch) ---
-
-
 def test_key_weakness_ratio_at_and_above_minimum():
-    """When key_size >= minimum the ratio is always >= 1.0, so the moderate
-    (>=1.5), safe (>=2.0), and at-minimum cases must be the only outcomes for
-    non-undersized keys. An at-minimum RSA key (ratio == 1.0) must score 50.0,
-    not fall through to the (previously unreachable) 100.0 branch."""
+    """An at-minimum key (ratio 1.0) scores 50.0; stronger ratios score lower, undersized 100.0."""
     from app.services.pqc_migration.scoring import _score_key_weakness
 
     at_min = _score_key_weakness(_A(key_size_bits=2048), "RSA")
@@ -166,13 +150,8 @@ def test_key_weakness_ratio_at_and_above_minimum():
     assert undersized == 100.0
 
 
-# --- B4: exposure thresholds are exposed as named constants ---
-
-
 def test_exposure_constants_are_module_level():
-    """Pin that the calibration values for _score_exposure are named, so
-    future changes appear in diffs as 'EXPOSURE_CERTIFICATE = 100 -> 90'
-    rather than as a magic-number tweak."""
+    """The _score_exposure calibration values must be named module-level constants."""
     from app.services.pqc_migration import scoring
 
     assert hasattr(scoring, "EXPOSURE_CERTIFICATE")

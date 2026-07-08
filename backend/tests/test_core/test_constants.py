@@ -93,20 +93,13 @@ class TestSortBySeverity:
 
 
 class TestRecommendationTypeBonusesOrdering:
-    """Pin the relative ordering of recommendation type bonuses.
-
-    These weights have no physical meaning on their own — only their
-    relative ordering matters for downstream prioritization. A test on
-    raw numbers would be brittle (any rebalance breaks it), but the
-    ordering is a real invariant that should not silently flip.
-    """
+    """Only the relative ordering of the type bonuses is a real invariant; pin it, not the raw numbers."""
 
     def _bonus(self, key: str) -> int:
         return RECOMMENDATION_TYPE_BONUSES[key]
 
     def test_security_threats_outrank_impact_updates(self):
-        # Anything in the "critical security" tier must beat anything in the
-        # "high impact updates" tier.
+        # The "critical security" tier must beat the "high impact updates" tier.
         critical_security_min = min(
             self._bonus(k)
             for k in (
@@ -133,8 +126,7 @@ class TestRecommendationTypeBonusesOrdering:
         assert critical_security_min > impact_max
 
     def test_malware_outranks_ransomware_outranks_active_exploit(self):
-        # The "what scares us most" stack ranking is intentional and load-bearing
-        # for which recommendation surfaces first in the UI.
+        # This stack ranking is intentional and load-bearing for which recommendation surfaces first.
         assert self._bonus("malware_detected") > self._bonus("ransomware_risk")
         assert self._bonus("ransomware_risk") > self._bonus("known_exploit")
         assert self._bonus("known_exploit") > self._bonus("actively_exploited")
@@ -164,13 +156,11 @@ class TestRecommendationTypeBonusesOrdering:
                 "dev_in_production",
             )
         )
-        # Pick any non-hygiene category to compare against.
         assert hygiene_max < self._bonus("outdated_dependency")
         assert hygiene_max < self._bonus("license_compliance")
 
     def test_all_bonuses_are_positive(self):
-        # A zero or negative bonus would silently demote a category to "no signal";
-        # if that's ever wanted it should be an explicit decision, not a typo.
+        # A zero/negative bonus would silently demote a category; guard against a typo.
         for key, value in RECOMMENDATION_TYPE_BONUSES.items():
             assert value > 0, f"{key} has non-positive bonus {value}"
 
@@ -181,5 +171,4 @@ class TestEffortBonusesOrdering:
         assert EFFORT_BONUSES["medium"] >= EFFORT_BONUSES["high"]
 
     def test_high_effort_has_no_bonus(self):
-        # A "high effort" recommendation should not be artificially inflated.
         assert EFFORT_BONUSES["high"] == 0

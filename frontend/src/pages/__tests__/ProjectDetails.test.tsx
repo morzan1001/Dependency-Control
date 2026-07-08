@@ -4,8 +4,6 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 
 import ProjectDetails from '../ProjectDetails'
 
-// --- Mocks -----------------------------------------------------------------
-
 const mockUseProject = vi.fn()
 const mockUseProjectBranches = vi.fn()
 const mockUseCurrentUser = vi.fn()
@@ -23,8 +21,7 @@ vi.mock('@/api/projects', () => ({
   projectApi: { exportCsv: vi.fn(), exportSbom: vi.fn() },
 }))
 
-// The Overview receives the resolved branch selection; render it so the test
-// can observe exactly which branches were selected.
+// Render the resolved branch selection so the test can observe it.
 vi.mock('@/components/project/ProjectOverview', () => ({
   ProjectOverview: ({ selectedBranches }: { selectedBranches: string[] }) => (
     <div data-testid="overview-branches">{selectedBranches.join(',')}</div>
@@ -57,7 +54,6 @@ beforeEach(() => {
 
 describe('ProjectDetails branch-filter initialization', () => {
   it('selects the default branch even when branches resolve before the project (race)', () => {
-    // First render: project still loading, branches already resolved.
     mockUseProject.mockReturnValue({ data: undefined, isLoading: true })
     mockUseProjectBranches.mockReturnValue({
       data: [branch('main'), branch('dev')],
@@ -66,10 +62,8 @@ describe('ProjectDetails branch-filter initialization', () => {
 
     const { rerender } = renderPage()
 
-    // Project loading -> skeleton, no overview / init yet.
     expect(screen.queryByTestId('overview-branches')).toBeNull()
 
-    // Project response arrives one render later, carrying default_branch.
     mockUseProject.mockReturnValue({
       data: { id: 'p1', name: 'Proj', default_branch: 'main' },
       isLoading: false,
@@ -100,7 +94,6 @@ describe('ProjectDetails branch-filter initialization', () => {
     renderPage()
     expect(screen.getByTestId('overview-branches').textContent).toBe('main,dev')
 
-    // Open the filter dialog and toggle "Select All Active" off -> empty.
     fireEvent.click(screen.getByRole('button', { name: /Filter Branches/i }))
     fireEvent.click(screen.getByLabelText('Select All Active'))
 

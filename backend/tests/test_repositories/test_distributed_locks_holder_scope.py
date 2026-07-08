@@ -1,13 +1,4 @@
-"""release_lock must be holder-scoped: only the holder that owns a lock may release it.
-
-Regression for Finding 14 — previously release_lock deleted by _id alone, so pod B
-could delete pod A's lock after a TTL-expiry/takeover, breaking mutual exclusion.
-
-These tests use a tiny in-memory collection that faithfully implements the subset of
-MongoDB semantics the repository relies on (upsert find_one_and_update with an $or
-availability guard, and delete_one with a holder filter), so they exercise the real
-DistributedLocksRepository logic end-to-end rather than asserting on mock calls.
-"""
+"""release_lock must be holder-scoped: only the holder that owns a lock may release it."""
 
 import asyncio
 
@@ -22,7 +13,6 @@ class _InMemoryLockCollection:
         self.docs = {}  # _id -> document
 
     def with_options(self, **_kwargs):
-        # Read-preference variant is the same store for the test.
         return self
 
     def _matches(self, doc, query):
@@ -52,10 +42,8 @@ class _InMemoryLockCollection:
             if doc["_id"] == filter["_id"] and self._matches(doc, filter):
                 doc.update(update.get("$set", {}))
                 return dict(doc)
-        # No matching existing doc.
         if upsert:
-            # Upsert only succeeds if there is no doc with that _id at all
-            # (a present-but-not-matching doc => duplicate-key in real Mongo => no upsert).
+            # Present-but-non-matching _id => duplicate-key in real Mongo => no upsert.
             if filter["_id"] in self.docs:
                 return None
             new_doc = {"_id": filter["_id"]}
@@ -94,14 +82,12 @@ class TestHolderScopedRelease:
         async def scenario():
             repo, _ = _make_repo()
 
-            # A acquires the lock.
             assert await repo.acquire_lock("lock-x", "A", ttl_seconds=300) is True
 
-            # B (a different pod) tries to release it — must NOT delete A's lock.
+            # A different pod must not be able to release A's lock.
             released = await repo.release_lock("lock-x", "B")
             assert released is False
 
-            # Because A still holds it, a third pod C cannot acquire it.
             acquired_by_c = await repo.acquire_lock("lock-x", "C", ttl_seconds=300)
             assert acquired_by_c is False
 
@@ -113,11 +99,9 @@ class TestHolderScopedRelease:
 
             assert await repo.acquire_lock("lock-y", "A", ttl_seconds=300) is True
 
-            # A releases its own lock — succeeds.
             released = await repo.release_lock("lock-y", "A")
             assert released is True
 
-            # Now the lock is free, so B can acquire it.
             acquired_by_b = await repo.acquire_lock("lock-y", "B", ttl_seconds=300)
             assert acquired_by_b is True
 

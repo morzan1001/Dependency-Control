@@ -2,8 +2,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import type { Project, ProjectsResponse } from '@/types/project'
 
-// Mock the query hooks so we can drive the list vs. the resolved-selection paths
-// independently, reproducing the "selected project not on current page" scenario.
+// Mock the query hooks to drive the list and resolved-selection paths independently.
 vi.mock('@/hooks/queries/use-projects', () => ({
   useProjects: vi.fn(),
   useProject: vi.fn(),
@@ -34,11 +33,9 @@ describe('ProjectCombobox', () => {
   })
 
   it('shows the selected project name even when it is not on the current list page', () => {
-    // Current (unfiltered first page) does NOT contain the selected project p2.
     vi.mocked(useProjects).mockReturnValue(
       asListResult(mkListResponse([mkProject('p1', 'Alpha'), mkProject('p3', 'Gamma')])),
     )
-    // The selected project is resolved independently by useProject(value).
     vi.mocked(useProject).mockReturnValue(asDetailResult(mkProject('p2', 'Beta Project')))
 
     render(<ProjectCombobox value="p2" onValueChange={vi.fn()} />)
@@ -55,7 +52,6 @@ describe('ProjectCombobox', () => {
     render(<ProjectCombobox value="p2" onValueChange={onValueChange} />)
 
     const trigger = screen.getByRole('combobox')
-    // The clear affordance must NOT be a nested <button> element.
     expect(trigger.querySelector('button')).toBeNull()
 
     const clear = screen.getByLabelText('Clear selection')

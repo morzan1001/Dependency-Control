@@ -18,14 +18,11 @@ function entry(over: Partial<HotspotEntry> = {}): HotspotEntry {
   }
 }
 
-// The API only returns a key's GLOBAL asset_count plus presence lists — there is
-// no per-location count. The heatmap must therefore show PRESENCE per cell, not
-// the global total fabricated into every cell (improvement audit #7).
+// API returns only a global asset_count plus presence lists, so cells show presence, not a per-cell count.
 describe('heatmapCell', () => {
   it('marks a present cell without fabricating a per-cell count', () => {
     const cell = heatmapCell(entry({ asset_count: 12 }), 'a.py', 'project', 20)
     expect(cell.present).toBe(true)
-    // the cell label must NOT be the global asset_count
     expect(cell.label).not.toBe('12')
   })
 

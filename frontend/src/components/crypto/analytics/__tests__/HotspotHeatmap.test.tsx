@@ -93,7 +93,6 @@ describe("HotspotHeatmap (org scope columns)", () => {
   it("truncates an unresolved ObjectId and keeps the full id in a title tooltip", async () => {
     renderWithClient(<HotspotHeatmap scope="global" groupBy="name" />);
     await screen.findByText("RSA-2048");
-    // Never render the raw 24-hex ObjectId as visible label text.
     expect(screen.queryByText(OID_B)).not.toBeInTheDocument();
     const truncated = screen.getByText(`${OID_B.slice(0, 8)}…`);
     expect(truncated).toHaveAttribute("title", OID_B);

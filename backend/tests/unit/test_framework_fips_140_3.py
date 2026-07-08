@@ -57,8 +57,7 @@ def test_fips_approved_algorithm_passes():
 
 
 def test_fips_disallowed_category_not_applicable_without_matching_primitive():
-    """A hash-only project must report the asymmetric/symmetric disallowed-category
-    controls as NOT_APPLICABLE, not a false PASSED (audit MF4)."""
+    """A hash-only project must report the asymmetric/symmetric disallowed-category controls as NOT_APPLICABLE, not a false PASS."""
     fw = Fips1403Framework()
 
     class A:
@@ -75,7 +74,6 @@ def test_fips_disallowed_category_not_applicable_without_matching_primitive():
     assert _status(asym) == "not_applicable"
     sym = next(c for c in result.controls if "symmetric ciphers" in c.title.lower())
     assert _status(sym) == "not_applicable"
-    # hash present, no disallowed hash name -> the hash control legitimately PASSES
     hsh = next(c for c in result.controls if "hash functions" in c.title.lower())
     assert _status(hsh) == "passed"
 
@@ -83,6 +81,4 @@ def test_fips_disallowed_category_not_applicable_without_matching_primitive():
 def test_fips_control_count_reasonable():
     fw = Fips1403Framework()
     # 3 disallowed-category controls (hashes, ciphers, kdfs) + 1 RSA-min-2048.
-    # The previous ECDSA-APPROVED-CURVES phantom control was removed because
-    # its empty rule_id filter meant it either never matched or double-counted.
     assert len(fw.controls) >= 4

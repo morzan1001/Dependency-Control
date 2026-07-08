@@ -1,12 +1,4 @@
-"""Integration test: CBOM ingest fires a crypto_asset.ingested webhook event.
-
-The integration fake DB does not support real webhook delivery (no webhooks
-are registered, and _FakeCollection does not support the aggregation pipeline
-used by WebhookDeliveriesRepository).  Instead, we monkeypatch
-``webhook_service.trigger_webhooks`` with a coroutine spy so we can assert the
-correct event name and payload fields were passed — without making any real
-HTTP calls.
-"""
+"""CBOM ingest fires a crypto_asset.ingested webhook; trigger_webhooks is spied to assert event name and payload."""
 
 import asyncio
 import json
@@ -20,7 +12,6 @@ FIXTURES = Path(__file__).parent.parent / "fixtures" / "cbom"
 
 @pytest.mark.asyncio
 async def test_crypto_asset_ingested_dispatches_webhook(client, db, api_key_headers):
-    """CBOM ingest fires a crypto_asset.ingested event with summary payload."""
     dispatched_calls: list = []
 
     def _capture_trigger(inner_db, event_type, payload, project_id=None):
@@ -32,8 +23,7 @@ async def test_crypto_asset_ingested_dispatches_webhook(client, db, api_key_head
         "cbom": cbom_data,
     }
 
-    # Patch must remain active for the duration of the background task, so we
-    # start it before the request and stop it after the background task drains.
+    # The patch must stay active until the background task drains.
     with patch(
         "app.api.v1.endpoints.cbom_ingest.webhook_service.trigger_webhooks",
         side_effect=_capture_trigger,
@@ -42,7 +32,6 @@ async def test_crypto_asset_ingested_dispatches_webhook(client, db, api_key_head
         assert resp.status_code == 202, resp.text
         scan_id = resp.json()["scan_id"]
 
-        # Wait for background task to complete
         for _ in range(100):
             if dispatched_calls:
                 break

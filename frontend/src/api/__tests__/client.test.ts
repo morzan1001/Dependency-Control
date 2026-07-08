@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-// Capture the fake axios instances created by client.ts (instances[0] = api,
-// instances[1] = refreshClient) plus the interceptor handlers registered on `api`,
-// while keeping the real AxiosError / AxiosHeaders / isAxiosError implementations.
+// Capture the fake axios instances (instances[0] = api, instances[1] = refreshClient).
 const { mockCreate, instances } = vi.hoisted(() => {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const instances: any[] = [];
@@ -23,8 +21,7 @@ const { mockCreate, instances } = vi.hoisted(() => {
   return { mockCreate, instances };
 });
 
-// This jsdom/node setup does not expose a usable localStorage; provide a minimal
-// in-memory implementation so the token side-effects can be observed.
+// jsdom lacks a usable localStorage; provide a minimal in-memory one.
 const memoryStore = vi.hoisted(() => {
   const store = new Map<string, string>();
   return {
@@ -82,15 +79,12 @@ describe('client 401 interceptor + token refresh', () => {
   it('keeps tokens and does NOT log out when the refresh fails with a network error', async () => {
     const logout = vi.fn();
     setLogoutCallback(logout);
-    // Network error / timeout => rejection with no `response`.
     refreshClient.post.mockRejectedValue({ isAxiosError: true, message: 'Network Error' });
 
     await expect(onRejected(make401())).rejects.toBeTruthy();
 
-    // The still-valid refresh token (and access token) must survive.
     expect(localStorage.getItem('refresh_token')).toBe('valid-refresh');
     expect(localStorage.getItem('token')).toBe('old-access');
-    // The user must NOT be force-logged-out on a transient failure.
     expect(logout).not.toHaveBeenCalled();
   });
 
@@ -109,7 +103,6 @@ describe('client 401 interceptor + token refresh', () => {
   it('clears tokens and logs out when the refresh is rejected with a 4xx', async () => {
     const logout = vi.fn();
     setLogoutCallback(logout);
-    // Server rejects the refresh token itself (invalid/expired) => real logout.
     refreshClient.post.mockRejectedValue({ isAxiosError: true, response: { status: 401 } });
 
     await expect(onRejected(make401())).rejects.toBeTruthy();
@@ -126,8 +119,7 @@ describe('client 401 interceptor + token refresh', () => {
       data: { access_token: 'new-access', refresh_token: 'new-refresh' },
     });
 
-    // The fake `api` object is not callable, so the retry line `api(originalRequest)`
-    // throws; swallow it and assert only the token rotation that happens before it.
+    // The fake `api` object is not callable, so the retry throws; swallow it and assert only the prior token rotation.
     await onRejected(make401()).catch(() => undefined);
 
     expect(localStorage.getItem('token')).toBe('new-access');

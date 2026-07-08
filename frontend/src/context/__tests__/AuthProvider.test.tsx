@@ -19,8 +19,7 @@ import { userApi } from '@/api/users'
 
 const getMe = userApi.getMe as unknown as ReturnType<typeof vi.fn>
 
-// jsdom/node in this harness may not expose a working localStorage global, so
-// install a minimal in-memory implementation for the provider to read tokens.
+// jsdom in this harness may lack a working localStorage; install an in-memory one.
 if (typeof globalThis.localStorage === 'undefined' || globalThis.localStorage === null) {
   const store = new Map<string, string>()
   const mem: Storage = {
@@ -40,8 +39,7 @@ if (typeof globalThis.localStorage === 'undefined' || globalThis.localStorage ==
   Object.defineProperty(globalThis, 'localStorage', { value: mem, configurable: true })
 }
 
-// Build a minimally-valid JWT (header.payload.signature) that jwt-decode can
-// parse. The signature is never verified client-side.
+// Minimal valid JWT for jwt-decode; the signature is never verified client-side.
 function makeToken(permissions: string[]): string {
   const now = Math.floor(Date.now() / 1000)
   const encode = (obj: unknown) =>
@@ -57,8 +55,7 @@ function makeToken(permissions: string[]): string {
   return `${header}.${payload}.sig`
 }
 
-// Test harness: shows auth state and offers a button to trigger a client-side
-// navigation, which changes react-router's `navigate` identity.
+// The button triggers navigation, which changes react-router's `navigate` identity.
 function AuthProbe() {
   const { isAuthenticated, isLoading } = useAuth()
   const navigate = useNavigate()
@@ -95,8 +92,7 @@ describe('AuthProvider init effect', () => {
     localStorage.setItem('token', makeToken(['read']))
     localStorage.setItem('refresh_token', 'refresh')
 
-    // First navigation succeeds (mount), a later transient failure would only
-    // matter if the effect re-fired getMe on navigation.
+    // Only the mount call resolves; a later failure matters only if the effect re-fires.
     getMe.mockResolvedValueOnce({ id: 'user-1' })
     getMe.mockRejectedValue(new Error('transient 500'))
 
@@ -107,15 +103,13 @@ describe('AuthProvider init effect', () => {
     })
     expect(getMe).toHaveBeenCalledTimes(1)
 
-    // Navigate to another route -> navigate/logout identity changes.
+    // Navigate away, changing navigate/logout identity.
     fireEvent.click(screen.getByText('go'))
 
     await waitFor(() => {
       expect(screen.getByText('go')).toBeInTheDocument()
     })
 
-    // getMe must NOT fire again, and a would-be transient failure must not
-    // force-logout a user with a valid session.
     expect(getMe).toHaveBeenCalledTimes(1)
     expect(screen.getByTestId('authed').textContent).toBe('true')
     expect(screen.queryByTestId('login-page')).not.toBeInTheDocument()

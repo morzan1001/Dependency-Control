@@ -1,9 +1,4 @@
-"""Expiry tests for compliance reports.
-
-When a report's artifact has been pruned (`artifact_gridfs_id` is None) but
-metadata remains, `GET /reports/{id}` should still succeed while
-`GET /reports/{id}/download` should return 410 Gone.
-"""
+"""A pruned artifact (artifact_gridfs_id None) still allows GET metadata but download returns 410 Gone."""
 
 from datetime import datetime, timedelta, timezone
 

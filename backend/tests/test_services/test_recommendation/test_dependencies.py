@@ -43,15 +43,11 @@ def _eol_finding(
 
 
 class TestAnalyzeOutdatedDependenciesEmpty:
-    """Empty input."""
-
     def test_empty_returns_empty(self):
         assert analyze_outdated_dependencies([]) == []
 
 
 class TestAnalyzeOutdatedDependenciesDirectOutdated:
-    """Direct dep with latest_version != version."""
-
     def test_direct_outdated_produces_recommendation(self):
         deps = [_dep(name="requests", version="2.28.0", latest_version="2.31.0", direct=True)]
         result = analyze_outdated_dependencies(deps)
@@ -85,7 +81,6 @@ class TestAnalyzeOutdatedDependenciesTransitive:
     """Transitive outdated deps flagged only if above SIGNIFICANT_FRAGMENTATION_THRESHOLD."""
 
     def test_few_transitive_not_flagged(self):
-        # Only 2 transitive outdated, threshold is 3
         deps = [
             _dep(name="sub-a", version="1.0", latest_version="2.0", direct=False),
             _dep(name="sub-b", version="1.0", latest_version="2.0", direct=False),
@@ -94,7 +89,6 @@ class TestAnalyzeOutdatedDependenciesTransitive:
         assert len(result) == 0
 
     def test_many_transitive_produces_low_priority(self):
-        # 4 transitive outdated, above threshold of 3
         deps = [_dep(name=f"sub-{i}", version="1.0", latest_version="2.0", direct=False) for i in range(4)]
         result = analyze_outdated_dependencies(deps)
         assert len(result) == 1
@@ -102,8 +96,6 @@ class TestAnalyzeOutdatedDependenciesTransitive:
 
 
 class TestAnalyzeOutdatedDependenciesNotFlagged:
-    """Cases that should not produce recommendations."""
-
     def test_no_latest_version_not_flagged(self):
         deps = [_dep(name="requests", version="2.28.0", latest_version=None)]
         result = analyze_outdated_dependencies(deps)
@@ -121,8 +113,6 @@ class TestAnalyzeOutdatedDependenciesNotFlagged:
 
 
 class TestAnalyzeOutdatedDependenciesPythonSkipped:
-    """Python lib packages are skipped."""
-
     def test_python3_prefix_skipped(self):
         deps = [_dep(name="python3-yaml", version="5.0", latest_version="6.0", direct=True)]
         result = analyze_outdated_dependencies(deps)
@@ -145,15 +135,11 @@ class TestAnalyzeOutdatedDependenciesPythonSkipped:
 
 
 class TestAnalyzeVersionFragmentationEmpty:
-    """Empty input."""
-
     def test_empty_returns_empty(self):
         assert analyze_version_fragmentation([]) == []
 
 
 class TestAnalyzeVersionFragmentationSignificant:
-    """Same package with 3+ versions triggers recommendation."""
-
     def test_three_versions_produces_recommendation(self):
         deps = [
             _dep(name="lodash", version="4.17.15"),
@@ -175,8 +161,6 @@ class TestAnalyzeVersionFragmentationSignificant:
 
 
 class TestAnalyzeVersionFragmentationBelowThreshold:
-    """Same package with only 2 versions is not significant."""
-
     def test_two_versions_no_recommendation(self):
         deps = [
             _dep(name="lodash", version="4.17.15"),
@@ -187,8 +171,6 @@ class TestAnalyzeVersionFragmentationBelowThreshold:
 
 
 class TestAnalyzeVersionFragmentationDifferentPackages:
-    """Different packages with different versions are not fragmented."""
-
     def test_different_packages_no_fragmentation(self):
         deps = [
             _dep(name="lodash", version="4.17.15"),
@@ -200,8 +182,6 @@ class TestAnalyzeVersionFragmentationDifferentPackages:
 
 
 class TestAnalyzeVersionFragmentationCaseInsensitive:
-    """Name matching is case-insensitive."""
-
     def test_case_insensitive_grouping(self):
         deps = [
             _dep(name="Lodash", version="4.17.15"),
@@ -213,15 +193,11 @@ class TestAnalyzeVersionFragmentationCaseInsensitive:
 
 
 class TestAnalyzeDevInProductionEmpty:
-    """Empty input."""
-
     def test_empty_returns_empty(self):
         assert analyze_dev_in_production([]) == []
 
 
 class TestAnalyzeDevInProductionFlagged:
-    """Dev packages not in dev scope are flagged."""
-
     def test_jest_not_in_dev_scope_flagged(self):
         deps = [_dep(name="jest", version="29.0.0")]
         result = analyze_dev_in_production(deps)
@@ -268,8 +244,6 @@ class TestAnalyzeDevInProductionFlagged:
 
 
 class TestAnalyzeDevInProductionNotFlagged:
-    """Dev packages in dev scope or non-dev packages."""
-
     def test_jest_in_dev_scope_not_flagged(self):
         deps = [_dep(name="jest", version="29.0.0", scope="dev")]
         result = analyze_dev_in_production(deps)
@@ -297,15 +271,11 @@ class TestAnalyzeDevInProductionNotFlagged:
 
 
 class TestAnalyzeEndOfLifeEmpty:
-    """Empty input."""
-
     def test_empty_returns_empty(self):
         assert analyze_end_of_life([]) == []
 
 
 class TestAnalyzeEndOfLifeCriticalSeverity:
-    """EOL findings with CRITICAL severity get HIGH priority."""
-
     def test_critical_eol_produces_recommendation(self):
         findings = [_eol_finding(severity="CRITICAL")]
         result = analyze_end_of_life(findings)
@@ -328,8 +298,6 @@ class TestAnalyzeEndOfLifeCriticalSeverity:
 
 
 class TestAnalyzeEndOfLifeNonCritical:
-    """EOL findings without CRITICAL get MEDIUM priority."""
-
     def test_high_severity_priority_medium(self):
         findings = [_eol_finding(severity="HIGH")]
         rec = analyze_end_of_life(findings)[0]
@@ -342,8 +310,6 @@ class TestAnalyzeEndOfLifeNonCritical:
 
 
 class TestAnalyzeEndOfLifeAffectedComponents:
-    """Affected components formatting."""
-
     def test_eol_date_included_in_components(self):
         findings = [_eol_finding(component="node", version="16.0.0", eol_date="2023-09-11")]
         rec = analyze_end_of_life(findings)[0]
@@ -363,8 +329,6 @@ class TestAnalyzeEndOfLifeAffectedComponents:
 
 
 class TestAnalyzeEndOfLifeMultiple:
-    """Multiple EOL findings."""
-
     def test_multiple_eol_counted(self):
         findings = [
             _eol_finding(component="node", version="14.0.0", finding_id="eol1"),

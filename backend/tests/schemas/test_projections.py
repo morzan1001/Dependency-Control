@@ -4,13 +4,7 @@ from app.schemas.projections import CallgraphMinimal
 
 
 class TestCallgraphMinimalImportMap:
-    """CallgraphMinimal.import_map is derived from the persisted imports list.
-
-    The callgraph writer stores a raw ``imports`` list (List[ImportEntry]) but
-    never an ``import_map`` key, so the previously phantom ``import_map`` field
-    was always empty/None. It must be derived as {file: [modules]} so
-    reachability's import fallback and the total_imports stat see real data.
-    """
+    """import_map is derived as {file: [modules]} from the persisted imports list."""
 
     def test_import_map_derived_from_imports(self):
         cg = CallgraphMinimal(
@@ -28,16 +22,12 @@ class TestCallgraphMinimalImportMap:
         }
 
     def test_import_map_defaults_to_empty_dict_not_none(self):
-        # Must never be None: build_reachability_summary does
-        # len(cg.get("import_map", {})) on model_dump output, which raises
-        # TypeError if import_map serializes to None.
+        # Never None: build_reachability_summary calls len() on the serialized value.
         cg = CallgraphMinimal(_id="cg-1", language="javascript")
         assert cg.import_map == {}
         assert cg.model_dump(by_alias=True)["import_map"] == {}
 
     def test_explicit_import_map_is_preserved(self):
-        # If a document ever supplies import_map directly, honor it and do not
-        # overwrite it with a derivation.
         cg = CallgraphMinimal(
             _id="cg-1",
             import_map={"x.py": ["foo"]},
@@ -59,20 +49,10 @@ class TestCallgraphMinimalImportMap:
 
 
 class TestCallgraphMinimalImportMapFromModuleUsage:
-    """import_map derives from module_usage under the ACTUAL minimal projection.
-
-    The minimal DB projection (repositories/callgraphs.py) is
-    ``{_id, module_usage, import_map, language}`` -- it projects the phantom
-    ``import_map`` (absent in Mongo) and the aggregated ``module_usage`` but NOT
-    the raw ``imports`` list. So in production ``imports`` is always [] and the
-    fallback/total_imports would be dead UNLESS import_map is derived from
-    module_usage. These tests exercise that production shape end-to-end.
-    """
+    """import_map derives from module_usage under the minimal DB projection, which omits raw imports."""
 
     def _minimal_projection_doc(self):
-        # Mirrors what Mongo returns for _MINIMAL_PROJECTION: module_usage is a
-        # dict keyed by module name, values are serialized ModuleUsage dicts;
-        # NO raw imports list is present.
+        # Mirrors the minimal projection: module_usage keyed by module name, no raw imports list.
         return {
             "_id": "cg-1",
             "language": "python",
@@ -96,16 +76,12 @@ class TestCallgraphMinimalImportMapFromModuleUsage:
         }
 
     def test_total_imports_stat_is_live_on_serialized_projection(self):
-        # build_reachability_summary computes len(cg.get("import_map", {})) over
-        # model_dump output. Prove it is non-zero (== number of importing files)
-        # for a realistic minimal-projection doc, i.e. the stat is no longer dead.
+        # import_map length (importing-file count) is non-zero on the serialized minimal projection.
         cg = CallgraphMinimal(**self._minimal_projection_doc())
         dumped = cg.model_dump(by_alias=True)
         assert len(dumped["import_map"]) == 2
 
     def test_reachability_fallback_sees_package_via_derived_map(self):
-        # _check_package_in_imports iterates import_map.items() -> {file: [mods]}.
-        # The derived map must let it find a package by module name.
         from app.services.reachability_enrichment import _check_package_in_imports
 
         cg = CallgraphMinimal(**self._minimal_projection_doc())
@@ -129,8 +105,6 @@ class TestCallgraphMinimalImportMapFromModuleUsage:
         assert cg.import_map == {"a.py": ["flask"]}
 
     def test_explicit_imports_take_precedence_over_module_usage(self):
-        # When a full document is loaded (raw imports present), that richer
-        # source wins over the module_usage fallback.
         cg = CallgraphMinimal(
             _id="cg-1",
             imports=[{"module": "bar", "file": "y.py", "line": 1}],

@@ -1,9 +1,4 @@
-"""Tests for analytics search endpoint: /search vuln_status_map scan_id scoping.
-
-Finding 21 — the vuln_status_map pipeline in search_dependencies_advanced
-must restrict to the active scan_ids so that a component fixed in the
-latest scan is not flagged as vulnerable due to findings in older scans.
-"""
+"""The vuln_status_map pipeline in search_dependencies_advanced must restrict to the active scan_ids so a component fixed in the latest scan is not flagged vulnerable by older-scan findings."""
 
 import asyncio
 from typing import Any, Dict, List
@@ -26,7 +21,6 @@ def _admin_user():
 
 
 def _make_dep(project_id="proj-1", name="lodash", version="4.17.11"):
-    """Return a dict-like dep so that get_attr(dep, key) works correctly."""
     return {
         "project_id": project_id,
         "name": name,
@@ -64,10 +58,7 @@ class TestSearchDependenciesVulnScanScope:
         has_vulnerabilities=True,
         q="lodash",
     ):
-        """
-        Run search_dependencies_advanced with patched helpers and repos.
-        Returns (results, captured_vuln_pipelines).
-        """
+        """Run search_dependencies_advanced with patched helpers; returns (results, captured_vuln_pipelines)."""
         from app.api.v1.endpoints.analytics.search import search_dependencies_advanced
 
         user = _admin_user()
@@ -117,7 +108,6 @@ class TestSearchDependenciesVulnScanScope:
         return response, captured_pipelines
 
     def test_vuln_pipeline_includes_scan_id(self):
-        """When has_vulnerabilities filter is active, pipeline must include scan_id."""
         dep = _make_dep()
         _, pipelines = self._run_search(
             dep_list=[dep],
@@ -130,25 +120,18 @@ class TestSearchDependenciesVulnScanScope:
         assert match_stage["scan_id"] == {"$in": ["scan-latest"]}
 
     def test_historical_vuln_does_not_mark_component_as_vulnerable(self):
-        """Component present only in an old scan's findings must NOT be returned
-        when has_vulnerabilities=True (because the vuln aggregate returns empty
-        for the latest scan)."""
         dep = _make_dep(name="lodash")
-        # Simulates: aggregate for latest scan returns nothing (old finding filtered out)
         response, _ = self._run_search(
             dep_list=[dep],
             vuln_agg_results=[],  # no vulns in latest scan
             has_vulnerabilities=True,
         )
-        # No items should pass the has_vulnerabilities=True filter since
-        # the vuln_status_map is empty (latest scan has no findings for this component).
         assert response.items == [], (
             "Component with vuln only in an old scan must not appear when "
             "has_vulnerabilities=True and the latest scan has no matching finding"
         )
 
     def test_active_scan_vuln_marks_component_as_vulnerable(self):
-        """Component with vuln in the latest scan IS returned for has_vulnerabilities=True."""
         dep = _make_dep(name="lodash", project_id="proj-1")
         agg_results = [{"_id": {"project_id": "proj-1", "component": "lodash"}}]
         response, _ = self._run_search(
@@ -160,7 +143,6 @@ class TestSearchDependenciesVulnScanScope:
         assert response.items[0].package == "lodash"
 
     def test_waived_excluded_from_vuln_status_map(self):
-        """The vuln_status_map pipeline must exclude waived findings."""
         dep = _make_dep()
         _, pipelines = self._run_search(
             dep_list=[dep],

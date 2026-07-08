@@ -13,9 +13,6 @@ describe('extractErrorMessage', () => {
   })
 
   it('joins ALL validation errors and strips the "Value error, " prefix', () => {
-    // Regression: previously only detail[0].msg was returned and the prefix
-    // was not stripped, so this same-shaped error rendered differently than
-    // getErrorMessage did on other pages.
     const error = {
       response: {
         data: {

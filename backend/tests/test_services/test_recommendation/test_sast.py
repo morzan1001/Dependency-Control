@@ -24,15 +24,11 @@ def _sast(
 
 
 class TestProcessSastEmpty:
-    """Edge case: no findings."""
-
     def test_empty_list_returns_empty(self):
         assert process_sast([]) == []
 
 
 class TestProcessSastInjection:
-    """Injection category normalization and recommendation."""
-
     def test_sql_injection_normalized_to_injection(self):
         rec = process_sast([_sast(category="sql-injection")])[0]
         assert "Injection" in rec.title
@@ -51,8 +47,6 @@ class TestProcessSastInjection:
 
 
 class TestProcessSastXSS:
-    """XSS category normalization."""
-
     def test_xss_keyword(self):
         rec = process_sast([_sast(category="xss-reflected")])[0]
         assert "XSS" in rec.title
@@ -63,8 +57,6 @@ class TestProcessSastXSS:
 
 
 class TestProcessSastCryptography:
-    """Cryptography category normalization."""
-
     def test_crypto_keyword(self):
         rec = process_sast([_sast(category="weak-crypto")])[0]
         assert "Cryptography" in rec.title
@@ -75,16 +67,12 @@ class TestProcessSastCryptography:
 
 
 class TestProcessSastAuthentication:
-    """Authentication category normalization."""
-
     def test_auth_keyword(self):
         rec = process_sast([_sast(category="broken-auth")])[0]
         assert "Authentication" in rec.title
 
 
 class TestProcessSastPathTraversal:
-    """Path Traversal category normalization."""
-
     def test_path_keyword(self):
         rec = process_sast([_sast(category="path-traversal")])[0]
         assert "Path Traversal" in rec.title
@@ -95,8 +83,6 @@ class TestProcessSastPathTraversal:
 
 
 class TestProcessSastBelowThreshold:
-    """Findings that do not meet the significance threshold are skipped."""
-
     def test_single_low_no_recommendation(self):
         """One LOW finding: no critical/high AND <3 total -> skip."""
         result = process_sast([_sast(severity="LOW")])
@@ -126,8 +112,6 @@ class TestProcessSastBelowThreshold:
 
 
 class TestProcessSastAboveThreshold:
-    """Findings that DO meet the significance threshold."""
-
     def test_three_low_findings_generates_recommendation(self):
         findings = [_sast(severity="LOW", finding_id=f"s{i}", category="sql-injection") for i in range(3)]
         result = process_sast(findings)
@@ -148,8 +132,6 @@ class TestProcessSastAboveThreshold:
 
 
 class TestProcessSastPriority:
-    """Priority determination for SAST recommendations."""
-
     def test_critical_severity_gives_critical_priority(self):
         rec = process_sast([_sast(severity="CRITICAL")])[0]
         assert rec.priority == Priority.CRITICAL
@@ -166,8 +148,6 @@ class TestProcessSastPriority:
 
 
 class TestProcessSastMixedCategories:
-    """Different categories produce separate recommendations."""
-
     def test_two_categories_produce_two_recommendations(self):
         findings = [
             _sast(category="sql-injection", finding_id="s1"),
@@ -216,8 +196,6 @@ class TestProcessSastEffort:
 
 
 class TestProcessSastImpactAndAction:
-    """Verify impact dict and action content."""
-
     def test_impact_severity_counts(self):
         findings = [
             _sast(severity="CRITICAL", finding_id="s1", category="sql-injection"),

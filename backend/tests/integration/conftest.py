@@ -1,13 +1,4 @@
-"""Fixtures for integration tests.
-
-These tests exercise endpoint behaviour end-to-end via ``httpx.AsyncClient``
-against the real FastAPI app, but with the MongoDB and auth dependencies
-replaced by lightweight in-process mocks so that no live database or API key
-infrastructure is required.
-
-The FakeDatabase implementation lives in ``tests/mocks/fake_mongo.py`` and is
-shared with the unit-test conftest. Extend operator support there, not here.
-"""
+"""Fixtures for integration tests: real FastAPI app with in-process fake Mongo and auth bypassed via dependency overrides."""
 
 import pytest
 import pytest_asyncio
@@ -31,7 +22,6 @@ def _project():
 
 @pytest_asyncio.fixture
 async def db():
-    """In-process fake database shared across a single test."""
     return FakeDatabase()
 
 
@@ -55,7 +45,6 @@ async def client(db, _project):
         return db
 
     async def _fake_get_current_user(token: str = Depends(oauth2_scheme)) -> User:
-        """Parse JWT token and return user. Used by member auth tests."""
         from fastapi import HTTPException
         from jose import jwt
 
@@ -91,7 +80,6 @@ async def client(db, _project):
     app.dependency_overrides[get_current_user] = _fake_get_current_user
     app.dependency_overrides[get_current_active_user] = _fake_get_current_active_user
 
-    # Pre-populate the project so tests can look it up
     project_doc = _project.model_dump(by_alias=True)
     await db.projects.update_one(
         {"_id": str(_project.id)},
@@ -116,7 +104,6 @@ def api_key_headers():
 
 @pytest.fixture
 def member_auth_headers(_project):
-    """Create auth headers for a user who is a project member."""
     from jose import jwt
 
     from app.core.config import settings
@@ -147,7 +134,6 @@ def member_auth_headers(_project):
 
 @pytest.fixture
 def regular_user_no_access():
-    """Create a user who is NOT a project member."""
     from tests.helpers.permission_presets import PRESET_USER
 
     from app.models.user import User
@@ -163,7 +149,6 @@ def regular_user_no_access():
 
 @pytest.fixture
 def admin_auth_headers():
-    """Create auth headers for a system admin (has system:manage permission)."""
     from jose import jwt
 
     from app.core.config import settings
@@ -179,10 +164,7 @@ def admin_auth_headers():
 
 @pytest_asyncio.fixture
 async def owner_auth_headers_proj(client, db):
-    """Auth headers for a user who owns project 'p' (project-level admin role).
-
-    The username doubles as the user id because _fake_get_current_user sets id=username.
-    """
+    """The username doubles as the user id because _fake_get_current_user sets id=username."""
     from jose import jwt
 
     from app.core.config import settings
@@ -214,7 +196,6 @@ async def owner_auth_headers_proj(client, db):
 
 @pytest_asyncio.fixture
 async def owner_auth_headers_proj_p2(client, db):
-    """Auth headers for a user who owns project 'p2' (project-level admin role)."""
     from jose import jwt
 
     from app.core.config import settings

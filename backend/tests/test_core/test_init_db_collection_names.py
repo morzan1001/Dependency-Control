@@ -1,14 +1,4 @@
-"""Tests that create_indexes targets the collections the app actually uses.
-
-Regression for the audit finding: init_db created the invitation token/email
-indexes on ``project_invitations`` and the policy-audit indexes on
-``policy_audit_entries``, but the repositories store those documents in
-``invitations`` (InvitationRepository.project_invitations = db.invitations) and
-``crypto_policy_history`` (PolicyAuditRepository.collection_name). The result was
-a missing unique token index on the real invitations collection (uniqueness
-unenforced, token lookups full-scan) and four indexes stranded on a permanently
-empty collection while every policy-audit query ran unindexed.
-"""
+"""create_indexes must build indexes on the collections the app uses (invitations, crypto_policy_history)."""
 
 import asyncio
 from unittest.mock import AsyncMock

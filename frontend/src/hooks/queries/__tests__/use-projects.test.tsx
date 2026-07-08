@@ -52,7 +52,6 @@ describe("useProjectsDropdown", () => {
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
 
-    // Every project must be present, not just the newest 100.
     expect(result.current.data?.items).toHaveLength(total);
     expect(result.current.data?.total).toBe(total);
     expect(mock).toHaveBeenCalledTimes(2);

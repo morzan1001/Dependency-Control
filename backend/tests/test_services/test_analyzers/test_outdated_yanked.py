@@ -1,14 +1,4 @@
-"""Tests for the outdated analyzer: version classification and yanked detection.
-
-A version that was published and then withdrawn from the registry is
-strictly more dangerous than a merely outdated version — the upstream
-authors took action to retract it, often because of a security or
-correctness defect. The ``is_version_withdrawn`` helper flags those.
-
-The analyzer fetches each deps.dev package document at most once and derives
-the outdated / ahead-of-default / yanked classifications from that single
-document, keyed by package (not package+version) so that several installed
-versions of the same package are each classified correctly."""
+"""Tests for the outdated analyzer: version classification and yanked (withdrawn) detection from a single per-package deps.dev fetch."""
 
 from typing import Any, Dict, List, Optional, Set
 
@@ -65,9 +55,8 @@ class TestIsVersionWithdrawn:
         assert is_version_withdrawn(versions, "1.0.0") is True
 
     def test_v_prefix_matches_canonical_form(self):
-        # PyPI / npm versions are stored without the "v" prefix in deps.dev.
-        # The lookup compares the literal string, but we strip leading "v"
-        # from the target to keep parity with how OutdatedAnalyzer normalises.
+        # deps.dev stores versions without a leading "v"; the target is stripped
+        # to match how OutdatedAnalyzer normalises.
         versions = [_v("1.0.0", withdrawn=True)]
         assert is_version_withdrawn(versions, "v1.0.0") is True
 
@@ -174,7 +163,7 @@ def _seed_key(system: str, name: str) -> str:
     return f"latest:{system}:{name}"
 
 
-# --- Finding 1: multiple versions of one package must each be classified -----
+# --- Multiple versions of one package must each be classified -----
 
 
 class TestMultipleVersionsOfSamePackage:
@@ -231,7 +220,7 @@ class TestMultipleVersionsOfSamePackage:
         assert len(client.urls) == 1
 
 
-# --- Finding 2: one fetch feeds both outdated and yanked classifications -----
+# --- One fetch feeds both outdated and yanked classifications -----
 
 
 class TestSingleFetchFeedsOutdatedAndYanked:
@@ -303,7 +292,7 @@ class TestSingleFetchFeedsOutdatedAndYanked:
         assert result["ahead_of_default"] == []
 
 
-# --- Finding 2b: distinct packages are fetched concurrently, not serially ----
+# --- Distinct packages are fetched concurrently, not serially ----
 
 
 class _ConcurrencyTrackingClient:

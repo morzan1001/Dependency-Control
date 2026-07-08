@@ -1,6 +1,4 @@
-"""
-Integration: registry-resolved CertificateLifecycleAnalyzer produces findings.
-"""
+"""Registry-resolved CertificateLifecycleAnalyzer produces findings."""
 
 from datetime import datetime, timedelta, timezone
 

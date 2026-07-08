@@ -36,24 +36,20 @@ class TestModelIdAlias:
         ],
     )
     def test_auto_id_and_alias_roundtrip(self, model_cls: str, kwargs: dict):
-        """Model generates an ID, serializes with _id alias, and accepts _id back."""
         module_path, cls_name = model_cls.rsplit(":", 1)
         import importlib
 
         mod = importlib.import_module(module_path)
         cls = getattr(mod, cls_name)
 
-        # 1) Create with auto-generated ID
         instance = cls(**kwargs)
         assert instance.id is not None
         assert len(instance.id) > 0
 
-        # 2) Serialize with alias -> must contain _id
         dumped = instance.model_dump(by_alias=True)
         assert "_id" in dumped
         assert dumped["_id"] == instance.id
 
-        # 3) Reconstruct from MongoDB-style dict (with _id)
         reconstructed = cls(**dumped)
         assert reconstructed.id == instance.id
 
@@ -95,7 +91,7 @@ class TestUseEnumValues:
 
 
 class TestDatetimeSerialization:
-    """After removing json_encoders, Pydantic v2 should still serialize datetimes correctly."""
+    """Pydantic v2 serializes datetimes to ISO strings in JSON mode."""
 
     def test_broadcast_datetime_json(self):
         from app.models.broadcast import Broadcast
@@ -108,9 +104,7 @@ class TestDatetimeSerialization:
             created_by="u1",
         )
         data = b.model_dump(mode="json")
-        # Pydantic v2 serializes datetime to ISO string in JSON mode
         assert isinstance(data["created_at"], str)
-        # Should be parseable back
         datetime.fromisoformat(data["created_at"])
 
     def test_callgraph_datetime_json(self):
@@ -282,8 +276,6 @@ class TestProjectionSchemas:
 
 
 class TestScanFindingItemEnumValues:
-    """ScanFindingItem should store enum values as strings."""
-
     def test_enum_values_stored_as_strings(self):
         from app.models.finding import FindingType, Severity
         from app.schemas.project import ScanFindingItem
@@ -303,8 +295,6 @@ class TestScanFindingItemEnumValues:
 
 
 class TestSettingsConfig:
-    """Settings class uses SettingsConfigDict correctly."""
-
     def test_settings_loads(self):
         from app.core.config import settings
 
@@ -313,7 +303,6 @@ class TestSettingsConfig:
         assert settings.ALGORITHM == "HS256"
 
     def test_settings_case_sensitive(self):
-        """Settings should use case_sensitive=True."""
         from app.core.config import Settings
 
         config = Settings.model_config
@@ -321,10 +310,7 @@ class TestSettingsConfig:
 
 
 class TestSystemSettingsConfig:
-    """SystemSettings model config works."""
-
     def test_empty_analyzers_list_persists(self):
-        """An admin can explicitly set no default analyzers."""
         from app.models.system import SystemSettings
 
         s = SystemSettings(default_active_analyzers=[])
@@ -351,11 +337,9 @@ class TestMongoRoundTrip:
             retention_days=30,
         )
 
-        # Simulate insert
         mongo_doc = original.model_dump(by_alias=True)
         assert "_id" in mongo_doc
 
-        # Simulate read
         restored = Project(**mongo_doc)
         assert restored.id == original.id
         assert restored.name == "My App"
@@ -399,10 +383,9 @@ class TestMongoRoundTrip:
 
         mongo_doc = original.model_dump(by_alias=True)
         assert "_id" in mongo_doc
-        # access_token should be excluded (exclude=True in Field)
+        # access_token is excluded (exclude=True) so it never leaks via model_dump.
         assert "access_token" not in mongo_doc
 
-        # Reconstruct without access_token (as it would come from MongoDB without it)
         restored = GitLabInstance(**mongo_doc, access_token=None)
         assert restored.id == original.id
         assert restored.name == "Internal GitLab"
@@ -428,10 +411,8 @@ class TestMongoRoundTrip:
 
 
 class TestGitLabInstanceAccessTokenPersistence:
-    """Verify that access_token is properly handled for MongoDB storage."""
-
     def test_model_dump_excludes_access_token(self):
-        """model_dump() should NOT include access_token (for API responses)."""
+        # Excluded from model_dump so it never leaks in API responses.
         from app.models.gitlab_instance import GitLabInstance
 
         instance = GitLabInstance(
@@ -444,7 +425,6 @@ class TestGitLabInstanceAccessTokenPersistence:
         assert "access_token" not in dumped
 
     def test_access_token_accessible_on_instance(self):
-        """access_token should still be accessible as an attribute."""
         from app.models.gitlab_instance import GitLabInstance
 
         instance = GitLabInstance(
@@ -456,7 +436,7 @@ class TestGitLabInstanceAccessTokenPersistence:
         assert instance.access_token == "my-secret-token"
 
     def test_repository_create_includes_access_token(self):
-        """GitLabInstanceRepository.create() must store access_token in MongoDB."""
+        # create() must persist access_token even though model_dump excludes it.
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
 
@@ -478,16 +458,13 @@ class TestGitLabInstanceAccessTokenPersistence:
 
         asyncio.run(repo.create(instance))
 
-        # Verify insert_one was called
         mock_collection.insert_one.assert_called_once()
         inserted_doc = mock_collection.insert_one.call_args[0][0]
 
-        # The critical assertion: access_token MUST be in the MongoDB document
         assert "access_token" in inserted_doc
         assert inserted_doc["access_token"] == "secret-token-123"
 
     def test_repository_create_without_token(self):
-        """When no access_token is provided, it should not be in the doc."""
         import asyncio
         from unittest.mock import AsyncMock, MagicMock
 
@@ -513,8 +490,6 @@ class TestGitLabInstanceAccessTokenPersistence:
 
 
 class TestProjectApiKeyHashExclusion:
-    """Verify that Project.api_key_hash with exclude=True behaves correctly."""
-
     def test_model_dump_excludes_api_key_hash(self):
         from app.models.project import Project
 
@@ -529,20 +504,13 @@ class TestProjectApiKeyHashExclusion:
         assert p.api_key_hash == "hashed-secret"
 
     def test_repository_create_excludes_api_key_hash(self):
-        """ProjectRepository.create() uses model_dump which excludes api_key_hash.
-
-        This is by design: api_key_hash is only set later via $set update
-        when the user generates/rotates the key. Auto-created projects have
-        api_key_hash=None.
-        """
+        # api_key_hash is set later via a $set update (key generation/rotation), so create() omits it.
         from app.models.project import Project
 
         project = Project(name="test", owner_id="u1")
         dumped = project.model_dump(by_alias=True)
 
-        # api_key_hash must NOT be in the document sent to MongoDB
         assert "api_key_hash" not in dumped
-        # _id must be present for MongoDB
         assert "_id" in dumped
         assert dumped["_id"] == project.id
 
@@ -583,7 +551,7 @@ class TestAutoCreateUsesSystemAnalyzers:
             }
         )
 
-        # Mock find_one_and_update to return the $setOnInsert document (simulates upsert insert)
+        # Simulate an upsert insert by returning the $setOnInsert document.
         def fake_find_or_create(filter_query, update, **kwargs):
             return update.get("$setOnInsert", {})
 
@@ -653,7 +621,7 @@ class TestAutoCreateUsesSystemAnalyzers:
             }
         )
 
-        # Mock find_one_and_update to return the $setOnInsert document (simulates upsert insert)
+        # Simulate an upsert insert by returning the $setOnInsert document.
         def fake_find_or_create(filter_query, update, **kwargs):
             return update.get("$setOnInsert", {})
 
@@ -692,13 +660,7 @@ class TestAutoCreateUsesSystemAnalyzers:
 
 
 class TestMongoDocumentIdConsolidation:
-    """Elegance #119: the uuid ``_id`` field is centralised in MongoDocument.
-
-    Persisted models inherit it instead of copy-pasting the declaration.
-    These tests guard that the consolidation preserves the exact public
-    contract (MongoDocument subtype, no locally-redeclared ``id``,
-    auto-generated uuid, and the ``_id`` alias round-trip).
-    """
+    """Persisted models inherit the uuid ``_id`` field from MongoDocument rather than redeclaring it."""
 
     _CASES = {
         "app.models.archive:ArchiveMetadata": {
@@ -761,9 +723,7 @@ class TestMongoDocumentIdConsolidation:
         from app.models.types import MongoDocument
 
         cls = self._load(dotted)
-        # Extends the shared base ...
         assert issubclass(cls, MongoDocument)
-        # ... and does NOT copy-paste its own ``id`` field.
         assert "id" not in getattr(cls, "__annotations__", {})
 
     @pytest.mark.parametrize("dotted", sorted(_CASES))
@@ -772,19 +732,15 @@ class TestMongoDocumentIdConsolidation:
         kwargs = self._CASES[dotted]
 
         instance = cls(**kwargs)
-        # Auto-generated uuid string id
         assert isinstance(instance.id, str) and len(instance.id) > 0
 
-        # Serializes with the _id alias
         dumped = instance.model_dump(by_alias=True)
         assert dumped["_id"] == instance.id
 
-        # Accepts _id back (MongoDB read path)
         reconstructed = cls(**dumped)
         assert reconstructed.id == instance.id
 
     def test_explicit_id_via_alias_is_honored(self):
-        """Passing _id (as MongoDB does) sets the id, not a fresh uuid."""
         from app.models.user import User
 
         u = User(_id="user-fixed-id", username="bob", email="bob@example.com")

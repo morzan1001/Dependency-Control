@@ -37,7 +37,6 @@ describe("analyticsApi.searchDependencies", () => {
 
     expect(Array.isArray(result)).toBe(true);
     expect(result).toEqual(items);
-    // A consumer that calls .map / .length must not crash.
     expect(result).toHaveLength(1);
     expect(result.map((r) => r.package)).toEqual(["react"]);
   });

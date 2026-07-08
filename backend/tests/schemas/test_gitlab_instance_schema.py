@@ -1,10 +1,4 @@
-"""Tests that GitLab instance schemas carry team_sync_depth.
-
-Regression for audit finding: the model + sync service + frontend all use
-``team_sync_depth`` but the Create/Update/Response schemas omitted it, so the
-UI setting was silently dropped (extra="ignore") on create/update and never
-surfaced on the response.
-"""
+"""GitLab instance Create/Update/Response schemas carry team_sync_depth."""
 
 from datetime import datetime, timezone
 
@@ -26,7 +20,6 @@ def test_create_accepts_and_retains_team_sync_depth():
         team_sync_depth=2,
     )
     assert schema.team_sync_depth == 2
-    # Value must survive a model_dump (i.e. not silently dropped by extra=ignore).
     assert schema.model_dump()["team_sync_depth"] == 2
 
 
@@ -40,7 +33,6 @@ def test_create_team_sync_depth_defaults_to_one():
 
 
 def test_create_team_sync_depth_zero_means_full_path():
-    # 0 = full path is a legitimate value and must be accepted.
     schema = GitLabInstanceCreate(
         name="Internal GitLab",
         url="https://gitlab.example.com",

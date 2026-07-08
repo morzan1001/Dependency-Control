@@ -18,15 +18,11 @@ def _dep(name, version="1.0", purl=None, direct=False, parent_components=None):
 
 
 class TestAnalyzeDeepDependencyChainsEmpty:
-    """Empty input."""
-
     def test_empty_returns_empty(self):
         assert analyze_deep_dependency_chains([]) == []
 
 
 class TestAnalyzeDeepDependencyChainsShallow:
-    """Direct deps have depth 1, no deep chain warning."""
-
     def test_direct_deps_no_warning(self):
         deps = [
             _dep("express", version="4.18.0", direct=True),
@@ -36,7 +32,7 @@ class TestAnalyzeDeepDependencyChainsShallow:
         assert len(result) == 0
 
     def test_shallow_transitive_no_warning(self):
-        # direct -> child (depth 2), well within default max_dependency_depth=8
+        # depth 2, well within default max_dependency_depth=8
         parent = _dep("express", version="4.18.0", direct=True)
         child = _dep("body-parser", version="1.20.0", direct=False, parent_components=["pkg:npm/express@4.18.0"])
         result = analyze_deep_dependency_chains([parent, child], max_dependency_depth=8)
@@ -44,12 +40,8 @@ class TestAnalyzeDeepDependencyChainsShallow:
 
 
 class TestAnalyzeDeepDependencyChainsDeep:
-    """Deps nested deeper than max_dependency_depth."""
-
     def _build_chain(self, length):
-        """Build a linear dependency chain of given length."""
         deps = []
-        # Root at depth 1
         deps.append(_dep("pkg-0", version="1.0", direct=True))
 
         for i in range(1, length):
@@ -64,7 +56,6 @@ class TestAnalyzeDeepDependencyChainsDeep:
         return deps
 
     def test_chain_exceeding_max_depth_produces_recommendation(self):
-        # Chain of 5 deep, max_dependency_depth=3
         deps = self._build_chain(5)
         result = analyze_deep_dependency_chains(deps, max_dependency_depth=3)
         deep_recs = [r for r in result if "Deep dependency" in r.title or "max depth" in r.title]
@@ -83,7 +74,7 @@ class TestAnalyzeDeepDependencyChainsDeep:
         assert deep_recs[0].priority == Priority.LOW
 
     def test_chain_at_max_depth_no_warning(self):
-        # Chain of 3, max_dependency_depth=3 => max depth is 3, not > 3
+        # Chain of 3, max_dependency_depth=3 => depth is 3, not > 3
         deps = self._build_chain(3)
         result = analyze_deep_dependency_chains(deps, max_dependency_depth=3)
         deep_recs = [r for r in result if "max depth" in r.title]
@@ -91,8 +82,6 @@ class TestAnalyzeDeepDependencyChainsDeep:
 
 
 class TestAnalyzeDeepDependencyChainsCircular:
-    """Circular dependencies detection."""
-
     def test_circular_detected(self):
         deps_circular = [
             {
@@ -160,8 +149,6 @@ class TestAnalyzeDeepDependencyChainsCircular:
 
 
 class TestAnalyzeDeepDependencyChainsCycleSegment:
-    """Only true cycle members should be flagged, not non-cycle ancestors."""
-
     def test_ancestor_not_flagged_as_circular(self):
         # A -> B -> C -> B  (cycle is B<->C; A is a non-cycle ancestor)
         deps = [
@@ -191,20 +178,14 @@ class TestAnalyzeDeepDependencyChainsCycleSegment:
         circular_recs = [r for r in result if "Circular" in r.title]
         assert len(circular_recs) == 1
         components = circular_recs[0].affected_components
-        # True cycle members present
         assert any("pkg-b" in c for c in components)
         assert any("pkg-c" in c for c in components)
-        # Non-cycle ancestor must NOT be flagged
         assert not any("pkg-a" in c for c in components)
-        # ...and the cycle only has 2 members
         assert circular_recs[0].impact["total"] == 2
 
 
 class TestAnalyzeDeepDependencyChainsBothCircularAndDeep:
-    """Both circular and deep chain issues produce two recommendations."""
-
     def test_both_circular_and_deep(self):
-        # Circular pair
         circular_deps = [
             {
                 "name": "circ-a",
@@ -222,7 +203,7 @@ class TestAnalyzeDeepDependencyChainsBothCircularAndDeep:
             },
         ]
 
-        # Deep chain: root -> d1 -> d2 -> d3 -> d4 (depth 5, max=2)
+        # Deep chain: root -> d1 -> d2 -> d3 -> d4 (depth 5, max_dependency_depth=2)
         deep_chain = [
             _dep("root", version="1.0", direct=True),
         ]
@@ -245,14 +226,12 @@ class TestAnalyzeDeepDependencyChainsBothCircularAndDeep:
 
 
 class TestAnalyzeDuplicatePackagesEmpty:
-    """Empty input."""
-
     def test_empty_returns_empty(self):
         assert analyze_duplicate_packages([]) == []
 
 
 class TestAnalyzeDuplicatePackagesFound:
-    """Two packages from the same SIMILAR_PACKAGE_GROUPS category."""
+    """Two packages from the same SIMILAR_PACKAGE_GROUPS category trigger a duplicate."""
 
     def test_http_clients_duplicate(self):
         deps = [
@@ -304,8 +283,6 @@ class TestAnalyzeDuplicatePackagesFound:
 
 
 class TestAnalyzeDuplicatePackagesSingleFromCategory:
-    """Only one package from a category does not trigger duplicate."""
-
     def test_single_http_client_no_duplicate(self):
         deps = [_dep("axios", version="1.0", direct=True)]
         result = analyze_duplicate_packages(deps)
@@ -313,14 +290,10 @@ class TestAnalyzeDuplicatePackagesSingleFromCategory:
 
 
 class TestAnalyzeDuplicatePackagesMultipleCategories:
-    """Multiple categories with duplicates produce single recommendation."""
-
     def test_multiple_categories_single_recommendation(self):
         deps = [
-            # HTTP clients
             _dep("axios", version="1.0", direct=True),
             _dep("got", version="12.0", direct=True),
-            # Date libraries
             _dep("moment", version="2.29.0", direct=True),
             _dep("dayjs", version="1.11.0", direct=True),
         ]

@@ -1,8 +1,4 @@
-"""Tests for InstrumentedAsyncClient in app.core.http_utils.
-
-Covers the verb-method delegation refactor (get/post/put/delete now route
-through request()) and the request/success/error metric protocol.
-"""
+"""Tests for InstrumentedAsyncClient verb delegation and request metrics."""
 
 import httpx
 import pytest
@@ -39,9 +35,6 @@ def _counter_value(counter, service: str) -> float:
     [("get", "GET"), ("post", "POST"), ("put", "PUT"), ("delete", "DELETE")],
 )
 async def test_verbs_delegate_to_request(verb, expected_method):
-    """get/post/put/delete must call the underlying client's request() with the
-    correct HTTP method (proves they delegate to request() rather than calling
-    client.get/post/... directly)."""
     client = InstrumentedAsyncClient("VerbTest")
     fake = _FakeHttpxClient()
     client._client = fake  # type: ignore[assignment]
@@ -95,7 +88,6 @@ async def test_error_records_error_metric_and_reraises():
 
 
 def test_dead_helpers_removed():
-    """The unreferenced HTTP helpers were deleted; only InstrumentedAsyncClient remains."""
     for name in (
         "HTTPRequestError",
         "safe_http_request",

@@ -6,8 +6,6 @@ from app.services.webhooks.validation import detect_webhook_type
 
 
 class TestDetectWebhookTypeIntegration:
-    """Test the auto-detection logic that runs inside create endpoints."""
-
     def _resolve_type(self, webhook_in: WebhookCreate) -> str:
         """Simulate the endpoint logic: use explicit type or auto-detect."""
         return webhook_in.webhook_type or detect_webhook_type(webhook_in.url)
@@ -61,8 +59,6 @@ class TestDetectWebhookTypeIntegration:
 
 
 class TestWebhookModelCreationWithType:
-    """Test that Webhook objects are built with the correct type."""
-
     def test_webhook_created_with_resolved_teams_type(self):
         webhook_in = WebhookCreate(
             url="https://contoso.webhook.office.com/webhookb2/abc",

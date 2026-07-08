@@ -1,12 +1,4 @@
-"""Tests for maintainer-risk signal correlation.
-
-The two registry-side signals that historically produced the most
-false-positives are ``stale_package`` (a mature library that's done
-shipping features can look identical to an abandoned one) and
-``free_email_maintainer`` (a personal address says nothing on its
-own). These tests pin the rules that combine those signals with
-their corroborating evidence before they become user-facing risks.
-"""
+"""Tests that stale_package and free_email_maintainer signals require corroborating evidence before surfacing as risks."""
 
 from typing import Any, Dict, List
 
@@ -50,9 +42,8 @@ class TestCorrelateMaintainerRisks:
         assert "inactive_repo" in _types(result)
 
     def test_stale_suppressed_when_repo_active(self):
-        # B6: registry says "no release in 2 years" but the repo is still
-        # getting commits — that's a mature/finished package, not an
-        # abandoned one. Drop the registry-only stale signal.
+        # Registry says "no release in 2 years" but the repo is still getting
+        # commits — a mature/finished package, not abandoned. Drop the stale signal.
         risks = [_stale()]
         result = correlate_maintainer_risks(risks, github_active=True)
         assert "stale_package" not in _types(result)

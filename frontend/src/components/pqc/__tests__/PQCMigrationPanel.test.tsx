@@ -11,8 +11,7 @@ vi.mock("@/api/pqcMigration", () => ({
   getPQCMigrationPlan: vi.fn(),
 }));
 
-// This jsdom setup runs without a backing localStorage; provide an in-memory
-// stub so the export flow (which reads/writes prefill state) can be exercised.
+// jsdom has no localStorage; stub it so the export flow's prefill read/write works.
 if (typeof globalThis.localStorage === "undefined") {
   const store = new Map<string, string>();
   const stub: Storage = {
@@ -46,10 +45,8 @@ const plan: MigrationPlanResponse = {
   },
 };
 
-// Faithful stand-in for <ComplianceReportsPanel /> that replicates ONLY the
-// contract exercised by the export flow: it lives in an inactive tab (so Radix
-// keeps it unmounted) and attaches the prefill listener in a mount effect,
-// reading + clearing localStorage exactly like the real panel does.
+// Stand-in for ComplianceReportsPanel: attaches the prefill listener on mount
+// and reads + clears localStorage like the real panel.
 function ComplianceStub() {
   const [framework, setFramework] = useState<string | null>(null);
   useEffect(() => {
@@ -73,8 +70,7 @@ function ComplianceStub() {
   );
 }
 
-// Mirrors CryptoAnalyticsTab: an uncontrolled Radix Tabs whose inactive tab
-// content (the compliance panel) is unmounted.
+// Uncontrolled Radix Tabs keeps the inactive tab's content unmounted.
 function Harness() {
   return (
     <Tabs defaultValue="pqc-migration">
@@ -115,19 +111,16 @@ describe("PQCMigrationPanel export-as-compliance-report", () => {
       name: /Export as Compliance Report/i,
     });
 
-    // Precondition: the compliance panel is not mounted while on the PQC tab.
     expect(screen.queryByTestId("prefill-dialog")).not.toBeInTheDocument();
 
     fireEvent.click(exportButton);
 
-    // The panel must mount (tab switched) AND receive the prefill event.
     await waitFor(() => {
       expect(screen.getByTestId("prefill-dialog")).toHaveTextContent(
         "pqc-migration-plan",
       );
     });
 
-    // Intent consumed — the orphaned-key leak is gone.
     expect(localStorage.getItem("prefill_compliance_framework")).toBeNull();
   });
 });

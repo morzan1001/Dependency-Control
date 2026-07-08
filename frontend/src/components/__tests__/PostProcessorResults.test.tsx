@@ -34,10 +34,8 @@ describe("EPSSKEVResults exploit maturity bars", () => {
     expect(bars).toHaveLength(1);
 
     const cls = bars[0].getAttribute("class") ?? "";
-    // The color must target the moving Indicator via the child selector,
-    // otherwise the whole track is colored and every bar reads as full.
+    // Color must target the moving Indicator via the child selector, else the whole track is colored.
     expect(cls).toContain("[&>div]:bg-red-600");
-    // The bare, track-coloring token must NOT be present.
     expect(cls).not.toMatch(/(^|\s)bg-red-600(\s|$)/);
   });
 });

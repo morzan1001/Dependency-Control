@@ -71,9 +71,7 @@ async def test_generate_sorts_items_descending_priority():
 
 @pytest.mark.asyncio
 async def test_list_vulnerable_assets_global_scope_enumerates_all_projects():
-    # Regression: ResolvedScope.project_ids is None for global scope (meaning
-    # "all projects"). It must NOT be coerced to [] (which would yield an empty
-    # all-clear plan); every project with a usable scan should be enumerated.
+    # global scope has project_ids=None ("all projects"); it must not be coerced to [] (empty plan) — enumerate every project with a usable scan.
     db = MagicMock()
     db.scans.distinct = AsyncMock(return_value=["p1", "p2"])
     gen = PQCMigrationPlanGenerator(db)
@@ -99,8 +97,7 @@ async def test_list_vulnerable_assets_global_scope_enumerates_all_projects():
 
 @pytest.mark.asyncio
 async def test_list_vulnerable_assets_empty_project_ids_stays_empty():
-    # An explicit empty list still means "no projects" — must not fall through
-    # to enumerating everything.
+    # an explicit empty list means "no projects" and must not fall through to enumerating everything.
     db = MagicMock()
     db.scans.distinct = AsyncMock(return_value=["p1", "p2"])
     gen = PQCMigrationPlanGenerator(db)

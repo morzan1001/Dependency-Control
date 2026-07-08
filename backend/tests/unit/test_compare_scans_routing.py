@@ -1,10 +1,4 @@
-"""Routing test for the MCP ``compare_scans`` chat tool.
-
-After the scan-delta extension (see plans/2026-05-11-scan-delta-extension.md
-Task 9), ``compare_scans`` must delegate to the unified
-``compute_findings_delta`` service and return its envelope, rather than its
-own ad-hoc count+sample shape. This test pins that routing contract.
-"""
+"""The compare_scans chat tool must delegate to compute_findings_delta and return its envelope."""
 
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch

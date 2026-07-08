@@ -13,7 +13,6 @@ import {
 } from '../project-roles'
 import type { Project } from '@/types/project'
 
-// Minimal Project factory; only the fields the role logic reads matter.
 function makeProject(members: Array<{ user_id: string; role: string; inherited_from?: string }> = [], ownerId?: string): Project {
   return {
     id: 'p1',
@@ -103,8 +102,6 @@ describe('getUserProjectRole / role hierarchy', () => {
   })
 
   it('team-derived members are already merged into project.members by the API (team admin -> admin)', () => {
-    // The backend detail endpoint merges team members into members with mapped
-    // roles + inherited_from, so team admins resolve to project admin here.
     const project = makeProject([
       { user_id: 'team-admin', role: 'admin', inherited_from: 'Team: DevOps' },
     ])

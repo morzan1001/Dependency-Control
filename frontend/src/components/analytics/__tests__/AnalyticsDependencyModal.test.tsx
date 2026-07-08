@@ -15,8 +15,6 @@ import {
   useComponentFindings,
 } from "@/hooks/queries/use-analytics";
 
-// --- helpers ---------------------------------------------------------------
-
 const makeFinding = (overrides: Partial<ComponentFinding>): ComponentFinding =>
   ({
     id: "x",
@@ -66,8 +64,6 @@ function renderModal(metadata: DependencyMetadata) {
   );
 }
 
-// --- Finding 1: safeHref hardening on metadata links -----------------------
-
 describe("AnalyticsDependencyModal metadata link hardening", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -89,7 +85,6 @@ describe("AnalyticsDependencyModal metadata link hardening", () => {
       },
     });
 
-    // Reveal the collapsible "Additional Details" (deps.dev links + license).
     fireEvent.click(screen.getByText(/Additional Details/i));
 
     await waitFor(() => {
@@ -103,14 +98,11 @@ describe("AnalyticsDependencyModal metadata link hardening", () => {
       expect(href.toLowerCase().startsWith("data:")).toBe(false);
     }
 
-    // The safe deps.dev link is still rendered as a real anchor.
     const safeLink = anchors.find(
       (a) => a.getAttribute("href") === "https://good.example.com",
     );
     expect(safeLink).toBeDefined();
 
-    // The malicious "Homepage" button (external links section) must not link out.
-    // Its label exists but carries no javascript: href.
     const homepageButton = screen
       .getAllByText("Homepage")
       .map((el) => el.closest("a"))
@@ -134,8 +126,6 @@ describe("AnalyticsDependencyModal metadata link hardening", () => {
   });
 });
 
-// --- Finding 2: resolveRelatedFinding id parsing ---------------------------
-
 describe("resolveRelatedFinding", () => {
   it("resolves EOL ids with hyphenated component names by stripping only the cycle", () => {
     const findings = [
@@ -157,7 +147,6 @@ describe("resolveRelatedFinding", () => {
     const findings = [
       makeFinding({ id: "lic-a", type: "license", component: "gpl-pkg" }),
     ];
-    // No exact id match -> must NOT fall back to the first license finding.
     expect(resolveRelatedFinding(findings, "LIC-MIT")).toBeUndefined();
   });
 
@@ -182,8 +171,6 @@ describe("resolveRelatedFinding", () => {
   });
 });
 
-// --- Finding 3: CopyButton uses shared clipboard hook ----------------------
-
 describe("AnalyticsDependencyModal copy button", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -207,12 +194,11 @@ describe("AnalyticsDependencyModal copy button", () => {
       expect(screen.getByText("pkg:npm/pkg@1.0.0")).toBeInTheDocument();
     });
 
-    // The copy button is the icon-only button next to the PURL code block.
     const purlCode = screen.getByText("pkg:npm/pkg@1.0.0");
     const copyBtn = purlCode.parentElement?.querySelector("button");
     expect(copyBtn).toBeTruthy();
 
-    // First click: clipboard rejects -> hook must swallow (no unhandled rejection).
+    // First click: clipboard rejects; the hook must swallow it (no unhandled rejection).
     fireEvent.click(copyBtn as HTMLElement);
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith("pkg:npm/pkg@1.0.0");

@@ -97,11 +97,7 @@ async def test_list_objects_returns_under_prefix(fake_s3):
 
 
 class _PaginatingS3Client:
-    """Fake S3 client that returns objects across multiple truncated pages.
-
-    Mimics list_objects_v2's 1000-key cap by paging through ``keys`` in
-    fixed-size chunks and driving the ContinuationToken protocol.
-    """
+    """Fake S3 client that pages keys via the ContinuationToken protocol, mimicking the 1000-key cap."""
 
     def __init__(self, keys: list[str], page_size: int = 1000) -> None:
         self._keys = keys
@@ -126,7 +122,7 @@ class _PaginatingS3Client:
 
 @pytest.mark.asyncio
 async def test_list_objects_follows_pagination_past_first_page():
-    """Regression: list_objects must page past the 1000-key list_objects_v2 cap."""
+    """list_objects must page past the 1000-key list_objects_v2 cap."""
     from app.core.s3 import list_objects
 
     fake = _PaginatingS3Client([f"archive/{i:05d}" for i in range(2500)], page_size=1000)

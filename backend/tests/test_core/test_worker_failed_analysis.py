@@ -1,7 +1,4 @@
-"""Worker race-condition retry handling.
-
-Engine owns status and retry_count writes; the worker only enforces the retry ceiling.
-"""
+"""Worker retry handling: the engine owns status/retry_count writes; the worker only enforces the ceiling."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch

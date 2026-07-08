@@ -231,8 +231,7 @@ class TestIdentifyQuickWinsNoFixedVersion:
 
 class TestIdentifyQuickWinsMinimalCandidate:
     def test_two_medium_no_kev_still_recommended(self):
-        # Regression: the removed top-5 guard (vuln_count < 2 and kev_count == 0)
-        # must not suppress the minimal valid candidate (exactly 2 vulns, no KEV).
+        # Exactly 2 vulns with no KEV is the minimal valid quick-win candidate.
         vulns = [
             _vuln("pkg", severity="MEDIUM", is_kev=False, finding_id="CVE-2024-001"),
             _vuln("pkg", severity="MEDIUM", is_kev=False, finding_id="CVE-2024-002"),

@@ -69,9 +69,7 @@ def test_primitive_match_required():
 
 
 class TestAssetInRuleScope:
-    """asset_in_rule_scope ignores threshold criteria (key size) so a COMPLIANT
-    asset still counts as 'within the rule's subject scope' — used for compliance
-    applicability (is the control's subject present?)."""
+    """asset_in_rule_scope ignores threshold criteria so a compliant asset still counts as within the rule's subject scope."""
 
     def test_compliant_rsa_key_is_in_scope_but_not_a_violation(self):
         rule = _rule(match_name_patterns=["RSA"], match_primitive=CryptoPrimitive.PKE, match_min_key_size_bits=2048)

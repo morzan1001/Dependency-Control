@@ -4,32 +4,25 @@ from app.models.system import SystemSettings
 
 
 class TestSystemSettingsDefaults:
-    """SystemSettings default values for all field groups."""
-
     def test_id_defaults_to_current(self):
-        """Default id is 'current'."""
         s = SystemSettings()
         assert s.id == "current"
 
     def test_general_defaults(self):
-        """instance_name defaults to 'Dependency Control'."""
         s = SystemSettings()
         assert s.instance_name == "Dependency Control"
 
     def test_limits_defaults(self):
-        """project_limit_per_user defaults to 0 (unlimited)."""
         s = SystemSettings()
         assert s.project_limit_per_user == 0
 
     def test_security_defaults(self):
-        """Security booleans default to False."""
         s = SystemSettings()
         assert s.allow_public_registration is False
         assert s.enforce_2fa is False
         assert s.enforce_email_verification is False
 
     def test_smtp_defaults(self):
-        """SMTP fields have correct defaults."""
         s = SystemSettings()
         assert s.smtp_host is None
         assert s.smtp_port == 587
@@ -40,7 +33,6 @@ class TestSystemSettingsDefaults:
         assert s.emails_from_name == "Dependency Control"
 
     def test_integration_tokens_default_none(self):
-        """Integration token fields default to None."""
         s = SystemSettings()
         assert s.github_token is None
         assert s.open_source_malware_api_key is None
@@ -53,7 +45,6 @@ class TestSystemSettingsDefaults:
         assert s.mattermost_url is None
 
     def test_oidc_defaults(self):
-        """OIDC fields have correct defaults."""
         s = SystemSettings()
         assert s.oidc_enabled is False
         assert s.oidc_provider_name == "GitLab"
@@ -66,7 +57,6 @@ class TestSystemSettingsDefaults:
         assert s.oidc_scopes == "openid profile email"
 
     def test_gitlab_integration_defaults(self):
-        """GitLab integration fields have correct defaults."""
         s = SystemSettings()
         assert s.gitlab_integration_enabled is False
         assert s.gitlab_url == "https://gitlab.com"
@@ -76,34 +66,27 @@ class TestSystemSettingsDefaults:
         assert s.gitlab_oidc_audience is None
 
     def test_rescan_defaults(self):
-        """Periodic scanning defaults are correct."""
         s = SystemSettings()
         assert s.rescan_mode == "project"
         assert s.global_rescan_enabled is False
         assert s.global_rescan_interval == 24
 
     def test_default_active_analyzers(self):
-        """default_active_analyzers has the expected list."""
         s = SystemSettings()
         assert s.default_active_analyzers == ["trivy", "osv", "license_compliance", "end_of_life"]
 
     def test_retention_defaults(self):
-        """Retention fields have correct defaults."""
         s = SystemSettings()
         assert s.retention_mode == "project"
         assert s.global_retention_days == 90
 
 
 class TestSystemSettingsCustomValues:
-    """SystemSettings with explicit custom values."""
-
     def test_custom_instance_name(self):
-        """instance_name can be overridden."""
         s = SystemSettings(instance_name="My Corp Security")
         assert s.instance_name == "My Corp Security"
 
     def test_custom_security_flags(self):
-        """Security booleans can be set to True."""
         s = SystemSettings(
             allow_public_registration=True,
             enforce_2fa=True,
@@ -114,7 +97,6 @@ class TestSystemSettingsCustomValues:
         assert s.enforce_email_verification is True
 
     def test_custom_smtp_config(self):
-        """SMTP fields can be fully configured."""
         s = SystemSettings(
             smtp_host="mail.example.com",
             smtp_port=465,
@@ -130,18 +112,15 @@ class TestSystemSettingsCustomValues:
         assert s.emails_from_email == "noreply@example.com"
 
     def test_custom_analyzers_list(self):
-        """default_active_analyzers can be set to a custom list."""
         custom = ["trivy", "osv"]
         s = SystemSettings(default_active_analyzers=custom)
         assert s.default_active_analyzers == custom
 
     def test_empty_analyzers_list(self):
-        """default_active_analyzers can be set to an empty list."""
         s = SystemSettings(default_active_analyzers=[])
         assert s.default_active_analyzers == []
 
     def test_custom_retention(self):
-        """Retention values can be overridden."""
         s = SystemSettings(
             retention_mode="global",
             global_retention_days=365,
@@ -150,28 +129,22 @@ class TestSystemSettingsCustomValues:
         assert s.global_retention_days == 365
 
     def test_zero_retention_means_forever(self):
-        """global_retention_days=0 means keep forever."""
         s = SystemSettings(global_retention_days=0)
         assert s.global_retention_days == 0
 
 
 class TestSystemSettingsIdAlias:
-    """SystemSettings _id alias round-trip for MongoDB compatibility."""
-
     def test_model_dump_by_alias_contains_id(self):
-        """model_dump(by_alias=True) produces '_id' key."""
         s = SystemSettings()
         dumped = s.model_dump(by_alias=True)
         assert "_id" in dumped
         assert dumped["_id"] == "current"
 
     def test_accepts_id_from_mongo(self):
-        """SystemSettings accepts _id via validation_alias."""
         s = SystemSettings(_id="current")
         assert s.id == "current"
 
     def test_from_mongo_document(self):
-        """SystemSettings can be constructed from a MongoDB document."""
         doc = {
             "_id": "current",
             "instance_name": "My Instance",
@@ -185,7 +158,6 @@ class TestSystemSettingsIdAlias:
         assert s.smtp_port == 465
 
     def test_roundtrip_via_model_dump(self):
-        """SystemSettings survives model_dump -> reconstruct cycle."""
         original = SystemSettings(
             instance_name="RoundTrip Test",
             enforce_2fa=True,
@@ -201,7 +173,6 @@ class TestSystemSettingsIdAlias:
         assert restored.global_retention_days == 180
 
     def test_legacy_mongo_doc_without_new_fields(self):
-        """Older MongoDB docs missing newer fields get Pydantic defaults."""
         legacy_doc = {
             "_id": "current",
             "instance_name": "Legacy",

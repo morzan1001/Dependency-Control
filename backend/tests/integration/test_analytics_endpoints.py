@@ -84,13 +84,13 @@ async def test_trends_endpoint(client, db, owner_auth_headers_proj):
 
 @pytest.mark.asyncio
 async def test_hotspots_user_scope_accepted(client, db, owner_auth_headers_proj):
-    """scope=user must pass the Query regex (regression guard)."""
+    """scope=user must pass the Query regex."""
     resp = await client.get(
         "/api/v1/analytics/crypto/hotspots",
         params={"scope": "user", "group_by": "name"},
         headers=owner_auth_headers_proj,
     )
-    # Accept 200 (resolved to project list) or 403 (no access). NOT 422.
+    # Accept 200 (resolved to project list) or 403 (no access), never 422.
     assert resp.status_code != 422, resp.text
 
 
@@ -132,19 +132,11 @@ async def test_cache_hit_on_second_call(client, db, owner_auth_headers_proj):
 
 @pytest.mark.asyncio
 async def test_recommendations_excludes_deleted_branch_scan(client, db, owner_auth_headers_proj):
-    """Regression (elegance #186): with no explicit scan_id, recommendations must be
-    built from the latest scan on a NON-deleted branch, never a newer scan whose
-    branch has been deleted.
-
-    Given an OLDER scan on an active branch and a NEWER scan on a deleted branch,
-    the endpoint must select the active-branch scan. Before the fix the endpoint
-    used an inline ``find_many`` with no deleted-branch exclusion and would pick the
-    newer deleted-branch scan.
-    """
+    """With no explicit scan_id, recommendations use the latest scan on a non-deleted branch, not a newer scan on a deleted branch."""
     await db.projects.update_one({"_id": "p"}, {"$set": {"deleted_branches": ["dead"]}})
 
     now = datetime.now(timezone.utc)
-    # Older scan on an active branch — the one that MUST be selected.
+    # Older scan on an active branch — the one that must be selected.
     await db.scans.insert_one(
         {
             "_id": "scan-active",
@@ -154,7 +146,7 @@ async def test_recommendations_excludes_deleted_branch_scan(client, db, owner_au
             "created_at": now - timedelta(hours=1),
         }
     )
-    # Newer scan on a DELETED branch — must be ignored.
+    # Newer scan on a deleted branch — must be ignored.
     await db.scans.insert_one(
         {
             "_id": "scan-dead",
@@ -175,8 +167,7 @@ async def test_recommendations_excludes_deleted_branch_scan(client, db, owner_au
 
 @pytest.mark.asyncio
 async def test_recommendations_cached_on_second_call(client, db, owner_auth_headers_proj, monkeypatch):
-    """The recommendations endpoint must serve the second identical request from
-    cache instead of re-loading both scans and re-running the engine (audit #13)."""
+    """The second identical request is served from cache instead of re-running the engine."""
     from app.api.v1.endpoints.analytics import recommendations as rec_module
 
     await db.scans.insert_one(
@@ -208,9 +199,7 @@ async def test_recommendations_cached_on_second_call(client, db, owner_auth_head
     # Redis cache_service is a no-op in tests; back it with an in-memory store so
     # the cache actually persists between the two requests.
     class _MemCache:
-        """Mimics the real CacheService JSON round-trip (json.dumps/loads), so the
-        cache-hit path is exercised on JSON-coerced values like production, not the
-        original Python objects (audit SC#11)."""
+        """Mimics the real CacheService JSON round-trip so cache hits are exercised on JSON-coerced values like production."""
 
         def __init__(self):
             self.store = {}
@@ -240,4 +229,4 @@ async def test_recommendations_cached_on_second_call(client, db, owner_auth_head
     assert r1.status_code == 200, r1.text
     assert r2.status_code == 200, r2.text
     assert r1.json() == r2.json()
-    assert calls["n"] == 1  # second request served from cache, engine not re-run
+    assert calls["n"] == 1

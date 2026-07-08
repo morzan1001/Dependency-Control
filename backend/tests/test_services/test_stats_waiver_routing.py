@@ -14,7 +14,7 @@ def _waiver(finding_type=None, match=None, scope="finding"):
 
 class TestIsSignatureWaiver:
     def test_untyped_non_location_waiver_goes_legacy(self):
-        # finding_type=None, no match -> must NOT be routed to the signature path (regression guard)
+        # finding_type=None, no match -> must NOT be routed to the signature path
         assert _is_signature_waiver(_waiver(finding_type=None, match=None)) is False
 
     def test_typed_license_waiver_goes_legacy(self):
@@ -40,14 +40,9 @@ class TestIsSignatureWaiver:
 
 
 # ---------------------------------------------------------------------------
-# recalculate_project_stats — unified stats pipeline (Task W4)
-#
-# recalc must produce the SAME authoritative Stats as
-# calculate_comprehensive_stats: severity counts excluding waived findings,
-# the avg-based risk_score, plus the populated adjusted_risk_score /
-# threat_intel / reachability / prioritized fields. The old partial path
-# (_build_stats_pipeline + _stats_from_result) left the enrichment fields at
-# their defaults (0.0 / None) and computed a $sum risk_score, corrupting stats.
+# recalculate_project_stats must produce the same authoritative Stats as
+# calculate_comprehensive_stats (severity counts excluding waived, avg-based
+# risk_score, populated enrichment fields).
 # ---------------------------------------------------------------------------
 
 PROJECT_ID = "proj-w4"
@@ -155,7 +150,7 @@ class TestRecalculateUnifiedStats:
 
     @pytest.mark.asyncio
     async def test_recalc_populates_enrichment_fields(self, seeded_db):
-        """The partial path left these at defaults; the unified path must populate them."""
+        """The unified path must populate the enrichment fields, not leave them at defaults."""
         from app.services.stats import recalculate_project_stats
 
         result = await recalculate_project_stats(PROJECT_ID, seeded_db)
@@ -185,13 +180,9 @@ class TestRecalculateUnifiedStats:
 
 
 # ---------------------------------------------------------------------------
-# Finding 1: a waiver with no matching criteria must NOT waive every finding.
-#
-# _build_waiver_query returns {} when a waiver carries no concrete criteria
-# (finding_id / package_name / package_version / finding_type all None or
-# "Unknown"). Passing {} to apply_finding_waiver used to match ALL findings in
-# the scan, silently suppressing every security finding. _apply_waivers must
-# now skip such waivers.
+# A waiver with no matching criteria must NOT waive every finding: an empty
+# _build_waiver_query ({}) would match all findings, so _apply_waivers must
+# skip criteria-less waivers.
 # ---------------------------------------------------------------------------
 
 
@@ -229,7 +220,7 @@ class TestEmptyCriteriaWaiverDoesNotWaiveEverything:
 
 
 # ---------------------------------------------------------------------------
-# Finding 2: lock contention must be retried (bounded backoff), not dropped.
+# Lock contention must be retried (bounded backoff), not dropped.
 # ---------------------------------------------------------------------------
 
 

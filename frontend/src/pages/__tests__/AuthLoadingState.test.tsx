@@ -7,13 +7,6 @@ import Signup from '../Signup'
 import ResetPassword from '../ResetPassword'
 import AcceptInvite from '../AcceptInvite'
 
-// Regression for Elegance #156: the submit button's loading affordance must be
-// DERIVED from the mutation's `isPending`, not from a hand-maintained local
-// `isLoading`/`isSubmitting` state. When a mutation reports `isPending: true`
-// the button must be disabled and show its loading label — even though the
-// component's own submit handler never ran to flip a local flag. With the old
-// duplicated local state these renders showed an idle, clickable button.
-
 vi.mock('@/hooks/queries/use-auth', () => ({
   useLogin: () => ({ mutate: vi.fn(), isPending: true }),
   useSignup: () => ({ mutate: vi.fn(), isPending: true }),

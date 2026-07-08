@@ -1,11 +1,4 @@
-"""Tests for the GrypeAnalyzer retry policy.
-
-Regression test for the silent-grype-fail issue: a single large Java project
-was producing SCAN-ERROR-grype findings on intermittent grype failures
-because the analyzer inherited ``max_retries = 0`` from CLIAnalyzer while
-the sister trivy analyzer retries up to 3 times. The fix mirrors trivy's
-policy. These tests pin that the policy survives future refactors.
-"""
+"""Tests for the GrypeAnalyzer retry policy (mirrors trivy: retries transient failures)."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -20,7 +13,7 @@ NON_RETRYABLE_STDERR = b"invalid command line argument: --bogus"
 
 
 def _exec_results(*results):
-    """Build an AsyncMock that returns each tuple in sequence."""
+    """AsyncMock returning each tuple in sequence."""
     return AsyncMock(side_effect=list(results))
 
 
@@ -43,8 +36,6 @@ def _stub_temp_io():
 
 
 class TestGrypeRetryablePatternMatching:
-    """The retry decision is driven entirely by _is_retryable_error matches."""
-
     @pytest.mark.parametrize(
         "stderr_text",
         [
@@ -77,16 +68,13 @@ class TestGrypeRetryablePatternMatching:
 
     @pytest.mark.parametrize("stderr_bytes", [b"", b"   ", b"\n\t "])
     def test_empty_stderr_is_retryable(self, stderr_bytes):
-        # A non-zero exit with no stderr means grype was killed (signal/OOM) or
-        # had its error swallowed (e.g. by --quiet). Retry rather than surface
-        # an empty SCAN-ERROR-grype finding.
+        # No stderr on a non-zero exit means grype was killed (signal/OOM) or
+        # silenced (--quiet); retry rather than surface an empty finding.
         analyzer = GrypeAnalyzer()
         assert analyzer._is_retryable_error(stderr_bytes) is True
 
 
 class TestGrypeRetryLoop:
-    """Verify the full analyze() flow retries / gives up correctly."""
-
     @pytest.mark.asyncio
     async def test_succeeds_on_first_attempt(self):
         analyzer = GrypeAnalyzer()
@@ -116,7 +104,7 @@ class TestGrypeRetryLoop:
     @pytest.mark.asyncio
     async def test_gives_up_after_max_retries(self):
         analyzer = GrypeAnalyzer()
-        # 1 initial attempt + 3 retries = 4 total invocations
+        # 1 initial attempt + 3 retries = 4 total invocations.
         mock_exec = _exec_results(
             *([(b"", RETRYABLE_STDERR, 1)] * 4),
         )
@@ -125,7 +113,7 @@ class TestGrypeRetryLoop:
             result = await analyzer.analyze(SBOM)
 
         assert result.get("error") == "grype analysis failed"
-        assert mock_exec.await_count == 4  # 1 + max_retries(3)
+        assert mock_exec.await_count == 4
 
     @pytest.mark.asyncio
     async def test_non_retryable_error_fails_immediately(self):
@@ -136,13 +124,11 @@ class TestGrypeRetryLoop:
             result = await analyzer.analyze(SBOM)
 
         assert result.get("error") == "grype analysis failed"
-        assert mock_exec.await_count == 1  # no retries on non-transient errors
+        assert mock_exec.await_count == 1
 
     @pytest.mark.asyncio
     async def test_retries_on_empty_stderr(self):
-        # Regression: grype killed/quiet -> empty stderr on a non-zero exit.
-        # This is the exact failure mode that previously slipped past the retry
-        # because the patterns were matched against an empty string.
+        # Killed/quiet grype -> empty stderr on a non-zero exit must still retry.
         analyzer = GrypeAnalyzer()
         mock_exec = _exec_results(
             (b"", b"", 1),
@@ -157,8 +143,6 @@ class TestGrypeRetryLoop:
 
 
 class TestGrypeRetryPolicyConfig:
-    """Lock the policy values so a future refactor can't silently remove them."""
-
     def test_max_retries_matches_trivy(self):
         assert GrypeAnalyzer.max_retries == 3
 
@@ -166,12 +150,11 @@ class TestGrypeRetryPolicyConfig:
         assert GrypeAnalyzer.retry_delay == 3.0
 
     def test_cli_timeout_extended_beyond_default(self):
-        # The CLIAnalyzer default is 300; grype needs more for large Java SBOMs.
+        # CLIAnalyzer default is 300; grype needs more for large Java SBOMs.
         assert GrypeAnalyzer.cli_timeout >= 600
 
     def test_quiet_flag_not_passed(self):
-        # Regression: --quiet suppresses grype's stderr, which the retry logic
-        # inspects. It must never be re-added or transient failures go silent.
+        # --quiet suppresses the stderr the retry logic inspects; never re-add it.
         analyzer = GrypeAnalyzer()
         args = analyzer._build_command_args("sbom.json", None)
         assert "--quiet" not in args

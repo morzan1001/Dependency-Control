@@ -1,9 +1,4 @@
-"""Authorization tests for create_user (privilege-escalation guard).
-
-Regression coverage for the finding: POST /users/ must not let a caller mint
-an account carrying permissions the caller does not itself hold, and setting
-any permissions at all requires user:manage_permissions.
-"""
+"""Authorization tests for create_user: a caller may not mint an account with permissions it does not hold, and setting any permissions requires user:manage_permissions."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -68,19 +63,16 @@ def _run_create(current_user, permissions):
 
 class TestCreateUserPrivilegeEscalation:
     def test_helpdesk_cannot_grant_permissions(self):
-        """user:create-only caller cannot set any permissions -> 403, no create."""
         with pytest.raises(HTTPException) as exc:
             _run_create(_helpdesk_user(), [Permissions.SYSTEM_MANAGE])
         assert exc.value.status_code == 403
 
     def test_manager_cannot_grant_permission_they_lack(self):
-        """A manager can manage permissions but not grant one they don't hold."""
         with pytest.raises(HTTPException) as exc:
             _run_create(_perm_manager_user(), [Permissions.SYSTEM_MANAGE])
         assert exc.value.status_code == 403
 
     def test_manager_can_grant_permission_they_hold(self):
-        """Granting a subset of the caller's own permissions is allowed."""
         result, repo = _run_create(
             _perm_manager_user(extra=[Permissions.USER_READ]),
             [Permissions.USER_READ],
@@ -89,7 +81,6 @@ class TestCreateUserPrivilegeEscalation:
         assert result.permissions == [Permissions.USER_READ]
 
     def test_empty_permissions_allowed_for_plain_create(self):
-        """A user:create-only caller can still create a user with no permissions."""
         result, repo = _run_create(_helpdesk_user(), [])
         repo.create.assert_called_once()
         assert result.permissions == []

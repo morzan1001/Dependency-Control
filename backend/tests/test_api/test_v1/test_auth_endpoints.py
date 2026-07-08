@@ -1,12 +1,4 @@
-"""Tests for auth endpoint security fixes.
-
-Covers:
-1. refresh-token must NOT bypass the enforced-2FA setup gate (a local user with
-   no 2FA configured, while enforce_2fa is on, must only ever get the restricted
-   ["auth:setup_2fa"] scope — never full DB permissions).
-2. Email-dependent endpoints must gate on the DB system settings the email
-   provider actually reads (system_config.smtp_host), not the env SMTP_HOST.
-"""
+"""Auth endpoint security: refresh-token must not bypass the enforced-2FA setup gate, and email endpoints must gate on the DB system settings (system_config.smtp_host), not env SMTP_HOST."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -48,8 +40,6 @@ class TestRefreshToken2FAGate:
             return asyncio.run(refresh_token(refresh_token=token, db=MagicMock()))
 
     def test_no_2fa_enforced_local_user_gets_only_setup_scope(self):
-        """Regression: full DB permissions must NOT be minted on refresh when a
-        local user has no 2FA and enforce_2fa is on."""
         user = {
             "username": "bob",
             "is_active": True,
@@ -64,7 +54,6 @@ class TestRefreshToken2FAGate:
         assert _decode_permissions(result["access_token"]) == ["auth:setup_2fa"]
 
     def test_2fa_configured_user_keeps_full_permissions(self):
-        """A user who already has 2FA configured keeps full permissions on refresh."""
         user = {
             "username": "alice",
             "is_active": True,
@@ -79,7 +68,6 @@ class TestRefreshToken2FAGate:
         assert _decode_permissions(result["access_token"]) == ["admin:manage", "scan:read"]
 
     def test_enforce_2fa_off_keeps_full_permissions(self):
-        """When 2FA is not enforced, a local user without 2FA keeps full permissions."""
         user = {
             "username": "carol",
             "is_active": True,
@@ -94,7 +82,6 @@ class TestRefreshToken2FAGate:
         assert _decode_permissions(result["access_token"]) == ["scan:read"]
 
     def test_oidc_user_exempt_from_2fa_gate(self):
-        """OIDC users are exempt from enforced-2FA setup restriction."""
         user = {
             "username": "dave",
             "is_active": True,
@@ -136,8 +123,7 @@ class TestForgotPasswordSmtpGate:
             )
 
     def test_db_smtp_unset_returns_501(self):
-        """Failure B: env SMTP may be set, but if DB smtp_host is empty the
-        provider cannot send -> endpoint must surface 501, not claim success."""
+        """Even with env SMTP set, an empty DB smtp_host must surface 501 rather than claim success."""
         send_mock = AsyncMock()
         with patch.object(settings, "SMTP_HOST", "smtp.env-set.example.com"):
             with pytest.raises(HTTPException) as exc_info:
@@ -147,13 +133,7 @@ class TestForgotPasswordSmtpGate:
         send_mock.assert_not_called()
 
     def test_db_smtp_set_sends_email_with_system_settings(self):
-        """Endpoint->helper contract only: with DB smtp_host set, the endpoint
-        calls send_password_reset_email and forwards the DB system settings.
-
-        NOTE: this mocks the helper, so it deliberately does NOT prove the email
-        actually goes out. End-to-end Failure A coverage lives in
-        test_db_smtp_set_actually_schedules_email_via_real_helper below.
-        """
+        """Contract only (helper mocked): with DB smtp_host set, the endpoint forwards DB system settings to send_password_reset_email."""
         send_mock = AsyncMock()
         system_config = _make_settings(smtp_host="smtp.db.example.com")
         user = {"email": "user@test.com", "username": "user", "is_active": True, "auth_provider": "local"}
@@ -166,10 +146,7 @@ class TestForgotPasswordSmtpGate:
         assert send_mock.call_args.kwargs["system_settings"] is system_config
 
     def test_db_smtp_set_actually_schedules_email_via_real_helper(self):
-        """Failure A, end-to-end regression: env SMTP_HOST unset but DB smtp_host
-        set MUST actually schedule the password-reset email. Exercises the REAL
-        send_password_reset_email helper (not a mock), proving the helper now gates
-        on the effective DB smtp_host rather than env settings.SMTP_HOST."""
+        """With env SMTP_HOST unset but DB smtp_host set, the real send_password_reset_email helper must still schedule the email (gates on effective DB smtp_host)."""
         from app.api.v1.endpoints.auth import forgot_password
 
         request = MagicMock()
@@ -197,7 +174,6 @@ class TestForgotPasswordSmtpGate:
                 )
             )
 
-        # The real helper must schedule the send even with env SMTP_HOST unset.
         background_tasks.add_task.assert_called_once()
         assert background_tasks.add_task.call_args.kwargs["system_settings"] is system_config
 
@@ -238,13 +214,7 @@ class TestRequestVerificationSmtpGate:
         assert exc_info.value.status_code == 501
 
     def test_db_smtp_set_sends_verification(self, regular_user):
-        """Endpoint->helper contract only: with DB smtp_host set, the endpoint
-        calls send_verification_email and forwards the DB system settings.
-
-        NOTE: this mocks the helper, so it deliberately does NOT prove the email
-        actually goes out. End-to-end Failure A coverage lives in
-        test_db_smtp_set_actually_schedules_verification_via_real_helper below.
-        """
+        """Contract only (helper mocked): with DB smtp_host set, the endpoint forwards DB system settings to send_verification_email."""
         from app.api.v1.endpoints.auth import request_verification_email
 
         regular_user.is_verified = False
@@ -268,10 +238,7 @@ class TestRequestVerificationSmtpGate:
         assert send_mock.call_args.kwargs["system_settings"] is system_config
 
     def test_db_smtp_set_actually_schedules_verification_via_real_helper(self, regular_user):
-        """Failure A, end-to-end regression: env SMTP_HOST unset but DB smtp_host
-        set MUST actually schedule the verification email. Exercises the REAL
-        send_verification_email helper (not a mock), proving the helper now gates
-        on the effective DB smtp_host rather than env settings.SMTP_HOST."""
+        """With env SMTP_HOST unset but DB smtp_host set, the real send_verification_email helper must still schedule the email (gates on effective DB smtp_host)."""
         from app.api.v1.endpoints.auth import request_verification_email
 
         regular_user.is_verified = False
@@ -291,6 +258,5 @@ class TestRequestVerificationSmtpGate:
             )
 
         assert result.message == "Verification email sent"
-        # The real helper must schedule the send even with env SMTP_HOST unset.
         background_tasks.add_task.assert_called_once()
         assert background_tasks.add_task.call_args.kwargs["system_settings"] is system_config

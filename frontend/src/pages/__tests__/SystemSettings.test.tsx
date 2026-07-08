@@ -7,17 +7,14 @@ import SystemSettings from '../SystemSettings'
 import { systemKeys } from '@/hooks/queries/use-system'
 import type { SystemSettings as SystemSettingsType } from '@/types/system'
 
-// --- toast (sonner) --------------------------------------------------------
 vi.mock('sonner', () => ({
   toast: { error: vi.fn(), success: vi.fn() },
 }))
 
-// --- auth ------------------------------------------------------------------
 vi.mock('@/context/useAuth', () => ({
   useAuth: () => ({ hasPermission: () => true }),
 }))
 
-// --- system queries --------------------------------------------------------
 const mockUseSystemSettings = vi.fn()
 const mockMutate = vi.fn()
 vi.mock('@/hooks/queries/use-system', async (importOriginal) => {
@@ -30,14 +27,12 @@ vi.mock('@/hooks/queries/use-system', async (importOriginal) => {
   }
 })
 
-// --- webhook queries -------------------------------------------------------
 vi.mock('@/hooks/queries/use-webhooks', () => ({
   useGlobalWebhooks: () => ({ data: [], isLoading: false }),
   useCreateGlobalWebhook: () => ({ mutateAsync: vi.fn() }),
   useDeleteWebhook: () => ({ mutateAsync: vi.fn() }),
 }))
 
-// --- settings tabs: expose formData + a Save button ------------------------
 vi.mock('@/components/settings', () => {
   const Tab = ({
     formData,
@@ -106,7 +101,6 @@ describe('SystemSettings - Slack connect refresh', () => {
     await waitFor(() => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: systemKeys.settings() })
     })
-    // The bogus key from the original bug must never be used.
     expect(invalidateSpy).not.toHaveBeenCalledWith({ queryKey: ['systemSettings'] })
   })
 

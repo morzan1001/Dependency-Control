@@ -1,22 +1,4 @@
-"""Guard for review issue #3: the *actual* webhook delivery path must connect
-through the DNS-rebinding-safe pinned transport, not a default httpx client that
-independently re-resolves the hostname at connect time.
-
-``build_pinned_transport`` / ``_PinnedIPTransport`` (in
-``app/services/webhooks/validation.py``) are the correct primitive, but the SSRF
-finding (#1) is only genuinely closed once they are wired into
-``WebhookService._send_webhook`` and ``WebhookService.send_test_webhook`` in
-``app/services/webhooks/webhook_service.py`` (the sites that today construct
-``InstrumentedAsyncClient("Webhook Delivery"/"Webhook Test", ...)`` with no
-``transport=`` argument, so httpx re-resolves the host and an attacker can rebind
-to 169.254.169.254 between the vetting call and the connect).
-
-These tests exercise the real delivery methods and assert the client is built
-with a ``_PinnedIPTransport``. They FAIL until the wire-in lands, which is
-exactly the tripwire the reviewer asked for: the suite can now detect that the
-fix is unwired. Editing ``webhook_service.py`` is outside the scope of the
-current change set (validation.py + tests only), so the wire-in is a follow-up.
-"""
+"""The real webhook delivery path must connect through the DNS-rebinding-safe pinned transport."""
 
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -27,10 +9,8 @@ import importlib
 
 from app.services.webhooks.validation import _PinnedIPTransport
 
-# NOTE: ``app.services.webhooks.__init__`` binds the name ``webhook_service`` to a
-# singleton *instance*, shadowing the submodule attribute on the package. Import
-# the real module object via importlib so ``ws_module.WebhookService`` and the
-# ``InstrumentedAsyncClient`` patch target both resolve correctly.
+# The package binds ``webhook_service`` to a singleton instance, shadowing the submodule;
+# import the real module via importlib so the WebhookService and patch target resolve.
 ws_module = importlib.import_module("app.services.webhooks.webhook_service")
 
 
@@ -58,8 +38,6 @@ def _capturing_client(captured: dict):
 
 
 async def _fake_getaddrinfo_public(host, port, type=None):
-    # Vetting resolves to a safe public IP; a later (attacker) resolution could
-    # return a metadata IP, which pinning must prevent from being connected to.
     return [(0, 0, 0, "", ("93.184.216.34", 0))]
 
 

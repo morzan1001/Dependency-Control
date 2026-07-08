@@ -1,12 +1,4 @@
-"""Tests for backend/app/core/metrics.py.
-
-Covers audit findings for backend_app_core_metrics_py.md:
-  1. _normalize_path must anchor ID substitutions to whole path segments and
-     run the ObjectId rule before the numeric rule, so mixed alphanumeric
-     segments (e.g. urlsafe tokens) and hex ids starting with a digit are not
-     partially mangled into unbounded-cardinality labels.
-  2. track_cache_operation / track_external_api were dead code and removed.
-"""
+"""Tests for metrics path normalization and removed dead helpers."""
 
 from app.core import metrics
 from app.core.metrics import PrometheusMiddleware

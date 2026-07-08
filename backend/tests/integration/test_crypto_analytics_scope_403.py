@@ -1,13 +1,4 @@
-"""
-Regression tests for the centralized ScopeResolutionError handler.
-
-The per-endpoint ``try/except ScopeResolutionError -> HTTPException(403)``
-boilerplate was replaced by a single ``@app.exception_handler`` in
-``app.main``. These tests exercise the crypto-analytics endpoints
-(hotspots + trends) end-to-end and assert that a scope-authorization
-failure still surfaces as HTTP 403 with a ``detail`` body -- i.e. the
-handler is wired up and the error is not leaking as a 500.
-"""
+"""Crypto-analytics scope-authorization failures surface as HTTP 403 (with a detail body) via the app-level exception handler, not 500."""
 
 from datetime import datetime, timedelta, timezone
 

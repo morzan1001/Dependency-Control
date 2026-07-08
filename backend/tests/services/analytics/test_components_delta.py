@@ -7,7 +7,6 @@ from app.services.analytics.components_delta import (
 
 
 def test_identity_strips_version_from_purl():
-    # purl with version → version stripped
     assert component_identity_key({"purl": "pkg:npm/react@17.0.2", "name": "react"}) == ("npm", "react")
 
 
@@ -49,7 +48,6 @@ def test_identity_without_purl_or_type():
 async def test_components_added_removed_changed(db):
     await db["dependencies"].insert_many(
         [
-            # Scan A
             {
                 "_id": "a1",
                 "project_id": "p1",
@@ -70,7 +68,6 @@ async def test_components_added_removed_changed(db):
                 "license": "MIT",
                 "type": "npm",
             },
-            # Scan B
             {
                 "_id": "b1",
                 "project_id": "p1",

@@ -7,7 +7,6 @@ MODULE = "app.api.v1.endpoints.github_instances"
 
 
 def _make_repo_mock(**method_returns):
-    """Create a mock GitHubInstanceRepository with configured async return values."""
     mock_repo = MagicMock()
     for method_name, return_value in method_returns.items():
         setattr(mock_repo, method_name, AsyncMock(return_value=return_value))
@@ -16,13 +15,7 @@ def _make_repo_mock(**method_returns):
 
 class TestGitHubInstancePagination:
     def test_pagination_response_page_reflects_requested_page(self, admin_user):
-        """Regression: build_pagination_response must receive skip, not the page number.
-
-        The GitHub list endpoint is a near-verbatim sibling of the GitLab one; the
-        GitLab endpoint was fixed to pass ``skip`` but the GitHub copy still passed
-        the 1-based ``page`` as the ``skip`` argument, so for page=2, size=100 the
-        reported page collapsed to 1, breaking client-side pagination state.
-        """
+        """build_pagination_response must receive skip, not the 1-based page (else page=2/size=100 collapses to 1)."""
         from app.api.v1.endpoints.github_instances import list_instances
 
         mock_repo = _make_repo_mock(list_all=[], count_all=250)

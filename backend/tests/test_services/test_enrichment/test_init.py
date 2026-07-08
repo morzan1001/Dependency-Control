@@ -1,4 +1,4 @@
-"""Tests for the enrichment package facade (services/enrichment/__init__.py)."""
+"""Tests for the enrichment package facade."""
 
 from unittest.mock import AsyncMock
 
@@ -10,10 +10,7 @@ from app.services.enrichment import enrich_vulnerability_findings
 
 @pytest.mark.asyncio
 async def test_enrich_vulnerability_findings_does_not_close_shared_singleton(monkeypatch):
-    """The enrichment service is a process-lifetime singleton shared by concurrent
-    scan runs and request-time analytics. A completed run must NOT close the shared
-    HTTP client, or concurrent in-flight runs hit "client has been closed" and lose
-    their EPSS/KEV data (audit bug/high #1)."""
+    """A completed run must not close the shared singleton HTTP client, or concurrent runs lose EPSS/KEV data."""
     enrich_mock = AsyncMock()
     close_mock = AsyncMock()
     monkeypatch.setattr(enrichment.vulnerability_enrichment_service, "enrich_findings", enrich_mock)

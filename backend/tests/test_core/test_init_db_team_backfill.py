@@ -1,18 +1,8 @@
-"""Tests for the one-time legacy-team backfill in init_db (W1.2, Finding 8).
+"""Tests for the one-time, idempotent legacy-team GitLab-id backfill in init_db.
 
-Legacy synced teams (created before the (instance, group) composite key existed)
-have a name like "GitLab Group: {path}" but no gitlab_instance_id / gitlab_group_id.
-With the unscoped name fallback removed, the next OIDC sync no longer re-matches
-these teams by name — it would create a NEW team and orphan the legacy one.
-
-The numeric gitlab_group_id is NOT recoverable from any local data (projects store
-gitlab_project_id, never the group's numeric id), so the backfill cannot
-unambiguously resolve the full (instance, group) key from the database alone. The
-conservative, safe behavior is therefore: stamp ONLY the unambiguously resolvable
-gitlab_instance_id (derived from the single instance of the team's linked projects),
-never fabricate a gitlab_group_id, and emit a warning for every legacy team so an
-operator knows it must be reconciled by a live re-sync. The migration must be
-idempotent and must never touch already-tagged teams.
+A legacy synced team ("GitLab Group: {path}" name, no gitlab ids) can only have its
+gitlab_instance_id safely derived from a single linked-project instance; gitlab_group_id
+is not locally recoverable and must never be fabricated. Already-tagged teams stay untouched.
 """
 
 import asyncio
@@ -116,15 +106,9 @@ class TestBackfillSyncedTeamIds:
         assert first == second
 
     def test_per_team_failure_is_isolated_and_loop_continues(self, caplog):
-        """A failure on one team must not abort the loop (Fix 2, availability gap).
-
-        The backfill runs before index creation in init_db; an unhandled raise here
-        propagates through create_indexes and crashes startup, blocking the migration
-        and every subsequent index build. One bad team must be skipped, not fatal.
-        """
+        """A failure on one team must be logged and skipped, not abort the whole backfill loop."""
         db = FakeDatabase()
-        # "bad" sorts before "good" so the failure happens first; the loop must still
-        # reach and stamp the good team afterwards.
+        # "bad" sorts before "good", so the loop must still reach the good team after failing.
         _seed_team(db, "team-bad", "GitLab Group: bad")
         _seed_project(db, "p-bad", "team-bad", gitlab_instance_id="inst-bad", gitlab_project_id=1)
         _seed_team(db, "team-good", "GitLab Group: good")
@@ -140,38 +124,25 @@ class TestBackfillSyncedTeamIds:
         db.teams.update_one = failing_update_one  # type: ignore[method-assign]
 
         with caplog.at_level("ERROR", logger="app.core.init_db"):
-            # Must NOT raise — the failure has to be swallowed and logged.
+            # Must not raise: the failure is swallowed and logged.
             asyncio.run(_backfill_synced_team_gitlab_ids(db))
 
-        # The good team must still have been processed despite the earlier failure.
         assert db.teams._docs["team-good"]["gitlab_instance_id"] == "inst-good"
-        # The failing team must remain untouched.
         assert db.teams._docs["team-bad"].get("gitlab_instance_id") is None
-        # The failure must be surfaced in the logs.
         assert any("team-bad" in r.message for r in caplog.records), (
             f"Per-team failure must be logged. Got: {[r.message for r in caplog.records]}"
         )
 
 
 class TestBackfillProvenance:
-    """W9 / Finding 16 (corrected): one-time, idempotent provenance backfill.
+    """One-time idempotent provenance backfill: stamp Project.team_source but never stamp existing members as gitlab.
 
-    The backfill stamps Project.team_source="gitlab" for projects of synced teams,
-    but it MUST NOT stamp existing team members with source="gitlab". Stamping
-    pre-existing members as 'gitlab' is harmful: a manually-added member of a synced
-    team would then be in the gitlab-sourced subset that the next sync merge REPLACES,
-    silently removing them (reintroducing Finding 16 for existing data). Leaving
-    members unstamped lets them default to 'manual' on read, which the merge PRESERVES.
+    Stamping a pre-existing member 'gitlab' would place a manually-added member in the
+    gitlab-sourced subset the next sync merge replaces, silently removing them. Left
+    unstamped, members default to 'manual' on read and the merge preserves them.
     """
 
     def test_does_not_stamp_gitlab_source_on_existing_synced_team_members(self):
-        """Existing members of a synced team must NOT be tagged source='gitlab'.
-
-        If they were tagged 'gitlab', the next sync merge (which replaces the
-        gitlab-sourced subset) would remove any member GitLab no longer reports —
-        including manually-added members. Leaving them unstamped means they default
-        to 'manual' and the merge preserves them.
-        """
         db = FakeDatabase()
         _seed_team(
             db,
@@ -185,7 +156,6 @@ class TestBackfillProvenance:
         asyncio.run(_backfill_member_and_team_provenance(db))
 
         members = db.teams._docs["t-synced"]["members"]
-        # No member may be stamped 'gitlab' by the backfill.
         assert all(m.get("source") != "gitlab" for m in members), (
             f"Backfill must not mass-stamp members as gitlab; got {members}"
         )
@@ -311,18 +281,15 @@ class TestBackfillProvenance:
 
 
 class TestTeamsUniqueIndexGuard:
-    """Fix 2 (availability): the teams (gitlab_instance_id, gitlab_group_id) unique
-    index build must degrade gracefully if an undetected duplicate exists at startup.
+    """The teams unique compound-index build must degrade gracefully (log + skip) on a startup duplicate.
 
-    create_indexes runs at pod startup; an unhandled DuplicateKeyError / OperationFailure
-    from that ONE index build would propagate and crash the pod into CrashLoopBackOff.
-    The guard must catch it, log, skip that index, and let startup continue.
+    create_indexes runs at pod startup; an unhandled DuplicateKeyError / OperationFailure from that
+    one build would crash the pod into CrashLoopBackOff instead of continuing.
     """
 
     @staticmethod
     def _wrap_teams_index_to_raise(db, exc):
-        """Make the teams collection's unique compound index build raise *exc*,
-        while leaving every other index (and collection) working normally."""
+        """Make only the teams unique compound (instance, group) index build raise *exc*."""
         teams = db["teams"]
         original_create_index = teams.create_index
 

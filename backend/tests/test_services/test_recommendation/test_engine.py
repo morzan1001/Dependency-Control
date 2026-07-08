@@ -123,8 +123,6 @@ def _make_recommendation(
 
 
 class TestSafeExtend:
-    """Tests for _safe_extend - error-safe list extension."""
-
     def test_successful_extension(self):
         recs = []
         _safe_extend(recs, lambda: [_make_recommendation()], "test_module")
@@ -171,8 +169,6 @@ class TestSafeExtend:
 
 
 class TestDeduplicateRecommendations:
-    """Tests for _deduplicate_recommendations - removes duplicates keeping highest score."""
-
     def test_no_duplicates_unchanged(self):
         recs = [
             _make_recommendation(component="pkg-a"),
@@ -228,7 +224,6 @@ class TestDeduplicateRecommendations:
         assert len(result) == 1
 
     def test_empty_component_uses_title_in_key(self):
-        """When component is empty, title should differentiate recommendations."""
         rec_a = _make_recommendation(component="", title="Fix A")
         rec_b = _make_recommendation(component="", title="Fix B")
         result = _deduplicate_recommendations([rec_a, rec_b])
@@ -243,9 +238,7 @@ class TestDeduplicateRecommendations:
         assert len(result) == 1
 
     def test_same_type_component_different_titles_not_deduplicated(self):
-        """Distinct recs sharing type + first component but with different titles
-        (e.g. the four SUPPLY_CHAIN_RISK recs, or per-category FIX_CODE_SECURITY recs)
-        must both survive."""
+        # Same type + first component but different titles must both survive.
         rec_a = _make_recommendation(
             rec_type=RecommendationType.SUPPLY_CHAIN_RISK,
             component="pkg-a",
@@ -260,9 +253,7 @@ class TestDeduplicateRecommendations:
         assert len(result) == 2
 
     def test_same_type_component_title_different_action_not_deduplicated(self):
-        """A cert with both a crypto_cert_expired and a crypto_cert_self_signed finding
-        yields two ROTATE_CERTIFICATE recs with an IDENTICAL title and component; they
-        differ only by action['finding_type'] and must not be merged."""
+        # Same title + component but differing action['finding_type'] must not be merged.
         rec_a = _make_recommendation(
             rec_type=RecommendationType.ROTATE_CERTIFICATE,
             component="cert.pem",
@@ -279,7 +270,6 @@ class TestDeduplicateRecommendations:
         assert len(result) == 2
 
     def test_true_duplicates_still_merged(self):
-        """Recs identical in type + component + title + action are still merged."""
         rec_a = _make_recommendation(
             rec_type=RecommendationType.ROTATE_CERTIFICATE,
             component="cert.pem",
@@ -300,8 +290,6 @@ class TestDeduplicateRecommendations:
 
 
 class TestGenerateRecommendationsEmpty:
-    """Tests for generate_recommendations with empty input."""
-
     @pytest.mark.asyncio
     async def test_none_inputs_returns_empty(self):
         engine = RecommendationEngine()
@@ -318,7 +306,6 @@ class TestGenerateRecommendationsEmpty:
     async def test_no_findings_with_deps_returns_empty_or_dep_recs(self):
         engine = RecommendationEngine()
         result = await engine.generate_recommendations(findings=[], dependencies=[_make_dependency()])
-        # Should return empty or only dependency-hygiene recommendations (no vulns)
         vuln_recs = [
             r
             for r in result
@@ -334,8 +321,6 @@ class TestGenerateRecommendationsEmpty:
 
 
 class TestGenerateRecommendationsSingleVuln:
-    """Single vulnerability finding should generate at least one recommendation."""
-
     @pytest.mark.asyncio
     async def test_single_vuln_generates_recommendation(self):
         engine = RecommendationEngine()
@@ -345,7 +330,6 @@ class TestGenerateRecommendationsSingleVuln:
         result = await engine.generate_recommendations(findings=[finding], dependencies=[dep])
 
         assert len(result) >= 1
-        # At least one should be vulnerability-related
         vuln_types = {
             RecommendationType.DIRECT_DEPENDENCY_UPDATE,
             RecommendationType.TRANSITIVE_FIX_VIA_PARENT,
@@ -369,8 +353,6 @@ class TestGenerateRecommendationsSingleVuln:
 
 
 class TestGenerateRecommendationsMultipleTypes:
-    """Multiple finding types should generate multiple recommendations."""
-
     @pytest.mark.asyncio
     async def test_vuln_and_secret_and_sast(self):
         engine = RecommendationEngine()
@@ -383,7 +365,6 @@ class TestGenerateRecommendationsMultipleTypes:
 
         result = await engine.generate_recommendations(findings=findings, dependencies=[dep])
 
-        # Should have at least 2 distinct recommendation types
         rec_types = {r.type for r in result}
         assert len(rec_types) >= 2
 
@@ -402,11 +383,8 @@ class TestGenerateRecommendationsMultipleTypes:
 
 
 class TestGenerateRecommendationsDeduplication:
-    """Deduplication should remove duplicates keeping highest score."""
-
     @pytest.mark.asyncio
     async def test_duplicate_vuln_findings_deduplicated(self):
-        """Two identical vuln findings for same component should not double recommendations."""
         engine = RecommendationEngine()
         finding1 = _make_vuln_finding(finding_id="CVE-2024-0001")
         finding2 = _make_vuln_finding(finding_id="CVE-2024-0001")
@@ -415,14 +393,11 @@ class TestGenerateRecommendationsDeduplication:
         result = await engine.generate_recommendations(findings=[finding1, finding2], dependencies=[dep])
 
         direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
-        # Should have at most 1 recommendation for this component (grouped by component)
         pkg_recs = [r for r in direct_recs if "pkg-name" in r.affected_components]
         assert len(pkg_recs) <= 1
 
 
 class TestGenerateRecommendationsSorting:
-    """Results should be sorted by score descending."""
-
     @pytest.mark.asyncio
     async def test_results_sorted_by_score_descending(self):
         engine = RecommendationEngine()
@@ -452,18 +427,14 @@ class TestGenerateRecommendationsSorting:
 
 
 class TestGenerateRecommendationsRegression:
-    """Previous scan findings enable regression detection."""
-
     @pytest.mark.asyncio
     async def test_previous_scan_findings_enables_regression(self):
         engine = RecommendationEngine()
-        # Current findings: many new vulns
         current_findings = [
             _make_vuln_finding(finding_id=f"CVE-2024-{i:04d}", component=f"pkg-{i}", purl=f"pkg:pypi/pkg-{i}@1.0.0")
             for i in range(15)
         ]
         deps = [_make_dependency(name=f"pkg-{i}", purl=f"pkg:pypi/pkg-{i}@1.0.0") for i in range(15)]
-        # Empty previous scan = all findings are new
         previous_findings = []
 
         result = await engine.generate_recommendations(
@@ -472,12 +443,10 @@ class TestGenerateRecommendationsRegression:
             previous_scan_findings=previous_findings,
         )
 
-        # Should have at least some recommendations
         assert len(result) >= 1
 
     @pytest.mark.asyncio
     async def test_no_previous_scan_no_regression_recs(self):
-        """When previous_scan_findings is None, regression analysis should not run."""
         engine = RecommendationEngine()
         finding = _make_vuln_finding()
         dep = _make_dependency()
@@ -493,24 +462,18 @@ class TestGenerateRecommendationsRegression:
 
 
 class TestGenerateRecommendationsErrorResilience:
-    """Error in one module should not crash the whole engine."""
-
     @pytest.mark.asyncio
     async def test_engine_does_not_crash_with_malformed_finding(self):
-        """A finding with unexpected structure should not crash the engine."""
         engine = RecommendationEngine()
         malformed = {"type": "vulnerability", "id": None}
         normal = _make_vuln_finding(component="good-pkg", purl="pkg:pypi/good-pkg@1.0.0")
         dep = _make_dependency(name="good-pkg", purl="pkg:pypi/good-pkg@1.0.0")
 
-        # Should not raise, even with malformed finding
         result = await engine.generate_recommendations(findings=[malformed, normal], dependencies=[dep])
         assert isinstance(result, list)
 
 
 class TestGenerateRecommendationsSourceTarget:
-    """Source target (Docker image name) should be passed through."""
-
     @pytest.mark.asyncio
     async def test_source_target_in_base_image_rec(self):
         engine = RecommendationEngine()
@@ -543,8 +506,6 @@ class TestGenerateRecommendationsSourceTarget:
 
 
 class TestGenerateRecommendationsCrossProject:
-    """Cross-project data should enable cross-project analysis."""
-
     @pytest.mark.asyncio
     async def test_cross_project_data_does_not_crash(self):
         engine = RecommendationEngine()
@@ -560,8 +521,6 @@ class TestGenerateRecommendationsCrossProject:
 
 
 class TestGenerateRecommendationsScanHistory:
-    """Scan history should enable recurring issue analysis."""
-
     @pytest.mark.asyncio
     async def test_scan_history_does_not_crash(self):
         engine = RecommendationEngine()
@@ -577,8 +536,7 @@ class TestGenerateRecommendationsScanHistory:
 
 
 class TestGenerateRecommendationsTyposquatting:
-    """Typosquat findings (emitted as malware with details.imitated_package)
-    should produce TYPOSQUAT_DETECTED recommendations with populated context."""
+    # Typosquat findings are malware with details.imitated_package and produce TYPOSQUAT_DETECTED recs.
 
     @staticmethod
     def _make_typosquat_finding(component="reqeusts", imitated="requests", similarity=0.95):
@@ -601,7 +559,6 @@ class TestGenerateRecommendationsTyposquatting:
 
         typo_recs = [r for r in result if r.type == RecommendationType.TYPOSQUAT_DETECTED]
         assert len(typo_recs) == 1
-        # The '(looks like: X)' context must be populated from imitated_package.
         assert any("reqeusts (looks like: requests)" == c for c in typo_recs[0].affected_components)
 
     @pytest.mark.asyncio
@@ -621,13 +578,10 @@ class TestGenerateRecommendationsTyposquatting:
 
         typo_recs = [r for r in result if r.type == RecommendationType.TYPOSQUAT_DETECTED]
         assert len(typo_recs) == 0
-        # A malware finding still surfaces as a malware recommendation.
         assert any(r.type == RecommendationType.MALWARE_DETECTED for r in result)
 
 
 class TestEngineInitialization:
-    """Tests for RecommendationEngine initialization."""
-
     def test_engine_has_outdated_threshold(self):
         engine = RecommendationEngine()
         assert engine.outdated_threshold_days > 0

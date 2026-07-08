@@ -1,15 +1,4 @@
-"""
-Format-coverage tests for compliance reports.
-
-These tests exercise the end-to-end pipeline (framework evaluator + renderer +
-artifact store + HTTP download) for every text format by:
-    1. Patching `_gather_inputs` to return a minimal EvaluationInput. The fake
-       DB doesn't support `async for` over a `_FakeCursor`, so we cannot let
-       the real `_gather_inputs` run.
-    2. Patching `_store_artifact` to write into an in-memory dict.
-    3. Patching `AsyncIOMotorGridFSBucket` in the endpoint module so the
-       download endpoint reads from that same dict.
-"""
+"""Format-coverage tests for the compliance report pipeline across text formats."""
 
 import asyncio
 
@@ -44,8 +33,7 @@ def _install_fake_pipeline(monkeypatch):
     store: dict = {}
 
     async def _fake_store(self, db_, artifact_bytes, filename, mime_type):
-        # Mirror production: GridFS hands back an ObjectId, which the engine
-        # serialises to its string form before persisting on the report.
+        # Mirror production: GridFS returns an ObjectId that the engine serialises to its string form before persisting.
         from bson import ObjectId
 
         key = str(ObjectId())

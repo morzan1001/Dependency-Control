@@ -5,8 +5,6 @@ import { MemoryRouter, Routes, Route } from 'react-router-dom'
 import LoginCallback from '../LoginCallback'
 import Login from '../Login'
 
-// --- Mocks -----------------------------------------------------------------
-
 const noopMutation = () => ({ mutate: vi.fn(), isPending: false })
 
 vi.mock('@/hooks/queries/use-auth', () => ({
@@ -21,8 +19,7 @@ vi.mock('@/context/useAuth', () => ({
   useAuth: () => ({ login: vi.fn(), isAuthenticated: false }),
 }))
 
-// The callback reads globalThis.location.hash directly; capture the original so
-// each test can drive a specific OIDC redirect payload.
+// The callback reads globalThis.location.hash directly; capture the original to restore per test.
 const originalHash = globalThis.location.hash
 
 function renderCallbackFlow() {
@@ -50,8 +47,7 @@ describe('LoginCallback failure messaging', () => {
 
     renderCallbackFlow()
 
-    // Regression: the callback must hand Login a state key it actually renders,
-    // otherwise the OIDC failure reason is silently dropped.
+    // Login must receive a state key it actually renders, else the failure reason is dropped.
     expect(screen.getByText('No token provided')).toBeInTheDocument()
   })
 

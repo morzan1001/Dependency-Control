@@ -1,8 +1,4 @@
-"""Tests for GitHubService OIDC validation.
-
-Tests instance-aware initialization, cache key generation, and OIDC token validation.
-Mirrors the pattern in test_gitlab.py.
-"""
+"""Tests for GitHubService OIDC validation."""
 
 import asyncio
 from unittest.mock import AsyncMock, patch
@@ -51,9 +47,7 @@ class TestGitHubServiceInitialization:
         assert service.api_url == "https://github.corp.example.com/api/v3"
 
     def test_ghes_host_with_github_com_prefix_not_misrouted(self):
-        """SECURITY: a GHES host whose name merely contains 'github.com' as a
-        substring must resolve to its own /api/v3 endpoint, never the public
-        api.github.com (which would leak the enterprise PAT)."""
+        """A GHES host whose name merely contains 'github.com' as a substring must resolve to its own /api/v3, never the public api.github.com (which would leak the enterprise PAT)."""
         for ghes_url in (
             "https://github.company.com",
             "https://github.commerce.io",
@@ -107,8 +101,7 @@ class TestGitHubServiceOIDC:
                     assert call_kwargs["audience"] == "dependency-control"
 
     def test_rejected_when_no_audience_configured(self):
-        """SECURITY (Finding 7 / W1.1): an instance without a configured
-        oidc_audience must reject any token (fail closed), never decode it."""
+        """An instance without a configured oidc_audience must reject any token (fail closed), never decode it."""
         instance = make_github_instance(oidc_audience=None)
         service = GitHubService(instance)
 

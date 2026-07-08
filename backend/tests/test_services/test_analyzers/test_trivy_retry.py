@@ -1,10 +1,4 @@
-"""Tests for the TrivyAnalyzer retry policy.
-
-Regression test: the "EOF" retryable pattern was stored uppercase while
-``_is_retryable_error`` lowercases the stderr before matching, so a transient
-``unexpected EOF`` from the Trivy server could never trigger a retry. These
-tests pin that EOF (and the other transient patterns) are recognised.
-"""
+"""Tests for the TrivyAnalyzer retry policy: transient stderr patterns (including EOF) trigger retries."""
 
 import pytest
 

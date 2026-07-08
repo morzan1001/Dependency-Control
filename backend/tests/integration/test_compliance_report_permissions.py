@@ -40,7 +40,6 @@ async def test_rate_limit_many_pending(
     db,
     owner_auth_headers_proj,
 ):
-    """Seed 10 pending reports directly, then POST an 11th and expect 429."""
     from datetime import datetime, timezone
 
     from app.models.compliance_report import ComplianceReport

@@ -1,9 +1,4 @@
-"""Tests for ArchiveMetadataRepository.
-
-Tests query logic and CRUD operations using mocked MongoDB.
-ArchiveMetadataRepository extends BaseRepository which uses db[collection_name]
-(dict access), so we configure __getitem__ on the mock db.
-"""
+"""Tests for ArchiveMetadataRepository query and CRUD logic with mocked MongoDB."""
 
 import asyncio
 from datetime import datetime, timezone
@@ -16,7 +11,6 @@ from tests.mocks.mongodb import create_mock_collection
 def _make_mock_db(collection):
     """Create a mock database that supports dict-style access for BaseRepository."""
     db = MagicMock()
-    # BaseRepository.__init__ does: self.collection = db[self.collection_name]
     db.__getitem__ = MagicMock(return_value=collection)
     return db
 

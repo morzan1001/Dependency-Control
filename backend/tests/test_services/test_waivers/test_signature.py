@@ -157,8 +157,7 @@ class TestNonLocationFindings:
 
 
 def test_compute_match_signature_from_doc_recovers_bearer_sast():
-    # A persisted finding doc with NO "match" field but with the merged SAST details
-    # the aggregator would have stored. Recompute must yield the same signature shape.
+    # persisted doc with no "match" field must recompute to the same signature shape
     doc = {
         "finding_id": "BEARER-java_lang_hardcoded_secret-a.py-94",
         "component": "a.py",
@@ -203,7 +202,7 @@ def test_sast_signature_collects_all_scanner_rule_keys():
     sig = compute_match_signature_from_doc(doc)
     assert sig is not None
     assert sig.rule_keys == ["bearer:X", "opengrep:X"]
-    assert sig.rule_key in sig.rule_keys  # primary is one of them
+    assert sig.rule_key in sig.rule_keys
 
 
 def test_iac_signature_rule_keys_is_single():
@@ -219,8 +218,7 @@ def test_iac_signature_rule_keys_is_single():
 
 
 def test_finding_and_raw_doc_produce_same_signature():
-    """Cross-path equivalence: compute_match_signature(Finding) == compute_match_signature_from_doc(doc)
-    for the same logical finding.  Guards against a silent finding_id→id field-name mismatch."""
+    """Both signature code paths must agree; guards against a finding_id/id field-name mismatch."""
     finding = _sast_merged("src/auth.py", 94, "bearer", "java_lang_hardcoded_secret", "edb203_2", 'API_KEY="s3cr3t"')
     doc = {
         "finding_id": finding.id,

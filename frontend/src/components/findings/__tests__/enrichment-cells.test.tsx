@@ -3,8 +3,7 @@ import { describe, it, expect } from 'vitest'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { EpssCell, KevCell, ExploitMaturityBadge } from '../enrichment-cells'
 
-// The tooltip primitives require a provider ancestor; the real tables hoist a
-// single one around the card, so mirror that here.
+// Tooltip primitives require a provider ancestor.
 function renderCell(node: React.ReactElement) {
   return render(<TooltipProvider>{node}</TooltipProvider>)
 }

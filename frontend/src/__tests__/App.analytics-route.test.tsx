@@ -6,9 +6,7 @@ import { ANALYTICS_ROUTE_PERMISSIONS } from '../lib/constants'
 import { RequirePermission } from '../context'
 import { AuthContext, type AuthContextType } from '../context/auth-context'
 
-// Renders the exact /analytics route gate used in App.tsx for a user holding
-// only `perms`, and reports whether they land on the Analytics page or get
-// redirected to /dashboard.
+// Renders the /analytics route gate from App.tsx for a user holding only `perms`.
 function renderAnalyticsGate(perms: string[]) {
   const authValue: AuthContextType = {
     isAuthenticated: true,
@@ -40,16 +38,13 @@ function renderAnalyticsGate(perms: string[]) {
 
 describe('/analytics route permission gate', () => {
   it('lets a user with only analytics:recommendations reach the Analytics page', () => {
-    // Regression: this permission was omitted from the gate, wrongly redirecting
-    // users who have two working tabs (Recommendations + Update Frequency).
     renderAnalyticsGate(['analytics:recommendations'])
     expect(screen.getByText('ANALYTICS PAGE')).toBeInTheDocument()
     expect(screen.queryByText('DASHBOARD PAGE')).not.toBeInTheDocument()
   })
 
   it('redirects a user with only analytics:dependencies (which renders no tabs)', () => {
-    // analytics:dependencies is never checked in Analytics.tsx, so passing the
-    // gate would drop the user on an empty page. It must no longer grant access.
+    // analytics:dependencies renders no tabs in Analytics.tsx, so it must not grant access.
     renderAnalyticsGate(['analytics:dependencies'])
     expect(screen.getByText('DASHBOARD PAGE')).toBeInTheDocument()
     expect(screen.queryByText('ANALYTICS PAGE')).not.toBeInTheDocument()

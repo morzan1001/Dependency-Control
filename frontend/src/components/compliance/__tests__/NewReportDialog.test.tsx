@@ -47,17 +47,14 @@ describe("NewReportDialog", () => {
 
   it("hides Global scope when user lacks system:manage and analytics:global", () => {
     withClient(<NewReportDialog open onClose={() => {}} />);
-    // Scope label is rendered; Global option should NOT be reachable via getAllByText
     expect(screen.queryByText(/^Global$/)).not.toBeInTheDocument();
   });
 
   it("shows Global scope option when user has system:manage", () => {
     permissionSet.add("system:manage");
     withClient(<NewReportDialog open onClose={() => {}} />);
-    // Open the Scope select trigger
     const triggers = screen.getAllByRole("combobox");
     fireEvent.click(triggers[0]);
-    // Options rendered in a portal — use findAllByText to wait if needed
     expect(screen.getAllByText(/Global/).length).toBeGreaterThan(0);
   });
 });

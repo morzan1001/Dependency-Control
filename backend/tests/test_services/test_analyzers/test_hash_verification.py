@@ -1,12 +1,4 @@
-"""Tests for the hash verification analyzer.
-
-Regression coverage for the PyPI multi-file hash bug: a released package
-ships one entry per file in ``data['urls']`` (sdist + one wheel per
-platform), each with its own sha256. The verifier must collect EVERY
-file's digest per algorithm, otherwise an SBOM built on a platform whose
-wheel is not the first ``urls`` entry gets a false CRITICAL "tampering"
-finding.
-"""
+"""Tests that the PyPI hash verifier collects every file's digest per algorithm, not just the first."""
 
 from typing import Any, Dict
 
@@ -34,16 +26,16 @@ class _FakeClient:
         return _FakeResponse(self._payload, self._status_code)
 
 
-# sha256 digests for three different released files of the same version.
+# sha256 digests for three released files of the same version.
 _MAC_WHEEL_SHA256 = "a" * 64
 _MANYLINUX_WHEEL_SHA256 = "b" * 64
 _SDIST_SHA256 = "c" * 64
 
 _PYPI_PAYLOAD = {
     "urls": [
-        {"digests": {"sha256": _MAC_WHEEL_SHA256}},  # macOS wheel (first)
-        {"digests": {"sha256": _MANYLINUX_WHEEL_SHA256}},  # manylinux wheel
-        {"digests": {"sha256": _SDIST_SHA256}},  # sdist
+        {"digests": {"sha256": _MAC_WHEEL_SHA256}},
+        {"digests": {"sha256": _MANYLINUX_WHEEL_SHA256}},
+        {"digests": {"sha256": _SDIST_SHA256}},
     ]
 }
 
@@ -55,7 +47,6 @@ async def test_fetch_pypi_collects_all_file_digests():
 
     result = await analyzer._fetch_pypi_registry_hashes(client, "numpy", "1.26.4")
 
-    # Every released file's sha256 must be retained, not just the first.
     assert set(result["sha256"]) == {
         _MAC_WHEEL_SHA256,
         _MANYLINUX_WHEEL_SHA256,
@@ -65,7 +56,7 @@ async def test_fetch_pypi_collects_all_file_digests():
 
 @pytest.mark.asyncio
 async def test_non_first_wheel_hash_is_verified_not_flagged():
-    """SBOM carries the manylinux wheel hash (2nd urls entry) -> must verify."""
+    """The manylinux wheel hash (2nd urls entry) must verify, not be flagged."""
     analyzer = HashVerificationAnalyzer()
     client = _FakeClient(_PYPI_PAYLOAD)
 

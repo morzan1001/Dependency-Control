@@ -48,8 +48,7 @@ def make_failed_payload():
 
 
 def make_policy_payload(event="crypto_policy.changed"):
-    """Mirror the flat payload built by audit.history._dispatch_webhook:
-    top-level project_id/actor/change_summary, no nested project/scan."""
+    """Flat policy payload: top-level project_id/actor/change_summary, no nested project/scan."""
     return {
         "event": event,
         "timestamp": "2026-05-04T10:00:00Z",
@@ -131,9 +130,7 @@ class TestFormatPayloadTeamsWebhook:
 
 
 class TestFormatPayloadPolicyEvents:
-    """Policy-changed events use a flat payload (no nested project/scan). The
-    Teams card must surface the actor, change summary and scope rather than
-    falling through to an empty 'Unknown Project' generic card."""
+    """Flat policy payloads must render a detailed Teams card, not the generic 'Unknown Project' fallback."""
 
     def _card_text(self, result: dict) -> str:
         assert result["type"] == "message"
@@ -235,8 +232,7 @@ class TestLogWebhookDeliveryProjectId:
 
 
 class TestNonBlockingSemantics:
-    """safe_trigger_webhooks is the single source of non-blocking semantics;
-    trigger_webhooks itself may propagate an unexpected dispatch error."""
+    """Only safe_trigger_webhooks swallows errors; trigger_webhooks propagates them."""
 
     @pytest.mark.asyncio
     async def test_trigger_webhooks_propagates_internal_error(self):
@@ -249,12 +245,10 @@ class TestNonBlockingSemantics:
     async def test_safe_trigger_webhooks_swallows_errors(self):
         service = WebhookService()
         with patch.object(service, "trigger_webhooks", new=AsyncMock(side_effect=RuntimeError("boom"))):
-            # Must not raise.
             await service.safe_trigger_webhooks(MagicMock(), "scan.completed", {}, "p1", context="test")
 
 
 def _make_mock_http_client(status_code: int = 200):
-    """Return a mock InstrumentedAsyncClient context manager with the given response status."""
     mock_response = MagicMock()
     mock_response.status_code = status_code
     mock_client = AsyncMock()
@@ -265,8 +259,6 @@ def _make_mock_http_client(status_code: int = 200):
 
 
 class TestTestWebhookForTeams:
-    """Verify that test_webhook() sends the accent-styled test card for Teams webhooks."""
-
     @pytest.mark.asyncio
     async def test_sends_test_card_regardless_of_event_type(self):
         webhook = make_webhook("teams")

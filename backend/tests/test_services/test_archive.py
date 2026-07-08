@@ -14,7 +14,7 @@ MODULE = "app.services.archive"
 
 
 # ---------------------------------------------------------------------------
-# Helpers — copy these verbatim from the existing test_archive.py
+# Helpers
 # ---------------------------------------------------------------------------
 
 
@@ -347,11 +347,6 @@ async def test_restore_scan_returns_none_when_no_metadata(archive_env):
     assert result is None
 
 
-# ---------------------------------------------------------------------------
-# Regression tests for follow-up review bugs #2–#5
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_replay_labels_mongo_error_not_as_s3_error():
     """A PyMongoError during replay must produce reason=UNKNOWN, not S3_ERROR."""
@@ -402,7 +397,7 @@ async def test_replay_labels_invalid_tag_as_encryption():
 
 @pytest.mark.asyncio
 async def test_restore_deletes_metadata_even_when_s3_delete_fails(archive_env):
-    """Bug #3: S3 delete failure must NOT leave a zombie metadata record."""
+    """S3 delete failure must NOT leave a zombie metadata record."""
     scan_doc = _make_scan_doc()
     findings = [{"_id": "f1", "scan_id": "scan-1", "severity": "CRITICAL"}]
     db = _make_mock_db(scan_doc=scan_doc, findings=findings)
@@ -435,7 +430,7 @@ async def test_restore_deletes_metadata_even_when_s3_delete_fails(archive_env):
 
 @pytest.mark.asyncio
 async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, monkeypatch):
-    """Bug #4: when _replay_bundle fails, partial scan + collections must be cleaned up."""
+    """When _replay_bundle fails, partial scan + collections must be cleaned up."""
     meta = _make_archive_metadata()
     db = _make_mock_db()
     db.scans.find_one = AsyncMock(return_value=None)  # scan not yet present
@@ -473,7 +468,7 @@ async def test_restore_rolls_back_partial_state_on_replay_failure(archive_env, m
 
 @pytest.mark.asyncio
 async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, monkeypatch):
-    """Bug #5: a DuplicateKeyError from repo.create must be labeled ALREADY_EXISTS, not UNKNOWN."""
+    """A DuplicateKeyError from repo.create must be labeled ALREADY_EXISTS, not UNKNOWN."""
     from pymongo.errors import DuplicateKeyError
 
     from app.core.metrics import archive_failures_total
@@ -508,14 +503,9 @@ async def test_archive_scan_labels_duplicate_key_as_already_exists(archive_env, 
     assert "unknown" not in seen_reasons
 
 
-# ---------------------------------------------------------------------------
-# Regression tests for follow-up review bugs #6–#7
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
 async def test_restore_rolls_back_when_gridfs_restore_fails(archive_env, monkeypatch):
-    """Bug #6: GridFS-fail path must also trigger _rollback_partial_restore."""
+    """GridFS-fail path must also trigger _rollback_partial_restore."""
     meta = _make_archive_metadata()
     db = _make_mock_db()
     db.scans.find_one = AsyncMock(return_value=None)  # no pre-existing scan
@@ -560,7 +550,7 @@ async def test_restore_rolls_back_when_gridfs_restore_fails(archive_env, monkeyp
 
 @pytest.mark.asyncio
 async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypatch):
-    """Bug #7: delete_by_scan_id failure after restore must NOT bubble up — log and return success."""
+    """delete_by_scan_id failure after restore must NOT bubble up — log and return success."""
     meta = _make_archive_metadata()
     db = _make_mock_db()
     db.scans.find_one = AsyncMock(return_value=None)
@@ -590,11 +580,6 @@ async def test_restore_succeeds_when_metadata_delete_fails(archive_env, monkeypa
     assert result.scan_id == "scan-1"
 
 
-# ---------------------------------------------------------------------------
-# Regression tests for audit findings 2026-07-07 (archive.py findings #1,#3,#4,#5)
-# ---------------------------------------------------------------------------
-
-
 async def _aiter(items):
     for item in items:
         yield item
@@ -602,11 +587,7 @@ async def _aiter(items):
 
 @pytest.mark.asyncio
 async def test_archive_aborts_when_gridfs_read_fails(archive_env, monkeypatch):
-    """Finding #1: a GridFS read failure must FAIL the archive (no silent drop).
-
-    Otherwise the archive reports success with the SBOM missing and housekeeping
-    then permanently deletes the source scan + its GridFS files.
-    """
+    """A GridFS read failure must fail the archive, not silently drop the SBOM and let housekeeping delete the source scan."""
     scan_doc = _make_scan_doc(
         sbom_refs=[
             {
@@ -639,12 +620,7 @@ async def test_archive_aborts_when_gridfs_read_fails(archive_env, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_restore_succeeds_when_encryption_flag_toggled_after_plaintext_archive(archive_env, monkeypatch):
-    """Finding #3: restore must sniff the bundle, not read the live global flag.
-
-    A bundle archived while encryption was OFF (plain gzip) must still restore
-    after an operator turns ARCHIVE_ENCRYPTION_KEY on. The old code piped plain
-    gzip through decrypt_stream and failed with 'Invalid encryption magic'.
-    """
+    """Restore must sniff the bundle, not the live global flag: a plaintext bundle must still restore after encryption is enabled."""
     scan_doc = _make_scan_doc()
     findings = [{"_id": "f1", "scan_id": "scan-1", "severity": "CRITICAL"}]
     db = _make_mock_db(scan_doc=scan_doc, findings=findings)
@@ -676,11 +652,7 @@ async def test_restore_succeeds_when_encryption_flag_toggled_after_plaintext_arc
 
 @pytest.mark.asyncio
 async def test_replay_rejects_unknown_collection_marker():
-    """Finding #4: a bundle marker naming a non-allowlisted collection must abort.
-
-    The footer is a plain sha256 (not an HMAC), so a crafted marker like
-    {"collection": "users"} must not be replayed into arbitrary collections.
-    """
+    """A marker naming a non-allowlisted collection must abort: the footer is a plain sha256 (not HMAC), so a crafted marker must not be replayed into arbitrary collections."""
     from app.services.archive import _replay_bundle
     from app.services.archive_bundle import BundleFrames, BundleStats
 
@@ -703,12 +675,7 @@ async def test_replay_rejects_unknown_collection_marker():
 
 @pytest.mark.asyncio
 async def test_replay_maps_bad_version_to_version_mismatch():
-    """Finding #5: version validation happens once, in read_bundle_frames.
-
-    A header with an unsupported version must surface as VERSION_MISMATCH via
-    the reader's ValueError, confirming the deleted duplicate check in
-    _handle_header_event is unnecessary.
-    """
+    """An unsupported header version must surface as VERSION_MISMATCH via the reader's ValueError."""
     from app.services.archive import _replay_bundle
 
     header = json.dumps({"version": 99, "scan": {"_id": "x"}}).encode() + b"\n"

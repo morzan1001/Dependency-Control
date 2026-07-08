@@ -1,17 +1,10 @@
-"""Tests for app.schemas.system.
-
-Focus: SystemSettingsResponse must NOT echo stored secrets back to clients
-(Finding: SystemSettingsResponse leaked every integration credential in
-GET/PUT /system/settings responses). Instead it exposes ``*_configured``
-booleans, mirroring the GitLab/GitHub instance ``token_configured`` convention.
-"""
+"""SystemSettingsResponse hides stored secrets and exposes ``*_configured`` booleans instead."""
 
 from fastapi.encoders import jsonable_encoder
 
 from app.models.system import SystemSettings
 from app.schemas.system import SystemSettingsResponse
 
-# Every secret field that used to be echoed back, with a sentinel value.
 SECRET_FIELDS = {
     "github_token": "ghp-SECRET",
     "smtp_password": "smtp-SECRET",
@@ -31,10 +24,8 @@ def _response_from_secrets():
 
 
 def test_response_does_not_echo_secret_values():
-    """No secret value may appear anywhere in the serialized response."""
     resp = _response_from_secrets()
 
-    # Serialize the way FastAPI does for the response body.
     for serialized in (resp.model_dump(), jsonable_encoder(resp)):
         blob = str(serialized)
         for field, value in SECRET_FIELDS.items():
@@ -62,7 +53,6 @@ def test_response_configured_booleans_false_when_unset():
 
 
 def test_response_still_exposes_non_secret_fields():
-    """Non-sensitive config must still round-trip so the settings UI works."""
     settings = SystemSettings(
         instance_name="My Instance",
         smtp_host="mail.example.com",

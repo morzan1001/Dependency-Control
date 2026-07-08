@@ -1,10 +1,4 @@
-"""Compliance applicability must be control-specific (improvement audit #2).
-
-A control is eligible for PASSED only when at least one crypto asset falls
-within the SUBJECT scope of one of the control's mapped rules. An RSA-key-size
-control must NOT report PASSED on a project that contains only AES — that is a
-false attestation.
-"""
+"""Compliance applicability is control-specific: a control only PASSES when a crypto asset falls within one of its mapped rules' subject scope."""
 
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
@@ -87,15 +81,14 @@ def test_no_assets_is_not_applicable():
 
 
 def test_fallback_to_inventory_when_no_scoping_rules_available():
-    """If the control's rules aren't in the effective policy, fall back to
-    inventory presence (don't hide the control)."""
+    """When the control's rules aren't in the effective policy, fall back to inventory presence."""
     aes = _asset(name="AES", primitive=CryptoPrimitive.BLOCK_CIPHER)
     data = EvaluationInput(
         resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p"]),
         scope_description="user 'alice'",
         crypto_assets=[aes],
         findings=[],
-        policy_rules=[],  # control's rule not present in policy
+        policy_rules=[],
         policy_version=1,
         iana_catalog_version=1,
         scan_ids=["s1"],
@@ -103,7 +96,7 @@ def test_fallback_to_inventory_when_no_scoping_rules_available():
     assert _is_applicable(_RSA_CONTROL, data) is True
 
 
-# --- finding #1: controls backed only by DISABLED policy rules must never PASS ---
+# Controls backed only by disabled policy rules must never PASS.
 
 _DISABLED_RSA_RULE = CryptoRule(
     rule_id="nist-131a-rsa-min-2048",
@@ -133,8 +126,7 @@ def _input_with_rules(assets, rule_dumps, *, findings=None):
 
 
 def test_control_backed_only_by_disabled_rule_is_not_applicable():
-    """A disabled rule is never evaluated by the analyzer, so no finding can
-    ever exist for it. Reporting PASSED would be a false attestation."""
+    """A disabled rule is never evaluated, so no finding can exist and PASSED would be a false attestation."""
     rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
     data = _input_with_rules([rsa], [_DISABLED_RSA_RULE.model_dump()])
     assert _is_applicable(_RSA_CONTROL, data) is False
@@ -154,7 +146,7 @@ def test_enabled_rule_still_applicable_alongside_disabled_duplicate():
     assert _is_applicable(_RSA_CONTROL, data) is True
 
 
-# --- finding #2: default_evaluator must honour details.matched_rules ---
+# default_evaluator must honour details.matched_rules.
 
 _MD5_CONTROL = ControlDefinition(
     control_id="NIST-131A-md5",
@@ -168,9 +160,7 @@ _MD5_CONTROL = ControlDefinition(
 
 
 def test_evaluator_matches_finding_via_matched_rules():
-    """A deduped finding leads with the strictest rule (bsi-02102-md5) but
-    records the NIST rule under details.matched_rules; the NIST control must
-    still see it and report FAILED, not PASSED."""
+    """The NIST control must FAIL on a deduped finding that records its rule under details.matched_rules."""
     finding = {
         "id": "f1",
         "type": "crypto_weak_algorithm",

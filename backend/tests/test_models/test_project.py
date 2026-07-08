@@ -25,7 +25,7 @@ class TestProjectModel:
         assert len(project.id) > 0
 
     def test_team_source_defaults_to_none(self):
-        # Finding 18: provenance of how team_id was last set. None = unknown/legacy.
+        # None marks unknown provenance for how team_id was last set.
         project = Project(name="test", owner_id="user-1")
         assert project.team_source is None
 
@@ -66,9 +66,6 @@ class TestScanModel:
         assert scan.pinned is False
 
     def test_pinned_survives_hydration_and_serialization(self):
-        # Regression: pin/protected state is persisted on scan docs (pin endpoints,
-        # housekeeping, archive restore) but was stripped from every scan API
-        # response because the Scan model omitted the field.
         doc = {"_id": "scan-1", "project_id": "proj-1", "branch": "main", "pinned": True}
         scan = Scan(**doc)
         assert scan.pinned is True

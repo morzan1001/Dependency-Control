@@ -29,7 +29,7 @@ def test_framework_identity():
     assert fw.name.startswith("NIST SP 800-131A")
     assert fw.version
     assert "csrc.nist.gov" in fw.source_url
-    assert len(fw.controls) >= 5  # at least 5 seed rules exist in Phase-1 yaml
+    assert len(fw.controls) >= 5  # at least 5 seed rules exist
 
 
 def test_passing_evaluation_with_no_findings():
@@ -38,13 +38,12 @@ def test_passing_evaluation_with_no_findings():
         _eval_input(
             findings=[],
             assets=[
-                # Give at least one asset so controls aren't ALL not_applicable
+                # at least one asset so controls aren't all not_applicable
                 {"name": "AES", "asset_type": "algorithm"},
             ],
         )
     )
     assert isinstance(result, FrameworkEvaluation)
-    # No findings -> no control failed
     assert result.summary["failed"] == 0
 
 
@@ -64,7 +63,6 @@ def test_failing_control_on_md5_finding():
         c for c in result.controls if c.status == ControlStatus.FAILED.value or c.status == ControlStatus.FAILED
     ]
     assert len(failed_controls) >= 1
-    # Control referencing rule_id nist-131a-md5 is failed
     md5_control = next(
         c for c in result.controls if "md5" in c.control_id.lower() or "nist-131a-md5" in c.description.lower()
     )

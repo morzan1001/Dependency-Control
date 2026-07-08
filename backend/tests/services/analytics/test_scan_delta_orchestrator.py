@@ -156,8 +156,7 @@ async def test_dispatch_rejects_unknown_severity():
 
 @pytest.mark.asyncio
 async def test_dispatch_rejects_unknown_severity_preserves_user_casing():
-    """Error message should echo the user-typed value, not the lowercased
-    canonical form, so typos like ?severity=CRITICLA round-trip readably."""
+    """Error echoes the user-typed value, not the lowercased canonical form, so typos round-trip readably."""
     with pytest.raises(InvalidDeltaQuery, match="CRITICLA"):
         await compute_scan_delta_dispatch(
             db=None,
@@ -175,7 +174,6 @@ async def test_dispatch_rejects_unknown_severity_preserves_user_casing():
 
 @pytest.mark.asyncio
 async def test_dispatch_accepts_uppercase_severity():
-    """severity=['CRITICAL'] must pass validation (case-insensitive)."""
     with patch(
         "app.services.analytics.scan_delta.compute_findings_delta",
         new=AsyncMock(return_value="findings-result"),

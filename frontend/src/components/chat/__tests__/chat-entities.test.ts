@@ -14,10 +14,6 @@ const toolCall = (result: Record<string, unknown>): ToolCall => ({
 });
 
 describe('linkifyAssistantMarkdown', () => {
-  // Regression (audit finding #1): the CVE post-pass used to run over the
-  // whole string AFTER the entity pass had inserted Markdown links, so a CVE
-  // used as a finding anchor got re-linkified inside the link it had just
-  // become — yielding nested, broken Markdown and a dead deep-link.
   it('does not re-linkify a CVE inside a link the entity pass inserted', () => {
     const entities = collectEntitiesFromToolCalls([
       toolCall({
@@ -33,11 +29,9 @@ describe('linkifyAssistantMarkdown', () => {
       entities,
     );
 
-    // The mention becomes exactly the scan-drawer deep link, once.
     expect(out).toBe(
       'The scan surfaced [CVE-2024-12345](/projects/p1/scans/s1?finding=CVE-2024-12345) in your build.',
     );
-    // No nested Markdown and no NVD rewrite of the entity link.
     expect(out).not.toContain('nvd.nist.gov');
     expect(out).not.toContain('[[');
     expect(out).not.toContain('=[CVE');

@@ -1,10 +1,4 @@
-"""Routing test for the MCP ``get_scan_delta`` chat tool.
-
-After the scan-delta extension (see plans/2026-05-11-scan-delta-extension.md
-Task 10), ``get_scan_delta`` must delegate to the unified
-``compute_crypto_delta_envelope`` service and return its envelope, rather than
-the legacy HotspotEntry-shaped ``ScanDelta`` payload.
-"""
+"""Routing test: the MCP get_scan_delta tool must delegate to compute_crypto_delta_envelope and return its envelope."""
 
 from unittest.mock import AsyncMock, patch
 
@@ -28,7 +22,6 @@ def admin_user():
 
 @pytest.mark.asyncio
 async def test_get_scan_delta_routes_through_crypto_envelope(db, admin_user):
-    """get_scan_delta must call compute_crypto_delta_envelope and return its envelope."""
     db.projects._docs["p1"] = {"_id": "p1", "name": "test-project", "team_id": None}
     await db["scans"].insert_many(
         [
@@ -78,7 +71,6 @@ async def test_get_scan_delta_routes_through_crypto_envelope(db, admin_user):
 
 @pytest.mark.asyncio
 async def test_get_scan_delta_returns_error_when_project_not_authorized(db, admin_user):
-    """Auth check still runs: unknown project_id is rejected before the service is called."""
     with patch(
         "app.services.chat.tools.registry.compute_crypto_delta_envelope",
         new=AsyncMock(),
@@ -96,7 +88,6 @@ async def test_get_scan_delta_returns_error_when_project_not_authorized(db, admi
 
 @pytest.mark.asyncio
 async def test_get_scan_delta_rejects_scan_from_another_project(db, admin_user):
-    """Cross-project guard: scan IDs must belong to the requested project."""
     db.projects._docs["p1"] = {"_id": "p1", "name": "test-project", "team_id": None}
     await db["scans"].insert_many(
         [
