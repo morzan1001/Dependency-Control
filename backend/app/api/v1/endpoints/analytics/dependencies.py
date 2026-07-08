@@ -33,6 +33,113 @@ from ._shared import _MSG_ACCESS_DENIED, _get_enrichment_info, _resolve_scan_id
 
 router = CustomAPIRouter()
 
+# Bounds the emitted tree: a package pulled in by many parents duplicates its subtree
+# under each, so a dense graph could otherwise blow up the response.
+_MAX_TREE_NODES = 5000
+
+
+def _dep_key(dep: Any) -> str:
+    """Node identity for parent matching: PURL (parent_components hold PURLs, as in graph.py), else name@version."""
+    return get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
+
+
+def _build_tree_node(dep: Any, findings_map: Dict[str, Dict[str, int]]) -> DependencyTreeNode:
+    """Build one tree node without children; the recursive builder attaches children."""
+    name = get_attr(dep, "name", "")
+    finding_info = findings_map.get(name, {})
+
+    return DependencyTreeNode(
+        # The document id (uuid) is unique per dependency; PURL only backstops dict inputs in tests.
+        id=str(get_attr(dep, "id") or get_attr(dep, "purl", "")),
+        name=name,
+        version=get_attr(dep, "version", ""),
+        purl=get_attr(dep, "purl", ""),
+        type=get_attr(dep, "type", "unknown"),
+        direct=get_attr(dep, "direct", False),
+        direct_inferred=get_attr(dep, "direct_inferred", False),
+        has_findings=finding_info.get("total", 0) > 0,
+        findings_count=finding_info.get("total", 0),
+        findings_severity=(
+            SeverityBreakdown(
+                critical=finding_info.get("critical", 0),
+                high=finding_info.get("high", 0),
+                medium=finding_info.get("medium", 0),
+                low=finding_info.get("low", 0),
+            )
+            if finding_info
+            else None
+        ),
+        source_type=get_attr(dep, "source_type"),
+        source_target=get_attr(dep, "source_target"),
+        layer_digest=get_attr(dep, "layer_digest"),
+        locations=get_attr(dep, "locations", []),
+        children=[],
+    )
+
+
+def _build_dependency_tree(
+    dependencies: List[Any], findings_map: Dict[str, Dict[str, int]]
+) -> List[DependencyTreeNode]:
+    """Nest transitive deps under their direct-dep roots via parent_components; unreached deps become flat roots."""
+    nodes_by_key: Dict[str, Any] = {}
+    order: List[str] = []
+    for dep in dependencies:
+        key = _dep_key(dep)
+        if key not in nodes_by_key:
+            nodes_by_key[key] = dep
+            order.append(key)
+
+    children_by_parent: Dict[str, List[str]] = {}
+    for dep in dependencies:
+        child_key = _dep_key(dep)
+        for parent in get_attr(dep, "parent_components", []) or []:
+            siblings = children_by_parent.setdefault(parent, [])
+            if child_key not in siblings:
+                siblings.append(child_key)
+
+    placed: set = set()
+    emitted = {"count": 0}
+
+    def build(key: str, on_path: frozenset) -> DependencyTreeNode:
+        placed.add(key)
+        node = _build_tree_node(nodes_by_key[key], findings_map)
+        emitted["count"] += 1
+        children: List[DependencyTreeNode] = []
+        for child_key in children_by_parent.get(key, []):
+            if child_key in on_path:  # cycle: child is already an ancestor on this path
+                continue
+            if emitted["count"] >= _MAX_TREE_NODES:
+                break
+            children.append(build(child_key, on_path | {child_key}))
+        children.sort(key=lambda n: n.findings_count, reverse=True)
+        node.children = children
+        return node
+
+    direct_keys = [key for key in order if get_attr(nodes_by_key[key], "direct", False)]
+    roots = [build(key, frozenset({key})) for key in direct_keys]
+
+    # Deps not reached from any direct root: unresolved parent, no dependency graph, or a
+    # disconnected cycle. Build the subtree roots among them so resolvable descendants still
+    # nest; a dep whose parent is itself such an orphan nests under it rather than twice.
+    unreached = [
+        key for key in order if key not in placed and not get_attr(nodes_by_key[key], "direct", False)
+    ]
+    unreached_set = set(unreached)
+    orphans: List[DependencyTreeNode] = []
+    for key in unreached:
+        parents = get_attr(nodes_by_key[key], "parent_components", []) or []
+        if key in placed or any(p in unreached_set for p in parents):
+            continue
+        orphans.append(build(key, frozenset({key})))
+    # Disconnected cycles have no entry point above; emit the remainder so nothing is dropped.
+    for key in unreached:
+        if key not in placed:
+            orphans.append(build(key, frozenset({key})))
+
+    roots.sort(key=lambda n: n.findings_count, reverse=True)
+    orphans.sort(key=lambda n: n.findings_count, reverse=True)
+    return roots + orphans
+
 
 @router.get("/projects/{project_id}/dependency-tree", responses=RESP_AUTH)
 async def get_dependency_tree(
@@ -68,43 +175,7 @@ async def get_dependency_tree(
     )
     findings_map = build_findings_severity_map(findings)
 
-    def build_node(dep: Any) -> DependencyTreeNode:
-        name = get_attr(dep, "name", "")
-        finding_info = findings_map.get(name, {})
-
-        return DependencyTreeNode(
-            id=str(get_attr(dep, "_id") or get_attr(dep, "purl", "")),
-            name=name,
-            version=get_attr(dep, "version", ""),
-            purl=get_attr(dep, "purl", ""),
-            type=get_attr(dep, "type", "unknown"),
-            direct=get_attr(dep, "direct", False),
-            has_findings=finding_info.get("total", 0) > 0,
-            findings_count=finding_info.get("total", 0),
-            findings_severity=(
-                SeverityBreakdown(
-                    critical=finding_info.get("critical", 0),
-                    high=finding_info.get("high", 0),
-                    medium=finding_info.get("medium", 0),
-                    low=finding_info.get("low", 0),
-                )
-                if finding_info
-                else None
-            ),
-            source_type=get_attr(dep, "source_type"),
-            source_target=get_attr(dep, "source_target"),
-            layer_digest=get_attr(dep, "layer_digest"),
-            locations=get_attr(dep, "locations", []),
-            children=[],
-        )
-
-    direct_deps = [build_node(d) for d in dependencies if get_attr(d, "direct", False)]
-    transitive_deps = [build_node(d) for d in dependencies if not get_attr(d, "direct", False)]
-
-    direct_deps.sort(key=lambda x: x.findings_count, reverse=True)
-    transitive_deps.sort(key=lambda x: x.findings_count, reverse=True)
-
-    return direct_deps + transitive_deps
+    return _build_dependency_tree(dependencies, findings_map)
 
 
 @router.get("/component-findings", responses=RESP_AUTH)

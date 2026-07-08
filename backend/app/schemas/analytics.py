@@ -50,6 +50,7 @@ class DependencyTreeNode(BaseModel):
     purl: str
     type: str
     direct: bool
+    direct_inferred: bool = False
     has_findings: bool
     findings_count: int
     findings_severity: Optional[SeverityBreakdown] = None

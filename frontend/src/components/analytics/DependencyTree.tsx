@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useDependencyTree } from '@/hooks/queries/use-analytics'
 import { DependencyTreeNode } from '@/types/analytics'
+import { flattenUniqueDependencies } from '@/lib/dependency-tree-utils'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -20,13 +21,14 @@ interface DependencyNodeProps {
   node: DependencyTreeNode;
   level: number;
   onSelect?: (node: DependencyTreeNode) => void;
+  hideChildren?: boolean;
 }
 
 const DEP_TREE_SKELETON_IDS = ['dt1', 'dt2', 'dt3', 'dt4', 'dt5', 'dt6', 'dt7', 'dt8']
 
-function DependencyNode({ node, level, onSelect }: Readonly<DependencyNodeProps>) {
+function DependencyNode({ node, level, onSelect, hideChildren }: Readonly<DependencyNodeProps>) {
   const [isExpanded, setIsExpanded] = useState(false)
-  const hasChildren = node.children && node.children.length > 0
+  const hasChildren = !hideChildren && !!node.children && node.children.length > 0
   const sourceInfo = getSourceInfo(node.source_type)
 
   const getSeverityBorder = () => {
@@ -164,12 +166,18 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
 
   const { data: tree, isLoading: isLoadingTree } = useDependencyTree(selectedProjectId)
 
-  const filteredTree = showDirectOnly 
-    ? tree?.filter(n => n.direct) 
-    : tree
+  // Roots are the direct dependencies (transitive deps are nested inside them). Transitive
+  // deps whose parent could not be resolved come back as flat top-level nodes.
+  const directRoots = tree?.filter(n => n.direct) ?? []
+  const orphanTransitive = tree?.filter(n => !n.direct) ?? []
 
-  const directDeps = filteredTree?.filter(n => n.direct) || []
-  const transitiveDeps = filteredTree?.filter(n => !n.direct) || []
+  // Counts walk the whole tree deduplicated: a transitive dep nested under several parents
+  // must be counted once, and nested deps must be counted at all.
+  const uniqueDeps = useMemo(() => flattenUniqueDependencies(tree), [tree])
+  const directCount = uniqueDeps.filter(n => n.direct).length
+  const transitiveCount = uniqueDeps.filter(n => !n.direct).length
+  const vulnerableCount = uniqueDeps.filter(n => n.has_findings).length
+  const hasDependencies = (tree?.length ?? 0) > 0
 
   return (
     <TooltipProvider>
@@ -216,51 +224,55 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
               </div>
             )
           }
-          if (filteredTree && filteredTree.length > 0) {
+          if (hasDependencies) {
             return (
             <div className="space-y-4">
               <div className="flex items-center gap-4 p-4 bg-muted rounded-lg">
                 <div className="flex items-center gap-2">
                   <Shield className="h-5 w-5 text-green-500" />
                   <span className="text-sm font-medium">
-                    {directDeps.length} direct dependencies
+                    {directCount} direct dependencies
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <Layers className="h-5 w-5 text-blue-500" />
                   <span className="text-sm font-medium">
-                    {transitiveDeps.length} transitive dependencies
+                    {transitiveCount} transitive dependencies
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <AlertTriangle className="h-5 w-5 text-destructive" />
                   <span className="text-sm font-medium">
-                    {filteredTree.filter(n => n.has_findings).length} with vulnerabilities
+                    {vulnerableCount} with vulnerabilities
                   </span>
                 </div>
               </div>
 
-              {directDeps.length > 0 && (
+              {directRoots.length > 0 && (
                 <div>
                   <h4 className="text-sm font-medium text-muted-foreground mb-2">Direct Dependencies</h4>
                   <div className="border rounded-lg divide-y">
-                    {directDeps.map((node) => (
+                    {directRoots.map((node) => (
                       <DependencyNode
                         key={node.id}
                         node={node}
                         level={0}
                         onSelect={onSelectNode}
+                        hideChildren={showDirectOnly}
                       />
                     ))}
                   </div>
                 </div>
               )}
 
-              {!showDirectOnly && transitiveDeps.length > 0 && (
+              {!showDirectOnly && orphanTransitive.length > 0 && (
                 <div>
                   <h4 className="text-sm font-medium text-muted-foreground mb-2">Transitive Dependencies</h4>
+                  <p className="text-xs text-muted-foreground mb-2">
+                    Not linked to a parent package (SBOM had no dependency graph, or its parents use a non-PURL identifier).
+                  </p>
                   <div className="border rounded-lg divide-y max-h-[400px] overflow-y-auto">
-                    {transitiveDeps.map((node) => (
+                    {orphanTransitive.map((node) => (
                       <DependencyNode
                         key={node.id}
                         node={node}
