@@ -7,6 +7,9 @@ from app.schemas.ingest import BaseIngest
 
 class TruffleHogFinding(BaseModel):
     SourceMetadata: Optional[Dict[str, Any]] = None
+    # Synthesized by the secret-scan CI template (not a native TruffleHog field): whether
+    # the finding's file path still exists at the scanned commit's HEAD tree.
+    DcInCurrentTree: Optional[bool] = None
     SourceID: Optional[Union[str, int]] = None
     SourceType: Optional[Union[str, int]] = None
     SourceName: Optional[str] = None

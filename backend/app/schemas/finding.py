@@ -40,6 +40,10 @@ class SecretDetails(TypedDict):
     decoder: Optional[str]
     verified: Optional[bool]
     redacted: Optional[str]
+    commit: Optional[str]
+    commit_timestamp: Optional[str]
+    line: Optional[int]
+    in_current_tree: Optional[bool]
 
 
 class VulnerabilityAggregatedDetails(TypedDict, total=False):

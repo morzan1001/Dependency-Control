@@ -24,6 +24,17 @@ def _extract_file_path(finding: Dict[str, Any]) -> str:
     return "unknown"
 
 
+def _extract_git_metadata(finding: Dict[str, Any]) -> Dict[str, Any]:
+    source_metadata = finding.get("SourceMetadata") or {}
+    git = (source_metadata.get("Data") or {}).get("Git") or {}
+    line = git.get("line")
+    return {
+        "commit": str(git["commit"]) if git.get("commit") else None,
+        "commit_timestamp": str(git["timestamp"]) if git.get("timestamp") else None,
+        "line": int(line) if isinstance(line, (int, float)) or (isinstance(line, str) and line.isdigit()) else None,
+    }
+
+
 def normalize_trufflehog(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
     for finding in result.get("findings") or []:
         file_path = _extract_file_path(finding)
@@ -36,11 +47,18 @@ def normalize_trufflehog(aggregator: "ResultAggregator", result: Dict[str, Any],
 
         finding_id = build_finding_id("SECRET", detector, secret_hash[:8])
 
+        git_meta = _extract_git_metadata(finding)
+        in_current_tree = finding.get("DcInCurrentTree")
+
         secret_details: SecretDetails = {
             "detector": detector,
             "decoder": finding.get("DecoderName"),
             "verified": finding.get("Verified"),
             "redacted": finding.get("Redacted"),
+            "commit": git_meta["commit"],
+            "commit_timestamp": git_meta["commit_timestamp"],
+            "line": git_meta["line"],
+            "in_current_tree": in_current_tree,
         }
 
         aggregator.add_finding(

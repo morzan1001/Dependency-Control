@@ -160,3 +160,88 @@ class TestNormalizeTrufflehog:
         self.agg.aggregate("trufflehog", result)
         f = list(self.agg.findings.values())[0]
         assert "nohash" in f.id
+
+    def test_git_commit_metadata_in_details(self):
+        result = {
+            "findings": [
+                {
+                    "DetectorType": "AWS",
+                    "Raw": "AKIAIOSFODNN7EXAMPLE",
+                    "SourceMetadata": {
+                        "Data": {
+                            "Git": {
+                                "file": "config/aws.env",
+                                "commit": "abc123def456",
+                                "line": 7,
+                                "timestamp": "2026-01-05T10:00:00Z",
+                            }
+                        }
+                    },
+                }
+            ]
+        }
+        self.agg.aggregate("trufflehog", result)
+        f = list(self.agg.findings.values())[0]
+        assert f.details["commit"] == "abc123def456"
+        assert f.details["line"] == 7
+        assert f.details["commit_timestamp"] == "2026-01-05T10:00:00Z"
+
+    def test_missing_git_metadata_is_none(self):
+        result = {
+            "findings": [
+                {
+                    "DetectorType": "Generic",
+                    "Raw": "secret123",
+                    "SourceMetadata": {"Data": {"Filesystem": {"file": "a.env"}}},
+                }
+            ]
+        }
+        self.agg.aggregate("trufflehog", result)
+        f = list(self.agg.findings.values())[0]
+        assert f.details["commit"] is None
+        assert f.details["line"] is None
+        assert f.details["commit_timestamp"] is None
+
+    def test_in_current_tree_true_from_pipeline_flag(self):
+        result = {
+            "findings": [
+                {
+                    "DetectorType": "Generic",
+                    "Raw": "secret123",
+                    "SourceMetadata": {"Data": {"Filesystem": {"file": "a.env"}}},
+                    "DcInCurrentTree": True,
+                }
+            ]
+        }
+        self.agg.aggregate("trufflehog", result)
+        f = list(self.agg.findings.values())[0]
+        assert f.details["in_current_tree"] is True
+
+    def test_in_current_tree_false_from_pipeline_flag(self):
+        result = {
+            "findings": [
+                {
+                    "DetectorType": "Generic",
+                    "Raw": "secret123",
+                    "SourceMetadata": {"Data": {"Filesystem": {"file": "a.env"}}},
+                    "DcInCurrentTree": False,
+                }
+            ]
+        }
+        self.agg.aggregate("trufflehog", result)
+        f = list(self.agg.findings.values())[0]
+        assert f.details["in_current_tree"] is False
+
+    def test_in_current_tree_unknown_when_flag_absent(self):
+        result = {
+            "findings": [
+                {
+                    "DetectorType": "Generic",
+                    "Raw": "secret123",
+                    "SourceMetadata": {"Data": {"Filesystem": {"file": "a.env"}}},
+                }
+            ]
+        }
+        self.agg.aggregate("trufflehog", result)
+        f = list(self.agg.findings.values())[0]
+        assert f.details["in_current_tree"] is None
