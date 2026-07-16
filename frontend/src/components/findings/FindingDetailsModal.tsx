@@ -13,7 +13,7 @@ import { useWaiverById } from '@/hooks/queries/use-waivers'
 import { canCreateProjectWaiver } from '@/lib/project-roles'
 import { FindingTypeBadge } from './FindingTypeBadge'
 import { CollapsibleReferences } from './CollapsibleReferences'
-import { getSeverityBadgeVariant, getExploitMaturityClass, advisoryUrl } from '@/lib/finding-utils'
+import { getSeverityBadgeVariant, getExploitMaturityClass, advisoryUrl, getSecretTreeStatusInfo } from '@/lib/finding-utils'
 import { formatDate } from '@/lib/utils'
 import { ContextBannersSection } from './details/ContextBannersSection'
 import { OriginBadge } from './details/OriginBadge'
@@ -299,6 +299,28 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                 {finding.details?.verified ? "Verified Live" : "Unverified"}
                                             </Badge>
                                         </DetailSection>
+                                        {(() => {
+                                            const treeStatus = getSecretTreeStatusInfo(finding.details?.in_current_tree)
+                                            return treeStatus ? (
+                                                <DetailSection label="Tree Status" compact>
+                                                    <Badge variant="outline" className={treeStatus.className}>
+                                                        {treeStatus.label}
+                                                    </Badge>
+                                                </DetailSection>
+                                            ) : null
+                                        })()}
+                                        {finding.details?.commit && (
+                                            <DetailSection label="Origin Commit" compact>
+                                                <p className="font-mono text-xs">
+                                                    {finding.details.commit.slice(0, 12)}
+                                                    {finding.details?.commit_timestamp && (
+                                                        <span className="text-muted-foreground ml-2">
+                                                            {finding.details.commit_timestamp}
+                                                        </span>
+                                                    )}
+                                                </p>
+                                            </DetailSection>
+                                        )}
                                         {finding.details?.redacted && (
                                             <div className="col-span-2">
                                                 <DetailSection label="Redacted Secret" compact>
