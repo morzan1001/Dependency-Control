@@ -811,3 +811,65 @@ class TestComprehensiveStatsKev:
         stats = await calculate_comprehensive_stats(db, _W5_SCAN)
         assert stats.threat_intel.kev_count == 2
         assert stats.threat_intel.kev_ransomware_count == 1
+
+
+_SECRET_SCAN = "scan-secret-priority"
+
+
+def _secret_finding(_id, *, verified=None, in_current_tree=None, waived=False):
+    details = {}
+    if verified is not None:
+        details["verified"] = verified
+    if in_current_tree is not None:
+        details["in_current_tree"] = in_current_tree
+    return {
+        "_id": _id,
+        "finding_id": _id,
+        "scan_id": _SECRET_SCAN,
+        "type": "secret",
+        "severity": "CRITICAL",
+        "component": "config/aws.env",
+        "version": "",
+        "details": details,
+        "waived": waived,
+    }
+
+
+class TestComprehensiveStatsSecretPriority:
+    @pytest.mark.asyncio
+    async def test_counts_by_verified_and_tree_status(self):
+        findings = [
+            _secret_finding("s1", verified=True, in_current_tree=True),
+            _secret_finding("s2", verified=True, in_current_tree=False),
+            _secret_finding("s3", verified=False, in_current_tree=True),
+            _secret_finding("s4", verified=False, in_current_tree=False),
+            _secret_finding("s5"),  # unknown/unknown
+        ]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _SECRET_SCAN)
+        assert stats.secret_priority is not None
+        assert stats.secret_priority.total == 5
+        assert stats.secret_priority.verified_count == 2
+        assert stats.secret_priority.in_current_tree_count == 2
+        assert stats.secret_priority.historical_only_count == 2
+        assert stats.secret_priority.unknown_tree_count == 1
+        assert stats.secret_priority.actionable_count == 1
+        assert stats.secret_priority.deprioritized_count == 1
+
+    @pytest.mark.asyncio
+    async def test_waived_secrets_are_excluded(self):
+        # All findings waived -> $match yields zero docs -> $group yields no rows,
+        # so the whole stats_result gate stays empty: prioritized/threat_intel/
+        # reachability/secret_priority are all None here, same as an empty scan.
+        findings = [_secret_finding("s1", verified=True, in_current_tree=True, waived=True)]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _SECRET_SCAN)
+        assert stats.secret_priority is None
+
+    @pytest.mark.asyncio
+    async def test_no_secrets_yields_zeroed_secret_priority(self):
+        findings = [_w5_finding("v1", "CRITICAL")]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.secret_priority is not None
+        assert stats.secret_priority.total == 0

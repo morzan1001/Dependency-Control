@@ -17,6 +17,7 @@ from app.core.epss import bucket_epss
 from app.models.stats import (
     PrioritizedCounts,
     ReachabilityStats,
+    SecretPrioritizedCounts,
     Stats,
     ThreatIntelligenceStats,
 )
@@ -251,6 +252,8 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                 "reachability_confidence": {"$ifNull": ["$details.reachability.confidence_score", None]},
                 "risk_score": {"$ifNull": ["$details.risk_score", None]},
                 "adjusted_risk_score": {"$ifNull": ["$details.adjusted_risk_score", None]},
+                "verified": {"$ifNull": ["$details.verified", None]},
+                "in_current_tree": {"$ifNull": ["$details.in_current_tree", None]},
                 # 0-100 fallback for unenriched findings, on the same scale as details.risk_score.
                 "calculated_score": {
                     "$switch": {
@@ -574,6 +577,74 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                         ]
                     }
                 },
+                # Secret finding priority (git-context aware)
+                "secret_total": {"$sum": {"$cond": [{"$eq": ["$type", "secret"]}, 1, 0]}},
+                "secret_verified_count": {
+                    "$sum": {
+                        "$cond": [
+                            {"$and": [{"$eq": ["$type", "secret"]}, {"$eq": ["$verified", True]}]},
+                            1,
+                            0,
+                        ]
+                    }
+                },
+                "secret_in_current_tree_count": {
+                    "$sum": {
+                        "$cond": [
+                            {"$and": [{"$eq": ["$type", "secret"]}, {"$eq": ["$in_current_tree", True]}]},
+                            1,
+                            0,
+                        ]
+                    }
+                },
+                "secret_historical_only_count": {
+                    "$sum": {
+                        "$cond": [
+                            {"$and": [{"$eq": ["$type", "secret"]}, {"$eq": ["$in_current_tree", False]}]},
+                            1,
+                            0,
+                        ]
+                    }
+                },
+                "secret_unknown_tree_count": {
+                    "$sum": {
+                        "$cond": [
+                            {"$and": [{"$eq": ["$type", "secret"]}, {"$eq": ["$in_current_tree", None]}]},
+                            1,
+                            0,
+                        ]
+                    }
+                },
+                "secret_actionable_count": {
+                    "$sum": {
+                        "$cond": [
+                            {
+                                "$and": [
+                                    {"$eq": ["$type", "secret"]},
+                                    {"$eq": ["$verified", True]},
+                                    {"$eq": ["$in_current_tree", True]},
+                                ]
+                            },
+                            1,
+                            0,
+                        ]
+                    }
+                },
+                "secret_deprioritized_count": {
+                    "$sum": {
+                        "$cond": [
+                            {
+                                "$and": [
+                                    {"$eq": ["$type", "secret"]},
+                                    {"$ne": ["$verified", True]},
+                                    {"$eq": ["$in_current_tree", False]},
+                                ]
+                            },
+                            1,
+                            0,
+                        ]
+                    }
+                },
             }
         },
     ]
@@ -641,6 +712,16 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
             actionable_high=res.get("actionable_high", 0),
             actionable_total=res.get("actionable_total", 0),
             deprioritized_count=res.get("deprioritized_count", 0),
+        )
+
+        stats.secret_priority = SecretPrioritizedCounts(
+            total=res.get("secret_total", 0),
+            verified_count=res.get("secret_verified_count", 0),
+            in_current_tree_count=res.get("secret_in_current_tree_count", 0),
+            historical_only_count=res.get("secret_historical_only_count", 0),
+            unknown_tree_count=res.get("secret_unknown_tree_count", 0),
+            actionable_count=res.get("secret_actionable_count", 0),
+            deprioritized_count=res.get("secret_deprioritized_count", 0),
         )
 
     return stats
