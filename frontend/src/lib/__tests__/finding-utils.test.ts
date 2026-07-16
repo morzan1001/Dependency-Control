@@ -5,6 +5,7 @@ import {
   advisoryUrl,
   SEVERITY_CHART_COLORS,
   SEVERITY_ORDER,
+  getSecretTreeStatusInfo,
 } from '../finding-utils'
 
 // Color bands are on the backend's 0-100 combined-risk scale, not the 0-10 CVSS scale.
@@ -69,5 +70,24 @@ describe('severity chart tokens', () => {
     expect(SEVERITY_CHART_COLORS.HIGH).toBe('#f97316')
     expect(SEVERITY_CHART_COLORS.MEDIUM).toBe('#eab308')
     expect(SEVERITY_CHART_COLORS.LOW).toBe('#3b82f6')
+  })
+})
+
+describe('getSecretTreeStatusInfo', () => {
+  it('labels a file still in the current tree', () => {
+    const info = getSecretTreeStatusInfo(true)
+    expect(info?.label).toBe('In current code')
+    expect(info?.className).toContain('text-success')
+  })
+
+  it('labels a file only in history as historical', () => {
+    const info = getSecretTreeStatusInfo(false)
+    expect(info?.label).toBe('Only in history')
+    expect(info?.className).toContain('text-severity-medium')
+  })
+
+  it('returns null when tree status is unknown', () => {
+    expect(getSecretTreeStatusInfo(null)).toBeNull()
+    expect(getSecretTreeStatusInfo(undefined)).toBeNull()
   })
 })

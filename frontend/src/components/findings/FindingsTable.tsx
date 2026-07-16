@@ -18,7 +18,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { SeverityBadge } from './SeverityBadge'
 import { FindingTypeBadge } from './FindingTypeBadge'
-import { getSourceInfo } from '@/lib/finding-utils'
+import { getSourceInfo, getSecretTreeStatusInfo } from '@/lib/finding-utils'
 import { ScanContext } from './details/SastDetailsView'
 import { resolveRelatedFindingInRows, fetchRelatedFinding } from './related-finding-rows'
 
@@ -78,6 +78,27 @@ function ReachabilityIndicator({ reachability }: ReachabilityIndicatorProps) {
                         </p>
                     )}
                 </div>
+            </TooltipContent>
+        </Tooltip>
+    )
+}
+
+interface TreeStatusIndicatorProps {
+    readonly inCurrentTree: boolean | null | undefined
+}
+
+function TreeStatusIndicator({ inCurrentTree }: TreeStatusIndicatorProps) {
+    const info = getSecretTreeStatusInfo(inCurrentTree)
+    if (!info) return null
+    return (
+        <Tooltip>
+            <TooltipTrigger asChild>
+                <div className={`flex items-center justify-center w-5 h-5 rounded-full ${info.className}`}>
+                    <Shield className="h-3 w-3" />
+                </div>
+            </TooltipTrigger>
+            <TooltipContent side="right">
+                <p className="font-medium">{info.label}</p>
             </TooltipContent>
         </Tooltip>
     )
@@ -386,6 +407,9 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                                             <SeverityBadge severity={finding.severity} />
                                             {finding.details?.reachability && (
                                                 <ReachabilityIndicator reachability={finding.details.reachability} />
+                                            )}
+                                            {finding.type === 'secret' && (
+                                                <TreeStatusIndicator inCurrentTree={finding.details?.in_current_tree} />
                                             )}
                                         </div>
                                     </TableCell>

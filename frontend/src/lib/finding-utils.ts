@@ -126,6 +126,18 @@ export function getExploitMaturityClass(maturity: string | null | undefined): st
   return '';
 }
 
+export function getSecretTreeStatusInfo(
+  inCurrentTree: boolean | null | undefined
+): { label: string; className: string } | null {
+  if (inCurrentTree === true) {
+    return { label: 'In current code', className: 'bg-green-100 text-success' }
+  }
+  if (inCurrentTree === false) {
+    return { label: 'Only in history', className: 'bg-amber-100 text-severity-medium' }
+  }
+  return null
+}
+
 export interface SourceInfo {
   icon: LucideIcon
   label: string
