@@ -14,7 +14,7 @@ import { canCreateProjectWaiver } from '@/lib/project-roles'
 import { FindingTypeBadge } from './FindingTypeBadge'
 import { CollapsibleReferences } from './CollapsibleReferences'
 import { getSeverityBadgeVariant, getExploitMaturityClass, advisoryUrl, getSecretTreeStatusInfo } from '@/lib/finding-utils'
-import { formatDate } from '@/lib/utils'
+import { formatDate, shortCommitHash } from '@/lib/utils'
 import { ContextBannersSection } from './details/ContextBannersSection'
 import { OriginBadge } from './details/OriginBadge'
 import { LicenseDetailsView } from './details/LicenseDetailsView'
@@ -312,7 +312,10 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                         {finding.details?.commit && (
                                             <DetailSection label="Origin Commit" compact>
                                                 <p className="font-mono text-xs">
-                                                    {finding.details.commit.slice(0, 12)}
+                                                    {shortCommitHash(finding.details.commit)}
+                                                    {finding.details?.line && (
+                                                        <span>:{finding.details.line}</span>
+                                                    )}
                                                     {finding.details?.commit_timestamp && (
                                                         <span className="text-muted-foreground ml-2">
                                                             {formatDate(finding.details.commit_timestamp)}
