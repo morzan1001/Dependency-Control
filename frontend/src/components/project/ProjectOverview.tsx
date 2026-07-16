@@ -2,13 +2,14 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProjectScans, useScanResults } from '@/hooks/queries/use-scans'
 import { useProjectWaivers } from '@/hooks/queries/use-waivers'
-import { Scan, ThreatIntelligenceStats, ReachabilityStats, PrioritizedCounts } from '@/types/scan'
+import { Scan, ThreatIntelligenceStats, ReachabilityStats, PrioritizedCounts, SecretPrioritizedCounts } from '@/types/scan'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Activity, ShieldAlert, ShieldCheck, AlertTriangle, GitBranch } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, BarChart, Bar } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ThreatIntelligenceDashboard } from '@/components/ThreatIntelligenceDashboard'
+import { SecretPriorityCard } from '@/components/findings/SecretPriorityCard'
 import { PostProcessorResultCard } from '@/components/PostProcessorResults'
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { MAX_SCANS_FOR_CHARTS } from '@/lib/constants'
@@ -47,6 +48,16 @@ function accumulatePrioritized(acc: PrioritizedCounts, p: PrioritizedCounts) {
   acc.actionable_high += p.actionable_high || 0
   acc.actionable_total += p.actionable_total || 0
   acc.deprioritized_count += p.deprioritized_count || 0
+}
+
+function accumulateSecretPriority(acc: SecretPrioritizedCounts, s: SecretPrioritizedCounts) {
+  acc.total += s.total || 0
+  acc.verified_count += s.verified_count || 0
+  acc.in_current_tree_count += s.in_current_tree_count || 0
+  acc.historical_only_count += s.historical_only_count || 0
+  acc.unknown_tree_count += s.unknown_tree_count || 0
+  acc.actionable_count += s.actionable_count || 0
+  acc.deprioritized_count += s.deprioritized_count || 0
 }
 
 interface ProjectOverviewProps {
@@ -96,10 +107,11 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           critical: number; high: number; medium: number; low: number; info: number; unknown: number;
           risk_score: number; adjusted_risk_score: number;
           threat_intel: ThreatIntelligenceStats | null; reachability: ReachabilityStats | null; prioritized: PrioritizedCounts | null;
+          secret_priority: SecretPrioritizedCounts | null;
       } = {
           critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0,
           risk_score: 0, adjusted_risk_score: 0,
-          threat_intel: null, reachability: null, prioritized: null
+          threat_intel: null, reachability: null, prioritized: null, secret_priority: null
       };
 
       let maxRisk = 0;
@@ -120,9 +132,15 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           actionable_critical: 0, actionable_high: 0,
           actionable_total: 0, deprioritized_count: 0,
       };
+      const secretPriorityAcc: SecretPrioritizedCounts = {
+          total: 0, verified_count: 0, in_current_tree_count: 0,
+          historical_only_count: 0, unknown_tree_count: 0,
+          actionable_count: 0, deprioritized_count: 0,
+      };
       let hasThreatIntel = false;
       let hasReachability = false;
       let hasPrioritized = false;
+      let hasSecretPriority = false;
       let epssScoreSum = 0;
       let epssScoreCount = 0;
 
@@ -157,6 +175,11 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
               hasPrioritized = true;
               accumulatePrioritized(prioritizedAcc, s.prioritized);
           }
+
+          if (s.secret_priority) {
+              hasSecretPriority = true;
+              accumulateSecretPriority(secretPriorityAcc, s.secret_priority);
+          }
       }
 
       aggregatedStats.risk_score = maxRisk;
@@ -167,6 +190,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       }
       if (hasReachability) aggregatedStats.reachability = reachabilityAcc;
       if (hasPrioritized) aggregatedStats.prioritized = prioritizedAcc;
+      if (hasSecretPriority) aggregatedStats.secret_priority = secretPriorityAcc;
 
       return { stats: aggregatedStats, branchStats: branchStatsData, latestScansByBranch, branchCount: allBranchScans.length };
   }, [filteredScans]);
@@ -307,6 +331,10 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
 
       {hasEnhancedStats && (
         <ThreatIntelligenceDashboard stats={stats} branchCount={projectStats?.branchCount} />
+      )}
+
+      {projectStats?.stats.secret_priority && (
+          <SecretPriorityCard counts={projectStats.stats.secret_priority} />
       )}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
