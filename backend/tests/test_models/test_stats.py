@@ -5,6 +5,7 @@ from app.models.stats import (
     ThreatIntelligenceStats,
     ReachabilityStats,
     PrioritizedCounts,
+    SecretPrioritizedCounts,
 )
 
 
@@ -25,6 +26,7 @@ class TestStatsModel:
         assert stats.threat_intel is None
         assert stats.reachability is None
         assert stats.prioritized is None
+        assert stats.secret_priority is None
 
 
 class TestThreatIntelligenceStats:
@@ -54,3 +56,15 @@ class TestPrioritizedCounts:
         assert prio.total == 0
         assert prio.actionable_total == 0
         assert prio.deprioritized_count == 0
+
+
+class TestSecretPrioritizedCounts:
+    def test_defaults(self):
+        spc = SecretPrioritizedCounts()
+        assert spc.total == 0
+        assert spc.verified_count == 0
+        assert spc.in_current_tree_count == 0
+        assert spc.historical_only_count == 0
+        assert spc.unknown_tree_count == 0
+        assert spc.actionable_count == 0
+        assert spc.deprioritized_count == 0

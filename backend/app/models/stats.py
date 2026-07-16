@@ -55,6 +55,18 @@ class PrioritizedCounts(BaseModel):
     deprioritized_count: int = Field(0, description="Vulns that are unreachable or low-EPSS without KEV")
 
 
+class SecretPrioritizedCounts(BaseModel):
+    """Secret finding counts focused on git-context-aware priorisation."""
+
+    total: int = Field(0, description="Total secret finding count")
+    verified_count: int = Field(0, description="Secrets TruffleHog confirmed as live/valid")
+    in_current_tree_count: int = Field(0, description="Secrets whose file exists at the scanned commit's tree")
+    historical_only_count: int = Field(0, description="Secrets whose file no longer exists in the current tree")
+    unknown_tree_count: int = Field(0, description="Secrets with no current-tree information available")
+    actionable_count: int = Field(0, description="Verified secrets still present in the current tree")
+    deprioritized_count: int = Field(0, description="Unverified secrets no longer present in the current tree")
+
+
 class Stats(BaseModel):
     critical: int = Field(0, description="Count of critical findings")
     high: int = Field(0, description="Count of high severity findings")
@@ -85,3 +97,4 @@ class Stats(BaseModel):
     threat_intel: Optional[ThreatIntelligenceStats] = Field(None, description="EPSS/KEV statistics")
     reachability: Optional[ReachabilityStats] = Field(None, description="Reachability analysis statistics")
     prioritized: Optional[PrioritizedCounts] = Field(None, description="Prioritized vulnerability counts")
+    secret_priority: Optional[SecretPrioritizedCounts] = Field(None, description="Prioritized secret finding counts")
