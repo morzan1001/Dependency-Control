@@ -96,14 +96,7 @@ def calculate_secret_risk_score(
     verified: Optional[bool],
     in_current_tree: Optional[bool],
 ) -> Tuple[float, float]:
-    """Risk score for a secret finding: (risk_score, adjusted_risk_score), both 0-100.
-
-    Base is the CRITICAL anchor (all secrets are CRITICAL severity). The adjusted score
-    applies a verified/in_current_tree modifier, mirroring the reachability modifier used
-    for vulnerabilities: a live-confirmed secret stays urgent regardless of tree state
-    (once exposed, it stays compromised until rotated); an unconfirmed pattern match whose
-    file no longer exists in the current tree is the least urgent case.
-    """
+    """CRITICAL-anchor (risk_score, adjusted_risk_score): verified secrets stay urgent regardless of tree state (already exposed until rotated), else 0.4x if gone from the tree."""
     base = SEVERITY_CALCULATED_RISK_SCORES["CRITICAL"]
     if verified is True:
         modifier = 1.1
