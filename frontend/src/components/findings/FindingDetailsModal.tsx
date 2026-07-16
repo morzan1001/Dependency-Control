@@ -315,7 +315,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                     {finding.details.commit.slice(0, 12)}
                                                     {finding.details?.commit_timestamp && (
                                                         <span className="text-muted-foreground ml-2">
-                                                            {finding.details.commit_timestamp}
+                                                            {formatDate(finding.details.commit_timestamp)}
                                                         </span>
                                                     )}
                                                 </p>
