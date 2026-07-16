@@ -226,6 +226,9 @@ export interface FindingDetails {
   decoder?: string;
   verified?: boolean;
   redacted?: string;
+  commit?: string;
+  commit_timestamp?: string;
+  in_current_tree?: boolean | null;
   line?: number;
   file?: string;
   rule_id?: string;
@@ -355,6 +358,16 @@ export interface PrioritizedCounts {
   deprioritized_count: number;
 }
 
+export interface SecretPrioritizedCounts {
+  total: number;
+  verified_count: number;
+  in_current_tree_count: number;
+  historical_only_count: number;
+  unknown_tree_count: number;
+  actionable_count: number;
+  deprioritized_count: number;
+}
+
 export interface SbomData {
   format?: string;
   version?: string;
@@ -456,6 +469,7 @@ export interface EnhancedStats {
   threat_intel?: ThreatIntelligenceStats | null;
   reachability?: ReachabilityStats | null;
   prioritized?: PrioritizedCounts | null;
+  secret_priority?: SecretPrioritizedCounts | null;
 }
 
 export interface Scan {
