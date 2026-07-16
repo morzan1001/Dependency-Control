@@ -1,6 +1,6 @@
-from typing import Optional
+from typing import Optional, Tuple
 
-from app.core.constants import EPSS_HIGH_THRESHOLD, EPSS_MEDIUM_THRESHOLD
+from app.core.constants import EPSS_HIGH_THRESHOLD, EPSS_MEDIUM_THRESHOLD, SEVERITY_CALCULATED_RISK_SCORES
 from app.core.epss import bucket_epss
 
 
@@ -90,3 +90,26 @@ def map_reachability_level_to_modifier(
     if is_reachable is True and analysis_level == "symbol":
         return "confirmed"
     return None
+
+
+def calculate_secret_risk_score(
+    verified: Optional[bool],
+    in_current_tree: Optional[bool],
+) -> Tuple[float, float]:
+    """Risk score for a secret finding: (risk_score, adjusted_risk_score), both 0-100.
+
+    Base is the CRITICAL anchor (all secrets are CRITICAL severity). The adjusted score
+    applies a verified/in_current_tree modifier, mirroring the reachability modifier used
+    for vulnerabilities: a live-confirmed secret stays urgent regardless of tree state
+    (once exposed, it stays compromised until rotated); an unconfirmed pattern match whose
+    file no longer exists in the current tree is the least urgent case.
+    """
+    base = SEVERITY_CALCULATED_RISK_SCORES["CRITICAL"]
+    if verified is True:
+        modifier = 1.1
+    elif in_current_tree is False:
+        modifier = 0.4
+    else:
+        modifier = 1.0
+    adjusted = min(base * modifier, 100.0)
+    return base, adjusted

@@ -3,6 +3,7 @@ from typing import Any, Dict, Optional, TYPE_CHECKING
 
 from app.models.finding import Finding, FindingType, Severity
 from app.schemas.finding import SecretDetails
+from app.services.enrichment.scoring import calculate_secret_risk_score
 from app.services.normalizers.utils import build_finding_id
 
 if TYPE_CHECKING:
@@ -49,16 +50,20 @@ def normalize_trufflehog(aggregator: "ResultAggregator", result: Dict[str, Any],
 
         git_meta = _extract_git_metadata(finding)
         in_current_tree = finding.get("DcInCurrentTree")
+        verified = finding.get("Verified")
+        risk_score, adjusted_risk_score = calculate_secret_risk_score(verified, in_current_tree)
 
         secret_details: SecretDetails = {
             "detector": detector,
             "decoder": finding.get("DecoderName"),
-            "verified": finding.get("Verified"),
+            "verified": verified,
             "redacted": finding.get("Redacted"),
             "commit": git_meta["commit"],
             "commit_timestamp": git_meta["commit_timestamp"],
             "line": git_meta["line"],
             "in_current_tree": in_current_tree,
+            "risk_score": risk_score,
+            "adjusted_risk_score": adjusted_risk_score,
         }
 
         aggregator.add_finding(

@@ -245,3 +245,35 @@ class TestNormalizeTrufflehog:
         self.agg.aggregate("trufflehog", result)
         f = list(self.agg.findings.values())[0]
         assert f.details["in_current_tree"] is None
+
+    def test_verified_secret_has_boosted_adjusted_risk_score(self):
+        result = {
+            "findings": [
+                {
+                    "DetectorType": "AWS",
+                    "Raw": "AKIAIOSFODNN7EXAMPLE",
+                    "Verified": True,
+                    "SourceMetadata": {"Data": {"Filesystem": {"file": "config/aws.env"}}},
+                    "DcInCurrentTree": False,
+                }
+            ]
+        }
+        self.agg.aggregate("trufflehog", result)
+        f = list(self.agg.findings.values())[0]
+        assert f.details["risk_score"] == 40.0
+        assert abs(f.details["adjusted_risk_score"] - 44.0) < 0.01
+
+    def test_unverified_historical_secret_has_deprioritized_score(self):
+        result = {
+            "findings": [
+                {
+                    "DetectorType": "Generic",
+                    "Raw": "secret123",
+                    "SourceMetadata": {"Data": {"Filesystem": {"file": "a.env"}}},
+                    "DcInCurrentTree": False,
+                }
+            ]
+        }
+        self.agg.aggregate("trufflehog", result)
+        f = list(self.agg.findings.values())[0]
+        assert f.details["adjusted_risk_score"] == 16.0

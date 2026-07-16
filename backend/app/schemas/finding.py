@@ -44,6 +44,8 @@ class SecretDetails(TypedDict):
     commit_timestamp: Optional[str]
     line: Optional[int]
     in_current_tree: Optional[bool]
+    risk_score: float
+    adjusted_risk_score: float
 
 
 class VulnerabilityAggregatedDetails(TypedDict, total=False):

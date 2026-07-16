@@ -4,6 +4,7 @@ from app.services.enrichment.scoring import (
     calculate_exploit_maturity,
     calculate_risk_score,
     calculate_adjusted_risk_score,
+    calculate_secret_risk_score,
     map_reachability_level_to_modifier,
 )
 
@@ -175,3 +176,36 @@ class TestCalculateAdjustedRiskScore:
 
     def test_unknown_level_returns_base(self):
         assert calculate_adjusted_risk_score(50.0, reachability_level="unknown") == 50.0
+
+
+class TestCalculateSecretRiskScore:
+    def test_verified_secret_gets_boosted_regardless_of_tree(self):
+        risk, adjusted = calculate_secret_risk_score(verified=True, in_current_tree=False)
+        assert risk == 40.0
+        assert abs(adjusted - 44.0) < 0.01
+
+    def test_verified_secret_in_current_tree_also_boosted(self):
+        risk, adjusted = calculate_secret_risk_score(verified=True, in_current_tree=True)
+        assert abs(adjusted - 44.0) < 0.01
+
+    def test_unverified_in_current_tree_is_baseline(self):
+        risk, adjusted = calculate_secret_risk_score(verified=False, in_current_tree=True)
+        assert risk == 40.0
+        assert adjusted == 40.0
+
+    def test_unverified_historical_only_is_deprioritized(self):
+        risk, adjusted = calculate_secret_risk_score(verified=False, in_current_tree=False)
+        assert risk == 40.0
+        assert adjusted == 16.0
+
+    def test_unknown_verified_and_unknown_tree_is_baseline(self):
+        risk, adjusted = calculate_secret_risk_score(verified=None, in_current_tree=None)
+        assert adjusted == 40.0
+
+    def test_unknown_verified_historical_only_is_deprioritized(self):
+        risk, adjusted = calculate_secret_risk_score(verified=None, in_current_tree=False)
+        assert adjusted == 16.0
+
+    def test_adjusted_score_capped_at_100(self):
+        _, adjusted = calculate_secret_risk_score(verified=True, in_current_tree=True)
+        assert adjusted <= 100.0
