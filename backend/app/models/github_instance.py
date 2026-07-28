@@ -3,11 +3,11 @@ from typing import Optional
 
 from pydantic import ConfigDict, Field
 
-from app.models.base import CreatedAtModel
+from app.models.base import CreatedAtModel, VcsInstanceModel
 from app.models.types import MongoDocument
 
 
-class GitHubInstance(MongoDocument, CreatedAtModel):
+class GitHubInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     """A configured GitHub instance (github.com or GitHub Enterprise Server)."""
 
     # Identity

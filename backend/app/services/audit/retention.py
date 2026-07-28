@@ -6,13 +6,13 @@ from datetime import datetime, timedelta, timezone
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.config import settings
-from app.repositories.policy_audit_entry import PolicyAuditRepository
+from app.repositories.policy_audit_entry import PolicyAuditRepository, PolicyType
 
 logger = logging.getLogger(__name__)
 
 # Crypto and license entries share one collection (discriminated by policy_type);
 # prune every discriminator or non-default types accumulate forever.
-_POLICY_TYPES = ("crypto", "license")
+_POLICY_TYPES: tuple[PolicyType, ...] = ("crypto", "license")
 
 
 async def prune_old_audit_entries(db: AsyncIOMotorDatabase) -> int:

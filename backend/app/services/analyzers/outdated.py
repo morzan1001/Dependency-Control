@@ -228,7 +228,8 @@ class OutdatedAnalyzer(Analyzer):
             response = await client.get(url, follow_redirects=True)
             if response.status_code != 200:
                 return {}
-            return response.json()
+            document: Dict[str, Any] = response.json()
+            return document
         except (httpx.TimeoutException, httpx.ConnectError):
             logger.debug(f"Timeout/connection error checking outdated for {deps_dev_name}")
             return None

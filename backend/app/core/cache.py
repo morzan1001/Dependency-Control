@@ -10,7 +10,7 @@ import json
 import logging
 import time
 import uuid
-from typing import Any, Callable, Dict, List, Optional, TypeVar
+from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar, cast
 
 import redis.asyncio as redis
 from redis.asyncio.connection import ConnectionPool
@@ -492,7 +492,8 @@ class CacheService:
     async def _release_lock(self, client: "redis.Redis", full_lock_key: str, token: str) -> None:
         """Release the stampede lock only if we still hold it (value == token)."""
         try:
-            await client.eval(_UNLOCK_LUA, 1, full_lock_key, token)
+            # redis-py types eval() as Awaitable[str] | str; the asyncio client always returns an awaitable.
+            await cast(Awaitable[str], client.eval(_UNLOCK_LUA, 1, full_lock_key, token))
         except Exception as e:
             logger.warning(f"Failed to release cache lock {full_lock_key}: {e}")
 

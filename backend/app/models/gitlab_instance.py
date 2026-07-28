@@ -3,11 +3,11 @@ from typing import Optional
 
 from pydantic import ConfigDict, Field
 
-from app.models.base import CreatedAtModel
+from app.models.base import CreatedAtModel, VcsInstanceModel
 from app.models.types import MongoDocument
 
 
-class GitLabInstance(MongoDocument, CreatedAtModel):
+class GitLabInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     """A configured GitLab instance."""
 
     # Identity

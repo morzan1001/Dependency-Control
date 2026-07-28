@@ -62,6 +62,11 @@ disable_error_code = ["dict-item"]
 module = ["yaml", "weasyprint"]
 ignore_missing_imports = true
 
+# mypy cannot model pydantic's @computed_field stacked on @property.
+[[tool.mypy.overrides]]
+module = "app.schemas.system"
+disable_error_code = ["prop-decorator"]
+
 [tool.ruff]
 line-length = 120
 exclude = [".git", "__pycache__", "docs/source/conf.py", "old", "build", "dist"]

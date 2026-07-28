@@ -5,7 +5,7 @@ These schemas define minimal models for performance-critical queries
 that only need specific fields.
 """
 
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -88,7 +88,7 @@ class CallgraphMinimal(BaseModel):
         return self
 
 
-def _field(entry: object, name: str):
+def _field(entry: object, name: str) -> Any:
     """Read ``name`` from a dict or attribute-style entry."""
     if isinstance(entry, dict):
         return entry.get(name)

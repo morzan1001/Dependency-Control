@@ -170,7 +170,7 @@ class ScanRepository:
         for p in projects:
             pid, deleted = _project_id_and_deleted(p)
             latest_scan_id = p.get("latest_scan_id") if isinstance(p, dict) else getattr(p, "latest_scan_id", None)
-            if not latest_scan_id:
+            if not pid or not latest_scan_id:
                 continue
             if deleted:
                 needing.append((pid, deleted))

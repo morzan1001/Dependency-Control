@@ -3,10 +3,11 @@
 from typing import Any, Dict, List, Optional, Type
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
-from pydantic import BaseModel
+
+from app.models.base import VcsInstanceModel
 
 
-class VcsInstanceRepository[T: BaseModel]:
+class VcsInstanceRepository[T: VcsInstanceModel]:
     """Subclasses set ``collection_name`` and ``model_class``."""
 
     collection_name: str
