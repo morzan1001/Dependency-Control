@@ -97,7 +97,10 @@ async def _resolve_and_vet(url: str) -> Optional[str]:
 
     safe_ip: Optional[str] = None
     for info in infos:
-        ip_str = info[4][0].split("%", 1)[0]
+        addr = info[4][0]
+        if not isinstance(addr, str):
+            continue
+        ip_str = addr.split("%", 1)[0]
         try:
             resolved = ipaddress.ip_address(ip_str)
         except ValueError:
