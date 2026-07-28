@@ -2,7 +2,7 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -99,14 +99,14 @@ class FindingInfo:
     finding_type: str  # vulnerability, secret, sast, iac, license, quality
     severity: str
     component: str  # package name or file path
-    version: Optional[str] = None
-    description: Optional[str] = None
-    fixed_version: Optional[str] = None
-    cve_id: Optional[str] = None
-    file_path: Optional[str] = None
-    line_number: Optional[int] = None
-    rule_id: Optional[str] = None
-    details: Dict[str, Any] = field(default_factory=dict)
+    version: str | None = None
+    description: str | None = None
+    fixed_version: str | None = None
+    cve_id: str | None = None
+    file_path: str | None = None
+    line_number: int | None = None
+    rule_id: str | None = None
+    details: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -118,16 +118,16 @@ class VulnerabilityInfo:
     severity: str
     package_name: str
     current_version: str
-    fixed_version: Optional[str]
-    description: Optional[str] = None
+    fixed_version: str | None
+    description: str | None = None
     source_type: str = "unknown"  # image or application
 
-    epss_score: Optional[float] = None  # 0.0 to 1.0
+    epss_score: float | None = None  # 0.0 to 1.0
     is_kev: bool = False
     kev_ransomware: bool = False
-    is_reachable: Optional[bool] = None
-    reachability_level: Optional[str] = None  # confirmed, likely, unknown, unreachable
-    risk_score: Optional[float] = None  # 0-100
+    is_reachable: bool | None = None
+    reachability_level: str | None = None  # confirmed, likely, unknown, unreachable
+    risk_score: float | None = None  # 0-100
 
     @property
     def is_fixable(self) -> bool:
@@ -145,9 +145,7 @@ class VulnerabilityInfo:
         """Returns True if this vulnerability can be safely deprioritized."""
         if self.is_reachable is False:
             return True
-        if not self.is_kev and (self.epss_score is None or self.epss_score < 0.01):
-            return True
-        return False
+        return bool(not self.is_kev and (self.epss_score is None or self.epss_score < 0.01))
 
 
 class PackageHotspot(BaseModel):
@@ -162,8 +160,8 @@ class PackageHotspot(BaseModel):
     high_epss_count: int = 0
     reachable_count: int = 0
     risk_score: float = 0.0
-    reasons: List[str] = []
-    fixed_versions: List[str] = []
+    reasons: list[str] = []
+    fixed_versions: list[str] = []
     has_malware: bool = False
     is_eol: bool = False
 
@@ -190,12 +188,12 @@ class Recommendation:
     priority: Priority
     title: str
     description: str
-    impact: Dict[str, Any]  # {critical: X, high: Y, total: Z, ...} + optional metadata
-    affected_components: List[str]
-    action: Dict[str, Any]  # Specific action details
+    impact: dict[str, Any]  # {critical: X, high: Y, total: Z, ...} + optional metadata
+    affected_components: list[str]
+    action: dict[str, Any]  # Specific action details
     effort: str = Effort.MEDIUM  # Accepts Effort enum or string for compatibility
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         effort_value = self.effort.value if isinstance(self.effort, Effort) else self.effort
         return {
             "type": self.type.value,

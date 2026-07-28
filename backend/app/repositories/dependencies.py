@@ -1,6 +1,6 @@
 """Repository for dependencies."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.models.dependency import Dependency
 from app.repositories.base import BaseRepository
@@ -10,7 +10,7 @@ class DependencyRepository(BaseRepository[Dependency]):
     collection_name = "dependencies"
     model_class = Dependency
 
-    async def get_by_name(self, name: str) -> Optional[Dependency]:
+    async def get_by_name(self, name: str) -> Dependency | None:
         return await self.find_one({"name": name})
 
     async def find_by_scan(
@@ -18,14 +18,14 @@ class DependencyRepository(BaseRepository[Dependency]):
         scan_id: str,
         skip: int = 0,
         limit: int = 10000,
-    ) -> List[Dependency]:
+    ) -> list[Dependency]:
         return await self.find_many({"scan_id": scan_id}, skip=skip, limit=limit)
 
     async def find_all(
         self,
-        query: Optional[Dict[str, Any]] = None,
-        projection: Optional[Dict[str, int]] = None,
-    ) -> List[Dict[str, Any]]:
+        query: dict[str, Any] | None = None,
+        projection: dict[str, int] | None = None,
+    ) -> list[dict[str, Any]]:
         """Returns raw dicts unbounded; use iterate() for large result sets."""
         cursor = self.collection.find(query or {}, projection)
         return await cursor.to_list(None)
@@ -36,8 +36,8 @@ class DependencyRepository(BaseRepository[Dependency]):
     async def count_by_scan(self, scan_id: str) -> int:
         return await self.count({"scan_id": scan_id})
 
-    async def get_unique_packages(self, scan_ids: List[str]) -> int:
-        pipeline: List[Dict[str, Any]] = [
+    async def get_unique_packages(self, scan_ids: list[str]) -> int:
+        pipeline: list[dict[str, Any]] = [
             {"$match": {"scan_id": {"$in": scan_ids}}},
             {"$group": {"_id": "$name"}},
             {"$count": "count"},
@@ -45,16 +45,16 @@ class DependencyRepository(BaseRepository[Dependency]):
         result = await self.aggregate(pipeline)
         return result[0]["count"] if result else 0
 
-    async def get_type_distribution(self, scan_ids: List[str]) -> List[Dict[str, Any]]:
-        pipeline: List[Dict[str, Any]] = [
+    async def get_type_distribution(self, scan_ids: list[str]) -> list[dict[str, Any]]:
+        pipeline: list[dict[str, Any]] = [
             {"$match": {"scan_id": {"$in": scan_ids}}},
             {"$group": {"_id": "$type", "count": {"$sum": 1}}},
             {"$sort": {"count": -1}},
         ]
         return await self.aggregate(pipeline)
 
-    async def get_distinct_types(self, scan_ids: List[str]) -> List[str]:
-        pipeline: List[Dict[str, Any]] = [
+    async def get_distinct_types(self, scan_ids: list[str]) -> list[str]:
+        pipeline: list[dict[str, Any]] = [
             {"$match": {"scan_id": {"$in": scan_ids}}},
             {"$group": {"_id": "$type"}},
             {"$sort": {"_id": 1}},

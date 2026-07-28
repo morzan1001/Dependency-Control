@@ -1,6 +1,5 @@
 import json
 
-
 from app.services.compliance.renderers.sarif_renderer import SarifRenderer
 from tests.unit.test_renderer_json import _evaluation, _report
 
@@ -9,7 +8,7 @@ def test_sarif_renderer_outputs_sarif_2_1_0():
     r = SarifRenderer()
     out, filename, mime = r.render(_evaluation(), _report())
     assert mime == "application/sarif+json"
-    assert filename.endswith(".sarif.json") or filename.endswith(".sarif")
+    assert filename.endswith((".sarif.json", ".sarif"))
     data = json.loads(out)
     assert data["version"] == "2.1.0"
     assert data["$schema"].endswith("sarif-schema-2.1.0.json")
@@ -25,6 +24,7 @@ def test_sarif_renderer_outputs_sarif_2_1_0():
 
 def test_sarif_passed_control_emits_pass_result():
     from datetime import datetime, timezone
+
     from app.models.finding import Severity
     from app.schemas.compliance import (
         ControlResult,

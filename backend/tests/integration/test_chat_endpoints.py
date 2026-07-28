@@ -1,12 +1,13 @@
 """Integration tests for chat API endpoints."""
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
-from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.main import app
 from app.db.mongodb import get_database
+from app.main import app
 
 
 @pytest_asyncio.fixture

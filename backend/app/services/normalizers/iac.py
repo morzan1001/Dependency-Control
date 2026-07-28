@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.core.constants import KICS_SEVERITY_MAP
 from app.models.finding import Finding, FindingType
@@ -14,10 +14,10 @@ if TYPE_CHECKING:
 
 def _process_kics_file(
     aggregator: "ResultAggregator",
-    f: Dict[str, Any],
-    query: Dict[str, Any],
+    f: dict[str, Any],
+    query: dict[str, Any],
     severity: str,
-    source: Optional[str],
+    source: str | None,
 ) -> None:
     query_name = query.get("query_name") or "Unknown Issue"
     query_id = query.get("query_id") or "unknown"
@@ -69,7 +69,7 @@ def _process_kics_file(
     )
 
 
-def normalize_kics(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
+def normalize_kics(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     queries = result.get("queries") or []
     if not queries:
         return

@@ -1,6 +1,6 @@
 """Repository for finding database operations."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pymongo import UpdateOne
 
@@ -17,10 +17,10 @@ class FindingRepository(BaseRepository[FindingRecord]):
         scan_id: str,
         vulnerability_id: str,
         waived: bool,
-        waiver_reason: Optional[str] = None,
+        waiver_reason: str | None = None,
     ) -> int:
         """Apply waiver to a specific nested vulnerability via array_filters."""
-        update_data: Dict[str, Any] = {"details.vulnerabilities.$[vuln].waived": waived}
+        update_data: dict[str, Any] = {"details.vulnerabilities.$[vuln].waived": waived}
         if waiver_reason:
             update_data["details.vulnerabilities.$[vuln].waiver_reason"] = waiver_reason
 
@@ -40,11 +40,11 @@ class FindingRepository(BaseRepository[FindingRecord]):
         scan_id: str,
         query: dict,
         waived: bool,
-        waiver_reason: Optional[str] = None,
+        waiver_reason: str | None = None,
     ) -> int:
         """Apply waiver to findings matching `query` (finding-level, not nested-vulnerability)."""
         full_query = {"scan_id": scan_id, **query}
-        update_data: Dict[str, Any] = {"waived": waived}
+        update_data: dict[str, Any] = {"waived": waived}
         if waiver_reason:
             update_data["waiver_reason"] = waiver_reason
 
@@ -56,9 +56,9 @@ class FindingRepository(BaseRepository[FindingRecord]):
         scan_id: str,
         skip: int = 0,
         limit: int = 1000,
-        query_filter: Optional[Dict[str, Any]] = None,
-    ) -> List[FindingRecord]:
-        query: Dict[str, Any] = {"scan_id": scan_id}
+        query_filter: dict[str, Any] | None = None,
+    ) -> list[FindingRecord]:
+        query: dict[str, Any] = {"scan_id": scan_id}
         if query_filter:
             query.update(query_filter)
         return await self.find_many(query, skip=skip, limit=limit)
@@ -69,7 +69,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
     async def count_by_scan(self, scan_id: str) -> int:
         return await self.count({"scan_id": scan_id})
 
-    async def bulk_upsert(self, operations: List[UpdateOne]) -> int:
+    async def bulk_upsert(self, operations: list[UpdateOne]) -> int:
         if not operations:
             return 0
         result = await self.collection.bulk_write(operations)
@@ -77,7 +77,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
 
     _LOCATION_TYPES = ("sast", "iac", "secret", "crypto_key_management")
 
-    async def find_location_findings(self, scan_id: str) -> List[Dict[str, Any]]:
+    async def find_location_findings(self, scan_id: str) -> list[dict[str, Any]]:
         """Raw docs for location-based findings of a scan (waiver-matchable)."""
         cursor = self.collection.find(
             {"scan_id": scan_id, "type": {"$in": list(self._LOCATION_TYPES)}},
@@ -86,7 +86,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         )
         return await cursor.to_list(None)
 
-    async def set_waived(self, scan_id: str, finding_ids: List[str], reason: Optional[str]) -> int:
+    async def set_waived(self, scan_id: str, finding_ids: list[str], reason: str | None) -> int:
         if not finding_ids:
             return 0
         result = await self.collection.update_many(
@@ -95,7 +95,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         )
         return result.modified_count
 
-    async def set_lapsed(self, scan_id: str, mapping: Dict[str, str]) -> int:
+    async def set_lapsed(self, scan_id: str, mapping: dict[str, str]) -> int:
         ops = [
             UpdateOne({"scan_id": scan_id, "_id": fid}, {"$set": {"waiver_lapsed": True, "lapsed_waiver_id": wid}})
             for fid, wid in mapping.items()
@@ -107,11 +107,11 @@ class FindingRepository(BaseRepository[FindingRecord]):
 
     async def get_severity_distribution(
         self,
-        scan_ids: List[str],
+        scan_ids: list[str],
         finding_type: str = "vulnerability",
-    ) -> Dict[str, int]:
+    ) -> dict[str, int]:
         """Returns {severity: count} of non-waived findings aggregated across `scan_ids`."""
-        pipeline: List[Dict[str, Any]] = [
+        pipeline: list[dict[str, Any]] = [
             {
                 "$match": {
                     "scan_id": {"$in": scan_ids},
@@ -126,12 +126,12 @@ class FindingRepository(BaseRepository[FindingRecord]):
 
     async def get_vuln_counts_by_components(
         self,
-        scan_ids: List[str],
-        project_ids: List[str],
-        component_names: List[str],
-    ) -> Dict[str, int]:
+        scan_ids: list[str],
+        project_ids: list[str],
+        component_names: list[str],
+    ) -> dict[str, int]:
         """{component_name: non_waived_vulnerability_count}; scan_ids+project_ids exclude prior-scan findings."""
-        pipeline: List[Dict[str, Any]] = [
+        pipeline: list[dict[str, Any]] = [
             {
                 "$match": {
                     "scan_id": {"$in": scan_ids},

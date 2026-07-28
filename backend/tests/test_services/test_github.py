@@ -3,10 +3,9 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
 
-
 from app.models.github_api import GitHubOIDCPayload
 from app.services.github import GitHubService
-from tests.mocks.github import make_github_instance, github_instance_a, github_instance_b
+from tests.mocks.github import github_instance_a, github_instance_b, make_github_instance
 
 
 class TestGitHubServiceInitialization:

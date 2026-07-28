@@ -1,7 +1,8 @@
 """Tests for Dependency model."""
 
-import pytest
 from datetime import datetime, timezone
+
+import pytest
 from pydantic import ValidationError
 
 from app.models.dependency import Dependency

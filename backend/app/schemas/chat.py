@@ -1,13 +1,13 @@
 """Request/response schemas for the chat API."""
 
 from datetime import datetime
-from typing import Annotated, Any, Dict, List, Literal, Optional
+from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 
 class ConversationCreate(BaseModel):
-    title: Optional[str] = None
+    title: str | None = None
 
 
 class ConversationResponse(BaseModel):
@@ -22,7 +22,7 @@ class ConversationResponse(BaseModel):
 
 
 class ConversationListResponse(BaseModel):
-    conversations: List[ConversationResponse]
+    conversations: list[ConversationResponse]
     total: int
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
@@ -31,13 +31,13 @@ class ConversationListResponse(BaseModel):
 class MessageCreate(BaseModel):
     content: str = Field(..., min_length=1, max_length=10000)
     # max_length is base64 chars: ~1.5MB per image.
-    images: List[Annotated[str, Field(max_length=2_000_000)]] = Field(default_factory=list, max_length=4)
+    images: list[Annotated[str, Field(max_length=2_000_000)]] = Field(default_factory=list, max_length=4)
 
 
 class ToolCallResponse(BaseModel):
     tool_name: str
-    arguments: Dict[str, Any]
-    result: Dict[str, Any]
+    arguments: dict[str, Any]
+    result: dict[str, Any]
     duration_ms: int
 
 
@@ -46,8 +46,8 @@ class MessageResponse(BaseModel):
     conversation_id: str
     role: Literal["user", "assistant", "tool"]
     content: str
-    images: List[str]
-    tool_calls: List[ToolCallResponse]
+    images: list[str]
+    tool_calls: list[ToolCallResponse]
     token_count: int
     created_at: datetime
 
@@ -56,6 +56,6 @@ class MessageResponse(BaseModel):
 
 class ConversationDetailResponse(BaseModel):
     conversation: ConversationResponse
-    messages: List[MessageResponse]
+    messages: list[MessageResponse]
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)

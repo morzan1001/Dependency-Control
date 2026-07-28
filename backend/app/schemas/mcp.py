@@ -1,7 +1,7 @@
 """Request/response schemas for MCP API key management and the MCP endpoint."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,8 +17,8 @@ class MCPKeyResponse(BaseModel):
     prefix: str
     created_at: datetime
     expires_at: datetime
-    last_used_at: Optional[datetime] = None
-    revoked_at: Optional[datetime] = None
+    last_used_at: datetime | None = None
+    revoked_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
@@ -37,7 +37,7 @@ class MCPKeyCreateResponse(MCPKeyResponse):
 
 
 class MCPKeyListResponse(BaseModel):
-    keys: List[MCPKeyResponse]
+    keys: list[MCPKeyResponse]
 
 
 # ── MCP JSON-RPC 2.0 envelope types ─────────────────────────────────────
@@ -45,19 +45,19 @@ class MCPKeyListResponse(BaseModel):
 
 class JSONRPCRequest(BaseModel):
     jsonrpc: str = "2.0"
-    id: Optional[Any] = None
+    id: Any | None = None
     method: str
-    params: Optional[Dict[str, Any]] = None
+    params: dict[str, Any] | None = None
 
 
 class JSONRPCError(BaseModel):
     code: int
     message: str
-    data: Optional[Any] = None
+    data: Any | None = None
 
 
 class JSONRPCResponse(BaseModel):
     jsonrpc: str = "2.0"
-    id: Optional[Any] = None
-    result: Optional[Any] = None
-    error: Optional[JSONRPCError] = None
+    id: Any | None = None
+    result: Any | None = None
+    error: JSONRPCError | None = None

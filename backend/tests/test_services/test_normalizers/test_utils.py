@@ -2,13 +2,13 @@
 
 from app.models.finding import Severity
 from app.services.normalizers.utils import (
-    safe_severity,
-    normalize_list,
-    normalize_cwe_list,
-    safe_get,
     build_finding_id,
     extract_cvss,
     extract_grype_cvss,
+    normalize_cwe_list,
+    normalize_list,
+    safe_get,
+    safe_severity,
 )
 
 

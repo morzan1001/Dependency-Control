@@ -56,11 +56,12 @@ async def test_ingest_cbom_rejects_empty_cbom(client, db, api_key_headers):
 
 @pytest.mark.asyncio
 async def test_ingest_cbom_rejects_unauthenticated(db):
-    from app.main import app
+    from httpx import ASGITransport, AsyncClient
+
     from app.api.deps import get_system_settings
     from app.db.mongodb import get_database
+    from app.main import app
     from app.models.system import SystemSettings
-    from httpx import AsyncClient, ASGITransport
 
     # Override only the DB and system-settings deps; leave the auth dep real so it enforces credential checking.
     saved = dict(app.dependency_overrides)

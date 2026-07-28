@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.core.constants import AGG_KEY_SAST, get_severity_value
 from app.models.finding import Finding, FindingType
@@ -10,14 +10,14 @@ from app.schemas.finding import VulnerabilityEntry
 from app.services.aggregation.versions import resolve_fixed_versions
 
 
-def _extend_unique(target: List[Any], items: List[Any]) -> None:
+def _extend_unique(target: list[Any], items: list[Any]) -> None:
     """Append items to target list, skipping duplicates."""
     for item in items:
         if item not in target:
             target.append(item)
 
 
-def _sast_entry(f: Finding) -> Dict[str, Any]:
+def _sast_entry(f: Finding) -> dict[str, Any]:
     """Build the per-scanner sast_findings entry from a single Finding."""
     return {
         "id": f.details.get("rule_id", "unknown"),
@@ -29,14 +29,14 @@ def _sast_entry(f: Finding) -> Dict[str, Any]:
     }
 
 
-def merge_sast_findings(findings: List[Finding]) -> Optional[Finding]:
+def merge_sast_findings(findings: list[Finding]) -> Finding | None:
     """Merge a list of SAST findings into one finding holding the per-scanner entries."""
     if not findings:
         return None
 
     base = findings[0]
 
-    merged_details: Dict[str, Any] = {
+    merged_details: dict[str, Any] = {
         "sast_findings": [],
         "file": base.component,
         "line": base.details.get("line") or base.details.get("start", {}).get("line"),
@@ -79,7 +79,7 @@ def merge_sast_findings(findings: List[Finding]) -> Optional[Finding]:
     )
 
 
-def _merge_vuln_ids_and_severity(tv: Dict[str, Any], source_entry: VulnerabilityEntry) -> None:
+def _merge_vuln_ids_and_severity(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
     """Merge scanners, aliases, and severity (using the maximum)."""
     tv["scanners"] = list(set(tv.get("scanners", []) + source_entry.get("scanners", [])))
 
@@ -92,14 +92,14 @@ def _merge_vuln_ids_and_severity(tv: Dict[str, Any], source_entry: Vulnerability
         tv["severity"] = source_entry["severity"]
 
 
-def _merge_vuln_description(tv: Dict[str, Any], source_entry: VulnerabilityEntry) -> None:
+def _merge_vuln_description(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
     """Prefer the longer description."""
     if len(source_entry.get("description", "")) > len(tv.get("description", "")):
         tv["description"] = source_entry["description"]
         tv["description_source"] = source_entry.get("description_source", "unknown")
 
 
-def _merge_vuln_fix_and_cvss(tv: Dict[str, Any], source_entry: VulnerabilityEntry) -> None:
+def _merge_vuln_fix_and_cvss(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
     """Merge fixed_version (filling gaps) and CVSS (taking the higher score)."""
     if not tv.get("fixed_version") and source_entry.get("fixed_version"):
         tv["fixed_version"] = source_entry["fixed_version"]
@@ -109,7 +109,7 @@ def _merge_vuln_fix_and_cvss(tv: Dict[str, Any], source_entry: VulnerabilityEntr
         tv["cvss_vector"] = source_entry.get("cvss_vector")
 
 
-def _merge_vuln_references(tv: Dict[str, Any], source_entry: VulnerabilityEntry) -> None:
+def _merge_vuln_references(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
     """Union references from both entries, including any details.urls fields."""
     tv_refs = set(tv.get("references", []) or [])
     sv_refs = set(source_entry.get("references", []) or [])
@@ -120,7 +120,7 @@ def _merge_vuln_references(tv: Dict[str, Any], source_entry: VulnerabilityEntry)
         del tv["details"]["urls"]
 
 
-def _merge_vuln_detail_fields(tv: Dict[str, Any], source_entry: VulnerabilityEntry) -> None:
+def _merge_vuln_detail_fields(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
     """Fill in missing detail fields from the source entry."""
     for key in ("cwe_ids", "published_date", "last_modified_date"):
         val = source_entry.get("details", {}).get(key)
@@ -132,7 +132,7 @@ def _merge_vuln_detail_fields(tv: Dict[str, Any], source_entry: VulnerabilityEnt
             tv["details"][key] = val
 
 
-def merge_vulnerability_into_list(target_list: List[Any], source_entry: VulnerabilityEntry) -> None:
+def merge_vulnerability_into_list(target_list: list[Any], source_entry: VulnerabilityEntry) -> None:
     """Merge a source vuln entry into target list, deduplicating by ID and aliases."""
     s_ids = set([source_entry["id"]] + source_entry.get("aliases", []))
 

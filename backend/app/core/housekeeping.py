@@ -1,13 +1,14 @@
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from datetime import datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any, Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo import ReadPreference
 
 from app.core import ensure_utc
+from app.core.cache import update_cache_stats
 from app.core.config import settings
 from app.core.constants import (
     ARCHIVE_BATCH_SIZE,
@@ -21,18 +22,17 @@ from app.core.constants import (
     RETENTION_ACTION_ARCHIVE,
     RETENTION_ACTION_DELETE,
 )
-from app.core.s3 import delete_object, is_archive_enabled, list_objects
-from app.db.mongodb import get_database
-from app.models.project import Project, Scan
-from app.repositories.scans import ScanRepository
-from app.repositories.system_settings import SystemSettingsRepository
 from app.core.metrics import (
     archive_housekeeping_batch_total,
     archive_housekeeping_scans_processed,
     update_archive_stats,
     update_db_stats,
 )
-from app.core.cache import update_cache_stats
+from app.core.s3 import delete_object, is_archive_enabled, list_objects
+from app.db.mongodb import get_database
+from app.models.project import Project, Scan
+from app.repositories.scans import ScanRepository
+from app.repositories.system_settings import SystemSettingsRepository
 from app.services.audit.retention import prune_old_audit_entries
 from app.services.compliance.retention import sweep_expired_compliance_reports
 
@@ -61,9 +61,9 @@ async def _get_referenced_scan_ids(db: Any) -> list[str]:
     return list(referenced_ids)
 
 
-def _extract_gridfs_ids_from_refs(sbom_refs: List[Any]) -> List[str]:
+def _extract_gridfs_ids_from_refs(sbom_refs: list[Any]) -> list[str]:
     """Extract GridFS IDs from a list of SBOM references."""
-    ids: List[str] = []
+    ids: list[str] = []
     for ref in sbom_refs:
         if isinstance(ref, dict) and ref.get("type") == "gridfs_reference":
             gid = ref.get("gridfs_id")
@@ -72,15 +72,15 @@ def _extract_gridfs_ids_from_refs(sbom_refs: List[Any]) -> List[str]:
     return ids
 
 
-async def _collect_gridfs_ids(db: Any, scan_ids: List[str]) -> List[str]:
+async def _collect_gridfs_ids(db: Any, scan_ids: list[str]) -> list[str]:
     """Collect all GridFS IDs referenced by the given scans."""
-    gridfs_ids: List[str] = []
+    gridfs_ids: list[str] = []
     async for scan_doc in db.scans.find({"_id": {"$in": scan_ids}}, {"sbom_refs": 1}):
         gridfs_ids.extend(_extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", [])))
     return gridfs_ids
 
 
-async def _cleanup_gridfs_files(db: Any, gridfs_ids: List[str], deleted_scan_ids: Optional[List[str]] = None) -> None:
+async def _cleanup_gridfs_files(db: Any, gridfs_ids: list[str], deleted_scan_ids: list[str] | None = None) -> None:
     """Delete GridFS files that no surviving scan still references.
 
     Rescans copy ``sbom_refs`` (and the ``gridfs_id``) from their source scan, so
@@ -99,11 +99,11 @@ async def _cleanup_gridfs_files(db: Any, gridfs_ids: List[str], deleted_scan_ids
             continue
         try:
             await fs.delete(ObjectId(gid))
-        except Exception:
-            pass  # File may already be deleted
+        except Exception as e:
+            logger.debug(f"GridFS file {gid} already deleted or delete failed: {e}")
 
 
-async def _surviving_gridfs_references(db: Any, gridfs_ids: List[str], excluded_scan_ids: List[str]) -> set[str]:
+async def _surviving_gridfs_references(db: Any, gridfs_ids: list[str], excluded_scan_ids: list[str]) -> set[str]:
     """Return the subset of ``gridfs_ids`` that is still referenced by at
     least one scan outside ``excluded_scan_ids``.
     """
@@ -124,7 +124,7 @@ async def _surviving_gridfs_references(db: Any, gridfs_ids: List[str], excluded_
     return surviving
 
 
-async def _delete_scans_and_related_data(db: Any, scan_ids: List[str], label: str = "") -> int:
+async def _delete_scans_and_related_data(db: Any, scan_ids: list[str], label: str = "") -> int:
     """Delete scans and all associated data (findings, dependencies, GridFS SBOMs, callgraphs)."""
     if not scan_ids:
         return 0
@@ -148,7 +148,7 @@ async def _delete_scans_and_related_data(db: Any, scan_ids: List[str], label: st
     return count
 
 
-def _resolve_rescan_interval(project: Project, system_settings: Any) -> Optional[int]:
+def _resolve_rescan_interval(project: Project, system_settings: Any) -> int | None:
     """Return effective rescan interval hours, or None if rescans are disabled."""
     enabled = project.rescan_enabled
     if enabled is None:
@@ -202,8 +202,9 @@ async def _create_rescan_for_project(
     project: Project, source_scan: dict, db: Any, worker_manager: "WorkerManager"
 ) -> None:
     """Atomically create a rescan after acquiring the distributed lock."""
-    from app.repositories import DistributedLocksRepository
     import os
+
+    from app.repositories import DistributedLocksRepository
 
     lock_repo = DistributedLocksRepository(db)
     lock_name = f"rescan_create:{project.id}"
@@ -293,10 +294,10 @@ async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) ->
     reclassifying their S3 object as an orphan for the next sweep. Batched to avoid N+1 lookups.
     """
 
-    async def _reap_batch(scan_ids: List[str]) -> int:
+    async def _reap_batch(scan_ids: list[str]) -> int:
         if not scan_ids:
             return 0
-        restored: List[str] = []
+        restored: list[str] = []
         async for scan in db.scans.find({"_id": {"$in": scan_ids}}, {"_id": 1}):
             sid = scan.get("_id")
             if sid is not None:
@@ -314,7 +315,7 @@ async def _reap_stale_metadata(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) ->
             return 0
 
     deleted = 0
-    batch: List[str] = []
+    batch: list[str] = []
     async for meta in db.archive_metadata.find({}, {"_id": 1, "scan_id": 1}):
         scan_id = meta.get("scan_id")
         if not scan_id:
@@ -376,7 +377,7 @@ async def _reap_orphan_s3_objects(db: Any) -> int:
     return deleted
 
 
-async def _archive_scans_and_delete(db: Any, scan_ids: List[str], label: str = "") -> int:
+async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str = "") -> int:
     """
     Archive scans to S3, then delete from MongoDB.
 
@@ -389,7 +390,7 @@ async def _archive_scans_and_delete(db: Any, scan_ids: List[str], label: str = "
     from app.services.archive import archive_scan
 
     archived_count = 0
-    failed_ids: List[str] = []
+    failed_ids: list[str] = []
 
     for scan_id in scan_ids:
         try:
@@ -421,7 +422,7 @@ async def _archive_scans_and_delete(db: Any, scan_ids: List[str], label: str = "
     return archived_count
 
 
-async def _handle_retention_action(db: Any, scan_ids: List[str], action: str, label: str) -> None:
+async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, label: str) -> None:
     """Route retention to delete or archive based on the configured action."""
     if not scan_ids:
         return
@@ -441,7 +442,7 @@ async def _process_scans_in_batches(
     db: Any, cursor: Any, action: str, label: str, batch_size: int = ARCHIVE_BATCH_SIZE
 ) -> None:
     """Stream scan IDs from cursor and process retention in batches."""
-    batch: List[str] = []
+    batch: list[str] = []
     async for doc in cursor:
         batch.append(str(doc["_id"]))
         if len(batch) >= batch_size:
@@ -494,7 +495,7 @@ async def run_housekeeping() -> None:
             logger.info("Running project-specific housekeeping...")
 
             # Group projects by (retention_days, retention_action) to minimize DB queries
-            pipeline: List[Dict[str, Any]] = [
+            pipeline: list[dict[str, Any]] = [
                 {
                     "$match": {
                         "retention_days": {"$gt": 0},
@@ -675,7 +676,7 @@ async def recover_stuck_scans(
         logger.exception("Stuck scan recovery failed: %s", e)
 
 
-async def _fetch_gitlab_branches(db: Any, instance_id: str, project_id: str) -> Optional[list]:
+async def _fetch_gitlab_branches(db: Any, instance_id: str, project_id: str) -> list | None:
     from app.repositories.gitlab_instances import GitLabInstanceRepository
     from app.services.gitlab import GitLabService
 
@@ -689,7 +690,7 @@ async def _fetch_gitlab_branches(db: Any, instance_id: str, project_id: str) -> 
     return await GitLabService(instance).list_branches(numeric_project_id)
 
 
-async def _fetch_github_branches(db: Any, instance_id: str, repo_path: str) -> Optional[list]:
+async def _fetch_github_branches(db: Any, instance_id: str, repo_path: str) -> list | None:
     from app.repositories.github_instances import GitHubInstanceRepository
     from app.services.github import GitHubService
 
@@ -702,7 +703,7 @@ async def _fetch_github_branches(db: Any, instance_id: str, repo_path: str) -> O
     return await GitHubService(gh_instance).list_branches(parts[0], parts[1])
 
 
-async def _fetch_vcs_branches(project_data: dict, db: Any) -> Optional[list]:
+async def _fetch_vcs_branches(project_data: dict, db: Any) -> list | None:
     """Resolve the VCS provider and return its branch list, or None if unavailable."""
     gitlab_instance_id = project_data.get("gitlab_instance_id")
     gitlab_project_id = project_data.get("gitlab_project_id")

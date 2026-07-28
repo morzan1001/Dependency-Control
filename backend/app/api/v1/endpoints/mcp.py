@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
@@ -33,7 +33,7 @@ _INVALID_PARAMS = -32602
 _INTERNAL_ERROR = -32603
 
 
-def _rpc_error(code: int, message: str, request_id: Any = None) -> Dict[str, Any]:
+def _rpc_error(code: int, message: str, request_id: Any = None) -> dict[str, Any]:
     return {
         "jsonrpc": "2.0",
         "id": request_id,
@@ -41,7 +41,7 @@ def _rpc_error(code: int, message: str, request_id: Any = None) -> Dict[str, Any
     }
 
 
-def _rpc_result(result: Any, request_id: Any) -> Dict[str, Any]:
+def _rpc_result(result: Any, request_id: Any) -> dict[str, Any]:
     return {"jsonrpc": "2.0", "id": request_id, "result": result}
 
 
@@ -54,7 +54,7 @@ class _RpcError(Exception):
         self.message = message
 
 
-async def _resolve_user_from_token(authorization: str, db: "AsyncIOMotorDatabase[Any]") -> tuple[User, Dict[str, Any]]:
+async def _resolve_user_from_token(authorization: str, db: AsyncIOMotorDatabase[Any]) -> tuple[User, dict[str, Any]]:
     """Validate Bearer token and return the (user, key_doc) pair; raises HTTPException on failure."""
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(
@@ -86,7 +86,7 @@ async def _resolve_user_from_token(authorization: str, db: "AsyncIOMotorDatabase
     return user, key_doc
 
 
-def _tools_list_payload() -> Dict[str, Any]:
+def _tools_list_payload() -> dict[str, Any]:
     """Map our TOOL_DEFINITIONS (OpenAI-style) into MCP tool shape."""
     tools = []
     for td in get_tool_definitions():
@@ -103,10 +103,10 @@ def _tools_list_payload() -> Dict[str, Any]:
 
 async def _handle_tool_call(
     registry: ChatToolRegistry,
-    params: Dict[str, Any],
+    params: dict[str, Any],
     user: User,
-    db: "AsyncIOMotorDatabase[Any]",
-) -> Dict[str, Any]:
+    db: AsyncIOMotorDatabase[Any],
+) -> dict[str, Any]:
     """Execute a tool call for MCP; protocol errors raise _RpcError, execution errors return isError=true."""
     name = params.get("name")
     if not isinstance(name, str) or not name:
@@ -128,7 +128,7 @@ async def _handle_tool_call(
     }
 
 
-async def _dispatch(method: str, params: Dict[str, Any], user: User, db: "AsyncIOMotorDatabase[Any]") -> Any:
+async def _dispatch(method: str, params: dict[str, Any], user: User, db: AsyncIOMotorDatabase[Any]) -> Any:
     if method == "initialize":
         # Echo our protocol version and advertise only 'tools'.
         return {

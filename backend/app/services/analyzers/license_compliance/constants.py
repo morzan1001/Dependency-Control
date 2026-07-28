@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, Optional, Tuple
 
 from app.core.constants import LICENSE_ALIASES
 from app.models.finding import Severity
@@ -32,7 +31,7 @@ SPDX_EPL_1_0 = "EPL-1.0"
 SPDX_SSPL_1_0 = "SSPL-1.0"
 
 # (license_a, license_b) → explanation. Both directions are checked.
-LICENSE_INCOMPATIBILITIES: Dict[tuple, str] = {
+LICENSE_INCOMPATIBILITIES: dict[tuple, str] = {
     (
         SPDX_GPL_2_0_ONLY,
         SPDX_GPL_3_0_ONLY,
@@ -58,7 +57,7 @@ LICENSE_INCOMPATIBILITIES: Dict[tuple, str] = {
     (SPDX_SSPL_1_0, SPDX_AGPL_3_0): f"{SPDX_SSPL_1_0} is not compatible with {SPDX_AGPL_3_0}.",
 }
 
-SEVERITY_RANK: Dict[Optional[str], int] = {
+SEVERITY_RANK: dict[str | None, int] = {
     None: 0,
     Severity.INFO.value: 1,
     Severity.LOW.value: 2,
@@ -68,7 +67,7 @@ SEVERITY_RANK: Dict[Optional[str], int] = {
 }
 
 
-LICENSE_DATABASE: Dict[str, LicenseInfo] = {
+LICENSE_DATABASE: dict[str, LicenseInfo] = {
     "MIT": LicenseInfo(
         spdx_id="MIT",
         category=LicenseCategory.PERMISSIVE,
@@ -552,7 +551,7 @@ LICENSE_DATABASE: Dict[str, LicenseInfo] = {
 }
 
 
-CATEGORY_STAT_KEY: Dict[LicenseCategory, str] = {
+CATEGORY_STAT_KEY: dict[LicenseCategory, str] = {
     LicenseCategory.PERMISSIVE: "permissive",
     LicenseCategory.PUBLIC_DOMAIN: "permissive",
     LicenseCategory.WEAK_COPYLEFT: "weak_copyleft",
@@ -562,15 +561,15 @@ CATEGORY_STAT_KEY: Dict[LicenseCategory, str] = {
 }
 
 
-_license_db_lower: Optional[Dict[str, str]] = None
-_alias_lower: Optional[Dict[str, str]] = None
+_license_db_lower: dict[str, str] | None = None
+_alias_lower: dict[str, str] | None = None
 
 
-def get_lowercase_mappings() -> Tuple[Dict[str, str], Dict[str, str]]:
+def get_lowercase_mappings() -> tuple[dict[str, str], dict[str, str]]:
     """Return cached (db_lower, alias_lower) lookup tables for case-insensitive matching."""
     global _license_db_lower, _alias_lower
     if _license_db_lower is None:
-        _license_db_lower = {k.lower(): k for k in LICENSE_DATABASE.keys()}
+        _license_db_lower = {k.lower(): k for k in LICENSE_DATABASE}
     if _alias_lower is None:
         _alias_lower = {k.lower(): v for k, v in LICENSE_ALIASES.items()}
     return _license_db_lower, _alias_lower

@@ -6,7 +6,6 @@ import pytest
 
 from app.services.analyzers.grype import GrypeAnalyzer
 
-
 SBOM = {"bomFormat": "CycloneDX", "specVersion": "1.5", "components": []}
 RETRYABLE_STDERR = b"context deadline exceeded while loading vuln DB"
 NON_RETRYABLE_STDERR = b"invalid command line argument: --bogus"

@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -50,26 +50,26 @@ class Finding(BaseModel):
     type: FindingType = Field(..., description="Type of finding")
     severity: Severity = Field(..., description="Severity level")
     component: str = Field(..., description="Affected component or file")
-    version: Optional[str] = Field(None, description="Affected version")
+    version: str | None = Field(None, description="Affected version")
     description: str = Field(..., description="Short description")
-    scanners: List[str] = Field(..., description="List of scanners that detected this")
-    details: Dict[str, Any] = Field(default_factory=dict, description="Analyzer-specific details")
+    scanners: list[str] = Field(..., description="List of scanners that detected this")
+    details: dict[str, Any] = Field(default_factory=dict, description="Analyzer-specific details")
 
     # Additional metadata
-    found_in: List[str] = Field(default_factory=list, description="Source files where this was found")
-    aliases: List[str] = Field(default_factory=list, description="Alternative IDs (e.g. GHSA vs CVE)")
-    related_findings: List[str] = Field(
+    found_in: list[str] = Field(default_factory=list, description="Source files where this was found")
+    aliases: list[str] = Field(default_factory=list, description="Alternative IDs (e.g. GHSA vs CVE)")
+    related_findings: list[str] = Field(
         default_factory=list,
         description="IDs of related findings (e.g. same CVEs in different packages)",
     )
 
     # Status fields
     waived: bool = False
-    waiver_reason: Optional[str] = None
+    waiver_reason: str | None = None
 
     # Waiver matching signature (location-based findings only; None otherwise)
-    match: Optional[MatchSignature] = None
+    match: MatchSignature | None = None
     waiver_lapsed: bool = False
-    lapsed_waiver_id: Optional[str] = None
+    lapsed_waiver_id: str | None = None
 
     model_config = ConfigDict(use_enum_values=True)

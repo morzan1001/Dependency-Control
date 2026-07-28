@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -8,13 +7,13 @@ from app.models.types import PyObjectId
 
 class TeamMemberSchema(BaseModel):
     user_id: str
-    username: Optional[str] = None
+    username: str | None = None
     role: str
 
 
 class TeamBase(BaseModel):
     name: str
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class TeamCreate(TeamBase):
@@ -22,13 +21,13 @@ class TeamCreate(TeamBase):
 
 
 class TeamUpdate(BaseModel):
-    name: Optional[str] = None
-    description: Optional[str] = None
+    name: str | None = None
+    description: str | None = None
 
 
 class TeamResponse(TeamBase):
     id: PyObjectId = Field(validation_alias="_id")
-    members: List[TeamMemberSchema]
+    members: list[TeamMemberSchema]
     created_at: datetime
     updated_at: datetime
 

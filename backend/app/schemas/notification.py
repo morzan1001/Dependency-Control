@@ -1,22 +1,20 @@
-from typing import List, Optional
-
 from pydantic import BaseModel, Field
 
 
 class AdvisoryPackage(BaseModel):
     name: str = Field(..., description="Affected package name")
-    version: Optional[str] = Field(None, description="Affected version (inclusive max)")
-    type: Optional[str] = Field(None, description="Package type (npm, pypi...)")
+    version: str | None = Field(None, description="Affected version (inclusive max)")
+    type: str | None = Field(None, description="Package type (npm, pypi...)")
 
 
 class BroadcastRequest(BaseModel):
     type: str = Field(..., description="Type of message: 'general' or 'advisory'")
     target_type: str = Field(..., description="Target audience: 'global', 'teams', 'advisory'")
-    target_teams: Optional[List[str]] = Field(None, description="List of Team IDs if target_type is 'teams'")
-    channels: Optional[List[str]] = Field(None, description="Channels to send to (email, slack, mattermost)")
+    target_teams: list[str] | None = Field(None, description="List of Team IDs if target_type is 'teams'")
+    channels: list[str] | None = Field(None, description="Channels to send to (email, slack, mattermost)")
 
     # For Advisory
-    packages: Optional[List[AdvisoryPackage]] = Field(None, description="List of affected packages for advisory")
+    packages: list[AdvisoryPackage] | None = Field(None, description="List of affected packages for advisory")
 
     subject: str
     message: str
@@ -35,8 +33,8 @@ class BroadcastHistoryItem(BaseModel):
     target_type: str
     subject: str
     created_at: str
-    created_by: Optional[str] = None
+    created_by: str | None = None
     recipient_count: int
     project_count: int
     unique_user_count: int = 0
-    teams: Optional[List[str]] = None
+    teams: list[str] | None = None

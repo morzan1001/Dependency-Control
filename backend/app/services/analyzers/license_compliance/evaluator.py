@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.models.finding import Severity
 from app.models.license import (
@@ -19,10 +19,10 @@ def evaluate_license(
     component: str,
     version: str,
     license_info: LicenseInfo,
-    lic_url: Optional[str],
+    lic_url: str | None,
     purl: str,
     policy: LicensePolicy,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Return an issue dict if the license is problematic under `policy`, else None."""
 
     if license_info.category in (
@@ -65,10 +65,10 @@ def evaluate_weak_copyleft(
     component: str,
     version: str,
     license_info: LicenseInfo,
-    lic_url: Optional[str],
+    lic_url: str | None,
     purl: str,
     policy: LicensePolicy,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Weak copyleft (LGPL, MPL, EPL, CDDL): obligation only on modification."""
     if policy.library_usage == LibraryUsage.UNMODIFIED:
         return None
@@ -102,10 +102,10 @@ def evaluate_strong_copyleft(
     component: str,
     version: str,
     license_info: LicenseInfo,
-    lic_url: Optional[str],
+    lic_url: str | None,
     purl: str,
     policy: LicensePolicy,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Strong copyleft (GPL): obligations trigger only upon distribution."""
     if policy.distribution_model == DistributionModel.INTERNAL_ONLY:
         return create_issue(
@@ -194,10 +194,10 @@ def evaluate_network_copyleft(
     component: str,
     version: str,
     license_info: LicenseInfo,
-    lic_url: Optional[str],
+    lic_url: str | None,
     purl: str,
     policy: LicensePolicy,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Network copyleft (AGPL, SSPL): obligations trigger on network interaction; CLI/desktop/embedded are exempt."""
     if policy.deployment_model in (
         DeploymentModel.CLI_BATCH,
@@ -298,7 +298,7 @@ def evaluate_network_copyleft(
     )
 
 
-def apply_transitive_adjustment(issue: Dict[str, Any], is_transitive: bool) -> None:
+def apply_transitive_adjustment(issue: dict[str, Any], is_transitive: bool) -> None:
     """Downgrade one severity level for transitive deps, whose copyleft obligations may be abstracted away."""
     if not is_transitive:
         return
@@ -320,14 +320,9 @@ def apply_transitive_adjustment(issue: Dict[str, Any], is_transitive: bool) -> N
         issue["context_reason"] = f"{existing_reason} {transitive_note}".strip() if existing_reason else transitive_note
 
 
-def should_include_finding(issue: Dict[str, Any], is_transitive: bool) -> bool:
+def should_include_finding(issue: dict[str, Any], is_transitive: bool) -> bool:
     """Skip INFO/LOW transitive findings — noise without actionable value."""
-    if is_transitive and issue.get("severity") in (
-        Severity.INFO.value,
-        Severity.LOW.value,
-    ):
-        return False
-    return True
+    return not (is_transitive and issue.get("severity") in (Severity.INFO.value, Severity.LOW.value))
 
 
 def create_issue(
@@ -339,15 +334,15 @@ def create_issue(
     message: str,
     explanation: str,
     recommendation: str,
-    obligations: Optional[List[str]] = None,
-    risks: Optional[List[str]] = None,
-    purl: Optional[str] = None,
-    license_url: Optional[str] = None,
-    context_reason: Optional[str] = None,
-    effective_severity: Optional[str] = None,
-) -> Dict[str, Any]:
+    obligations: list[str] | None = None,
+    risks: list[str] | None = None,
+    purl: str | None = None,
+    license_url: str | None = None,
+    context_reason: str | None = None,
+    effective_severity: str | None = None,
+) -> dict[str, Any]:
     """Create a license issue dict."""
-    issue: Dict[str, Any] = {
+    issue: dict[str, Any] = {
         "component": component,
         "version": version,
         "license": license_id,

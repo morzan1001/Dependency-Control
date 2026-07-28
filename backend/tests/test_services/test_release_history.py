@@ -1,7 +1,6 @@
 """Tests for upstream release-history analytics (release-cadence metrics)."""
 
 from datetime import datetime, timedelta, timezone
-from typing import List
 
 from app.services.release_history import (
     DepsDevReleaseHistoryFetcher,
@@ -15,7 +14,7 @@ from app.services.release_history import (
 )
 
 
-async def _async_noop(*_args, **_kwargs):  # noqa: ANN001
+async def _async_noop(*_args, **_kwargs):
     return None
 
 
@@ -229,7 +228,7 @@ class TestAggregateUpstreamMetrics:
 
     def test_deps_dev_fetcher_uses_cache_when_available(self):
         # The fetcher must consult the cache and skip HTTP when a hit exists.
-        cache_hits: List[str] = []
+        cache_hits: list[str] = []
 
         async def fake_get(key: str):  # type: ignore[no-untyped-def]
             cache_hits.append(key)
@@ -275,18 +274,19 @@ class TestDepsDevFetcherIntegration:
 
     def test_cache_miss_fetches_parses_and_caches(self):
         import asyncio
+
         from app.services.release_history import DepsDevReleaseHistoryFetcher
 
-        fetched_urls: List[str] = []
+        fetched_urls: list[str] = []
         cache_writes: dict = {}
 
-        async def cache_get(_key):  # noqa: ANN001
+        async def cache_get(_key):
             return None  # always cold
 
-        async def cache_set(key, value, ttl_seconds):  # noqa: ANN001
+        async def cache_set(key, value, ttl_seconds):
             cache_writes[key] = (value, ttl_seconds)
 
-        async def http_fetch(url):  # noqa: ANN001
+        async def http_fetch(url):
             fetched_urls.append(url)
             return {
                 "versions": [
@@ -310,15 +310,16 @@ class TestDepsDevFetcherIntegration:
 
     def test_http_failure_returns_empty_for_that_package(self):
         import asyncio
+
         from app.services.release_history import DepsDevReleaseHistoryFetcher
 
-        async def cache_get(_key):  # noqa: ANN001
+        async def cache_get(_key):
             return None
 
-        async def cache_set(*_a, **_k):  # noqa: ANN001
+        async def cache_set(*_a, **_k):
             return None
 
-        async def http_fetch(_url):  # noqa: ANN001
+        async def http_fetch(_url):
             return None  # simulates timeout / 5xx
 
         fetcher = DepsDevReleaseHistoryFetcher(cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch)
@@ -329,23 +330,24 @@ class TestDepsDevFetcherIntegration:
 
     def test_multi_package_fetch_keys_results_by_system_and_name(self):
         import asyncio
+
         from app.services.release_history import DepsDevReleaseHistoryFetcher
 
         cache: dict = {}
 
-        async def cache_get(key):  # noqa: ANN001
+        async def cache_get(key):
             return cache.get(key)
 
-        async def cache_set(key, value, ttl_seconds):  # noqa: ANN001
+        async def cache_set(key, value, ttl_seconds):
             cache[key] = value
 
         responses_by_url: dict = {
             "first": {"versions": [{"versionKey": {"version": "1.0"}, "publishedAt": "2024-01-01T00:00:00Z"}]},
             "second": {"versions": [{"versionKey": {"version": "2.0"}, "publishedAt": "2024-02-01T00:00:00Z"}]},
         }
-        urls_seen: List[str] = []
+        urls_seen: list[str] = []
 
-        async def http_fetch(url):  # noqa: ANN001
+        async def http_fetch(url):
             urls_seen.append(url)
             # Pick payload by ordinal so the assertion is unambiguous.
             return responses_by_url["first" if "first" in url else "second"]
@@ -359,17 +361,18 @@ class TestDepsDevFetcherIntegration:
 
     def test_cache_hit_skips_http(self):
         import asyncio
+
         from app.services.release_history import DepsDevReleaseHistoryFetcher
 
-        async def cache_get(_key):  # noqa: ANN001
+        async def cache_get(_key):
             return [
                 {"version": "5.0.0", "published_at": "2025-01-01T00:00:00+00:00"},
             ]
 
-        async def cache_set(*_a, **_k):  # noqa: ANN001
+        async def cache_set(*_a, **_k):
             raise AssertionError("cache_set must not be called on a cache hit")
 
-        async def http_fetch(_url):  # noqa: ANN001
+        async def http_fetch(_url):
             raise AssertionError("http_fetch must not be called on a cache hit")
 
         fetcher = DepsDevReleaseHistoryFetcher(cache_get=cache_get, cache_set=cache_set, http_fetch=http_fetch)
@@ -384,15 +387,16 @@ class TestEcosystemKeyingNoConflation:
     def test_fetch_keeps_same_name_across_ecosystems_separate(self):
         # Two packages share the bare name "foo" but live in different ecosystems.
         import asyncio
+
         from app.services.release_history import DepsDevReleaseHistoryFetcher
 
-        async def cache_get(_key):  # noqa: ANN001
+        async def cache_get(_key):
             return None
 
-        async def cache_set(*_a, **_k):  # noqa: ANN001
+        async def cache_set(*_a, **_k):
             return None
 
-        async def http_fetch(url):  # noqa: ANN001
+        async def http_fetch(url):
             # deps.dev URL embeds the system, so key the payload off it.
             if "/npm/" in url:
                 return {"versions": [{"versionKey": {"version": "9.9.9"}, "publishedAt": "2024-01-01T00:00:00Z"}]}

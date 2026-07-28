@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from typing import List, Optional
 
 from pydantic import ConfigDict, Field
 
@@ -16,25 +15,25 @@ class ArchiveMetadata(MongoDocument):
     archived_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     # Scan metadata snapshot (for listing archives without S3 access)
-    branch: Optional[str] = None
-    commit_hash: Optional[str] = None
-    scan_created_at: Optional[datetime] = None
-    scan_completed_at: Optional[datetime] = None
-    scan_status: Optional[str] = None
+    branch: str | None = None
+    commit_hash: str | None = None
+    scan_created_at: datetime | None = None
+    scan_completed_at: datetime | None = None
+    scan_status: str | None = None
 
     # Size info
-    original_size_bytes: Optional[int] = None
-    compressed_size_bytes: Optional[int] = None
+    original_size_bytes: int | None = None
+    compressed_size_bytes: int | None = None
 
     # Content summary (for listing without downloading)
     findings_count: int = 0
     critical_findings_count: int = 0
     high_findings_count: int = 0
     dependencies_count: int = 0
-    sbom_filenames: List[str] = Field(default_factory=list)
+    sbom_filenames: list[str] = Field(default_factory=list)
 
     # Collections included in the archive bundle
-    collections_included: List[str] = Field(
+    collections_included: list[str] = Field(
         default_factory=lambda: [
             "scans",
             "findings",

@@ -1,7 +1,5 @@
 """Repository for GitLab instances."""
 
-from typing import Optional
-
 from app.models.gitlab_instance import GitLabInstance
 from app.repositories.vcs_instances import VcsInstanceRepository
 
@@ -10,7 +8,7 @@ class GitLabInstanceRepository(VcsInstanceRepository[GitLabInstance]):
     collection_name = "gitlab_instances"
     model_class = GitLabInstance
 
-    async def get_default(self) -> Optional[GitLabInstance]:
+    async def get_default(self) -> GitLabInstance | None:
         data = await self.collection.find_one({"is_default": True, "is_active": True})
         if data:
             return GitLabInstance(**data)

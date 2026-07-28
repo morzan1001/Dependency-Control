@@ -3,7 +3,7 @@ import logging
 import os
 import time
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReadPreference
@@ -40,11 +40,11 @@ class AnalysisWorkerManager:
     def __init__(self, num_workers: int = 2) -> None:
         self.queue: asyncio.Queue[str] = asyncio.Queue()
         self.num_workers = num_workers
-        self.workers: List[asyncio.Task[None]] = []
-        self.housekeeping_task: Optional[asyncio.Task[None]] = None
-        self.stale_scan_task: Optional[asyncio.Task[None]] = None
+        self.workers: list[asyncio.Task[None]] = []
+        self.housekeeping_task: asyncio.Task[None] | None = None
+        self.stale_scan_task: asyncio.Task[None] | None = None
         self._shutting_down: bool = False
-        self._active_scans: Set[str] = set()
+        self._active_scans: set[str] = set()
         self._shutdown_event: asyncio.Event = asyncio.Event()
 
     async def start(self) -> None:
@@ -190,7 +190,7 @@ class AnalysisWorkerManager:
 
         return True
 
-    async def _notify_analysis_failed(self, db: AsyncIOMotorDatabase, scan: Dict[str, Any], error: str) -> None:
+    async def _notify_analysis_failed(self, db: AsyncIOMotorDatabase, scan: dict[str, Any], error: str) -> None:
         """Fire the analysis_failed webhook + project notification for a failed scan.
 
         Best-effort: any error here is logged and swallowed so it never masks the
@@ -222,7 +222,7 @@ class AnalysisWorkerManager:
         except Exception as webhook_err:
             logger.exception("Failed to trigger analysis_failed webhook: %s", webhook_err)
 
-    async def _handle_failed_analysis(self, scan: Dict[str, Any], scan_id: str, db: AsyncIOMotorDatabase) -> bool:
+    async def _handle_failed_analysis(self, scan: dict[str, Any], scan_id: str, db: AsyncIOMotorDatabase) -> bool:
         """Apply the retry ceiling. Engine owns status and retry_count writes."""
         max_retries = 5
         retry_count = scan.get("retry_count", 0) + 1

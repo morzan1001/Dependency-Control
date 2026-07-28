@@ -1,7 +1,7 @@
 """Type definitions for the analysis module."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, TypedDict
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -32,7 +32,7 @@ class KEVDetail(TypedDict):
 
     cve: str
     component: str
-    due_date: Optional[str]
+    due_date: str | None
     ransomware: bool
 
 
@@ -43,7 +43,7 @@ class HighRiskCVE(TypedDict):
     component: str
     version: str
     risk_score: float
-    epss_score: Optional[float]
+    epss_score: float | None
     in_kev: bool
     exploit_maturity: str
 
@@ -57,12 +57,12 @@ class EPSSKEVSummary(TypedDict):
     kev_ransomware: int
     epss_scores: EPSSScoreCounts
     exploit_maturity: ExploitMaturityCounts
-    avg_epss_score: Optional[float]
-    max_epss_score: Optional[float]
-    avg_risk_score: Optional[float]
-    max_risk_score: Optional[float]
-    kev_details: List[KEVDetail]
-    high_risk_cves: List[HighRiskCVE]
+    avg_epss_score: float | None
+    max_epss_score: float | None
+    avg_risk_score: float | None
+    max_risk_score: float | None
+    kev_details: list[KEVDetail]
+    high_risk_cves: list[HighRiskCVE]
     timestamp: str
 
 
@@ -81,7 +81,7 @@ class CallgraphInfo(TypedDict):
     language: str
     total_modules: int
     total_imports: int
-    generated_at: Optional[str]
+    generated_at: str | None
 
 
 class VulnerabilityInfo(TypedDict, total=False):
@@ -92,7 +92,7 @@ class VulnerabilityInfo(TypedDict, total=False):
     version: str
     severity: str
     reachability_level: str
-    reachable_functions: List[str]
+    reachable_functions: list[str]
     # True only when confidence_score cleared REACHABILITY_HIGH_CONFIDENCE_THRESHOLD.
     is_high_confidence: bool
 
@@ -103,10 +103,10 @@ class ReachabilitySummary(TypedDict):
     total_vulnerabilities: int
     analyzed: int
     reachability_levels: ReachabilityLevelCounts
-    callgraph_info: List[CallgraphInfo]
-    languages: List[str]
-    reachable_vulnerabilities: List[VulnerabilityInfo]
-    unreachable_vulnerabilities: List[VulnerabilityInfo]
+    callgraph_info: list[CallgraphInfo]
+    languages: list[str]
+    reachable_vulnerabilities: list[VulnerabilityInfo]
+    unreachable_vulnerabilities: list[VulnerabilityInfo]
     timestamp: str
 
 
@@ -115,39 +115,39 @@ class FindingDict(TypedDict, total=False):
 
     _id: str
     scan_id: str
-    project_id: Optional[str]
+    project_id: str | None
     finding_id: str
     id: str
     type: str
     severity: str
     component: str
-    version: Optional[str]
+    version: str | None
     description: str
-    scanners: List[str]
-    details: Dict[str, Any]
-    found_in: List[str]
-    aliases: List[str]
-    related_findings: List[str]
+    scanners: list[str]
+    details: dict[str, Any]
+    found_in: list[str]
+    aliases: list[str]
+    related_findings: list[str]
     waived: bool
-    waiver_reason: Optional[str]
-    reachable: Optional[bool]
-    reachability_level: Optional[str]
-    reachable_functions: List[str]
+    waiver_reason: str | None
+    reachable: bool | None
+    reachability_level: str | None
+    reachable_functions: list[str]
 
 
 class WaiverDict(TypedDict, total=False):
     """A waiver document as stored in the database."""
 
     _id: str
-    project_id: Optional[str]
-    finding_id: Optional[str]
-    package_name: Optional[str]
-    package_version: Optional[str]
-    finding_type: Optional[str]
-    vulnerability_id: Optional[str]
+    project_id: str | None
+    finding_id: str | None
+    package_name: str | None
+    package_version: str | None
+    finding_type: str | None
+    vulnerability_id: str | None
     reason: str
     status: str
-    expiration_date: Optional[datetime]
+    expiration_date: datetime | None
     created_by: str
     created_at: datetime
 
@@ -158,15 +158,15 @@ class ScanDict(TypedDict, total=False):
     _id: str
     project_id: str
     branch: str
-    commit_hash: Optional[str]
-    pipeline_id: Optional[int]
-    pipeline_iid: Optional[int]
+    commit_hash: str | None
+    pipeline_id: int | None
+    pipeline_iid: int | None
     status: str
     is_rescan: bool
-    original_scan_id: Optional[str]
-    latest_rescan_id: Optional[str]
-    last_result_at: Optional[datetime]
-    received_results: List[str]
+    original_scan_id: str | None
+    latest_rescan_id: str | None
+    last_result_at: datetime | None
+    received_results: list[str]
 
 
 class LatestRunSummary(TypedDict):
@@ -175,7 +175,7 @@ class LatestRunSummary(TypedDict):
     scan_id: str
     status: str
     findings_count: int
-    stats: Dict[str, Any]
+    stats: dict[str, Any]
     completed_at: datetime
 
 
@@ -196,42 +196,42 @@ class SystemSettingsDict(TypedDict, total=False):
     enforce_email_verification: bool
 
     # Email / SMTP
-    smtp_host: Optional[str]
+    smtp_host: str | None
     smtp_port: int
-    smtp_user: Optional[str]
-    smtp_password: Optional[str]
+    smtp_user: str | None
+    smtp_password: str | None
     smtp_encryption: str
     emails_from_email: str
 
     # Integrations
-    github_token: Optional[str]
-    open_source_malware_api_key: Optional[str]
-    slack_bot_token: Optional[str]
-    slack_client_id: Optional[str]
-    slack_client_secret: Optional[str]
-    slack_refresh_token: Optional[str]
-    slack_token_expires_at: Optional[float]
-    mattermost_bot_token: Optional[str]
-    mattermost_url: Optional[str]
+    github_token: str | None
+    open_source_malware_api_key: str | None
+    slack_bot_token: str | None
+    slack_client_id: str | None
+    slack_client_secret: str | None
+    slack_refresh_token: str | None
+    slack_token_expires_at: float | None
+    mattermost_bot_token: str | None
+    mattermost_url: str | None
 
     # OIDC / SSO
     oidc_enabled: bool
     oidc_provider_name: str
-    oidc_client_id: Optional[str]
-    oidc_client_secret: Optional[str]
-    oidc_issuer: Optional[str]
-    oidc_authorization_endpoint: Optional[str]
-    oidc_token_endpoint: Optional[str]
-    oidc_userinfo_endpoint: Optional[str]
+    oidc_client_id: str | None
+    oidc_client_secret: str | None
+    oidc_issuer: str | None
+    oidc_authorization_endpoint: str | None
+    oidc_token_endpoint: str | None
+    oidc_userinfo_endpoint: str | None
     oidc_scopes: str
 
     # GitLab Integration
     gitlab_integration_enabled: bool
     gitlab_url: str
-    gitlab_access_token: Optional[str]
+    gitlab_access_token: str | None
     gitlab_auto_create_projects: bool
     gitlab_sync_teams: bool
-    gitlab_oidc_audience: Optional[str]
+    gitlab_oidc_audience: str | None
 
     # Periodic Scanning Defaults
     rescan_mode: str

@@ -2,7 +2,7 @@
 
 import csv
 import io
-from typing import Optional, Tuple
+from typing import ClassVar
 
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import FrameworkEvaluation, ReportFormat
@@ -14,7 +14,7 @@ class CsvRenderer:
     mime_type = "text/csv"
     extension = "csv"
 
-    FIELDS = [
+    FIELDS: ClassVar[list[str]] = [
         "control_id",
         "title",
         "status",
@@ -29,8 +29,8 @@ class CsvRenderer:
         evaluation: FrameworkEvaluation,
         report: ComplianceReport,
         *,
-        disclaimer: Optional[str] = None,
-    ) -> Tuple[bytes, str, str]:
+        disclaimer: str | None = None,
+    ) -> tuple[bytes, str, str]:
         buf = io.StringIO()
         # Prepend disclaimers as '#' comment lines so a bare CSV export cannot be mistaken for a full pass.
         fw_name = evaluation.framework_name or ""

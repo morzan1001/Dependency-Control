@@ -1,19 +1,19 @@
 import re
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from pydantic import BaseModel
 
-from app.schemas.recommendation import Recommendation, Priority
 from app.core.constants import (
     ACTIONABLE_VULN_BONUS,
     EFFORT_BONUSES,
+    REACHABILITY_MODIFIERS,
+    REACHABILITY_SCORING_WEIGHTS,
     RECOMMENDATION_SCORING_WEIGHTS,
     RECOMMENDATION_TYPE_BONUSES,
-    REACHABILITY_SCORING_WEIGHTS,
-    REACHABILITY_MODIFIERS,
 )
+from app.schemas.recommendation import Priority, Recommendation
 
-ModelOrDict = Union[BaseModel, Dict[str, Any]]
+ModelOrDict = BaseModel | dict[str, Any]
 
 
 def get_attr(obj: ModelOrDict, key: str, default: Any = None) -> Any:
@@ -26,11 +26,11 @@ def get_attr(obj: ModelOrDict, key: str, default: Any = None) -> Any:
 
 
 def group_findings_by_field(
-    findings: List[ModelOrDict],
+    findings: list[ModelOrDict],
     field: str = "component",
-) -> Dict[str, List[ModelOrDict]]:
+) -> dict[str, list[ModelOrDict]]:
     """Group findings by `field` value, returning {value: [findings]}."""
-    grouped: Dict[str, List[ModelOrDict]] = {}
+    grouped: dict[str, list[ModelOrDict]] = {}
     for finding in findings:
         key = get_attr(finding, field, "unknown") or "unknown"
         if key not in grouped:
@@ -39,7 +39,7 @@ def group_findings_by_field(
     return grouped
 
 
-def extract_cve_id(finding: ModelOrDict) -> Optional[str]:
+def extract_cve_id(finding: ModelOrDict) -> str | None:
     """Return the first CVE-XXXX-XXXXX id found in finding.id, details.cve_id, or aliases."""
     finding_id = get_attr(finding, "id") or get_attr(finding, "finding_id")
     if finding_id and str(finding_id).startswith("CVE-"):
@@ -68,7 +68,7 @@ def parse_version_tuple(version: str) -> tuple:
     return tuple(int(p) for p in parts)
 
 
-def calculate_best_fix_version(versions: List[str]) -> str:
+def calculate_best_fix_version(versions: list[str]) -> str:
     """Pick the highest fix version (handles comma-separated lists)."""
     if not versions:
         return "unknown"

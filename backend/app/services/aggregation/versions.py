@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any
 
 
-def parse_version_key(v: str) -> Tuple[Tuple[int, Union[int, str]], ...]:
+def parse_version_key(v: str) -> tuple[tuple[int, int | str], ...]:
     """Parse a version into (type_flag, value) pairs so numeric parts always sort before string parts."""
     v = v.lower()
-    if v.startswith("v"):
-        v = v[1:]
+    v = v.removeprefix("v")
 
-    parts: List[Tuple[int, Union[int, str]]] = []
+    parts: list[tuple[int, int | str]] = []
     for part in re.split(r"[^a-z0-9]+", v):
         if not part:
             continue
@@ -24,12 +23,12 @@ def parse_version_key(v: str) -> Tuple[Tuple[int, Union[int, str]], ...]:
     return tuple(parts)
 
 
-def calculate_aggregated_fixed_version(fixed_versions_list: List[str]) -> Optional[str]:
+def calculate_aggregated_fixed_version(fixed_versions_list: list[str]) -> str | None:
     """Pick the best fixed version(s) across vulnerabilities and major lines, e.g. ["1.2.5, 2.0.1", "1.2.6"] -> "1.2.6, 2.0.1"."""
     if not fixed_versions_list:
         return None
 
-    major_buckets: Dict[Any, Any] = {}
+    major_buckets: dict[Any, Any] = {}
 
     for i, fv_str in enumerate(fixed_versions_list):
         candidates = [c.strip() for c in fv_str.split(",") if c.strip()]
@@ -62,7 +61,7 @@ def calculate_aggregated_fixed_version(fixed_versions_list: List[str]) -> Option
             max_ver_tuple = None
             max_ver_str = None
 
-            for _, fixes in vulns_map.items():
+            for fixes in vulns_map.values():
                 fixes.sort(key=lambda x: x[0])
                 best_fix_for_vuln = fixes[0]
 
@@ -83,7 +82,7 @@ def calculate_aggregated_fixed_version(fixed_versions_list: List[str]) -> Option
     return ", ".join([str(vm[2]) for vm in valid_majors if vm[2] is not None])
 
 
-def resolve_fixed_versions(versions: List[str]) -> Optional[str]:
+def resolve_fixed_versions(versions: list[str]) -> str | None:
     """Resolve the best fixed version(s) across multiple vulnerabilities and major versions."""
     return calculate_aggregated_fixed_version(versions)
 

@@ -1,9 +1,11 @@
 """HTTP client helpers for shared error handling and retry logic."""
 
 import time
-from typing import Any, Optional
+from types import TracebackType
+from typing import Any
 
 import httpx
+from typing_extensions import Self
 
 from app.core.metrics import (
     external_api_duration_seconds,
@@ -22,7 +24,7 @@ class InstrumentedAsyncClient:
         **kwargs: Any,
     ) -> None:
         self.service_name = service_name
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
         self._timeout = timeout
         self._kwargs = kwargs
         self._NOT_STARTED_MSG = "Client not started. Use 'async with' or call start()."
@@ -36,12 +38,12 @@ class InstrumentedAsyncClient:
             await self._client.aclose()
             self._client = None
 
-    async def __aenter__(self) -> "InstrumentedAsyncClient":
+    async def __aenter__(self) -> Self:
         await self.start()
         return self
 
     async def __aexit__(
-        self, exc_type: Optional[type], exc_val: Optional[BaseException], exc_tb: Optional[Any]
+        self, exc_type: type[BaseException] | None, exc_val: BaseException | None, exc_tb: TracebackType | None
     ) -> None:
         await self.close()
 

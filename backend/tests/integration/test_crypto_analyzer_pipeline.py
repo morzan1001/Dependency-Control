@@ -169,6 +169,7 @@ async def test_end_to_end_cbom_ingest_creates_findings(client, db, api_key_heade
     """CBOM ingest + analyzer dispatch produce findings in the findings collection."""
     import json
     from pathlib import Path
+
     from app.models.crypto_policy import CryptoPolicy
 
     await CryptoPolicyRepository(db).upsert_system_policy(

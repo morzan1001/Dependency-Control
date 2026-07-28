@@ -3,8 +3,8 @@
 from app.schemas.sbom import SBOMFormat
 from app.services.sbom_parser import (
     SBOMParser,
-    is_url,
     extract_license_from_url,
+    is_url,
     parse_sbom,
 )
 

@@ -1,7 +1,6 @@
 """Distributed locks for multi-pod coordination (e.g. Slack token refresh)."""
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReadPreference
@@ -50,7 +49,7 @@ class DistributedLocksRepository:
         result = await self.collection.delete_one({"_id": lock_name, "holder": holder_id})
         return result.deleted_count > 0
 
-    async def get_lock_info(self, lock_name: str) -> Optional[dict]:
+    async def get_lock_info(self, lock_name: str) -> dict | None:
         return await self._reads.find_one({"_id": lock_name})
 
     async def is_locked(self, lock_name: str) -> bool:

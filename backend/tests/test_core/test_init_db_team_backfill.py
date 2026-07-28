@@ -11,8 +11,8 @@ import pytest
 from pymongo.errors import DuplicateKeyError, OperationFailure
 
 from app.core.init_db import (
-    _backfill_synced_team_gitlab_ids,
     _backfill_member_and_team_provenance,
+    _backfill_synced_team_gitlab_ids,
     create_indexes,
 )
 from tests.mocks.fake_mongo import FakeDatabase

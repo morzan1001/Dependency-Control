@@ -47,12 +47,11 @@ def add_context_to_vulnerability(vuln_finding: Finding, other_finding: Finding) 
                 "license_finding_id": other_finding.id,
             }
 
-    elif other_finding.type == FindingType.EOL:
-        if "eol_info" not in vuln_finding.details:
-            vuln_finding.details["eol_info"] = {
-                "is_eol": True,
-                "eol_date": other_finding.details.get("eol_date"),
-                "cycle": other_finding.details.get("cycle"),
-                "latest_version": other_finding.details.get("fixed_version"),
-                "eol_finding_id": other_finding.id,
-            }
+    elif other_finding.type == FindingType.EOL and "eol_info" not in vuln_finding.details:
+        vuln_finding.details["eol_info"] = {
+            "is_eol": True,
+            "eol_date": other_finding.details.get("eol_date"),
+            "cycle": other_finding.details.get("cycle"),
+            "latest_version": other_finding.details.get("fixed_version"),
+            "eol_finding_id": other_finding.id,
+        }

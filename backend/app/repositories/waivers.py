@@ -1,7 +1,7 @@
 """Repository for waivers."""
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -11,7 +11,7 @@ from app.models.waiver import Waiver
 _COL = "waivers"
 
 
-def _non_expired_filter(now: Optional[datetime] = None) -> Dict[str, Any]:
+def _non_expired_filter(now: datetime | None = None) -> dict[str, Any]:
     """Return a MongoDB $or clause matching waivers whose expiration_date is absent, null, or in the future."""
     ts = now or datetime.now(timezone.utc)
     return {
@@ -24,14 +24,14 @@ class WaiverRepository:
         self.db = db
         self.collection = db.waivers
 
-    async def get_by_id(self, waiver_id: str) -> Optional[Waiver]:
+    async def get_by_id(self, waiver_id: str) -> Waiver | None:
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one({"_id": waiver_id})
         if data:
             return Waiver(**data)
         return None
 
-    async def get_raw_by_id(self, waiver_id: str) -> Optional[Dict[str, Any]]:
+    async def get_raw_by_id(self, waiver_id: str) -> dict[str, Any] | None:
         with track_db_operation(_COL, "find_one"):
             return await self.collection.find_one({"_id": waiver_id})
 
@@ -40,7 +40,7 @@ class WaiverRepository:
             await self.collection.insert_one(waiver.model_dump(by_alias=True))
         return waiver
 
-    async def update(self, waiver_id: str, update_data: Dict[str, Any]) -> Optional[Waiver]:
+    async def update(self, waiver_id: str, update_data: dict[str, Any]) -> Waiver | None:
         with track_db_operation(_COL, "update_one"):
             await self.collection.update_one({"_id": waiver_id}, {"$set": update_data})
         return await self.get_by_id(waiver_id)
@@ -50,7 +50,7 @@ class WaiverRepository:
             result = await self.collection.delete_one({"_id": waiver_id})
         return result.deleted_count > 0
 
-    async def delete_many(self, query: Dict[str, Any]) -> int:
+    async def delete_many(self, query: dict[str, Any]) -> int:
         with track_db_operation(_COL, "delete_many"):
             result = await self.collection.delete_many(query)
         return result.deleted_count
@@ -60,7 +60,7 @@ class WaiverRepository:
         project_id: str,
         skip: int = 0,
         limit: int = 1000,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Returns raw dicts (not Waiver models) to avoid model overhead in bulk listings."""
         with track_db_operation(_COL, "find"):
             cursor = self.collection.find({"project_id": project_id}).skip(skip).limit(limit)
@@ -68,22 +68,22 @@ class WaiverRepository:
 
     async def find_many(
         self,
-        query: Dict[str, Any],
+        query: dict[str, Any],
         skip: int = 0,
         limit: int = 1000,
         sort_by: str = "created_at",
         sort_order: int = -1,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         """Returns raw dicts (not Waiver models) to avoid model overhead in bulk listings."""
         with track_db_operation(_COL, "find"):
             cursor = self.collection.find(query).sort(sort_by, sort_order).skip(skip).limit(limit)
             return await cursor.to_list(limit)
 
-    async def count(self, query: Optional[Dict[str, Any]] = None) -> int:
+    async def count(self, query: dict[str, Any] | None = None) -> int:
         with track_db_operation(_COL, "count"):
             return await self.collection.count_documents(query or {})
 
-    async def find_active_for_project(self, project_id: str, include_global: bool = True) -> List[Waiver]:
+    async def find_active_for_project(self, project_id: str, include_global: bool = True) -> list[Waiver]:
         """Active (non-expired) waivers for a project; include_global also matches global waivers (project_id=None)."""
         now = datetime.now(timezone.utc)
 
@@ -92,14 +92,14 @@ class WaiverRepository:
             if include_global
             else {"project_id": project_id}
         )
-        query: Dict[str, Any] = {"$and": [project_filter, _non_expired_filter(now=now)]}
+        query: dict[str, Any] = {"$and": [project_filter, _non_expired_filter(now=now)]}
 
         with track_db_operation(_COL, "find"):
             cursor = self.collection.find(query)
             docs = await cursor.to_list(None)
         return [Waiver(**doc) for doc in docs]
 
-    async def find_by_finding(self, project_id: str, finding_id: str) -> Optional[Waiver]:
+    async def find_by_finding(self, project_id: str, finding_id: str) -> Waiver | None:
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one(
                 {

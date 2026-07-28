@@ -1,16 +1,16 @@
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import (
     ANALYZER_BATCH_SIZES,
     ANALYZER_TIMEOUTS,
     OSV_BATCH_API_URL,
 )
+from app.core.http_utils import InstrumentedAsyncClient
 from app.core.metrics import external_api_rate_limit_hits_total
 from app.models.finding import Severity
 
@@ -28,11 +28,11 @@ OSV_SEVERITY_MAP = {
 
 
 def _build_batch_payload(
-    chunk: List[Dict[str, Any]],
-) -> Tuple[Dict[str, List[Dict[str, Any]]], List[Dict[str, Any]]]:
+    chunk: list[dict[str, Any]],
+) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
     """``(payload, valid_components)`` from a chunk; PURL-less components are skipped."""
-    payload: Dict[str, List[Dict[str, Any]]] = {"queries": []}
-    valid_components: List[Dict[str, Any]] = []
+    payload: dict[str, list[dict[str, Any]]] = {"queries": []}
+    valid_components: list[dict[str, Any]] = []
     skipped = 0
     for component in chunk:
         purl = component.get("purl")
@@ -58,12 +58,12 @@ class OSVAnalyzer(Analyzer):
 
     async def analyze(
         self,
-        sbom: Dict[str, Any],
-        settings: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        sbom: dict[str, Any],
+        settings: dict[str, Any] | None = None,
+        parsed_components: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         components = self._get_components(sbom, parsed_components)
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
 
         cached_results, uncached_components = await self._get_cached_components(components)
         results.extend(cached_results)
@@ -77,8 +77,8 @@ class OSVAnalyzer(Analyzer):
 
     async def _fetch_uncached(
         self,
-        uncached_components: List[Dict[str, Any]],
-        results: List[Dict[str, Any]],
+        uncached_components: list[dict[str, Any]],
+        results: list[dict[str, Any]],
     ) -> None:
         """Drive the chunked batch loop, populating ``results`` in-place."""
         timeout = ANALYZER_TIMEOUTS.get("osv", ANALYZER_TIMEOUTS["default"])
@@ -112,9 +112,9 @@ class OSVAnalyzer(Analyzer):
     async def _post_and_handle(
         self,
         client: InstrumentedAsyncClient,
-        payload: Dict[str, List[Dict[str, Any]]],
-        valid_components: List[Dict[str, Any]],
-        results: List[Dict[str, Any]],
+        payload: dict[str, list[dict[str, Any]]],
+        valid_components: list[dict[str, Any]],
+        results: list[dict[str, Any]],
         chunk_start: int,
     ) -> bool:
         """POST one batch and dispatch on response status.
@@ -146,8 +146,8 @@ class OSVAnalyzer(Analyzer):
     async def _handle_success(
         self,
         response: Any,
-        valid_components: List[Dict[str, Any]],
-        results: List[Dict[str, Any]],
+        valid_components: list[dict[str, Any]],
+        results: list[dict[str, Any]],
     ) -> None:
         """Parse a 200 response: align entries with components, cache, append."""
         data = response.json()
@@ -158,7 +158,7 @@ class OSVAnalyzer(Analyzer):
             )
             batch_results = batch_results[: len(valid_components)]
 
-        cache_mapping: Dict[str, Dict[str, Any]] = {}
+        cache_mapping: dict[str, dict[str, Any]] = {}
         for comp, res in zip(valid_components, batch_results):
             cache_data = self._build_cache_entry(comp, res.get("vulns", []))
             cache_mapping[CacheKeys.osv(comp.get("purl", ""))] = cache_data
@@ -168,7 +168,7 @@ class OSVAnalyzer(Analyzer):
         if cache_mapping:
             await cache_service.mset(cache_mapping, CacheTTL.OSV_VULNERABILITY)
 
-    def _build_cache_entry(self, component: Dict[str, Any], vulns: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _build_cache_entry(self, component: dict[str, Any], vulns: list[dict[str, Any]]) -> dict[str, Any]:
         """Build the per-component dict that gets written to cache and to results."""
         comp_name = component.get("name", "")
         comp_version = component.get("version", "")
@@ -183,14 +183,14 @@ class OSVAnalyzer(Analyzer):
         }
 
     async def _get_cached_components(
-        self, components: List[Dict[str, Any]]
-    ) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+        self, components: list[dict[str, Any]]
+    ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         """``(cached_results, uncached_components)`` from a batch Redis lookup."""
-        cached_results: List[Dict[str, Any]] = []
-        uncached_components: List[Dict[str, Any]] = []
+        cached_results: list[dict[str, Any]] = []
+        uncached_components: list[dict[str, Any]] = []
 
-        cache_keys: List[str] = []
-        component_map: Dict[str, Any] = {}
+        cache_keys: list[str] = []
+        component_map: dict[str, Any] = {}
         for component in components:
             purl = component.get("purl")
             if purl:
@@ -214,7 +214,7 @@ class OSVAnalyzer(Analyzer):
 
         return cached_results, uncached_components
 
-    def _normalize_vulnerabilities(self, vulns: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    def _normalize_vulnerabilities(self, vulns: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Normalize OSV vulnerabilities, dropping retracted entries (``withdrawn`` set)."""
         normalized = []
         for vuln in vulns:
@@ -261,9 +261,9 @@ class OSVAnalyzer(Analyzer):
             return Severity.MEDIUM.value
         return Severity.LOW.value
 
-    def _severity_from_cvss_array(self, severity_array: List[Dict[str, Any]]) -> Optional[str]:
+    def _severity_from_cvss_array(self, severity_array: list[dict[str, Any]]) -> str | None:
         """Pick the highest-ranked CVSS entry (newest standard wins) and map it."""
-        entries_by_type: Dict[str, List[Dict[str, Any]]] = {}
+        entries_by_type: dict[str, list[dict[str, Any]]] = {}
         for sev_info in severity_array:
             sev_type = sev_info.get("type", "")
             if "CVSS" in sev_type and sev_info.get("score"):
@@ -286,14 +286,14 @@ class OSVAnalyzer(Analyzer):
         return None
 
     @staticmethod
-    def _severity_from_map(raw_severity: Optional[str]) -> Optional[str]:
+    def _severity_from_map(raw_severity: str | None) -> str | None:
         """Look up a raw severity string in the OSV severity map."""
         if not raw_severity:
             return None
         sev = raw_severity.upper()
         return OSV_SEVERITY_MAP.get(sev)
 
-    def _extract_severity(self, vuln: Dict[str, Any]) -> str:
+    def _extract_severity(self, vuln: dict[str, Any]) -> str:
         """Extract severity from OSV vulnerability data."""
         db_sev = self._severity_from_map(vuln.get("database_specific", {}).get("severity"))
         if db_sev:
@@ -310,7 +310,7 @@ class OSVAnalyzer(Analyzer):
 
         return Severity.MEDIUM.value
 
-    def _parse_cvss_score(self, score: str) -> Optional[float]:
+    def _parse_cvss_score(self, score: str) -> float | None:
         """Parse CVSS score from numeric value or vector string."""
         try:
             return float(score)
@@ -326,7 +326,7 @@ class OSVAnalyzer(Analyzer):
 
         return None
 
-    def _get_highest_severity(self, vulns: List[Dict[str, Any]]) -> str:
+    def _get_highest_severity(self, vulns: list[dict[str, Any]]) -> str:
         """Get the highest severity from a list of vulnerabilities."""
         if not vulns:
             return Severity.INFO.value
@@ -346,7 +346,7 @@ class OSVAnalyzer(Analyzer):
 
         return Severity.MEDIUM.value
 
-    def _create_summary_message(self, component: str, version: str, vulns: List[Dict[str, Any]]) -> str:
+    def _create_summary_message(self, component: str, version: str, vulns: list[dict[str, Any]]) -> str:
         """Create a summary message for the component's vulnerabilities."""
         if not vulns:
             return ""

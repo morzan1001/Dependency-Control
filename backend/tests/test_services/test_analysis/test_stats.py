@@ -10,9 +10,7 @@ from app.services.analysis.stats import (
     build_reachability_summary,
     calculate_comprehensive_stats,
 )
-
 from tests.mocks.fake_mongo import FakeDatabase
-
 
 # ---------------------------------------------------------------------------
 # _format_datetime

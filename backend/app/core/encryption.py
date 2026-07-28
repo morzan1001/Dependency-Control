@@ -25,7 +25,7 @@ active-adversary resistance must add an outer MAC or sequence-number binding.
 import hashlib
 import os
 import struct
-from typing import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 

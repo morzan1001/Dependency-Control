@@ -2,8 +2,8 @@
 
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.insights import (
-    correlate_scorecard_with_vulnerabilities,
     analyze_cross_project_patterns,
+    correlate_scorecard_with_vulnerabilities,
 )
 
 

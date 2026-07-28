@@ -4,8 +4,8 @@ import asyncio
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from fastapi import HTTPException
 import pytest
+from fastapi import HTTPException
 
 from app.models.archive import ArchiveMetadata
 
@@ -810,6 +810,7 @@ class TestRestoreReturns409WhenScanAlreadyExists:
 class TestPinEmitsAuditLog:
     def test_pin_emits_structured_audit_log(self, admin_user, caplog):
         import logging
+
         from app.api.v1.endpoints.archives import pin_scan
 
         mock_db = MagicMock()

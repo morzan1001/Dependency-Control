@@ -6,9 +6,9 @@ from app.models.finding import Severity
 from app.models.license import (
     DeploymentModel,
     DistributionModel,
+    LibraryUsage,
     LicenseCategory,
     LicensePolicy,
-    LibraryUsage,
 )
 from app.services.analyzers.license_compliance import LicenseAnalyzer
 from app.services.analyzers.license_compliance.compatibility import check_license_compatibility

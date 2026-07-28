@@ -16,4 +16,3 @@ class NotificationProvider(ABC):
         **kwargs: Any,
     ) -> bool:
         """Send a notification; return True on success."""
-        pass

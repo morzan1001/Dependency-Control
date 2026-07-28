@@ -1,7 +1,6 @@
 """Merges the system default crypto policy with a project override."""
 
 from dataclasses import dataclass
-from typing import List, Optional
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -12,10 +11,10 @@ from app.schemas.crypto_policy import CryptoRule
 
 @dataclass
 class EffectivePolicy:
-    rules: List[CryptoRule]
-    system_rules: List[CryptoRule]
+    rules: list[CryptoRule]
+    system_rules: list[CryptoRule]
     system_version: int
-    override_version: Optional[int]
+    override_version: int | None
     override_locked: bool = False  # system enforces global policy; project override ignored
 
 

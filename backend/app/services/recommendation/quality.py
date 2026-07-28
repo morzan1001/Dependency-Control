@@ -1,21 +1,21 @@
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any
 
 from app.core.constants import SCORECARD_LOW_THRESHOLD
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import get_attr, ModelOrDict
+from app.services.recommendation.common import ModelOrDict, get_attr
 
 
-def process_quality(findings: List[ModelOrDict]) -> List[Recommendation]:
+def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
     """Process supply chain quality findings from OpenSSF Scorecard."""
     if not findings:
         return []
 
     recommendations = []
-    severity_counts: Dict[str, int] = defaultdict(int)
-    components_by_issue: Dict[str, List[Any]] = defaultdict(list)
-    low_score_packages: List[Any] = []
-    unmaintained_packages: List[Any] = []
+    severity_counts: dict[str, int] = defaultdict(int)
+    components_by_issue: dict[str, list[Any]] = defaultdict(list)
+    low_score_packages: list[Any] = []
+    unmaintained_packages: list[Any] = []
 
     for f in findings:
         severity = get_attr(f, "severity", "UNKNOWN")

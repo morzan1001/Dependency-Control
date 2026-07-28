@@ -1,12 +1,11 @@
 from datetime import datetime, timedelta, timezone
 
-
 from app.services.pqc_migration.mappings_loader import Timeline
 from app.services.pqc_migration.scoring import (
+    COUNT_WEIGHT,
+    DEADLINE_WEIGHT,
     EXPOSURE_WEIGHT,
     KEY_WEAKNESS_WEIGHT,
-    DEADLINE_WEIGHT,
-    COUNT_WEIGHT,
     priority_score,
     status_from_score,
 )

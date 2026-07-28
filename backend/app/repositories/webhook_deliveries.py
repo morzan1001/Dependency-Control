@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -16,10 +16,10 @@ class WebhookDeliveriesRepository:
         self,
         webhook_id: str,
         event_type: str,
-        payload_summary: Dict[str, Any],
+        payload_summary: dict[str, Any],
         success: bool,
-        status_code: Optional[int] = None,
-        error: Optional[str] = None,
+        status_code: int | None = None,
+        error: str | None = None,
         retry_count: int = 0,
     ) -> str:
         log_entry = {
@@ -37,21 +37,21 @@ class WebhookDeliveriesRepository:
         await self.collection.insert_one(log_entry)
         return str(log_entry["_id"])
 
-    async def get_recent_deliveries(self, webhook_id: str, limit: int = 100) -> List[Dict[str, Any]]:
+    async def get_recent_deliveries(self, webhook_id: str, limit: int = 100) -> list[dict[str, Any]]:
         cursor = self.collection.find({"webhook_id": webhook_id}).sort("timestamp", -1).limit(limit)
         return await cursor.to_list(length=limit)
 
-    async def get_failure_count(self, webhook_id: str, since: Optional[datetime] = None) -> int:
-        query: Dict[str, Any] = {"webhook_id": webhook_id, "success": False}
+    async def get_failure_count(self, webhook_id: str, since: datetime | None = None) -> int:
+        query: dict[str, Any] = {"webhook_id": webhook_id, "success": False}
 
         if since:
             query["timestamp"] = {"$gte": since}
 
         return await self.collection.count_documents(query)
 
-    async def get_success_rate(self, webhook_id: str) -> Dict[str, Any]:
+    async def get_success_rate(self, webhook_id: str) -> dict[str, Any]:
         """Returns total, successful, failed counts and success_rate percentage."""
-        pipeline: List[Dict[str, Any]] = [
+        pipeline: list[dict[str, Any]] = [
             {"$match": {"webhook_id": webhook_id}},
             {
                 "$group": {

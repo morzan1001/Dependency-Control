@@ -1,6 +1,6 @@
 """Helper functions for callgraph endpoints."""
 
-from typing import Any, Dict, List
+from typing import Any
 
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -18,7 +18,7 @@ def _has_global_permission(user: User, require_write: bool) -> bool:
     return has_permission(user.permissions, [Permissions.PROJECT_READ_ALL, Permissions.PROJECT_UPDATE])
 
 
-def _is_member(members: List[Dict[str, Any]], user_id: str) -> bool:
+def _is_member(members: list[dict[str, Any]], user_id: str) -> bool:
     """Check if user_id appears in a members list."""
     return any(member.get("user_id") == user_id for member in members)
 
@@ -28,7 +28,7 @@ async def check_callgraph_access(
     user: User,
     db: AsyncIOMotorDatabase,
     require_write: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Verify user has access to the project's callgraph and return the project document.
 
     require_write=True demands write permission (for upload/delete).
@@ -67,7 +67,7 @@ def normalize_module_name(module: str, _language: str) -> str:
     if not module:
         return module
 
-    if module.startswith("./") or module.startswith("../"):
+    if module.startswith(("./", "../")):
         return module
 
     if module.startswith("@"):
@@ -87,7 +87,7 @@ def _is_external_module(dep: str) -> bool:
     return not dep.startswith("./") and not dep.startswith("../")
 
 
-def _get_or_create_module_usage(module_usage: Dict[str, ModuleUsage], base_module: str) -> ModuleUsage:
+def _get_or_create_module_usage(module_usage: dict[str, ModuleUsage], base_module: str) -> ModuleUsage:
     """Get existing or create new ModuleUsage entry."""
     if base_module not in module_usage:
         module_usage[base_module] = ModuleUsage(
@@ -101,11 +101,11 @@ def _get_or_create_module_usage(module_usage: Dict[str, ModuleUsage], base_modul
 
 
 def parse_madge_format(
-    data: Dict[str, Any], language: str
-) -> tuple[List[ImportEntry], List[CallEdge], Dict[str, ModuleUsage]]:
+    data: dict[str, Any], language: str
+) -> tuple[list[ImportEntry], list[CallEdge], dict[str, ModuleUsage]]:
     """Parse madge JSON output ({file: [dependencies]}); returns no call edges."""
     imports = []
-    module_usage: Dict[str, ModuleUsage] = {}
+    module_usage: dict[str, ModuleUsage] = {}
 
     for file_path, dependencies in data.items():
         if not isinstance(dependencies, list):
@@ -135,7 +135,7 @@ def parse_madge_format(
     return imports, [], module_usage
 
 
-def _track_module_call(module_usage: Dict[str, ModuleUsage], target: str, language: str) -> None:
+def _track_module_call(module_usage: dict[str, ModuleUsage], target: str, language: str) -> None:
     """Track a call edge's module usage and used symbol."""
     if "." not in target:
         return
@@ -150,11 +150,11 @@ def _track_module_call(module_usage: Dict[str, ModuleUsage], target: str, langua
 
 
 def _track_module_import(
-    module_usage: Dict[str, ModuleUsage],
+    module_usage: dict[str, ModuleUsage],
     target: str,
     language: str,
-    source_info: Dict[str, Any],
-    imports: List[ImportEntry],
+    source_info: dict[str, Any],
+    imports: list[ImportEntry],
     seen_imports: set[tuple[str, str]],
 ) -> None:
     """Track a uses edge's import and module usage."""
@@ -190,17 +190,17 @@ def _track_module_import(
 
 
 def parse_pyan_format(
-    data: Dict[str, Any], language: str
-) -> tuple[List[ImportEntry], List[CallEdge], Dict[str, ModuleUsage]]:
+    data: dict[str, Any], language: str
+) -> tuple[list[ImportEntry], list[CallEdge], dict[str, ModuleUsage]]:
     """Parse pyan JSON output (nodes + calls/uses edges)."""
-    imports: List[ImportEntry] = []
-    calls: List[CallEdge] = []
-    module_usage: Dict[str, ModuleUsage] = {}
+    imports: list[ImportEntry] = []
+    calls: list[CallEdge] = []
+    module_usage: dict[str, ModuleUsage] = {}
 
     nodes = data.get("nodes", [])
     edges = data.get("edges", [])
 
-    node_info: Dict[str, Dict[str, Any]] = {}
+    node_info: dict[str, dict[str, Any]] = {}
     for node in nodes:
         name = node.get("name", "")
         node_info[name] = {
@@ -236,12 +236,12 @@ def parse_pyan_format(
 
 
 def parse_generic_format(
-    data: Dict[str, Any], language: str
-) -> tuple[List[ImportEntry], List[CallEdge], Dict[str, ModuleUsage]]:
+    data: dict[str, Any], language: str
+) -> tuple[list[ImportEntry], list[CallEdge], dict[str, ModuleUsage]]:
     """Parse the generic callgraph format."""
     imports = []
     calls = []
-    module_usage: Dict[str, ModuleUsage] = {}
+    module_usage: dict[str, ModuleUsage] = {}
 
     for imp in data.get("imports", []):
         imports.append(
@@ -303,7 +303,7 @@ def parse_generic_format(
     return imports, calls, module_usage
 
 
-def detect_format(data: Dict[str, Any]) -> str:
+def detect_format(data: dict[str, Any]) -> str:
     """Auto-detect callgraph format from data structure."""
     if "nodes" in data and "edges" in data:
         nodes = data.get("nodes", [])

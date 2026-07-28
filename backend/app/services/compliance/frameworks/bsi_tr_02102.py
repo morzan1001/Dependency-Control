@@ -2,7 +2,6 @@
 
 from functools import cached_property
 from pathlib import Path
-from typing import List, Optional
 
 from app.schemas.compliance import ControlDefinition, FrameworkEvaluation, ReportFramework
 from app.services.compliance.frameworks.base import EvaluationInput, evaluate_framework
@@ -20,10 +19,10 @@ class BsiTr02102Framework:
     source_url: str = (
         "https://www.bsi.bund.de/SharedDocs/Downloads/EN/BSI/Publications/TechGuidelines/TG02102/BSI-TR-02102-1.html"
     )
-    disclaimer: Optional[str] = None
+    disclaimer: str | None = None
 
     @cached_property
-    def controls(self) -> List[ControlDefinition]:
+    def controls(self) -> list[ControlDefinition]:
         return _derive_controls_from_seed(_SEED_PATH, control_id_prefix="BSI-02102")
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:

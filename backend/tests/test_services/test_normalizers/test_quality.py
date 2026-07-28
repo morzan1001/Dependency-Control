@@ -44,7 +44,7 @@ class TestNormalizeScorecard:
             ]
         }
         self.agg.aggregate("deps_dev", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.severity == "HIGH"
 
     def test_severity_high_for_maintained_critical(self):
@@ -61,7 +61,7 @@ class TestNormalizeScorecard:
             ]
         }
         self.agg.aggregate("deps_dev", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.severity == "HIGH"
 
     def test_severity_medium_for_moderate_score(self):
@@ -78,7 +78,7 @@ class TestNormalizeScorecard:
             ]
         }
         self.agg.aggregate("deps_dev", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.severity == "MEDIUM"
 
     def test_severity_low_for_good_score(self):
@@ -95,7 +95,7 @@ class TestNormalizeScorecard:
             ]
         }
         self.agg.aggregate("deps_dev", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.severity == "LOW"
 
     def test_description_contains_score(self):
@@ -111,7 +111,7 @@ class TestNormalizeScorecard:
             ]
         }
         self.agg.aggregate("deps_dev", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert "3.5" in f.description
 
     def test_record_scorecard_public_method(self):
@@ -200,7 +200,7 @@ class TestNormalizeTyposquatting:
             ]
         }
         self.agg.aggregate("typosquatting", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert "85.0%" in f.description
 
     def test_details_contain_imitated_package(self):
@@ -214,7 +214,7 @@ class TestNormalizeTyposquatting:
             ]
         }
         self.agg.aggregate("typosquatting", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["imitated_package"] == "react"
         assert f.details["similarity"] == 0.9
 
@@ -260,7 +260,7 @@ class TestNormalizeMaintainerRisk:
             ]
         }
         self.agg.aggregate("maintainer_risk", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert "Stale" in f.description
         assert "Single maintainer" in f.description
 
@@ -274,7 +274,7 @@ class TestNormalizeMaintainerRisk:
             ]
         }
         self.agg.aggregate("maintainer_risk", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.severity == "MEDIUM"
 
     def test_empty_issues(self):

@@ -1,6 +1,6 @@
 """Schemas for parsing and validating callgraph data from various tools."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -11,22 +11,22 @@ class CallgraphUploadRequest(BaseModel):
     format: str = "auto"  # auto, madge, pyan, go-callvis, generic
 
     # Required if format is generic or auto-detection fails.
-    language: Optional[str] = None  # javascript, typescript, python, go, java
+    language: str | None = None  # javascript, typescript, python, go, java
 
     # pipeline_id is the primary key for matching a callgraph to a CI/CD run.
-    pipeline_id: Optional[int] = None
-    branch: Optional[str] = None  # fallback when no pipeline_id
-    commit_hash: Optional[str] = None
+    pipeline_id: int | None = None
+    branch: str | None = None  # fallback when no pipeline_id
+    commit_hash: str | None = None
 
-    tool: Optional[str] = None
-    tool_version: Optional[str] = None
+    tool: str | None = None
+    tool_version: str | None = None
 
-    data: Dict[str, Any]  # shape depends on the 'format' field
+    data: dict[str, Any]  # shape depends on the 'format' field
 
-    scan_id: Optional[str] = None
+    scan_id: str | None = None
 
-    source_files_count: Optional[int] = None
-    analysis_duration_ms: Optional[int] = None
+    source_files_count: int | None = None
+    analysis_duration_ms: int | None = None
 
 
 class CallgraphUploadResponse(BaseModel):
@@ -40,7 +40,7 @@ class CallgraphUploadResponse(BaseModel):
     calls_parsed: int = 0
     modules_detected: int = 0
 
-    warnings: List[str] = []
+    warnings: list[str] = []
 
 
 class ModuleUsageItem(BaseModel):
@@ -50,36 +50,36 @@ class ModuleUsageItem(BaseModel):
     module: str
     import_count: int = 0
     call_count: int = 0
-    import_locations: List[str] = []
-    used_symbols: List[str] = []
+    import_locations: list[str] = []
+    used_symbols: list[str] = []
 
 
 class ModuleUsageResponse(BaseModel):
     """Response for module usage endpoint."""
 
     project_id: str
-    language: Optional[str] = None
-    modules: List[ModuleUsageItem] = []
+    language: str | None = None
+    modules: list[ModuleUsageItem] = []
 
 
 class CallgraphResponse(BaseModel):
     """Response for get callgraph endpoint."""
 
     project_id: str
-    pipeline_id: Optional[int] = None
-    branch: Optional[str] = None
-    commit_hash: Optional[str] = None
-    scan_id: Optional[str] = None
+    pipeline_id: int | None = None
+    branch: str | None = None
+    commit_hash: str | None = None
+    scan_id: str | None = None
     language: str
-    tool: Optional[str] = None
-    tool_version: Optional[str] = None
-    imports: List[Dict[str, Any]] = []
-    calls: List[Dict[str, Any]] = []
-    module_usage: Dict[str, Any] = {}
+    tool: str | None = None
+    tool_version: str | None = None
+    imports: list[dict[str, Any]] = []
+    calls: list[dict[str, Any]] = []
+    module_usage: dict[str, Any] = {}
     source_files_analyzed: int = 0
     total_imports: int = 0
     total_calls: int = 0
-    analysis_duration_ms: Optional[int] = None
+    analysis_duration_ms: int | None = None
 
 
 class DeleteCallgraphResponse(BaseModel):

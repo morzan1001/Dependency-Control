@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import datetime
 from functools import lru_cache
 from pathlib import Path
-from typing import Dict, List, Optional
 
 import yaml
 
@@ -27,16 +26,16 @@ class PQCMapping:
 class Timeline:
     name: str
     deadline: datetime
-    applies_to: List[str]
+    applies_to: list[str]
 
 
 @dataclass(frozen=True)
 class PQCMappings:
     version: int
     snapshot_date: str
-    mappings: List[PQCMapping]
-    timelines: List[Timeline]
-    family_aliases: Dict[str, str]
+    mappings: list[PQCMapping]
+    timelines: list[Timeline]
+    family_aliases: dict[str, str]
 
 
 @lru_cache(maxsize=1)
@@ -82,7 +81,7 @@ def _parse_date(s: str) -> datetime:
     return datetime.fromisoformat(s).replace(tzinfo=timezone.utc)
 
 
-def normalise_family(name: Optional[str], mappings: PQCMappings) -> str:
+def normalise_family(name: str | None, mappings: PQCMappings) -> str:
     """Resolve an asset name to its canonical source_family."""
     if not name:
         return ""

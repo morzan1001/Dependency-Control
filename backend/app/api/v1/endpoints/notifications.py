@@ -2,17 +2,16 @@ import html
 import logging
 import re
 from datetime import datetime
-from typing import Annotated, Any, Dict, List, Set
+from typing import Annotated, Any
 
 import markdown
 from fastapi import BackgroundTasks, Depends, HTTPException, Query
-
-from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400
 from packaging.version import parse as parse_version
 
 from app.api import deps
 from app.api.deps import DatabaseDep
+from app.api.router import CustomAPIRouter
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400
 from app.core.config import settings
 from app.core.permissions import Permissions
 from app.models.broadcast import Broadcast
@@ -31,8 +30,8 @@ from app.schemas.notification import (
     BroadcastRequest,
     BroadcastResult,
 )
-from app.services.notifications.service import notification_service
 from app.services.notifications.mattermost_formatter import build_advisory_props as mm_advisory_props
+from app.services.notifications.service import notification_service
 from app.services.notifications.slack_formatter import build_advisory_blocks
 from app.services.notifications.templates import get_announcement_template
 
@@ -46,7 +45,7 @@ async def get_broadcast_history(
     current_user: Annotated[
         User, Depends(deps.PermissionChecker([Permissions.NOTIFICATIONS_BROADCAST, Permissions.SYSTEM_MANAGE]))
     ],
-) -> List[BroadcastHistoryItem]:
+) -> list[BroadcastHistoryItem]:
     """Get history of sent broadcasts."""
     broadcast_repo = BroadcastRepository(db)
     user_repo = UserRepository(db)
@@ -92,11 +91,11 @@ async def suggest_packages(
         User, Depends(deps.PermissionChecker([Permissions.NOTIFICATIONS_BROADCAST, Permissions.SYSTEM_MANAGE]))
     ],
     q: Annotated[str, Query(min_length=2, description="Search query for package name")],
-) -> List[str]:
+) -> list[str]:
     """Suggest package names for advisories based on existing dependencies."""
     dep_repo = DependencyRepository(db)
 
-    pipeline: List[Dict[str, Any]] = [
+    pipeline: list[dict[str, Any]] = [
         {"$match": {"name": {"$regex": re.escape(q), "$options": "i"}}},
         {"$group": {"_id": "$name"}},
         {"$sort": {"_id": 1}},
@@ -110,7 +109,7 @@ async def suggest_packages(
 
 def _queue_announcement(
     background_tasks: BackgroundTasks,
-    users: List[User],
+    users: list[User],
     subject: str,
     message: str,
     message_html: str,
@@ -169,7 +168,7 @@ async def _handle_teams_broadcast(
         return 0, 0
 
     teams = await team_repo.find_many({"_id": {"$in": payload.target_teams}}, limit=100)
-    user_ids: Set[str] = set()
+    user_ids: set[str] = set()
     for t in teams:
         for m in t.members:
             user_ids.add(m.user_id)
@@ -188,9 +187,9 @@ async def _handle_teams_broadcast(
 async def _build_advisory_scan_map(
     project_repo: "ProjectRepository",
     db: Any,
-) -> Dict[str, Project]:
+) -> dict[str, Project]:
     """Build scan_id -> Project map for advisory broadcasts, handling deleted branches."""
-    projects: List[Project] = [
+    projects: list[Project] = [
         p async for p in project_repo.iterate({"latest_scan_id": {"$exists": True}}) if p and p.latest_scan_id
     ]
     scan_ids = await ScanRepository(db).get_latest_active_scan_ids(projects)
@@ -225,8 +224,8 @@ def _record_affected_project(
     p_data: Project,
     dep_name: str,
     dep_version: str,
-    affected_projects_map: Dict[str, Project],
-    project_findings: Dict[str, List[str]],
+    affected_projects_map: dict[str, Project],
+    project_findings: dict[str, list[str]],
 ) -> None:
     """Track an affected project and the dependency finding string."""
     project_id = str(p_data.id)
@@ -243,9 +242,9 @@ def _record_affected_project(
 def _find_affected_projects(
     dep: Any,
     payload_packages: list,
-    scan_map: Dict[str, Project],
-    affected_projects_map: Dict[str, Project],
-    project_findings: Dict[str, List[str]],
+    scan_map: dict[str, Project],
+    affected_projects_map: dict[str, Project],
+    project_findings: dict[str, list[str]],
 ) -> None:
     """Check if a dependency is affected by any advisory package rule."""
     matching_rule = _match_package_rule(dep, payload_packages)
@@ -304,9 +303,9 @@ def _build_advisory_html(
     return final_html, findings_text_block
 
 
-def _collect_admin_ids(affected_projects_map: Dict[str, Project]) -> Set[str]:
+def _collect_admin_ids(affected_projects_map: dict[str, Project]) -> set[str]:
     """Collect unique admin member IDs across all affected projects."""
-    admin_ids: Set[str] = set()
+    admin_ids: set[str] = set()
     for project in affected_projects_map.values():
         for member in project.members:
             if member.role == "admin":
@@ -315,12 +314,12 @@ def _collect_admin_ids(affected_projects_map: Dict[str, Project]) -> Set[str]:
 
 
 def _group_projects_by_admin(
-    affected_projects_map: Dict[str, Project],
-    project_findings: Dict[str, List[str]],
-    users_dict: Dict[str, Any],
-) -> Dict[str, Dict]:
+    affected_projects_map: dict[str, Project],
+    project_findings: dict[str, list[str]],
+    users_dict: dict[str, Any],
+) -> dict[str, dict]:
     """Group affected projects under each admin user that should be notified."""
-    user_notification_map: Dict[str, Dict] = {}
+    user_notification_map: dict[str, dict] = {}
     for pid, project in affected_projects_map.items():
         for member in project.members:
             if member.role != "admin" or member.user_id not in users_dict:
@@ -335,7 +334,7 @@ def _group_projects_by_admin(
 
 
 def _queue_advisory_for_user(
-    data: Dict,
+    data: dict,
     payload: "BroadcastRequest",
     background_tasks: BackgroundTasks,
     message_html: str,
@@ -377,8 +376,8 @@ def _queue_advisory_for_user(
 
 
 async def _notify_advisory_admins(
-    affected_projects_map: Dict[str, Project],
-    project_findings: Dict[str, List[str]],
+    affected_projects_map: dict[str, Project],
+    project_findings: dict[str, list[str]],
     user_repo: UserRepository,
     payload: "BroadcastRequest",
     background_tasks: BackgroundTasks,
@@ -433,7 +432,7 @@ async def broadcast_message(
 
     forced_channels = payload.channels if payload.channels else None
 
-    valid_target_types: List[str] = ["global", "teams", "advisory"]
+    valid_target_types: list[str] = ["global", "teams", "advisory"]
     if payload.target_type not in valid_target_types:
         raise HTTPException(
             status_code=400,
@@ -475,11 +474,11 @@ async def broadcast_message(
         if not scan_map:
             return BroadcastResult(recipient_count=0)
 
-        affected_projects_map: Dict[str, Project] = {}
-        project_findings: Dict[str, List[str]] = {}
+        affected_projects_map: dict[str, Project] = {}
+        project_findings: dict[str, list[str]] = {}
 
         package_names = [pkg.name for pkg in payload.packages]
-        match_query: Dict[str, Any] = {
+        match_query: dict[str, Any] = {
             "scan_id": {"$in": list(scan_map.keys())},
             "name": {"$in": package_names},
         }

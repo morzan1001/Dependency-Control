@@ -3,13 +3,13 @@
 import asyncio
 import base64
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar
 
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import ANALYZER_TIMEOUTS, NPM_REGISTRY_URL, PYPI_API_URL
+from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer
@@ -22,17 +22,17 @@ class HashVerificationAnalyzer(Analyzer):
     name = "hash_verification"
 
     # Maven Central omitted: its checksums are served as separate files, not inline.
-    REGISTRY_APIS = {
+    REGISTRY_APIS: ClassVar[dict[str, str]] = {
         "pypi": f"{PYPI_API_URL}/{{package}}/{{version}}/json",
         "npm": f"{NPM_REGISTRY_URL}/{{package}}/{{version}}",
     }
 
     async def analyze(
         self,
-        sbom: Dict[str, Any],
-        settings: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        sbom: dict[str, Any],
+        settings: dict[str, Any] | None = None,
+        parsed_components: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Verify component hashes against registries; fetch registry hashes when the SBOM has none."""
         components = self._get_components(sbom, parsed_components)
         issues = []
@@ -74,7 +74,7 @@ class HashVerificationAnalyzer(Analyzer):
         }
 
     @staticmethod
-    def _detect_registry(purl: str) -> Optional[str]:
+    def _detect_registry(purl: str) -> str | None:
         """Return the registry name for a PURL, or None if unsupported."""
         if is_pypi(purl):
             return "pypi"
@@ -83,9 +83,9 @@ class HashVerificationAnalyzer(Analyzer):
         return None
 
     @staticmethod
-    def _hashes_from_cyclonedx_list(hashes: List[Any]) -> Dict[str, str]:
+    def _hashes_from_cyclonedx_list(hashes: list[Any]) -> dict[str, str]:
         """Extract hashes from a CycloneDX-style list."""
-        result: Dict[str, str] = {}
+        result: dict[str, str] = {}
         for h in hashes:
             if not isinstance(h, dict):
                 continue
@@ -96,9 +96,9 @@ class HashVerificationAnalyzer(Analyzer):
         return result
 
     @staticmethod
-    def _extract_sbom_hashes(component: Dict[str, Any]) -> Dict[str, str]:
+    def _extract_sbom_hashes(component: dict[str, Any]) -> dict[str, str]:
         """Extract hashes from a component, supporting Syft/CycloneDX/normalized formats."""
-        sbom_hashes: Dict[str, str] = {}
+        sbom_hashes: dict[str, str] = {}
         syft_hashes = component.get("_hashes")
         component_hashes = component.get("hashes")
 
@@ -119,8 +119,8 @@ class HashVerificationAnalyzer(Analyzer):
         return sbom_hashes
 
     async def _verify_component(
-        self, client: InstrumentedAsyncClient, component: Dict[str, Any]
-    ) -> Optional[Dict[str, Any]]:
+        self, client: InstrumentedAsyncClient, component: dict[str, Any]
+    ) -> dict[str, Any] | None:
         """Verify a single component's hash against the registry."""
 
         name = component.get("name", "")
@@ -149,12 +149,12 @@ class HashVerificationAnalyzer(Analyzer):
 
     @staticmethod
     def _compare_hashes(
-        sbom_hashes: Dict[str, str],
-        registry_hashes: Dict[str, set],
+        sbom_hashes: dict[str, str],
+        registry_hashes: dict[str, set],
         name: str,
         version: str,
         registry: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Compare SBOM hashes to registry hashes; return mismatch/verified/None."""
         for sbom_alg, sbom_value in sbom_hashes.items():
             sbom_alg_normalized = normalize_hash_algorithm(sbom_alg)
@@ -181,19 +181,19 @@ class HashVerificationAnalyzer(Analyzer):
 
     @staticmethod
     def _evaluate_registry_hashes(
-        registry_hashes_flat: Optional[Dict[str, Any]],
-        sbom_hashes: Dict[str, str],
+        registry_hashes_flat: dict[str, Any] | None,
+        sbom_hashes: dict[str, str],
         name: str,
         version: str,
         registry: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Convert flat registry hashes and either enrich or compare against SBOM."""
         if registry_hashes_flat is None or not registry_hashes_flat:
             return None
 
         # A registry value may be a single digest (npm) or a list (PyPI, one per file);
         # normalize both into a set so any legitimate file hash matches.
-        registry_hashes: Dict[str, set] = {}
+        registry_hashes: dict[str, set] = {}
         for k, v in registry_hashes_flat.items():
             registry_hashes[k] = set(v) if isinstance(v, (list, tuple, set)) else {v}
 
@@ -209,7 +209,7 @@ class HashVerificationAnalyzer(Analyzer):
 
     async def _fetch_pypi_registry_hashes(
         self, client: InstrumentedAsyncClient, name: str, version: str
-    ) -> Optional[Dict[str, List[str]]]:
+    ) -> dict[str, list[str]] | None:
         """Fetch PyPI registry hashes; empty dict = negative cache, None = transient error.
 
         Collect every file's digest per algorithm (sdist plus each platform wheel) so an
@@ -222,7 +222,7 @@ class HashVerificationAnalyzer(Analyzer):
                 return {}
 
             data = response.json()
-            registry_hashes_flat: Dict[str, List[str]] = {}
+            registry_hashes_flat: dict[str, list[str]] = {}
             for url_info in data.get("urls", []):
                 for alg, value in url_info.get("digests", {}).items():
                     alg_normalized = normalize_hash_algorithm(alg)
@@ -246,13 +246,13 @@ class HashVerificationAnalyzer(Analyzer):
         client: InstrumentedAsyncClient,
         name: str,
         version: str,
-        sbom_hashes: Dict[str, str],
-    ) -> Optional[Dict[str, Any]]:
+        sbom_hashes: dict[str, str],
+    ) -> dict[str, Any] | None:
         """Verify package hash against PyPI, or fetch hashes if none in SBOM."""
 
         cache_key = CacheKeys.package_hash("pypi", name, version)
 
-        async def fetch_pypi_hashes() -> Optional[Dict[str, List[str]]]:
+        async def fetch_pypi_hashes() -> dict[str, list[str]] | None:
             return await self._fetch_pypi_registry_hashes(client, name, version)
 
         registry_hashes_flat = await cache_service.get_or_fetch_with_lock(
@@ -264,9 +264,9 @@ class HashVerificationAnalyzer(Analyzer):
         return self._evaluate_registry_hashes(registry_hashes_flat, sbom_hashes, name, version, "pypi")
 
     @staticmethod
-    def _parse_npm_dist(dist: Dict[str, Any], name: str, version: str) -> Dict[str, str]:
+    def _parse_npm_dist(dist: dict[str, Any], name: str, version: str) -> dict[str, str]:
         """Parse the npm dist payload into a flat hash dictionary."""
-        registry_hashes_flat: Dict[str, str] = {}
+        registry_hashes_flat: dict[str, str] = {}
         shasum = dist.get("shasum")
         if shasum:
             registry_hashes_flat["sha1"] = shasum.lower()
@@ -282,7 +282,7 @@ class HashVerificationAnalyzer(Analyzer):
 
     async def _fetch_npm_registry_hashes(
         self, client: InstrumentedAsyncClient, name: str, version: str
-    ) -> Optional[Dict[str, str]]:
+    ) -> dict[str, str] | None:
         """Fetch npm registry hashes; empty dict = negative cache, None = transient error."""
         try:
             encoded_name = name.replace("/", "%2F") if "/" in name else name
@@ -309,13 +309,13 @@ class HashVerificationAnalyzer(Analyzer):
         client: InstrumentedAsyncClient,
         name: str,
         version: str,
-        sbom_hashes: Dict[str, str],
-    ) -> Optional[Dict[str, Any]]:
+        sbom_hashes: dict[str, str],
+    ) -> dict[str, Any] | None:
         """Verify package hash against npm registry, or fetch hashes if none in SBOM."""
 
         cache_key = CacheKeys.package_hash("npm", name, version)
 
-        async def fetch_npm_hashes() -> Optional[Dict[str, str]]:
+        async def fetch_npm_hashes() -> dict[str, str] | None:
             return await self._fetch_npm_registry_hashes(client, name, version)
 
         registry_hashes_flat = await cache_service.get_or_fetch_with_lock(

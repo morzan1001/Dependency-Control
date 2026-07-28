@@ -1,7 +1,6 @@
 """SARIF 2.1.0 renderer: each control maps to a rule and a result."""
 
 import json
-from typing import Optional, Tuple
 
 from app.models.compliance_report import ComplianceReport
 from app.models.finding import Severity
@@ -32,8 +31,8 @@ class SarifRenderer:
         evaluation: FrameworkEvaluation,
         report: ComplianceReport,
         *,
-        disclaimer: Optional[str] = None,
-    ) -> Tuple[bytes, str, str]:
+        disclaimer: str | None = None,
+    ) -> tuple[bytes, str, str]:
         rules = []
         results = []
 

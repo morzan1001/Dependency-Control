@@ -2,12 +2,12 @@
 
 import pytest
 
+from app.schemas.recommendation import Priority, Recommendation, RecommendationType
 from app.services.recommendations import (
     RecommendationEngine,
-    _safe_extend,
     _deduplicate_recommendations,
+    _safe_extend,
 )
-from app.schemas.recommendation import Recommendation, RecommendationType, Priority
 
 
 def _make_vuln_finding(
@@ -155,7 +155,7 @@ class TestSafeExtend:
 
     def test_empty_list_result_not_extended(self):
         recs = []
-        _safe_extend(recs, lambda: [], "empty_module")
+        _safe_extend(recs, list, "empty_module")
         assert len(recs) == 0
 
     def test_multiple_recs_extended(self):

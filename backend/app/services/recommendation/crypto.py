@@ -1,10 +1,9 @@
 """Recommendations for crypto findings, grouped by (finding_type, asset_name)."""
 
 from collections import defaultdict
-from typing import Dict, List, Optional, Tuple
 
 from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import get_attr, ModelOrDict
+from app.services.recommendation.common import ModelOrDict, get_attr
 
 CRYPTO_FINDING_TYPES = {
     "crypto_weak_algorithm",
@@ -26,7 +25,7 @@ CRYPTO_FINDING_TYPES = {
 # Well-known modern replacements; falls back to generic phrasing when absent.
 _MODERN_HASH = "SHA-256 or SHA-3"
 _MODERN_BLOCK_CIPHER = "AES-256-GCM"
-_ALGORITHM_REPLACEMENTS: Dict[str, str] = {
+_ALGORITHM_REPLACEMENTS: dict[str, str] = {
     "MD5": _MODERN_HASH,
     "MD4": _MODERN_HASH,
     "SHA1": _MODERN_HASH,
@@ -37,7 +36,7 @@ _ALGORITHM_REPLACEMENTS: Dict[str, str] = {
     "RC2": _MODERN_BLOCK_CIPHER,
 }
 
-_TYPE_TO_RECTYPE: Dict[str, RecommendationType] = {
+_TYPE_TO_RECTYPE: dict[str, RecommendationType] = {
     "crypto_weak_algorithm": RecommendationType.REPLACE_WEAK_ALGORITHM,
     "crypto_weak_key": RecommendationType.INCREASE_KEY_SIZE,
     "crypto_quantum_vulnerable": RecommendationType.PQC_MIGRATION,
@@ -54,7 +53,7 @@ _TYPE_TO_RECTYPE: Dict[str, RecommendationType] = {
     "crypto_key_management": RecommendationType.FIX_CODE_SECURITY,
 }
 
-_SEVERITY_TO_PRIORITY: Dict[str, Priority] = {
+_SEVERITY_TO_PRIORITY: dict[str, Priority] = {
     "CRITICAL": Priority.CRITICAL,
     "HIGH": Priority.HIGH,
     "MEDIUM": Priority.MEDIUM,
@@ -62,7 +61,7 @@ _SEVERITY_TO_PRIORITY: Dict[str, Priority] = {
 }
 
 # Effort defaults to MEDIUM; cert rotation is operational (low), PQC is high.
-_TYPE_TO_EFFORT: Dict[str, str] = {
+_TYPE_TO_EFFORT: dict[str, str] = {
     "crypto_weak_algorithm": Effort.MEDIUM,
     "crypto_weak_key": Effort.MEDIUM,
     "crypto_quantum_vulnerable": Effort.HIGH,
@@ -80,12 +79,12 @@ _TYPE_TO_EFFORT: Dict[str, str] = {
 }
 
 
-def process_crypto(findings: List[ModelOrDict]) -> List[Recommendation]:
+def process_crypto(findings: list[ModelOrDict]) -> list[Recommendation]:
     """Build remediation recommendations for crypto findings."""
     if not findings:
         return []
 
-    grouped: Dict[Tuple[str, str], List[ModelOrDict]] = defaultdict(list)
+    grouped: dict[tuple[str, str], list[ModelOrDict]] = defaultdict(list)
     for f in findings:
         finding_type = get_attr(f, "type", "")
         if finding_type not in CRYPTO_FINDING_TYPES:
@@ -98,7 +97,7 @@ def process_crypto(findings: List[ModelOrDict]) -> List[Recommendation]:
         )
         grouped[(finding_type, asset_name)].append(f)
 
-    out: List[Recommendation] = []
+    out: list[Recommendation] = []
     for (finding_type, asset_name), group in grouped.items():
         rec = _build_recommendation(finding_type, asset_name, group)
         if rec is not None:
@@ -109,8 +108,8 @@ def process_crypto(findings: List[ModelOrDict]) -> List[Recommendation]:
 def _build_recommendation(
     finding_type: str,
     asset_name: str,
-    findings: List[ModelOrDict],
-) -> Optional[Recommendation]:
+    findings: list[ModelOrDict],
+) -> Recommendation | None:
     rec_type = _TYPE_TO_RECTYPE.get(finding_type)
     if rec_type is None:
         return None
@@ -124,7 +123,7 @@ def _build_recommendation(
     rule_ids = sorted({rid for rid in (_rule_id(f) for f in findings) if rid})
     descriptions = sorted({str(get_attr(f, "description", "")).strip() for f in findings if get_attr(f, "description")})
 
-    impact: Dict[str, int] = {
+    impact: dict[str, int] = {
         "critical": severities.count("CRITICAL"),
         "high": severities.count("HIGH"),
         "medium": severities.count("MEDIUM"),
@@ -134,7 +133,7 @@ def _build_recommendation(
 
     title, description = _title_and_description(finding_type, asset_name, findings)
 
-    action: Dict[str, object] = {
+    action: dict[str, object] = {
         "asset_name": asset_name,
         "finding_type": finding_type,
         "bom_refs": bom_refs,
@@ -157,38 +156,48 @@ def _build_recommendation(
     )
 
 
-def _title_and_description(finding_type: str, asset_name: str, findings: List[ModelOrDict]) -> Tuple[str, str]:
+def _title_and_description(finding_type: str, asset_name: str, findings: list[ModelOrDict]) -> tuple[str, str]:
     count = len(findings)
     plural = "s" if count != 1 else ""
     if finding_type == "crypto_weak_algorithm":
         return (
             f"Replace weak algorithm: {asset_name}",
-            f"{asset_name} is flagged by {count} crypto policy rule{plural} as broken or disallowed. "
-            f"Replace it with a modern primitive in the affected components.",
+            (
+                f"{asset_name} is flagged by {count} crypto policy rule{plural} as broken or disallowed. "
+                f"Replace it with a modern primitive in the affected components."
+            ),
         )
     if finding_type == "crypto_weak_key":
         return (
             f"Increase key size for {asset_name}",
-            f"{asset_name} keys are below the policy minimum in {count} location{plural}. "
-            f"Re-issue keys at the policy-mandated size or stronger.",
+            (
+                f"{asset_name} keys are below the policy minimum in {count} location{plural}. "
+                f"Re-issue keys at the policy-mandated size or stronger."
+            ),
         )
     if finding_type == "crypto_quantum_vulnerable":
         return (
             f"Plan PQC migration for {asset_name}",
-            f"{asset_name} is quantum-vulnerable. Use the PQC migration plan endpoint for a "
-            f"per-asset transition target (ML-KEM / ML-DSA / SLH-DSA per use-case).",
+            (
+                f"{asset_name} is quantum-vulnerable. Use the PQC migration plan endpoint for a "
+                f"per-asset transition target (ML-KEM / ML-DSA / SLH-DSA per use-case)."
+            ),
         )
     if finding_type in ("crypto_weak_protocol", "crypto_protocol_cipher"):
         return (
             f"Upgrade protocol/cipher: {asset_name}",
-            f"{asset_name} uses a deprecated protocol version or cipher suite ({count} finding{plural}). "
-            f"Disable the legacy version/suite and require modern equivalents.",
+            (
+                f"{asset_name} uses a deprecated protocol version or cipher suite ({count} finding{plural}). "
+                f"Disable the legacy version/suite and require modern equivalents."
+            ),
         )
     if finding_type.startswith("crypto_cert_"):
         return (
             f"Rotate or fix certificate: {asset_name}",
-            f"Certificate {asset_name} has lifecycle/integrity issues ({count} finding{plural}). "
-            f"Rotate the certificate or correct the issuance parameters.",
+            (
+                f"Certificate {asset_name} has lifecycle/integrity issues ({count} finding{plural}). "
+                f"Rotate the certificate or correct the issuance parameters."
+            ),
         )
     if finding_type == "crypto_certificate_lifecycle":
         return (
@@ -198,8 +207,10 @@ def _title_and_description(finding_type: str, asset_name: str, findings: List[Mo
     if finding_type == "crypto_key_management":
         return (
             f"Fix key-management hygiene: {asset_name}",
-            f"Crypto-misuse SAST flagged {count} key-management issue{plural} for {asset_name}. "
-            f"Review key generation, storage, and rotation paths.",
+            (
+                f"Crypto-misuse SAST flagged {count} key-management issue{plural} for {asset_name}. "
+                f"Review key generation, storage, and rotation paths."
+            ),
         )
     return (
         f"Crypto issue: {asset_name}",
@@ -207,7 +218,7 @@ def _title_and_description(finding_type: str, asset_name: str, findings: List[Mo
     )
 
 
-def _suggested_replacement(finding_type: str, asset_name: str, findings: List[ModelOrDict]) -> Optional[str]:
+def _suggested_replacement(finding_type: str, asset_name: str, findings: list[ModelOrDict]) -> str | None:
     if finding_type == "crypto_weak_algorithm":
         return _ALGORITHM_REPLACEMENTS.get(asset_name.upper())
     if finding_type == "crypto_weak_key":
@@ -233,7 +244,7 @@ def _suggested_replacement(finding_type: str, asset_name: str, findings: List[Mo
     return None
 
 
-def _highest_severity(severities: List[str]) -> str:
+def _highest_severity(severities: list[str]) -> str:
     order = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN"]
     for s in order:
         if s in severities:
@@ -241,7 +252,7 @@ def _highest_severity(severities: List[str]) -> str:
     return "UNKNOWN"
 
 
-def _bom_ref(finding: ModelOrDict) -> Optional[str]:
+def _bom_ref(finding: ModelOrDict) -> str | None:
     details = get_attr(finding, "details", {}) or {}
     if isinstance(details, dict):
         ref = details.get("bom_ref")
@@ -249,7 +260,7 @@ def _bom_ref(finding: ModelOrDict) -> Optional[str]:
     return None
 
 
-def _rule_id(finding: ModelOrDict) -> Optional[str]:
+def _rule_id(finding: ModelOrDict) -> str | None:
     details = get_attr(finding, "details", {}) or {}
     if isinstance(details, dict):
         rid = details.get("rule_id")

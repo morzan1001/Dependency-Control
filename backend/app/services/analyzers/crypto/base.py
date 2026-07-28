@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -18,20 +18,20 @@ logger = logging.getLogger(__name__)
 
 
 class CryptoRuleAnalyzer(Analyzer):
-    def __init__(self, name: str, finding_types: Set[FindingType]):
+    def __init__(self, name: str, finding_types: set[FindingType]):
         self.name = name
         self.finding_types = finding_types
 
     async def analyze(
         self,
-        sbom: Dict[str, Any],
-        settings: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
+        sbom: dict[str, Any],
+        settings: dict[str, Any] | None = None,
+        parsed_components: list[dict[str, Any]] | None = None,
         *,
-        project_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        db: Optional[AsyncIOMotorDatabase] = None,
-    ) -> Dict[str, Any]:
+        project_id: str | None = None,
+        scan_id: str | None = None,
+        db: AsyncIOMotorDatabase | None = None,
+    ) -> dict[str, Any]:
         if db is None or project_id is None or scan_id is None:
             return {"findings": []}
 
@@ -46,7 +46,7 @@ class CryptoRuleAnalyzer(Analyzer):
                 and (r.finding_type if not hasattr(r.finding_type, "value") else r.finding_type.value)
                 in relevant_finding_types
             ]
-            findings: List[Dict[str, Any]] = []
+            findings: list[dict[str, Any]] = []
             for asset in assets:
                 matched_rules = [r for r in rules if rule_matches(asset, r)]
                 if not matched_rules:
@@ -63,7 +63,7 @@ class CryptoRuleAnalyzer(Analyzer):
 _SEVERITY_RANK = {"CRITICAL": 5, "HIGH": 4, "MEDIUM": 3, "LOW": 2, "INFO": 1, "UNKNOWN": 0}
 
 
-def _build_finding_dedup(asset: CryptoAsset, rules: List[CryptoRule]) -> Dict[str, Any]:
+def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule]) -> dict[str, Any]:
     # Lead rule (strictest by default_severity) drives top-level fields; the rest
     # are recorded under details.matched_rules.
     lead = max(rules, key=lambda r: _SEVERITY_RANK.get(_severity_str(r.default_severity), 0))
@@ -80,7 +80,7 @@ def _build_finding_dedup(asset: CryptoAsset, rules: List[CryptoRule]) -> Dict[st
         }
         for r in rules
     ]
-    aggregated_references: List[str] = []
+    aggregated_references: list[str] = []
     seen_refs: set = set()
     for r in rules:
         for ref in r.references:

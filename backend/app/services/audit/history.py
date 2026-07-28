@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 _NO_CHANGES_SUMMARY = "No effective changes"
 
 # Fields compared to detect a modified rule; not exhaustive.
-_COMPARED_FIELDS: Tuple[str, ...] = (
+_COMPARED_FIELDS: tuple[str, ...] = (
     "enabled",
     "default_severity",
     "finding_type",
@@ -39,7 +39,7 @@ _COMPARED_FIELDS: Tuple[str, ...] = (
 )
 
 
-def compute_change_summary(old: Optional[CryptoPolicy], new: CryptoPolicy) -> str:
+def compute_change_summary(old: CryptoPolicy | None, new: CryptoPolicy) -> str:
     """Deterministic human-readable diff summary (<=200 chars)."""
     if old is None:
         return f"Initial policy ({len(new.rules)} rules)"
@@ -50,8 +50,8 @@ def compute_change_summary(old: Optional[CryptoPolicy], new: CryptoPolicy) -> st
     removed = old_by_id.keys() - new_by_id.keys()
     common = old_by_id.keys() & new_by_id.keys()
 
-    toggled: List[str] = []
-    modified: List[str] = []
+    toggled: list[str] = []
+    modified: list[str] = []
     for rid in common:
         o_rule = old_by_id[rid]
         n_rule = new_by_id[rid]
@@ -63,7 +63,7 @@ def compute_change_summary(old: Optional[CryptoPolicy], new: CryptoPolicy) -> st
         else:
             modified.append(rid)
 
-    parts: List[str] = []
+    parts: list[str] = []
     if added:
         parts.append(f"added {len(added)} rule(s)")
     if removed:
@@ -85,13 +85,13 @@ async def record_policy_change(
     db: AsyncIOMotorDatabase,
     *,
     policy_scope: str,
-    project_id: Optional[str],
-    old_policy: Optional[CryptoPolicy],
+    project_id: str | None,
+    old_policy: CryptoPolicy | None,
     new_policy: CryptoPolicy,
     action: PolicyAuditAction,
     actor: Any,
-    comment: Optional[str],
-    reverted_from_version: Optional[int] = None,
+    comment: str | None,
+    reverted_from_version: int | None = None,
 ) -> PolicyAuditEntry:
     """Persist an audit entry and fire webhook + notifications (best-effort)."""
     summary = compute_change_summary(old_policy, new_policy)
@@ -130,14 +130,14 @@ async def record_policy_change(
     return entry
 
 
-def _actor_id(actor: Any) -> Optional[str]:
+def _actor_id(actor: Any) -> str | None:
     if actor is None:
         return None
     result = getattr(actor, "id", None) or getattr(actor, "user_id", None)
     return str(result) if result is not None else None
 
 
-def _actor_display_name(actor: Any) -> Optional[str]:
+def _actor_display_name(actor: Any) -> str | None:
     if actor is None:
         return None
     for attr in ("display_name", "full_name", "username", "email"):
@@ -225,7 +225,7 @@ async def _notify_relevant_users(
 
 
 # Fields compared to detect a license-policy change; all values are scalar.
-_LICENSE_COMPARED_FIELDS: Tuple[str, ...] = (
+_LICENSE_COMPARED_FIELDS: tuple[str, ...] = (
     "distribution_model",
     "deployment_model",
     "library_usage",
@@ -237,8 +237,8 @@ _LICENSE_COMPARED_FIELDS: Tuple[str, ...] = (
 
 
 def compute_license_policy_change_summary(
-    old: Optional[Dict[str, Any]],
-    new: Optional[Dict[str, Any]],
+    old: dict[str, Any] | None,
+    new: dict[str, Any] | None,
 ) -> str:
     """Deterministic one-line summary of a license-policy transition (<=200 chars)."""
     if old is None and new is None:
@@ -250,7 +250,7 @@ def compute_license_policy_change_summary(
     if not new:
         return "License policy cleared"
 
-    parts: List[str] = []
+    parts: list[str] = []
     for field in _LICENSE_COMPARED_FIELDS:
         old_v = old.get(field)
         new_v = new.get(field)
@@ -271,12 +271,12 @@ async def record_license_policy_change(
     db: AsyncIOMotorDatabase,
     *,
     project_id: str,
-    old_policy: Optional[Dict[str, Any]],
-    new_policy: Optional[Dict[str, Any]],
+    old_policy: dict[str, Any] | None,
+    new_policy: dict[str, Any] | None,
     action: PolicyAuditAction,
     actor: Any,
-    comment: Optional[str] = None,
-) -> Optional[PolicyAuditEntry]:
+    comment: str | None = None,
+) -> PolicyAuditEntry | None:
     """Persist a license-policy audit entry (best-effort); returns None if no effective change. Version derives from existing entry count since the project doc has no version column."""
     summary = compute_license_policy_change_summary(old_policy, new_policy)
     if summary == _NO_CHANGES_SUMMARY:

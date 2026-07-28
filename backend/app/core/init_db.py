@@ -5,9 +5,9 @@ from typing import Any
 import pymongo
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.metrics import update_db_stats
 from app.core.permissions import ALL_PERMISSIONS
 from app.core.security import get_password_hash
-from app.core.metrics import update_db_stats
 from app.db.mongodb import get_database
 from app.models.user import User
 from app.services.crypto_policy.seeder import seed_crypto_policies

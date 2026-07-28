@@ -1,15 +1,18 @@
 """Notification handling and webhook triggers for completed scans."""
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 from app.core.config import settings
 from app.core.constants import get_severity_value
 from app.models.finding import Finding
 from app.models.project import Project
+from app.services.analysis.types import Database
 from app.services.notifications import notification_service
 from app.services.notifications.mattermost_formatter import (
     build_analysis_completed_props as mm_analysis_props,
+)
+from app.services.notifications.mattermost_formatter import (
     build_vulnerability_found_props as mm_vulnerability_props,
 )
 from app.services.notifications.slack_formatter import (
@@ -21,12 +24,11 @@ from app.services.notifications.templates import (
     get_vulnerability_found_template,
 )
 from app.services.webhooks import webhook_service
-from app.services.analysis.types import Database
 
 logger = logging.getLogger(__name__)
 
 
-def _extract_vulnerability_info(vuln: Dict[str, Any], finding: Dict[str, Any]) -> Dict[str, Any]:
+def _extract_vulnerability_info(vuln: dict[str, Any], finding: dict[str, Any]) -> dict[str, Any]:
     """Extract vulnerability info from a vulnerability dict and its parent finding."""
     return {
         "id": vuln.get("id", finding.get("id", "Unknown")),
@@ -41,12 +43,12 @@ def _extract_vulnerability_info(vuln: Dict[str, Any], finding: Dict[str, Any]) -
 
 
 def _categorize_vulnerabilities(
-    vulnerability_findings: List[Dict[str, Any]],
-) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    vulnerability_findings: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, Any]]]:
     """Categorize vulnerabilities into (kev_vulns, high_epss_vulns, critical_vulns)."""
-    kev_vulns: List[Dict[str, Any]] = []
-    high_epss_vulns: List[Dict[str, Any]] = []
-    critical_vulns: List[Dict[str, Any]] = []
+    kev_vulns: list[dict[str, Any]] = []
+    high_epss_vulns: list[dict[str, Any]] = []
+    critical_vulns: list[dict[str, Any]] = []
 
     for finding in vulnerability_findings:
         details = finding.get("details", {})
@@ -69,7 +71,7 @@ def _categorize_vulnerabilities(
     return kev_vulns, high_epss_vulns, critical_vulns
 
 
-def _format_vuln_line(index: int, vuln: Dict[str, Any]) -> str:
+def _format_vuln_line(index: int, vuln: dict[str, Any]) -> str:
     """Format a single vulnerability line for notification message."""
     vuln_line = f"  {index}. {vuln['id']} ({vuln['severity']}) - {vuln['package']}"
     if vuln["version"]:
@@ -83,10 +85,10 @@ def _format_vuln_line(index: int, vuln: Dict[str, Any]) -> str:
 
 def _build_vulnerability_message(
     project_name: str,
-    kev_vulns: List[Dict[str, Any]],
-    high_epss_vulns: List[Dict[str, Any]],
-    critical_vulns: List[Dict[str, Any]],
-    top_vulns: List[Dict[str, Any]],
+    kev_vulns: list[dict[str, Any]],
+    high_epss_vulns: list[dict[str, Any]],
+    critical_vulns: list[dict[str, Any]],
+    top_vulns: list[dict[str, Any]],
     scan_link: str,
 ) -> tuple[str, str]:
     """Build (subject, message) for a vulnerability notification."""
@@ -121,8 +123,8 @@ def _build_vulnerability_message(
 async def send_scan_notifications(
     scan_id: str,
     project: Project,
-    aggregated_findings: List[Finding],
-    results_summary: List[str],
+    aggregated_findings: list[Finding],
+    results_summary: list[str],
     db: Database,
 ) -> None:
     """Send notifications and trigger webhooks for a completed scan.
@@ -130,7 +132,7 @@ async def send_scan_notifications(
     Each notification type is handled independently so one failure does not block others.
     """
     try:
-        severity_counts: Dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+        severity_counts: dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
         for f in aggregated_findings:
             sev = f.severity if hasattr(f, "severity") else "UNKNOWN"
             if sev in severity_counts:

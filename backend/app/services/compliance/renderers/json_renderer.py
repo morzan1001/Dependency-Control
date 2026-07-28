@@ -1,7 +1,6 @@
 """JSON renderer — machine-readable structured output."""
 
 import json
-from typing import Optional, Tuple
 
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import FrameworkEvaluation, ReportFormat
@@ -18,8 +17,8 @@ class JsonRenderer:
         evaluation: FrameworkEvaluation,
         report: ComplianceReport,
         *,
-        disclaimer: Optional[str] = None,
-    ) -> Tuple[bytes, str, str]:
+        disclaimer: str | None = None,
+    ) -> tuple[bytes, str, str]:
         framework_key_str = (
             evaluation.framework_key if isinstance(evaluation.framework_key, str) else evaluation.framework_key.value
         )

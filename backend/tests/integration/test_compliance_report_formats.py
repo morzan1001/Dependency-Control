@@ -9,10 +9,10 @@ def _install_fake_pipeline(monkeypatch):
     """Common monkeypatch setup: fake gather_inputs + fake GridFS store."""
     from unittest.mock import AsyncMock
 
+    from app.api.v1.endpoints import compliance_reports as ep_mod
     from app.services.analytics.scopes import ResolvedScope
     from app.services.compliance import engine as engine_mod
     from app.services.compliance.frameworks.base import EvaluationInput
-    from app.api.v1.endpoints import compliance_reports as ep_mod
 
     inputs = EvaluationInput(
         resolved=ResolvedScope(scope="project", scope_id="p", project_ids=["p"]),

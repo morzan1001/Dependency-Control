@@ -1,4 +1,4 @@
-from typing import Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel
 
@@ -13,10 +13,10 @@ class MatchSignature(BaseModel):
 
     rule_key: str
     file_key: str
-    anchor: Optional[str] = None
+    anchor: str | None = None
     anchor_kind: AnchorKind
-    content_hash: Optional[str] = None
-    last_line: Optional[int] = None
+    content_hash: str | None = None
+    last_line: int | None = None
     rule_keys: list[str] = []  # all "{scanner}:{rule_id}" of a SAST finding; single-element for IaC/Secret
 
     @property

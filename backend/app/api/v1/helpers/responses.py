@@ -1,8 +1,8 @@
 """Shared OpenAPI response definitions for FastAPI route decorators."""
 
-from typing import Any, Dict
+from typing import Any
 
-_Responses = Dict[int | str, Dict[str, Any]]
+_Responses = dict[int | str, dict[str, Any]]
 
 RESP_400: _Responses = {400: {"description": "Bad request"}}
 RESP_401: _Responses = {401: {"description": "Not authenticated"}}

@@ -1,8 +1,9 @@
 """S3-compatible storage client with streaming upload/download support."""
 
 import logging
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncGenerator, AsyncIterator, Optional
+from typing import Any
 
 from aiobotocore.session import AioSession, get_session  # type: ignore[import-untyped]
 from botocore.config import Config as BotoConfig
@@ -12,7 +13,7 @@ from app.core.constants import S3_MULTIPART_PART_SIZE
 
 logger = logging.getLogger(__name__)
 
-_session: Optional[AioSession] = None
+_session: AioSession | None = None
 
 
 def _get_session() -> AioSession:
@@ -47,7 +48,7 @@ async def get_s3_client() -> AsyncGenerator[Any, None]:
         yield client
 
 
-def _bucket(bucket: Optional[str]) -> str:
+def _bucket(bucket: str | None) -> str:
     return bucket or settings.S3_BUCKET_NAME
 
 
@@ -68,7 +69,7 @@ async def upload_stream(
     source: AsyncIterator[bytes],
     *,
     content_type: str = "application/octet-stream",
-    bucket: Optional[str] = None,
+    bucket: str | None = None,
     part_size: int = S3_MULTIPART_PART_SIZE,
 ) -> int:
     """Multipart-upload a stream to S3.
@@ -129,7 +130,7 @@ async def upload_stream(
             raise
 
 
-async def download_stream(key: str, *, bucket: Optional[str] = None, chunk_size: int = 65536) -> AsyncIterator[bytes]:
+async def download_stream(key: str, *, bucket: str | None = None, chunk_size: int = 65536) -> AsyncIterator[bytes]:
     """Stream an S3 object as an async iterator of chunks (default 64 KiB each)."""
     async with get_s3_client() as s3:
         response = await s3.get_object(Bucket=_bucket(bucket), Key=key)
@@ -138,12 +139,12 @@ async def download_stream(key: str, *, bucket: Optional[str] = None, chunk_size:
                 yield chunk
 
 
-async def delete_object(key: str, *, bucket: Optional[str] = None) -> None:
+async def delete_object(key: str, *, bucket: str | None = None) -> None:
     async with get_s3_client() as s3:
         await s3.delete_object(Bucket=_bucket(bucket), Key=key)
 
 
-async def list_objects(prefix: str = "", *, bucket: Optional[str] = None) -> list[dict[str, Any]]:
+async def list_objects(prefix: str = "", *, bucket: str | None = None) -> list[dict[str, Any]]:
     """List all S3 objects under a prefix, following pagination.
 
     Returns the raw Contents entries (Key, Size, LastModified, ...) across every
@@ -154,7 +155,7 @@ async def list_objects(prefix: str = "", *, bucket: Optional[str] = None) -> lis
     """
     b = _bucket(bucket)
     objects: list[dict[str, Any]] = []
-    token: Optional[str] = None
+    token: str | None = None
     async with get_s3_client() as s3:
         while True:
             kwargs: dict[str, Any] = {"Bucket": b, "Prefix": prefix}

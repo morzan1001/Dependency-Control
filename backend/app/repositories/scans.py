@@ -1,6 +1,7 @@
 """Repository for scans."""
 
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from collections.abc import AsyncGenerator
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pymongo import ReadPreference
@@ -22,7 +23,7 @@ _MINIMAL_PROJECTION = {
 }
 
 
-def _project_id_and_deleted(project: Any) -> tuple[Optional[str], List[str]]:
+def _project_id_and_deleted(project: Any) -> tuple[str | None, list[str]]:
     """Extract ``(project_id, deleted_branches)`` from a Project model or raw dict."""
     if isinstance(project, dict):
         pid = project.get("_id") or project.get("id")
@@ -41,21 +42,21 @@ class ScanRepository:
     def _primary(self) -> AsyncIOMotorCollection:
         return self.collection.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
 
-    async def get_by_id(self, scan_id: str) -> Optional[Scan]:
+    async def get_by_id(self, scan_id: str) -> Scan | None:
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one({"_id": scan_id})
         return Scan(**data) if data else None
 
-    async def get_by_id_strong(self, scan_id: str) -> Optional[Scan]:
+    async def get_by_id_strong(self, scan_id: str) -> Scan | None:
         with track_db_operation(_COL, "find_one"):
             data = await self._primary().find_one({"_id": scan_id})
         return Scan(**data) if data else None
 
-    async def get_minimal_by_id(self, scan_id: str) -> Optional[ScanMinimal]:
+    async def get_minimal_by_id(self, scan_id: str) -> ScanMinimal | None:
         data = await self.collection.find_one({"_id": scan_id}, _MINIMAL_PROJECTION)
         return ScanMinimal(**data) if data else None
 
-    async def get_minimal_by_id_strong(self, scan_id: str) -> Optional[ScanMinimal]:
+    async def get_minimal_by_id_strong(self, scan_id: str) -> ScanMinimal | None:
         data = await self._primary().find_one({"_id": scan_id}, _MINIMAL_PROJECTION)
         return ScanMinimal(**data) if data else None
 
@@ -64,16 +65,16 @@ class ScanRepository:
             await self.collection.insert_one(scan.model_dump(by_alias=True))
         return scan
 
-    async def upsert(self, query: Dict[str, Any], update: Dict[str, Any]) -> None:
+    async def upsert(self, query: dict[str, Any], update: dict[str, Any]) -> None:
         with track_db_operation(_COL, "update_one"):
             await self.collection.update_one(query, update, upsert=True)
 
-    async def update(self, scan_id: str, update_data: Dict[str, Any]) -> Optional[Scan]:
+    async def update(self, scan_id: str, update_data: dict[str, Any]) -> Scan | None:
         with track_db_operation(_COL, "update_one"):
             await self.collection.update_one({"_id": scan_id}, {"$set": update_data})
         return await self.get_by_id(scan_id)
 
-    async def update_raw(self, scan_id: str, update_ops: Dict[str, Any]) -> None:
+    async def update_raw(self, scan_id: str, update_ops: dict[str, Any]) -> None:
         with track_db_operation(_COL, "update_one"):
             await self.collection.update_one({"_id": scan_id}, update_ops)
 
@@ -82,7 +83,7 @@ class ScanRepository:
             result = await self.collection.delete_one({"_id": scan_id})
         return result.deleted_count > 0
 
-    async def delete_many(self, query: Dict[str, Any]) -> int:
+    async def delete_many(self, query: dict[str, Any]) -> int:
         with track_db_operation(_COL, "delete_many"):
             result = await self.collection.delete_many(query)
         return result.deleted_count
@@ -94,8 +95,8 @@ class ScanRepository:
         limit: int = 100,
         sort_by: str = "created_at",
         sort_order: int = -1,
-        projection: Optional[Dict[str, int]] = None,
-    ) -> List[Dict[str, Any]]:
+        projection: dict[str, int] | None = None,
+    ) -> list[dict[str, Any]]:
         cursor = (
             self.collection.find({"project_id": project_id}, projection)
             .sort(sort_by, sort_order)
@@ -104,21 +105,21 @@ class ScanRepository:
         )
         return await cursor.to_list(limit)
 
-    async def find_one(self, query: Dict[str, Any], sort: Optional[List[tuple]] = None) -> Optional[Dict[str, Any]]:
+    async def find_one(self, query: dict[str, Any], sort: list[tuple] | None = None) -> dict[str, Any] | None:
         if sort:
             return await self.collection.find_one(query, sort=sort)
         return await self.collection.find_one(query)
 
     async def find_many(
         self,
-        query: Dict[str, Any],
-        sort: Optional[List[tuple]] = None,
+        query: dict[str, Any],
+        sort: list[tuple] | None = None,
         skip: int = 0,
-        limit: Optional[int] = None,
-        projection: Optional[Dict[str, int]] = None,
-    ) -> List[Scan]:
+        limit: int | None = None,
+        projection: dict[str, int] | None = None,
+    ) -> list[Scan]:
         # limit=0 means unbounded in pymongo; floor to 1. None stays unbounded via to_list(None).
-        safe_limit: Optional[int] = max(limit, 1) if limit is not None else None
+        safe_limit: int | None = max(limit, 1) if limit is not None else None
         cursor = self.collection.find(query, projection)
         if sort:
             cursor = cursor.sort(sort)
@@ -131,42 +132,40 @@ class ScanRepository:
 
     async def find_many_with_stats(
         self,
-        query: Dict[str, Any],
+        query: dict[str, Any],
         limit: int = 1000,
-    ) -> List[ScanWithStats]:
+    ) -> list[ScanWithStats]:
         cursor = self.collection.find(query, {"_id": 1, "stats": 1}).limit(limit)
         docs = await cursor.to_list(limit)
         return [ScanWithStats(**doc) for doc in docs]
 
-    async def count(self, query: Optional[Dict[str, Any]] = None) -> int:
+    async def count(self, query: dict[str, Any] | None = None) -> int:
         with track_db_operation(_COL, "count"):
             return await self.collection.count_documents(query or {})
 
-    async def get_latest_for_project(self, project_id: str, status: Optional[str] = None) -> Optional[Scan]:
-        query: Dict[str, Any] = {"project_id": project_id}
+    async def get_latest_for_project(self, project_id: str, status: str | None = None) -> Scan | None:
+        query: dict[str, Any] = {"project_id": project_id}
         if status:
             query["status"] = status
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one(query, sort=[("created_at", -1)])
         return Scan(**data) if data else None
 
-    async def get_latest_active_scan(
-        self, project: Any, deleted_branches: Optional[List[str]] = None
-    ) -> Optional[Scan]:
+    async def get_latest_active_scan(self, project: Any, deleted_branches: list[str] | None = None) -> Scan | None:
         """Most recent completed scan for project on a non-deleted branch. project may be a model or raw dict; deleted_branches overrides the project's value (housekeeping passes the freshly-computed set before it is persisted)."""
         project_id, project_deleted = _project_id_and_deleted(project)
         deleted = deleted_branches if deleted_branches is not None else project_deleted
-        query: Dict[str, Any] = {"project_id": project_id, "status": "completed"}
+        query: dict[str, Any] = {"project_id": project_id, "status": "completed"}
         if deleted:
             query["branch"] = {"$nin": deleted}
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one(query, sort=[("created_at", -1)])
         return Scan(**data) if data else None
 
-    async def get_latest_active_scan_ids(self, projects: List[Any]) -> Dict[str, str]:
+    async def get_latest_active_scan_ids(self, projects: list[Any]) -> dict[str, str]:
         """Maps project_id -> latest active scan_id: stored latest_scan_id when no deleted branches, else the most recent completed scan on a non-deleted branch; projects resolving to no scan are omitted. Each project may be a model or dict exposing id, deleted_branches, latest_scan_id."""
-        result: Dict[str, str] = {}
-        needing: List[tuple] = []
+        result: dict[str, str] = {}
+        needing: list[tuple] = []
         for p in projects:
             pid, deleted = _project_id_and_deleted(p)
             latest_scan_id = p.get("latest_scan_id") if isinstance(p, dict) else getattr(p, "latest_scan_id", None)
@@ -183,7 +182,7 @@ class ScanRepository:
         or_conditions = [
             {"project_id": pid, "branch": {"$nin": deleted}, "status": "completed"} for pid, deleted in needing
         ]
-        pipeline: List[Dict[str, Any]] = [
+        pipeline: list[dict[str, Any]] = [
             {"$match": {"$or": or_conditions}},
             {"$sort": {"created_at": -1}},
             {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
@@ -195,14 +194,14 @@ class ScanRepository:
         return result
 
     async def iterate(
-        self, query: Dict[str, Any], projection: Optional[Dict[str, int]] = None
-    ) -> AsyncGenerator[Dict[str, Any], None]:
+        self, query: dict[str, Any], projection: dict[str, int] | None = None
+    ) -> AsyncGenerator[dict[str, Any], None]:
         async for doc in self.collection.find(query, projection):
             yield doc
 
-    async def aggregate(self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
         with track_db_operation(_COL, "aggregate"):
             return await self.collection.aggregate(pipeline).to_list(limit)
 
-    async def distinct(self, field: str, query: Optional[Dict[str, Any]] = None) -> List[Any]:
+    async def distinct(self, field: str, query: dict[str, Any] | None = None) -> list[Any]:
         return await self.collection.distinct(field, query or {})

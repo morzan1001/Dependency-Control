@@ -2,7 +2,6 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -35,46 +34,46 @@ class ParsedCryptoAsset(BaseModel):
     asset_type: CryptoAssetType
 
     # Algorithm-only
-    primitive: Optional[CryptoPrimitive] = None
-    variant: Optional[str] = None
-    parameter_set_identifier: Optional[str] = None
-    mode: Optional[str] = None
-    padding: Optional[str] = None
-    key_size_bits: Optional[int] = None
-    curve: Optional[str] = None
+    primitive: CryptoPrimitive | None = None
+    variant: str | None = None
+    parameter_set_identifier: str | None = None
+    mode: str | None = None
+    padding: str | None = None
+    key_size_bits: int | None = None
+    curve: str | None = None
 
     # Certificate-only
-    subject_name: Optional[str] = None
-    issuer_name: Optional[str] = None
-    not_valid_before: Optional[datetime] = None
-    not_valid_after: Optional[datetime] = None
-    signature_algorithm_ref: Optional[str] = None
-    subject_public_key_ref: Optional[str] = None
-    certificate_format: Optional[str] = None
+    subject_name: str | None = None
+    issuer_name: str | None = None
+    not_valid_before: datetime | None = None
+    not_valid_after: datetime | None = None
+    signature_algorithm_ref: str | None = None
+    subject_public_key_ref: str | None = None
+    certificate_format: str | None = None
 
     # Protocol-only
-    protocol_type: Optional[str] = None
-    version: Optional[str] = None
-    cipher_suites: List[str] = Field(default_factory=list)
+    protocol_type: str | None = None
+    version: str | None = None
+    cipher_suites: list[str] = Field(default_factory=list)
 
     # Context
-    occurrence_locations: List[str] = Field(default_factory=list)
-    detection_context: Optional[str] = None
-    confidence: Optional[float] = None
-    related_dependency_purls: List[str] = Field(default_factory=list)
+    occurrence_locations: list[str] = Field(default_factory=list)
+    detection_context: str | None = None
+    confidence: float | None = None
+    related_dependency_purls: list[str] = Field(default_factory=list)
 
-    properties: Dict[str, str] = Field(default_factory=dict)
+    properties: dict[str, str] = Field(default_factory=dict)
 
 
 class ParsedCBOM(BaseModel):
     """Normalized CBOM representation produced by parse_cbom()."""
 
-    format_version: Optional[str] = None
-    tool_name: Optional[str] = None
-    tool_version: Optional[str] = None
-    created_at: Optional[str] = None
+    format_version: str | None = None
+    tool_name: str | None = None
+    tool_version: str | None = None
+    created_at: str | None = None
 
-    assets: List[ParsedCryptoAsset] = Field(default_factory=list)
+    assets: list[ParsedCryptoAsset] = Field(default_factory=list)
 
     total_components: int = 0
     parsed_components: int = 0

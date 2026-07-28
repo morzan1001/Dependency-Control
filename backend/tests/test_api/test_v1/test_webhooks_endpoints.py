@@ -136,20 +136,22 @@ class TestGetWebhook:
 
         mock_repo = MagicMock()
 
-        with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
-            with patch(
+        with (
+            patch(f"{MODULE}.WebhookRepository", return_value=mock_repo),
+            patch(
                 f"{MODULE}.get_webhook_or_404",
                 new_callable=AsyncMock,
                 side_effect=HTTPException(status_code=404, detail="Webhook not found"),
-            ):
-                with pytest.raises(HTTPException) as exc_info:
-                    asyncio.run(
-                        get_webhook(
-                            webhook_id="missing",
-                            current_user=regular_user,
-                            db=MagicMock(),
-                        )
-                    )
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            asyncio.run(
+                get_webhook(
+                    webhook_id="missing",
+                    current_user=regular_user,
+                    db=MagicMock(),
+                )
+            )
         assert exc_info.value.status_code == 404
 
 

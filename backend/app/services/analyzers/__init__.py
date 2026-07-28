@@ -1,8 +1,8 @@
 from .base import Analyzer
 from .cli_base import CLIAnalyzer
-from .crypto.base import CryptoRuleAnalyzer  # noqa: F401
-from .crypto.certificate_lifecycle import CertificateLifecycleAnalyzer  # noqa: F401
-from .crypto.protocol_cipher import ProtocolCipherSuiteAnalyzer  # noqa: F401
+from .crypto.base import CryptoRuleAnalyzer
+from .crypto.certificate_lifecycle import CertificateLifecycleAnalyzer
+from .crypto.protocol_cipher import ProtocolCipherSuiteAnalyzer
 from .deps_dev import DepsDevAnalyzer
 from .end_of_life import EndOfLifeAnalyzer
 from .epss_kev import EPSSKEVAnalyzer
@@ -19,18 +19,18 @@ from .typosquatting import TyposquattingAnalyzer
 
 __all__ = [
     "Analyzer",
-    "CertificateLifecycleAnalyzer",
     "CLIAnalyzer",
+    "CertificateLifecycleAnalyzer",
     "CryptoRuleAnalyzer",
     "DepsDevAnalyzer",
-    "EndOfLifeAnalyzer",
     "EPSSKEVAnalyzer",
+    "EndOfLifeAnalyzer",
     "GrypeAnalyzer",
     "HashVerificationAnalyzer",
     "LicenseAnalyzer",
     "MaintainerRiskAnalyzer",
-    "OpenSourceMalwareAnalyzer",
     "OSVAnalyzer",
+    "OpenSourceMalwareAnalyzer",
     "OutdatedAnalyzer",
     "ProtocolCipherSuiteAnalyzer",
     "ReachabilityAnalyzer",

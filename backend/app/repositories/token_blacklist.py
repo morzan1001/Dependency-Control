@@ -1,6 +1,6 @@
 """Blacklisted JWT tokens for logout. A MongoDB TTL index removes expired entries."""
 
-from datetime import datetime
+from datetime import datetime, timezone
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReadPreference
@@ -18,7 +18,7 @@ class TokenBlacklistRepository:
                 {
                     "_id": jti,  # jti as _id enforces dedup
                     "jti": jti,
-                    "blacklisted_at": datetime.now(),
+                    "blacklisted_at": datetime.now(timezone.utc),
                     "expires_at": expires_at,
                     "reason": reason,
                 }

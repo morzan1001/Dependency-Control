@@ -19,13 +19,13 @@ os.environ["REFRESH_TOKEN_EXPIRE_DAYS"] = "1"
 os.environ["MONGODB_URL"] = "mongodb://localhost:27017"
 os.environ["DATABASE_NAME"] = "test_dependency_control"
 
-import pytest  # noqa: E402
+import pytest
 
 # Test constants for commonly used PURLs
 TEST_PURL_REQUESTS = "pkg:pypi/requests@2.31.0"
 
-from tests.mocks.gitlab import make_gitlab_instance  # noqa: E402
-from tests.mocks.github import make_github_instance  # noqa: E402
+from tests.mocks.github import make_github_instance
+from tests.mocks.gitlab import make_gitlab_instance
 
 
 @pytest.fixture

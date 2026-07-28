@@ -5,7 +5,7 @@ import logging
 import secrets
 import uuid
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReadPreference
@@ -39,7 +39,7 @@ class MCPApiKeyRepository:
         user_id: str,
         name: str,
         expires_in_days: int,
-    ) -> Tuple[Dict[str, Any], str]:
+    ) -> tuple[dict[str, Any], str]:
         """Returns (stored_document, plaintext_token); the plaintext is shown once and never persisted server-side."""
         token = generate_plaintext_token()
         doc = {
@@ -57,12 +57,12 @@ class MCPApiKeyRepository:
             await self.collection.insert_one(doc)
         return doc, token
 
-    async def list_for_user(self, user_id: str) -> List[Dict[str, Any]]:
+    async def list_for_user(self, user_id: str) -> list[dict[str, Any]]:
         with track_db_operation(_COL, "find"):
             cursor = self.collection.find({"user_id": user_id}, sort=[("created_at", -1)])
             return await cursor.to_list(length=100)
 
-    async def get_by_plaintext(self, plaintext: str) -> Optional[Dict[str, Any]]:
+    async def get_by_plaintext(self, plaintext: str) -> dict[str, Any] | None:
         if not plaintext.startswith(_TOKEN_PREFIX):
             return None
         now = datetime.now(timezone.utc)

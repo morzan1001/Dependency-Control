@@ -1,15 +1,13 @@
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, status
 
-from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_404, RESP_AUTH_404
-
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
+from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import (
     build_team_enrichment_pipeline,
     check_team_access,
@@ -18,6 +16,7 @@ from app.api.v1.helpers import (
     get_member_role,
     get_team_with_access,
 )
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_404, RESP_AUTH_404
 from app.core.constants import TEAM_ROLE_ADMIN
 from app.core.permissions import has_permission
 from app.models.team import Team, TeamMember
@@ -41,7 +40,7 @@ async def create_team(
     team_in: TeamCreate,
     current_user: Annotated[User, Depends(deps.PermissionChecker("team:create"))],
     db: DatabaseDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a new team. The creator becomes an admin."""
     team_repo = TeamRepository(db)
 
@@ -59,18 +58,18 @@ async def create_team(
     return team_dict
 
 
-@router.get("/", response_model=List[TeamResponse], responses=RESP_AUTH)
+@router.get("/", response_model=list[TeamResponse], responses=RESP_AUTH)
 async def read_teams(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    search: Optional[str] = None,
+    search: str | None = None,
     sort_by: str = "name",
     sort_order: str = "asc",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """List teams."""
     team_repo = TeamRepository(db)
 
-    query: Dict[str, Any] = {}
+    query: dict[str, Any] = {}
     if search:
         query["name"] = {"$regex": re.escape(search), "$options": "i"}
 
@@ -98,7 +97,7 @@ async def read_team(
     team_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Get team details."""
     team_repo = TeamRepository(db)
 
@@ -159,7 +158,6 @@ async def delete_team(
 
     team_repo = TeamRepository(db)
     await team_repo.delete(team_id)
-    return None
 
 
 @router.post("/{team_id}/members", responses=RESP_AUTH_400_404)

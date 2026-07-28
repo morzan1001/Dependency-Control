@@ -1,16 +1,17 @@
 import logging
 import urllib.parse
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any
 
 import httpx
 
-from app.core.http_utils import InstrumentedAsyncClient
 from app.core.cache import cache_service
 from app.core.constants import (
     GITHUB_JWKS_CACHE_TTL,
     GITHUB_JWKS_URI_CACHE_TTL,
 )
+from app.core.http_utils import InstrumentedAsyncClient
 from app.models.github_api import GitHubOIDCPayload
 from app.models.github_instance import GitHubInstance
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
@@ -47,7 +48,7 @@ class GitHubService:
         """Generate cache key for this specific instance."""
         return f"github:{self._cache_key_prefix}:{suffix}"
 
-    def _get_auth_headers(self) -> Dict[str, str]:
+    def _get_auth_headers(self) -> dict[str, str]:
         if not self.instance.access_token:
             raise ValueError(f"No access token configured for GitHub instance '{self.instance.name}'")
         return {"Authorization": f"Bearer {self.instance.access_token}", "Accept": "application/vnd.github+json"}
@@ -57,7 +58,7 @@ class GitHubService:
         async with InstrumentedAsyncClient("GitHub API", timeout=_GITHUB_API_TIMEOUT) as client:
             yield client
 
-    async def _api_get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Optional[httpx.Response]:
+    async def _api_get(self, endpoint: str, params: dict[str, Any] | None = None) -> httpx.Response | None:
         if not self.instance.access_token:
             return None
 
@@ -75,14 +76,14 @@ class GitHubService:
     async def _api_get_paginated(
         self,
         endpoint: str,
-        params: Optional[Dict[str, Any]] = None,
+        params: dict[str, Any] | None = None,
         max_pages: int = 10,
-    ) -> Optional[List[Dict[str, Any]]]:
+    ) -> list[dict[str, Any]] | None:
         """Paginated GET via GitHub's Link header; returns all items or None on failure."""
         if not self.instance.access_token:
             return None
 
-        all_items: List[Dict[str, Any]] = []
+        all_items: list[dict[str, Any]] = []
         page = 1
         per_page = 100
 
@@ -118,14 +119,14 @@ class GitHubService:
 
         return all_items
 
-    async def list_branches(self, owner: str, repo: str) -> Optional[List[str]]:
+    async def list_branches(self, owner: str, repo: str) -> list[str] | None:
         """Fetches all branch names from a GitHub repository. Returns None on API failure."""
         branches = await self._api_get_paginated(f"/repos/{owner}/{repo}/branches")
         if branches is None:
             return None
         return [b["name"] for b in branches]
 
-    async def _get_jwks_uri(self) -> Optional[str]:
+    async def _get_jwks_uri(self) -> str | None:
         """Resolve the JWKS URI: well-known endpoint for github.com, OIDC discovery for GHES."""
         cache_key = self._get_cache_key("jwks_uri")
 
@@ -154,7 +155,7 @@ class GitHubService:
         await cache_service.set(cache_key, fallback_uri, ttl_seconds=GITHUB_JWKS_URI_CACHE_TTL)
         return fallback_uri
 
-    async def get_jwks(self) -> Optional[dict]:
+    async def get_jwks(self) -> dict | None:
         """Fetch and Redis-cache the JWKS from GitHub."""
         cache_key = self._get_cache_key("jwks")
 
@@ -184,7 +185,7 @@ class GitHubService:
         cache_key = self._get_cache_key("jwks")
         await cache_service.delete(cache_key)
 
-    async def validate_oidc_token(self, token: str) -> Optional[GitHubOIDCPayload]:
+    async def validate_oidc_token(self, token: str) -> GitHubOIDCPayload | None:
         """Validate a GitHub Actions OIDC JWT, refreshing JWKS on key rotation."""
         return await _validate_oidc_token(
             token=token,

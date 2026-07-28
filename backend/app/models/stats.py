@@ -1,5 +1,3 @@
-from typing import Optional
-
 from pydantic import BaseModel, Field
 
 
@@ -10,8 +8,8 @@ class ThreatIntelligenceStats(BaseModel):
     kev_ransomware_count: int = Field(0, description="Count of KEV findings with known ransomware use")
     high_epss_count: int = Field(0, description="Count of findings with EPSS > 10%")
     medium_epss_count: int = Field(0, description="Count of findings with EPSS 1-10%")
-    avg_epss_score: Optional[float] = Field(None, description="Average EPSS score")
-    max_epss_score: Optional[float] = Field(None, description="Maximum EPSS score")
+    avg_epss_score: float | None = Field(None, description="Average EPSS score")
+    max_epss_score: float | None = Field(None, description="Maximum EPSS score")
     weaponized_count: int = Field(0, description="Count of weaponized vulnerabilities")
     active_exploitation_count: int = Field(0, description="Count of actively exploited vulnerabilities")
 
@@ -94,7 +92,7 @@ class Stats(BaseModel):
         ),
     )
 
-    threat_intel: Optional[ThreatIntelligenceStats] = Field(None, description="EPSS/KEV statistics")
-    reachability: Optional[ReachabilityStats] = Field(None, description="Reachability analysis statistics")
-    prioritized: Optional[PrioritizedCounts] = Field(None, description="Prioritized vulnerability counts")
-    secret_priority: Optional[SecretPrioritizedCounts] = Field(None, description="Prioritized secret finding counts")
+    threat_intel: ThreatIntelligenceStats | None = Field(None, description="EPSS/KEV statistics")
+    reachability: ReachabilityStats | None = Field(None, description="Reachability analysis statistics")
+    prioritized: PrioritizedCounts | None = Field(None, description="Prioritized vulnerability counts")
+    secret_priority: SecretPrioritizedCounts | None = Field(None, description="Prioritized secret finding counts")

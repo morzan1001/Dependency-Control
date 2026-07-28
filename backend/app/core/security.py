@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Optional
+from typing import Any
 
 from jose import ExpiredSignatureError, JWTError, jwt
 from passlib.context import CryptContext
@@ -20,7 +20,7 @@ def _create_token(
     subject: str,
     token_type: str,
     expire: datetime,
-    extra_claims: Optional[dict] = None,
+    extra_claims: dict | None = None,
 ) -> str:
     """Create a JWT with a jti claim (for blacklisting on logout) and optional extra claims."""
     import uuid
@@ -38,7 +38,7 @@ def _create_token(
     return jwt.encode(to_encode, settings.SECRET_KEY, algorithm=settings.ALGORITHM)
 
 
-def _verify_token(token: str, expected_type: str) -> Optional[str]:
+def _verify_token(token: str, expected_type: str) -> str | None:
     """Verify a JWT of the expected type, returning its subject (sub claim) or None if invalid."""
     try:
         payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
@@ -55,8 +55,8 @@ def _verify_token(token: str, expected_type: str) -> Optional[str]:
 
 def create_access_token(
     subject: str | Any,
-    permissions: Optional[list[str]] = None,
-    expires_delta: Optional[timedelta] = None,
+    permissions: list[str] | None = None,
+    expires_delta: timedelta | None = None,
 ) -> str:
     """Create an access token with permissions."""
     if permissions is None:
@@ -75,7 +75,7 @@ def create_access_token(
     )
 
 
-def create_refresh_token(subject: str | Any, expires_delta: Optional[timedelta] = None) -> str:
+def create_refresh_token(subject: str | Any, expires_delta: timedelta | None = None) -> str:
     """Create a refresh token."""
     if expires_delta:
         expire = datetime.now(timezone.utc) + expires_delta
@@ -85,7 +85,7 @@ def create_refresh_token(subject: str | Any, expires_delta: Optional[timedelta] 
     return _create_token(subject=str(subject), token_type="refresh", expire=expire)
 
 
-def verify_password(plain_password: str, hashed_password: Optional[str]) -> bool:
+def verify_password(plain_password: str, hashed_password: str | None) -> bool:
     """Verify a plain password against a hashed password."""
     if not hashed_password:
         return False
@@ -103,7 +103,7 @@ def create_email_verification_token(email: str) -> str:
     return _create_token(subject=email, token_type="email_verification", expire=expire)
 
 
-def verify_email_verification_token(token: str) -> Optional[str]:
+def verify_email_verification_token(token: str) -> str | None:
     """Verify an email verification token and return the email if valid."""
     return _verify_token(token, "email_verification")
 
@@ -114,6 +114,6 @@ def create_password_reset_token(email: str) -> str:
     return _create_token(subject=email, token_type="password_reset", expire=expire)
 
 
-def verify_password_reset_token(token: str) -> Optional[str]:
+def verify_password_reset_token(token: str) -> str | None:
     """Verify a password reset token and return the email if valid."""
     return _verify_token(token, "password_reset")

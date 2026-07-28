@@ -4,7 +4,7 @@ CryptoTrendService — time-bucketed crypto finding + asset aggregations.
 
 import hashlib
 from datetime import datetime, timedelta
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -26,7 +26,7 @@ Metric = Literal[
 
 _MAX_RANGE = timedelta(days=730)
 
-_METRIC_FILTER: Dict[str, Dict[str, Any]] = {
+_METRIC_FILTER: dict[str, dict[str, Any]] = {
     "total_crypto_findings": {"type": {"$regex": "^crypto_"}},
     "quantum_vulnerable_findings": {"type": "crypto_quantum_vulnerable"},
     "weak_algo_findings": {"type": "crypto_weak_algorithm"},
@@ -123,8 +123,8 @@ class CryptoTrendService:
         bucket: Bucket,
         range_start: datetime,
         range_end: datetime,
-    ) -> List[TrendPoint]:
-        match: Dict[str, Any] = dict(_METRIC_FILTER[metric])
+    ) -> list[TrendPoint]:
+        match: dict[str, Any] = dict(_METRIC_FILTER[metric])
         match["scan_created_at"] = {"$gte": range_start, "$lte": range_end}
         # Exclude waived/accepted findings (a risk decision, not current posture).
         match["waived"] = {"$ne": True}
@@ -160,7 +160,7 @@ class CryptoTrendService:
             {"$group": {"_id": "$bucket", "value": {"$sum": "$value"}}},
             {"$sort": {"_id": 1}},
         ]
-        out: List[TrendPoint] = []
+        out: list[TrendPoint] = []
         async for row in self.db.findings.aggregate(pipeline):
             out.append(
                 TrendPoint(
@@ -180,16 +180,16 @@ class CryptoTrendService:
         *,
         asset_type: str,
         field: str,
-        unwind_field: Optional[str] = None,
-    ) -> List[TrendPoint]:
-        match: Dict[str, Any] = {
+        unwind_field: str | None = None,
+    ) -> list[TrendPoint]:
+        match: dict[str, Any] = {
             "asset_type": asset_type,
             "created_at": {"$gte": range_start, "$lte": range_end},
         }
         if resolved.project_ids is not None:
             match["project_id"] = {"$in": resolved.project_ids}
 
-        pipeline: List[Dict[str, Any]] = [{"$match": match}]
+        pipeline: list[dict[str, Any]] = [{"$match": match}]
         if unwind_field:
             pipeline.append({"$unwind": unwind_field})
         field_ref = f"${field}"
@@ -213,7 +213,7 @@ class CryptoTrendService:
             ]
         )
         metric_name = "unique_algorithms" if asset_type == "algorithm" else "unique_cipher_suites"
-        out: List[TrendPoint] = []
+        out: list[TrendPoint] = []
         async for row in self.db.crypto_assets.aggregate(pipeline):
             out.append(
                 TrendPoint(

@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Any, Dict, Optional
+from typing import Annotated, Any
 
 import httpx
 from fastapi import HTTPException, Query
@@ -43,7 +43,7 @@ logger = logging.getLogger(__name__)
 router = CustomAPIRouter()
 
 
-def _resolve_since(window_days: Optional[int]) -> Optional[datetime]:
+def _resolve_since(window_days: int | None) -> datetime | None:
     """Translate ``window_days`` into a ``since`` UTC cutoff."""
     if window_days is None:
         return None
@@ -53,18 +53,18 @@ def _resolve_since(window_days: Optional[int]) -> Optional[datetime]:
 def _build_release_fetcher() -> ReleaseHistoryFetcher:
     """Production deps.dev fetcher wired to Redis + httpx, built per request."""
 
-    async def cache_get(key: str) -> Optional[Any]:
+    async def cache_get(key: str) -> Any | None:
         return await cache_service.get(key)
 
     async def cache_set(key: str, value: Any, ttl_seconds: int) -> None:
         await cache_service.set(key, value, ttl_seconds=ttl_seconds)
 
-    async def http_fetch(url: str) -> Optional[Dict[str, Any]]:
+    async def http_fetch(url: str) -> dict[str, Any] | None:
         try:
             async with InstrumentedAsyncClient("deps.dev API", timeout=10.0) as client:
                 response = await client.get(url, follow_redirects=True)
                 if response.status_code == 200:
-                    payload: Dict[str, Any] = response.json()
+                    payload: dict[str, Any] = response.json()
                     return payload
                 return None
         except (httpx.TimeoutException, httpx.ConnectError):
@@ -88,7 +88,7 @@ async def get_project_update_frequency(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     max_scans: Annotated[int, Query(ge=2, le=500)] = 20,
-    window_days: Annotated[Optional[int], Query(ge=1, le=3650)] = None,
+    window_days: Annotated[int | None, Query(ge=1, le=3650)] = None,
 ) -> UpdateFrequencyMetrics:
     """Update-frequency metrics from version diffs; window_days scopes by time, else max_scans."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
@@ -130,9 +130,9 @@ async def get_project_update_frequency(
 async def get_update_frequency_comparison(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    team_id: Optional[str] = None,
+    team_id: str | None = None,
     max_scans: Annotated[int, Query(ge=2, le=200)] = 10,
-    window_days: Annotated[Optional[int], Query(ge=1, le=3650)] = None,
+    window_days: Annotated[int | None, Query(ge=1, le=3650)] = None,
 ) -> UpdateFrequencyComparison:
     """Cross-project ranking. Pass ``window_days`` to align scan cadences."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
@@ -154,7 +154,7 @@ async def get_update_frequency_comparison(
             team_avg_coverage_pct=0.0,
         )
 
-    query: Dict[str, Any] = {"_id": {"$in": user_project_ids}}
+    query: dict[str, Any] = {"_id": {"$in": user_project_ids}}
     if team_id:
         query["team_id"] = team_id
 
@@ -166,7 +166,7 @@ async def get_update_frequency_comparison(
 
     if projects_raw:
         unique_team_ids = list({str(p["team_id"]) for p in projects_raw if p.get("team_id")})
-        team_names: Dict[str, str] = {}
+        team_names: dict[str, str] = {}
         if unique_team_ids:
             cursor = db.teams.find(
                 {"_id": {"$in": unique_team_ids}},

@@ -134,9 +134,8 @@ def member_auth_headers(_project):
 
 @pytest.fixture
 def regular_user_no_access():
-    from tests.helpers.permission_presets import PRESET_USER
-
     from app.models.user import User
+    from tests.helpers.permission_presets import PRESET_USER
 
     return User(
         id="test-user-no-access",

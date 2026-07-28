@@ -1,7 +1,6 @@
 import json
 from pathlib import Path
 
-
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.cbom_parser import parse_cbom, parse_crypto_components
 

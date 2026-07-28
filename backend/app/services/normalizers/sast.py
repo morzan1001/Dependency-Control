@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.core.constants import BEARER_SEVERITY_MAP, OPENGREP_SEVERITY_MAP
 from app.models.finding import Finding, FindingType
@@ -34,7 +34,7 @@ def _build_opengrep_description(check_id: str, message: str) -> str:
     return message
 
 
-def _parse_opengrep_item(item: Dict[str, Any]) -> Finding:
+def _parse_opengrep_item(item: dict[str, Any]) -> Finding:
     check_id = item.get("check_id") or "unknown-check"
     path = item.get("path") or "unknown"
 
@@ -103,7 +103,7 @@ def _parse_opengrep_item(item: Dict[str, Any]) -> Finding:
     )
 
 
-def normalize_opengrep(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
+def normalize_opengrep(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     # OpenGrep emits either "findings" or "results" depending on version.
     results = result.get("findings") or result.get("results") or []
     if not results:
@@ -113,7 +113,7 @@ def normalize_opengrep(aggregator: "ResultAggregator", result: Dict[str, Any], s
         aggregator.add_finding(_parse_opengrep_item(item), source=source)
 
 
-def normalize_bearer(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
+def normalize_bearer(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     findings_container = result.get("findings") or {}
 
     # Bearer emits either a flat list or a dict keyed by severity.

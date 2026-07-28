@@ -1,7 +1,5 @@
 """Central registry of analyzers and post-processors with name-based lookup."""
 
-from typing import Dict, List, Optional, Set
-
 from app.models.finding import FindingType
 from app.services.analyzers import (
     Analyzer,
@@ -23,7 +21,7 @@ from app.services.analyzers import (
     TyposquattingAnalyzer,
 )
 
-analyzers: Dict[str, Analyzer] = {
+analyzers: dict[str, Analyzer] = {
     "end_of_life": EndOfLifeAnalyzer(),
     "os_malware": OpenSourceMalwareAnalyzer(),
     "trivy": TrivyAnalyzer(),
@@ -52,15 +50,15 @@ analyzers: Dict[str, Analyzer] = {
 }
 
 # Post-processors enrich existing findings; they run after analyzers and don't see SBOMs.
-post_processors: Dict[str, Analyzer] = {
+post_processors: dict[str, Analyzer] = {
     "epss_kev": EPSSKEVAnalyzer(),
     "reachability": ReachabilityAnalyzer(),
 }
 
 # Vulnerability scanners — post-processors depend on these.
-VULNERABILITY_ANALYZERS: Set[str] = {"trivy", "grype", "osv", "deps_dev"}
+VULNERABILITY_ANALYZERS: set[str] = {"trivy", "grype", "osv", "deps_dev"}
 
-CRYPTO_ANALYZERS: Set[str] = {
+CRYPTO_ANALYZERS: set[str] = {
     "crypto_weak_algorithm",
     "crypto_weak_key",
     "crypto_quantum_vulnerable",
@@ -69,7 +67,7 @@ CRYPTO_ANALYZERS: Set[str] = {
 }
 
 
-def get_analyzer(name: str) -> Optional[Analyzer]:
+def get_analyzer(name: str) -> Analyzer | None:
     """Look up an analyzer in either the analyzer or post-processor maps."""
     if name in analyzers:
         return analyzers[name]
@@ -78,7 +76,7 @@ def get_analyzer(name: str) -> Optional[Analyzer]:
     return None
 
 
-def get_all_analyzer_names() -> List[str]:
+def get_all_analyzer_names() -> list[str]:
     return list(analyzers.keys()) + list(post_processors.keys())
 
 

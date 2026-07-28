@@ -1,5 +1,4 @@
 from collections import defaultdict
-from typing import Dict, List
 
 from app.core.constants import DETAILS_KEY_IN_KEV, QUICK_WIN_SCORING_WEIGHTS
 from app.schemas.recommendation import (
@@ -8,17 +7,17 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import calculate_best_fix_version, get_attr, ModelOrDict
+from app.services.recommendation.common import ModelOrDict, calculate_best_fix_version, get_attr
 
 
 def identify_quick_wins(
-    vuln_findings: List[ModelOrDict],
-    dependencies: List[ModelOrDict],
-) -> List[Recommendation]:
+    vuln_findings: list[ModelOrDict],
+    dependencies: list[ModelOrDict],
+) -> list[Recommendation]:
     """Identify quick wins - single updates that fix many or critical/KEV vulnerabilities."""
     recommendations = []
 
-    vulns_by_package: Dict[str, List[ModelOrDict]] = defaultdict(list)
+    vulns_by_package: dict[str, list[ModelOrDict]] = defaultdict(list)
     for f in vuln_findings:
         component = get_attr(f, "component", "")
         details = get_attr(f, "details", {})
@@ -35,7 +34,7 @@ def identify_quick_wins(
         if len(vulns) < 2:
             continue
 
-        fixed_versions: List[str] = []
+        fixed_versions: list[str] = []
         for v in vulns:
             v_details = get_attr(v, "details", {})
             if isinstance(v_details, dict):

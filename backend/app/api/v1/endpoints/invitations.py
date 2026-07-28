@@ -1,16 +1,15 @@
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Any, Dict, List
+from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, Body, Depends, HTTPException, status
 
-from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.responses import RESP_400, RESP_404, RESP_AUTH, RESP_AUTH_400
-
 from app.api import deps
 from app.api.deps import DatabaseDep
+from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.auth import send_system_invitation_email
+from app.api.v1.helpers.responses import RESP_400, RESP_404, RESP_AUTH, RESP_AUTH_400
 from app.core import security
 from app.core.config import settings
 from app.models.invitation import SystemInvitation
@@ -22,13 +21,13 @@ router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 
-@router.get("/system", response_model=List[SystemInvitation], responses=RESP_AUTH)
+@router.get("/system", response_model=list[SystemInvitation], responses=RESP_AUTH)
 async def read_system_invitations(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker("user:create"))],
     skip: int = 0,
     limit: int = 100,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """List all pending system invitations. Requires 'user:create' permission."""
     invitation_repo = InvitationRepository(db)
     invitations = await invitation_repo.find_active_system_invitations(skip=skip, limit=limit)
@@ -41,7 +40,7 @@ async def create_system_invitation(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker("user:create"))],
     email: Annotated[str, Body(..., embed=True)],
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Create a system invitation for a new user. Requires 'user:create' permission."""
     user_repo = UserRepository(db)
     invitation_repo = InvitationRepository(db)
@@ -86,7 +85,7 @@ async def create_system_invitation(
 
 
 @router.get("/system/{token}", responses=RESP_404)
-async def validate_system_invitation(token: str, db: DatabaseDep) -> Dict[str, Any]:
+async def validate_system_invitation(token: str, db: DatabaseDep) -> dict[str, Any]:
     """Validate a system invitation token."""
     invitation_repo = InvitationRepository(db)
     invitation = await invitation_repo.get_system_invitation_by_token(token)

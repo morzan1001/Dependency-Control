@@ -1,7 +1,7 @@
 """Rehydrate pre-shaped crypto analyzer dicts into Finding objects."""
 
 import logging
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding
 
@@ -13,8 +13,8 @@ logger = logging.getLogger(__name__)
 
 def normalize_crypto(
     aggregator: "ResultAggregator",
-    result: Dict[str, Any],
-    source: Optional[str] = None,
+    result: dict[str, Any],
+    source: str | None = None,
 ) -> None:
     for item in result.get("findings") or []:
         try:

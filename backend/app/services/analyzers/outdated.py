@@ -1,14 +1,14 @@
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 from urllib.parse import quote
 
 import httpx
-from packaging.version import Version, InvalidVersion
+from packaging.version import InvalidVersion, Version
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, DEPS_DEV_API_URL
+from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer
@@ -33,7 +33,7 @@ def _is_ahead_of(current: str, latest: str) -> bool:
         return False
 
 
-def is_version_withdrawn(versions_info: List[Any], target_version: str) -> bool:
+def is_version_withdrawn(versions_info: list[Any], target_version: str) -> bool:
     """True iff ``target_version`` is present and marked ``isWithdrawn`` in the deps.dev payload.
 
     Strips a leading ``v`` so ``v1.0.0`` matches ``1.0.0`` in the response.
@@ -60,14 +60,14 @@ class OutdatedAnalyzer(Analyzer):
 
     async def analyze(
         self,
-        sbom: Dict[str, Any],
-        settings: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        sbom: dict[str, Any],
+        settings: dict[str, Any] | None = None,
+        parsed_components: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         components = self._get_components(sbom, parsed_components)
-        outdated: List[Dict[str, Any]] = []
-        ahead: List[Dict[str, Any]] = []
-        yanked: List[Dict[str, Any]] = []
+        outdated: list[dict[str, Any]] = []
+        ahead: list[dict[str, Any]] = []
+        yanked: list[dict[str, Any]] = []
 
         # Resolve one deps.dev document per distinct package, then classify every component
         # against it (keyed by package so multiple installed versions each get classified).
@@ -96,14 +96,14 @@ class OutdatedAnalyzer(Analyzer):
             "yanked_versions": yanked,
         }
 
-    async def _resolve_package_infos(self, components: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    async def _resolve_package_infos(self, components: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
         """Return ``{cache_key: {"default": str|None, "withdrawn": [str, ...]}}``.
 
         Warm entries come from a batched ``mget``; misses are fetched concurrently with a
         distributed lock, so each package document is requested at most once.
         """
         # Dedupe by cache key so a package at several versions is fetched only once.
-        key_targets: Dict[str, Tuple[str, str]] = {}
+        key_targets: dict[str, tuple[str, str]] = {}
         skipped_count = 0
 
         for component in components:
@@ -120,10 +120,10 @@ class OutdatedAnalyzer(Analyzer):
         if not key_targets:
             return {}
 
-        infos: Dict[str, Dict[str, Any]] = {}
-        missing: List[str] = []
+        infos: dict[str, dict[str, Any]] = {}
+        missing: list[str] = []
 
-        cached_data: Dict[str, Any] = await cache_service.mget(list(key_targets.keys()))
+        cached_data: dict[str, Any] = await cache_service.mget(list(key_targets.keys()))
         for cache_key in key_targets:
             normalized = self._normalize_cached_info(cached_data.get(cache_key))
             if normalized is None:
@@ -139,7 +139,7 @@ class OutdatedAnalyzer(Analyzer):
         return infos
 
     @staticmethod
-    def _normalize_cached_info(value: Any) -> Optional[Dict[str, Any]]:
+    def _normalize_cached_info(value: Any) -> dict[str, Any] | None:
         """Coerce a cached value into a package-info dict.
 
         ``None`` means the key is absent (needs fetching); an empty dict is a negative cache.
@@ -158,9 +158,9 @@ class OutdatedAnalyzer(Analyzer):
 
     async def _fetch_missing_infos(
         self,
-        missing_keys: List[str],
-        key_targets: Dict[str, Tuple[str, str]],
-        infos: Dict[str, Dict[str, Any]],
+        missing_keys: list[str],
+        key_targets: dict[str, tuple[str, str]],
+        infos: dict[str, dict[str, Any]],
     ) -> None:
         """Fetch package documents for uncached packages, concurrently in batches."""
         timeout = ANALYZER_TIMEOUTS.get("outdated", ANALYZER_TIMEOUTS["default"])
@@ -170,7 +170,7 @@ class OutdatedAnalyzer(Analyzer):
             for i in range(0, len(missing_keys), batch_size):
                 batch = missing_keys[i : i + batch_size]
                 tasks = [self._fetch_package_info(client, cache_key, *key_targets[cache_key]) for cache_key in batch]
-                results: List[Any] = await asyncio.gather(*tasks, return_exceptions=True)
+                results: list[Any] = await asyncio.gather(*tasks, return_exceptions=True)
 
                 for cache_key, result in zip(batch, results):
                     if isinstance(result, Exception) or result is None:
@@ -189,10 +189,10 @@ class OutdatedAnalyzer(Analyzer):
         cache_key: str,
         system: str,
         deps_dev_name: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Fetch (once, cached, lock-protected) a package's default + withdrawn versions."""
 
-        async def fetch() -> Optional[Dict[str, Any]]:
+        async def fetch() -> dict[str, Any] | None:
             data = await self._get_package_document(client, system, deps_dev_name)
             if data is None:
                 return None
@@ -217,7 +217,7 @@ class OutdatedAnalyzer(Analyzer):
         client: InstrumentedAsyncClient,
         system: str,
         deps_dev_name: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Return the raw deps.dev package document.
 
         ``None`` signals a transient failure (skip this scan); an empty dict
@@ -228,7 +228,7 @@ class OutdatedAnalyzer(Analyzer):
             response = await client.get(url, follow_redirects=True)
             if response.status_code != 200:
                 return {}
-            document: Dict[str, Any] = response.json()
+            document: dict[str, Any] = response.json()
             return document
         except (httpx.TimeoutException, httpx.ConnectError):
             logger.debug(f"Timeout/connection error checking outdated for {deps_dev_name}")
@@ -239,10 +239,10 @@ class OutdatedAnalyzer(Analyzer):
 
     def _classify_version(
         self,
-        component: Dict[str, Any],
+        component: dict[str, Any],
         latest_version: str,
-        outdated: List[Dict[str, Any]],
-        ahead: List[Dict[str, Any]],
+        outdated: list[dict[str, Any]],
+        ahead: list[dict[str, Any]],
     ) -> None:
         """Classify a component as outdated, ahead-of-default, or up-to-date."""
         name = component.get("name", "")
@@ -279,9 +279,7 @@ class OutdatedAnalyzer(Analyzer):
                 }
             )
 
-    def _build_yanked_finding(
-        self, component: Dict[str, Any], withdrawn_versions: List[str]
-    ) -> Optional[Dict[str, Any]]:
+    def _build_yanked_finding(self, component: dict[str, Any], withdrawn_versions: list[str]) -> dict[str, Any] | None:
         """Return a finding dict if the component's installed version was withdrawn, else None."""
         version = component.get("version", "")
         purl_str = component.get("purl", "")
@@ -302,7 +300,7 @@ class OutdatedAnalyzer(Analyzer):
             ),
         }
 
-    def _find_default_version(self, versions_info: List[Any]) -> Optional[str]:
+    def _find_default_version(self, versions_info: list[Any]) -> str | None:
         """Find the version marked as default (usually the latest stable)."""
         for v in versions_info:
             if v.get("isDefault"):
@@ -311,7 +309,7 @@ class OutdatedAnalyzer(Analyzer):
         return None
 
     @staticmethod
-    def _collect_withdrawn_versions(versions_info: List[Any]) -> List[str]:
+    def _collect_withdrawn_versions(versions_info: list[Any]) -> list[str]:
         """Collect the version strings marked ``isWithdrawn`` in a deps.dev payload."""
         return [
             v

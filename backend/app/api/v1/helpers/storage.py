@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
@@ -15,13 +15,13 @@ logger = logging.getLogger(__name__)
 async def load_from_gridfs(
     db: AsyncIOMotorDatabase,
     file_id: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Load and parse JSON content from GridFS, or None if loading fails."""
     try:
         fs = primary_gridfs_bucket(db)
         grid_out = await open_gridfs_download_with_retry(fs, ObjectId(file_id))
         content: bytes = await grid_out.read()
-        data: Dict[str, Any] = json.loads(content)
+        data: dict[str, Any] = json.loads(content)
         return data
     except Exception as e:
         logger.exception("Failed to load file from GridFS: %s", e)
@@ -30,8 +30,8 @@ async def load_from_gridfs(
 
 async def resolve_sbom_refs(
     db: AsyncIOMotorDatabase,
-    sbom_items: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
+    sbom_items: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
     """Resolve SBOM references from GridFS or inline data into resolved SBOMs."""
     if not sbom_items:
         return []
@@ -74,7 +74,7 @@ async def resolve_sbom_refs(
 
 async def delete_gridfs_files(
     db: AsyncIOMotorDatabase,
-    file_ids: List[str],
+    file_ids: list[str],
 ) -> int:
     """Delete multiple files from GridFS, returning the count deleted."""
     if not file_ids:

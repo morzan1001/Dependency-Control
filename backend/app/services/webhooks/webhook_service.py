@@ -8,28 +8,16 @@ import hmac
 import json
 import logging
 import time
+from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Optional
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from app.models.webhook import Webhook
 
 import httpx
-from prometheus_client import Counter
-
-from app.core.http_utils import InstrumentedAsyncClient
-from app.services.webhooks.validation import build_pinned_transport
-from app.services.webhooks.types import (
-    AnalysisFailedPayload,
-    BaseWebhookPayload,
-    ProjectPayload,
-    ScanCompletedPayload,
-    ScanPayload,
-    TestWebhookPayload,
-    VulnerabilityFoundPayload,
-)
-from app.services.webhooks.teams_formatter import TeamsFormatter
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from prometheus_client import Counter
 
 from app.core.config import settings
 from app.core.constants import (
@@ -49,6 +37,18 @@ from app.core.constants import (
     WEBHOOK_HEADER_USER_AGENT,
     WEBHOOK_USER_AGENT_VALUE,
 )
+from app.core.http_utils import InstrumentedAsyncClient
+from app.services.webhooks.teams_formatter import TeamsFormatter
+from app.services.webhooks.types import (
+    AnalysisFailedPayload,
+    BaseWebhookPayload,
+    ProjectPayload,
+    ScanCompletedPayload,
+    ScanPayload,
+    TestWebhookPayload,
+    VulnerabilityFoundPayload,
+)
+from app.services.webhooks.validation import build_pinned_transport
 
 
 def _normalize_event_name(event_type: str) -> str:
@@ -56,7 +56,7 @@ def _normalize_event_name(event_type: str) -> str:
     return WEBHOOK_EVENT_ALIASES.get(event_type, event_type)
 
 
-def _event_match_set(event_type: str) -> List[str]:
+def _event_match_set(event_type: str) -> list[str]:
     """Return both the canonical and alias forms so either stored subscription name matches."""
     canonical = _normalize_event_name(event_type)
     names = [canonical]
@@ -70,8 +70,8 @@ def _event_match_set(event_type: str) -> List[str]:
 
 logger = logging.getLogger(__name__)
 
-webhooks_triggered_total: Optional[Counter] = None
-webhooks_failed_total: Optional[Counter] = None
+webhooks_triggered_total: Counter | None = None
+webhooks_failed_total: Counter | None = None
 
 try:
     from app.core.metrics import webhooks_failed_total, webhooks_triggered_total
@@ -84,8 +84,8 @@ class WebhookService:
 
     def __init__(
         self,
-        timeout: Optional[float] = None,
-        max_retries: Optional[int] = None,
+        timeout: float | None = None,
+        max_retries: int | None = None,
     ):
         self.timeout = timeout if timeout is not None else settings.WEBHOOK_TIMEOUT_SECONDS
         self.max_retries = max_retries if max_retries is not None else settings.WEBHOOK_MAX_RETRIES
@@ -99,11 +99,11 @@ class WebhookService:
 
     def _build_headers(
         self,
-        webhook: "Webhook",
+        webhook: Webhook,
         event_type: str,
         json_payload: str,
         is_test: bool = False,
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         timestamp = str(int(time.time()))
 
         headers = {
@@ -132,7 +132,7 @@ class WebhookService:
         scan_id: str,
         project_id: str,
         project_name: str,
-        scan_url: Optional[str] = None,
+        scan_url: str | None = None,
     ) -> BaseWebhookPayload:
         scan: ScanPayload = {
             "id": scan_id,
@@ -218,10 +218,10 @@ class WebhookService:
         db: AsyncIOMotorDatabase,
         webhook_id: str,
         event_type: str,
-        payload: "Mapping[str, Any]",
+        payload: Mapping[str, Any],
         success: bool,
-        status_code: Optional[int] = None,
-        error: Optional[str] = None,
+        status_code: int | None = None,
+        error: str | None = None,
         retry_count: int = 0,
     ) -> None:
         from app.repositories.webhook_deliveries import WebhookDeliveriesRepository
@@ -250,10 +250,10 @@ class WebhookService:
 
     def _format_payload(
         self,
-        webhook: "Webhook",
+        webhook: Webhook,
         event_type: str,
-        raw_payload: "Mapping[str, Any]",
-    ) -> "Mapping[str, Any]":
+        raw_payload: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
         # A generic-typed webhook pointing at a Teams URL must be formatted as Teams, else Power Automate rejects the raw JSON.
         effective_type = webhook.webhook_type
         if effective_type != "teams":
@@ -310,8 +310,8 @@ class WebhookService:
     @staticmethod
     def _build_policy_changed_card(
         normalized_event: str,
-        raw_payload: "Mapping[str, Any]",
-    ) -> "Mapping[str, Any]":
+        raw_payload: Mapping[str, Any],
+    ) -> Mapping[str, Any]:
         """Teams card for policy-changed events, whose payloads are flat (no nested project/scan)."""
         project_id = raw_payload.get("project_id")
         policy_scope = raw_payload.get("policy_scope")
@@ -331,8 +331,8 @@ class WebhookService:
     async def _send_webhook(
         self,
         db: AsyncIOMotorDatabase,
-        webhook: "Webhook",
-        payload: "Mapping[str, Any]",
+        webhook: Webhook,
+        payload: Mapping[str, Any],
         event_type: str,
     ) -> bool:
         """Send a single webhook with retries. Retries are in-memory — delivery is lost if the pod crashes mid-retry."""
@@ -343,8 +343,8 @@ class WebhookService:
         headers = self._build_headers(webhook, event_type, signing_payload)
 
         retry_count = 0
-        last_error: Optional[str] = None
-        last_status_code: Optional[int] = None
+        last_error: str | None = None
+        last_status_code: int | None = None
 
         while retry_count < self.max_retries:
             try:
@@ -421,11 +421,11 @@ class WebhookService:
         return False
 
     async def _fetch_webhooks_by_query(
-        self, db: AsyncIOMotorDatabase, query: Dict[str, Any], label: str
-    ) -> List["Webhook"]:
+        self, db: AsyncIOMotorDatabase, query: dict[str, Any], label: str
+    ) -> list[Webhook]:
         from app.models.webhook import Webhook
 
-        results: List[Webhook] = []
+        results: list[Webhook] = []
         cursor = db.webhooks.find(query)
         async for webhook_data in cursor:
             try:
@@ -435,8 +435,8 @@ class WebhookService:
         return results
 
     async def _get_webhooks_for_event(
-        self, db: AsyncIOMotorDatabase, project_id: Optional[str], event_type: str
-    ) -> List["Webhook"]:
+        self, db: AsyncIOMotorDatabase, project_id: str | None, event_type: str
+    ) -> list[Webhook]:
         """Active webhooks for the event across project, team, and global scope, excluding circuit-broken ones."""
         from datetime import datetime, timezone
 
@@ -444,7 +444,7 @@ class WebhookService:
 
         # Match both dot-notation and snake_case alias forms stored in subscriptions.
         event_names = _event_match_set(event_type)
-        base_conditions: Dict[str, Any] = {
+        base_conditions: dict[str, Any] = {
             "is_active": True,
             "events": {"$in": event_names},
             "$or": [
@@ -454,7 +454,7 @@ class WebhookService:
             ],
         }
 
-        webhooks: List["Webhook"] = []
+        webhooks: list[Webhook] = []
 
         if project_id:
             webhooks.extend(
@@ -481,8 +481,8 @@ class WebhookService:
         self,
         db: AsyncIOMotorDatabase,
         event_type: str,
-        payload: "Mapping[str, Any]",
-        project_id: Optional[str] = None,
+        payload: Mapping[str, Any],
+        project_id: str | None = None,
         *,
         context: str = "webhook",
     ) -> None:
@@ -505,8 +505,8 @@ class WebhookService:
         self,
         db: AsyncIOMotorDatabase,
         event_type: str,
-        payload: "Mapping[str, Any]",
-        project_id: Optional[str] = None,
+        payload: Mapping[str, Any],
+        project_id: str | None = None,
     ) -> None:
         """Dispatch an event to all matching webhooks; a failure while resolving webhooks may propagate, so use safe_trigger_webhooks when the caller must not be affected."""
         webhooks = await self._get_webhooks_for_event(db, project_id, event_type)
@@ -545,8 +545,8 @@ class WebhookService:
         project_id: str,
         project_name: str,
         findings_count: int,
-        stats: Dict[str, Any],
-        scan_url: Optional[str] = None,
+        stats: dict[str, Any],
+        scan_url: str | None = None,
     ) -> None:
         base_payload = self._build_base_payload(
             event_type=WEBHOOK_EVENT_SCAN_COMPLETED,
@@ -575,8 +575,8 @@ class WebhookService:
         high_count: int,
         kev_count: int,
         high_epss_count: int,
-        top_vulnerabilities: List[Dict[str, Any]],
-        scan_url: Optional[str] = None,
+        top_vulnerabilities: list[dict[str, Any]],
+        scan_url: str | None = None,
     ) -> None:
         base_payload = self._build_base_payload(
             event_type=WEBHOOK_EVENT_VULNERABILITY_FOUND,
@@ -605,7 +605,7 @@ class WebhookService:
         project_id: str,
         project_name: str,
         error_message: str,
-        scan_url: Optional[str] = None,
+        scan_url: str | None = None,
     ) -> None:
         base_payload = self._build_base_payload(
             event_type=WEBHOOK_EVENT_ANALYSIS_FAILED,
@@ -623,9 +623,9 @@ class WebhookService:
 
     async def test_webhook(
         self,
-        webhook: "Webhook",
+        webhook: Webhook,
         event_type: str = WEBHOOK_EVENT_SCAN_COMPLETED,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         test_payload: TestWebhookPayload = {
             "event": event_type,
             "timestamp": datetime.now(timezone.utc).isoformat(),

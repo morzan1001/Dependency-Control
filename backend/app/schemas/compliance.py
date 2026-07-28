@@ -3,10 +3,10 @@ Compliance reporting schemas — enums, control definitions, framework
 evaluation result, residual risks. Pure data types, no I/O.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Callable, Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -52,10 +52,10 @@ class ControlDefinition:
     description: str
     severity: Severity
     remediation: str
-    maps_to_rule_ids: List[str] = field(default_factory=list)
-    maps_to_finding_types: List[FindingType] = field(default_factory=list)
+    maps_to_rule_ids: list[str] = field(default_factory=list)
+    maps_to_finding_types: list[FindingType] = field(default_factory=list)
     # If set, produces a ControlResult in place of the default evaluator.
-    custom_evaluator: Optional[Callable[..., "ControlResult"]] = None
+    custom_evaluator: Callable[..., "ControlResult"] | None = None
 
 
 class ControlResult(BaseModel):
@@ -64,9 +64,9 @@ class ControlResult(BaseModel):
     description: str
     status: ControlStatus
     severity: Severity
-    evidence_finding_ids: List[str] = Field(default_factory=list)
-    evidence_asset_bom_refs: List[str] = Field(default_factory=list)
-    waiver_reasons: List[str] = Field(default_factory=list)
+    evidence_finding_ids: list[str] = Field(default_factory=list)
+    evidence_asset_bom_refs: list[str] = Field(default_factory=list)
+    waiver_reasons: list[str] = Field(default_factory=list)
     remediation: str
 
     model_config = ConfigDict(use_enum_values=True)
@@ -87,9 +87,9 @@ class FrameworkEvaluation(BaseModel):
     framework_version: str
     generated_at: datetime
     scope_description: str
-    controls: List[ControlResult] = Field(default_factory=list)
-    summary: Dict[str, int] = Field(default_factory=dict)
-    residual_risks: List[ResidualRisk] = Field(default_factory=list)
+    controls: list[ControlResult] = Field(default_factory=list)
+    summary: dict[str, int] = Field(default_factory=dict)
+    residual_risks: list[ResidualRisk] = Field(default_factory=list)
     inputs_fingerprint: str
 
     model_config = ConfigDict(use_enum_values=True)

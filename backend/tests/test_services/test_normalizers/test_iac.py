@@ -67,7 +67,7 @@ class TestNormalizeKics:
             ]
         }
         self.agg.aggregate("kics", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.severity == "INFO"
 
     def test_actual_expected_values(self):
@@ -92,7 +92,7 @@ class TestNormalizeKics:
             ]
         }
         self.agg.aggregate("kics", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["actual_value"] == "'runAsRoot' is true"
         assert f.details["expected_value"] == "'runAsRoot' should be false"
 
@@ -119,7 +119,7 @@ class TestNormalizeKics:
             ]
         }
         self.agg.aggregate("kics", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["platform"] == "Terraform"
 
     def test_cwe_normalized(self):
@@ -138,7 +138,7 @@ class TestNormalizeKics:
             ]
         }
         self.agg.aggregate("kics", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["cwe_ids"] == ["250"]
 
     def test_similarity_id_stored_in_details(self):
@@ -163,7 +163,7 @@ class TestNormalizeKics:
             ]
         }
         agg.aggregate("kics", result)
-        f = list(agg.findings.values())[0]
+        f = next(iter(agg.findings.values()))
         assert f.details["similarity_id"] == "sim-abc-123"
         assert f.details["search_key"] == "resource.aws_s3_bucket[b].acl"
         assert f.details["actual_value"] == "public-read"

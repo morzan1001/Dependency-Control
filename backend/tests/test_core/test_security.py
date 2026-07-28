@@ -4,13 +4,13 @@ from datetime import timedelta
 
 from app.core.security import (
     create_access_token,
-    create_refresh_token,
     create_email_verification_token,
     create_password_reset_token,
-    verify_email_verification_token,
-    verify_password_reset_token,
-    verify_password,
+    create_refresh_token,
     get_password_hash,
+    verify_email_verification_token,
+    verify_password,
+    verify_password_reset_token,
 )
 
 
@@ -48,6 +48,7 @@ class TestAccessToken:
 
     def test_decode_contains_subject(self):
         from jose import jwt
+
         from app.core.config import settings
 
         token = create_access_token("user123")
@@ -56,6 +57,7 @@ class TestAccessToken:
 
     def test_decode_contains_type(self):
         from jose import jwt
+
         from app.core.config import settings
 
         token = create_access_token("user123")
@@ -64,6 +66,7 @@ class TestAccessToken:
 
     def test_decode_contains_jti(self):
         from jose import jwt
+
         from app.core.config import settings
 
         token = create_access_token("user123")
@@ -72,6 +75,7 @@ class TestAccessToken:
 
     def test_decode_contains_permissions(self):
         from jose import jwt
+
         from app.core.config import settings
 
         token = create_access_token("user123", permissions=["user:read"])
@@ -86,6 +90,7 @@ class TestRefreshToken:
 
     def test_decode_type_is_refresh(self):
         from jose import jwt
+
         from app.core.config import settings
 
         token = create_refresh_token("user123")

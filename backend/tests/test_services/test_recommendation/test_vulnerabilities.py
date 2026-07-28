@@ -2,8 +2,8 @@
 
 import pytest
 
+from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.vulnerabilities import process_vulnerabilities
-from app.schemas.recommendation import RecommendationType, Priority
 
 
 def _make_finding(

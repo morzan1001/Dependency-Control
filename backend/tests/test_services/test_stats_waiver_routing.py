@@ -4,7 +4,6 @@ import pytest_asyncio
 from app.models.match_signature import MatchSignature
 from app.models.waiver import Waiver
 from app.services.stats import _is_signature_waiver, recalculate_project_stats
-
 from tests.mocks.fake_mongo import FakeDatabase
 
 

@@ -4,7 +4,7 @@ name, primitive, asset_type, weakness_tag, or severity.
 
 import hashlib
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -26,7 +26,7 @@ class CryptoHotspotService:
         *,
         resolved: ResolvedScope,
         group_by: GroupBy,
-        scan_id: Optional[str] = None,
+        scan_id: str | None = None,
         limit: int = 100,
     ) -> HotspotResponse:
         if group_by not in _SUPPORTED_GROUPINGS:
@@ -62,11 +62,11 @@ class CryptoHotspotService:
     async def _pick_scan_ids(
         self,
         resolved: ResolvedScope,
-        override: Optional[str],
-    ) -> List[str]:
+        override: str | None,
+    ) -> list[str]:
         if override:
             return [override]
-        match: Dict[str, Any] = {"status": {"$in": ["completed", "partial"]}}
+        match: dict[str, Any] = {"status": {"$in": ["completed", "partial"]}}
         if resolved.project_ids is not None:
             match["project_id"] = {"$in": resolved.project_ids}
         pipeline = [
@@ -79,11 +79,11 @@ class CryptoHotspotService:
     async def _aggregate(
         self,
         *,
-        project_ids: Optional[List[str]],
-        scan_ids: List[str],
+        project_ids: list[str] | None,
+        scan_ids: list[str],
         group_by: GroupBy,
         limit: int,
-    ) -> List[HotspotEntry]:
+    ) -> list[HotspotEntry]:
         # severity/weakness_tag live on findings, not assets, so they use a
         # finding-first pipeline; the rest stay asset-first.
         if group_by in ("severity", "weakness_tag"):
@@ -96,12 +96,12 @@ class CryptoHotspotService:
 
         # Empty scan_ids must match nothing ($in: []), not disable the filter
         # (which would aggregate every historical scan).
-        match: Dict[str, Any] = {"scan_id": {"$in": scan_ids}}
+        match: dict[str, Any] = {"scan_id": {"$in": scan_ids}}
         if project_ids is not None:
             match["project_id"] = {"$in": project_ids}
 
         group_key = self._group_key_stage(group_by)
-        asset_pipeline: List[Dict[str, Any]] = [
+        asset_pipeline: list[dict[str, Any]] = [
             {"$match": match},
             {
                 "$group": {
@@ -121,12 +121,12 @@ class CryptoHotspotService:
         ]
 
         now = datetime.now(timezone.utc)
-        out: List[HotspotEntry] = []
+        out: list[HotspotEntry] = []
         async for row in self.db.crypto_assets.aggregate(asset_pipeline):
             key = self._key_from_row(row)
             if key is None:
                 continue
-            locations_flat: List[str] = []
+            locations_flat: list[str] = []
             for subl in row.get("locations", []):
                 if isinstance(subl, list):
                     locations_flat.extend(subl)
@@ -152,18 +152,18 @@ class CryptoHotspotService:
     async def _aggregate_by_finding_dimension(
         self,
         *,
-        project_ids: Optional[List[str]],
-        scan_ids: List[str],
+        project_ids: list[str] | None,
+        scan_ids: list[str],
         group_by: GroupBy,
         limit: int,
-    ) -> List[HotspotEntry]:
+    ) -> list[HotspotEntry]:
         """Aggregate hotspots whose grouping dimension lives on findings (severity/weakness_tag).
 
         asset_count is the count of distinct bom_refs; finding_count the raw match count.
         """
         # Exclude waived findings (a risk decision, not current posture) so hotspots
         # agree with crypto_trends. Empty scan_ids matches nothing ($in: []).
-        match: Dict[str, Any] = {
+        match: dict[str, Any] = {
             "type": {"$regex": "^crypto_"},
             "waived": {"$ne": True},
             "scan_id": {"$in": scan_ids},
@@ -171,7 +171,7 @@ class CryptoHotspotService:
         if project_ids is not None:
             match["project_id"] = {"$in": project_ids}
 
-        pre_stages: List[Dict[str, Any]] = [{"$match": match}]
+        pre_stages: list[dict[str, Any]] = [{"$match": match}]
         if group_by == "weakness_tag":
             pre_stages.extend(
                 [
@@ -181,7 +181,7 @@ class CryptoHotspotService:
             )
 
         group_field = "$severity" if group_by == "severity" else "$details.weakness_tags"
-        pipeline: List[Dict[str, Any]] = pre_stages + [
+        pipeline: list[dict[str, Any]] = pre_stages + [
             {
                 "$group": {
                     "_id": {"key": group_field, "severity": "$severity"},
@@ -194,7 +194,7 @@ class CryptoHotspotService:
             },
         ]
 
-        accum: Dict[str, Dict[str, Any]] = {}
+        accum: dict[str, dict[str, Any]] = {}
         async for row in self.db.findings.aggregate(pipeline):
             key = (row.get("_id") or {}).get("key")
             if not key:
@@ -255,7 +255,7 @@ class CryptoHotspotService:
             return "$asset_type"
         return None
 
-    def _key_from_row(self, row: Dict[str, Any]) -> Optional[str]:
+    def _key_from_row(self, row: dict[str, Any]) -> str | None:
         key = row.get("_id")
         if isinstance(key, str) and key:
             return key
@@ -263,9 +263,9 @@ class CryptoHotspotService:
 
     async def _enrich_with_findings(
         self,
-        items: List[HotspotEntry],
-        project_ids: Optional[List[str]],
-        scan_ids: List[str],
+        items: list[HotspotEntry],
+        project_ids: list[str] | None,
+        scan_ids: list[str],
         group_by: GroupBy,
     ) -> None:
         if not items:
@@ -274,7 +274,7 @@ class CryptoHotspotService:
         if join_field is None:
             # severity/weakness_tag have no clean per-asset join; leave defaults.
             return
-        match: Dict[str, Any] = {
+        match: dict[str, Any] = {
             "scan_id": {"$in": scan_ids},
             "type": {"$regex": "^crypto_"},
             # Exclude waived findings to match crypto_trends posture semantics.
@@ -294,8 +294,8 @@ class CryptoHotspotService:
                 }
             },
         ]
-        mix: Dict[str, Dict[str, int]] = {}
-        total: Dict[str, int] = {}
+        mix: dict[str, dict[str, int]] = {}
+        total: dict[str, int] = {}
         async for row in self.db.findings.aggregate(pipeline):
             key = row["_id"].get("key") or ""
             if not key:
@@ -310,7 +310,7 @@ class CryptoHotspotService:
                 item.severity_mix = mix[item.key]
 
     @staticmethod
-    def _finding_join_field(group_by: GroupBy) -> Optional[str]:
+    def _finding_join_field(group_by: GroupBy) -> str | None:
         """Map a hotspot grouping dimension to the matching findings.details field."""
         if group_by == "name":
             return "$details.asset_name"
@@ -324,7 +324,7 @@ class CryptoHotspotService:
         self,
         resolved: ResolvedScope,
         group_by: GroupBy,
-        scan_ids: List[str],
+        scan_ids: list[str],
         limit: int,
     ) -> tuple:
         fingerprint = hashlib.sha256("|".join(sorted(scan_ids)).encode()).hexdigest()[:16]

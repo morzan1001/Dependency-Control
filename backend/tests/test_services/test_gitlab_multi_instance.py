@@ -3,7 +3,6 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
 from app.models.gitlab_api import GitLabMember
 from app.models.project import Project, Scan
 from app.models.stats import Stats

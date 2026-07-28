@@ -1,11 +1,11 @@
 """TypedDict definitions for webhook payloads."""
 
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, TypedDict
 
 
 class ScanPayload(TypedDict):
     id: str
-    url: Optional[str]
+    url: str | None
 
 
 class ProjectPayload(TypedDict):
@@ -22,7 +22,7 @@ class BaseWebhookPayload(TypedDict):
 
 class FindingsStats(TypedDict):
     total: int
-    stats: Dict[str, Any]
+    stats: dict[str, Any]
 
 
 class ScanCompletedPayload(BaseWebhookPayload):
@@ -34,7 +34,7 @@ class VulnerabilityInfo(TypedDict):
     high: int
     kev: int
     high_epss: int
-    top: List[Dict[str, Any]]
+    top: list[dict[str, Any]]
 
 
 class VulnerabilityFoundPayload(BaseWebhookPayload):

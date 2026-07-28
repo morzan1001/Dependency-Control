@@ -1,8 +1,9 @@
 """Tests for the outdated analyzer: version classification and yanked (withdrawn) detection from a single per-package deps.dev fetch."""
 
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 import pytest
+from typing_extensions import Self
 
 from app.models.finding import Severity
 from app.services.analyzers.outdated import OutdatedAnalyzer, is_version_withdrawn
@@ -64,7 +65,7 @@ class TestIsVersionWithdrawn:
 # --- Test doubles -----------------------------------------------------------
 
 
-def _component(name: str, version: str, ptype: str = "pypi") -> Dict[str, Any]:
+def _component(name: str, version: str, ptype: str = "pypi") -> dict[str, Any]:
     return {
         "name": name,
         "version": version,
@@ -77,19 +78,19 @@ class _FakeCache:
     """In-memory replacement for the parts of cache_service the analyzer uses:
     ``mget``, ``get``, ``set`` and ``get_or_fetch_with_lock``."""
 
-    def __init__(self, seed: Optional[Dict[str, Any]] = None) -> None:
-        self.store: Dict[str, Any] = dict(seed or {})
-        self.mgets: List[List[str]] = []
-        self.sets: List[str] = []
+    def __init__(self, seed: dict[str, Any] | None = None) -> None:
+        self.store: dict[str, Any] = dict(seed or {})
+        self.mgets: list[list[str]] = []
+        self.sets: list[str] = []
 
-    async def mget(self, keys: List[str]) -> Dict[str, Any]:
+    async def mget(self, keys: list[str]) -> dict[str, Any]:
         self.mgets.append(list(keys))
         return {k: self.store.get(k) for k in keys}
 
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         return self.store.get(key)
 
-    async def set(self, key: str, value: Any, ttl_seconds: int = 0) -> None:  # noqa: ARG002
+    async def set(self, key: str, value: Any, ttl_seconds: int = 0) -> None:
         self.sets.append(key)
         self.store[key] = value
 
@@ -107,11 +108,11 @@ class _FakeCache:
 class _Response:
     """Minimal stand-in for httpx.Response."""
 
-    def __init__(self, status_code: int, payload: Dict[str, Any]) -> None:
+    def __init__(self, status_code: int, payload: dict[str, Any]) -> None:
         self.status_code = status_code
         self._payload = payload
 
-    def json(self) -> Dict[str, Any]:
+    def json(self) -> dict[str, Any]:
         return self._payload
 
 
@@ -120,10 +121,10 @@ class _AlwaysFailingClient:
     assert the HTTP path was never taken."""
 
     def __init__(self, *_args: Any, **_kwargs: Any) -> None: ...
-    async def __aenter__(self) -> "_AlwaysFailingClient":
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *_args: Any) -> None:
+    async def __aexit__(self, *_args: object) -> None:
         return None
 
     async def get(self, *_args: Any, **_kwargs: Any) -> Any:
@@ -134,19 +135,19 @@ class _ScriptedClient:
     """HTTP client returning a canned deps.dev document per package URL and
     recording every request, so tests can count round-trips."""
 
-    def __init__(self, docs_by_name: Dict[str, Dict[str, Any]], status: int = 200) -> None:
+    def __init__(self, docs_by_name: dict[str, dict[str, Any]], status: int = 200) -> None:
         self._docs = docs_by_name
         self._status = status
-        self.urls: List[str] = []
+        self.urls: list[str] = []
 
     def __call__(self, *_args: Any, **_kwargs: Any) -> "_ScriptedClient":
         # Allow being used as the InstrumentedAsyncClient constructor.
         return self
 
-    async def __aenter__(self) -> "_ScriptedClient":
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *_args: Any) -> None:
+    async def __aexit__(self, *_args: object) -> None:
         return None
 
     async def get(self, url: str, **_kwargs: Any) -> Any:
@@ -302,15 +303,15 @@ class _ConcurrencyTrackingClient:
     def __init__(self) -> None:
         self.in_flight = 0
         self.max_in_flight = 0
-        self.urls: List[str] = []
+        self.urls: list[str] = []
 
     def __call__(self, *_args: Any, **_kwargs: Any) -> "_ConcurrencyTrackingClient":
         return self
 
-    async def __aenter__(self) -> "_ConcurrencyTrackingClient":
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *_args: Any) -> None:
+    async def __aexit__(self, *_args: object) -> None:
         return None
 
     async def get(self, url: str, **_kwargs: Any) -> Any:
@@ -344,6 +345,6 @@ class TestConcurrentFetch:
         assert len(result["outdated_dependencies"]) == 5
 
 
-def _suppress_unused(_set: Set[str]) -> None:
+def _suppress_unused(_set: set[str]) -> None:
     """Hint to linters that Set is intentionally imported for type hints."""
-    return None
+    return

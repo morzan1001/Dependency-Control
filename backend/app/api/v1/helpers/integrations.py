@@ -1,7 +1,7 @@
 """Helper functions for external service integrations (Slack, etc.)."""
 
 import logging
-from typing import Any, Dict
+from typing import Any
 
 import httpx
 
@@ -28,7 +28,7 @@ async def exchange_slack_code_for_token(
     code: str,
     client_id: str,
     client_secret: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Exchange a Slack OAuth code for token data, raising SlackOAuthError on failure."""
     try:
         async with InstrumentedAsyncClient("Slack OAuth", timeout=_SLACK_OAUTH_TIMEOUT) as client:
@@ -79,16 +79,16 @@ async def exchange_slack_code_for_token(
     except httpx.RequestError as e:
         logger.exception("Slack OAuth request error: %s", e)
         raise SlackOAuthError(
-            f"Request error: {str(e)}",
+            f"Request error: {e!s}",
             error_code="request_error",
         ) from e
 
 
-def extract_slack_tokens(oauth_response: Dict[str, Any]) -> Dict[str, Any]:
+def extract_slack_tokens(oauth_response: dict[str, Any]) -> dict[str, Any]:
     """Extract token data from a Slack OAuth response, ready for a database update."""
     import time
 
-    update_data: Dict[str, Any] = {
+    update_data: dict[str, Any] = {
         "slack_bot_token": oauth_response.get("access_token"),
     }
 

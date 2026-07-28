@@ -368,15 +368,11 @@ def _run_group(docs: list, group_spec: dict) -> list:
                     grp.setdefault(acc_name, []).append(val)
             elif op == "$min":
                 cur = grp.get(acc_name)
-                if val is not None and (cur is None or val < cur):
-                    grp[acc_name] = val
-                elif is_new:
+                if val is not None and (cur is None or val < cur) or is_new:
                     grp[acc_name] = val
             elif op == "$max":
                 cur = grp.get(acc_name)
-                if val is not None and (cur is None or val > cur):
-                    grp[acc_name] = val
-                elif is_new:
+                if val is not None and (cur is None or val > cur) or is_new:
                     grp[acc_name] = val
 
     result = []
@@ -468,15 +464,15 @@ class _FakeCursor:
         self._limit_n = limit
         self._iter = None
 
-    def skip(self, n: int) -> "_FakeCursor":
+    def skip(self, n: int) -> _FakeCursor:
         self._skip_n = n
         return self
 
-    def limit(self, n: int) -> "_FakeCursor":
+    def limit(self, n: int) -> _FakeCursor:
         self._limit_n = n
         return self
 
-    def sort(self, key_or_list, direction: int = 1) -> "_FakeCursor":
+    def sort(self, key_or_list, direction: int = 1) -> _FakeCursor:
         if isinstance(key_or_list, list):
             self._sort = list(key_or_list)
         else:
@@ -583,7 +579,7 @@ class FakeCollection:
         result.matched_count = len(matched)
         return result
 
-    def with_options(self, **_kwargs) -> "FakeCollection":
+    def with_options(self, **_kwargs) -> FakeCollection:
         # Read-preference / write-concern variations are no-ops in-process.
         return self
 

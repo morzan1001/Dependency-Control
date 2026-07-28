@@ -1,5 +1,5 @@
 from datetime import datetime, timezone
-from typing import List, Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -25,10 +25,10 @@ class TeamMember(BaseModel):
 
 class Team(MongoDocument, CreatedAtModel):
     name: str
-    description: Optional[str] = None
-    gitlab_instance_id: Optional[str] = None
-    gitlab_group_id: Optional[int] = None
-    members: List[TeamMember] = Field(default_factory=list)
+    description: str | None = None
+    gitlab_instance_id: str | None = None
+    gitlab_group_id: int | None = None
+    members: list[TeamMember] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

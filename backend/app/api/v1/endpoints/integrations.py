@@ -1,17 +1,14 @@
-from typing import Optional
-
 from fastapi import HTTPException
+from fastapi.responses import RedirectResponse
 
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.responses import RESP_400
-from fastapi.responses import RedirectResponse
-
 from app.api.v1.helpers.integrations import (
     SlackOAuthError,
     exchange_slack_code_for_token,
     extract_slack_tokens,
 )
+from app.api.v1.helpers.responses import RESP_400
 from app.core.config import settings
 from app.repositories.system_settings import SystemSettingsRepository
 
@@ -22,7 +19,7 @@ router = CustomAPIRouter()
 async def slack_callback(
     code: str,
     db: DatabaseDep,
-    state: Optional[str] = None,
+    state: str | None = None,
 ) -> RedirectResponse:
     """Slack OAuth callback: exchange the code for access and refresh tokens."""
     repo = SystemSettingsRepository(db)

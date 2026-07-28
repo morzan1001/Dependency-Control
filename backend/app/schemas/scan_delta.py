@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Literal, Optional, Union
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -37,8 +37,8 @@ class ScanDeltaTotals(BaseModel):
     # Only set for the components category.
     changed: int = 0
     # Findings-only breakdowns.
-    by_severity: Dict[str, int] = Field(default_factory=dict)
-    by_type: Dict[str, int] = Field(default_factory=dict)
+    by_severity: dict[str, int] = Field(default_factory=dict)
+    by_type: dict[str, int] = Field(default_factory=dict)
 
 
 class FindingDeltaItem(BaseModel):
@@ -51,10 +51,10 @@ class FindingDeltaItem(BaseModel):
     finding_type: str
     severity: str
     title: str
-    component: Optional[str] = None
-    cve_id: Optional[str] = None
-    file_path: Optional[str] = None
-    first_seen: Optional[datetime] = None
+    component: str | None = None
+    cve_id: str | None = None
+    file_path: str | None = None
+    first_seen: datetime | None = None
 
 
 class ComponentDeltaItem(BaseModel):
@@ -64,13 +64,13 @@ class ComponentDeltaItem(BaseModel):
 
     change: Literal["added", "removed", "version_changed", "license_changed"]
     name: str
-    purl: Optional[str] = None
-    version: Optional[str] = None
-    from_version: Optional[str] = None
-    to_version: Optional[str] = None
-    license: Optional[str] = None
-    from_license: Optional[str] = None
-    to_license: Optional[str] = None
+    purl: str | None = None
+    version: str | None = None
+    from_version: str | None = None
+    to_version: str | None = None
+    license: str | None = None
+    from_license: str | None = None
+    to_license: str | None = None
 
 
 class CryptoDeltaItem(BaseModel):
@@ -80,13 +80,13 @@ class CryptoDeltaItem(BaseModel):
 
     change: Literal["added", "removed"]
     name: str
-    variant: Optional[str] = None
-    primitive: Optional[str] = None
-    locations: List[str] = Field(default_factory=list)
+    variant: str | None = None
+    primitive: str | None = None
+    locations: list[str] = Field(default_factory=list)
     asset_count: int = 1
 
 
-DeltaItem = Union[FindingDeltaItem, ComponentDeltaItem, CryptoDeltaItem]
+DeltaItem = FindingDeltaItem | ComponentDeltaItem | CryptoDeltaItem
 
 
 class ScanDeltaResponse(BaseModel):
@@ -102,4 +102,4 @@ class ScanDeltaResponse(BaseModel):
     page: int = 1
     page_size: int = 50
     total_pages: int = 1
-    items: List[DeltaItem] = Field(default_factory=list)
+    items: list[DeltaItem] = Field(default_factory=list)

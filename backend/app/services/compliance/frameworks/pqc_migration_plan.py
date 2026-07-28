@@ -1,7 +1,7 @@
 """PQC Migration Plan framework; async-only (generator issues DB queries), one ControlResult per plan item."""
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar
 
 from app.models.finding import Severity
 from app.schemas.compliance import (
@@ -19,15 +19,14 @@ from app.services.compliance.frameworks.base import (
 )
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 
-
-_STATUS_MAP: Dict[str, ControlStatus] = {
+_STATUS_MAP: dict[str, ControlStatus] = {
     "migrate_now": ControlStatus.FAILED,
     "migrate_soon": ControlStatus.FAILED,
     "plan_migration": ControlStatus.NOT_APPLICABLE,
     "monitor": ControlStatus.NOT_APPLICABLE,
 }
 
-_SEVERITY_MAP: Dict[str, Severity] = {
+_SEVERITY_MAP: dict[str, Severity] = {
     "migrate_now": Severity.HIGH,
     "migrate_soon": Severity.MEDIUM,
     "plan_migration": Severity.LOW,
@@ -40,12 +39,12 @@ class PQCMigrationPlanFramework:
     name: str = "PQC Migration Plan"
     version: str = "1"
     source_url: str = "https://csrc.nist.gov/Projects/post-quantum-cryptography"
-    disclaimer: Optional[str] = (
+    disclaimer: str | None = (
         "This report enumerates currently-detected quantum-vulnerable crypto "
         "assets and their NIST-standardised PQC successors. It is not a "
         "formal compliance assessment against an external standard."
     )
-    controls: List[ControlDefinition] = []
+    controls: ClassVar[list[ControlDefinition]] = []
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
         """Sync entry point unsupported; dispatch via evaluate_async."""

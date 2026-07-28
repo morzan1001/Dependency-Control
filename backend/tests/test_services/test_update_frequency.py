@@ -2,8 +2,9 @@
 
 import asyncio
 from collections import Counter
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Sequence, Tuple
+from typing import Any
 
 import pytest
 
@@ -238,25 +239,25 @@ class TestAggregateMetricsCoverage:
 class _FakeScanObj:
     """Mirrors the attribute access (.id/.created_at/.status) of the real Scan model."""
 
-    def __init__(self, doc: Dict[str, Any]):
+    def __init__(self, doc: dict[str, Any]):
         self.id = doc["_id"]
         self.created_at = doc["created_at"]
         self.status = doc.get("status", "completed")
 
 
 class FakeScanRepo:
-    def __init__(self, scans: List[Dict[str, Any]]):
+    def __init__(self, scans: list[dict[str, Any]]):
         # scans must include _id, created_at, status, project_id
         self._scans = scans
 
     async def find_many(
         self,
-        query: Dict[str, Any],
-        sort: Optional[List[Tuple[str, int]]] = None,
+        query: dict[str, Any],
+        sort: list[tuple[str, int]] | None = None,
         skip: int = 0,
-        limit: Optional[int] = None,
-        projection: Optional[Dict[str, int]] = None,
-    ) -> List[_FakeScanObj]:
+        limit: int | None = None,
+        projection: dict[str, int] | None = None,
+    ) -> list[_FakeScanObj]:
         # Mirrors ScanRepository.find_many: filter by the query (incl. status),
         # sort, then apply the limit — status is filtered BEFORE the limit.
         matched = [s for s in self._scans if s.get("project_id") == query.get("project_id")]
@@ -274,33 +275,33 @@ class FakeScanRepo:
 
 
 class FakeDepRepo:
-    def __init__(self, deps_by_scan: Dict[str, List[Dict[str, Any]]]):
+    def __init__(self, deps_by_scan: dict[str, list[dict[str, Any]]]):
         self._deps_by_scan = deps_by_scan
-        self.calls: List[str] = []  # tracks every find_all query for assertions
+        self.calls: list[str] = []  # tracks every find_all query for assertions
 
     async def find_all(
         self,
-        query: Dict[str, Any],
-        projection: Optional[Dict[str, int]] = None,
-    ) -> List[Dict[str, Any]]:
+        query: dict[str, Any],
+        projection: dict[str, int] | None = None,
+    ) -> list[dict[str, Any]]:
         scan_id = query.get("scan_id")
         self.calls.append(scan_id)
         return list(self._deps_by_scan.get(scan_id, []))
 
 
 class _AnalysisResultStub:
-    def __init__(self, scan_id: str, analyzer_name: str, result: Dict[str, Any]):
+    def __init__(self, scan_id: str, analyzer_name: str, result: dict[str, Any]):
         self.scan_id = scan_id
         self.analyzer_name = analyzer_name
         self.result = result
 
 
 class FakeAnalysisRepo:
-    def __init__(self, results: List[_AnalysisResultStub]):
+    def __init__(self, results: list[_AnalysisResultStub]):
         self._results = results
-        self.find_many_calls: List[Dict[str, Any]] = []
+        self.find_many_calls: list[dict[str, Any]] = []
 
-    async def find_many(self, query: Dict[str, Any], limit: int = 1000) -> List[_AnalysisResultStub]:
+    async def find_many(self, query: dict[str, Any], limit: int = 1000) -> list[_AnalysisResultStub]:
         self.find_many_calls.append(query)
         scan_filter = query.get("scan_id")
         analyzer = query.get("analyzer_name")
@@ -321,7 +322,7 @@ class FakeAnalysisRepo:
 _BASE_SCAN_DATE = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
-def _make_scan(scan_id: str, day_offset: int, project_id: str = "proj-1") -> Dict[str, Any]:
+def _make_scan(scan_id: str, day_offset: int, project_id: str = "proj-1") -> dict[str, Any]:
     return {
         "_id": scan_id,
         "created_at": _BASE_SCAN_DATE + timedelta(days=day_offset),
@@ -330,7 +331,7 @@ def _make_scan(scan_id: str, day_offset: int, project_id: str = "proj-1") -> Dic
     }
 
 
-def _make_dep(scan_id: str, name: str, version: str, ptype: str = "pypi") -> Dict[str, Any]:
+def _make_dep(scan_id: str, name: str, version: str, ptype: str = "pypi") -> dict[str, Any]:
     return {
         "scan_id": scan_id,
         "name": name,
@@ -340,7 +341,7 @@ def _make_dep(scan_id: str, name: str, version: str, ptype: str = "pypi") -> Dic
     }
 
 
-def _outdated_result(scan_id: str, entries: List[Dict[str, str]]) -> _AnalysisResultStub:
+def _outdated_result(scan_id: str, entries: list[dict[str, str]]) -> _AnalysisResultStub:
     return _AnalysisResultStub(
         scan_id=scan_id,
         analyzer_name="outdated_packages",
@@ -448,7 +449,7 @@ class TestStreamingOrchestrator:
     async def test_observations_bounded_for_high_churn_history(self):
         # 200 scans x 5 packages = 1000 (pkg, version) pairs; the orchestrator must stay bounded and still produce metrics.
         scans = [_make_scan(f"s{i}", i) for i in range(200)]
-        deps: Dict[str, List[Dict[str, Any]]] = {}
+        deps: dict[str, list[dict[str, Any]]] = {}
         for i in range(200):
             deps[f"s{i}"] = [_make_dep(f"s{i}", f"pkg-{p}", f"1.{i}.{p}") for p in range(5)]
         scan_repo = FakeScanRepo(scans)
@@ -508,9 +509,9 @@ class TestStreamingOrchestrator:
         class FakeFetcher:
             def __init__(self, h: ReleaseHistory):
                 self._h = h
-                self.calls: List[Sequence[Tuple[str, str]]] = []
+                self.calls: list[Sequence[tuple[str, str]]] = []
 
-            async def fetch(self, packages: Sequence[Tuple[str, str]]) -> ReleaseHistory:
+            async def fetch(self, packages: Sequence[tuple[str, str]]) -> ReleaseHistory:
                 self.calls.append(list(packages))
                 return self._h
 
@@ -701,7 +702,7 @@ class TestStreamingOrchestrator:
     @pytest.mark.asyncio
     async def test_maven_upstream_uses_deps_dev_name(self):
         # Maven components store only the artifact as the DB name, but deps.dev needs "group:artifact"; the spec must use that name and re-key observations so adoption-latency resolves.
-        def _maven_dep(scan_id: str, version: str) -> Dict[str, Any]:
+        def _maven_dep(scan_id: str, version: str) -> dict[str, Any]:
             return {
                 "scan_id": scan_id,
                 "name": "log4j-core",  # DB name = artifact only
@@ -724,9 +725,9 @@ class TestStreamingOrchestrator:
         class FakeFetcher:
             def __init__(self, h: ReleaseHistory):
                 self._h = h
-                self.calls: List[Sequence[Tuple[str, str]]] = []
+                self.calls: list[Sequence[tuple[str, str]]] = []
 
-            async def fetch(self, packages: Sequence[Tuple[str, str]]) -> ReleaseHistory:
+            async def fetch(self, packages: Sequence[tuple[str, str]]) -> ReleaseHistory:
                 self.calls.append(list(packages))
                 return self._h
 
@@ -765,8 +766,8 @@ class TestStreamingOrchestrator:
                 return await super().find_all(*args, **kwargs)
 
         projects = [{"_id": f"proj-{i}", "name": f"Project {i}"} for i in range(n_projects)]
-        all_scans: List[Dict[str, Any]] = []
-        deps: Dict[str, List[Dict[str, Any]]] = {}
+        all_scans: list[dict[str, Any]] = []
+        deps: dict[str, list[dict[str, Any]]] = {}
         for i in range(n_projects):
             pid = f"proj-{i}"
             s1, s2 = f"{pid}-s1", f"{pid}-s2"

@@ -1,7 +1,9 @@
 """Tests for Pydantic v2 ConfigDict migration."""
 
-import pytest
 from datetime import datetime, timezone
+from typing import ClassVar
+
+import pytest
 from pydantic import ValidationError
 
 
@@ -662,7 +664,7 @@ class TestAutoCreateUsesSystemAnalyzers:
 class TestMongoDocumentIdConsolidation:
     """Persisted models inherit the uuid ``_id`` field from MongoDocument rather than redeclaring it."""
 
-    _CASES = {
+    _CASES: ClassVar[dict[str, dict[str, object]]] = {
         "app.models.archive:ArchiveMetadata": {
             "project_id": "p1",
             "scan_id": "s1",

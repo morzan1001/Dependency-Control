@@ -1,15 +1,13 @@
-from typing import List
-
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, EPSS_VERY_HIGH_THRESHOLD
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import extract_cve_id, get_attr, ModelOrDict
+from app.services.recommendation.common import ModelOrDict, extract_cve_id, get_attr
 
 
-def process_malware(malware_findings: List[ModelOrDict]) -> List[Recommendation]:
+def process_malware(malware_findings: list[ModelOrDict]) -> list[Recommendation]:
     """Process malware detection findings."""
     if not malware_findings:
         return []
@@ -54,8 +52,8 @@ def process_malware(malware_findings: List[ModelOrDict]) -> List[Recommendation]
 
 
 def process_typosquatting(
-    typosquat_findings: List[ModelOrDict],
-) -> List[Recommendation]:
+    typosquat_findings: list[ModelOrDict],
+) -> list[Recommendation]:
     """Process potential typosquatting package findings."""
     if not typosquat_findings:
         return []
@@ -106,9 +104,9 @@ def process_typosquatting(
 
 def _classify_vuln_finding(
     f: ModelOrDict,
-    kev_vulns: List[ModelOrDict],
-    ransomware_vulns: List[ModelOrDict],
-    high_epss_vulns: List[ModelOrDict],
+    kev_vulns: list[ModelOrDict],
+    ransomware_vulns: list[ModelOrDict],
+    high_epss_vulns: list[ModelOrDict],
 ) -> None:
     """Classify a single vulnerability finding into KEV, ransomware, or high EPSS."""
     details = get_attr(f, "details", {})
@@ -127,13 +125,13 @@ def _classify_vuln_finding(
         high_epss_vulns.append(f)
 
 
-def detect_known_exploits(vuln_findings: List[ModelOrDict]) -> List[Recommendation]:
+def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendation]:
     """Detect vulnerabilities with known exploits (KEV, ransomware, high EPSS)."""
     recommendations = []
 
-    kev_vulns: List[ModelOrDict] = []
-    ransomware_vulns: List[ModelOrDict] = []
-    high_epss_vulns: List[ModelOrDict] = []
+    kev_vulns: list[ModelOrDict] = []
+    ransomware_vulns: list[ModelOrDict] = []
+    high_epss_vulns: list[ModelOrDict] = []
 
     for f in vuln_findings:
         _classify_vuln_finding(f, kev_vulns, ransomware_vulns, high_epss_vulns)

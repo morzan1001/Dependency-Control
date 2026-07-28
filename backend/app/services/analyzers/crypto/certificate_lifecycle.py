@@ -3,7 +3,7 @@
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -27,7 +27,7 @@ _MIN_KEY_SIZES = {
 }
 
 
-def _coerce_primitive(prim: Any) -> Optional[CryptoPrimitive]:
+def _coerce_primitive(prim: Any) -> CryptoPrimitive | None:
     if isinstance(prim, CryptoPrimitive):
         return prim
     if isinstance(prim, str):
@@ -46,7 +46,7 @@ def _rule_severity(rule: CryptoRule) -> Severity:
         return Severity.MEDIUM
 
 
-def _matching_hash_rule(algo: CryptoAsset, rules: List[CryptoRule]) -> Optional[CryptoRule]:
+def _matching_hash_rule(algo: CryptoAsset, rules: list[CryptoRule]) -> CryptoRule | None:
     """First enabled hash-primitive rule matching this algorithm via glob-aware matcher."""
     for rule in rules:
         if not rule.enabled or _coerce_primitive(rule.match_primitive) != CryptoPrimitive.HASH:
@@ -56,7 +56,7 @@ def _matching_hash_rule(algo: CryptoAsset, rules: List[CryptoRule]) -> Optional[
     return None
 
 
-def _has_hash_rule(rules: List[CryptoRule]) -> bool:
+def _has_hash_rule(rules: list[CryptoRule]) -> bool:
     return any(r.enabled and _coerce_primitive(r.match_primitive) == CryptoPrimitive.HASH for r in rules)
 
 
@@ -64,9 +64,9 @@ def _is_static_weak_hash(algo: CryptoAsset) -> bool:
     return bool(algo.name and algo.name.upper() in {n.upper() for n in _WEAK_HASH_NAMES})
 
 
-def _min_key_sizes(rules: List[CryptoRule]) -> Dict[CryptoPrimitive, int]:
+def _min_key_sizes(rules: list[CryptoRule]) -> dict[CryptoPrimitive, int]:
     """Per-primitive minimum key sizes: strictest policy rule wins, static baseline fills gaps."""
-    mins: Dict[CryptoPrimitive, int] = {}
+    mins: dict[CryptoPrimitive, int] = {}
     for rule in rules:
         if not rule.enabled or rule.match_min_key_size_bits is None:
             continue
@@ -84,14 +84,14 @@ class CertificateLifecycleAnalyzer(Analyzer):
 
     async def analyze(
         self,
-        sbom: Dict[str, Any],
-        settings: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
+        sbom: dict[str, Any],
+        settings: dict[str, Any] | None = None,
+        parsed_components: list[dict[str, Any]] | None = None,
         *,
-        project_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        db: Optional[AsyncIOMotorDatabase] = None,
-    ) -> Dict[str, Any]:
+        project_id: str | None = None,
+        scan_id: str | None = None,
+        db: AsyncIOMotorDatabase | None = None,
+    ) -> dict[str, Any]:
         if db is None or project_id is None or scan_id is None:
             return {"findings": []}
 
@@ -113,7 +113,7 @@ class CertificateLifecycleAnalyzer(Analyzer):
             effective = await CryptoPolicyResolver(db).resolve(project_id)
             now = datetime.now(timezone.utc)
 
-            findings: List[Dict[str, Any]] = []
+            findings: list[dict[str, Any]] = []
             for cert in certs:
                 for check in (
                     self._check_expired,
@@ -142,9 +142,9 @@ class CertificateLifecycleAnalyzer(Analyzer):
         self,
         cert: CryptoAsset,
         now: datetime,
-        rules: List[CryptoRule],
-        algo_by_ref: Dict[str, CryptoAsset],
-    ) -> List[Dict[str, Any]]:
+        rules: list[CryptoRule],
+        algo_by_ref: dict[str, CryptoAsset],
+    ) -> list[dict[str, Any]]:
         if cert.not_valid_after is None:
             return []
         na = _ensure_aware(cert.not_valid_after)
@@ -166,9 +166,9 @@ class CertificateLifecycleAnalyzer(Analyzer):
         self,
         cert: CryptoAsset,
         now: datetime,
-        rules: List[CryptoRule],
-        algo_by_ref: Dict[str, CryptoAsset],
-    ) -> List[Dict[str, Any]]:
+        rules: list[CryptoRule],
+        algo_by_ref: dict[str, CryptoAsset],
+    ) -> list[dict[str, Any]]:
         if cert.not_valid_after is None:
             return []
         na = _ensure_aware(cert.not_valid_after)
@@ -176,7 +176,7 @@ class CertificateLifecycleAnalyzer(Analyzer):
         if remaining < 0:
             return []
         days = int(remaining // 86400)
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for rule in rules:
             if not rule.enabled:
                 continue
@@ -204,9 +204,9 @@ class CertificateLifecycleAnalyzer(Analyzer):
         self,
         cert: CryptoAsset,
         now: datetime,
-        rules: List[CryptoRule],
-        algo_by_ref: Dict[str, CryptoAsset],
-    ) -> List[Dict[str, Any]]:
+        rules: list[CryptoRule],
+        algo_by_ref: dict[str, CryptoAsset],
+    ) -> list[dict[str, Any]]:
         if cert.not_valid_before is None:
             return []
         nb = _ensure_aware(cert.not_valid_before)
@@ -228,9 +228,9 @@ class CertificateLifecycleAnalyzer(Analyzer):
         self,
         cert: CryptoAsset,
         now: datetime,
-        rules: List[CryptoRule],
-        algo_by_ref: Dict[str, CryptoAsset],
-    ) -> List[Dict[str, Any]]:
+        rules: list[CryptoRule],
+        algo_by_ref: dict[str, CryptoAsset],
+    ) -> list[dict[str, Any]]:
         if not cert.signature_algorithm_ref:
             return []
         algo = algo_by_ref.get(cert.signature_algorithm_ref)
@@ -242,14 +242,14 @@ class CertificateLifecycleAnalyzer(Analyzer):
         matched = _matching_hash_rule(algo, rules)
         if matched is not None:
             severity = _rule_severity(matched)
-            rule_id: Optional[str] = matched.rule_id
+            rule_id: str | None = matched.rule_id
         elif not _has_hash_rule(rules) and _is_static_weak_hash(algo):
             severity = Severity.HIGH
             rule_id = None
         else:
             return []
 
-        details: Dict[str, Any] = {"algorithm_name": algo.name, "related_algo_bom_ref": algo.bom_ref}
+        details: dict[str, Any] = {"algorithm_name": algo.name, "related_algo_bom_ref": algo.bom_ref}
         if rule_id:
             details["rule_id"] = rule_id
         return [
@@ -266,9 +266,9 @@ class CertificateLifecycleAnalyzer(Analyzer):
         self,
         cert: CryptoAsset,
         now: datetime,
-        rules: List[CryptoRule],
-        algo_by_ref: Dict[str, CryptoAsset],
-    ) -> List[Dict[str, Any]]:
+        rules: list[CryptoRule],
+        algo_by_ref: dict[str, CryptoAsset],
+    ) -> list[dict[str, Any]]:
         # Judge the cert's own subject public key, not the CA's signing key.
         if not cert.subject_public_key_ref:
             return []
@@ -302,9 +302,9 @@ class CertificateLifecycleAnalyzer(Analyzer):
         self,
         cert: CryptoAsset,
         now: datetime,
-        rules: List[CryptoRule],
-        algo_by_ref: Dict[str, CryptoAsset],
-    ) -> List[Dict[str, Any]]:
+        rules: list[CryptoRule],
+        algo_by_ref: dict[str, CryptoAsset],
+    ) -> list[dict[str, Any]]:
         if not cert.subject_name or not cert.issuer_name:
             return []
         if cert.subject_name.strip() != cert.issuer_name.strip():
@@ -323,9 +323,9 @@ class CertificateLifecycleAnalyzer(Analyzer):
         self,
         cert: CryptoAsset,
         now: datetime,
-        rules: List[CryptoRule],
-        algo_by_ref: Dict[str, CryptoAsset],
-    ) -> List[Dict[str, Any]]:
+        rules: list[CryptoRule],
+        algo_by_ref: dict[str, CryptoAsset],
+    ) -> list[dict[str, Any]]:
         if cert.not_valid_before is None or cert.not_valid_after is None:
             return []
         nb = _ensure_aware(cert.not_valid_before)
@@ -333,7 +333,7 @@ class CertificateLifecycleAnalyzer(Analyzer):
         total = (na - nb).days
         if total <= 0:
             return []
-        out: List[Dict[str, Any]] = []
+        out: list[dict[str, Any]] = []
         for rule in rules:
             if not rule.enabled:
                 continue
@@ -372,7 +372,7 @@ def _is_expiry_rule(rule: CryptoRule) -> bool:
     )
 
 
-def _severity_from_ladder(days: int, rule: CryptoRule) -> Optional[Severity]:
+def _severity_from_ladder(days: int, rule: CryptoRule) -> Severity | None:
     if rule.expiry_critical_days is not None and days <= rule.expiry_critical_days:
         return Severity.CRITICAL
     if rule.expiry_high_days is not None and days <= rule.expiry_high_days:
@@ -390,8 +390,8 @@ def _build(
     type_: FindingType,
     severity: Severity,
     description: str,
-    details: Dict[str, Any],
-) -> Dict[str, Any]:
+    details: dict[str, Any],
+) -> dict[str, Any]:
     comp_label = f"{cert.subject_name or cert.name} [bom-ref:{cert.bom_ref}]"
     return {
         "id": str(uuid.uuid4()),

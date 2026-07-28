@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from app.core.constants import WEBHOOK_EVENT_ALIASES, WEBHOOK_EVENT_SCAN_COMPLETED
@@ -75,7 +75,7 @@ class TestWebhookTriggerHandlesOldName:
         }
 
         class _AsyncCursor:
-            def __init__(self, docs: List[Dict[str, Any]]):
+            def __init__(self, docs: list[dict[str, Any]]):
                 self._docs = docs
 
             def __aiter__(self):
@@ -88,9 +88,9 @@ class TestWebhookTriggerHandlesOldName:
                 except StopIteration as exc:
                     raise StopAsyncIteration from exc
 
-        captured_queries: List[Dict[str, Any]] = []
+        captured_queries: list[dict[str, Any]] = []
 
-        def _find(query: Dict[str, Any]) -> "_AsyncCursor":
+        def _find(query: dict[str, Any]) -> _AsyncCursor:
             captured_queries.append(query)
             # Only the global branch (no project/team) returns the subscription.
             if query.get("project_id") is None and query.get("team_id") is None:

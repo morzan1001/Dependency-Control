@@ -203,8 +203,9 @@ class TestStatsDelegation:
         assert fallback_query["status"] == "completed"
 
     def test_returns_none_when_no_active_scan(self):
-        from app.services import stats
         from unittest.mock import AsyncMock
+
+        from app.services import stats
 
         coll = MagicMock()
         coll.find_one = AsyncMock(
@@ -223,8 +224,9 @@ class TestHousekeepingDelegation:
     """housekeeping._resolve_latest_scan_after_branch_deletion keeps its update-dict shape while delegating selection."""
 
     def test_updates_from_active_scan(self):
-        from app.core import housekeeping
         from unittest.mock import AsyncMock
+
+        from app.core import housekeeping
 
         coll = MagicMock()
         coll.find_one = AsyncMock(
@@ -246,8 +248,9 @@ class TestHousekeepingDelegation:
         assert updates["stats"] == Stats().model_dump()
 
     def test_clears_when_no_active_scan(self):
-        from app.core import housekeeping
         from unittest.mock import AsyncMock
+
+        from app.core import housekeeping
 
         coll = MagicMock()
         coll.find_one = AsyncMock(
@@ -266,8 +269,9 @@ class TestHousekeepingDelegation:
         assert updates == {"latest_scan_id": None, "stats": None}
 
     def test_noop_when_current_scan_not_on_deleted_branch(self):
-        from app.core import housekeeping
         from unittest.mock import AsyncMock
+
+        from app.core import housekeeping
 
         coll = MagicMock()
         coll.find_one = AsyncMock(return_value={"_id": "scan-old", "branch": "main"})

@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType, Severity
 from app.services.normalizers.utils import build_finding_id, safe_get
@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from app.services.aggregation import ResultAggregator
 
 
-def normalize_malware(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
+def normalize_malware(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     """os_malware scanner findings; OpenSSF malware arrives via OSV, handled elsewhere."""
     for item in result.get("malware_issues") or []:
         malware_info = item.get("malware_info") or {}
@@ -46,7 +46,7 @@ def normalize_malware(aggregator: "ResultAggregator", result: Dict[str, Any], so
 
 
 def normalize_hash_verification(
-    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
+    aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None
 ) -> None:
     for item in result.get("hash_issues") or []:
         component = safe_get(item, "component", "unknown")

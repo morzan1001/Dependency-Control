@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from prometheus_client import Counter
 
@@ -11,8 +11,8 @@ from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
 
-notifications_sent_total: Optional[Counter] = None
-notifications_failed_total: Optional[Counter] = None
+notifications_sent_total: Counter | None = None
+notifications_failed_total: Counter | None = None
 
 try:
     from app.core.metrics import notifications_failed_total, notifications_sent_total
@@ -22,11 +22,11 @@ except ImportError:
 
 class MattermostProvider(NotificationProvider):
     def __init__(self) -> None:
-        self._bot_user_id: Optional[str] = None
+        self._bot_user_id: str | None = None
         # Prevents concurrent bot ID fetches within the same pod.
         self._bot_id_lock = asyncio.Lock()
 
-    async def _get_bot_user_id(self, client: InstrumentedAsyncClient, base_url: str, headers: dict) -> Optional[str]:
+    async def _get_bot_user_id(self, client: InstrumentedAsyncClient, base_url: str, headers: dict) -> str | None:
         if self._bot_user_id:
             return self._bot_user_id
 
@@ -49,7 +49,7 @@ class MattermostProvider(NotificationProvider):
 
     async def _get_user_id_by_username(
         self, client: InstrumentedAsyncClient, username: str, base_url: str, headers: dict
-    ) -> Optional[str]:
+    ) -> str | None:
         username = username.lstrip("@")
         try:
             response = await client.get(f"{base_url}/api/v4/users/username/{username}", headers=headers)
@@ -65,7 +65,7 @@ class MattermostProvider(NotificationProvider):
 
     async def _create_dm_channel(
         self, client: InstrumentedAsyncClient, user_id: str, base_url: str, headers: dict
-    ) -> Optional[str]:
+    ) -> str | None:
         bot_id = await self._get_bot_user_id(client, base_url, headers)
         if not bot_id:
             return None
@@ -85,7 +85,7 @@ class MattermostProvider(NotificationProvider):
 
     async def _get_channel_id_by_name(
         self, client: InstrumentedAsyncClient, channel_name: str, base_url: str, headers: dict
-    ) -> Optional[str]:
+    ) -> str | None:
         channel_name = channel_name.lstrip("#")
 
         try:
@@ -117,7 +117,7 @@ class MattermostProvider(NotificationProvider):
         destination: str,
         subject: str,
         message: str,
-        system_settings: Optional[SystemSettings] = None,
+        system_settings: SystemSettings | None = None,
         **kwargs: Any,
     ) -> bool:
         mattermost_url = system_settings.mattermost_url if system_settings else None

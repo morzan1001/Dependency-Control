@@ -1,12 +1,12 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.models.finding import Severity
 
 from .purl_utils import normalize_hash_algorithm
 
 
-def map_vendor_severity(raw_severity: Optional[str]) -> str:
+def map_vendor_severity(raw_severity: str | None) -> str:
     """Map a vendor severity label to the internal Severity enum; unknown labels fall back to MEDIUM."""
     return {
         "CRITICAL": Severity.CRITICAL.value,
@@ -26,18 +26,17 @@ class Analyzer(ABC):
     @abstractmethod
     async def analyze(
         self,
-        sbom: Dict[str, Any],
-        settings: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        sbom: dict[str, Any],
+        settings: dict[str, Any] | None = None,
+        parsed_components: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Analyze an SBOM for security issues; on error returns {"error": ...}."""
-        pass
 
     def _get_components(
         self,
-        sbom: Dict[str, Any],
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
-    ) -> List[Dict[str, Any]]:
+        sbom: dict[str, Any],
+        parsed_components: list[dict[str, Any]] | None = None,
+    ) -> list[dict[str, Any]]:
         """Return normalized components, preferring pre-parsed ones over raw-SBOM extraction."""
         if parsed_components:
             return parsed_components

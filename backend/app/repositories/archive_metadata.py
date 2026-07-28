@@ -1,7 +1,7 @@
 """Repository for archive tracking records."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.models.archive import ArchiveMetadata
 from app.repositories.base import BaseRepository
@@ -13,18 +13,18 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
 
     def _build_filter_query(
         self,
-        project_id: Optional[str] = None,
-        branch: Optional[str] = None,
-        date_from: Optional[datetime] = None,
-        date_to: Optional[datetime] = None,
-    ) -> Dict[str, Any]:
-        query: Dict[str, Any] = {}
+        project_id: str | None = None,
+        branch: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+    ) -> dict[str, Any]:
+        query: dict[str, Any] = {}
         if project_id:
             query["project_id"] = project_id
         if branch:
             query["branch"] = branch
         if date_from or date_to:
-            date_filter: Dict[str, Any] = {}
+            date_filter: dict[str, Any] = {}
             if date_from:
                 date_filter["$gte"] = date_from
             if date_to:
@@ -37,10 +37,10 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
         project_id: str,
         skip: int = 0,
         limit: int = 50,
-        branch: Optional[str] = None,
-        date_from: Optional[datetime] = None,
-        date_to: Optional[datetime] = None,
-    ) -> List[ArchiveMetadata]:
+        branch: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+    ) -> list[ArchiveMetadata]:
         query = self._build_filter_query(
             project_id=project_id,
             branch=branch,
@@ -58,9 +58,9 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
     async def count_by_project(
         self,
         project_id: str,
-        branch: Optional[str] = None,
-        date_from: Optional[datetime] = None,
-        date_to: Optional[datetime] = None,
+        branch: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
     ) -> int:
         query = self._build_filter_query(
             project_id=project_id,
@@ -70,15 +70,15 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
         )
         return await self.count(query)
 
-    async def find_by_scan_id(self, scan_id: str) -> Optional[ArchiveMetadata]:
+    async def find_by_scan_id(self, scan_id: str) -> ArchiveMetadata | None:
         return await self.find_one({"scan_id": scan_id})
 
     async def delete_by_scan_id(self, scan_id: str) -> bool:
         result = await self.collection.delete_one({"scan_id": scan_id})
         return result.deleted_count > 0
 
-    async def get_distinct_branches(self, project_id: str) -> List[str]:
-        branches: List[str] = await self.collection.distinct(
+    async def get_distinct_branches(self, project_id: str) -> list[str]:
+        branches: list[str] = await self.collection.distinct(
             "branch", {"project_id": project_id, "branch": {"$ne": None}}
         )
         return sorted(branches)
@@ -87,11 +87,11 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
         self,
         skip: int = 0,
         limit: int = 50,
-        branch: Optional[str] = None,
-        date_from: Optional[datetime] = None,
-        date_to: Optional[datetime] = None,
-        project_id: Optional[str] = None,
-    ) -> List[ArchiveMetadata]:
+        branch: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        project_id: str | None = None,
+    ) -> list[ArchiveMetadata]:
         query = self._build_filter_query(
             project_id=project_id,
             branch=branch,
@@ -108,10 +108,10 @@ class ArchiveMetadataRepository(BaseRepository[ArchiveMetadata]):
 
     async def count_all(
         self,
-        branch: Optional[str] = None,
-        date_from: Optional[datetime] = None,
-        date_to: Optional[datetime] = None,
-        project_id: Optional[str] = None,
+        branch: str | None = None,
+        date_from: datetime | None = None,
+        date_to: datetime | None = None,
+        project_id: str | None = None,
     ) -> int:
         query = self._build_filter_query(
             project_id=project_id,

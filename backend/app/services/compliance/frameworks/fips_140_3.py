@@ -1,8 +1,8 @@
 """FIPS 140-3 algorithm-level conformance; no module-level CMVP certification check."""
 
+from collections.abc import Callable
 from functools import cached_property
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
 
 import yaml
 
@@ -27,19 +27,19 @@ class Fips1403Framework:
     name: str = "FIPS 140-3 (Algorithm-level Conformance)"
     version: str = "2019"
     source_url: str = "https://nvlpubs.nist.gov/nistpubs/FIPS/NIST.FIPS.140-3.pdf"
-    disclaimer: Optional[str] = (
+    disclaimer: str | None = (
         "Algorithm-level conformance only. Module-level CMVP certification status is out of scope of this report."
     )
 
     @cached_property
-    def data(self) -> Dict[str, Dict[str, List[str]]]:
+    def data(self) -> dict[str, dict[str, list[str]]]:
         """FIPS approved-functions YAML; exposed so derived frameworks (ISO 19790) reuse it."""
         with _DATA_PATH.open() as f:
             loaded = yaml.safe_load(f) or {}
         return loaded if isinstance(loaded, dict) else {}
 
     @cached_property
-    def controls(self) -> List[ControlDefinition]:
+    def controls(self) -> list[ControlDefinition]:
         out = build_disallowed_algorithm_controls(self.data, control_id_prefix="FIPS-140-3")
         out.append(
             ControlDefinition(
@@ -59,13 +59,13 @@ class Fips1403Framework:
 
 
 def build_disallowed_algorithm_controls(
-    data: Dict[str, Dict[str, List[str]]],
+    data: dict[str, dict[str, list[str]]],
     *,
     control_id_prefix: str,
-) -> List[ControlDefinition]:
+) -> list[ControlDefinition]:
     """Disallowed-category controls shared by FIPS 140-3 and ISO 19790; control_id_prefix scopes the identifiers."""
-    disallowed: Dict[str, List[str]] = data.get("disallowed") or {}
-    out: List[ControlDefinition] = []
+    disallowed: dict[str, list[str]] = data.get("disallowed") or {}
+    out: list[ControlDefinition] = []
     for category, algos in disallowed.items():
         title = f"Disallowed {category.replace('_', ' ')}"
         control_id = f"{control_id_prefix}-{category.upper()}"
@@ -94,14 +94,14 @@ def build_disallowed_algorithm_controls(
 
 
 # Disallowed category -> primitives whose presence makes the control applicable.
-_CATEGORY_PRIMITIVES: Dict[str, frozenset] = {
+_CATEGORY_PRIMITIVES: dict[str, frozenset] = {
     "hash_functions": frozenset({"hash"}),
     "symmetric_ciphers": frozenset({"block-cipher", "stream-cipher"}),
     "asymmetric": frozenset({"pke", "signature", "kem"}),
 }
 
 
-def _asset_primitive_value(asset: object) -> Optional[str]:
+def _asset_primitive_value(asset: object) -> str | None:
     prim = getattr(asset, "primitive", None)
     if prim is None and isinstance(asset, dict):
         prim = asset.get("primitive")
@@ -112,7 +112,7 @@ def _asset_primitive_value(asset: object) -> Optional[str]:
 
 def _make_disallowed_evaluator(
     *,
-    algos: List[str],
+    algos: list[str],
     category: str,
     title: str,
     control_id: str,
@@ -122,8 +122,8 @@ def _make_disallowed_evaluator(
     relevant_primitives = _CATEGORY_PRIMITIVES.get(category, frozenset())
 
     def evaluator(data: EvaluationInput) -> ControlResult:
-        hits_bom_refs: List[str] = []
-        hits_names: List[str] = []
+        hits_bom_refs: list[str] = []
+        hits_names: list[str] = []
         for asset in data.crypto_assets:
             name = getattr(asset, "name", None) or (asset.get("name") if isinstance(asset, dict) else None)
             if not name:

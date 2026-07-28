@@ -1,6 +1,6 @@
 """Slack Block Kit message formatting."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Slack Block Kit limits
 _HEADER_MAX_LENGTH = 150
@@ -16,9 +16,9 @@ _SEVERITY_EMOJI = {
 }
 
 
-def build_generic_blocks(subject: str, message: str) -> List[Dict[str, Any]]:
+def build_generic_blocks(subject: str, message: str) -> list[dict[str, Any]]:
     """Default Block Kit layout built from subject + message."""
-    blocks: List[Dict[str, Any]] = [
+    blocks: list[dict[str, Any]] = [
         {
             "type": "header",
             "text": {
@@ -48,12 +48,12 @@ def build_analysis_completed_blocks(
     project_name: str,
     scan_id: str,
     total_findings: int,
-    severity_counts: Dict[str, int],
-    results_summary: List[str],
+    severity_counts: dict[str, int],
+    results_summary: list[str],
     scan_link: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Build rich Block Kit layout for analysis completed notification."""
-    blocks: List[Dict[str, Any]] = [
+    blocks: list[dict[str, Any]] = [
         {
             "type": "header",
             "text": {
@@ -127,7 +127,7 @@ def build_analysis_completed_blocks(
     return blocks
 
 
-def _format_vuln_line(index: int, vuln: Dict[str, Any]) -> str:
+def _format_vuln_line(index: int, vuln: dict[str, Any]) -> str:
     """Format a single vulnerability line for Block Kit."""
     emoji = _SEVERITY_EMOJI.get(vuln.get("severity", ""), "\u26aa")
     line = f"{index}. `{vuln['id']}` {emoji} {vuln['severity']} \u2014 {vuln['package']}"
@@ -150,11 +150,11 @@ def build_vulnerability_found_blocks(
     kev_count: int,
     high_epss_count: int,
     critical_count: int,
-    top_vulns: List[Dict[str, Any]],
+    top_vulns: list[dict[str, Any]],
     scan_link: str,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Build rich Block Kit layout for vulnerability found notification."""
-    blocks: List[Dict[str, Any]] = [
+    blocks: list[dict[str, Any]] = [
         {
             "type": "header",
             "text": {
@@ -173,7 +173,7 @@ def build_vulnerability_found_blocks(
         {"type": "divider"},
     ]
 
-    fields: List[Dict[str, str]] = []
+    fields: list[dict[str, str]] = []
     if kev_count:
         fields.append({"type": "mrkdwn", "text": f"\u26a0\ufe0f *KEV Vulnerabilities:* {kev_count}"})
     if high_epss_count:
@@ -214,11 +214,11 @@ def build_vulnerability_found_blocks(
 def build_advisory_blocks(
     subject: str,
     message: str,
-    affected_projects: Optional[List[Dict[str, Any]]] = None,
-    dashboard_link: Optional[str] = None,
-) -> List[Dict[str, Any]]:
+    affected_projects: list[dict[str, Any]] | None = None,
+    dashboard_link: str | None = None,
+) -> list[dict[str, Any]]:
     """Build Block Kit layout for advisory / broadcast notifications."""
-    blocks: List[Dict[str, Any]] = [
+    blocks: list[dict[str, Any]] = [
         {
             "type": "header",
             "text": {

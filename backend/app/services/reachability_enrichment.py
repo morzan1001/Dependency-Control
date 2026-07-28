@@ -2,8 +2,9 @@
 
 import logging
 import uuid
+from collections.abc import Mapping
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Mapping, Optional, TypedDict
+from typing import Any, TypedDict
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import UpdateOne
@@ -36,7 +37,7 @@ _BULK_CHUNK_SIZE = 500
 # purl type) -> the callgraph language(s) that can actually analyze it. Anything
 # else (maven, cargo, nuget, rpm, deb, ...) has no callgraph support, so a missing
 # package in those ecosystems is never treated as unreachable.
-_ECOSYSTEM_TO_CALLGRAPH_LANGUAGES: Dict[str, frozenset] = {
+_ECOSYSTEM_TO_CALLGRAPH_LANGUAGES: dict[str, frozenset] = {
     "pypi": frozenset({"python"}),
     "python": frozenset({"python"}),
     "npm": frozenset({"javascript", "typescript"}),
@@ -46,7 +47,7 @@ _ECOSYSTEM_TO_CALLGRAPH_LANGUAGES: Dict[str, frozenset] = {
 }
 
 
-def _ecosystem_languages(ecosystem: Optional[str], purl: Optional[str]) -> frozenset:
+def _ecosystem_languages(ecosystem: str | None, purl: str | None) -> frozenset:
     """Callgraph language(s) that can analyze a package, derived from its
     dependency ecosystem/type or (fallback) its purl. Empty when undeterminable
     or unsupported."""
@@ -61,7 +62,7 @@ def _ecosystem_languages(ecosystem: Optional[str], purl: Optional[str]) -> froze
     return frozenset()
 
 
-async def _build_component_language_map(db: AsyncIOMotorDatabase, scan_id: str) -> Dict[str, frozenset]:
+async def _build_component_language_map(db: AsyncIOMotorDatabase, scan_id: str) -> dict[str, frozenset]:
     """Map component name -> callgraph language(s) that could analyze it, derived
     from the scan's dependencies (their ``type``/``purl``).
 
@@ -69,7 +70,7 @@ async def _build_component_language_map(db: AsyncIOMotorDatabase, scan_id: str) 
     NOT carry a purl (the OSV/Trivy/Grype normalizers don't persist one), so the
     fail-closed gate must look the package up in the dependency inventory instead.
     """
-    out: Dict[str, frozenset] = {}
+    out: dict[str, frozenset] = {}
     cursor = db.dependencies.find({"scan_id": scan_id}, {"name": 1, "type": 1, "purl": 1})
     async for dep in cursor:
         name = dep.get("name")
@@ -82,9 +83,9 @@ async def _build_component_language_map(db: AsyncIOMotorDatabase, scan_id: str) 
 
 
 def _callgraphs_cover_finding_ecosystem(
-    finding: Dict[str, Any],
-    callgraph_languages: List[str],
-    component_languages: Optional[Dict[str, frozenset]] = None,
+    finding: dict[str, Any],
+    callgraph_languages: list[str],
+    component_languages: dict[str, frozenset] | None = None,
 ) -> bool:
     """True only when an analyzed callgraph's language can cover this finding's
     package ecosystem.
@@ -107,7 +108,7 @@ def _callgraphs_cover_finding_ecosystem(
     return any(lang in langs for lang in callgraph_languages)
 
 
-def _apply_adjusted_risk_score(finding: Dict[str, Any], reachability: Mapping[str, Any]) -> None:
+def _apply_adjusted_risk_score(finding: dict[str, Any], reachability: Mapping[str, Any]) -> None:
     """Apply the reachability modifier to ``details.risk_score`` and store ``adjusted_risk_score``.
 
     Symbol-level reachable boosts (x1.1); not-reachable de-prioritises (x0.4); else
@@ -131,7 +132,7 @@ def _apply_adjusted_risk_score(finding: Dict[str, Any], reachability: Mapping[st
     )
 
 
-def is_high_confidence_reachable(reachability_data: Optional[Dict[str, Any]]) -> bool:
+def is_high_confidence_reachable(reachability_data: dict[str, Any] | None) -> bool:
     """True only when ``is_reachable=True`` *and* confidence clears the threshold.
 
     Use this for any user-facing count that drives prioritisation. The
@@ -149,7 +150,7 @@ def is_high_confidence_reachable(reachability_data: Optional[Dict[str, Any]]) ->
     return bool(confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD)
 
 
-def reachability_display_tier(is_reachable: Optional[bool], analysis_level: Optional[str]) -> str:
+def reachability_display_tier(is_reachable: bool | None, analysis_level: str | None) -> str:
     """Map persisted reachability (is_reachable + analysis_level in
     none/import/symbol) onto the display vocabulary confirmed/likely/unreachable/
     unknown. Shared by the comprehensive-stats and persisted-pending summaries so they cannot drift."""
@@ -169,19 +170,19 @@ class ReachabilityResult(TypedDict, total=False):
     is_reachable: bool
     confidence_score: float
     analysis_level: str
-    matched_symbols: List[str]
-    import_locations: List[str]
+    matched_symbols: list[str]
+    import_locations: list[str]
     message: str
     extraction_method: str
     extraction_confidence: str
-    vulnerable_symbols: List[str]
+    vulnerable_symbols: list[str]
 
 
 async def _fetch_callgraphs(
     project_id: str,
     scan_id: str,
     db: AsyncIOMotorDatabase,
-) -> List[Any]:
+) -> list[Any]:
     """
     Fetch all callgraphs for a scan (one per language), falling back to pipeline_id match.
 
@@ -206,9 +207,9 @@ async def _fetch_callgraphs(
 
 
 def _enrich_single_finding(
-    finding: Dict[str, Any],
-    module_usage: Dict[str, Any],
-    import_map: Dict[str, List[str]],
+    finding: dict[str, Any],
+    module_usage: dict[str, Any],
+    import_map: dict[str, list[str]],
     language: str,
 ) -> bool:
     """
@@ -238,8 +239,8 @@ def _enrich_single_finding(
 
 def _is_package_in_callgraph(
     component: str,
-    module_usage: Dict[str, Any],
-    import_map: Dict[str, List[str]],
+    module_usage: dict[str, Any],
+    import_map: dict[str, list[str]],
     language: str,
 ) -> bool:
     """Check whether a package appears in a callgraph's module usage or imports."""
@@ -249,9 +250,9 @@ def _is_package_in_callgraph(
 
 
 def _enrich_finding_from_callgraphs(
-    finding: Dict[str, Any],
-    callgraphs: List[Any],
-    component_languages: Optional[Dict[str, frozenset]] = None,
+    finding: dict[str, Any],
+    callgraphs: list[Any],
+    component_languages: dict[str, frozenset] | None = None,
 ) -> bool:
     """
     Try each callgraph for a finding. Returns True if enriched.
@@ -279,7 +280,7 @@ def _enrich_finding_from_callgraphs(
     if _callgraphs_cover_finding_ecosystem(finding, languages, component_languages):
         # A callgraph of the finding's own ecosystem analyzed the code and the
         # package isn't imported there -> genuinely unreachable (fail-closed x0.4).
-        reachability: Dict[str, Any] = {
+        reachability: dict[str, Any] = {
             "is_reachable": False,
             "confidence_score": REACHABILITY_CONFIDENCE_NOT_USED,
             "analysis_level": REACHABILITY_LEVEL_IMPORT,
@@ -308,10 +309,10 @@ def _enrich_finding_from_callgraphs(
 
 
 async def enrich_findings_with_reachability(
-    findings: List[Dict[str, Any]],
+    findings: list[dict[str, Any]],
     project_id: str,
     db: AsyncIOMotorDatabase,
-    scan_id: Optional[str] = None,
+    scan_id: str | None = None,
 ) -> int:
     """Enrich vulnerability findings (modified in-place) with reachability; return count enriched.
 
@@ -351,10 +352,10 @@ async def enrich_findings_with_reachability(
 
 
 def _analyze_reachability(
-    finding: Dict[str, Any],
+    finding: dict[str, Any],
     component: str,
-    module_usage: Dict[str, Any],
-    import_map: Dict[str, List[str]],
+    module_usage: dict[str, Any],
+    import_map: dict[str, list[str]],
     language: str,
 ) -> ReachabilityResult:
     """Analyze reachability for one finding: import-based, then symbol-based."""
@@ -379,7 +380,7 @@ def _analyze_reachability(
         return result
 
     # Package is imported - collect import locations
-    import_locations: List[str] = []
+    import_locations: list[str] = []
     if usage:
         import_locations = usage.get("import_locations", [])[:10]  # Limit to 10
     elif package_in_imports:
@@ -471,7 +472,7 @@ def _normalize_component(component: str, language: str) -> str:
     return component.lower()
 
 
-def _check_package_in_imports(package: str, import_map: Dict[str, List[str]]) -> List[str]:
+def _check_package_in_imports(package: str, import_map: dict[str, list[str]]) -> list[str]:
     """
     Check if a package appears anywhere in the import map.
     Returns list of files that import it.
@@ -491,14 +492,14 @@ def _check_package_in_imports(package: str, import_map: Dict[str, List[str]]) ->
             # Boundary-anchored subpath/submodule match only: a bare substring test
             # spuriously matches unrelated packages (npm "ms" -> "forms"), inflating
             # reachability. Require a real path ("/") or module (".") boundary.
-            if imp_lower.startswith(package_lower + "/") or imp_lower.startswith(package_lower + "."):
+            if imp_lower.startswith((package_lower + "/", package_lower + ".")):
                 files_importing.append(file_path)
                 break
 
     return files_importing
 
 
-def _match_symbols(vulnerable_symbols: List[str], used_symbols: List[str]) -> List[str]:
+def _match_symbols(vulnerable_symbols: list[str], used_symbols: list[str]) -> list[str]:
     """
     Match vulnerable symbols against used symbols.
     Returns list of matched symbols.
@@ -558,21 +559,21 @@ async def run_pending_reachability_for_scan(
     scan_id: str,
     project_id: str,
     db: AsyncIOMotorDatabase,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run pending reachability for a scan after its callgraph is uploaded.
 
     Returns ``{"findings_enriched": int, "error": str | None}``.
     """
-    result: Dict[str, Any] = {
+    result: dict[str, Any] = {
         "findings_enriched": 0,
         "error": None,
     }
 
     from app.repositories import (
-        ScanRepository,
-        FindingRepository,
-        CallgraphRepository,
         AnalysisResultRepository,
+        CallgraphRepository,
+        FindingRepository,
+        ScanRepository,
     )
 
     scan_repo = ScanRepository(db)
@@ -616,13 +617,13 @@ async def run_pending_reachability_for_scan(
 
         # Chunked unordered bulk_write instead of one update per finding, so a 10k-finding
         # scan doesn't fire 10k serial Mongo calls inline in the callgraph-upload request.
-        bulk_ops: List[UpdateOne] = []
+        bulk_ops: list[UpdateOne] = []
         for finding_dict in findings_dicts:
             details = finding_dict.get("details", {})
             reachability_data = details.get("reachability")
             if reachability_data is None:
                 continue
-            update_fields: Dict[str, Any] = {
+            update_fields: dict[str, Any] = {
                 "reachable": reachability_data.get("is_reachable"),
                 "reachability_level": reachability_data.get("analysis_level"),
                 "reachable_functions": reachability_data.get("matched_symbols", []),

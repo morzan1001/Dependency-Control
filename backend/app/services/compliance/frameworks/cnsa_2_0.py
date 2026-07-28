@@ -2,7 +2,6 @@
 
 from functools import cached_property
 from pathlib import Path
-from typing import List, Optional
 
 from app.schemas.compliance import ControlDefinition, FrameworkEvaluation, ReportFramework
 from app.services.compliance.frameworks.base import EvaluationInput, evaluate_framework
@@ -18,10 +17,10 @@ class Cnsa20Framework:
     name: str = "CNSA 2.0 (Commercial National Security Algorithm Suite)"
     version: str = "2022"
     source_url: str = "https://media.defense.gov/2022/Sep/07/2003071834/-1/-1/0/CSA_CNSA_2.0_ALGORITHMS_.PDF"
-    disclaimer: Optional[str] = None
+    disclaimer: str | None = None
 
     @cached_property
-    def controls(self) -> List[ControlDefinition]:
+    def controls(self) -> list[ControlDefinition]:
         return _derive_controls_from_seed(_SEED_PATH, control_id_prefix="CNSA20")
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:

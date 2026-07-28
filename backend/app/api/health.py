@@ -1,5 +1,5 @@
 import time
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import APIRouter, status
 from fastapi.responses import JSONResponse
@@ -24,7 +24,7 @@ def get_max_uptime_seconds() -> int:
 
 
 @router.get("/live", summary="Liveness Probe", response_model=None)
-async def liveness() -> Dict[str, Any] | JSONResponse:
+async def liveness() -> dict[str, Any] | JSONResponse:
     """Liveness probe; reports unhealthy past max uptime to recycle pods for memory."""
     uptime = get_uptime_seconds()
     max_uptime = get_max_uptime_seconds()
@@ -45,7 +45,7 @@ async def liveness() -> Dict[str, Any] | JSONResponse:
 
 
 @router.get("/ready", summary="Readiness Probe", response_model=None)
-async def readiness() -> Dict[str, Any] | JSONResponse:
+async def readiness() -> dict[str, Any] | JSONResponse:
     """Readiness probe checking MongoDB, workers, and (optional) Redis cache."""
     components = {"database": "unknown", "workers": "unknown", "cache": "unknown"}
     is_ready = True
@@ -58,7 +58,7 @@ async def readiness() -> Dict[str, Any] | JSONResponse:
             components["database"] = "client_not_initialized"
             is_ready = False
     except Exception as e:
-        components["database"] = f"error: {str(e)}"
+        components["database"] = f"error: {e!s}"
         is_ready = False
 
     active_workers = [t for t in worker_manager.workers if not t.done()]
@@ -78,7 +78,7 @@ async def readiness() -> Dict[str, Any] | JSONResponse:
         else:
             components["cache"] = "unavailable (degraded mode)"
     except Exception as e:
-        components["cache"] = f"unavailable: {str(e)}"
+        components["cache"] = f"unavailable: {e!s}"
 
     if is_ready:
         return {"status": "ready", "components": components}
@@ -90,7 +90,7 @@ async def readiness() -> Dict[str, Any] | JSONResponse:
 
 
 @router.get("/cache", summary="Cache Health & Statistics")
-async def cache_health() -> Dict[str, Any]:
+async def cache_health() -> dict[str, Any]:
     """Cache health status and statistics."""
     try:
         health = await cache_service.health_check()

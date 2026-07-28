@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Dict, List, cast
+from typing import Any, cast
 
 from app.core.constants import (
     CROSS_PROJECT_MIN_OCCURRENCES,
@@ -10,20 +10,20 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import get_attr, ModelOrDict, parse_version_tuple
+from app.services.recommendation.common import ModelOrDict, get_attr, parse_version_tuple
 
 
 def correlate_scorecard_with_vulnerabilities(
-    vulnerability_findings: List[ModelOrDict],
-    quality_findings: List[ModelOrDict],
-) -> List[Recommendation]:
+    vulnerability_findings: list[ModelOrDict],
+    quality_findings: list[ModelOrDict],
+) -> list[Recommendation]:
     """Flag vulnerabilities in packages that also have poor OpenSSF Scorecard ratings."""
-    recommendations: List[Recommendation] = []
+    recommendations: list[Recommendation] = []
 
     if not vulnerability_findings or not quality_findings:
         return recommendations
 
-    scorecard_by_component: Dict[str, Dict[str, Any]] = {}
+    scorecard_by_component: dict[str, dict[str, Any]] = {}
     for qf in quality_findings:
         component = get_attr(qf, "component", "")
         if not component:
@@ -36,7 +36,7 @@ def correlate_scorecard_with_vulnerabilities(
             "failed_checks": details.get("failed_checks", []) if isinstance(details, dict) else [],
         }
 
-    high_risk_vulns: List[Dict[str, Any]] = []
+    high_risk_vulns: list[dict[str, Any]] = []
 
     for vf in vulnerability_findings:
         component = get_attr(vf, "component", "")
@@ -129,18 +129,18 @@ def correlate_scorecard_with_vulnerabilities(
     return recommendations
 
 
-def _build_cve_project_map(projects: List[Dict[str, Any]]) -> Dict[str, List[str]]:
+def _build_cve_project_map(projects: list[dict[str, Any]]) -> dict[str, list[str]]:
     """Build a mapping of CVE -> list of project names from cross-project data."""
-    cve_project_map: Dict[str, List[str]] = defaultdict(list)
+    cve_project_map: dict[str, list[str]] = defaultdict(list)
     for proj in projects:
         for cve in proj.get("cves", []):
             cve_project_map[cve].append(str(proj.get("project_name", proj.get("project_id", ""))))
     return cve_project_map
 
 
-def _build_package_usage(projects: List[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+def _build_package_usage(projects: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
     """Build package usage map across projects."""
-    package_usage: Dict[str, Dict[str, Any]] = defaultdict(lambda: {"versions": set(), "projects": []})
+    package_usage: dict[str, dict[str, Any]] = defaultdict(lambda: {"versions": set(), "projects": []})
     for proj in projects:
         for pkg in proj.get("packages", []):
             name = pkg.get("name", "").lower()
@@ -151,12 +151,12 @@ def _build_package_usage(projects: List[Dict[str, Any]]) -> Dict[str, Dict[str, 
 
 
 def analyze_cross_project_patterns(
-    _current_findings: List[ModelOrDict],
-    dependencies: List[ModelOrDict],
-    cross_project_data: Dict[str, Any],
-) -> List[Recommendation]:
+    _current_findings: list[ModelOrDict],
+    dependencies: list[ModelOrDict],
+    cross_project_data: dict[str, Any],
+) -> list[Recommendation]:
     """Analyze patterns across multiple projects owned by the same user/team."""
-    recommendations: List[Recommendation] = []
+    recommendations: list[Recommendation] = []
 
     if not cross_project_data or not cross_project_data.get("projects"):
         return recommendations
@@ -213,7 +213,7 @@ def analyze_cross_project_patterns(
 
     package_usage = _build_package_usage(projects)
 
-    inconsistent_packages: List[Dict[str, Any]] = [
+    inconsistent_packages: list[dict[str, Any]] = [
         {
             "name": name,
             "versions": list(data["versions"]),

@@ -6,8 +6,9 @@ so crypto-misuse SAST findings (id OPENGREP-...) are also covered.
 
 import hashlib
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any, Dict, List, Mapping, Optional, Protocol
+from typing import Any, Protocol
 
 from app.models.match_signature import MatchSignature
 
@@ -21,21 +22,21 @@ class SignatureSource(Protocol):
     """Structural view of the fields signature derivation needs."""
 
     @property
-    def id(self) -> Optional[str]: ...
+    def id(self) -> str | None: ...
     @property
-    def details(self) -> Optional[Dict[str, Any]]: ...
+    def details(self) -> dict[str, Any] | None: ...
     @property
     def component(self) -> str: ...
 
 
 @dataclass(frozen=True)
 class _DocSignatureSource:
-    id: Optional[str]
-    details: Optional[Dict[str, Any]]
+    id: str | None
+    details: dict[str, Any] | None
     component: str
 
 
-def normalize_snippet(text: Optional[str]) -> Optional[str]:
+def normalize_snippet(text: str | None) -> str | None:
     """Whitespace-insensitive hash input. Empty/blank -> None (sentinel)."""
     if not text:
         return None
@@ -46,22 +47,22 @@ def normalize_snippet(text: Optional[str]) -> Optional[str]:
     return hashlib.sha1(joined.encode("utf-8"), usedforsecurity=False).hexdigest()
 
 
-def _hash(text: Optional[str]) -> Optional[str]:
+def _hash(text: str | None) -> str | None:
     return normalize_snippet(text)
 
 
-def _select_sast_entry(entries: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+def _select_sast_entry(entries: list[dict[str, Any]]) -> dict[str, Any] | None:
     """Pick a deterministic per-scanner entry (preference list, then sorted by (scanner, id))."""
     if not entries:
         return None
     for pref in _SCANNER_PREFERENCE:
         matches = [e for e in entries if (e.get("scanner") or "") == pref]
         if matches:
-            return sorted(matches, key=lambda e: str(e.get("id") or ""))[0]
-    return sorted(entries, key=lambda e: (str(e.get("scanner") or ""), str(e.get("id") or "")))[0]
+            return min(matches, key=lambda e: str(e.get("id") or ""))
+    return min(entries, key=lambda e: (str(e.get("scanner") or ""), str(e.get("id") or "")))
 
 
-def _sast_signature(finding: SignatureSource) -> Optional[MatchSignature]:
+def _sast_signature(finding: SignatureSource) -> MatchSignature | None:
     details = finding.details or {}
     entries = details.get("sast_findings") or []
     entry = _select_sast_entry(entries)
@@ -96,7 +97,7 @@ def _sast_signature(finding: SignatureSource) -> Optional[MatchSignature]:
     )
 
 
-def _iac_signature(finding: SignatureSource) -> Optional[MatchSignature]:
+def _iac_signature(finding: SignatureSource) -> MatchSignature | None:
     details = finding.details or {}
     rule_id = details.get("rule_id") or "unknown"
     content_hash = _hash("\n".join(str(details.get(k) or "") for k in ("actual_value", "expected_value")))
@@ -136,7 +137,7 @@ def _iac_signature(finding: SignatureSource) -> Optional[MatchSignature]:
     )
 
 
-def _secret_signature(finding: SignatureSource) -> Optional[MatchSignature]:
+def _secret_signature(finding: SignatureSource) -> MatchSignature | None:
     details = finding.details or {}
     detector = details.get("detector") or "unknown"
     secret_hash = finding.id.rsplit("-", 1)[-1] if finding.id else None
@@ -153,7 +154,7 @@ def _secret_signature(finding: SignatureSource) -> Optional[MatchSignature]:
     )
 
 
-def compute_match_signature(finding: SignatureSource) -> Optional[MatchSignature]:
+def compute_match_signature(finding: SignatureSource) -> MatchSignature | None:
     """Return a MatchSignature for SAST/IaC/Secret findings (dispatched by id prefix / details), else None."""
     fid = finding.id or ""
     details = finding.details or {}
@@ -167,7 +168,7 @@ def compute_match_signature(finding: SignatureSource) -> Optional[MatchSignature
     return None
 
 
-def compute_match_signature_from_doc(doc: Mapping[str, Any]) -> Optional[MatchSignature]:
+def compute_match_signature_from_doc(doc: Mapping[str, Any]) -> MatchSignature | None:
     """Recompute a MatchSignature from a raw persisted finding document when the stored `match` field is missing."""
     return compute_match_signature(
         _DocSignatureSource(

@@ -1,7 +1,5 @@
 """Repository for callgraphs."""
 
-from typing import List
-
 from app.models.callgraph import Callgraph
 from app.repositories.base import BaseRepository
 from app.schemas.projections import CallgraphMinimal
@@ -13,11 +11,11 @@ class CallgraphRepository(BaseRepository[Callgraph]):
     collection_name = "callgraphs"
     model_class = Callgraph
 
-    async def find_all_minimal_by_scan(self, project_id: str, scan_id: str) -> List[CallgraphMinimal]:
+    async def find_all_minimal_by_scan(self, project_id: str, scan_id: str) -> list[CallgraphMinimal]:
         cursor = self.collection.find({"project_id": project_id, "scan_id": scan_id}, _MINIMAL_PROJECTION)
         return [CallgraphMinimal(**doc) async for doc in cursor]
 
-    async def find_all_minimal_by_pipeline(self, project_id: str, pipeline_id: int) -> List[CallgraphMinimal]:
+    async def find_all_minimal_by_pipeline(self, project_id: str, pipeline_id: int) -> list[CallgraphMinimal]:
         cursor = self.collection.find({"project_id": project_id, "pipeline_id": pipeline_id}, _MINIMAL_PROJECTION)
         return [CallgraphMinimal(**doc) async for doc in cursor]
 

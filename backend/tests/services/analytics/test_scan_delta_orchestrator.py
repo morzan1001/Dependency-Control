@@ -1,6 +1,8 @@
-import pytest
 from unittest.mock import AsyncMock, patch
-from app.services.analytics.scan_delta import compute_scan_delta_dispatch, InvalidDeltaQuery
+
+import pytest
+
+from app.services.analytics.scan_delta import InvalidDeltaQuery, compute_scan_delta_dispatch
 
 
 @pytest.mark.asyncio

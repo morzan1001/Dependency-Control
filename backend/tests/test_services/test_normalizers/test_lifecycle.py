@@ -32,19 +32,19 @@ class TestNormalizeOutdated:
     def test_default_severity_info(self):
         result = {"outdated_dependencies": [{"component": "pkg", "current_version": "1.0"}]}
         self.agg.aggregate("outdated_packages", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.severity == "INFO"
 
     def test_custom_severity(self):
         result = {"outdated_dependencies": [{"component": "pkg", "current_version": "1.0", "severity": "MEDIUM"}]}
         self.agg.aggregate("outdated_packages", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.severity == "MEDIUM"
 
     def test_default_description(self):
         result = {"outdated_dependencies": [{"component": "lodash", "current_version": "1.0"}]}
         self.agg.aggregate("outdated_packages", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert "lodash" in f.description
 
     def test_empty_dependencies(self):
@@ -104,7 +104,7 @@ class TestNormalizeEol:
             ]
         }
         self.agg.aggregate("end_of_life", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert "2023-06-27" in f.description
         assert "3.7" in f.description
 
@@ -123,7 +123,7 @@ class TestNormalizeEol:
             ]
         }
         self.agg.aggregate("end_of_life", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["fixed_version"] == "3.3.0"
 
     def test_eol_details(self):
@@ -143,7 +143,7 @@ class TestNormalizeEol:
             ]
         }
         self.agg.aggregate("end_of_life", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["eol_date"] == "2024-04-01"
         assert f.details["cycle"] == "3.2"
         assert f.details["lts"] is True
@@ -156,6 +156,6 @@ class TestNormalizeEol:
     def test_missing_eol_info(self):
         result = {"eol_issues": [{"component": "pkg", "version": "1.0"}]}
         self.agg.aggregate("end_of_life", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.type == "eol"
         assert f.component == "pkg"

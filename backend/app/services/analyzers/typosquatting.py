@@ -1,17 +1,17 @@
 import difflib
 import logging
 import re
-from typing import Any, Dict, List, Optional, Set
+from typing import Any
 
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import (
     ANALYZER_TIMEOUTS,
     TOP_PYPI_PACKAGES_URL,
     TYPOSQUATTING_SIMILARITY_THRESHOLD,
 )
+from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer
@@ -24,7 +24,7 @@ _SEPARATOR_RUN = re.compile(r"[-_.]+")
 _SEPARATORS = {"-", "_", "."}
 
 
-def _normalize_pkg_name(name: Optional[str]) -> str:
+def _normalize_pkg_name(name: str | None) -> str:
     """PEP 503-style canonical name; strips ``@scope/`` for npm, collapses ``-_.`` to ``-``."""
     if not name:
         return ""
@@ -43,7 +43,7 @@ def _has_legitimate_prefix(longer: str, shorter: str) -> bool:
     return longer[len(shorter)] in _SEPARATORS
 
 
-def _resolve_ecosystem(component: Dict[str, Any], purl: str) -> str:
+def _resolve_ecosystem(component: dict[str, Any], purl: str) -> str:
     """``pypi`` / ``npm`` / ``unknown`` from PURL or component type."""
     if is_pypi(purl) or component.get("type") == "python":
         return "pypi"
@@ -61,11 +61,11 @@ def _severity_for_ratio(ratio: float, critical_at: float, high_at: float) -> str
 
 
 def _build_typosquat_issue(
-    component: Dict[str, Any],
+    component: dict[str, Any],
     popular: str,
     ratio: float,
     severity: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     name = component.get("name")
     return {
         "component": name,
@@ -83,7 +83,7 @@ class TyposquattingAnalyzer(Analyzer):
 
     name = "typosquatting"
 
-    async def _ensure_popular_packages(self) -> Dict[str, Set[str]]:
+    async def _ensure_popular_packages(self) -> dict[str, set[str]]:
         """Load popular packages from Redis cache or fetch from APIs."""
         pypi_cache_key = CacheKeys.popular_packages("pypi")
         npm_cache_key = CacheKeys.popular_packages("npm")
@@ -93,7 +93,7 @@ class TyposquattingAnalyzer(Analyzer):
         pypi_packages = cached_data.get(pypi_cache_key)
         npm_packages = cached_data.get(npm_cache_key)
 
-        result: Dict[str, set] = {"pypi": set(), "npm": set()}
+        result: dict[str, set] = {"pypi": set(), "npm": set()}
 
         if pypi_packages:
             result["pypi"] = set(pypi_packages)
@@ -110,7 +110,7 @@ class TyposquattingAnalyzer(Analyzer):
 
         return result
 
-    async def _fetch_pypi_packages(self) -> Set[str]:
+    async def _fetch_pypi_packages(self) -> set[str]:
         """Fetch top PyPI packages and cache in Redis."""
         cache_key = CacheKeys.popular_packages("pypi")
         timeout = ANALYZER_TIMEOUTS.get("typosquatting", ANALYZER_TIMEOUTS["default"])
@@ -135,7 +135,7 @@ class TyposquattingAnalyzer(Analyzer):
         await cache_service.set(cache_key, list(packages), CacheTTL.POPULAR_PACKAGES)
         return packages
 
-    def _get_static_pypi(self) -> Set[str]:
+    def _get_static_pypi(self) -> set[str]:
         return {
             "requests",
             "flask",
@@ -163,7 +163,7 @@ class TyposquattingAnalyzer(Analyzer):
             "kubernetes",
         }
 
-    def _get_static_npm(self) -> Set[str]:
+    def _get_static_npm(self) -> set[str]:
         return {
             "react",
             "react-dom",
@@ -208,10 +208,10 @@ class TyposquattingAnalyzer(Analyzer):
 
     async def analyze(
         self,
-        sbom: Dict[str, Any],
-        settings: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        sbom: dict[str, Any],
+        settings: dict[str, Any] | None = None,
+        parsed_components: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         popular_packages = await self._ensure_popular_packages()
 
         components = self._get_components(sbom, parsed_components)
@@ -222,7 +222,7 @@ class TyposquattingAnalyzer(Analyzer):
         critical_at = float(settings.get("critical_similarity", 0.95))
         high_at = float(settings.get("high_similarity", 0.90))
 
-        normalized_popular: Dict[str, Set[str]] = {}  # lazy per-ecosystem cache
+        normalized_popular: dict[str, set[str]] = {}  # lazy per-ecosystem cache
 
         for component in components:
             issue = self._scan_component(
@@ -240,13 +240,13 @@ class TyposquattingAnalyzer(Analyzer):
 
     def _scan_component(
         self,
-        component: Dict[str, Any],
-        popular_packages: Dict[str, Set[str]],
-        normalized_popular: Dict[str, Set[str]],
+        component: dict[str, Any],
+        popular_packages: dict[str, set[str]],
+        normalized_popular: dict[str, set[str]],
         similarity_threshold: float,
         critical_at: float,
         high_at: float,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Return a typosquat finding for ``component``, or ``None`` if clean."""
         purl = component.get("purl", "")
         ecosystem = _resolve_ecosystem(component, purl)
@@ -284,6 +284,4 @@ class TyposquattingAnalyzer(Analyzer):
         """
         if name == popular:
             return False
-        if _has_legitimate_prefix(name, popular) or _has_legitimate_prefix(popular, name):
-            return False
-        return True
+        return not (_has_legitimate_prefix(name, popular) or _has_legitimate_prefix(popular, name))

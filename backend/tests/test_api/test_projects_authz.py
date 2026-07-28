@@ -73,14 +73,16 @@ class TestRotateApiKeyRoutesThroughGate:
         user = _plain_member()
         mock_repo = MagicMock()
 
-        with patch(f"{ENDPOINTS}.ProjectRepository", return_value=mock_repo):
-            with patch(
+        with (
+            patch(f"{ENDPOINTS}.ProjectRepository", return_value=mock_repo),
+            patch(
                 f"{ENDPOINTS}.check_project_access",
                 new_callable=AsyncMock,
                 side_effect=HTTPException(status_code=403, detail="nope"),
-            ):
-                with pytest.raises(HTTPException) as exc_info:
-                    asyncio.run(rotate_api_key("proj-1", user, MagicMock()))
+            ),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            asyncio.run(rotate_api_key("proj-1", user, MagicMock()))
         assert exc_info.value.status_code == 403
 
 
@@ -103,13 +105,15 @@ class TestLoadProjectForUpdateRoutesThroughGate:
 
         user = _plain_member()
 
-        with patch(
-            f"{ENDPOINTS}.check_project_access",
-            new_callable=AsyncMock,
-            side_effect=HTTPException(status_code=403, detail="nope"),
+        with (
+            patch(
+                f"{ENDPOINTS}.check_project_access",
+                new_callable=AsyncMock,
+                side_effect=HTTPException(status_code=403, detail="nope"),
+            ),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(_load_project_for_update("proj-1", user, MagicMock()))
+            asyncio.run(_load_project_for_update("proj-1", user, MagicMock()))
         assert exc_info.value.status_code == 403
 
 
@@ -214,13 +218,15 @@ class TestDeleteProjectRoutesThroughGate:
 
         user = _plain_member()
 
-        with patch(
-            f"{ENDPOINTS}.check_project_access",
-            new_callable=AsyncMock,
-            side_effect=HTTPException(status_code=403, detail="nope"),
+        with (
+            patch(
+                f"{ENDPOINTS}.check_project_access",
+                new_callable=AsyncMock,
+                side_effect=HTTPException(status_code=403, detail="nope"),
+            ),
+            pytest.raises(HTTPException) as exc_info,
         ):
-            with pytest.raises(HTTPException) as exc_info:
-                asyncio.run(delete_project("proj-1", user, MagicMock()))
+            asyncio.run(delete_project("proj-1", user, MagicMock()))
         assert exc_info.value.status_code == 403
 
 

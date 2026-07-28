@@ -2,12 +2,13 @@
 
 import json
 import logging
-from typing import Any, AsyncIterator, Dict, List, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 
 import httpx
 
 from app.core.config import settings
-from app.core.metrics import chat_ollama_requests_total, chat_ollama_queue_depth
+from app.core.metrics import chat_ollama_queue_depth, chat_ollama_requests_total
 
 logger = logging.getLogger(__name__)
 
@@ -27,13 +28,13 @@ class OllamaClient:
 
     async def chat_stream(
         self,
-        messages: List[Dict[str, Any]],
-        tools: Optional[List[Dict[str, Any]]] = None,
-    ) -> AsyncIterator[Dict[str, Any]]:
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
         """Stream a chat completion, yielding token / tool_call / done / error dicts keyed by "type"."""
         global _active_requests
 
-        payload: Dict[str, Any] = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
             "stream": True,
@@ -48,49 +49,50 @@ class OllamaClient:
         chat_ollama_queue_depth.set(_active_requests)
 
         try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout)) as client:
-                async with client.stream(
+            async with (
+                httpx.AsyncClient(timeout=httpx.Timeout(self.timeout)) as client,
+                client.stream(
                     "POST",
                     f"{self.base_url}/api/chat",
                     json=payload,
-                ) as response:
-                    if response.status_code != 200:
-                        body = await response.aread()
-                        chat_ollama_requests_total.labels(status="error").inc()
-                        yield {"type": "error", "message": f"Ollama returned {response.status_code}: {body.decode()}"}
+                ) as response,
+            ):
+                if response.status_code != 200:
+                    body = await response.aread()
+                    chat_ollama_requests_total.labels(status="error").inc()
+                    yield {"type": "error", "message": f"Ollama returned {response.status_code}: {body.decode()}"}
+                    return
+
+                chat_ollama_requests_total.labels(status="success").inc()
+
+                async for line in response.aiter_lines():
+                    if not line.strip():
+                        continue
+                    try:
+                        chunk = json.loads(line)
+                    except json.JSONDecodeError:
+                        continue
+
+                    if chunk.get("done", False):
+                        yield {
+                            "type": "done",
+                            "total_tokens": chunk.get("eval_count", 0),
+                            "eval_rate": chunk.get("eval_count", 0) / max(chunk.get("eval_duration", 1) / 1e9, 0.001),
+                        }
                         return
 
-                    chat_ollama_requests_total.labels(status="success").inc()
+                    message = chunk.get("message", {})
 
-                    async for line in response.aiter_lines():
-                        if not line.strip():
-                            continue
-                        try:
-                            chunk = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-
-                        if chunk.get("done", False):
+                    if message.get("tool_calls"):
+                        for tc in message["tool_calls"]:
                             yield {
-                                "type": "done",
-                                "total_tokens": chunk.get("eval_count", 0),
-                                "eval_rate": chunk.get("eval_count", 0)
-                                / max(chunk.get("eval_duration", 1) / 1e9, 0.001),
+                                "type": "tool_call",
+                                "function": tc.get("function", {}),
                             }
-                            return
 
-                        message = chunk.get("message", {})
-
-                        if message.get("tool_calls"):
-                            for tc in message["tool_calls"]:
-                                yield {
-                                    "type": "tool_call",
-                                    "function": tc.get("function", {}),
-                                }
-
-                        content = message.get("content", "")
-                        if content:
-                            yield {"type": "token", "content": content}
+                    content = message.get("content", "")
+                    if content:
+                        yield {"type": "token", "content": content}
 
         except httpx.TimeoutException:
             chat_ollama_requests_total.labels(status="timeout").inc()

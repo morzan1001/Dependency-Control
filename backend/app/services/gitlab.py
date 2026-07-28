@@ -1,11 +1,10 @@
 import logging
+from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from typing import Any
 
 import httpx
-
-from app.core.http_utils import InstrumentedAsyncClient
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.cache import cache_service
@@ -14,6 +13,7 @@ from app.core.constants import (
     GITLAB_JWKS_CACHE_TTL,
     GITLAB_JWKS_URI_CACHE_TTL,
 )
+from app.core.http_utils import InstrumentedAsyncClient
 from app.models.gitlab_api import (
     GitLabMember,
     GitLabMergeRequest,
@@ -23,8 +23,8 @@ from app.models.gitlab_api import (
 )
 from app.models.gitlab_instance import GitLabInstance
 from app.models.team import Team, TeamMember
-from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 from app.repositories import TeamRepository, UserRepository
+from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class GitLabService:
         """Generate cache key for this specific instance."""
         return f"gitlab:{self._cache_key_prefix}:{suffix}"
 
-    def _get_auth_headers(self) -> Dict[str, str]:
+    def _get_auth_headers(self) -> dict[str, str]:
         if not self.instance.access_token:
             raise ValueError(f"No access token configured for GitLab instance '{self.instance.name}'")
         return {"PRIVATE-TOKEN": self.instance.access_token}
@@ -52,7 +52,7 @@ class GitLabService:
         async with InstrumentedAsyncClient("GitLab API", timeout=_GITLAB_API_TIMEOUT) as client:
             yield client
 
-    async def _api_get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> Optional[httpx.Response]:
+    async def _api_get(self, endpoint: str, params: dict[str, Any] | None = None) -> httpx.Response | None:
         if not self.instance.access_token:
             return None
 
@@ -67,7 +67,7 @@ class GitLabService:
             logger.exception("GitLab API GET %s failed: %s: %s", endpoint, type(e).__name__, e)
             return None
 
-    async def _api_post(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None) -> Optional[httpx.Response]:
+    async def _api_post(self, endpoint: str, json_data: dict[str, Any] | None = None) -> httpx.Response | None:
         if not self.instance.access_token:
             return None
 
@@ -82,7 +82,7 @@ class GitLabService:
             logger.exception("GitLab API POST %s failed: %s: %s", endpoint, type(e).__name__, e)
             return None
 
-    async def _api_put(self, endpoint: str, json_data: Optional[Dict[str, Any]] = None) -> Optional[httpx.Response]:
+    async def _api_put(self, endpoint: str, json_data: dict[str, Any] | None = None) -> httpx.Response | None:
         if not self.instance.access_token:
             return None
 
@@ -100,9 +100,9 @@ class GitLabService:
     async def _api_get_paginated(
         self,
         endpoint: str,
-        params: Optional[Dict[str, Any]] = None,
-        max_pages: Optional[int] = 10,
-    ) -> Optional[List[Dict[str, Any]]]:
+        params: dict[str, Any] | None = None,
+        max_pages: int | None = 10,
+    ) -> list[dict[str, Any]] | None:
         """Paginated GET; returns all items or None on failure.
 
         ``max_pages=None`` fetches all pages uncapped; a hit finite cap logs a
@@ -111,7 +111,7 @@ class GitLabService:
         if not self.instance.access_token:
             return None
 
-        all_items: List[Dict[str, Any]] = []
+        all_items: list[dict[str, Any]] = []
         page = 1
         per_page = 100  # GitLab max per_page
 
@@ -145,16 +145,14 @@ class GitLabService:
         return all_items
 
     @staticmethod
-    def _is_last_page(items: List[Any], per_page: int, page: int, total_pages: Optional[str]) -> bool:
+    def _is_last_page(items: list[Any], per_page: int, page: int, total_pages: str | None) -> bool:
         """True when GitLab signals there are no further pages to fetch."""
         if total_pages and page >= int(total_pages):
             return True
         return len(items) < per_page
 
     @staticmethod
-    def _cap_reached(
-        endpoint: str, page: int, max_pages: Optional[int], per_page: int, total_pages: Optional[str]
-    ) -> bool:
+    def _cap_reached(endpoint: str, page: int, max_pages: int | None, per_page: int, total_pages: str | None) -> bool:
         """True (and logs a WARNING) when a finite cap is hit while more pages remain."""
         if max_pages is None or page < max_pages:
             return False
@@ -168,7 +166,7 @@ class GitLabService:
         )
         return True
 
-    async def _get_jwks_uri(self) -> Optional[str]:
+    async def _get_jwks_uri(self) -> str | None:
         """Resolve the JWKS URI from the OIDC discovery document, Redis-cached."""
         cache_key = self._get_cache_key("jwks_uri")
 
@@ -196,7 +194,7 @@ class GitLabService:
         client: InstrumentedAsyncClient,
         jwks_uri: str,
         cache_key: str,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Fetch JWKS from a known URI and cache it; returns None if unavailable."""
         response = await client.get(jwks_uri)
         if response.status_code != 200:
@@ -209,7 +207,7 @@ class GitLabService:
         self,
         client: InstrumentedAsyncClient,
         cache_key: str,
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Try common fallback JWKS endpoints; returns None if all fail."""
         for path in ["/oauth/discovery/keys", "/-/jwks"]:
             response = await client.get(f"{self.base_url}{path}")
@@ -220,7 +218,7 @@ class GitLabService:
                 return jwks_fallback
         return None
 
-    async def _try_fetch_jwks_once(self, cache_key: str) -> Optional[dict]:
+    async def _try_fetch_jwks_once(self, cache_key: str) -> dict | None:
         """Single attempt to fetch JWKS via discovery + fallbacks. Returns {} on definitive failure."""
         async with InstrumentedAsyncClient("GitLab JWKS", timeout=10.0) as client:
             jwks_uri = await self._get_jwks_uri()
@@ -236,7 +234,7 @@ class GitLabService:
             logger.error(f"Failed to fetch JWKS from any known endpoint for {self.base_url}")
             return {}
 
-    async def get_jwks(self) -> Optional[dict]:
+    async def get_jwks(self) -> dict | None:
         """Fetch and Redis-cache the JWKS from GitLab, retrying on transient failure."""
         cache_key = self._get_cache_key("jwks")
 
@@ -264,7 +262,7 @@ class GitLabService:
         cache_key = self._get_cache_key("jwks")
         await cache_service.delete(cache_key)
 
-    async def validate_oidc_token(self, token: str) -> Optional[OIDCPayload]:
+    async def validate_oidc_token(self, token: str) -> OIDCPayload | None:
         """Validate a GitLab OIDC JWT, refreshing JWKS on key rotation."""
         return await _validate_oidc_token(
             token=token,
@@ -277,21 +275,21 @@ class GitLabService:
             provider_name="GitLab",
         )
 
-    async def list_branches(self, project_id: int) -> Optional[List[str]]:
+    async def list_branches(self, project_id: int) -> list[str] | None:
         """Fetches all branch names from a GitLab project. Returns None on API failure."""
         branches = await self._api_get_paginated(f"/projects/{project_id}/repository/branches")
         if branches is None:
             return None
         return [b["name"] for b in branches]
 
-    async def get_project_details(self, project_id: int) -> Optional[GitLabProjectDetails]:
+    async def get_project_details(self, project_id: int) -> GitLabProjectDetails | None:
         """Fetches project details using the system token."""
         response = await self._api_get(f"/projects/{project_id}")
         if response and response.status_code == 200:
             return GitLabProjectDetails(**response.json())
         return None
 
-    async def get_merge_requests_for_commit(self, project_id: int, commit_sha: str) -> List[GitLabMergeRequest]:
+    async def get_merge_requests_for_commit(self, project_id: int, commit_sha: str) -> list[GitLabMergeRequest]:
         """Fetches merge requests associated with a specific commit."""
         response = await self._api_get(f"/projects/{project_id}/repository/commits/{commit_sha}/merge_requests")
         if response and response.status_code == 200:
@@ -310,7 +308,7 @@ class GitLabService:
             logger.error(f"Failed to post MR comment: {response.status_code} - {response.text}")
         return False
 
-    async def get_merge_request_notes(self, project_id: int, mr_iid: int) -> List[GitLabNote]:
+    async def get_merge_request_notes(self, project_id: int, mr_iid: int) -> list[GitLabNote]:
         """Fetch all notes (comments) from a merge request."""
         notes = await self._api_get_paginated(f"/projects/{project_id}/merge_requests/{mr_iid}/notes")
         return [GitLabNote(**n) for n in notes] if notes else []
@@ -327,7 +325,7 @@ class GitLabService:
             logger.error(f"Failed to update MR comment: {response.status_code} - {response.text}")
         return False
 
-    async def get_project_members(self, project_id: int) -> Optional[List[GitLabMember]]:
+    async def get_project_members(self, project_id: int) -> list[GitLabMember] | None:
         """Fetch all project members (including group-inherited) via the system token."""
         if not self.instance.access_token:
             logger.warning("Cannot fetch project members: No system GitLab Access Token configured.")
@@ -337,7 +335,7 @@ class GitLabService:
         members = await self._api_get_paginated(f"/projects/{project_id}/members/all", max_pages=None)
         return [GitLabMember(**m) for m in members] if members else None
 
-    async def get_group_members(self, group_id: int) -> Optional[List[GitLabMember]]:
+    async def get_group_members(self, group_id: int) -> list[GitLabMember] | None:
         """Fetch all group members via the system token."""
         if not self.instance.access_token:
             logger.warning("Cannot fetch group members: No system GitLab Access Token configured.")
@@ -347,14 +345,14 @@ class GitLabService:
         members = await self._api_get_paginated(f"/groups/{group_id}/members/all", max_pages=None)
         return [GitLabMember(**m) for m in members] if members else None
 
-    async def _resolve_group_by_path(self, group_path: str) -> Optional[Dict[str, Any]]:
+    async def _resolve_group_by_path(self, group_path: str) -> dict[str, Any] | None:
         """Resolve a GitLab group by its full path. Returns group dict with 'id' key."""
         import urllib.parse
 
         encoded_path = urllib.parse.quote(group_path, safe="")
         response = await self._api_get(f"/groups/{encoded_path}")
         if response and response.status_code == 200:
-            result: Dict[str, Any] = response.json()
+            result: dict[str, Any] = response.json()
             return result
         return None
 
@@ -362,8 +360,8 @@ class GitLabService:
         self,
         gitlab_project_id: int,
         gitlab_project_path: str,
-        gitlab_project_data: Optional[GitLabProjectDetails],
-    ) -> Optional[Tuple[int, str]]:
+        gitlab_project_data: GitLabProjectDetails | None,
+    ) -> tuple[int, str] | None:
         """Determine which GitLab group (id, path) should back the team for this project.
 
         Returns None and logs a reason if the project has no syncable group target.
@@ -412,16 +410,16 @@ class GitLabService:
 
     async def _build_team_members(
         self,
-        gitlab_members: List[GitLabMember],
+        gitlab_members: list[GitLabMember],
         user_repo: UserRepository,
-    ) -> List[TeamMember]:
+    ) -> list[TeamMember]:
         """Resolve each GitLab member to an EXISTING local user and map to TeamMember.
 
         Tagged ``source="gitlab"`` so the merge in ``_upsert_team_with_members`` refreshes
         only the gitlab-sourced subset. Members without a local account are skipped — sync
         never creates users (see ``_find_user``).
         """
-        team_members: List[TeamMember] = []
+        team_members: list[TeamMember] = []
         for member in gitlab_members:
             user = await self._find_user(member, user_repo)
             if not user:
@@ -442,7 +440,7 @@ class GitLabService:
         self,
         member: GitLabMember,
         user_repo: UserRepository,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Resolve a GitLab member to an EXISTING local user (by email, else username).
 
         Returns None when the member has no local account; sync never creates users.
@@ -458,15 +456,15 @@ class GitLabService:
 
     @staticmethod
     def _merge_team_members(
-        existing_members: List[Dict[str, Any]],
-        gitlab_members: List[TeamMember],
-    ) -> List[Dict[str, Any]]:
+        existing_members: list[dict[str, Any]],
+        gitlab_members: list[TeamMember],
+    ) -> list[dict[str, Any]]:
         """Merge freshly-fetched GitLab members into the existing member list.
 
         Manual members are kept; the gitlab-sourced subset is replaced by
         ``gitlab_members`` (departed members disappear); on overlap the gitlab entry wins.
         """
-        merged: Dict[str, Dict[str, Any]] = {}
+        merged: dict[str, dict[str, Any]] = {}
         # Untagged members default to manual so pre-existing members are preserved.
         for raw in existing_members:
             if raw.get("source", "manual") != "gitlab":
@@ -478,13 +476,13 @@ class GitLabService:
     async def _upsert_team_with_members(
         self,
         team_repo: TeamRepository,
-        existing_team: Optional[Dict[str, Any]],
+        existing_team: dict[str, Any] | None,
         team_name: str,
         description: str,
         instance_id: str,
         group_id: int,
-        team_members: List[TeamMember],
-    ) -> Optional[str]:
+        team_members: list[TeamMember],
+    ) -> str | None:
         now = datetime.now(timezone.utc)
         if existing_team:
             # Merge, not replace: keep manual members, refresh only the gitlab-sourced subset.
@@ -522,8 +520,8 @@ class GitLabService:
         db: AsyncIOMotorDatabase,
         gitlab_project_id: int,
         gitlab_project_path: str,
-        gitlab_project_data: Optional[GitLabProjectDetails] = None,
-    ) -> Optional[str]:
+        gitlab_project_data: GitLabProjectDetails | None = None,
+    ) -> str | None:
         """Sync GitLab group members to a local Team and return its id, or None on any failure."""
         team_repo = TeamRepository(db)
         user_repo = UserRepository(db)

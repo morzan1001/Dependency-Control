@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime
-from typing import Annotated, Any, Dict, List
+from typing import Annotated, Any
 
 from fastapi import Query
 
@@ -40,7 +40,7 @@ router = CustomAPIRouter()
 _SEVERITY_BUCKETS = ("critical", "high", "medium", "low")
 
 
-def _severity_count_accumulators() -> Dict[str, Any]:
+def _severity_count_accumulators() -> dict[str, Any]:
     """$group accumulators counting findings per severity (case-insensitive)."""
     return {
         bucket: {"$sum": {"$cond": [{"$eq": [{"$toLower": "$severity"}, bucket]}, 1, 0]}}
@@ -48,14 +48,14 @@ def _severity_count_accumulators() -> Dict[str, Any]:
     }
 
 
-def _severity_counts_from_row(row: Dict[str, Any]) -> Dict[str, int]:
+def _severity_counts_from_row(row: dict[str, Any]) -> dict[str, int]:
     """Read the scalar severity counts back out of an aggregation row."""
     return {bucket: int(row.get(bucket) or 0) for bucket in _SEVERITY_BUCKETS}
 
 
 # Project $details down to fix-version fields before $group so the group never
 # accumulates the raw analyzer payload; only extract_fix_versions reads these.
-_SLIM_DETAILS_EXPR: Dict[str, Any] = {
+_SLIM_DETAILS_EXPR: dict[str, Any] = {
     "fixed_version": "$details.fixed_version",
     "vulnerabilities": {
         "$map": {
@@ -72,7 +72,7 @@ async def get_impact_analysis(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
-) -> List[ImpactAnalysisResult]:
+) -> list[ImpactAnalysisResult]:
     """Analyze which dependency fixes would have the highest impact across projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_IMPACT)
 
@@ -86,7 +86,7 @@ async def get_impact_analysis(
     if not scan_ids:
         return []
 
-    pipeline: List[Dict[str, Any]] = [
+    pipeline: list[dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
         {
             "$project": {
@@ -212,11 +212,11 @@ def _format_first_seen(first_seen: Any) -> str:
 
 
 def _build_hotspot(
-    r: Dict[str, Any],
-    enrichments: Dict[str, Any],
-    dep_type_map: Dict[str, str],
-    project_name_map: Dict[str, str],
-    project_ids: List[str],
+    r: dict[str, Any],
+    enrichments: dict[str, Any],
+    dep_type_map: dict[str, str],
+    project_name_map: dict[str, str],
+    project_ids: list[str],
 ) -> VulnerabilityHotspot:
     severity_counts = _severity_counts_from_row(r)
     fix_versions = extract_fix_versions(r.get("details_list", []))
@@ -272,7 +272,7 @@ async def get_vulnerability_hotspots(
         Query(description="Sort field: finding_count, component, first_seen, epss, risk"),
     ] = "finding_count",
     sort_order: Annotated[str, Query(description="Sort order: asc, desc")] = "desc",
-) -> List[VulnerabilityHotspot]:
+) -> list[VulnerabilityHotspot]:
     """Get dependencies with the most vulnerabilities (hotspots)."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_HOTSPOTS)
 
@@ -296,7 +296,7 @@ async def get_vulnerability_hotspots(
     mongo_sort_field = sort_field_map.get(sort_by, "finding_count")
     post_sort_by = sort_by if sort_by in ["epss", "risk"] else None
 
-    pipeline: List[Dict[str, Any]] = [
+    pipeline: list[dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
         {
             "$project": {
@@ -344,7 +344,7 @@ async def get_vulnerability_hotspots(
             logger.warning(f"Failed to enrich CVEs: {e}")
 
     component_names = list({r["_id"]["component"] for r in results})
-    type_pipeline: List[Dict[str, Any]] = [
+    type_pipeline: list[dict[str, Any]] = [
         {"$match": {"name": {"$in": component_names}}},
         {"$group": {"_id": "$name", "type": {"$first": "$type"}}},
     ]

@@ -1,7 +1,6 @@
 """Helper functions for authentication endpoints."""
 
 import os
-from typing import Optional
 
 from fastapi import BackgroundTasks
 
@@ -26,7 +25,7 @@ def get_logo_path() -> str:
 async def send_verification_email(
     background_tasks: BackgroundTasks,
     email: str,
-    system_settings: Optional[SystemSettings] = None,
+    system_settings: SystemSettings | None = None,
 ) -> None:
     """Send a verification email to the user."""
     # Gate on the DB-configured SMTP host the provider actually sends with, matching EmailProvider.send.
@@ -53,7 +52,7 @@ async def send_password_reset_email(
     background_tasks: BackgroundTasks,
     email: str,
     username: str,
-    system_settings: Optional[SystemSettings] = None,
+    system_settings: SystemSettings | None = None,
 ) -> None:
     """Send a password reset email to the user."""
     # Gate on the DB-configured SMTP host the provider actually sends with, matching EmailProvider.send.
@@ -86,7 +85,7 @@ async def send_system_invitation_email(
     email: str,
     invitation_link: str,
     inviter_name: str,
-    system_settings: Optional[SystemSettings] = None,
+    system_settings: SystemSettings | None = None,
 ) -> None:
     """Send a system invitation email to a new user."""
     # Gate on the DB-configured SMTP host the provider actually sends with, matching EmailProvider.send.
@@ -118,7 +117,7 @@ def send_project_member_added_email(
     project_id: str,
     inviter_name: str,
     role: str,
-    system_settings: Optional[SystemSettings] = None,
+    system_settings: SystemSettings | None = None,
 ) -> None:
     """Send a notification email when a user is added to a project."""
     # Gate on the DB-configured SMTP host the provider actually sends with, matching EmailProvider.send.

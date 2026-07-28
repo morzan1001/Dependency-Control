@@ -2,10 +2,9 @@
 
 import math
 from datetime import datetime
-from typing import Any, List
+from typing import Any
 
 from app.services.pqc_migration.mappings_loader import Timeline
-
 
 EXPOSURE_WEIGHT = 0.35
 KEY_WEAKNESS_WEIGHT = 0.30
@@ -42,7 +41,7 @@ def priority_score(
     *,
     asset: Any,
     source_family: str,
-    timelines: List[Timeline],
+    timelines: list[Timeline],
     now: datetime,
     asset_count: int = 1,
 ) -> int:
@@ -98,7 +97,7 @@ def _score_key_weakness(asset: Any, source_family: str) -> float:
     return 50.0
 
 
-def _score_deadline(source_family: str, timelines: List[Timeline], now: datetime) -> float:
+def _score_deadline(source_family: str, timelines: list[Timeline], now: datetime) -> float:
     applicable = [t for t in timelines if source_family in t.applies_to]
     if not applicable:
         return 40.0

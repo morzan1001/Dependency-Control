@@ -12,28 +12,18 @@ class MessageResponse(BaseModel):
 class LogoutResponse(MessageResponse):
     """Response for logout endpoint."""
 
-    pass
-
 
 class VerificationEmailResponse(MessageResponse):
     """Response for verification email endpoints."""
-
-    pass
 
 
 class EmailVerifyResponse(MessageResponse):
     """Response for email verification endpoint."""
 
-    pass
-
 
 class PasswordResetResponse(MessageResponse):
     """Response for password reset endpoint."""
 
-    pass
-
 
 class ForgotPasswordResponse(MessageResponse):
     """Response for forgot password endpoint."""
-
-    pass

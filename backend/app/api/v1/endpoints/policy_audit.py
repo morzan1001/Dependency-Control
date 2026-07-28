@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, Optional
+from typing import Any, Literal
 
 from fastapi import Body, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -275,9 +275,9 @@ async def _revert_policy(
     db: AsyncIOMotorDatabase,
     actor: User,
     policy_scope: Literal["system", "project"],
-    project_id: Optional[str],
+    project_id: str | None,
     target_version: int,
-    comment: Optional[str],
+    comment: str | None,
 ) -> None:
     target_entry = await PolicyAuditRepository(db).get_by_version(
         policy_scope=policy_scope,
@@ -291,7 +291,7 @@ async def _revert_policy(
     rules = [CryptoRule.model_validate(r) for r in snapshot.get("rules", [])]
 
     policy_repo = CryptoPolicyRepository(db)
-    current: Optional[CryptoPolicy]
+    current: CryptoPolicy | None
     if policy_scope == "system":
         current = await policy_repo.get_system_policy()
     else:

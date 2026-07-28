@@ -1,13 +1,11 @@
 """Helper functions for analytics endpoints."""
 
-from datetime import date, datetime
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import datetime, timezone
+from typing import Any
 
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.schemas.analytics import CVEEnrichmentResult
-from app.services.recommendation.common import get_attr
 from app.core.constants import (
     ANALYTICS_MAX_QUERY_LIMIT,
     BLAST_RADIUS_THRESHOLD,
@@ -33,6 +31,8 @@ from app.core.constants import (
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories import ProjectRepository, ScanRepository
+from app.schemas.analytics import CVEEnrichmentResult
+from app.services.recommendation.common import get_attr
 
 MONGO_MATCH = "$match"
 MONGO_GROUP = "$group"
@@ -51,7 +51,7 @@ def require_analytics_permission(user: User, permission: str) -> None:
         )
 
 
-async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> List[str]:
+async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> list[str]:
     """Get list of project IDs the user has access to."""
     from app.services.analytics.scopes import ScopeResolver
 
@@ -60,14 +60,14 @@ async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> List[str
 
 
 async def _resolve_active_scan_ids(
-    projects: List[Any],
+    projects: list[Any],
     db: AsyncIOMotorDatabase,
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """Resolve latest scan ID per project, excluding scans from deleted branches."""
     return await ScanRepository(db).get_latest_active_scan_ids(projects)
 
 
-async def get_latest_scan_ids(project_ids: List[str], db: AsyncIOMotorDatabase) -> List[str]:
+async def get_latest_scan_ids(project_ids: list[str], db: AsyncIOMotorDatabase) -> list[str]:
     """Get latest scan IDs for given projects, excluding scans from deleted branches."""
     project_repo = ProjectRepository(db)
     projects = await project_repo.find_many_with_scan_id(
@@ -79,7 +79,7 @@ async def get_latest_scan_ids(project_ids: List[str], db: AsyncIOMotorDatabase) 
     return list(resolved.values())
 
 
-async def get_projects_with_scans(project_ids: List[str], db: AsyncIOMotorDatabase) -> Tuple[Dict[str, str], List[str]]:
+async def get_projects_with_scans(project_ids: list[str], db: AsyncIOMotorDatabase) -> tuple[dict[str, str], list[str]]:
     """Return (project_name_map, scan_ids), excluding scans from deleted branches."""
     project_repo = ProjectRepository(db)
     projects = await project_repo.find_many_with_scan_id(
@@ -93,18 +93,18 @@ async def get_projects_with_scans(project_ids: List[str], db: AsyncIOMotorDataba
     return project_name_map, list(resolved.values())
 
 
-def calculate_days_until_due(kev_due_date: Optional[str]) -> Optional[int]:
+def calculate_days_until_due(kev_due_date: str | None) -> int | None:
     """Calculate days until KEV due date (negative = overdue)."""
     if not kev_due_date:
         return None
     try:
-        due = datetime.strptime(kev_due_date, "%Y-%m-%d").date()
-        return (due - date.today()).days
+        due = datetime.strptime(kev_due_date, "%Y-%m-%d").replace(tzinfo=timezone.utc).date()
+        return (due - datetime.now(timezone.utc).date()).days
     except Exception:
         return None
 
 
-def calculate_days_known(first_seen: Optional[datetime]) -> Optional[int]:
+def calculate_days_known(first_seen: datetime | None) -> int | None:
     """Calculate how many days a vulnerability has been known."""
     if not first_seen or not isinstance(first_seen, datetime):
         return None
@@ -114,7 +114,7 @@ def calculate_days_known(first_seen: Optional[datetime]) -> Optional[int]:
         return None
 
 
-def extract_fix_versions(details_list: List[Any]) -> set:
+def extract_fix_versions(details_list: list[Any]) -> set:
     """Extract fix versions from finding details."""
     fix_versions = set()
     for details in details_list:
@@ -127,7 +127,7 @@ def extract_fix_versions(details_list: List[Any]) -> set:
     return fix_versions
 
 
-def process_cve_enrichments(finding_ids: List[str], enrichments: Dict[str, Any]) -> CVEEnrichmentResult:
+def process_cve_enrichments(finding_ids: list[str], enrichments: dict[str, Any]) -> CVEEnrichmentResult:
     """Process CVE enrichment data and extract the maximum/worst-case values."""
     result = CVEEnrichmentResult()
 
@@ -137,23 +137,20 @@ def process_cve_enrichments(finding_ids: List[str], enrichments: Dict[str, Any])
 
         enr = enrichments[fid]
 
-        if enr.epss_score is not None:
-            if result.max_epss is None or enr.epss_score > result.max_epss:
-                result.max_epss = enr.epss_score
-                result.max_percentile = enr.epss_percentile
+        if enr.epss_score is not None and (result.max_epss is None or enr.epss_score > result.max_epss):
+            result.max_epss = enr.epss_score
+            result.max_percentile = enr.epss_percentile
 
-        if enr.risk_score is not None:
-            if result.max_risk is None or enr.risk_score > result.max_risk:
-                result.max_risk = enr.risk_score
+        if enr.risk_score is not None and (result.max_risk is None or enr.risk_score > result.max_risk):
+            result.max_risk = enr.risk_score
 
         if enr.is_kev:
             result.has_kev = True
             result.kev_count += 1
             if enr.kev_ransomware_use:
                 result.kev_ransomware_use = True
-            if enr.kev_due_date:
-                if result.kev_due_date is None or enr.kev_due_date < result.kev_due_date:
-                    result.kev_due_date = enr.kev_due_date
+            if enr.kev_due_date and (result.kev_due_date is None or enr.kev_due_date < result.kev_due_date):
+                result.kev_due_date = enr.kev_due_date
 
         if EXPLOIT_MATURITY_ORDER.get(enr.exploit_maturity, 0) > EXPLOIT_MATURITY_ORDER.get(result.exploit_maturity, 0):
             result.exploit_maturity = enr.exploit_maturity
@@ -178,7 +175,7 @@ def _calculate_kev_boost(enrichment_data: CVEEnrichmentResult) -> float:
     return KEV_DEFAULT_BOOST
 
 
-def _calculate_epss_boost(max_epss: Optional[float]) -> float:
+def _calculate_epss_boost(max_epss: float | None) -> float:
     """Calculate the EPSS-based boost multiplier for impact scoring."""
     if not max_epss:
         return 1.0
@@ -194,11 +191,11 @@ def _calculate_epss_boost(max_epss: Optional[float]) -> float:
 
 
 def calculate_impact_score(
-    severity_counts: Dict[str, int],
+    severity_counts: dict[str, int],
     affected_projects: int,
     enrichment_data: CVEEnrichmentResult,
     has_fix: bool,
-    days_known: Optional[int],
+    days_known: int | None,
 ) -> float:
     """Calculate fix impact score based on severity, reach, and threat intelligence."""
     # severity_counts may use lowercase or original-case keys
@@ -224,12 +221,12 @@ def calculate_impact_score(
 
 
 def build_priority_reasons(
-    severity_counts: Dict[str, int],
+    severity_counts: dict[str, int],
     enrichment_data: CVEEnrichmentResult,
     affected_projects: int,
     has_fix: bool,
-    days_known: Optional[int],
-) -> List[str]:
+    days_known: int | None,
+) -> list[str]:
     """Build human-readable priority reasons list."""
     reasons = []
     days_until_due = enrichment_data.days_until_due
@@ -264,7 +261,7 @@ def build_priority_reasons(
     return reasons
 
 
-def count_severities(severities: List[Optional[str]]) -> Dict[str, int]:
+def count_severities(severities: list[str | None]) -> dict[str, int]:
     """Count severities from a list."""
     counts = {"critical": 0, "high": 0, "medium": 0, "low": 0}
     for sev in severities:
@@ -276,10 +273,10 @@ def count_severities(severities: List[Optional[str]]) -> Dict[str, int]:
 
 
 def build_findings_severity_map(
-    findings: List[Any],
-) -> Dict[str, Dict[str, int]]:
+    findings: list[Any],
+) -> dict[str, dict[str, int]]:
     """Map component names to their severity counts."""
-    findings_map: Dict[str, Dict[str, int]] = {}
+    findings_map: dict[str, dict[str, int]] = {}
 
     for finding in findings:
         component = get_attr(finding, "component")
@@ -307,10 +304,10 @@ def build_findings_severity_map(
 
 def build_hotspot_priority_reasons(
     enrichment_data: CVEEnrichmentResult,
-    severity_counts: Dict[str, int],
+    severity_counts: dict[str, int],
     has_fix: bool,
-    days_until_due: Optional[int],
-) -> List[str]:
+    days_until_due: int | None,
+) -> list[str]:
     """Build priority reasons for vulnerability hotspots."""
     reasons = []
 
@@ -339,10 +336,10 @@ def build_hotspot_priority_reasons(
 
 
 async def gather_cross_project_data(
-    user_project_ids: List[str],
+    user_project_ids: list[str],
     current_project_id: str,
     db: AsyncIOMotorDatabase,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Gather cross-project vulnerability and dependency data for shared-vuln analysis.
 
     Returns None if the user has one project or fewer.
@@ -362,7 +359,7 @@ async def gather_cross_project_data(
     finding_repo = FindingRepository(db)
     dep_repo = DependencyRepository(db)
 
-    cross_project_data: Dict[str, Any] = {
+    cross_project_data: dict[str, Any] = {
         "projects": [],
         "total_projects": len(user_project_ids),
     }
@@ -378,7 +375,7 @@ async def gather_cross_project_data(
 
     resolved_scans = await _resolve_active_scan_ids(other_projects, db)
 
-    scan_id_to_project: Dict[str, str] = {}
+    scan_id_to_project: dict[str, str] = {}
     for proj_id, scan_id in resolved_scans.items():
         scan_id_to_project[scan_id] = proj_id
 
@@ -393,7 +390,7 @@ async def gather_cross_project_data(
     )
     scan_stats_map = {s.id: s.stats for s in other_scans if s.stats}
 
-    cve_pipeline: List[Dict[str, Any]] = [
+    cve_pipeline: list[dict[str, Any]] = [
         {
             MONGO_MATCH: {
                 "scan_id": {"$in": other_scan_ids},
@@ -410,7 +407,7 @@ async def gather_cross_project_data(
     cve_results = await finding_repo.aggregate(cve_pipeline)
     scan_cves_map = {r["_id"]: [c for c in r["cves"] if c] for r in cve_results}
 
-    pkg_pipeline: List[Dict[str, Any]] = [
+    pkg_pipeline: list[dict[str, Any]] = [
         {MONGO_MATCH: {"scan_id": {"$in": other_scan_ids}}},
         {
             MONGO_GROUP: {

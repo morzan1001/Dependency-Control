@@ -1,12 +1,11 @@
 import asyncio
 import logging
-from typing import Dict, List
 
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, EPSS_API_URL
+from app.core.http_utils import InstrumentedAsyncClient
 from app.core.metrics import external_api_rate_limit_hits_total
 from app.schemas.enrichment import EPSSData
 
@@ -22,7 +21,7 @@ class EPSSProvider:
         self._batch_size = ANALYZER_BATCH_SIZES.get("epss", 100)
         self._timeout = ANALYZER_TIMEOUTS.get("epss", ANALYZER_TIMEOUTS["default"])
 
-    async def fetch_epss_batch(self, client: InstrumentedAsyncClient, cves: List[str]) -> Dict[str, EPSSData]:
+    async def fetch_epss_batch(self, client: InstrumentedAsyncClient, cves: list[str]) -> dict[str, EPSSData]:
         if not cves:
             return {}
 
@@ -85,7 +84,7 @@ class EPSSProvider:
         return {}
 
     async def _fetch_and_cache_batches(
-        self, client: InstrumentedAsyncClient, missing_cves: List[str], result: Dict[str, EPSSData]
+        self, client: InstrumentedAsyncClient, missing_cves: list[str], result: dict[str, EPSSData]
     ) -> None:
         for i in range(0, len(missing_cves), self._batch_size):
             batch = missing_cves[i : i + self._batch_size]
@@ -103,7 +102,7 @@ class EPSSProvider:
             if i + self._batch_size < len(missing_cves):
                 await asyncio.sleep(0.5)
 
-    async def load_epss_scores(self, client: InstrumentedAsyncClient, cves: List[str]) -> Dict[str, EPSSData]:
+    async def load_epss_scores(self, client: InstrumentedAsyncClient, cves: list[str]) -> dict[str, EPSSData]:
         """Load EPSS scores for `cves`, hitting Redis cache first."""
         result = {}
         missing_cves = []

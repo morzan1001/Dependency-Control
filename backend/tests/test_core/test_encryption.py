@@ -2,9 +2,9 @@ import os
 from unittest.mock import patch
 
 import pytest
-
-from app.core.constants import ENCRYPTION_MAGIC, ENCRYPTION_CHUNK_SIZE, ENCRYPTION_FORMAT_VERSION
 from cryptography.exceptions import InvalidTag
+
+from app.core.constants import ENCRYPTION_CHUNK_SIZE, ENCRYPTION_FORMAT_VERSION, ENCRYPTION_MAGIC
 
 
 @pytest.fixture

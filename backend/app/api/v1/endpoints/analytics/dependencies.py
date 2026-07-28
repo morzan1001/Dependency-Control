@@ -1,6 +1,6 @@
 """Analytics dependency endpoints: dependency-tree, component-findings, dependency-metadata."""
 
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any
 
 from fastapi import HTTPException, Query
 
@@ -34,12 +34,13 @@ from ._shared import _MSG_ACCESS_DENIED, _get_enrichment_info, _resolve_scan_id
 
 router = CustomAPIRouter()
 
+
 def _dep_key(dep: Any) -> str:
     """Node identity for parent matching: PURL (parent_components hold PURLs, as in graph.py), else name@version."""
     return get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
 
 
-def _build_tree_node(dep: Any, findings_map: Dict[str, Dict[str, int]]) -> DependencyTreeNode:
+def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> DependencyTreeNode:
     """Build one node without its children; the graph builder fills in child_ids."""
     name = get_attr(dep, "name", "")
     finding_info = findings_map.get(name, {})
@@ -73,15 +74,13 @@ def _build_tree_node(dep: Any, findings_map: Dict[str, Dict[str, int]]) -> Depen
     )
 
 
-def _build_dependency_graph(
-    dependencies: List[Any], findings_map: Dict[str, Dict[str, int]]
-) -> DependencyGraph:
+def _build_dependency_graph(dependencies: list[Any], findings_map: dict[str, dict[str, int]]) -> DependencyGraph:
     """Flatten deps into unique nodes + per-node child_ids and roots so the client nests lazily."""
-    node_by_key: Dict[str, DependencyTreeNode] = {}
-    order: List[str] = []
+    node_by_key: dict[str, DependencyTreeNode] = {}
+    order: list[str] = []
     # A purl can appear in several docs (e.g. one per container layer) with different
     # parent_components; merge every doc's parents so no parent -> child edge is lost.
-    parents_by_key: Dict[str, List[str]] = {}
+    parents_by_key: dict[str, list[str]] = {}
     for dep in dependencies:
         key = _dep_key(dep)
         if key not in node_by_key:
@@ -92,7 +91,7 @@ def _build_dependency_graph(
             if parent not in known:
                 known.append(parent)
 
-    children_by_parent: Dict[str, List[str]] = {}
+    children_by_parent: dict[str, list[str]] = {}
     for key in order:
         for parent in parents_by_key.get(key, []):
             siblings = children_by_parent.setdefault(parent, [])
@@ -119,16 +118,14 @@ def _build_dependency_graph(
         return any(p in node_by_key for p in parents_by_key.get(key, []))
 
     reachable: set = set()
-    root_keys = [
-        key for key in order if node_by_key[key].direct or not _has_resolvable_parent(key)
-    ]
+    root_keys = [key for key in order if node_by_key[key].direct or not _has_resolvable_parent(key)]
     for key in root_keys:
         reachable |= _closure(key)
 
     # Whatever is still unreachable belongs to a component with no natural entry (a fully
     # disconnected cycle). Promote one entry per component and drop any extra root its subtree
     # already covers, so a descendant seen before its component's entry is not left as a root.
-    extra_roots: List[str] = []
+    extra_roots: list[str] = []
     for key in order:
         if key not in reachable:
             component = _closure(key)
@@ -149,7 +146,7 @@ async def get_dependency_tree(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    scan_id: Annotated[Optional[str], Query(description="Specific scan ID, defaults to latest")] = None,
+    scan_id: Annotated[str | None, Query(description="Specific scan ID, defaults to latest")] = None,
 ) -> DependencyGraph:
     """Get the dependency graph for a project as flat nodes + roots (client nests lazily)."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_TREE)
@@ -186,8 +183,8 @@ async def get_component_findings(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     component: Annotated[str, Query(description="Component/package name")],
-    version: Annotated[Optional[str], Query(description="Specific version")] = None,
-) -> List[Dict[str, Any]]:
+    version: Annotated[str | None, Query(description="Specific version")] = None,
+) -> list[dict[str, Any]]:
     """Get all findings for a specific component across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
@@ -218,10 +215,8 @@ async def get_component_findings(
     return results
 
 
-def _build_dep_query(
-    scan_ids: List[str], component: str, version: Optional[str], type: Optional[str]
-) -> Dict[str, Any]:
-    dep_query: Dict[str, Any] = {"scan_id": {"$in": scan_ids}, "name": component}
+def _build_dep_query(scan_ids: list[str], component: str, version: str | None, type: str | None) -> dict[str, Any]:
+    dep_query: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "name": component}
     if version:
         dep_query["version"] = version
     if type:
@@ -229,8 +224,8 @@ def _build_dep_query(
     return dep_query
 
 
-def _collect_affected_projects(dependencies: List[Any], project_name_map: Dict[str, str]) -> Dict[str, Dict[str, Any]]:
-    affected_projects: Dict[str, Dict[str, Any]] = {}
+def _collect_affected_projects(dependencies: list[Any], project_name_map: dict[str, str]) -> dict[str, dict[str, Any]]:
+    affected_projects: dict[str, dict[str, Any]] = {}
     for dep in dependencies:
         proj_id = get_attr(dep, "project_id")
         if proj_id and proj_id not in affected_projects:
@@ -242,7 +237,7 @@ def _collect_affected_projects(dependencies: List[Any], project_name_map: Dict[s
     return affected_projects
 
 
-def _first_dep_value(dependencies: List[Any], key: str) -> Optional[Any]:
+def _first_dep_value(dependencies: list[Any], key: str) -> Any | None:
     for dep in dependencies:
         val = get_attr(dep, key)
         if val:
@@ -255,9 +250,9 @@ async def get_dependency_metadata_endpoint(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     component: Annotated[str, Query(description="Component/package name")],
-    version: Annotated[Optional[str], Query(description="Specific version")] = None,
-    type: Annotated[Optional[str], Query(description="Package type")] = None,
-) -> Optional[DependencyMetadata]:
+    version: Annotated[str | None, Query(description="Specific version")] = None,
+    type: Annotated[str | None, Query(description="Package type")] = None,
+) -> DependencyMetadata | None:
     """Aggregated dependency metadata across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 
@@ -291,7 +286,7 @@ async def get_dependency_metadata_endpoint(
     dep_purl = get_attr(first_dep, "purl")
     enrichment_info = await _get_enrichment_info(enrichment_repo, dep_purl)
 
-    finding_query: Dict[str, Any] = {"scan_id": {"$in": scan_ids}, "component": component}
+    finding_query: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "component": component}
     if version:
         finding_query["version"] = version
 

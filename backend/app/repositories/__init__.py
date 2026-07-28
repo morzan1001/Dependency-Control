@@ -1,12 +1,12 @@
 """Repository pattern over MongoDB collections."""
 
-from app.repositories.base import BaseRepository
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.archive_metadata import ArchiveMetadataRepository
+from app.repositories.base import BaseRepository
 from app.repositories.broadcasts import BroadcastRepository
 from app.repositories.callgraphs import CallgraphRepository
-from app.repositories.crypto_asset import CryptoAssetRepository  # noqa: F401
-from app.repositories.crypto_policy import CryptoPolicyRepository  # noqa: F401
+from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.dependency_enrichments import DependencyEnrichmentRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
@@ -24,15 +24,15 @@ from app.repositories.webhook_deliveries import WebhookDeliveriesRepository
 from app.repositories.webhooks import WebhookRepository
 
 __all__ = [
-    "BaseRepository",
     "AnalysisResultRepository",
     "ArchiveMetadataRepository",
+    "BaseRepository",
     "BroadcastRepository",
     "CallgraphRepository",
     "CryptoAssetRepository",
     "CryptoPolicyRepository",
-    "DependencyRepository",
     "DependencyEnrichmentRepository",
+    "DependencyRepository",
     "DistributedLocksRepository",
     "FindingRepository",
     "GitHubInstanceRepository",

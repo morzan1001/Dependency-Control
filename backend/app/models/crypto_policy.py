@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime, timezone
-from typing import List, Literal, Optional
+from typing import Literal
 
 from pydantic import Field
 
@@ -20,10 +20,10 @@ class CryptoPolicy(MongoDocument):
     scope: Literal["system", "project"] = Field(
         ..., description="Policy scope: 'system' for the seed policy, 'project' for per-project overrides"
     )
-    project_id: Optional[str] = Field(None, description="Project ID when scope='project'; None for system policy")
-    rules: List[CryptoRule] = Field(default_factory=list, description="Rules carried by this policy document")
+    project_id: str | None = Field(None, description="Project ID when scope='project'; None for system policy")
+    rules: list[CryptoRule] = Field(default_factory=list, description="Rules carried by this policy document")
     version: int = Field(1, description="Monotonically increasing version for cache invalidation and audit trail")
     updated_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc), description="Last write timestamp (UTC)"
     )
-    updated_by: Optional[str] = Field(None, description="User ID of the last editor")
+    updated_by: str | None = Field(None, description="User ID of the last editor")

@@ -1,12 +1,11 @@
 import asyncio
 import logging
 import os
-from pathlib import Path
 from email.mime.image import MIMEImage
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import formataddr
-from typing import Optional
+from pathlib import Path
 
 from prometheus_client import Counter
 
@@ -16,8 +15,8 @@ from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
 
-notifications_sent_total: Optional[Counter] = None
-notifications_failed_total: Optional[Counter] = None
+notifications_sent_total: Counter | None = None
+notifications_failed_total: Counter | None = None
 
 try:
     from app.core.metrics import notifications_failed_total, notifications_sent_total
@@ -38,8 +37,8 @@ class EmailProvider(NotificationProvider):
         destination: str,
         subject: str,
         message: str,
-        html_message: Optional[str],
-        logo_path: Optional[str],
+        html_message: str | None,
+        logo_path: str | None,
     ) -> MIMEMultipart:
         """Build the MIME message, attaching logo if available."""
         has_logo = bool(logo_path and os.path.exists(logo_path))
@@ -77,8 +76,8 @@ class EmailProvider(NotificationProvider):
         self,
         smtp_host: str,
         smtp_port: int,
-        smtp_user: Optional[str],
-        smtp_password: Optional[str],
+        smtp_user: str | None,
+        smtp_password: str | None,
         encryption: str,
         msg: MIMEMultipart,
     ) -> None:
@@ -119,9 +118,9 @@ class EmailProvider(NotificationProvider):
         destination: str,
         subject: str,
         message: str,
-        html_message: Optional[str] = None,
-        logo_path: Optional[str] = None,
-        system_settings: Optional[SystemSettings] = None,
+        html_message: str | None = None,
+        logo_path: str | None = None,
+        system_settings: SystemSettings | None = None,
     ) -> bool:
         if not system_settings:
             logger.warning("System settings not provided. Skipping email.")

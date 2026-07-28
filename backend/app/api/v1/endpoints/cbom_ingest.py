@@ -1,14 +1,14 @@
 """Ingest CycloneDX 1.6 CBOM payloads; creates a scan and persists CryptoAssets."""
 
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.api.deps import DatabaseDep
 from app.api import deps
+from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.core.constants import MAX_CBOM_BODY_BYTES, MAX_CRYPTO_ASSETS_PER_SCAN, WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED
 from app.core.metrics import cbom_ingests_total
@@ -50,12 +50,12 @@ def _enforce_body_size_limit(request: Request) -> None:
 class CBOMIngest(BaseIngest):
     """CBOM ingest payload; flat shape aligned with SBOMIngest, also accepting a legacy scan_metadata envelope."""
 
-    cbom: Dict[str, Any] = Field(..., description="CycloneDX 1.6 CBOM payload")
+    cbom: dict[str, Any] = Field(..., description="CycloneDX 1.6 CBOM payload")
 
     # Optional so legacy payloads without pipeline_id/commit_hash/branch can still ingest.
-    pipeline_id: Optional[int] = Field(None, description="Unique ID of the pipeline run")  # type: ignore[assignment]
-    commit_hash: Optional[str] = Field(None, description="Git commit hash")  # type: ignore[assignment]
-    branch: Optional[str] = Field(None, description="Git branch name")  # type: ignore[assignment]
+    pipeline_id: int | None = Field(None, description="Unique ID of the pipeline run")  # type: ignore[assignment]
+    commit_hash: str | None = Field(None, description="Git commit hash")  # type: ignore[assignment]
+    branch: str | None = Field(None, description="Git branch name")  # type: ignore[assignment]
 
     # Accept unknown keys so the pre-validator can fold a legacy scan_metadata envelope.
     model_config = ConfigDict(extra="allow")

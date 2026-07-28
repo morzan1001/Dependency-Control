@@ -1,7 +1,8 @@
 """Tests for ProjectInvitation and SystemInvitation models."""
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
-from datetime import datetime, timezone, timedelta
 from pydantic import ValidationError
 
 from app.models.invitation import ProjectInvitation, SystemInvitation

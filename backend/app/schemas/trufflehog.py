@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, Union
+from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -6,14 +6,14 @@ from app.schemas.ingest import BaseIngest
 
 
 class TruffleHogFinding(BaseModel):
-    SourceMetadata: Optional[Dict[str, Any]] = None
+    SourceMetadata: dict[str, Any] | None = None
     # Synthesized by the secret-scan CI template (not a native TruffleHog field): whether
     # the finding's file path still exists at the scanned commit's HEAD tree.
-    DcInCurrentTree: Optional[bool] = None
-    SourceID: Optional[Union[str, int]] = None
-    SourceType: Optional[Union[str, int]] = None
-    SourceName: Optional[str] = None
-    DetectorType: Union[str, int]
+    DcInCurrentTree: bool | None = None
+    SourceID: str | int | None = None
+    SourceType: str | int | None = None
+    SourceName: str | None = None
+    DetectorType: str | int
 
     @field_validator("SourceID", "SourceType", "DetectorType", mode="before")
     @classmethod
@@ -24,18 +24,18 @@ class TruffleHogFinding(BaseModel):
             return str(v)
         return v
 
-    DecoderName: Optional[str] = None
-    Verified: Optional[bool] = None
-    Raw: Optional[str] = None
-    Redacted: Optional[str] = None
-    ExtraData: Optional[Dict[str, Any]] = None
-    StructuredData: Optional[Dict[str, Any]] = None
+    DecoderName: str | None = None
+    Verified: bool | None = None
+    Raw: str | None = None
+    Redacted: str | None = None
+    ExtraData: dict[str, Any] | None = None
+    StructuredData: dict[str, Any] | None = None
 
 
 class TruffleHogIngest(BaseIngest):
     """Schema for TruffleHog secret scan results."""
 
-    findings: List[TruffleHogFinding] = Field(
+    findings: list[TruffleHogFinding] = Field(
         default_factory=list,
         description="List of secrets found by TruffleHog.",
     )

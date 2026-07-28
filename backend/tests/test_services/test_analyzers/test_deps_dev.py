@@ -1,6 +1,6 @@
 """Tests that scorecard severity thresholds are threaded per call, never stored on the shared analyzer instance."""
 
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -8,7 +8,7 @@ from app.models.finding import Severity
 from app.services.analyzers.deps_dev import DepsDevAnalyzer
 
 
-def _scorecard(score: float) -> Dict[str, Any]:
+def _scorecard(score: float) -> dict[str, Any]:
     """Scorecard payload with no failing checks, so severity is score-driven."""
     return {"overallScore": score, "date": "2024-01-01", "checks": []}
 

@@ -8,8 +8,6 @@ cross-project scan checks live one layer above (REST handler / MCP wrapper).
 
 from __future__ import annotations
 
-from typing import List, Optional
-
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.finding import FindingType, Severity
@@ -37,7 +35,7 @@ _MAX_PAGE_SIZE = 200
 
 
 def _reject_unknown(
-    values: List[str],
+    values: list[str],
     allowed: set,
     label: str,
     *,
@@ -59,9 +57,9 @@ def _validate_query(
     to_scan: str,
     page: int,
     page_size: int,
-    change: Optional[str],
-    severity: Optional[List[str]],
-    finding_type: Optional[List[str]],
+    change: str | None,
+    severity: list[str] | None,
+    finding_type: list[str] | None,
 ) -> None:
     if from_scan == to_scan:
         raise InvalidDeltaQuery("from_scan_id and to_scan_id must differ")
@@ -91,9 +89,9 @@ async def compute_scan_delta_dispatch(
     to_scan: str,
     page: int,
     page_size: int,
-    change: Optional[str],
-    severity: Optional[List[str]],
-    finding_type: Optional[List[str]],
+    change: str | None,
+    severity: list[str] | None,
+    finding_type: list[str] | None,
 ) -> ScanDeltaResponse:
     _validate_query(
         category=category,

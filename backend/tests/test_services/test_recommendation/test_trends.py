@@ -2,8 +2,8 @@
 
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.trends import (
-    analyze_regressions,
     analyze_recurring_issues,
+    analyze_regressions,
 )
 
 
@@ -362,7 +362,7 @@ class TestRecurringDetectionEndToEndWithPersistedSummary:
             scanners=["licensecheck"],
         )
         vuln = self._aggregated_vuln("CVE-2024-001")
-        findings_to_insert, vulnerability_findings = _prepare_finding_records(
+        _findings_to_insert, vulnerability_findings = _prepare_finding_records(
             [license_finding, vuln], "scanY", "proj-1", None
         )
         summary = _build_findings_summary(vulnerability_findings)

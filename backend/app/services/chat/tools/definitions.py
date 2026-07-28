@@ -1,6 +1,6 @@
 """Static tool metadata: TOOL_DEFINITIONS, TOOL_PERMISSIONS, get_tool_definitions()."""
 
-from typing import Any, Dict, List
+from typing import Any
 
 from app.core.permissions import Permissions
 
@@ -9,7 +9,7 @@ _DESC_SCAN_ID = "The scan ID"
 _DESC_OPTIONAL_SINGLE_PROJECT = "Optional: restrict to a single project."
 _DESC_MAX_FINDINGS_10_25 = "Max findings (default 10, max 25)."
 
-TOOL_DEFINITIONS: List[Dict[str, Any]] = [
+TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
         "type": "function",
         "function": {
@@ -1051,7 +1051,7 @@ TOOL_DEFINITIONS: List[Dict[str, Any]] = [
 ]
 
 
-TOOL_PERMISSIONS: Dict[str, List[str]] = {
+TOOL_PERMISSIONS: dict[str, list[str]] = {
     # Most tools just need project:read (access is further scoped by build_user_project_query)
     "list_global_waivers": [Permissions.WAIVER_READ_ALL],
     "get_system_settings": [Permissions.SYSTEM_MANAGE],
@@ -1061,6 +1061,6 @@ TOOL_PERMISSIONS: Dict[str, List[str]] = {
 }
 
 
-def get_tool_definitions() -> List[Dict[str, Any]]:
+def get_tool_definitions() -> list[dict[str, Any]]:
     """Return all tool definitions in Ollama function-calling format."""
     return TOOL_DEFINITIONS

@@ -10,8 +10,8 @@ from app.core.constants import (
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
     PROJECT_ROLE_VIEWER,
-    TEAM_ROLE_MEMBER,
     TEAM_ROLE_ADMIN,
+    TEAM_ROLE_MEMBER,
 )
 from app.models.project import Project, ProjectMember
 from app.models.team import Team, TeamMember

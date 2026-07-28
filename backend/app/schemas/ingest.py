@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -12,17 +12,17 @@ class BaseIngest(BaseModel):
     commit_hash: str = Field(..., description="Git commit hash")
     branch: str = Field(..., description="Git branch name")
 
-    pipeline_iid: Optional[int] = Field(None, description="Project-level pipeline ID")
-    project_url: Optional[str] = Field(None, description="URL to the project")
-    pipeline_url: Optional[str] = Field(None, description="URL to the pipeline")
+    pipeline_iid: int | None = Field(None, description="Project-level pipeline ID")
+    project_url: str | None = Field(None, description="URL to the project")
+    pipeline_url: str | None = Field(None, description="URL to the pipeline")
 
-    job_id: Optional[int] = Field(None, description="CI Job ID")
-    job_started_at: Optional[str] = Field(None, description="Job start time")
+    job_id: int | None = Field(None, description="CI Job ID")
+    job_started_at: str | None = Field(None, description="Job start time")
 
-    project_name: Optional[str] = Field(None, description="Name of the project")
-    commit_message: Optional[str] = Field(None, description="Commit message")
-    commit_tag: Optional[str] = Field(None, description="Git tag")
-    pipeline_user: Optional[str] = Field(None, description="User who triggered the pipeline")
+    project_name: str | None = Field(None, description="Name of the project")
+    commit_message: str | None = Field(None, description="Commit message")
+    commit_tag: str | None = Field(None, description="Git tag")
+    pipeline_user: str | None = Field(None, description="User who triggered the pipeline")
 
 
 class ScanContext(BaseModel):
@@ -30,13 +30,13 @@ class ScanContext(BaseModel):
 
     scan_id: str = Field(..., description=_DESC_SCAN_ID)
     is_new: bool = Field(..., description="Whether this is a newly created scan")
-    pipeline_url: Optional[str] = Field(None, description="URL to the pipeline")
+    pipeline_url: str | None = Field(None, description="URL to the pipeline")
 
     model_config = ConfigDict(frozen=True)
 
 
 class SBOMIngest(BaseIngest):
-    sboms: List[Dict[str, Any]] = Field(default_factory=list, description="List of SBOM JSON contents")
+    sboms: list[dict[str, Any]] = Field(default_factory=list, description="List of SBOM JSON contents")
 
 
 class ScanStatsResponse(BaseModel):
@@ -78,11 +78,11 @@ class SBOMIngestResponse(BaseModel):
     sboms_processed: int = Field(0, description="Number of SBOMs successfully processed")
     sboms_failed: int = Field(0, description="Number of SBOMs that failed to process")
     dependencies_count: int = Field(0, description="Total dependencies extracted")
-    warnings: List[str] = Field(default_factory=list, description="Processing warnings")
+    warnings: list[str] = Field(default_factory=list, description="Processing warnings")
 
 
 class ProjectConfigResponse(BaseModel):
     """Response for project configuration endpoint."""
 
-    active_analyzers: List[str] = Field(default_factory=list, description="List of active analyzer names")
+    active_analyzers: list[str] = Field(default_factory=list, description="List of active analyzer names")
     retention_days: int = Field(90, description="Scan retention period in days")

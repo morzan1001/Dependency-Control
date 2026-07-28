@@ -1,5 +1,4 @@
 import json
-from typing import Dict, List
 
 import pytest
 
@@ -45,7 +44,7 @@ async def test_write_then_read_roundtrip():
 
     # Round-trip read
     parsed_header = None
-    rows_by_coll: Dict[str, List[dict]] = {}
+    rows_by_coll: dict[str, list[dict]] = {}
     footer = None
 
     async def source():
@@ -97,7 +96,7 @@ async def test_write_includes_crypto_assets_in_bundle_and_stats():
 
     assert stats.crypto_assets == 2
 
-    rows_by_coll: Dict[str, List[dict]] = {}
+    rows_by_coll: dict[str, list[dict]] = {}
     footer = None
 
     async def source():
@@ -149,7 +148,7 @@ async def test_roundtrip_preserves_datetime_and_objectid_bson_types():
         yield raw
 
     header = None
-    findings: List[dict] = []
+    findings: list[dict] = []
     async for event in read_bundle_frames(source()):
         if event["type"] == "header":
             header = event["data"]

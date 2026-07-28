@@ -42,7 +42,7 @@ class TestNormalizeTrufflehog:
             ]
         }
         self.agg.aggregate("trufflehog", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.component == "src/auth.py"
 
     def test_unknown_file_path_when_no_source(self):
@@ -56,7 +56,7 @@ class TestNormalizeTrufflehog:
             ]
         }
         self.agg.aggregate("trufflehog", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.component == "unknown"
 
     def test_finding_id_contains_secret_hash(self):
@@ -73,7 +73,7 @@ class TestNormalizeTrufflehog:
             ]
         }
         self.agg.aggregate("trufflehog", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert expected_hash in f.id
 
     def test_verified_status_in_details(self):
@@ -88,7 +88,7 @@ class TestNormalizeTrufflehog:
             ]
         }
         self.agg.aggregate("trufflehog", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["verified"] is True
 
     def test_detector_in_details(self):
@@ -102,7 +102,7 @@ class TestNormalizeTrufflehog:
             ]
         }
         self.agg.aggregate("trufflehog", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["detector"] == "Slack Token"
 
     def test_empty_findings(self):
@@ -140,7 +140,7 @@ class TestNormalizeTrufflehog:
             ]
         }
         self.agg.aggregate("trufflehog", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["detector"] == "AWS"
         assert "AWS" in f.description
         assert "AWS" in f.id
@@ -158,7 +158,7 @@ class TestNormalizeTrufflehog:
             ]
         }
         self.agg.aggregate("trufflehog", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert "nohash" in f.id
 
     def test_git_commit_metadata_in_details(self):
@@ -181,7 +181,7 @@ class TestNormalizeTrufflehog:
             ]
         }
         self.agg.aggregate("trufflehog", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["commit"] == "abc123def456"
         assert f.details["line"] == 7
         assert f.details["commit_timestamp"] == "2026-01-05T10:00:00Z"
@@ -197,7 +197,7 @@ class TestNormalizeTrufflehog:
             ]
         }
         self.agg.aggregate("trufflehog", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["commit"] is None
         assert f.details["line"] is None
         assert f.details["commit_timestamp"] is None
@@ -214,7 +214,7 @@ class TestNormalizeTrufflehog:
             ]
         }
         self.agg.aggregate("trufflehog", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["in_current_tree"] is True
 
     def test_in_current_tree_false_from_pipeline_flag(self):
@@ -229,7 +229,7 @@ class TestNormalizeTrufflehog:
             ]
         }
         self.agg.aggregate("trufflehog", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["in_current_tree"] is False
 
     def test_in_current_tree_unknown_when_flag_absent(self):
@@ -243,7 +243,7 @@ class TestNormalizeTrufflehog:
             ]
         }
         self.agg.aggregate("trufflehog", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["in_current_tree"] is None
 
     def test_verified_secret_has_boosted_adjusted_risk_score(self):
@@ -259,7 +259,7 @@ class TestNormalizeTrufflehog:
             ]
         }
         self.agg.aggregate("trufflehog", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["risk_score"] == 40.0
         assert abs(f.details["adjusted_risk_score"] - 44.0) < 0.01
 
@@ -275,5 +275,5 @@ class TestNormalizeTrufflehog:
             ]
         }
         self.agg.aggregate("trufflehog", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["adjusted_risk_score"] == 16.0

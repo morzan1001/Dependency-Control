@@ -1,8 +1,9 @@
 """Compliance report REST endpoints; generation runs in a BackgroundTask with a best-effort webhook on completion."""
 
 import logging
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from bson import ObjectId
 from fastapi import BackgroundTasks, HTTPException, Query
@@ -31,10 +32,10 @@ _REPORT_NOT_FOUND = "Report not found"
 
 class ReportRequest(BaseModel):
     scope: Literal["project", "team", "global", "user"] = Field(..., pattern=_SCOPE_PATTERN)
-    scope_id: Optional[str] = None
+    scope_id: str | None = None
     framework: ReportFramework
     format: ReportFormat
-    comment: Optional[str] = Field(None, max_length=1000)
+    comment: str | None = Field(None, max_length=1000)
 
 
 class ReportAck(BaseModel):
@@ -112,7 +113,7 @@ async def _user_can_see_report(db: AsyncIOMotorDatabase, user: User, report: Com
         return False
 
 
-async def _build_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> Dict[str, Any]:
+async def _build_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> dict[str, Any]:
     """Build the $or filter capturing every scope a user may see, so list pagination runs on already-filtered results."""
     from app.core.permissions import Permissions, has_permission
     from app.repositories.teams import TeamRepository
@@ -121,14 +122,14 @@ async def _build_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> Dict
     is_super = has_permission(perms, Permissions.SYSTEM_MANAGE)
     user_id = str(user.id)
 
-    branches: List[Dict[str, Any]] = []
+    branches: list[dict[str, Any]] = []
 
-    user_branch: Dict[str, Any] = {"scope": "user"}
+    user_branch: dict[str, Any] = {"scope": "user"}
     if not is_super:
         user_branch["requested_by"] = user_id
     branches.append(user_branch)
 
-    project_ids = await ScopeResolver(db, user)._list_user_project_ids()  # noqa: SLF001
+    project_ids = await ScopeResolver(db, user)._list_user_project_ids()
     if project_ids:
         branches.append({"scope": "project", "scope_id": {"$in": project_ids}})
 
@@ -148,10 +149,10 @@ async def _build_visibility_filter(db: AsyncIOMotorDatabase, user: User) -> Dict
 async def list_reports(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    scope: Optional[str] = Query(None, pattern=_SCOPE_PATTERN),
-    scope_id: Optional[str] = None,
-    framework: Optional[ReportFramework] = None,
-    status: Optional[ReportStatus] = None,
+    scope: str | None = Query(None, pattern=_SCOPE_PATTERN),
+    scope_id: str | None = None,
+    framework: ReportFramework | None = None,
+    status: ReportStatus | None = None,
     skip: int = Query(0, ge=0),
     limit: int = Query(50, ge=1, le=200),
 ) -> dict[str, Any]:

@@ -1,13 +1,13 @@
 """Read-only endpoints for crypto assets."""
 
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import HTTPException, Query
 
+from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_404
-from app.api.deps import CurrentUserDep, DatabaseDep
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 
@@ -22,9 +22,9 @@ async def list_crypto_assets(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     scan_id: str = Query(..., description="Scan ID to list assets for"),
-    asset_type: Optional[CryptoAssetType] = Query(None),
-    primitive: Optional[CryptoPrimitive] = Query(None),
-    name_search: Optional[str] = Query(None),
+    asset_type: CryptoAssetType | None = Query(None),
+    primitive: CryptoPrimitive | None = Query(None),
+    name_search: str | None = Query(None),
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=500),
 ) -> dict[str, Any]:

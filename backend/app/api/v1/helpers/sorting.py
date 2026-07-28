@@ -1,8 +1,8 @@
 """Shared utilities for sorting across endpoints."""
 
-from typing import Dict, Literal
+from typing import Literal
 
-SORT_FIELDS: Dict[str, Dict[str, str]] = {
+SORT_FIELDS: dict[str, dict[str, str]] = {
     "projects": {
         "name": "name",
         "created_at": "created_at",

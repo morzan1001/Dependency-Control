@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.models.license import (
     DeploymentModel,
@@ -25,14 +25,14 @@ from .constants import (
 class LicenseAnalyzer(Analyzer):
     name = "license_compliance"
 
-    LICENSE_DATABASE: Dict[str, LicenseInfo] = LICENSE_DATABASE
+    LICENSE_DATABASE: dict[str, LicenseInfo] = LICENSE_DATABASE
 
     async def analyze(
         self,
-        sbom: Dict[str, Any],
-        settings: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        sbom: dict[str, Any],
+        settings: dict[str, Any] | None = None,
+        parsed_components: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Analyze SBOM components for license compliance issues."""
         settings = settings or {}
         ignore_dev = settings.get("ignore_dev_dependencies", True)
@@ -53,7 +53,7 @@ class LicenseAnalyzer(Analyzer):
         )
 
         components = self._get_components(sbom, parsed_components)
-        issues: List[Dict[str, Any]] = []
+        issues: list[dict[str, Any]] = []
 
         stats = {
             "total_components": len(components),
@@ -83,9 +83,9 @@ class LicenseAnalyzer(Analyzer):
 
     def _analyze_component(
         self,
-        component: Dict[str, Any],
-        stats: Dict[str, int],
-        issues: List[Dict[str, Any]],
+        component: dict[str, Any],
+        stats: dict[str, int],
+        issues: list[dict[str, Any]],
         *,
         ignore_dev: bool,
         ignore_transitive: bool,
@@ -155,10 +155,10 @@ class LicenseAnalyzer(Analyzer):
                 if evaluator.should_include_finding(issue, is_transitive):
                     issues.append(issue)
 
-    def _track_expression_stats(self, or_groups: List[List[str]], stats: Dict[str, int]) -> None:
+    def _track_expression_stats(self, or_groups: list[list[str]], stats: dict[str, int]) -> None:
         """Track stats for the least restrictive OR alternative."""
         best_rank = 999
-        best_licenses: List[str] = []
+        best_licenses: list[str] = []
         for group in or_groups:
             worst_rank = 0
             for lic_id in group:
@@ -191,15 +191,15 @@ class LicenseAnalyzer(Analyzer):
         comp_name: str,
         comp_version: str,
         comp_purl: str,
-        or_groups: List[List[str]],
+        or_groups: list[list[str]],
         policy: LicensePolicy,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> dict[str, Any] | None:
         """Evaluate an SPDX expression: lowest-severity OR-alternative, highest-severity AND-member."""
-        best_issue: Optional[Dict[str, Any]] = None
+        best_issue: dict[str, Any] | None = None
         best_severity_rank = 999
 
         for and_group in or_groups:
-            worst_issue: Optional[Dict[str, Any]] = None
+            worst_issue: dict[str, Any] | None = None
             worst_rank = -1
 
             for lic_id in and_group:

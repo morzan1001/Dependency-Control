@@ -1,7 +1,7 @@
 """Turns quantum-vulnerable crypto assets into a priority-ranked PQC migration plan."""
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -24,10 +24,9 @@ from app.services.pqc_migration.mappings_loader import (
 )
 from app.services.pqc_migration.scoring import priority_score, status_from_score
 
-
 _QV_PRIMITIVES = {CryptoPrimitive.PKE, CryptoPrimitive.SIGNATURE, CryptoPrimitive.KEM}
 
-_GroupKey = Tuple[str, Optional[str], Optional[int], str]
+_GroupKey = tuple[str, str | None, int | None, str]
 
 
 class PQCMigrationPlanGenerator:
@@ -60,9 +59,9 @@ class PQCMigrationPlanGenerator:
 
     @staticmethod
     def _group_assets(
-        assets: List[CryptoAsset],
-    ) -> Dict[_GroupKey, List[CryptoAsset]]:
-        groups: Dict[_GroupKey, List[CryptoAsset]] = {}
+        assets: list[CryptoAsset],
+    ) -> dict[_GroupKey, list[CryptoAsset]]:
+        groups: dict[_GroupKey, list[CryptoAsset]] = {}
         for a in assets:
             variant = getattr(a, "variant", None)
             key: _GroupKey = (
@@ -77,9 +76,9 @@ class PQCMigrationPlanGenerator:
     def _build_item(
         self,
         key: _GroupKey,
-        group: List[CryptoAsset],
+        group: list[CryptoAsset],
         now: datetime,
-    ) -> Optional[MigrationItem]:
+    ) -> MigrationItem | None:
         name, variant, _ksize, _ref = key
         canonical = normalise_family(name, self.mappings)
         first_asset = group[0]
@@ -113,8 +112,8 @@ class PQCMigrationPlanGenerator:
         )
 
     @staticmethod
-    def _summarise(items: List[MigrationItem]) -> MigrationPlanSummary:
-        status_counts: Dict[str, int] = {}
+    def _summarise(items: list[MigrationItem]) -> MigrationPlanSummary:
+        status_counts: dict[str, int] = {}
         for item in items:
             key = item.status if isinstance(item.status, str) else item.status.value
             status_counts[key] = status_counts.get(key, 0) + 1
@@ -129,9 +128,9 @@ class PQCMigrationPlanGenerator:
     async def _list_vulnerable_assets(
         self,
         resolved: ResolvedScope,
-    ) -> List[CryptoAsset]:
+    ) -> list[CryptoAsset]:
         """Quantum-vulnerable assets from the latest scan of each resolved project."""
-        out: List[CryptoAsset] = []
+        out: list[CryptoAsset] = []
         # None project_ids means global scope (all projects); an explicit [] means none.
         if resolved.project_ids is None:
             project_ids = await self._all_project_ids()
@@ -149,10 +148,10 @@ class PQCMigrationPlanGenerator:
 
     def _filter_vulnerable(
         self,
-        assets: List[CryptoAsset],
+        assets: list[CryptoAsset],
         canonical_families: set,
-    ) -> List[CryptoAsset]:
-        filtered: List[CryptoAsset] = []
+    ) -> list[CryptoAsset]:
+        filtered: list[CryptoAsset] = []
         for a in assets:
             if _coerce_primitive(a.primitive) not in _QV_PRIMITIVES:
                 continue
@@ -161,14 +160,14 @@ class PQCMigrationPlanGenerator:
                 filtered.append(a)
         return filtered
 
-    async def _all_project_ids(self) -> List[str]:
+    async def _all_project_ids(self) -> list[str]:
         """Distinct project ids that have at least one completed/partial scan."""
         return await self.db.scans.distinct(
             "project_id",
             {"status": {"$in": ["completed", "partial"]}},
         )
 
-    async def _latest_scan_for_project(self, project_id: str) -> Optional[dict]:
+    async def _latest_scan_for_project(self, project_id: str) -> dict | None:
         """Most recent completed/partial scan for a project, or None."""
         cursor = (
             self.db.scans.find(
@@ -183,10 +182,10 @@ class PQCMigrationPlanGenerator:
         docs = await cursor.to_list(length=1)
         if not docs:
             return None
-        first: Dict[str, Any] = docs[0]
+        first: dict[str, Any] = docs[0]
         return first
 
-    def _find_mapping(self, family: str, primitive: Any) -> Optional[PQCMapping]:
+    def _find_mapping(self, family: str, primitive: Any) -> PQCMapping | None:
         prim_val = _enum_value(primitive)
         exact = next(
             (m for m in self.mappings.mappings if m.source_family == family and m.source_primitive == prim_val),
@@ -202,8 +201,8 @@ class PQCMigrationPlanGenerator:
     @staticmethod
     def _nearest_deadline(
         family: str,
-        timelines: List[Timeline],
-    ) -> Optional[datetime]:
+        timelines: list[Timeline],
+    ) -> datetime | None:
         applicable = [t for t in timelines if family in t.applies_to]
         if not applicable:
             return None
@@ -216,7 +215,7 @@ def _enum_value(val: Any) -> str:
     return str(val) if val else ""
 
 
-def _coerce_primitive(prim: Any) -> Optional[CryptoPrimitive]:
+def _coerce_primitive(prim: Any) -> CryptoPrimitive | None:
     if isinstance(prim, CryptoPrimitive):
         return prim
     if isinstance(prim, str):

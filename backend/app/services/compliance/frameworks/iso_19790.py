@@ -1,7 +1,6 @@
 """ISO/IEC 19790 algorithm-level framework; wraps FIPS 140-3 with ISO identifiers."""
 
 from functools import cached_property
-from typing import List, Optional
 
 from app.models.finding import FindingType, Severity
 from app.schemas.compliance import ControlDefinition, FrameworkEvaluation, ReportFramework
@@ -17,7 +16,7 @@ class Iso19790Framework:
     name: str = "ISO/IEC 19790 (Algorithm-level Conformance)"
     version: str = "2012 (as aligned with FIPS 140-3)"
     source_url: str = "https://www.iso.org/standard/52906.html"
-    disclaimer: Optional[str] = (
+    disclaimer: str | None = (
         "Algorithm-level conformance only, mapped from FIPS 140-3 approved "
         "functions via ISO/IEC 19790:2012 Annex D. Module-level certification "
         "(e.g., via ISO/IEC 24759) is out of scope."
@@ -27,7 +26,7 @@ class Iso19790Framework:
         self._fips = Fips1403Framework()
 
     @cached_property
-    def controls(self) -> List[ControlDefinition]:
+    def controls(self) -> list[ControlDefinition]:
         # rebuild with ISO prefix so closure-captured control_ids match this framework
         out = build_disallowed_algorithm_controls(self._fips.data, control_id_prefix="ISO-19790")
         out.append(

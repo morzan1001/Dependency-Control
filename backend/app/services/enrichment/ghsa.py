@@ -1,11 +1,9 @@
 import asyncio
 import logging
-from typing import Dict, List, Optional
 
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.http_utils import InstrumentedAsyncClient
 from app.core.config import settings
 from app.core.constants import (
     ANALYZER_TIMEOUTS,
@@ -13,6 +11,7 @@ from app.core.constants import (
     GHSA_CONCURRENT_REQUESTS_AUTHENTICATED,
     GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED,
 )
+from app.core.http_utils import InstrumentedAsyncClient
 from app.schemas.enrichment import GHSAData
 
 logger = logging.getLogger(__name__)
@@ -23,14 +22,14 @@ class GHSAProvider:
 
     def __init__(
         self,
-        max_retries: Optional[int] = None,
-        retry_delay: Optional[float] = None,
+        max_retries: int | None = None,
+        retry_delay: float | None = None,
     ):
-        self._github_token: Optional[str] = None
+        self._github_token: str | None = None
         self._max_retries = max_retries if max_retries is not None else settings.ENRICHMENT_MAX_RETRIES
         self._retry_delay = retry_delay if retry_delay is not None else settings.ENRICHMENT_RETRY_DELAY
 
-    def set_token(self, token: Optional[str]) -> None:
+    def set_token(self, token: str | None) -> None:
         self._github_token = token
         if token:
             logger.info("GitHub token configured - using authenticated API access")
@@ -40,7 +39,7 @@ class GHSAProvider:
             return GHSA_CONCURRENT_REQUESTS_AUTHENTICATED
         return GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED
 
-    def _get_github_headers(self) -> Dict[str, str]:
+    def _get_github_headers(self) -> dict[str, str]:
         headers = {
             "Accept": "application/vnd.github+json",
             "X-GitHub-Api-Version": "2022-11-28",
@@ -49,12 +48,12 @@ class GHSAProvider:
             headers["Authorization"] = f"Bearer {self._github_token}"
         return headers
 
-    async def fetch_ghsa_advisory(self, client: InstrumentedAsyncClient, ghsa_id: str) -> Optional[GHSAData]:
+    async def fetch_ghsa_advisory(self, client: InstrumentedAsyncClient, ghsa_id: str) -> GHSAData | None:
         """Fetch a single GHSA advisory, using a distributed lock so multiple pods don't fetch the same one."""
         cache_key = CacheKeys.ghsa(ghsa_id)
         timeout = ANALYZER_TIMEOUTS.get("ghsa", ANALYZER_TIMEOUTS["default"])
 
-        async def fetch_from_github() -> Optional[Dict]:
+        async def fetch_from_github() -> dict | None:
             last_error = None
 
             for attempt in range(self._max_retries):
@@ -156,13 +155,13 @@ class GHSAProvider:
             return GHSAData(**cached)
         return None
 
-    async def resolve_ghsa_to_cve(self, client: InstrumentedAsyncClient, ghsa_ids: List[str]) -> Dict[str, GHSAData]:
+    async def resolve_ghsa_to_cve(self, client: InstrumentedAsyncClient, ghsa_ids: list[str]) -> dict[str, GHSAData]:
         """Resolve GHSA IDs to CVEs and advisory metadata (Redis-cached, semaphore-bounded fetch)."""
         if not ghsa_ids:
             return {}
 
-        results: Dict[str, GHSAData] = {}
-        missing_ghsas: List[str] = []
+        results: dict[str, GHSAData] = {}
+        missing_ghsas: list[str] = []
 
         cache_keys = [CacheKeys.ghsa(ghsa_id) for ghsa_id in ghsa_ids]
         cached_data = await cache_service.mget(cache_keys)
@@ -181,7 +180,7 @@ class GHSAProvider:
 
             async def fetch_with_semaphore(
                 ghsa_id: str,
-            ) -> tuple[str, Optional[GHSAData]]:
+            ) -> tuple[str, GHSAData | None]:
                 async with semaphore:
                     ghsa_data = await self.fetch_ghsa_advisory(client, ghsa_id)
                     return ghsa_id, ghsa_data

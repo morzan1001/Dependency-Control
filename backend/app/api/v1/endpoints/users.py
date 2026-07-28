@@ -2,16 +2,15 @@ import base64
 import io
 import logging
 import re
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any
 
 import pyotp
 import qrcode
 from fastapi import BackgroundTasks, Depends, HTTPException, status
 
-from app.api.router import CustomAPIRouter
-
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
+from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import (
     check_admin_or_self,
     fetch_updated_user,
@@ -19,6 +18,7 @@ from app.api.v1.helpers import (
     get_user_or_404,
     is_2fa_setup_mode,
 )
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_AUTH_400_404, RESP_AUTH_404
 from app.core import security
 from app.core.config import settings
 from app.core.constants import AUTH_PROVIDER_LOCAL
@@ -36,7 +36,6 @@ from app.schemas.user import (
     UserUpdate,
     UserUpdateMe,
 )
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_AUTH_400_404, RESP_AUTH_404
 from app.services.notifications import templates
 from app.services.notifications.email_provider import EmailProvider
 from app.services.notifications.service import notification_service
@@ -98,16 +97,16 @@ async def create_user(
     return new_user
 
 
-@router.get("/", response_model=List[UserSchema], responses=RESP_AUTH)
+@router.get("/", response_model=list[UserSchema], responses=RESP_AUTH)
 async def read_users(
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_READ_ALL]))],
     db: DatabaseDep,
     skip: int = 0,
     limit: int = 100,
-    search: Optional[str] = None,
+    search: str | None = None,
     sort_by: str = "username",
     sort_order: str = "asc",
-) -> List[User]:
+) -> list[User]:
     query = {}
     if search:
         escaped_search = re.escape(search)
@@ -138,17 +137,19 @@ async def update_user_me(
     user_in: UserUpdateMe,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Update own profile."""
     user_repo = UserRepository(db)
 
-    if user_in.email and user_in.email != current_user.email:
-        if await user_repo.exists_by_email(user_in.email):
-            raise HTTPException(status_code=400, detail="Email already registered")
+    if user_in.email and user_in.email != current_user.email and await user_repo.exists_by_email(user_in.email):
+        raise HTTPException(status_code=400, detail="Email already registered")
 
-    if user_in.username and user_in.username != current_user.username:
-        if await user_repo.exists_by_username(user_in.username):
-            raise HTTPException(status_code=400, detail="Username already taken")
+    if (
+        user_in.username
+        and user_in.username != current_user.username
+        and await user_repo.exists_by_username(user_in.username)
+    ):
+        raise HTTPException(status_code=400, detail="Username already taken")
 
     update_data = user_in.model_dump(exclude_unset=True)
 
@@ -163,7 +164,7 @@ async def read_user_by_id(
     user_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Get user by ID. Requires admin permission or self."""
     check_admin_or_self(current_user, user_id, [Permissions.USER_READ])
     return await get_user_or_404(user_id, db)
@@ -175,7 +176,7 @@ async def update_user(
     user_in: UserUpdate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Update user; setting permissions requires user:manage_permissions and callers can't grant permissions they lack."""
     has_admin_perm = check_admin_or_self(current_user, user_id, [Permissions.USER_UPDATE])
 
@@ -207,13 +208,19 @@ async def update_user(
             detail="Cannot change your own active state",
         )
 
-    if "email" in update_data and update_data["email"] != existing_user.get("email"):
-        if await user_repo.exists_by_email(update_data["email"]):
-            raise HTTPException(status_code=400, detail="Email already registered")
+    if (
+        "email" in update_data
+        and update_data["email"] != existing_user.get("email")
+        and await user_repo.exists_by_email(update_data["email"])
+    ):
+        raise HTTPException(status_code=400, detail="Email already registered")
 
-    if "username" in update_data and update_data["username"] != existing_user.get("username"):
-        if await user_repo.exists_by_username(update_data["username"]):
-            raise HTTPException(status_code=400, detail="Username already taken")
+    if (
+        "username" in update_data
+        and update_data["username"] != existing_user.get("username")
+        and await user_repo.exists_by_username(update_data["username"])
+    ):
+        raise HTTPException(status_code=400, detail="Username already taken")
 
     if "password" in update_data:
         if has_admin_perm:
@@ -242,7 +249,7 @@ async def migrate_to_local(
     password_in: UserMigrateToLocal,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Migrate SSO user to local account by setting a password."""
     if current_user.auth_provider == AUTH_PROVIDER_LOCAL:
         raise HTTPException(status_code=400, detail="User is already a local account.")
@@ -263,7 +270,7 @@ async def migrate_user_to_local(
     user_id: str,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_UPDATE]))],
     db: DatabaseDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Admin only: switch a user's auth_provider to 'local' without setting a password (follow with a reset)."""
     user = await get_user_or_404(user_id, db)
 
@@ -282,7 +289,7 @@ async def reset_user_password(
     background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_UPDATE]))],
     db: DatabaseDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Admin only: trigger a password reset; emails the link if SMTP is configured and always returns it."""
     user = await get_user_or_404(user_id, db)
 
@@ -333,7 +340,7 @@ async def update_password_me(
     background_tasks: BackgroundTasks,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Update current user password."""
     if current_user.auth_provider != AUTH_PROVIDER_LOCAL:
         raise HTTPException(
@@ -376,7 +383,7 @@ async def update_password_me(
 async def setup_2fa(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Dict[str, str]:
+) -> dict[str, str]:
     """Generate a new 2FA secret and QR code (local auth users only)."""
     if current_user.auth_provider and current_user.auth_provider != "local":
         raise HTTPException(
@@ -409,7 +416,7 @@ async def enable_2fa(
     background_tasks: BackgroundTasks,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Verify OTP and enable 2FA (local auth users only)."""
     if current_user.auth_provider and current_user.auth_provider != "local":
         raise HTTPException(
@@ -464,7 +471,7 @@ async def disable_2fa(
     background_tasks: BackgroundTasks,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Disable 2FA."""
     user = await get_user_or_404(current_user.id, db)
 
@@ -504,7 +511,7 @@ async def admin_disable_2fa(
     background_tasks: BackgroundTasks,
     current_user: Annotated[User, Depends(deps.PermissionChecker([Permissions.USER_UPDATE]))],
     db: DatabaseDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Admin only: disable 2FA for a user (e.g. lost device)."""
     user = await get_user_or_404(user_id, db)
 
@@ -554,12 +561,12 @@ async def delete_user(
     user = await user_repo.get_raw_by_id(user_id)
     if user:
         await user_repo.delete(user_id)
-        return None
+        return
 
     # Pending invitations use their _id as the user_id in the frontend list.
     invitation = await invitation_repo.get_system_invitation(user_id)
     if invitation:
         await invitation_repo.delete_system_invitation(user_id)
-        return None
+        return
 
     raise HTTPException(status_code=404, detail="User or invitation not found")

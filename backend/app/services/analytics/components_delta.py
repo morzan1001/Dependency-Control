@@ -5,7 +5,6 @@ added+removed, and a license-only change reads as ``license_changed``.
 
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Tuple
 from urllib.parse import unquote
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -19,7 +18,7 @@ from app.schemas.scan_delta import (
 from app.services.analytics._delta_pagination import MAX_FETCH, paginate
 
 
-def component_identity_key(comp: Dict) -> Tuple[str, str]:
+def component_identity_key(comp: dict) -> tuple[str, str]:
     """Component identity for cross-scan matching.
 
     Strips version from purl so that a version bump appears as
@@ -54,7 +53,7 @@ async def _fetch_components(
     db: AsyncIOMotorDatabase,
     project_id: str,
     scan_id: str,
-) -> List[dict]:
+) -> list[dict]:
     cursor = db["dependencies"].find({"project_id": project_id, "scan_id": scan_id}).limit(MAX_FETCH)
     return [doc async for doc in cursor]
 
@@ -89,7 +88,7 @@ async def compute_components_delta(
     to_scan: str,
     page: int,
     page_size: int,
-    change: Optional[str],
+    change: str | None,
 ) -> ScanDeltaResponse:
     """Compute the delta between two scans' components as a paginated envelope."""
     from_docs = await _fetch_components(db, project_id, from_scan)
@@ -102,8 +101,8 @@ async def compute_components_delta(
     removed_keys = from_map.keys() - to_map.keys()
     common_keys = to_map.keys() & from_map.keys()
 
-    version_changed: List[ComponentDeltaItem] = []
-    license_changed: List[ComponentDeltaItem] = []
+    version_changed: list[ComponentDeltaItem] = []
+    license_changed: list[ComponentDeltaItem] = []
     unchanged = 0
     for k in common_keys:
         f, t = from_map[k], to_map[k]
@@ -116,7 +115,7 @@ async def compute_components_delta(
         else:
             unchanged += 1
 
-    items: List[ComponentDeltaItem] = []
+    items: list[ComponentDeltaItem] = []
     if change in (None, "all", "added"):
         items.extend(_to_added_or_removed(to_map[k], "added") for k in added_keys)
     if change in (None, "all", "removed"):

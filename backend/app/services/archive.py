@@ -6,8 +6,9 @@ import logging
 import os
 import time
 import zlib
+from collections.abc import AsyncIterator
 from datetime import datetime, timezone
-from typing import Any, AsyncIterator, Dict, List, Optional, Tuple
+from typing import Any
 
 from bson import ObjectId
 from cryptography.exceptions import InvalidTag
@@ -77,9 +78,9 @@ def _holder_id(prefix: str) -> str:
     return f"{prefix}-{os.getenv('HOSTNAME', 'unknown')}"
 
 
-def _extract_gridfs_ids_from_refs(sbom_refs: List[Any]) -> List[str]:
+def _extract_gridfs_ids_from_refs(sbom_refs: list[Any]) -> list[str]:
     """Extract GridFS IDs from a list of SBOM references."""
-    ids: List[str] = []
+    ids: list[str] = []
     for ref in sbom_refs:
         if isinstance(ref, dict) and ref.get("type") == "gridfs_reference":
             gid = ref.get("gridfs_id")
@@ -88,7 +89,7 @@ def _extract_gridfs_ids_from_refs(sbom_refs: List[Any]) -> List[str]:
     return ids
 
 
-async def _stream_collection(collection: Any, scan_id: str) -> AsyncIterator[Dict[str, Any]]:
+async def _stream_collection(collection: Any, scan_id: str) -> AsyncIterator[dict[str, Any]]:
     """Yield documents from a collection where scan_id matches."""
     cursor = collection.find({"scan_id": scan_id})
     if hasattr(cursor, "batch_size"):
@@ -97,7 +98,7 @@ async def _stream_collection(collection: Any, scan_id: str) -> AsyncIterator[Dic
         yield doc
 
 
-async def _stream_gridfs_sboms(db: Any, scan_doc: Dict[str, Any]) -> AsyncIterator[Dict[str, Any]]:
+async def _stream_gridfs_sboms(db: Any, scan_doc: dict[str, Any]) -> AsyncIterator[dict[str, Any]]:
     """Yield one frame per GridFS SBOM (gridfs_id, filename, data)."""
     gridfs_ids = _extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", []))
     if not gridfs_ids:
@@ -151,7 +152,7 @@ async def _gzip_decompress_stream(source: AsyncIterator[bytes]) -> AsyncIterator
 
 async def _encrypt_stream(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
     """Wrap a byte stream in chunked AES-GCM via a producer task + bounded queue."""
-    queue: asyncio.Queue[Optional[bytes]] = asyncio.Queue(maxsize=4)
+    queue: asyncio.Queue[bytes | None] = asyncio.Queue(maxsize=4)
 
     async def sink(chunk: bytes) -> None:
         await queue.put(chunk)
@@ -181,11 +182,11 @@ async def _encrypt_stream(source: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
 
 def _build_archive_payload(
     db: Any,
-    scan_doc: Dict[str, Any],
+    scan_doc: dict[str, Any],
     scan_id: str,
     stats: BundleStats,
-    bytes_counter: Dict[str, int],
-) -> Tuple[AsyncIterator[bytes], str]:
+    bytes_counter: dict[str, int],
+) -> tuple[AsyncIterator[bytes], str]:
     """Build the upload payload iterator and its content-type string."""
 
     async def count_through(it: AsyncIterator[bytes]) -> AsyncIterator[bytes]:
@@ -214,12 +215,12 @@ def _build_archive_payload(
 
 async def _save_archive_metadata(
     repo: ArchiveMetadataRepository,
-    scan_doc: Dict[str, Any],
+    scan_doc: dict[str, Any],
     scan_id: str,
     s3_key: str,
     total: int,
     stats: BundleStats,
-) -> Optional[ArchiveMetadata]:
+) -> ArchiveMetadata | None:
     """Persist ArchiveMetadata; on unique-key collision delete the S3 orphan and return None."""
     sbom_filenames = [
         ref["filename"] for ref in scan_doc.get("sbom_refs", []) if isinstance(ref, dict) and ref.get("filename")
@@ -275,7 +276,7 @@ async def _load_scan_for_archive(
     db: Any,
     repo: ArchiveMetadataRepository,
     scan_id: str,
-) -> Tuple[Optional[ArchiveMetadata], Optional[Dict[str, Any]]]:
+) -> tuple[ArchiveMetadata | None, dict[str, Any] | None]:
     """Look up the scan for archival, returning (existing_metadata, scan_doc).
 
     Exactly one is non-None on the happy path; both None means not-found (metrics recorded).
@@ -303,13 +304,13 @@ async def _load_scan_for_archive(
 
 async def _upload_archive_bundle(
     db: Any,
-    scan_doc: Dict[str, Any],
+    scan_doc: dict[str, Any],
     scan_id: str,
     s3_key: str,
-) -> Optional[Tuple[int, BundleStats]]:
+) -> tuple[int, BundleStats] | None:
     """Build and upload the archive bundle; returns (total_bytes, stats) or None on failure (metrics recorded)."""
     stats = BundleStats()
-    bytes_counter: Dict[str, int] = {"total": 0}
+    bytes_counter: dict[str, int] = {"total": 0}
     payload, content_type = _build_archive_payload(db, scan_doc, scan_id, stats, bytes_counter)
     try:
         total = await upload_stream(s3_key, payload, content_type=content_type)
@@ -336,7 +337,7 @@ async def _upload_archive_bundle(
 async def archive_scan(
     db: AsyncIOMotorDatabase,  # type: ignore[type-arg]
     scan_id: str,
-) -> Optional[ArchiveMetadata]:
+) -> ArchiveMetadata | None:
     """Archive one scan and its related data to S3 under a distributed lock on archive:{scan_id}.
 
     Returns ArchiveMetadata on success; None on lock-held, not-found, or upload failure.
@@ -443,8 +444,8 @@ def _parse_error_reason(exc: ValueError) -> str:
 async def _flush_batch(
     db: Any,
     coll_name: str,
-    batch_by_collection: Dict[str, List[Dict[str, Any]]],
-    collections_restored: List[str],
+    batch_by_collection: dict[str, list[dict[str, Any]]],
+    collections_restored: list[str],
 ) -> None:
     docs = batch_by_collection.pop(coll_name, None)
     if not docs:
@@ -456,8 +457,8 @@ async def _flush_batch(
 
 async def _handle_header_event(
     db: Any,
-    data: Dict[str, Any],
-    collections_restored: List[str],
+    data: dict[str, Any],
+    collections_restored: list[str],
 ) -> None:
     """Insert the scan doc from a header event.
 
@@ -473,10 +474,10 @@ async def _handle_header_event(
 
 async def _handle_doc_event(
     db: Any,
-    event: Dict[str, Any],
-    batch_by_collection: Dict[str, List[Dict[str, Any]]],
-    gridfs_entries: List[Dict[str, Any]],
-    collections_restored: List[str],
+    event: dict[str, Any],
+    batch_by_collection: dict[str, list[dict[str, Any]]],
+    gridfs_entries: list[dict[str, Any]],
+    collections_restored: list[str],
 ) -> None:
     coll = event["collection"]
     if coll not in _RESTORABLE_COLLECTIONS:
@@ -495,14 +496,14 @@ async def _replay_bundle(
     db: Any,
     scan_id: str,
     decompressed: AsyncIterator[bytes],
-) -> Tuple[Optional[str], List[str], List[Dict[str, Any]]]:
+) -> tuple[str | None, list[str], list[dict[str, Any]]]:
     """Read bundle frames, insert scan + batched collections, collect GridFS entries.
 
     Returns (failure_reason_or_None, collections_restored, gridfs_entries).
     """
-    collections_restored: List[str] = []
-    batch_by_collection: Dict[str, List[Dict[str, Any]]] = {}
-    gridfs_entries: List[Dict[str, Any]] = []
+    collections_restored: list[str] = []
+    batch_by_collection: dict[str, list[dict[str, Any]]] = {}
+    gridfs_entries: list[dict[str, Any]] = []
 
     try:
         async for event in read_bundle_frames(decompressed):
@@ -546,11 +547,11 @@ async def _replay_bundle(
 async def _restore_gridfs(
     db: Any,
     scan_id: str,
-    gridfs_entries: List[Dict[str, Any]],
+    gridfs_entries: list[dict[str, Any]],
 ) -> bool:
     """Re-upload GridFS SBOMs from bundle entries. Returns True on full success."""
     fs = AsyncIOMotorGridFSBucket(db)
-    failures: List[str] = []
+    failures: list[str] = []
     for entry in gridfs_entries:
         try:
             grid_id = ObjectId(entry["gridfs_id"])
@@ -559,7 +560,10 @@ async def _restore_gridfs(
             try:
                 await fs.delete(grid_id)
             except Exception:
-                pass
+                logger.debug(
+                    "GridFS pre-delete found nothing to remove",
+                    extra={"gridfs_id": _sanitize_for_log(entry.get("gridfs_id"))},
+                )
             await fs.upload_from_stream_with_id(
                 grid_id,
                 entry.get("filename", "restored.json"),
@@ -611,7 +615,7 @@ async def _load_restore_metadata(
     db: Any,
     repo: ArchiveMetadataRepository,
     scan_id: str,
-) -> Optional[ArchiveMetadata]:
+) -> ArchiveMetadata | None:
     """Return restore metadata, or None (metrics recorded) if it's missing or the scan already exists."""
     metadata = await repo.find_by_scan_id(scan_id)
     if not metadata:
@@ -672,7 +676,7 @@ async def _run_restore_pipeline(
     repo: ArchiveMetadataRepository,
     metadata: ArchiveMetadata,
     scan_id: str,
-) -> Optional[ArchiveRestoreResponse]:
+) -> ArchiveRestoreResponse | None:
     """Drive the replay+GridFS+cleanup pipeline after preconditions are met."""
     start_time = time.monotonic()
     decompressed = _open_restore_stream(metadata)
@@ -715,7 +719,7 @@ async def _run_restore_pipeline(
 async def restore_scan(
     db: AsyncIOMotorDatabase,  # type: ignore[type-arg]
     scan_id: str,
-) -> Optional[ArchiveRestoreResponse]:
+) -> ArchiveRestoreResponse | None:
     """Restore an archived scan back to MongoDB under a distributed lock on restore:{scan_id}.
 
     Aborts if the scan already exists. On success, deletes the S3 archive and metadata;

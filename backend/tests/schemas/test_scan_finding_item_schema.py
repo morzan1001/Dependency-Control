@@ -2,17 +2,16 @@
 
 from app.schemas.project import ScanFindingItem
 
-
-_MINIMAL = dict(
-    id="CVE-2021-44228",
-    finding_id="CVE-2021-44228",
-    type="vulnerability",
-    severity="HIGH",
-    component="log4j",
-    description="Remote code execution",
-    project_id="p1",
-    scan_id="s1",
-)
+_MINIMAL = {
+    "id": "CVE-2021-44228",
+    "finding_id": "CVE-2021-44228",
+    "type": "vulnerability",
+    "severity": "HIGH",
+    "component": "log4j",
+    "description": "Remote code execution",
+    "project_id": "p1",
+    "scan_id": "s1",
+}
 
 
 def test_scan_finding_item_serializes_lapsed_fields():

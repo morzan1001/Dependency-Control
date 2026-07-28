@@ -50,7 +50,7 @@ class TestNormalizeOpengrep:
                 ]
             )
             agg.aggregate("opengrep", result)
-            f = list(agg.findings.values())[0]
+            f = next(iter(agg.findings.values()))
             assert f.severity == expected, f"OpenGrep {og_sev} should map to {expected}"
 
     def test_cwe_ids_normalized(self):
@@ -70,7 +70,7 @@ class TestNormalizeOpengrep:
             ]
         )
         self.agg.aggregate("opengrep", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["cwe_ids"] == ["79", "89"]
 
     def test_owasp_metadata_captured(self):
@@ -90,7 +90,7 @@ class TestNormalizeOpengrep:
             ]
         )
         self.agg.aggregate("opengrep", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["owasp"] == ["A01:2021"]
 
     def test_rule_name_in_description(self):
@@ -111,7 +111,7 @@ class TestNormalizeOpengrep:
             ]
         )
         self.agg.aggregate("opengrep", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert "sql-injection" in f.description
         assert "Raw query used" in f.description
 
@@ -152,7 +152,7 @@ class TestNormalizeOpengrep:
             ]
         )
         self.agg.aggregate("opengrep", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["start"] == {"line": 10, "column": 5}
         assert f.details["end"] == {"line": 15, "column": 20}
 
@@ -255,7 +255,7 @@ class TestNormalizeBearer:
                 ]
             }
             agg.aggregate("bearer", result)
-            f = list(agg.findings.values())[0]
+            f = next(iter(agg.findings.values()))
             assert f.severity == expected, f"Bearer {bearer_sev} should map to {expected}"
 
     def test_grouped_by_severity_dict(self):
@@ -272,7 +272,7 @@ class TestNormalizeBearer:
         """When findings are grouped by severity, items without 'severity' get it from the key."""
         result = {"findings": {"high": [{"id": "rule1", "title": "test", "full_filename": "a.py", "line_number": 1}]}}
         self.agg.aggregate("bearer", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.severity == "HIGH"
 
     def test_cwe_ids_normalized(self):
@@ -289,7 +289,7 @@ class TestNormalizeBearer:
             ]
         }
         self.agg.aggregate("bearer", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["cwe_ids"] == ["79", "89"]
 
     def test_filename_fallback(self):
@@ -306,7 +306,7 @@ class TestNormalizeBearer:
             ]
         }
         self.agg.aggregate("bearer", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.component == "fallback.py"
 
     def test_source_line_numbers(self):
@@ -326,7 +326,7 @@ class TestNormalizeBearer:
             ]
         }
         self.agg.aggregate("bearer", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["start"]["line"] == 10
         assert f.details["end"]["line"] == 20
         assert f.details["start"]["column"] == 5

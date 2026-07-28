@@ -1,6 +1,6 @@
 """ResultAggregator - aggregates findings from multiple analyzers."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.core.constants import (
     AGG_KEY_QUALITY,
@@ -36,8 +36,8 @@ from app.services.aggregation.versions import (
 )
 from app.services.normalizers.crypto import normalize_crypto
 from app.services.normalizers.iac import normalize_kics
-from app.services.normalizers.lifecycle import normalize_eol, normalize_outdated
 from app.services.normalizers.license import normalize_license
+from app.services.normalizers.lifecycle import normalize_eol, normalize_outdated
 from app.services.normalizers.quality import (
     normalize_maintainer_risk,
     normalize_scorecard,
@@ -58,11 +58,11 @@ from app.services.normalizers.vulnerability import (
 
 class ResultAggregator:
     def __init__(self) -> None:
-        self.findings: Dict[str, Finding] = {}
-        self.alias_map: Dict[str, str] = {}
-        self._scorecard_cache: Dict[str, Dict[str, Any]] = {}
-        self._dependency_enrichments: Dict[str, DependencyEnrichment] = {}
-        self._license_data: Dict[str, Dict[str, Any]] = {}
+        self.findings: dict[str, Finding] = {}
+        self.alias_map: dict[str, str] = {}
+        self._scorecard_cache: dict[str, dict[str, Any]] = {}
+        self._dependency_enrichments: dict[str, DependencyEnrichment] = {}
+        self._license_data: dict[str, dict[str, Any]] = {}
 
     def _get_or_create_enrichment(self, name: str, version: str) -> DependencyEnrichment:
         """Get or create a DependencyEnrichment for the given package."""
@@ -72,7 +72,7 @@ class ResultAggregator:
         return self._dependency_enrichments[key]
 
     @staticmethod
-    def _apply_deps_dev_project(enrichment: DependencyEnrichment, project: Dict[str, Any]) -> None:
+    def _apply_deps_dev_project(enrichment: DependencyEnrichment, project: dict[str, Any]) -> None:
         """Apply deps.dev project block to enrichment."""
         if not project:
             return
@@ -88,7 +88,7 @@ class ResultAggregator:
             enrichment.licenses.append({"spdx_id": project.get("license"), "source": "deps_dev_project"})
 
     @staticmethod
-    def _apply_deps_dev_links(enrichment: DependencyEnrichment, links: Dict[str, Any]) -> None:
+    def _apply_deps_dev_links(enrichment: DependencyEnrichment, links: dict[str, Any]) -> None:
         """Apply deps.dev links block to enrichment."""
         if not links:
             return
@@ -108,7 +108,7 @@ class ResultAggregator:
                 enrichment.additional_links[key] = url
 
     @staticmethod
-    def _apply_deps_dev_flags(enrichment: DependencyEnrichment, metadata: Dict[str, Any]) -> None:
+    def _apply_deps_dev_flags(enrichment: DependencyEnrichment, metadata: dict[str, Any]) -> None:
         """Apply deps.dev top-level flag fields to enrichment."""
         if metadata.get("published_at"):
             enrichment.published_at = metadata.get("published_at")
@@ -124,7 +124,7 @@ class ResultAggregator:
             enrichment.has_slsa_provenance = True
 
     @staticmethod
-    def _apply_deps_dev_licenses(enrichment: DependencyEnrichment, licenses: List[Any]) -> None:
+    def _apply_deps_dev_licenses(enrichment: DependencyEnrichment, licenses: list[Any]) -> None:
         """Apply deps.dev license list to enrichment."""
         for lic in licenses:
             if isinstance(lic, str):
@@ -132,7 +132,7 @@ class ResultAggregator:
                 if not enrichment.primary_license:
                     enrichment.primary_license = lic
 
-    def enrich_from_deps_dev(self, name: str, version: str, metadata: Dict[str, Any]) -> None:
+    def enrich_from_deps_dev(self, name: str, version: str, metadata: dict[str, Any]) -> None:
         """Enrich dependency with data from deps.dev."""
         enrichment = self._get_or_create_enrichment(name, version)
         if "deps_dev" not in enrichment.sources:
@@ -155,11 +155,11 @@ class ResultAggregator:
         self._apply_deps_dev_flags(enrichment, metadata)
         self._apply_deps_dev_licenses(enrichment, metadata.get("licenses", []))
 
-    def record_scorecard(self, component_key: str, data: Dict[str, Any]) -> None:
+    def record_scorecard(self, component_key: str, data: dict[str, Any]) -> None:
         """Cache OpenSSF Scorecard data (keyed by ``name@version``) applied to findings during finalization."""
         self._scorecard_cache[component_key] = data
 
-    def enrich_from_license_scanner(self, name: str, version: str, license_info: Dict[str, Any]) -> None:
+    def enrich_from_license_scanner(self, name: str, version: str, license_info: dict[str, Any]) -> None:
         """Enrich dependency with data from license compliance scanner."""
         enrichment = self._get_or_create_enrichment(name, version)
         if "license_compliance" not in enrichment.sources:
@@ -185,7 +185,7 @@ class ResultAggregator:
 
             self._license_data[f"{name}@{version}"] = license_info
 
-    def aggregate(self, analyzer_name: str, result: Dict[str, Any], source: Optional[str] = None) -> None:
+    def aggregate(self, analyzer_name: str, result: dict[str, Any], source: str | None = None) -> None:
         """
         Dispatches the result to the specific normalizer based on analyzer name.
         """
@@ -244,7 +244,7 @@ class ResultAggregator:
         return (f.component, effective_line, rule_id)
 
     @staticmethod
-    def _vuln_group_key(f: Finding) -> Optional[tuple]:
+    def _vuln_group_key(f: Finding) -> tuple | None:
         """Build vulnerability grouping key, or None if finding has no vulns."""
         vulns = {v["id"] for v in f.details.get("vulnerabilities", [])}
         if not vulns:
@@ -254,11 +254,11 @@ class ResultAggregator:
         return (extract_artifact_name(component), version)
 
     def _partition_findings(
-        self, current_findings: List[Finding]
-    ) -> tuple[Dict[tuple, List[Finding]], Dict[Any, List[Finding]]]:
+        self, current_findings: list[Finding]
+    ) -> tuple[dict[tuple, list[Finding]], dict[Any, list[Finding]]]:
         """Partition findings into SAST and vulnerability groups."""
-        groups: Dict[tuple, List[Finding]] = {}
-        sast_groups: Dict[Any, List[Finding]] = {}
+        groups: dict[tuple, list[Finding]] = {}
+        sast_groups: dict[Any, list[Finding]] = {}
 
         for f in current_findings:
             if f.type == FindingType.SAST:
@@ -274,7 +274,7 @@ class ResultAggregator:
         return groups, sast_groups
 
     @staticmethod
-    def _merge_cluster(cluster: List[Finding]) -> Finding:
+    def _merge_cluster(cluster: list[Finding]) -> Finding:
         """Merge a single component cluster into one primary finding."""
         if len(cluster) == 1:
             return cluster[0]
@@ -287,7 +287,7 @@ class ResultAggregator:
         return primary
 
     @staticmethod
-    def _cross_link_primaries(primaries: List[Finding]) -> None:
+    def _cross_link_primaries(primaries: list[Finding]) -> None:
         """Cross-link a list of cluster primaries by id."""
         if len(primaries) <= 1:
             return
@@ -295,12 +295,12 @@ class ResultAggregator:
             for p2 in primaries[i + 1 :]:
                 cross_link_pair(p1, p2)
 
-    def _reduce_vuln_group(self, group: List[Finding]) -> List[Finding]:
+    def _reduce_vuln_group(self, group: list[Finding]) -> list[Finding]:
         """Cluster findings in a vuln group by artifact and return primaries."""
         if len(group) == 1:
             return [group[0]]
 
-        component_clusters: Dict[str, List] = {}
+        component_clusters: dict[str, list] = {}
         for f in group:
             name = extract_artifact_name(f.component or "")
             component_clusters.setdefault(name, []).append(f)
@@ -309,12 +309,12 @@ class ResultAggregator:
         self._cross_link_primaries(cluster_primaries)
         return cluster_primaries
 
-    def get_findings(self) -> List[Finding]:
+    def get_findings(self) -> list[Finding]:
         """Return deduplicated findings with merge/link post-processing applied."""
         current_findings = list(self.findings.values())
         groups, sast_groups = self._partition_findings(current_findings)
 
-        final_findings: List[Finding] = [
+        final_findings: list[Finding] = [
             f for f in current_findings if f.type not in (FindingType.VULNERABILITY, FindingType.SAST)
         ]
 
@@ -343,7 +343,7 @@ class ResultAggregator:
 
         return final_findings
 
-    def _link_finding_group(self, component_findings: List[Finding]) -> None:
+    def _link_finding_group(self, component_findings: list[Finding]) -> None:
         for i, f1 in enumerate(component_findings):
             for f2 in component_findings[i + 1 :]:
                 if f1.id == f2.id:
@@ -352,9 +352,9 @@ class ResultAggregator:
                 add_context_to_vulnerability(f1, f2)
                 add_context_to_vulnerability(f2, f1)
 
-    def _link_related_findings_by_component(self, findings: List[Finding]) -> None:
+    def _link_related_findings_by_component(self, findings: list[Finding]) -> None:
         """Link all findings for the same component to each other (vuln, outdated, quality, license, eol)."""
-        component_map: Dict[str, List[Finding]] = {}
+        component_map: dict[str, list[Finding]] = {}
 
         for f in findings:
             if not f.component:
@@ -368,18 +368,18 @@ class ResultAggregator:
             if len(component_findings) > 1:
                 self._link_finding_group(component_findings)
 
-    def get_dependency_enrichments(self) -> Dict[str, Dict[str, Any]]:
+    def get_dependency_enrichments(self) -> dict[str, dict[str, Any]]:
         """Return enrichment data keyed by ``package_name@version`` for MongoDB updates."""
         result = {}
         for key, enrichment in self._dependency_enrichments.items():
             result[key] = enrichment.to_mongo_dict()
         return result
 
-    def get_license_data(self) -> Dict[str, Dict[str, Any]]:
+    def get_license_data(self) -> dict[str, dict[str, Any]]:
         """Return detailed license analysis data per package."""
         return self._license_data
 
-    def add_finding(self, finding: Finding, source: Optional[str] = None) -> None:
+    def add_finding(self, finding: Finding, source: str | None = None) -> None:
         """Add a finding, merging if one already exists for the same key."""
         if finding.type == FindingType.VULNERABILITY:
             self._add_vulnerability_finding(finding, source)
@@ -388,7 +388,7 @@ class ResultAggregator:
         else:
             self._add_generic_finding(finding, source)
 
-    def _build_vuln_entry(self, finding: Finding, source: Optional[str]) -> VulnerabilityEntry:
+    def _build_vuln_entry(self, finding: Finding, source: str | None) -> VulnerabilityEntry:
         """Build a vulnerability entry dict from a finding."""
         refs_from_details = finding.details.get("references", []) or []
         urls_from_details = finding.details.get("urls", []) or []
@@ -412,7 +412,7 @@ class ResultAggregator:
         }
 
     def _merge_vuln_into_existing(
-        self, existing: Finding, finding: Finding, vuln_entry: VulnerabilityEntry, source: Optional[str]
+        self, existing: Finding, finding: Finding, vuln_entry: VulnerabilityEntry, source: str | None
     ) -> None:
         """Merge a vulnerability finding into an existing aggregate."""
         existing.scanners = list(set(existing.scanners + finding.scanners))
@@ -420,7 +420,7 @@ class ResultAggregator:
         if get_severity_value(finding.severity) > get_severity_value(existing.severity):
             existing.severity = finding.severity
 
-        vuln_list: List[VulnerabilityEntry] = existing.details.get("vulnerabilities", [])
+        vuln_list: list[VulnerabilityEntry] = existing.details.get("vulnerabilities", [])
         merge_vulnerability_into_list(vuln_list, vuln_entry)
         existing.details["vulnerabilities"] = vuln_list
         existing.description = ""
@@ -431,7 +431,7 @@ class ResultAggregator:
         fvs = [str(v.get("fixed_version")) for v in vuln_list if v.get("fixed_version")]
         existing.details["fixed_version"] = resolve_fixed_versions(fvs) if fvs else None
 
-    def _add_vulnerability_finding(self, finding: Finding, source: Optional[str] = None) -> None:
+    def _add_vulnerability_finding(self, finding: Finding, source: str | None = None) -> None:
         comp_key = normalize_component(finding.component or "unknown")
         version_key = normalize_version(finding.version or "unknown")
         agg_key = f"{AGG_KEY_VULNERABILITY}:{comp_key}:{version_key}"
@@ -487,7 +487,7 @@ class ResultAggregator:
         quality_entry: QualityEntry,
         issue_type: str,
         has_maintenance: bool,
-        source: Optional[str],
+        source: str | None,
     ) -> None:
         """Merge a quality finding into an existing aggregated finding."""
         existing.scanners = list(set(existing.scanners + finding.scanners))
@@ -495,7 +495,7 @@ class ResultAggregator:
         if get_severity_value(finding.severity) > get_severity_value(existing.severity):
             existing.severity = finding.severity
 
-        quality_list: List[QualityEntry] = existing.details.get("quality_issues", [])
+        quality_list: list[QualityEntry] = existing.details.get("quality_issues", [])
         existing_ids = {q.get("id") for q in quality_list}
         if finding.id not in existing_ids:
             quality_list.append(quality_entry)
@@ -513,7 +513,7 @@ class ResultAggregator:
 
         update_quality_description(existing)
 
-    def _add_quality_finding(self, finding: Finding, source: Optional[str] = None) -> None:
+    def _add_quality_finding(self, finding: Finding, source: str | None = None) -> None:
         """Aggregate quality findings (scorecard, maintainer_risk, ...) by component+version."""
         raw_comp = finding.component if finding.component else "unknown"
         comp_key = normalize_component(raw_comp)
@@ -559,7 +559,7 @@ class ResultAggregator:
             found_in=[source] if source else [],
         )
 
-    def _lookup_existing_key(self, finding: Finding, comp_key: str, lookup_key_id: str) -> Optional[str]:
+    def _lookup_existing_key(self, finding: Finding, comp_key: str, lookup_key_id: str) -> str | None:
         """Resolve an existing aggregate key for the finding via id or aliases."""
         if lookup_key_id in self.alias_map:
             return self.alias_map[lookup_key_id]
@@ -570,7 +570,7 @@ class ResultAggregator:
         return None
 
     @staticmethod
-    def _merge_generic_into_existing(existing: Finding, finding: Finding, source: Optional[str]) -> None:
+    def _merge_generic_into_existing(existing: Finding, finding: Finding, source: str | None) -> None:
         """Merge a generic finding's fields into an existing aggregate."""
         existing.scanners = list(set(existing.scanners + finding.scanners))
 
@@ -595,7 +595,7 @@ class ResultAggregator:
             k = f"{finding.type}:{comp_key}:{finding.version}:{alias}"
             self.alias_map[k] = target_key
 
-    def _add_generic_finding(self, finding: Finding, source: Optional[str] = None) -> None:
+    def _add_generic_finding(self, finding: Finding, source: str | None = None) -> None:
         """Add a finding keyed by ``type:id:component:version``, merging on ID or alias match."""
         if source and source not in finding.found_in:
             finding.found_in.append(source)

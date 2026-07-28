@@ -1,7 +1,5 @@
 """Unified scan-delta endpoint dispatching across findings, components, and crypto."""
 
-from typing import List, Optional
-
 from fastapi import HTTPException, Query
 
 from app.api.deps import CurrentUserDep, DatabaseDep
@@ -17,7 +15,7 @@ from app.services.analytics.scopes import ScopeResolver
 router = CustomAPIRouter()
 
 
-def _csv_to_list(value: Optional[str]) -> Optional[List[str]]:
+def _csv_to_list(value: str | None) -> list[str] | None:
     if not value:
         return None
     return [v.strip() for v in value.split(",") if v.strip()]
@@ -33,9 +31,9 @@ async def get_scan_delta(
     category: str = Query(...),  # str not enum: invalid values 400 via InvalidDeltaQuery, not 422
     page: int = Query(1),
     page_size: int = Query(50),
-    change: Optional[str] = Query(None),
-    severity: Optional[str] = Query(None, description="csv: critical,high,medium,low"),
-    finding_type: Optional[str] = Query(None, description="csv finding types"),
+    change: str | None = Query(None),
+    severity: str | None = Query(None, description="csv: critical,high,medium,low"),
+    finding_type: str | None = Query(None, description="csv finding types"),
 ) -> ScanDeltaResponse:
     await ScopeResolver(db, current_user).resolve(
         scope="project",

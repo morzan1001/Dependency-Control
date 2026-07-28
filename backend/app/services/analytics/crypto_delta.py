@@ -2,8 +2,6 @@
 (``bom_ref`` is regenerated per scan and unusable for matching), as a ScanDeltaResponse.
 """
 
-from typing import List, Optional, Tuple
-
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.crypto_asset import CryptoAsset
@@ -17,7 +15,7 @@ from app.schemas.scan_delta import (
 from app.services.analytics._delta_pagination import MAX_FETCH, paginate
 
 
-def _primitive_str(asset: CryptoAsset) -> Optional[str]:
+def _primitive_str(asset: CryptoAsset) -> str | None:
     """Stringify ``asset.primitive`` whether it's an enum, string, or None."""
     primitive = asset.primitive
     if primitive is None:
@@ -27,7 +25,7 @@ def _primitive_str(asset: CryptoAsset) -> Optional[str]:
     return str(primitive)
 
 
-def _key(asset: CryptoAsset) -> Tuple[str, str, str]:
+def _key(asset: CryptoAsset) -> tuple[str, str, str]:
     """Semantic identity used for cross-scan matching."""
     return (
         asset.name or "",
@@ -55,7 +53,7 @@ async def compute_crypto_delta_envelope(
     to_scan: str,
     page: int,
     page_size: int,
-    change: Optional[str],
+    change: str | None,
 ) -> ScanDeltaResponse:
     repo = CryptoAssetRepository(db)
     from_assets = await repo.list_by_scan(project_id, from_scan, limit=MAX_FETCH)
@@ -68,7 +66,7 @@ async def compute_crypto_delta_envelope(
     removed_keys = from_map.keys() - to_map.keys()
     unchanged = len(to_map.keys() & from_map.keys())
 
-    items: List[CryptoDeltaItem] = []
+    items: list[CryptoDeltaItem] = []
     if change in (None, "all", "added"):
         items.extend(_asset_to_envelope_item(to_map[k], "added") for k in added_keys)
     if change in (None, "all", "removed"):

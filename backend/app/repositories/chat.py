@@ -2,7 +2,7 @@
 
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -18,7 +18,7 @@ class ChatRepository:
         self.conversations = db[_CONV_COL]
         self.messages = db[_MSG_COL]
 
-    async def create_conversation(self, user_id: str, title: str = "New Conversation") -> Dict[str, Any]:
+    async def create_conversation(self, user_id: str, title: str = "New Conversation") -> dict[str, Any]:
         now = datetime.now(timezone.utc)
         doc = {
             "_id": str(uuid.uuid4()),
@@ -32,7 +32,7 @@ class ChatRepository:
             await self.conversations.insert_one(doc)
         return doc
 
-    async def list_conversations(self, user_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+    async def list_conversations(self, user_id: str, limit: int = 50) -> list[dict[str, Any]]:
         with track_db_operation(_CONV_COL, "find"):
             cursor = self.conversations.find(
                 {"user_id": user_id},
@@ -41,7 +41,7 @@ class ChatRepository:
             )
             return await cursor.to_list(length=limit)
 
-    async def get_conversation(self, conversation_id: str, user_id: str) -> Optional[Dict[str, Any]]:
+    async def get_conversation(self, conversation_id: str, user_id: str) -> dict[str, Any] | None:
         with track_db_operation(_CONV_COL, "find_one"):
             return await self.conversations.find_one({"_id": conversation_id, "user_id": user_id})
 
@@ -66,10 +66,10 @@ class ChatRepository:
         conversation_id: str,
         role: str,
         content: str = "",
-        images: Optional[List[str]] = None,
-        tool_calls: Optional[List[Dict[str, Any]]] = None,
+        images: list[str] | None = None,
+        tool_calls: list[dict[str, Any]] | None = None,
         token_count: int = 0,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         doc = {
             "_id": str(uuid.uuid4()),
             "conversation_id": conversation_id,
@@ -92,7 +92,7 @@ class ChatRepository:
             )
         return doc
 
-    async def get_messages(self, conversation_id: str, limit: int = 100, skip: int = 0) -> List[Dict[str, Any]]:
+    async def get_messages(self, conversation_id: str, limit: int = 100, skip: int = 0) -> list[dict[str, Any]]:
         with track_db_operation(_MSG_COL, "find"):
             cursor = self.messages.find(
                 {"conversation_id": conversation_id},
@@ -102,7 +102,7 @@ class ChatRepository:
             )
             return await cursor.to_list(length=limit)
 
-    async def get_recent_messages(self, conversation_id: str, limit: int = 20) -> List[Dict[str, Any]]:
+    async def get_recent_messages(self, conversation_id: str, limit: int = 20) -> list[dict[str, Any]]:
         with track_db_operation(_MSG_COL, "find"):
             cursor = self.messages.find(
                 {"conversation_id": conversation_id},

@@ -1,5 +1,5 @@
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any
 
 from app.core.constants import FINDING_DELTA_THRESHOLD, RECURRING_ISSUE_THRESHOLD
 from app.schemas.recommendation import (
@@ -7,13 +7,13 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import get_attr, ModelOrDict
+from app.services.recommendation.common import ModelOrDict, get_attr
 
 
 def analyze_regressions(
-    current_findings: List[ModelOrDict],
-    previous_findings: List[ModelOrDict],
-) -> List[Recommendation]:
+    current_findings: list[ModelOrDict],
+    previous_findings: list[ModelOrDict],
+) -> list[Recommendation]:
     """Detect regressions - vulnerabilities that were fixed but have returned."""
     recommendations = []
 
@@ -96,10 +96,10 @@ def analyze_regressions(
 
 
 def _build_finding_frequency(
-    scan_history: List[ModelOrDict],
-) -> Dict[str, Dict[str, Any]]:
+    scan_history: list[ModelOrDict],
+) -> dict[str, dict[str, Any]]:
     """Count how often each CVE/finding appears across scans."""
-    finding_frequency: Dict[str, Dict[str, Any]] = defaultdict(lambda: {"count": 0, "scans": set(), "info": None})
+    finding_frequency: dict[str, dict[str, Any]] = defaultdict(lambda: {"count": 0, "scans": set(), "info": None})
 
     for scan in scan_history:
         scan_id = get_attr(scan, "_id") or get_attr(scan, "id")
@@ -124,14 +124,14 @@ def _build_finding_frequency(
     return finding_frequency
 
 
-def _count_recurring_by_severity(recurring: List[Dict[str, Any]], severity: str) -> int:
+def _count_recurring_by_severity(recurring: list[dict[str, Any]], severity: str) -> int:
     """Count recurring issues matching a given severity."""
     return len([r for r in recurring if r.get("info", {}).get("severity") == severity])
 
 
 def analyze_recurring_issues(
-    scan_history: List[ModelOrDict],
-) -> List[Recommendation]:
+    scan_history: list[ModelOrDict],
+) -> list[Recommendation]:
     """Identify issues that keep appearing across multiple scans."""
     if not scan_history:
         return []

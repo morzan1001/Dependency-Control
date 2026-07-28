@@ -8,8 +8,8 @@ from app.db.mongodb import (
 )
 
 __all__ = [
+    "close_mongo_connection",
+    "connect_to_mongo",
     "db",
     "get_database",
-    "connect_to_mongo",
-    "close_mongo_connection",
 ]

@@ -7,7 +7,7 @@ import os
 import shutil
 import tempfile
 from abc import abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from .base import Analyzer
 
@@ -32,10 +32,10 @@ class CLIAnalyzer(Analyzer):
 
     async def analyze(
         self,
-        sbom: Dict[str, Any],
-        settings: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        sbom: dict[str, Any],
+        settings: dict[str, Any] | None = None,
+        parsed_components: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Run CLI analysis with automatic temp file management and retry."""
         if not self.is_tool_available():
             logger.warning(f"{self.name}: CLI tool '{self.cli_command}' not found in PATH")
@@ -45,8 +45,8 @@ class CLIAnalyzer(Analyzer):
                 self.empty_result_key: [],
             }
 
-        tmp_sbom_path: Optional[str] = None
-        extra_paths: List[str] = []
+        tmp_sbom_path: str | None = None
+        extra_paths: list[str] = []
 
         try:
             tmp_sbom_path = self._create_temp_sbom(sbom)
@@ -79,12 +79,12 @@ class CLIAnalyzer(Analyzer):
 
         except Exception as e:
             logger.exception(f"Exception during {self.name} analysis")
-            return {"error": f"Exception during {self.name} analysis: {str(e)}"}
+            return {"error": f"Exception during {self.name} analysis: {e!s}"}
 
         finally:
             self._cleanup_files([p for p in [tmp_sbom_path] + extra_paths if p is not None])
 
-    def _create_temp_sbom(self, sbom: Dict[str, Any]) -> str:
+    def _create_temp_sbom(self, sbom: dict[str, Any]) -> str:
         """Create a temporary file containing the SBOM JSON."""
         with tempfile.NamedTemporaryFile(mode="w+", suffix=".json", delete=False) as tmp_file:
             json.dump(sbom, tmp_file)
@@ -92,15 +92,15 @@ class CLIAnalyzer(Analyzer):
 
     async def _preprocess_sbom(
         self,
-        _sbom: Dict[str, Any],
+        _sbom: dict[str, Any],
         tmp_sbom_path: str,
-        _settings: Optional[Dict[str, Any]],
-    ) -> Tuple[str, List[str]]:
+        _settings: dict[str, Any] | None,
+    ) -> tuple[str, list[str]]:
         """Preprocess SBOM before analysis; returns (target_path, extra_temp_files_to_cleanup)."""
         return tmp_sbom_path, []
 
     @abstractmethod
-    def _build_command_args(self, sbom_path: str, settings: Optional[Dict[str, Any]]) -> List[str]:
+    def _build_command_args(self, sbom_path: str, settings: dict[str, Any] | None) -> list[str]:
         """Build command line arguments. Must be implemented by subclasses."""
         raise NotImplementedError
 
@@ -109,7 +109,7 @@ class CLIAnalyzer(Analyzer):
     max_retries: int = 0
     retry_delay: float = 2.0  # base delay in seconds, doubles each retry
 
-    async def _execute_command(self, args: List[str]) -> Tuple[bytes, bytes, int]:
+    async def _execute_command(self, args: list[str]) -> tuple[bytes, bytes, int]:
         """Execute the CLI command and return stdout, stderr, returncode."""
         process = await asyncio.create_subprocess_exec(
             *args,
@@ -125,20 +125,20 @@ class CLIAnalyzer(Analyzer):
             return b"", f"{self.name} timed out after {self.cli_timeout} seconds".encode(), 1
         return stdout, stderr, process.returncode or 0
 
-    def _handle_error(self, stderr: bytes) -> Dict[str, Any]:
+    def _handle_error(self, stderr: bytes) -> dict[str, Any]:
         """Handle CLI error output."""
         error_msg = stderr.decode()
         logger.error(f"{self.name} failed: {error_msg}")
         return {"error": f"{self.name} analysis failed", "details": error_msg}
 
-    def _parse_output(self, stdout: bytes) -> Dict[str, Any]:
+    def _parse_output(self, stdout: bytes) -> dict[str, Any]:
         """Parse CLI JSON output."""
         try:
             output_str = stdout.decode()
             if not output_str.strip():
                 return {self.empty_result_key: []}
 
-            result: Dict[str, Any] = json.loads(output_str)
+            result: dict[str, Any] = json.loads(output_str)
             return result
         except json.JSONDecodeError:
             output_str = stdout.decode()
@@ -147,7 +147,7 @@ class CLIAnalyzer(Analyzer):
                 "output": output_str,
             }
 
-    def _cleanup_files(self, paths: List[Optional[str]]) -> None:
+    def _cleanup_files(self, paths: list[str | None]) -> None:
         """Remove temporary files."""
         for path in paths:
             if path and os.path.exists(path):

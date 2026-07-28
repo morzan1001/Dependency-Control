@@ -1,5 +1,5 @@
 import os
-from typing import Any, Dict, Optional
+from typing import Any
 
 from jinja2 import Environment, FileSystemLoader
 
@@ -10,7 +10,7 @@ template_dir = os.path.join(current_dir, "../../templates/email")
 env = Environment(loader=FileSystemLoader(template_dir), autoescape=True)
 
 
-def render_template(template_name: str, context: Dict[str, Any]) -> str:
+def render_template(template_name: str, context: dict[str, Any]) -> str:
     template = env.get_template(template_name)
     return template.render(**context)
 
@@ -61,7 +61,7 @@ def get_vulnerability_found_template(
     vulnerabilities: list,
     has_kev: bool = False,
     kev_count: int = 0,
-    kev_vulnerabilities: Optional[list] = None,
+    kev_vulnerabilities: list | None = None,
     has_high_epss: bool = False,
     high_epss_count: int = 0,
 ) -> str:
@@ -91,7 +91,7 @@ def get_analysis_completed_template(
     severity_medium: int = 0,
     severity_low: int = 0,
     analyzer_count: int = 0,
-    results_summary: Optional[list] = None,
+    results_summary: list | None = None,
 ) -> str:
     return render_template(
         "analysis_completed.html",

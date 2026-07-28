@@ -2,10 +2,10 @@
 
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.dependencies import (
-    analyze_outdated_dependencies,
-    analyze_version_fragmentation,
     analyze_dev_in_production,
     analyze_end_of_life,
+    analyze_outdated_dependencies,
+    analyze_version_fragmentation,
 )
 
 

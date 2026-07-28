@@ -1,6 +1,6 @@
 """EPSS/KEV enrichment analyzer; the actual enrichment runs in analysis.py post-processing."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar
 
 from .base import Analyzer
 
@@ -12,14 +12,14 @@ class EPSSKEVAnalyzer(Analyzer):
 
     is_post_processor = True
 
-    depends_on = ["trivy", "grype", "osv", "deps_dev"]
+    depends_on: ClassVar[list[str]] = ["trivy", "grype", "osv", "deps_dev"]
 
     async def analyze(
         self,
-        sbom: Dict[str, Any],
-        settings: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        sbom: dict[str, Any],
+        settings: dict[str, Any] | None = None,
+        parsed_components: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Return a placeholder; enrichment happens in analysis.py post-processing."""
         return {
             "analyzer": self.name,

@@ -1,6 +1,6 @@
 """MongoDB access for the crypto_assets collection."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pymongo import UpdateOne
 
@@ -19,7 +19,7 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
         self,
         project_id: str,
         scan_id: str,
-        assets: List[CryptoAsset],
+        assets: list[CryptoAsset],
         chunk_size: int = CRYPTO_ASSET_BULK_CHUNK_SIZE,
     ) -> int:
         if not assets:
@@ -50,12 +50,12 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
         scan_id: str,
         limit: int,
         skip: int = 0,
-        asset_type: Optional[CryptoAssetType] = None,
-        primitive: Optional[CryptoPrimitive] = None,
-        name_search: Optional[str] = None,
-    ) -> List[CryptoAsset]:
+        asset_type: CryptoAssetType | None = None,
+        primitive: CryptoPrimitive | None = None,
+        name_search: str | None = None,
+    ) -> list[CryptoAsset]:
         limit = min(limit, CRYPTO_ASSET_MAX_LIST_LIMIT)
-        query: Dict[str, Any] = {"project_id": project_id, "scan_id": scan_id}
+        query: dict[str, Any] = {"project_id": project_id, "scan_id": scan_id}
         if asset_type is not None:
             query["asset_type"] = asset_type.value if hasattr(asset_type, "value") else asset_type
         if primitive is not None:
@@ -67,7 +67,7 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
             docs = await cursor.to_list(length=limit)
         return [CryptoAsset.model_validate(d) for d in docs]
 
-    async def get(self, project_id: str, asset_id: str) -> Optional[CryptoAsset]:
+    async def get(self, project_id: str, asset_id: str) -> CryptoAsset | None:
         with track_db_operation(self.collection_name, "find_one"):
             doc = await self.collection.find_one({"project_id": project_id, "_id": asset_id})
         return CryptoAsset.model_validate(doc) if doc else None
@@ -76,12 +76,12 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
         with track_db_operation(self.collection_name, "count"):
             return await self.collection.count_documents({"project_id": project_id, "scan_id": scan_id})
 
-    async def summary_for_scan(self, project_id: str, scan_id: str) -> Dict[str, Any]:
-        pipeline: List[Dict[str, Any]] = [
+    async def summary_for_scan(self, project_id: str, scan_id: str) -> dict[str, Any]:
+        pipeline: list[dict[str, Any]] = [
             {"$match": {"project_id": project_id, "scan_id": scan_id}},
             {"$group": {"_id": "$asset_type", "count": {"$sum": 1}}},
         ]
-        by_type: Dict[str, int] = {}
+        by_type: dict[str, int] = {}
         total = 0
         with track_db_operation(self.collection_name, "aggregate"):
             async for row in self.collection.aggregate(pipeline):

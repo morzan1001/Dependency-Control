@@ -2,7 +2,7 @@
 
 import asyncio
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, ClassVar
 
 from app.models.finding import FindingType, Severity
 from app.schemas.compliance import (
@@ -20,9 +20,8 @@ from app.services.compliance.frameworks.base import (
     build_summary,
 )
 
-
 # License-policy toggle -> control; when the toggle is False, matching-category findings FAIL.
-_POLICY_TO_CATEGORY: Dict[str, Dict[str, Any]] = {
+_POLICY_TO_CATEGORY: dict[str, dict[str, Any]] = {
     "allow_strong_copyleft": {
         "control_id": "LICENSE-AUDIT-STRONG-COPYLEFT",
         "title": "No strong-copyleft licenses",
@@ -50,13 +49,13 @@ class LicenseAuditFramework:
     name: str = "License Audit (project policy)"
     version: str = "1"
     source_url: str = "https://spdx.dev/learn/handling-license-info/"
-    disclaimer: Optional[str] = (
+    disclaimer: str | None = (
         "This report checks the project's SBOM dependencies against the "
         "configured license policy (allow_strong_copyleft / "
         "allow_network_copyleft etc.). It is an advisory signal, not legal "
         "advice."
     )
-    controls: List[ControlDefinition] = []
+    controls: ClassVar[list[ControlDefinition]] = []
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation:
         raise RuntimeError("LicenseAuditFramework is async-only; callers must dispatch via evaluate_async()")
@@ -67,7 +66,7 @@ class LicenseAuditFramework:
         policy = _extract_license_policy(data)
         findings = data.findings or []
 
-        controls: List[ControlResult] = []
+        controls: list[ControlResult] = []
         for policy_key, cfg in _POLICY_TO_CATEGORY.items():
             allowed = bool(policy.get(policy_key, False))
             if allowed:
@@ -139,7 +138,7 @@ class LicenseAuditFramework:
         )
 
 
-def _extract_license_policy(data: EvaluationInput) -> Dict[str, Any]:
+def _extract_license_policy(data: EvaluationInput) -> dict[str, Any]:
     """Pull the license policy from policy_rules; permissive defaults when unset."""
     rules = data.policy_rules or []
     # License policy is a single flat dict placed first in policy_rules.
@@ -150,7 +149,7 @@ def _extract_license_policy(data: EvaluationInput) -> Dict[str, Any]:
     return {}
 
 
-def _is_license_violation(f: Dict[str, Any], categories: List[str]) -> bool:
+def _is_license_violation(f: dict[str, Any], categories: list[str]) -> bool:
     ftype = f.get("type")
     license_type = FindingType.LICENSE.value
     if ftype != license_type:

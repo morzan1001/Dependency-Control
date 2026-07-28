@@ -382,7 +382,7 @@ async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch
 @pytest.mark.asyncio
 async def test_reap_orphan_s3_objects_deletes_only_old_unknown_keys(monkeypatch):
     """Reaper deletes S3 objects that have no archive_metadata record AND are older than min age."""
-    from datetime import datetime, timezone, timedelta
+    from datetime import datetime, timedelta, timezone
 
     from app.core.housekeeping import _reap_orphan_s3_objects
 

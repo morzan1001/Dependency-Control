@@ -1,7 +1,7 @@
 """Pydantic models and TypedDicts for analytics API endpoints."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -9,15 +9,15 @@ from pydantic import BaseModel, Field
 class CVEEnrichmentResult(BaseModel):
     """Result of CVE enrichment data processing from process_cve_enrichments()."""
 
-    max_epss: Optional[float] = None
-    max_percentile: Optional[float] = None
-    max_risk: Optional[float] = None
+    max_epss: float | None = None
+    max_percentile: float | None = None
+    max_risk: float | None = None
     has_kev: bool = False
     kev_count: int = 0
     kev_ransomware_use: bool = False
-    kev_due_date: Optional[str] = None
+    kev_due_date: str | None = None
     exploit_maturity: str = "unknown"
-    days_until_due: Optional[int] = None
+    days_until_due: int | None = None
 
 
 class SeverityBreakdown(BaseModel):
@@ -34,7 +34,7 @@ class DependencyUsage(BaseModel):
 
     name: str
     type: str
-    versions: List[str]
+    versions: list[str]
     project_count: int
     total_occurrences: int
     has_vulnerabilities: bool
@@ -53,12 +53,12 @@ class DependencyTreeNode(BaseModel):
     direct_inferred: bool = False
     has_findings: bool
     findings_count: int
-    findings_severity: Optional[SeverityBreakdown] = None
-    child_ids: List[str] = []
-    source_type: Optional[str] = None
-    source_target: Optional[str] = None
-    layer_digest: Optional[str] = None
-    locations: List[str] = []
+    findings_severity: SeverityBreakdown | None = None
+    child_ids: list[str] = []
+    source_type: str | None = None
+    source_target: str | None = None
+    layer_digest: str | None = None
+    locations: list[str] = []
 
 
 class DependencyGraph(BaseModel):
@@ -66,8 +66,8 @@ class DependencyGraph(BaseModel):
 
     # Every node is reachable from roots (direct deps, unresolved-parent deps, one entry per
     # otherwise-disconnected component), so the graph is rendered whole without server nesting.
-    nodes: List[DependencyTreeNode] = []
-    roots: List[str] = []
+    nodes: list[DependencyTreeNode] = []
+    roots: list[str] = []
 
 
 class ImpactAnalysisResult(BaseModel):
@@ -78,22 +78,22 @@ class ImpactAnalysisResult(BaseModel):
     affected_projects: int
     total_findings: int
     findings_by_severity: SeverityBreakdown
-    recommended_version: Optional[str] = None
+    recommended_version: str | None = None
     fix_impact_score: float
-    affected_project_names: List[str]
-    max_epss_score: Optional[float] = None
-    epss_percentile: Optional[float] = None
+    affected_project_names: list[str]
+    max_epss_score: float | None = None
+    epss_percentile: float | None = None
     has_kev: bool = False
     kev_count: int = 0
     kev_ransomware_use: bool = False
-    kev_due_date: Optional[str] = None  # Earliest CISA remediation deadline
-    days_until_due: Optional[int] = None  # negative when overdue
+    kev_due_date: str | None = None  # Earliest CISA remediation deadline
+    days_until_due: int | None = None  # negative when overdue
     exploit_maturity: str = "unknown"
-    max_risk_score: Optional[float] = None
-    days_known: Optional[int] = None
+    max_risk_score: float | None = None
+    days_known: int | None = None
     has_fix: bool = False
-    fix_versions: List[str] = []
-    priority_reasons: List[str] = []
+    fix_versions: list[str] = []
+    priority_reasons: list[str] = []
 
 
 class VulnerabilityHotspot(BaseModel):
@@ -104,22 +104,22 @@ class VulnerabilityHotspot(BaseModel):
     type: str
     finding_count: int
     severity_breakdown: SeverityBreakdown
-    affected_projects: List[str]
+    affected_projects: list[str]
     first_seen: str
-    max_epss_score: Optional[float] = None
-    epss_percentile: Optional[float] = None
+    max_epss_score: float | None = None
+    epss_percentile: float | None = None
     has_kev: bool = False
     kev_count: int = 0
     kev_ransomware_use: bool = False
-    kev_due_date: Optional[str] = None  # Earliest CISA remediation deadline
-    days_until_due: Optional[int] = None  # negative when overdue
+    kev_due_date: str | None = None  # Earliest CISA remediation deadline
+    days_until_due: int | None = None  # negative when overdue
     exploit_maturity: str = "unknown"
-    max_risk_score: Optional[float] = None
-    days_known: Optional[int] = None
+    max_risk_score: float | None = None
+    days_known: int | None = None
     has_fix: bool = False
-    fix_versions: List[str] = []
-    top_cves: List[str] = []
-    priority_reasons: List[str] = []
+    fix_versions: list[str] = []
+    top_cves: list[str] = []
+    priority_reasons: list[str] = []
 
 
 class DependencyTypeStats(BaseModel):
@@ -136,7 +136,7 @@ class AnalyticsSummary(BaseModel):
     total_dependencies: int
     total_vulnerabilities: int
     unique_packages: int
-    dependency_types: List[DependencyTypeStats]
+    dependency_types: list[DependencyTypeStats]
     severity_distribution: SeverityBreakdown
 
 
@@ -146,69 +146,69 @@ class DependencyMetadata(BaseModel):
     name: str
     version: str
     type: str
-    purl: Optional[str] = None
+    purl: str | None = None
 
-    description: Optional[str] = None
-    author: Optional[str] = None
-    publisher: Optional[str] = None
-    homepage: Optional[str] = None
-    repository_url: Optional[str] = None
-    download_url: Optional[str] = None
-    group: Optional[str] = None
+    description: str | None = None
+    author: str | None = None
+    publisher: str | None = None
+    homepage: str | None = None
+    repository_url: str | None = None
+    download_url: str | None = None
+    group: str | None = None
 
-    license: Optional[str] = None
-    license_url: Optional[str] = None
-    license_category: Optional[str] = None
-    license_risks: List[str] = []
-    license_obligations: List[str] = []
+    license: str | None = None
+    license_url: str | None = None
+    license_category: str | None = None
+    license_risks: list[str] = []
+    license_obligations: list[str] = []
 
-    deps_dev: Optional[Dict[str, Any]] = None
+    deps_dev: dict[str, Any] | None = None
 
     project_count: int = 0
-    affected_projects: List[Dict[str, Any]] = []  # [{id, name, direct}]
+    affected_projects: list[dict[str, Any]] = []  # [{id, name, direct}]
     total_vulnerability_count: int = 0
     total_finding_count: int = 0
 
-    enrichment_sources: List[str] = []
+    enrichment_sources: list[str] = []
 
 
 class VulnerabilitySearchResult(BaseModel):
     """Result of a vulnerability/CVE search."""
 
     vulnerability_id: str  # e.g. CVE-2021-44228, GHSA-xxx
-    aliases: List[str] = []
+    aliases: list[str] = []
 
     severity: str
-    cvss_score: Optional[float] = None
-    epss_score: Optional[float] = None
-    epss_percentile: Optional[float] = None
+    cvss_score: float | None = None
+    epss_score: float | None = None
+    epss_percentile: float | None = None
 
     in_kev: bool = False
     kev_ransomware: bool = False
-    kev_due_date: Optional[str] = None
+    kev_due_date: str | None = None
 
     component: str
     version: str
-    component_type: Optional[str] = None
-    purl: Optional[str] = None
+    component_type: str | None = None
+    purl: str | None = None
 
     project_id: str
     project_name: str
-    scan_id: Optional[str] = None
+    scan_id: str | None = None
 
     finding_id: str
     finding_type: str
-    description: Optional[str] = None
-    fixed_version: Optional[str] = None
+    description: str | None = None
+    fixed_version: str | None = None
 
     waived: bool = False
-    waiver_reason: Optional[str] = None
+    waiver_reason: str | None = None
 
 
 class VulnerabilitySearchResponse(BaseModel):
     """Paginated response for vulnerability search."""
 
-    items: List[VulnerabilitySearchResult]
+    items: list[VulnerabilitySearchResult]
     total: int
     page: int
     size: int
@@ -222,31 +222,31 @@ class DependencySearchResult(BaseModel):
     package: str
     version: str
     type: str
-    license: Optional[str] = None
-    license_url: Optional[str] = None
+    license: str | None = None
+    license_url: str | None = None
     direct: bool = False
-    purl: Optional[str] = None
-    source_type: Optional[str] = None
-    source_target: Optional[str] = None
-    layer_digest: Optional[str] = None
-    found_by: Optional[str] = None
-    locations: List[str] = []
-    cpes: List[str] = []
-    description: Optional[str] = None
-    author: Optional[str] = None
-    publisher: Optional[str] = None
-    group: Optional[str] = None
-    homepage: Optional[str] = None
-    repository_url: Optional[str] = None
-    download_url: Optional[str] = None
-    hashes: Dict[str, Any] = {}
-    properties: Dict[str, Any] = {}
+    purl: str | None = None
+    source_type: str | None = None
+    source_target: str | None = None
+    layer_digest: str | None = None
+    found_by: str | None = None
+    locations: list[str] = []
+    cpes: list[str] = []
+    description: str | None = None
+    author: str | None = None
+    publisher: str | None = None
+    group: str | None = None
+    homepage: str | None = None
+    repository_url: str | None = None
+    download_url: str | None = None
+    hashes: dict[str, Any] = {}
+    properties: dict[str, Any] = {}
 
 
 class DependencySearchResponse(BaseModel):
     """Paginated response for dependency search."""
 
-    items: List[DependencySearchResult]
+    items: list[DependencySearchResult]
     total: int
     page: int
     size: int
@@ -259,9 +259,9 @@ class RecommendationResponse(BaseModel):
     priority: str
     title: str
     description: str
-    impact: Dict[str, Any]
-    affected_components: List[str]
-    action: Dict[str, Any]
+    impact: dict[str, Any]
+    affected_components: list[str]
+    action: dict[str, Any]
     effort: str
 
 
@@ -273,8 +273,8 @@ class RecommendationsResponse(BaseModel):
     scan_id: str
     total_findings: int
     total_vulnerabilities: int
-    recommendations: List[RecommendationResponse]
-    summary: Dict[str, Any]
+    recommendations: list[RecommendationResponse]
+    summary: dict[str, Any]
 
 
 # --- Update Frequency Analysis ---
@@ -285,7 +285,7 @@ class DependencyUpdateEvent(BaseModel):
 
     package_name: str
     package_type: str
-    purl: Optional[str] = None
+    purl: str | None = None
     old_version: str
     new_version: str
     update_type: str  # "patch" | "minor" | "major" | "unknown"
@@ -312,8 +312,8 @@ class SlowPackage(BaseModel):
 
     name: str
     type: str
-    current_version: Optional[str] = None
-    latest_version: Optional[str] = None
+    current_version: str | None = None
+    latest_version: str | None = None
     scans_outdated: int  # number of scans where this package was flagged as outdated
 
 
@@ -335,7 +335,7 @@ class UpdateFrequencyMetrics(BaseModel):
     minor_updates: int
     major_updates: int
     unknown_updates: int
-    granularity_ratio: Dict[str, float]  # {"patch": 0.6, "minor": 0.3, "major": 0.1}
+    granularity_ratio: dict[str, float]  # {"patch": 0.6, "minor": 0.3, "major": 0.1}
 
     avg_days_between_scans: float
 
@@ -343,24 +343,24 @@ class UpdateFrequencyMetrics(BaseModel):
     # None means nothing was ever outdated (N/A, distinct from 0%).
     total_outdated_detected: int
     outdated_resolved: int
-    update_coverage_pct: Optional[float] = None
+    update_coverage_pct: float | None = None
 
     trend_direction: str  # "improving" | "stable" | "deteriorating" | "unknown"
     trend_detail: str
 
     # Upstream release cadence (independent of scan frequency).
     # All four are None when no release-history data is available.
-    upstream_releases_last_12m_median: Optional[float] = None
-    upstream_days_between_releases_median: Optional[float] = None
-    upstream_days_since_latest_release_median: Optional[float] = None
-    adoption_latency_days_median: Optional[float] = None  # release-to-first-scan lag
+    upstream_releases_last_12m_median: float | None = None
+    upstream_days_between_releases_median: float | None = None
+    upstream_days_since_latest_release_median: float | None = None
+    adoption_latency_days_median: float | None = None  # release-to-first-scan lag
 
     # Dominant dep ecosystem ("pypi"/"npm"/...); "mixed" if none >=70%; None if empty.
-    dominant_ecosystem: Optional[str] = None
+    dominant_ecosystem: str | None = None
 
-    scan_timeline: List[ScanTimelineEntry]
-    slowest_packages: List[SlowPackage]
-    recent_updates: List[DependencyUpdateEvent]
+    scan_timeline: list[ScanTimelineEntry]
+    slowest_packages: list[SlowPackage]
+    recent_updates: list[DependencyUpdateEvent]
 
 
 class ProjectUpdateSummary(BaseModel):
@@ -368,27 +368,27 @@ class ProjectUpdateSummary(BaseModel):
 
     project_id: str
     project_name: str
-    team_name: Optional[str] = None
+    team_name: str | None = None
     scan_count: int
     updates_per_month: float
-    update_coverage_pct: Optional[float] = None
+    update_coverage_pct: float | None = None
     patch_ratio: float  # proportion of patch updates (0-1)
     trend_direction: str  # "improving" | "stable" | "deteriorating" | "unknown"
     total_outdated: int
     last_scan_date: str
-    dominant_ecosystem: Optional[str] = None
+    dominant_ecosystem: str | None = None
 
 
 class UpdateFrequencyComparison(BaseModel):
     """Cross-project comparison of update frequency metrics."""
 
-    projects: List[ProjectUpdateSummary]
+    projects: list[ProjectUpdateSummary]
     team_avg_updates_per_month: float
     team_avg_coverage_pct: float
-    best_project: Optional[str] = None
-    worst_project: Optional[str] = None
-    best_per_ecosystem: Dict[str, str] = {}
-    worst_per_ecosystem: Dict[str, str] = {}
+    best_project: str | None = None
+    worst_project: str | None = None
+    best_per_ecosystem: dict[str, str] = {}
+    worst_per_ecosystem: dict[str, str] = {}
 
 
 # Crypto analytics schemas
@@ -401,9 +401,9 @@ class HotspotEntry(BaseModel):
     grouping_dimension: str = Field(..., description="Dimension this entry groups by")
     asset_count: int = Field(..., ge=0)
     finding_count: int = Field(..., ge=0)
-    severity_mix: Dict[str, int] = Field(default_factory=dict)
-    locations: List[str] = Field(default_factory=list)
-    project_ids: List[str] = Field(default_factory=list)
+    severity_mix: dict[str, int] = Field(default_factory=dict)
+    locations: list[str] = Field(default_factory=list)
+    project_ids: list[str] = Field(default_factory=list)
     first_seen: datetime
     last_seen: datetime
 
@@ -412,9 +412,9 @@ class HotspotResponse(BaseModel):
     """Paginated hotspot response for a given scope."""
 
     scope: Literal["project", "team", "global", "user"]
-    scope_id: Optional[str] = None
+    scope_id: str | None = None
     grouping_dimension: str
-    items: List[HotspotEntry] = Field(default_factory=list)
+    items: list[HotspotEntry] = Field(default_factory=list)
     total: int = Field(..., ge=0)
     generated_at: datetime
     cache_hit: bool = False
@@ -432,10 +432,10 @@ class TrendSeries(BaseModel):
     """A full trend time-series for a metric within a scope."""
 
     scope: str
-    scope_id: Optional[str] = None
+    scope_id: str | None = None
     metric: str
     bucket: Literal["day", "week", "month"]
-    points: List[TrendPoint] = Field(default_factory=list)
+    points: list[TrendPoint] = Field(default_factory=list)
     range_start: datetime
     range_end: datetime
     cache_hit: bool = False

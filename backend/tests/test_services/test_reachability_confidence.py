@@ -41,15 +41,14 @@ class TestIsHighConfidenceReachable:
         assert is_high_confidence_reachable(None) is False
 
 
-from app.services.reachability_enrichment import (  # noqa: E402
+from app.services.analysis.stats import build_reachability_summary
+from app.services.reachability_enrichment import (
     _build_component_language_map,
     _check_package_in_imports,
     _enrich_finding_from_callgraphs,
     _enrich_single_finding,
     _match_symbols,
 )
-
-from app.services.analysis.stats import build_reachability_summary  # noqa: E402
 
 
 class TestPendingSummaryTiers:
@@ -285,8 +284,8 @@ class TestRunPendingBulkPersist:
 
     @pytest.mark.asyncio
     async def test_persists_via_bulk_write_and_writes_summary(self, monkeypatch):
-        from tests.mocks.fake_mongo import FakeDatabase
         from app.services.reachability_enrichment import run_pending_reachability_for_scan
+        from tests.mocks.fake_mongo import FakeDatabase
 
         db = FakeDatabase()
         pid, sid = "p1", "s1"

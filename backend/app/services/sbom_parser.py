@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, ClassVar
 from urllib.parse import urlparse
 
 from app.core.constants import (
@@ -34,7 +34,7 @@ def is_url(value: str) -> bool:
         return False
 
 
-def extract_license_from_url(url: str) -> Optional[str]:
+def extract_license_from_url(url: str) -> str | None:
     """Try to extract a license SPDX ID from a license URL."""
     if not url:
         return None
@@ -59,7 +59,7 @@ class SBOMParser:
         }
 
     @staticmethod
-    def _detect_cyclonedx(sbom: Dict[str, Any]) -> Optional[Tuple[SBOMFormat, Optional[str]]]:
+    def _detect_cyclonedx(sbom: dict[str, Any]) -> tuple[SBOMFormat, str | None] | None:
         """Try to detect CycloneDX format."""
         if sbom.get("bomFormat") == "CycloneDX":
             return SBOMFormat.CYCLONEDX, sbom.get("specVersion")
@@ -78,7 +78,7 @@ class SBOMParser:
         return None
 
     @staticmethod
-    def _detect_spdx(sbom: Dict[str, Any]) -> Optional[Tuple[SBOMFormat, Optional[str]]]:
+    def _detect_spdx(sbom: dict[str, Any]) -> tuple[SBOMFormat, str | None] | None:
         """Try to detect SPDX format."""
         if sbom.get("spdxVersion"):
             return SBOMFormat.SPDX, sbom.get("spdxVersion")
@@ -89,7 +89,7 @@ class SBOMParser:
         return None
 
     @staticmethod
-    def _detect_syft(sbom: Dict[str, Any]) -> Optional[Tuple[SBOMFormat, Optional[str]]]:
+    def _detect_syft(sbom: dict[str, Any]) -> tuple[SBOMFormat, str | None] | None:
         """Try to detect Syft JSON format."""
         if "artifacts" in sbom and isinstance(sbom.get("artifacts"), list):
             descriptor = sbom.get("descriptor", {})
@@ -109,7 +109,7 @@ class SBOMParser:
 
         return None
 
-    def detect_format(self, sbom: Dict[str, Any]) -> Tuple[SBOMFormat, Optional[str]]:
+    def detect_format(self, sbom: dict[str, Any]) -> tuple[SBOMFormat, str | None]:
         """Detect the SBOM format and version."""
         result = self._detect_cyclonedx(sbom)
         if result:
@@ -125,7 +125,7 @@ class SBOMParser:
 
         return SBOMFormat.UNKNOWN, None
 
-    def parse(self, sbom: Dict[str, Any]) -> ParsedSBOM:
+    def parse(self, sbom: dict[str, Any]) -> ParsedSBOM:
         """Parse an SBOM and return normalized representation."""
 
         format_type, version = self.detect_format(sbom)
@@ -141,6 +141,7 @@ class SBOMParser:
                     if result.dependencies:
                         break
                 except Exception:
+                    logger.debug("Best-effort SBOM parse attempt failed, trying next handler", exc_info=True)
                     continue
         else:
             format_handler = self.format_handlers.get(format_type)
@@ -156,7 +157,7 @@ class SBOMParser:
         return result
 
     @staticmethod
-    def _extract_cyclonedx_tool(tools: Any) -> Tuple[Optional[str], Optional[str]]:
+    def _extract_cyclonedx_tool(tools: Any) -> tuple[str | None, str | None]:
         """Extract tool name/version from CycloneDX metadata.tools (list or object form)."""
         if not tools:
             return None, None
@@ -174,11 +175,11 @@ class SBOMParser:
 
     @staticmethod
     def _build_cyclonedx_deps_graph(
-        dependencies_map: List[Dict[str, Any]],
-    ) -> Tuple[Dict[str, list], Dict[str, list], set]:
+        dependencies_map: list[dict[str, Any]],
+    ) -> tuple[dict[str, list], dict[str, list], set]:
         """Build forward/reverse cyclonedx dep graphs and the transitive ref set."""
-        deps_graph: Dict[str, list] = {}
-        reverse_deps_graph: Dict[str, list] = {}
+        deps_graph: dict[str, list] = {}
+        reverse_deps_graph: dict[str, list] = {}
         all_transitive_refs: set = set()
 
         for dep_entry in dependencies_map:
@@ -193,7 +194,7 @@ class SBOMParser:
 
     @staticmethod
     def _resolve_cyclonedx_direct_refs(
-        deps_graph: Dict[str, list], all_transitive_refs: set, main_bom_ref: Optional[str]
+        deps_graph: dict[str, list], all_transitive_refs: set, main_bom_ref: str | None
     ) -> set:
         """Resolve the set of direct refs given the dep graph and main component."""
         if main_bom_ref and main_bom_ref in deps_graph:
@@ -211,7 +212,7 @@ class SBOMParser:
         # we don't mark everything transitive.
         return direct or roots
 
-    def _parse_cyclonedx(self, sbom: Dict[str, Any], result: ParsedSBOM) -> None:
+    def _parse_cyclonedx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         """Parse CycloneDX format SBOM."""
 
         metadata = sbom.get("metadata", {})
@@ -262,7 +263,7 @@ class SBOMParser:
             else:
                 result.skipped_components += 1
 
-    def _extract_cyclonedx_source(self, metadata: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    def _extract_cyclonedx_source(self, metadata: dict[str, Any]) -> tuple[str | None, str | None]:
         """Extract source information from CycloneDX metadata."""
 
         source_type = None
@@ -306,16 +307,15 @@ class SBOMParser:
         self,
         purl: str,
         pkg_type: str,
-        layer_digest: Optional[str],
-        global_source_type: Optional[str],
-    ) -> Optional[str]:
+        layer_digest: str | None,
+        global_source_type: str | None,
+    ) -> str | None:
         """Determine a component's likely source: image, application, file, or None."""
         purl_type = get_purl_type(purl)
         effective_type = (purl_type or pkg_type or "").lower()
 
-        if effective_type in OS_PACKAGE_TYPES:
-            if layer_digest or global_source_type == SOURCE_TYPE_IMAGE:
-                return SOURCE_TYPE_IMAGE
+        if effective_type in OS_PACKAGE_TYPES and (layer_digest or global_source_type == SOURCE_TYPE_IMAGE):
+            return SOURCE_TYPE_IMAGE
 
         if effective_type in APP_PACKAGE_TYPES:
             return SOURCE_TYPE_APPLICATION
@@ -325,7 +325,7 @@ class SBOMParser:
 
         return global_source_type
 
-    def _construct_purl(self, pkg_type: str, name: str, version: str, group: Optional[str] = None) -> str:
+    def _construct_purl(self, pkg_type: str, name: str, version: str, group: str | None = None) -> str:
         """Construct a PURL from component metadata."""
         type_mapping = {
             "library": "generic",
@@ -346,10 +346,10 @@ class SBOMParser:
 
     @staticmethod
     def _resolve_cyclonedx_directness(
-        check_ref: Optional[str],
-        direct_refs: Optional[set],
-        all_transitive_refs: Optional[set],
-    ) -> Tuple[bool, bool]:
+        check_ref: str | None,
+        direct_refs: set | None,
+        all_transitive_refs: set | None,
+    ) -> tuple[bool, bool]:
         """Return (direct, direct_inferred) for a cyclonedx component."""
         has_dependency_graph = bool(direct_refs) or bool(all_transitive_refs)
         if not (has_dependency_graph and direct_refs is not None and all_transitive_refs is not None):
@@ -368,8 +368,8 @@ class SBOMParser:
         cls,
         prop_name: str,
         prop_value: str,
-        current_layer: Optional[str],
-    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        current_layer: str | None,
+    ) -> tuple[str | None, str | None, str | None]:
         """Return (layer_digest_update, found_by_update, location_update) for a single property.
 
         Each item is either None (no update) or the new value to record.
@@ -389,13 +389,13 @@ class SBOMParser:
     @classmethod
     def _extract_cyclonedx_properties(
         cls,
-        comp: Dict[str, Any],
-    ) -> Tuple[Optional[str], Optional[str], List[str], Dict[str, str]]:
+        comp: dict[str, Any],
+    ) -> tuple[str | None, str | None, list[str], dict[str, str]]:
         """Extract (layer_digest, found_by, locations, properties) from comp."""
-        layer_digest: Optional[str] = None
-        found_by: Optional[str] = None
-        locations: List[str] = []
-        properties: Dict[str, str] = {}
+        layer_digest: str | None = None
+        found_by: str | None = None
+        locations: list[str] = []
+        properties: dict[str, str] = {}
 
         for prop in comp.get("properties", []):
             prop_name = prop.get("name", "")
@@ -422,12 +422,12 @@ class SBOMParser:
 
     @staticmethod
     def _extract_cyclonedx_external_refs(
-        external_refs: List[Dict[str, Any]],
-    ) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        external_refs: list[dict[str, Any]],
+    ) -> tuple[str | None, str | None, str | None]:
         """Return (homepage, repository_url, download_url) from externalReferences."""
-        homepage: Optional[str] = None
-        repository_url: Optional[str] = None
-        download_url: Optional[str] = None
+        homepage: str | None = None
+        repository_url: str | None = None
+        download_url: str | None = None
         for ref in external_refs:
             ref_type = ref.get("type", "").lower()
             ref_url = ref.get("url", "")
@@ -441,13 +441,13 @@ class SBOMParser:
 
     def _parse_cyclonedx_component(
         self,
-        comp: Dict[str, Any],
-        global_source_type: Optional[str],
-        source_target: Optional[str],
-        direct_refs: Optional[set] = None,
-        all_transitive_refs: Optional[set] = None,
-        reverse_deps_graph: Optional[dict] = None,
-    ) -> Optional[ParsedDependency]:
+        comp: dict[str, Any],
+        global_source_type: str | None,
+        source_target: str | None,
+        direct_refs: set | None = None,
+        all_transitive_refs: set | None = None,
+        reverse_deps_graph: dict | None = None,
+    ) -> ParsedDependency | None:
         """Parse a single CycloneDX component with all available fields."""
 
         purl = comp.get("purl")
@@ -485,7 +485,7 @@ class SBOMParser:
             if val and val not in cpes:
                 cpes.append(val)
 
-        hashes: Dict[str, str] = {}
+        hashes: dict[str, str] = {}
         for h in comp.get("hashes", []):
             alg = h.get("alg", "").lower()
             content = h.get("content", "")
@@ -534,8 +534,8 @@ class SBOMParser:
 
     @staticmethod
     def _classify_license_value(
-        value: str, current_url: Optional[str], fallback_url: Optional[str] = None
-    ) -> Tuple[Optional[str], Optional[str]]:
+        value: str, current_url: str | None, fallback_url: str | None = None
+    ) -> tuple[str | None, str | None]:
         """Classify a license value, returning (name_or_extracted, new_url_or_None).
 
         Handles whether the value is a URL (try to extract SPDX id) or a plain name.
@@ -551,8 +551,8 @@ class SBOMParser:
         return value, None
 
     def _handle_cyclonedx_license_dict(
-        self, lic: Dict[str, Any], license_names: List[str], license_url: Optional[str]
-    ) -> Optional[str]:
+        self, lic: dict[str, Any], license_names: list[str], license_url: str | None
+    ) -> str | None:
         """Handle a single CycloneDX license-dict entry; returns possibly updated url."""
         # Could be license object or expression
         if "license" in lic:
@@ -578,13 +578,13 @@ class SBOMParser:
                 return license_url
         return license_url
 
-    def _extract_cyclonedx_licenses_full(self, licenses: List[Any]) -> Tuple[str, Optional[str]]:
+    def _extract_cyclonedx_licenses_full(self, licenses: list[Any]) -> tuple[str, str | None]:
         """Extract license string and URL from CycloneDX license array."""
         if not licenses:
             return "", None
 
-        license_names: List[str] = []
-        license_url: Optional[str] = None
+        license_names: list[str] = []
+        license_url: str | None = None
 
         for lic in licenses:
             if isinstance(lic, dict):
@@ -618,7 +618,7 @@ class SBOMParser:
     )
 
     @classmethod
-    def _resolve_syft_source(cls, source: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    def _resolve_syft_source(cls, source: dict[str, Any]) -> tuple[str | None, str | None]:
         """Return (source_type, source_target) parsed from a syft source dict."""
         source_type_raw = source.get("type", "")
         if source_type_raw not in cls._SYFT_KNOWN_SOURCE_TYPES:
@@ -631,12 +631,12 @@ class SBOMParser:
 
     @staticmethod
     def _build_syft_relationship_graph(
-        relationships: List[Dict[str, Any]], source_id: str
-    ) -> Tuple[set, set, Dict[str, list]]:
+        relationships: list[dict[str, Any]], source_id: str
+    ) -> tuple[set, set, dict[str, list]]:
         """Build (direct_artifact_ids, all_child_ids, reverse_deps_graph) for syft."""
         direct_artifact_ids: set = set()
         all_child_ids: set = set()
-        reverse_deps_graph: Dict[str, list] = {}
+        reverse_deps_graph: dict[str, list] = {}
         direct_rel_types = ("contains", "dependency-of", "depends-on")
 
         for rel in relationships:
@@ -656,11 +656,11 @@ class SBOMParser:
         return direct_artifact_ids, all_child_ids, reverse_deps_graph
 
     @classmethod
-    def _syft_image_fallback_direct_ids(cls, artifacts: List[Dict[str, Any]]) -> set:
+    def _syft_image_fallback_direct_ids(cls, artifacts: list[dict[str, Any]]) -> set:
         """Heuristic: treat application-level package artifacts as direct in images."""
         return {artifact.get("id") for artifact in artifacts if artifact.get("type", "") in cls._SYFT_APP_PACKAGE_TYPES}
 
-    def _parse_syft(self, sbom: Dict[str, Any], result: ParsedSBOM) -> None:
+    def _parse_syft(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         """Parse Syft JSON format SBOM."""
 
         descriptor = sbom.get("descriptor", {})
@@ -711,11 +711,11 @@ class SBOMParser:
 
     @staticmethod
     def _extract_syft_locations(
-        location_entries: List[Dict[str, Any]],
-    ) -> Tuple[List[str], Optional[str]]:
+        location_entries: list[dict[str, Any]],
+    ) -> tuple[list[str], str | None]:
         """Return (locations, first_layer_digest) from a syft location list."""
-        locations: List[str] = []
-        layer_digest: Optional[str] = None
+        locations: list[str] = []
+        layer_digest: str | None = None
         for loc in location_entries:
             path = loc.get("path", "")
             access_path = loc.get("accessPath", "")
@@ -728,7 +728,7 @@ class SBOMParser:
         return locations, layer_digest
 
     @staticmethod
-    def _extract_syft_author(metadata: Dict[str, Any]) -> Optional[str]:
+    def _extract_syft_author(metadata: dict[str, Any]) -> str | None:
         """Extract author/maintainer string from syft metadata."""
         authors = metadata.get("authors")
         if authors:
@@ -738,9 +738,9 @@ class SBOMParser:
         return metadata.get("author") or metadata.get("maintainer")
 
     @staticmethod
-    def _extract_syft_hashes(metadata: Dict[str, Any]) -> Dict[str, str]:
+    def _extract_syft_hashes(metadata: dict[str, Any]) -> dict[str, str]:
         """Extract hashes from syft metadata (direct fields + digests array)."""
-        hashes: Dict[str, str] = {}
+        hashes: dict[str, str] = {}
         for hash_type in ("md5", "sha1", "sha256", "sha512"):
             if metadata.get(hash_type):
                 hashes[hash_type] = metadata[hash_type]
@@ -752,23 +752,21 @@ class SBOMParser:
         return hashes
 
     @staticmethod
-    def _resolve_syft_direct(is_direct: bool, metadata: Dict[str, Any]) -> bool:
+    def _resolve_syft_direct(is_direct: bool, metadata: dict[str, Any]) -> bool:
         """Combine relationship-based and metadata-flag directness."""
         if is_direct:
             return True
-        if metadata and (metadata.get("directDependency") or metadata.get("direct")):
-            return True
-        return False
+        return bool(metadata and (metadata.get("directDependency") or metadata.get("direct")))
 
     def _parse_syft_artifact(
         self,
-        artifact: Dict[str, Any],
-        source_type: Optional[str],
-        source_target: Optional[str],
+        artifact: dict[str, Any],
+        source_type: str | None,
+        source_target: str | None,
         is_direct: bool = False,
         direct_inferred: bool = False,
-        parent_components: Optional[List[str]] = None,
-    ) -> Optional[ParsedDependency]:
+        parent_components: list[str] | None = None,
+    ) -> ParsedDependency | None:
         """Parse a single Syft artifact with all available fields."""
 
         purl = artifact.get("purl")
@@ -847,7 +845,7 @@ class SBOMParser:
         )
 
     @staticmethod
-    def _syft_license_dict_url(lic: Dict[str, Any]) -> Optional[str]:
+    def _syft_license_dict_url(lic: dict[str, Any]) -> str | None:
         """Extract a dedicated license URL from a syft license dict ('url'/'urls')."""
         for url_key in ("url", "urls"):
             url_val = lic.get(url_key)
@@ -859,8 +857,8 @@ class SBOMParser:
         return None
 
     def _handle_syft_license_dict(
-        self, lic: Dict[str, Any], license_names: List[str], license_url: Optional[str]
-    ) -> Optional[str]:
+        self, lic: dict[str, Any], license_names: list[str], license_url: str | None
+    ) -> str | None:
         """Handle a single syft license-dict entry; returns possibly updated url."""
         value = lic.get("value") or lic.get("spdxExpression") or lic.get("type", "")
         if value:
@@ -876,13 +874,13 @@ class SBOMParser:
                 license_url = dedicated_url
         return license_url
 
-    def _extract_syft_licenses_full(self, licenses: List[Any]) -> Tuple[str, Optional[str]]:
+    def _extract_syft_licenses_full(self, licenses: list[Any]) -> tuple[str, str | None]:
         """Extract license string and URL from Syft license array."""
         if not licenses:
             return "", None
 
-        license_names: List[str] = []
-        license_url: Optional[str] = None
+        license_names: list[str] = []
+        license_url: str | None = None
 
         for lic in licenses:
             if isinstance(lic, dict):
@@ -896,7 +894,7 @@ class SBOMParser:
 
         # Deduplicate while preserving order
         seen: set = set()
-        unique: List[str] = []
+        unique: list[str] = []
         for lic in license_names:
             if lic not in seen:
                 seen.add(lic)
@@ -905,8 +903,8 @@ class SBOMParser:
         return ", ".join(unique), license_url
 
     def _build_spdx_dependency_graph(
-        self, relationships: List[Dict[str, Any]], doc_spdx_id: str
-    ) -> Tuple[set, Dict[str, list]]:
+        self, relationships: list[dict[str, Any]], doc_spdx_id: str
+    ) -> tuple[set, dict[str, list]]:
         """
         Build SPDX dependency-graph data used to classify direct vs transitive deps.
 
@@ -922,10 +920,10 @@ class SBOMParser:
         """
         described_roots: set = set()  # application roots (DOCUMENT DESCRIBES ...)
         doc_direct_targets: set = set()  # packages the DOCUMENT points at directly
-        forward_deps: Dict[str, list] = {}  # element -> [children] via DEPENDS_ON
+        forward_deps: dict[str, list] = {}  # element -> [children] via DEPENDS_ON
         all_dependency_targets: set = set()  # every DEPENDS_ON target (transitive candidates)
         packages_with_deps: set = set()  # elements that declare DEPENDS_ON edges
-        reverse_deps_graph: Dict[str, list] = {}
+        reverse_deps_graph: dict[str, list] = {}
 
         for rel in relationships:
             rel_type = rel.get("relationshipType", "")
@@ -962,7 +960,7 @@ class SBOMParser:
 
         return direct_package_ids, reverse_deps_graph
 
-    def _parse_spdx(self, sbom: Dict[str, Any], result: ParsedSBOM) -> None:
+    def _parse_spdx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         """Parse SPDX format SBOM."""
 
         result.tool_name = "spdx"
@@ -998,7 +996,7 @@ class SBOMParser:
         (("rubygems",), "gem"),
     )
 
-    _SPDX_PURL_PREFIX_TYPE_MAP = {
+    _SPDX_PURL_PREFIX_TYPE_MAP: ClassVar[dict[str, str]] = {
         "pkg:npm/": "npm",
         "pkg:pypi/": "python",
         "pkg:maven/": "java",
@@ -1013,11 +1011,11 @@ class SBOMParser:
 
     @staticmethod
     def _extract_spdx_external_refs(
-        external_refs: List[Dict[str, Any]],
-    ) -> Tuple[Optional[str], List[str]]:
+        external_refs: list[dict[str, Any]],
+    ) -> tuple[str | None, list[str]]:
         """Return (purl, cpes) from an SPDX externalRefs list."""
-        purl: Optional[str] = None
-        cpes: List[str] = []
+        purl: str | None = None
+        cpes: list[str] = []
         for ref in external_refs:
             ref_type = ref.get("referenceType", "")
             locator = ref.get("referenceLocator", "")
@@ -1036,7 +1034,7 @@ class SBOMParser:
         return "generic"
 
     @classmethod
-    def _spdx_pkg_type_from_purl(cls, purl: Optional[str]) -> str:
+    def _spdx_pkg_type_from_purl(cls, purl: str | None) -> str:
         """Map an SPDX-derived PURL to a normalized pkg_type."""
         if not purl:
             return "unknown"
@@ -1046,7 +1044,7 @@ class SBOMParser:
         return "unknown"
 
     @staticmethod
-    def _resolve_spdx_license(pkg: Dict[str, Any]) -> Tuple[str, Optional[str]]:
+    def _resolve_spdx_license(pkg: dict[str, Any]) -> tuple[str, str | None]:
         """Extract (license_str, license_url) from SPDX licenseConcluded/Declared."""
         license_concluded = pkg.get("licenseConcluded", "")
         license_declared = pkg.get("licenseDeclared", "")
@@ -1054,7 +1052,7 @@ class SBOMParser:
         if license_str == "NOASSERTION":
             license_str = ""
 
-        license_url: Optional[str] = None
+        license_url: str | None = None
         if is_url(license_str):
             license_url = license_str
             extracted = extract_license_from_url(license_str)
@@ -1063,11 +1061,11 @@ class SBOMParser:
 
     @staticmethod
     def _resolve_spdx_originator(
-        pkg: Dict[str, Any],
-    ) -> Tuple[Optional[str], Optional[str]]:
+        pkg: dict[str, Any],
+    ) -> tuple[str | None, str | None]:
         """Extract (author, publisher) from SPDX originator/supplier fields."""
-        author: Optional[str] = None
-        publisher: Optional[str] = None
+        author: str | None = None
+        publisher: str | None = None
 
         originator = pkg.get("originator")
         if originator and originator != "NOASSERTION":
@@ -1079,15 +1077,14 @@ class SBOMParser:
                 author = originator
 
         supplier = pkg.get("supplier")
-        if supplier and supplier != "NOASSERTION" and not publisher:
-            if supplier.startswith(SPDX_ORGANIZATION_PREFIX):
-                publisher = supplier.replace(SPDX_ORGANIZATION_PREFIX, "").strip()
+        if supplier and supplier != "NOASSERTION" and not publisher and supplier.startswith(SPDX_ORGANIZATION_PREFIX):
+            publisher = supplier.replace(SPDX_ORGANIZATION_PREFIX, "").strip()
         return author, publisher
 
     @staticmethod
-    def _build_spdx_properties(pkg: Dict[str, Any]) -> Dict[str, str]:
+    def _build_spdx_properties(pkg: dict[str, Any]) -> dict[str, str]:
         """Build the SPDX-specific 'properties' dict."""
-        properties: Dict[str, str] = {}
+        properties: dict[str, str] = {}
         if pkg.get("filesAnalyzed") is not None:
             properties["filesAnalyzed"] = str(pkg["filesAnalyzed"])
         if pkg.get("packageFileName"):
@@ -1100,9 +1097,9 @@ class SBOMParser:
         return properties
 
     @staticmethod
-    def _extract_spdx_hashes(pkg: Dict[str, Any]) -> Dict[str, str]:
+    def _extract_spdx_hashes(pkg: dict[str, Any]) -> dict[str, str]:
         """Extract a hash map from an SPDX package's checksums array."""
-        hashes: Dict[str, str] = {}
+        hashes: dict[str, str] = {}
         for checksum in pkg.get("checksums", []):
             alg = checksum.get("algorithm", "").lower()
             value = checksum.get("checksumValue", "")
@@ -1112,11 +1109,11 @@ class SBOMParser:
 
     def _parse_spdx_package(
         self,
-        pkg: Dict[str, Any],
+        pkg: dict[str, Any],
         is_direct: bool = False,
         direct_inferred: bool = False,
-        parent_components: Optional[List[str]] = None,
-    ) -> Optional[ParsedDependency]:
+        parent_components: list[str] | None = None,
+    ) -> ParsedDependency | None:
         """Parse a single SPDX package with all available fields."""
 
         name = pkg.get("name")
@@ -1191,6 +1188,6 @@ class SBOMParser:
 sbom_parser = SBOMParser()
 
 
-def parse_sbom(sbom: Dict[str, Any]) -> ParsedSBOM:
+def parse_sbom(sbom: dict[str, Any]) -> ParsedSBOM:
     """Convenience function to parse an SBOM."""
     return sbom_parser.parse(sbom)

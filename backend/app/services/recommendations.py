@@ -2,36 +2,40 @@
 
 import logging
 from collections import defaultdict
-from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
+from collections.abc import Callable, Sequence
+from typing import Any
 
 from app.core.constants import MAX_DEPENDENCY_DEPTH, OUTDATED_DEPENDENCY_THRESHOLD_DAYS
 from app.schemas.recommendation import Recommendation
-from app.services.recommendation.common import get_attr, ModelOrDict
-
 from app.services.recommendation import (
-    vulnerabilities,
-    secrets,
-    sast,
-    iac,
-    licenses,
-    quality,
-    crypto as crypto_recs,
-    dependencies as dep_analysis,
-    trends,
-    graph,
-    insights,
-    risks,
-    incidents,
-    optimization,
     common,
+    graph,
+    iac,
+    incidents,
+    insights,
+    licenses,
+    optimization,
+    quality,
+    risks,
+    sast,
+    secrets,
+    trends,
+    vulnerabilities,
 )
+from app.services.recommendation import (
+    crypto as crypto_recs,
+)
+from app.services.recommendation import (
+    dependencies as dep_analysis,
+)
+from app.services.recommendation.common import ModelOrDict, get_attr
 
 logger = logging.getLogger(__name__)
 
 
 def _safe_extend(
-    recommendations: List[Recommendation],
-    generator: Callable[[], List[Recommendation]],
+    recommendations: list[Recommendation],
+    generator: Callable[[], list[Recommendation]],
     module_name: str,
 ) -> None:
     """Extend recommendations from ``generator``, swallowing its exceptions so one module can't abort the rest."""
@@ -45,10 +49,10 @@ def _safe_extend(
 
 
 def _deduplicate_recommendations(
-    recommendations: List[Recommendation],
-) -> List[Recommendation]:
+    recommendations: list[Recommendation],
+) -> list[Recommendation]:
     """Drop duplicates keyed on (type, component, title, action), keeping the highest-scoring."""
-    seen: Dict[Tuple[str, str, str, str], Recommendation] = {}
+    seen: dict[tuple[str, str, str, str], Recommendation] = {}
 
     for rec in recommendations:
         primary_component = ""
@@ -94,7 +98,7 @@ class RecommendationEngine:
         self.max_dependency_depth = MAX_DEPENDENCY_DEPTH
 
     @staticmethod
-    def _collect_typosquat_findings(malware_findings: List[ModelOrDict]) -> List[ModelOrDict]:
+    def _collect_typosquat_findings(malware_findings: list[ModelOrDict]) -> list[ModelOrDict]:
         """Extract typosquatting findings from the malware finding group.
 
         The typosquatting analyzer emits its hits as ``FindingType.MALWARE`` with a
@@ -103,7 +107,7 @@ class RecommendationEngine:
         reads the imitated name from ``details['similar_to']``, so remap the key here to
         populate the "(looks like: X)" context without touching the shared incidents module.
         """
-        typosquat_findings: List[ModelOrDict] = []
+        typosquat_findings: list[ModelOrDict] = []
         for f in malware_findings:
             details = get_attr(f, "details", {})
             imitated = details.get("imitated_package") if isinstance(details, dict) else None
@@ -118,8 +122,8 @@ class RecommendationEngine:
 
     def _process_typosquatting(
         self,
-        recommendations: List[Recommendation],
-        findings_by_type: Dict[str, List[ModelOrDict]],
+        recommendations: list[Recommendation],
+        findings_by_type: dict[str, list[ModelOrDict]],
     ) -> None:
         """Queue typosquatting recommendations for malware findings carrying an
         imitated-package indicator."""
@@ -133,17 +137,17 @@ class RecommendationEngine:
 
     async def generate_recommendations(
         self,
-        findings: Optional[Sequence[ModelOrDict]] = None,
-        dependencies: Optional[Sequence[ModelOrDict]] = None,
-        source_target: Optional[str] = None,
-        previous_scan_findings: Optional[Sequence[ModelOrDict]] = None,
-        scan_history: Optional[Sequence[Dict[str, Any]]] = None,
-        cross_project_data: Optional[Dict[str, Any]] = None,
-    ) -> List[Recommendation]:
+        findings: Sequence[ModelOrDict] | None = None,
+        dependencies: Sequence[ModelOrDict] | None = None,
+        source_target: str | None = None,
+        previous_scan_findings: Sequence[ModelOrDict] | None = None,
+        scan_history: Sequence[dict[str, Any]] | None = None,
+        cross_project_data: dict[str, Any] | None = None,
+    ) -> list[Recommendation]:
         """Generate prioritized remediation recommendations across all finding types."""
-        findings_list: List[ModelOrDict] = list(findings) if findings else []
-        dependencies_list: List[ModelOrDict] = list(dependencies) if dependencies else []
-        previous_findings_list: Optional[List[ModelOrDict]] = (
+        findings_list: list[ModelOrDict] = list(findings) if findings else []
+        dependencies_list: list[ModelOrDict] = list(dependencies) if dependencies else []
+        previous_findings_list: list[ModelOrDict] | None = (
             list(previous_scan_findings) if previous_scan_findings else None
         )
 
@@ -151,10 +155,10 @@ class RecommendationEngine:
             f"Generating recommendations for {len(findings_list)} findings, {len(dependencies_list)} dependencies"
         )
 
-        recommendations: List[Recommendation] = []
+        recommendations: list[Recommendation] = []
 
         # Separate findings by type (using get_attr for Pydantic compatibility)
-        findings_by_type: Dict[str, List[ModelOrDict]] = defaultdict(list)
+        findings_by_type: dict[str, list[ModelOrDict]] = defaultdict(list)
         for f in findings_list:
             finding_type = get_attr(f, "type", "other")
             findings_by_type[finding_type].append(f)
@@ -257,7 +261,7 @@ class RecommendationEngine:
             )
 
         if scan_history:
-            scan_history_list: List[ModelOrDict] = list(scan_history)
+            scan_history_list: list[ModelOrDict] = list(scan_history)
             _safe_extend(
                 recommendations,
                 lambda: trends.analyze_recurring_issues(scan_history_list),

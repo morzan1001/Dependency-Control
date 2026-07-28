@@ -4,12 +4,11 @@ import asyncio
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, ClassVar
 
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import (
     ANALYZER_BATCH_SIZES,
     ANALYZER_TIMEOUTS,
@@ -19,6 +18,7 @@ from app.core.constants import (
     STALE_PACKAGE_THRESHOLD_DAYS,
     STALE_PACKAGE_WARNING_DAYS,
 )
+from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer
@@ -34,10 +34,10 @@ _BUS_FACTOR_TYPE = "single_maintainer"
 
 
 def correlate_maintainer_risks(
-    risks: List[Dict[str, Any]],
-    github_active: Optional[bool],
-    maintainer_count: Optional[int] = None,
-) -> List[Dict[str, Any]]:
+    risks: list[dict[str, Any]],
+    github_active: bool | None,
+    maintainer_count: int | None = None,
+) -> list[dict[str, Any]]:
     """Filter raw maintainer signals against corroborating evidence.
 
     Drops staleness when the source repo is still active. Drops the free-email signal only
@@ -50,7 +50,7 @@ def correlate_maintainer_risks(
     has_single_maintainer = _BUS_FACTOR_TYPE in types_present
     multiple_maintainers_confirmed = maintainer_count is not None and maintainer_count > 1
 
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for r in risks:
         rtype = r.get("type")
         if rtype in _STALENESS_TYPES and github_active is True:
@@ -65,7 +65,7 @@ class MaintainerRiskAnalyzer(Analyzer):
     name = "maintainer_risk"
 
     @staticmethod
-    def _parse_iso_datetime(dt_string: Optional[str]) -> Optional[datetime]:
+    def _parse_iso_datetime(dt_string: str | None) -> datetime | None:
         """Parse ISO datetime string, handling Z suffix."""
         if not dt_string:
             return None
@@ -74,7 +74,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         except (ValueError, TypeError):
             return None
 
-    FREE_EMAIL_PROVIDERS = {
+    FREE_EMAIL_PROVIDERS: ClassVar[set[str]] = {
         "gmail.com",
         "yahoo.com",
         "hotmail.com",
@@ -87,10 +87,10 @@ class MaintainerRiskAnalyzer(Analyzer):
 
     async def analyze(
         self,
-        sbom: Dict[str, Any],
-        settings: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        sbom: dict[str, Any],
+        settings: dict[str, Any] | None = None,
+        parsed_components: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         """Analyze maintainer health for packages in the SBOM."""
         components = self._get_components(sbom, parsed_components)
         issues = []
@@ -128,9 +128,9 @@ class MaintainerRiskAnalyzer(Analyzer):
     async def _check_component(
         self,
         client: InstrumentedAsyncClient,
-        component: Dict[str, Any],
-        github_token: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
+        component: dict[str, Any],
+        github_token: str | None = None,
+    ) -> dict[str, Any] | None:
         """Check maintainer health for a single component."""
 
         name = component.get("name", "")
@@ -173,11 +173,11 @@ class MaintainerRiskAnalyzer(Analyzer):
         client: InstrumentedAsyncClient,
         purl: str,
         name: str,
-        repo_url: Optional[str],
-        github_token: Optional[str],
-    ) -> Optional[Dict[str, Any]]:
+        repo_url: str | None,
+        github_token: str | None,
+    ) -> dict[str, Any] | None:
         """Pull registry + GitHub data; ``{}`` is the negative-cache marker."""
-        cache_data: Dict[str, Any] = {"maintainer_info": {}, "github_info": None}
+        cache_data: dict[str, Any] = {"maintainer_info": {}, "github_info": None}
 
         if is_pypi(purl):
             info = await self._check_pypi(client, name)
@@ -200,12 +200,12 @@ class MaintainerRiskAnalyzer(Analyzer):
 
     def _assess_all_risks(
         self,
-        cached_info: Dict[str, Any],
-        registry: Optional[str],
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        cached_info: dict[str, Any],
+        registry: str | None,
+    ) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         """Combine registry + GitHub risk assessment, then correlate signals."""
-        risks: List[Dict[str, Any]] = []
-        maintainer_info: Dict[str, Any] = cached_info.get("maintainer_info", {}) or {}
+        risks: list[dict[str, Any]] = []
+        maintainer_info: dict[str, Any] = cached_info.get("maintainer_info", {}) or {}
 
         if maintainer_info and registry in ("pypi", "npm"):
             risks.extend(self._assess_risks(maintainer_info, registry))
@@ -222,7 +222,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         )
         return risks, maintainer_info
 
-    def _calculate_overall_severity(self, risks: List[Dict[str, Any]]) -> str:
+    def _calculate_overall_severity(self, risks: list[dict[str, Any]]) -> str:
         """Calculate overall severity from individual risk scores."""
         if not risks:
             return Severity.LOW.value
@@ -235,7 +235,7 @@ class MaintainerRiskAnalyzer(Analyzer):
             return Severity.MEDIUM.value
         return Severity.LOW.value
 
-    def _create_summary_message(self, name: str, version: str, risks: List[Dict[str, Any]]) -> str:
+    def _create_summary_message(self, name: str, version: str, risks: list[dict[str, Any]]) -> str:
         """Create a human-readable summary message for maintainer risks."""
         if not risks:
             return ""
@@ -254,7 +254,7 @@ class MaintainerRiskAnalyzer(Analyzer):
 
         return f"{name}@{version} has {risk_count} maintainer risk{'s' if risk_count > 1 else ''}"
 
-    async def _check_pypi(self, client: InstrumentedAsyncClient, name: str) -> Optional[Dict[str, Any]]:
+    async def _check_pypi(self, client: InstrumentedAsyncClient, name: str) -> dict[str, Any] | None:
         """Fetch maintainer info from PyPI."""
         try:
             response = await client.get(f"{PYPI_API_URL}/{name}/json")
@@ -266,7 +266,7 @@ class MaintainerRiskAnalyzer(Analyzer):
             releases = data.get("releases", {})
 
             latest_release_date = None
-            for ver, files in releases.items():
+            for files in releases.values():
                 for f in files:
                     upload_time = f.get("upload_time_iso_8601") or f.get("upload_time")
                     dt = self._parse_iso_datetime(upload_time)
@@ -296,7 +296,7 @@ class MaintainerRiskAnalyzer(Analyzer):
             logger.debug(f"PyPI check failed for {name}: {e}")
             return None
 
-    async def _check_npm(self, client: InstrumentedAsyncClient, name: str) -> Optional[Dict[str, Any]]:
+    async def _check_npm(self, client: InstrumentedAsyncClient, name: str) -> dict[str, Any] | None:
         """Fetch maintainer info from npm."""
         try:
             encoded_name = name.replace("/", "%2F") if "/" in name else name
@@ -333,8 +333,8 @@ class MaintainerRiskAnalyzer(Analyzer):
             return None
 
     async def _check_github(
-        self, client: InstrumentedAsyncClient, repo: str, github_token: Optional[str] = None
-    ) -> Optional[Dict[str, Any]]:
+        self, client: InstrumentedAsyncClient, repo: str, github_token: str | None = None
+    ) -> dict[str, Any] | None:
         """Fetch repository health from GitHub API, authenticating when a token is provided."""
         try:
             headers = {
@@ -373,7 +373,7 @@ class MaintainerRiskAnalyzer(Analyzer):
             logger.debug(f"GitHub check failed for {repo}: {e}")
             return None
 
-    def _assess_risks(self, info: Dict[str, Any], registry: str) -> List[Dict[str, Any]]:
+    def _assess_risks(self, info: dict[str, Any], registry: str) -> list[dict[str, Any]]:
         """Assess maintainer risks based on registry info."""
         risks = []
 
@@ -425,7 +425,7 @@ class MaintainerRiskAnalyzer(Analyzer):
 
         return risks
 
-    def _infer_github_active(self, gh_info: Optional[Dict[str, Any]]) -> Optional[bool]:
+    def _infer_github_active(self, gh_info: dict[str, Any] | None) -> bool | None:
         """True if the repo shows recent activity, False if archived/stale, None if data is unavailable."""
         if not gh_info:
             return None
@@ -437,7 +437,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         warn_after = getattr(self, "_warn_after_days", STALE_PACKAGE_WARNING_DAYS)
         return bool(days_since_push <= warn_after)
 
-    def _assess_github_risks(self, gh_info: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _assess_github_risks(self, gh_info: dict[str, Any]) -> list[dict[str, Any]]:
         """Assess risks from GitHub repository info."""
         risks = []
 
@@ -474,7 +474,7 @@ class MaintainerRiskAnalyzer(Analyzer):
 
         return risks
 
-    def _extract_github_repo(self, url: Optional[str]) -> Optional[str]:
+    def _extract_github_repo(self, url: str | None) -> str | None:
         """Extract owner/repo from GitHub URL."""
         if not url:
             return None

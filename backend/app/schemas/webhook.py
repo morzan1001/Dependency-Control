@@ -1,7 +1,7 @@
 """Webhook API schemas for request/response validation."""
 
 from datetime import datetime
-from typing import Dict, List, Literal, Optional
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -19,14 +19,14 @@ class WebhookCreate(BaseModel):
     """Schema for creating a new webhook."""
 
     url: str
-    events: List[str]
-    secret: Optional[str] = None
-    headers: Optional[Dict[str, str]] = None
-    webhook_type: Optional[Literal["generic", "teams"]] = None
+    events: list[str]
+    secret: str | None = None
+    headers: dict[str, str] | None = None
+    webhook_type: Literal["generic", "teams"] | None = None
 
     @field_validator("events")
     @classmethod
-    def _validate_events(cls, v: List[str]) -> List[str]:
+    def _validate_events(cls, v: list[str]) -> list[str]:
         """Validate that all events are valid event types."""
         return validate_webhook_events(v, allow_empty=False)
 
@@ -40,22 +40,22 @@ class WebhookCreate(BaseModel):
 class WebhookUpdate(BaseModel):
     """Schema for updating an existing webhook."""
 
-    url: Optional[str] = None
-    events: Optional[List[str]] = None
-    is_active: Optional[bool] = None
-    secret: Optional[str] = None
-    headers: Optional[Dict[str, str]] = None
-    webhook_type: Optional[Literal["generic", "teams"]] = None
+    url: str | None = None
+    events: list[str] | None = None
+    is_active: bool | None = None
+    secret: str | None = None
+    headers: dict[str, str] | None = None
+    webhook_type: Literal["generic", "teams"] | None = None
 
     @field_validator("events")
     @classmethod
-    def _validate_events(cls, v: Optional[List[str]]) -> Optional[List[str]]:
+    def _validate_events(cls, v: list[str] | None) -> list[str] | None:
         """Validate that all events are valid event types."""
         return validate_webhook_events_optional(v)
 
     @field_validator("url")
     @classmethod
-    def _validate_url(cls, v: Optional[str]) -> Optional[str]:
+    def _validate_url(cls, v: str | None) -> str | None:
         """Validate that URL is HTTPS (except for localhost in development)."""
         return validate_webhook_url_optional(v)
 
@@ -64,15 +64,15 @@ class WebhookResponse(BaseModel):
     """Schema for webhook response (excludes secret for security)."""
 
     id: str
-    project_id: Optional[str] = None
-    team_id: Optional[str] = None
+    project_id: str | None = None
+    team_id: str | None = None
     url: str
-    events: List[str]
-    headers: Optional[Dict[str, str]] = None
+    events: list[str]
+    headers: dict[str, str] | None = None
     is_active: bool
     created_at: datetime
-    last_triggered_at: Optional[datetime] = None
-    last_failure_at: Optional[datetime] = None
+    last_triggered_at: datetime | None = None
+    last_failure_at: datetime | None = None
     webhook_type: Literal["generic", "teams"]
 
     model_config = ConfigDict(from_attributes=True)
@@ -94,6 +94,6 @@ class WebhookTestResponse(BaseModel):
     """Schema for webhook test response."""
 
     success: bool
-    status_code: Optional[int] = None
-    error: Optional[str] = None
-    response_time_ms: Optional[float] = None
+    status_code: int | None = None
+    error: str | None = None
+    response_time_ms: float | None = None

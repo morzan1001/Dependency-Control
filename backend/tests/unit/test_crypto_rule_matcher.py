@@ -8,26 +8,26 @@ from app.services.analyzers.crypto.matcher import asset_in_rule_scope, rule_matc
 
 
 def _asset(**kw):
-    defaults = dict(
-        project_id="p",
-        scan_id="s",
-        bom_ref="r",
-        name="X",
-        asset_type=CryptoAssetType.ALGORITHM,
-    )
+    defaults = {
+        "project_id": "p",
+        "scan_id": "s",
+        "bom_ref": "r",
+        "name": "X",
+        "asset_type": CryptoAssetType.ALGORITHM,
+    }
     defaults.update(kw)
     return CryptoAsset(**defaults)
 
 
 def _rule(**kw):
-    defaults = dict(
-        rule_id="r",
-        name="n",
-        description="",
-        finding_type=FindingType.CRYPTO_WEAK_ALGORITHM,
-        default_severity=Severity.HIGH,
-        source=CryptoPolicySource.NIST_SP_800_131A,
-    )
+    defaults = {
+        "rule_id": "r",
+        "name": "n",
+        "description": "",
+        "finding_type": FindingType.CRYPTO_WEAK_ALGORITHM,
+        "default_severity": Severity.HIGH,
+        "source": CryptoPolicySource.NIST_SP_800_131A,
+    }
     defaults.update(kw)
     return CryptoRule(**defaults)
 

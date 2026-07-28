@@ -1,18 +1,18 @@
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 from urllib.parse import quote
 
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import (
     ANALYZER_BATCH_SIZES,
     ANALYZER_TIMEOUTS,
     DEPS_DEV_API_URL,
     SCORECARD_UNMAINTAINED_THRESHOLD,
 )
+from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer
@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 
 def _validated_threshold(
-    settings: Optional[Dict[str, Any]], key: str, default: float, min_value: float = 0.0, max_value: float = 10.0
+    settings: dict[str, Any] | None, key: str, default: float, min_value: float = 0.0, max_value: float = 10.0
 ) -> float:
     """Extract and validate a numeric threshold from settings, falling back to default."""
     if not settings or key not in settings:
@@ -44,7 +44,7 @@ class DepsDevAnalyzer(Analyzer):
 
     MAX_CONCURRENT = ANALYZER_BATCH_SIZES.get("deps_dev", 10)
 
-    def _resolve_scorecard_threshold(self, settings: Optional[Dict[str, Any]]) -> float:
+    def _resolve_scorecard_threshold(self, settings: dict[str, Any] | None) -> float:
         """Resolve the configured scorecard threshold, validating range."""
         threshold = SCORECARD_UNMAINTAINED_THRESHOLD
         if not settings or "scorecard_threshold" not in settings:
@@ -59,10 +59,10 @@ class DepsDevAnalyzer(Analyzer):
 
     def _collect_cached(
         self,
-        cached_results: Dict[str, Any],
+        cached_results: dict[str, Any],
         threshold: float,
-        package_metadata: Dict[str, Any],
-        scorecard_issues: List[Any],
+        package_metadata: dict[str, Any],
+        scorecard_issues: list[Any],
     ) -> None:
         """Apply cached deps.dev results to outputs, re-checking the threshold."""
         for key, data in cached_results.items():
@@ -76,7 +76,7 @@ class DepsDevAnalyzer(Analyzer):
             if score < threshold:
                 scorecard_issues.append(scorecard_issue)
 
-    def _collect_live_result(self, result: Any, package_metadata: Dict[str, Any], scorecard_issues: List[Any]) -> None:
+    def _collect_live_result(self, result: Any, package_metadata: dict[str, Any], scorecard_issues: list[Any]) -> None:
         """Apply a single live fetch result to outputs."""
         if isinstance(result, Exception):
             logger.warning(f"deps_dev check failed: {result}")
@@ -91,10 +91,10 @@ class DepsDevAnalyzer(Analyzer):
 
     async def _fetch_uncached(
         self,
-        uncached_components: List[Dict[str, Any]],
+        uncached_components: list[dict[str, Any]],
         threshold: float,
-        severity_thresholds: Dict[str, float],
-    ) -> List[Any]:
+        severity_thresholds: dict[str, float],
+    ) -> list[Any]:
         """Fetch deps.dev data for uncached components with bounded concurrency."""
         semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
         timeout = ANALYZER_TIMEOUTS.get("deps_dev", ANALYZER_TIMEOUTS["default"])
@@ -104,18 +104,18 @@ class DepsDevAnalyzer(Analyzer):
                 self._check_component_with_limit(semaphore, client, c, threshold, severity_thresholds)
                 for c in uncached_components
             ]
-            results: List[Any] = await asyncio.gather(*tasks, return_exceptions=True)
+            results: list[Any] = await asyncio.gather(*tasks, return_exceptions=True)
             return results
 
     async def analyze(
         self,
-        sbom: Dict[str, Any],
-        settings: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        sbom: dict[str, Any],
+        settings: dict[str, Any] | None = None,
+        parsed_components: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         components = self._get_components(sbom, parsed_components)
-        scorecard_issues: List[Any] = []
-        package_metadata: Dict[str, Any] = {}
+        scorecard_issues: list[Any] = []
+        package_metadata: dict[str, Any] = {}
 
         threshold = self._resolve_scorecard_threshold(settings)
         # Thread thresholds per-call, never on the singleton instance: analyzers are shared
@@ -141,7 +141,7 @@ class DepsDevAnalyzer(Analyzer):
             "package_metadata": package_metadata,
         }
 
-    def _get_cache_key_for_component(self, component: Dict[str, Any]) -> Optional[str]:
+    def _get_cache_key_for_component(self, component: dict[str, Any]) -> str | None:
         """Get cache key for a component."""
         purl = component.get("purl", "")
         version = component.get("version", "")
@@ -153,14 +153,14 @@ class DepsDevAnalyzer(Analyzer):
         return CacheKeys.deps_dev(parsed.registry_system, parsed.deps_dev_name, version)
 
     async def _get_cached_components(
-        self, components: List[Dict[str, Any]]
-    ) -> tuple[Dict[str, Any], List[Dict[str, Any]]]:
+        self, components: list[dict[str, Any]]
+    ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
         """Check cache for components, return cached data and uncached components."""
         cached_results = {}
         uncached_components = []
 
         cache_keys = []
-        component_map: Dict[str, Any] = {}
+        component_map: dict[str, Any] = {}
 
         for component in components:
             purl = component.get("purl", "")
@@ -177,7 +177,7 @@ class DepsDevAnalyzer(Analyzer):
         if not cache_keys:
             return {}, components
 
-        cached_data: Dict[str, Any] = await cache_service.mget(cache_keys)
+        cached_data: dict[str, Any] = await cache_service.mget(cache_keys)
 
         for cache_key, data in cached_data.items():
             cached_comp = component_map.get(cache_key)
@@ -196,16 +196,16 @@ class DepsDevAnalyzer(Analyzer):
         self,
         semaphore: asyncio.Semaphore,
         client: InstrumentedAsyncClient,
-        component: Dict[str, Any],
+        component: dict[str, Any],
         threshold: float,
-        severity_thresholds: Dict[str, float],
-    ) -> Optional[Dict[str, Any]]:
+        severity_thresholds: dict[str, float],
+    ) -> dict[str, Any] | None:
         """Fetch component data with concurrency limit and distributed lock."""
         cache_key = self._get_cache_key_for_component(component)
         if not cache_key:
             return None
 
-        async def fetch_component() -> Optional[Dict[str, Any]]:
+        async def fetch_component() -> dict[str, Any] | None:
             async with semaphore:
                 return await self._check_component(client, component, threshold, severity_thresholds)
 
@@ -217,9 +217,9 @@ class DepsDevAnalyzer(Analyzer):
         )
 
     @staticmethod
-    def _select_project_id(related_projects: List[Dict[str, Any]]) -> Optional[str]:
+    def _select_project_id(related_projects: list[dict[str, Any]]) -> str | None:
         """Pick the best project id: prefer SOURCE_REPO, fall back to any GitHub project."""
-        project_id: Optional[str] = None
+        project_id: str | None = None
         for project in related_projects:
             project_key = project.get("projectKey", {})
             pid = str(project_key.get("id", ""))
@@ -234,13 +234,13 @@ class DepsDevAnalyzer(Analyzer):
         self,
         client: InstrumentedAsyncClient,
         project_id: str,
-        metadata: Dict[str, Any],
-        result: Dict[str, Any],
+        metadata: dict[str, Any],
+        result: dict[str, Any],
         name: str,
         version: str,
         purl: str,
         threshold: float,
-        severity_thresholds: Dict[str, float],
+        severity_thresholds: dict[str, float],
     ) -> None:
         """Fetch project info and scorecard for the resolved project_id."""
         encoded_project_id = quote(project_id, safe="")
@@ -281,7 +281,7 @@ class DepsDevAnalyzer(Analyzer):
     async def _enrich_with_dependents(
         self,
         client: InstrumentedAsyncClient,
-        metadata: Dict[str, Any],
+        metadata: dict[str, Any],
         system: str,
         encoded_name: str,
         encoded_version: str,
@@ -307,10 +307,10 @@ class DepsDevAnalyzer(Analyzer):
     async def _check_component(
         self,
         client: InstrumentedAsyncClient,
-        component: Dict[str, Any],
+        component: dict[str, Any],
         threshold: float,
-        severity_thresholds: Dict[str, float],
-    ) -> Optional[Dict[str, Any]]:
+        severity_thresholds: dict[str, float],
+    ) -> dict[str, Any] | None:
         """Check a component for Scorecard data and package metadata via deps.dev API."""
         purl = component.get("purl", "")
         name = component.get("name", "")
@@ -329,7 +329,7 @@ class DepsDevAnalyzer(Analyzer):
         encoded_version = quote(version, safe="")
         version_url = f"{self.base_url}/systems/{system}/packages/{encoded_name}/versions/{encoded_version}"
 
-        result: Dict[str, Any | None] = {"metadata": None, "scorecard_issue": None}
+        result: dict[str, Any | None] = {"metadata": None, "scorecard_issue": None}
 
         try:
             response = await client.get(version_url)
@@ -379,8 +379,8 @@ class DepsDevAnalyzer(Analyzer):
         return label
 
     def _extract_metadata(
-        self, data: Dict[str, Any], name: str, version: str, system: str, purl: str
-    ) -> Dict[str, Any]:
+        self, data: dict[str, Any], name: str, version: str, system: str, purl: str
+    ) -> dict[str, Any]:
         """Extract useful metadata from version response."""
         links = {}
         for link in data.get("links", []):
@@ -416,9 +416,9 @@ class DepsDevAnalyzer(Analyzer):
         version: str,
         purl: str,
         project_id: str,
-        scorecard: Dict[str, Any],
-        severity_thresholds: Optional[Dict[str, float]] = None,
-    ) -> Dict[str, Any]:
+        scorecard: dict[str, Any],
+        severity_thresholds: dict[str, float] | None = None,
+    ) -> dict[str, Any]:
         """Create a scorecard issue; severity_thresholds is per-call, never on the shared singleton."""
         overall_score = scorecard.get("overallScore", 0)
         checks = scorecard.get("checks", [])
@@ -488,7 +488,7 @@ class DepsDevAnalyzer(Analyzer):
     def _calculate_scorecard_severity(
         self,
         overall_score: float,
-        critical_issues: List[str],
+        critical_issues: list[str],
         high_threshold: float = 2.0,
         medium_threshold: float = 4.0,
         low_threshold: float = 5.0,

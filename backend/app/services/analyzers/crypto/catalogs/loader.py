@@ -9,7 +9,7 @@ import re
 from dataclasses import dataclass, field
 from io import StringIO
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import httpx
 import yaml
@@ -47,14 +47,14 @@ class CipherSuiteEntry:
     authentication: str
     cipher: str
     mac: str
-    weaknesses: List[str] = field(default_factory=list)
+    weaknesses: list[str] = field(default_factory=list)
 
 
-_IN_PROCESS_CACHE: Optional[Dict[str, CipherSuiteEntry]] = None
+_IN_PROCESS_CACHE: dict[str, CipherSuiteEntry] | None = None
 _IN_PROCESS_LOCK = asyncio.Lock()
 
 
-async def load_iana_catalog() -> Dict[str, CipherSuiteEntry]:
+async def load_iana_catalog() -> dict[str, CipherSuiteEntry]:
     """Return the IANA TLS cipher-suite catalog: in-process, then Redis, then live fetch, then bundled YAML."""
     global _IN_PROCESS_CACHE
     if _IN_PROCESS_CACHE is not None:
@@ -93,7 +93,7 @@ def reset_iana_cache_for_tests() -> None:
     _IN_PROCESS_CACHE = None
 
 
-async def _read_from_redis() -> Optional[List[Dict[str, Any]]]:
+async def _read_from_redis() -> list[dict[str, Any]] | None:
     try:
         cached = await cache_service.get(_IANA_CACHE_KEY)
     except Exception:
@@ -104,14 +104,14 @@ async def _read_from_redis() -> Optional[List[Dict[str, Any]]]:
     return cached
 
 
-async def _write_to_redis(suites: List[Dict[str, Any]]) -> None:
+async def _write_to_redis(suites: list[dict[str, Any]]) -> None:
     try:
         await cache_service.set(_IANA_CACHE_KEY, suites, _IANA_CACHE_TTL_SECONDS)
     except Exception:
         logger.exception("IANA catalog: Redis SET failed (non-fatal)")
 
 
-async def _fetch_from_iana() -> Optional[List[Dict[str, Any]]]:
+async def _fetch_from_iana() -> list[dict[str, Any]] | None:
     """Fetch and parse the IANA CSV into suite dicts; None on any network/parsing error."""
     try:
         async with httpx.AsyncClient(timeout=_IANA_CSV_TIMEOUT) as client:
@@ -131,9 +131,9 @@ async def _fetch_from_iana() -> Optional[List[Dict[str, Any]]]:
         return None
 
 
-def _parse_iana_csv(csv_text: str) -> List[Dict[str, Any]]:
+def _parse_iana_csv(csv_text: str) -> list[dict[str, Any]]:
     reader = csv.DictReader(StringIO(csv_text))
-    out: List[Dict[str, Any]] = []
+    out: list[dict[str, Any]] = []
     for row in reader:
         name = (row.get("Description") or "").strip()
         value = (row.get("Value") or "").strip()
@@ -156,7 +156,7 @@ def _parse_iana_csv(csv_text: str) -> List[Dict[str, Any]]:
     return out
 
 
-def _parse_components(name: str) -> Dict[str, str]:
+def _parse_components(name: str) -> dict[str, str]:
     result = {"key_exchange": "", "authentication": "", "cipher": "", "mac": ""}
     if "_WITH_" not in name:
         parts = name.split("_")
@@ -182,8 +182,8 @@ def _parse_components(name: str) -> Dict[str, str]:
     return result
 
 
-def _derive_weaknesses(name: str) -> List[str]:
-    tags: List[str] = []
+def _derive_weaknesses(name: str) -> list[str]:
+    tags: list[str] = []
     upper = name.upper()
 
     for kw, tag in _CIPHER_KEYWORDS.items():
@@ -209,21 +209,20 @@ def _derive_weaknesses(name: str) -> List[str]:
     if "EXPORT" in upper:
         tags.append("export-grade")
 
-    if not any(kex in upper for kex in ("ECDHE", "DHE", "ECCPWD")):
-        if "_WITH_" in upper:
-            tags.append("no-forward-secrecy")
+    if not any(kex in upper for kex in ("ECDHE", "DHE", "ECCPWD")) and "_WITH_" in upper:
+        tags.append("no-forward-secrecy")
 
     return sorted(set(tags))
 
 
-def _load_fallback_yaml() -> List[Dict[str, Any]]:
+def _load_fallback_yaml() -> list[dict[str, Any]]:
     with _CATALOG_FALLBACK_PATH.open() as fh:
         doc = yaml.safe_load(fh) or {}
     return list(doc.get("suites") or [])
 
 
-def _materialize(suites: List[Dict[str, Any]]) -> Dict[str, CipherSuiteEntry]:
-    out: Dict[str, CipherSuiteEntry] = {}
+def _materialize(suites: list[dict[str, Any]]) -> dict[str, CipherSuiteEntry]:
+    out: dict[str, CipherSuiteEntry] = {}
     for e in suites:
         name = e.get("name")
         if not name:

@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Any, List, Optional
+from typing import Annotated, Any
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -29,7 +29,7 @@ _MSG_INVALID_API_KEY = "Invalid API Key"
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token")
 
-auth_token_validations_total: Optional[Counter] = None
+auth_token_validations_total: Counter | None = None
 
 try:
     from app.core.metrics import auth_token_validations_total
@@ -62,7 +62,7 @@ def _decode_user_token(token: str, credentials_exception: HTTPException) -> tupl
     return payload, token_data
 
 
-async def _ensure_token_not_blacklisted(jti: Optional[str], db: AsyncIOMotorDatabase) -> None:
+async def _ensure_token_not_blacklisted(jti: str | None, db: AsyncIOMotorDatabase) -> None:
     if not jti:
         return
     from app.repositories import TokenBlacklistRepository
@@ -140,7 +140,7 @@ async def get_current_active_user(
 class PermissionChecker:
     """Permission dependency requiring ANY of the given permissions (no wildcard support)."""
 
-    def __init__(self, required_permissions: str | List[str]):
+    def __init__(self, required_permissions: str | list[str]):
         self.required_permissions = (
             required_permissions if isinstance(required_permissions, list) else [required_permissions]
         )
@@ -158,8 +158,8 @@ class PermissionChecker:
 
 
 async def _resolve_initial_member_id(
-    user_repo: UserRepository, email: Optional[str] = None, username: Optional[str] = None
-) -> Optional[str]:
+    user_repo: UserRepository, email: str | None = None, username: str | None = None
+) -> str | None:
     """Resolve a user ID to add as initial project admin member. Returns None if no match."""
     if email:
         user = await user_repo.get_raw_by_email(email)
@@ -173,9 +173,9 @@ async def _resolve_initial_member_id(
 
 
 async def _should_overwrite_team_id_from_sync(
-    project_team_id: Optional[str],
+    project_team_id: str | None,
     team_repo: TeamRepository,
-    team_source: Optional[str] = None,
+    team_source: str | None = None,
 ) -> bool:
     """Whether GitLab sync may overwrite project.team_id.
 
@@ -226,7 +226,7 @@ async def _sync_project_name(
     new_path: str,
     project_repo: ProjectRepository,
     path_field: str = "gitlab_project_path",
-    extra_updates: Optional[dict] = None,
+    extra_updates: dict | None = None,
 ) -> Project:
     """Sync project path/name if the VCS project was renamed."""
     updates: dict = extra_updates or {}
@@ -414,10 +414,10 @@ async def _authenticate_via_oidc(
     db: AsyncIOMotorDatabase,
     project_repo: ProjectRepository,
     user_repo: UserRepository,
-    default_active_analyzers: List[str],
+    default_active_analyzers: list[str],
 ) -> "Project":
-    from app.repositories.gitlab_instances import GitLabInstanceRepository
     from app.repositories.github_instances import GitHubInstanceRepository
+    from app.repositories.gitlab_instances import GitLabInstanceRepository
 
     issuer = _extract_oidc_issuer(oidc_token)
 
@@ -450,8 +450,8 @@ async def _authenticate_via_oidc(
 
 
 async def get_project_for_ingest(
-    x_api_key: Optional[str] = Header(None, alias="X-API-Key"),
-    oidc_token: Optional[str] = Header(None, alias="Job-Token"),
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+    oidc_token: str | None = Header(None, alias="Job-Token"),
     db: AsyncIOMotorDatabase = Depends(get_database),
     settings: SystemSettings = Depends(get_system_settings),
 ) -> Project:

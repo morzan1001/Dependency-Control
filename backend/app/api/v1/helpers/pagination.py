@@ -1,14 +1,14 @@
 """Shared utilities for building paginated responses."""
 
-from typing import Any, Dict, List
+from typing import Any
 
 
 def build_pagination_response(
-    items: List[Any],
+    items: list[Any],
     total: int,
     skip: int,
     limit: int,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a standardized pagination response (items, total, page, size, pages)."""
     return {
         "items": items,

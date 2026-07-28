@@ -1,6 +1,6 @@
 """Shared helper functions for team-related operations."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -19,10 +19,10 @@ _MSG_TEAM_NOT_FOUND = "Team not found"
 
 
 def build_team_enrichment_pipeline(
-    match_query: Dict[str, Any],
+    match_query: dict[str, Any],
     sort_by: str = "name",
     sort_direction: int = 1,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Build a MongoDB aggregation pipeline that enriches teams with member usernames."""
     return [
         {"$match": match_query},
@@ -86,7 +86,7 @@ async def check_team_access(
     team_id: str,
     user: User,
     db: AsyncIOMotorDatabase,
-    required_role: Optional[str] = None,
+    required_role: str | None = None,
 ) -> Team:
     """Check a user's access to a team and return it, raising 404/403 on failure."""
     team_repo = TeamRepository(db)
@@ -119,7 +119,7 @@ async def check_team_access(
     return team
 
 
-async def enrich_team_with_usernames(team_data: Dict[str, Any], db: AsyncIOMotorDatabase) -> None:
+async def enrich_team_with_usernames(team_data: dict[str, Any], db: AsyncIOMotorDatabase) -> None:
     """Enrich a raw team document with member usernames, mutating it in place."""
     user_repo = UserRepository(db)
     members = team_data.get("members", [])
@@ -147,7 +147,7 @@ async def fetch_and_enrich_team(team_id: str, db: AsyncIOMotorDatabase) -> TeamR
     return TeamResponse(**team_data)
 
 
-def find_member_in_team(team: Team, user_id: str) -> Optional[int]:
+def find_member_in_team(team: Team, user_id: str) -> int | None:
     """Return a member's index in the team's member list, or None if not found."""
     for i, member in enumerate(team.members):
         if member.user_id == user_id:
@@ -155,7 +155,7 @@ def find_member_in_team(team: Team, user_id: str) -> Optional[int]:
     return None
 
 
-def get_member_role(team: Team, user_id: str) -> Optional[str]:
+def get_member_role(team: Team, user_id: str) -> str | None:
     """Return a member's role in the team, or None if not a member."""
     for member in team.members:
         if member.user_id == user_id:

@@ -7,8 +7,8 @@ import pytest
 from fastapi import HTTPException
 
 from app.models.system import SystemSettings
-from tests.mocks.gitlab import make_oidc_payload
 from tests.mocks.github import make_github_oidc_payload
+from tests.mocks.gitlab import make_oidc_payload
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
 

@@ -1,5 +1,4 @@
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
 
 from pydantic import Field
 
@@ -15,54 +14,54 @@ class Dependency(MongoDocument):
     # Core Identity
     name: str = Field(..., description="Package name")
     version: str = Field(..., description="Package version")
-    purl: Optional[str] = Field(None, description="Package URL (unique identifier)")
+    purl: str | None = Field(None, description="Package URL (unique identifier)")
     type: str = Field(
         "unknown",
         description="Package type (e.g. maven, npm, pypi, rpm, deb, go-module)",
     )
 
     # Licensing
-    license: Optional[str] = Field(None, description="License expression or name")
-    license_url: Optional[str] = Field(None, description="URL to license text")
+    license: str | None = Field(None, description="License expression or name")
+    license_url: str | None = Field(None, description="URL to license text")
 
     # Scope and relationships
-    scope: Optional[str] = Field(None, description="Dependency scope (e.g. runtime, dev, optional)")
+    scope: str | None = Field(None, description="Dependency scope (e.g. runtime, dev, optional)")
     direct: bool = Field(False, description="True if direct dependency, False if transitive")
     direct_inferred: bool = Field(
         False,
         description="True if 'direct' was inferred (SBOM had no dependency graph)",
     )
-    parent_components: List[str] = Field(default_factory=list, description="List of parent component PURLs/names")
+    parent_components: list[str] = Field(default_factory=list, description="List of parent component PURLs/names")
 
     # Source/Origin info (from SBOM properties)
-    source_type: Optional[str] = Field(None, description="Source type: image, file-system, directory, application")
-    source_target: Optional[str] = Field(None, description="Source target: Docker image name, file path, etc.")
-    layer_digest: Optional[str] = Field(None, description="Docker layer digest if from container image")
-    found_by: Optional[str] = Field(
+    source_type: str | None = Field(None, description="Source type: image, file-system, directory, application")
+    source_target: str | None = Field(None, description="Source target: Docker image name, file path, etc.")
+    layer_digest: str | None = Field(None, description="Docker layer digest if from container image")
+    found_by: str | None = Field(
         None,
         description="Cataloger/scanner that found this (e.g. python-pkg-cataloger)",
     )
-    locations: List[str] = Field(default_factory=list, description="File paths where this package was found")
+    locations: list[str] = Field(default_factory=list, description="File paths where this package was found")
 
     # Security identifiers
-    cpes: List[str] = Field(default_factory=list, description="Common Platform Enumeration identifiers")
+    cpes: list[str] = Field(default_factory=list, description="Common Platform Enumeration identifiers")
 
     # Package metadata
-    description: Optional[str] = Field(None, description="Package description")
-    author: Optional[str] = Field(None, description="Package author/maintainer")
-    publisher: Optional[str] = Field(None, description="Package publisher")
-    group: Optional[str] = Field(None, description="Package group/namespace (e.g. Maven groupId)")
+    description: str | None = Field(None, description="Package description")
+    author: str | None = Field(None, description="Package author/maintainer")
+    publisher: str | None = Field(None, description="Package publisher")
+    group: str | None = Field(None, description="Package group/namespace (e.g. Maven groupId)")
 
     # External references
-    homepage: Optional[str] = Field(None, description="Package homepage URL")
-    repository_url: Optional[str] = Field(None, description="Source repository URL")
-    download_url: Optional[str] = Field(None, description="Download URL")
+    homepage: str | None = Field(None, description="Package homepage URL")
+    repository_url: str | None = Field(None, description="Source repository URL")
+    download_url: str | None = Field(None, description="Download URL")
 
     # Checksums/hashes
-    hashes: Dict[str, str] = Field(default_factory=dict, description="Package hashes (e.g. {sha256: ...})")
+    hashes: dict[str, str] = Field(default_factory=dict, description="Package hashes (e.g. {sha256: ...})")
 
     # Additional metadata from SBOM properties
-    properties: Dict[str, str] = Field(
+    properties: dict[str, str] = Field(
         default_factory=dict,
         description="Additional SBOM properties as key-value pairs",
     )

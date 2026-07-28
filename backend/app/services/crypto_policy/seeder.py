@@ -2,7 +2,6 @@
 
 import logging
 from pathlib import Path
-from typing import List
 
 import yaml
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -21,8 +20,8 @@ CURRENT_SEED_VERSION = 1
 _SEED_DIR = Path(__file__).parent / "seed"
 
 
-def load_seed_rules() -> List[CryptoRule]:
-    rules: List[CryptoRule] = []
+def load_seed_rules() -> list[CryptoRule]:
+    rules: list[CryptoRule] = []
     for path in sorted(_SEED_DIR.glob("*.yaml")):
         with open(path) as f:
             data = yaml.safe_load(f) or {}

@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType, Severity
 from app.services.normalizers.utils import build_finding_id, safe_get, safe_severity
@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from app.services.aggregation import ResultAggregator
 
 
-def normalize_license(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
+def normalize_license(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     for item in result.get("license_issues") or []:
         severity = safe_severity(item.get("severity"), default=Severity.MEDIUM)
 

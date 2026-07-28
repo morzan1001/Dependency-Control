@@ -5,14 +5,13 @@ import logging
 import re
 import uuid
 from datetime import datetime, timezone
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Response, status
 
-from app.api.router import CustomAPIRouter
-
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
+from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import (
     aggregate_stats_by_category,
     apply_system_settings_enforcement,
@@ -29,6 +28,13 @@ from app.api.v1.helpers import (
     resolve_sbom_refs,
 )
 from app.api.v1.helpers.auth import send_project_member_added_email
+from app.api.v1.helpers.responses import (
+    RESP_AUTH,
+    RESP_AUTH_400_404,
+    RESP_AUTH_400_404_500,
+    RESP_AUTH_404,
+    RESP_AUTH_404_500,
+)
 from app.core.constants import SEVERITY_CALCULATED_RISK_SCORES
 from app.core.permissions import Permissions, has_permission
 from app.core.worker import worker_manager
@@ -53,21 +59,14 @@ from app.schemas.project import (
     ProjectApiKeyResponse,
     ProjectCreate,
     ProjectListEnriched,
-    ProjectWithTeam,
     ProjectMemberInvite,
     ProjectMemberUpdate,
     ProjectNotificationSettings,
     ProjectUpdate,
+    ProjectWithTeam,
     RecentScan,
     RiskyProject,
     ScanFindingsResponse,
-)
-from app.api.v1.helpers.responses import (
-    RESP_AUTH,
-    RESP_AUTH_400_404,
-    RESP_AUTH_400_404_500,
-    RESP_AUTH_404,
-    RESP_AUTH_404_500,
 )
 
 router = CustomAPIRouter()
@@ -84,14 +83,14 @@ _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 async def get_dashboard_stats(
     db: DatabaseDep,
     current_user: CurrentUserDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
     query = await build_user_project_query(current_user, team_repo)
 
     # Aggregate rather than fetch all projects, for performance.
-    pipeline: List[Dict[str, Any]] = [
+    pipeline: list[dict[str, Any]] = [
         {"$match": query},
         {
             "$project": {
@@ -236,16 +235,15 @@ async def create_project(
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
-    if settings.project_limit_per_user > 0:
-        if not has_permission(current_user.permissions, Permissions.SYSTEM_MANAGE):
-            current_count = await project_repo.count(
-                {"members": {"$elemMatch": {"user_id": str(current_user.id), "role": "admin"}}}
+    if settings.project_limit_per_user > 0 and not has_permission(current_user.permissions, Permissions.SYSTEM_MANAGE):
+        current_count = await project_repo.count(
+            {"members": {"$elemMatch": {"user_id": str(current_user.id), "role": "admin"}}}
+        )
+        if current_count >= settings.project_limit_per_user:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Project limit reached. You can only create {settings.project_limit_per_user} projects.",
             )
-            if current_count >= settings.project_limit_per_user:
-                raise HTTPException(
-                    status_code=403,
-                    detail=f"Project limit reached. You can only create {settings.project_limit_per_user} projects.",
-                )
 
     if project_in.team_id:
         is_member = await team_repo.is_member(project_in.team_id, str(current_user.id))
@@ -303,13 +301,13 @@ async def rotate_api_key(
 async def read_projects(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    search: Optional[str] = None,
-    team_id: Optional[str] = None,
+    search: str | None = None,
+    team_id: str | None = None,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     sort_by: str = "created_at",
     sort_order: str = "desc",
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """
     Retrieve projects.
 
@@ -323,7 +321,7 @@ async def read_projects(
     if not has_permission(current_user.permissions, [Permissions.PROJECT_READ, Permissions.PROJECT_READ_ALL]):
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
-    search_query: Dict[str, Any] = {}
+    search_query: dict[str, Any] = {}
     if search:
         search_query["name"] = {"$regex": re.escape(search), "$options": "i"}
     if team_id:
@@ -367,7 +365,7 @@ async def read_projects(
 
 @router.get(
     "/scans",
-    response_model=List[RecentScan],
+    response_model=list[RecentScan],
     summary="List scans across all accessible projects",
     responses=RESP_AUTH,
 )
@@ -378,7 +376,7 @@ async def read_all_scans(
     skip: Annotated[int, Query(ge=0)] = 0,
     sort_by: str = "created_at",
     sort_order: str = "desc",
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Retrieve scans for all projects the user has access to, with pagination and sorting."""
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
@@ -390,7 +388,7 @@ async def read_all_scans(
     permission_query = await build_user_project_query(current_user, team_repo)
     projects = await project_repo.find_many_minimal(permission_query)
 
-    project_map: Dict[str, str] = {str(p.id): str(p.name) for p in projects}
+    project_map: dict[str, str] = {str(p.id): str(p.name) for p in projects}
     project_ids = list(project_map.keys())
 
     if not project_ids:
@@ -399,7 +397,7 @@ async def read_all_scans(
     direction = parse_sort_direction(sort_order)
     sort_field = get_sort_field("scans", sort_by)
 
-    pipeline: List[Dict[str, Any]] = [
+    pipeline: list[dict[str, Any]] = [
         {"$match": {"project_id": {"$in": project_ids}}},
         {"$sort": {sort_field: direction}},
         {"$skip": skip},
@@ -421,13 +419,13 @@ async def read_all_scans(
     return scans
 
 
-def _merge_team_members(data: Dict[str, Any], t_users: Dict[str, str]) -> None:
+def _merge_team_members(data: dict[str, Any], t_users: dict[str, str]) -> None:
     """Merge team members into project members list, skipping duplicates."""
     team_data = data.get("team_data")
     if not team_data:
         return
 
-    existing_ids = set(m["user_id"] for m in data["members"])
+    existing_ids = {m["user_id"] for m in data["members"]}
     for tm in team_data.get("members", []):
         uid = tm["user_id"]
         if uid in existing_ids:
@@ -453,7 +451,7 @@ async def read_project(
     project_repo = ProjectRepository(db)
 
     # Single aggregation to avoid N+1 team/user lookups.
-    pipeline: List[Dict[str, Any]] = [
+    pipeline: list[dict[str, Any]] = [
         {"$match": {"_id": project_id}},
         {
             "$lookup": {
@@ -548,7 +546,7 @@ async def _assert_can_transfer_team(
 
 async def _assert_gitlab_mr_token_present(
     project: Project,
-    update_data: Dict[str, Any],
+    update_data: dict[str, Any],
     db: Any,
 ) -> None:
     """Reject MR-decoration enablement when the linked GitLab instance lacks a token."""
@@ -570,7 +568,7 @@ async def _assert_gitlab_mr_token_present(
 async def _audit_license_policy_change(
     db: Any,
     project_id: str,
-    old_license_policy: Optional[Dict[str, Any]],
+    old_license_policy: dict[str, Any] | None,
     updated_project: Project,
     actor: User,
 ) -> None:
@@ -638,7 +636,7 @@ async def update_project(
     return updated_project
 
 
-def _resolve_license_policy(project: Project) -> Optional[Dict[str, Any]]:
+def _resolve_license_policy(project: Project) -> dict[str, Any] | None:
     """Return the project's license policy, preferring analyzer_settings['license_compliance'] over the legacy top-level field."""
     settings = (
         (project.analyzer_settings or {}).get("license_compliance")
@@ -662,7 +660,7 @@ async def read_project_branches(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> List[BranchInfo]:
+) -> list[BranchInfo]:
     """Get all unique branches for a project with their active/deleted status."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
@@ -673,7 +671,7 @@ async def read_project_branches(
     project = await project_repo.get_by_id(project_id)
     deleted_set = set(project.deleted_branches) if project else set()
 
-    pipeline: List[Dict[str, Any]] = [
+    pipeline: list[dict[str, Any]] = [
         {"$match": {"project_id": project_id}},
         {MONGO_GROUP: {"_id": "$branch", "last_scan_at": {"$max": "$created_at"}}},
     ]
@@ -701,7 +699,7 @@ async def sync_project_branches_endpoint(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> List[BranchInfo]:
+) -> list[BranchInfo]:
     """Trigger branch status sync against the VCS provider for a project."""
     await check_project_access(project_id, current_user, db, required_role="editor")
 
@@ -729,19 +727,19 @@ async def read_project_scans(
     db: DatabaseDep,
     skip: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
-    branch: Optional[str] = None,
+    branch: str | None = None,
     exclude_deleted_branches: bool = False,
     exclude_rescans: bool = False,
     sort_by: str = "created_at",
     sort_order: str = "desc",
-) -> List[Scan]:
+) -> list[Scan]:
     """Get scans for a project."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
     scan_repo = ScanRepository(db)
     project_repo = ProjectRepository(db)
 
-    query: Dict[str, Any] = {"project_id": project_id}
+    query: dict[str, Any] = {"project_id": project_id}
     if branch:
         query["branch"] = branch
     elif exclude_deleted_branches:
@@ -846,7 +844,7 @@ async def read_scan_history(
     scan_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> List[Scan]:
+) -> list[Scan]:
     """Get a scan's history (original plus all re-scans), sorted by date."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
@@ -887,11 +885,10 @@ async def update_notification_settings(
     is_admin = any(m.user_id == str(current_user.id) and m.role == "admin" for m in project.members)
     has_update_perm = has_permission(current_user.permissions, Permissions.PROJECT_UPDATE)
 
-    update_data: Dict[str, Any] = {}
+    update_data: dict[str, Any] = {}
 
-    if settings.enforce_notification_settings is not None:
-        if is_admin or has_update_perm:
-            update_data["enforce_notification_settings"] = settings.enforce_notification_settings
+    if settings.enforce_notification_settings is not None and (is_admin or has_update_perm):
+        update_data["enforce_notification_settings"] = settings.enforce_notification_settings
 
     project_repo = ProjectRepository(db)
 
@@ -956,7 +953,7 @@ async def invite_user(
     background_tasks: BackgroundTasks,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Add an existing user to the project by email (404 if no account exists; use system invitations for new users)."""
     project = await check_project_access(project_id, current_user, db, required_role="admin")
 
@@ -1001,7 +998,7 @@ async def read_analysis_results(
     scan_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> List[AnalysisResult]:
+) -> list[AnalysisResult]:
     """Get the results of all analyzers for a specific scan."""
     scan_repo = ScanRepository(db)
     analysis_repo = AnalysisResultRepository(db)
@@ -1044,7 +1041,7 @@ async def read_scan_sboms(
     scan_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Get raw SBOM data for a scan, resolved from GridFS on demand."""
     scan_repo = ScanRepository(db)
 
@@ -1065,16 +1062,16 @@ async def read_scan_sboms(
 def _build_scan_findings_match(
     scan_id: str,
     *,
-    type: Optional[str] = None,
-    category: Optional[str] = None,
-    severity: Optional[str] = None,
-    search: Optional[str] = None,
-    license_category: Optional[str] = None,
-    hide_info: Optional[bool] = None,
-    waived: Optional[bool] = None,
-) -> Dict[str, Any]:
+    type: str | None = None,
+    category: str | None = None,
+    severity: str | None = None,
+    search: str | None = None,
+    license_category: str | None = None,
+    hide_info: bool | None = None,
+    waived: bool | None = None,
+) -> dict[str, Any]:
     """Compose the $match stage for the scan-findings aggregation."""
-    query: Dict[str, Any] = {"scan_id": scan_id}
+    query: dict[str, Any] = {"scan_id": scan_id}
 
     if type:
         query["type"] = type
@@ -1108,7 +1105,7 @@ def _build_scan_findings_match(
     return query
 
 
-def _scan_findings_lookup_stage() -> Dict[str, Any]:
+def _scan_findings_lookup_stage() -> dict[str, Any]:
     """The ``$lookup`` stage that pulls dependency info into each finding."""
     return {
         "$lookup": {
@@ -1149,7 +1146,7 @@ def _scan_findings_lookup_stage() -> Dict[str, Any]:
     }
 
 
-def _scan_findings_add_fields_stage() -> Dict[str, Any]:
+def _scan_findings_add_fields_stage() -> dict[str, Any]:
     """The ``$addFields`` stage that ranks severity and flattens dependency info."""
     return {
         "$addFields": {
@@ -1183,7 +1180,7 @@ def _scan_findings_add_fields_stage() -> Dict[str, Any]:
 
 # Sort keys the API accepts mapped to real document fields; unlisted keys fall back
 # to severity so an unrecognised sort_by can't yield an unstably-paginated result.
-_SCAN_FINDINGS_SORT_FIELDS: Dict[str, str] = {
+_SCAN_FINDINGS_SORT_FIELDS: dict[str, str] = {
     "severity": "severity",
     "component": "component",
     "type": "type",
@@ -1194,29 +1191,29 @@ _SCAN_FINDINGS_SORT_FIELDS: Dict[str, str] = {
 }
 
 
-def _scan_findings_sort_stage(sort_by: str, sort_order: str) -> Dict[str, Any]:
+def _scan_findings_sort_stage(sort_by: str, sort_order: str) -> dict[str, Any]:
     """Compose the $sort stage, always ending with the unique _id tiebreaker so skip/limit pagination is stable (finding_id is not unique within a scan)."""
     sort_dir = -1 if sort_order == "desc" else 1
     field = _SCAN_FINDINGS_SORT_FIELDS.get(sort_by, "severity")
     if field == "severity":
         return {"$sort": {"severity_rank": sort_dir, "component": 1, "_id": 1}}
-    sort_spec: Dict[str, Any] = {field: sort_dir}
+    sort_spec: dict[str, Any] = {field: sort_dir}
     if field != "_id":
         sort_spec["_id"] = 1
     return {"$sort": sort_spec}
 
 
 def _build_scan_findings_pipeline(
-    query: Dict[str, Any],
+    query: dict[str, Any],
     *,
     sort_by: str,
     sort_order: str,
     skip: int,
     limit: int,
     direct_only: bool = False,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Compose the full aggregation pipeline used by ``read_scan_findings``."""
-    stages: List[Dict[str, Any]] = [
+    stages: list[dict[str, Any]] = [
         {"$match": query},
         _scan_findings_lookup_stage(),
         _scan_findings_add_fields_stage(),
@@ -1239,7 +1236,7 @@ def _build_scan_findings_pipeline(
     return stages
 
 
-def _unpack_scan_findings_facet(result: List[Dict[str, Any]]) -> tuple:
+def _unpack_scan_findings_facet(result: list[dict[str, Any]]) -> tuple:
     """Pull ``(data, total)`` out of the ``$facet`` result envelope."""
     if not result:
         return [], 0
@@ -1278,15 +1275,15 @@ async def read_scan_findings(
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
     sort_by: str = "severity",  # severity, type, component
     sort_order: str = "desc",  # asc, desc
-    type: Optional[str] = None,
-    category: Optional[str] = None,  # security, secret, sast, compliance, quality
-    severity: Optional[str] = None,
-    search: Optional[str] = None,
-    license_category: Optional[str] = None,  # permissive, weak_copyleft, strong_copyleft, etc.
-    hide_info: Optional[bool] = None,  # Hide INFO severity findings
-    waived: Optional[bool] = None,  # True: only waived; False: only active; None: both
-    direct_only: Optional[bool] = None,  # Hide findings on transitive dependencies
-) -> Dict[str, Any]:
+    type: str | None = None,
+    category: str | None = None,  # security, secret, sast, compliance, quality
+    severity: str | None = None,
+    search: str | None = None,
+    license_category: str | None = None,  # permissive, weak_copyleft, strong_copyleft, etc.
+    hide_info: bool | None = None,  # Hide INFO severity findings
+    waived: bool | None = None,  # True: only waived; False: only active; None: both
+    direct_only: bool | None = None,  # Hide findings on transitive dependencies
+) -> dict[str, Any]:
     """Get paginated findings for a scan."""
     await _resolve_scan_for_findings(scan_id, current_user, db)
 
@@ -1321,7 +1318,7 @@ async def get_scan_stats(
     scan_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Get finding statistics by category for a scan."""
     scan_repo = ScanRepository(db)
     finding_repo = FindingRepository(db)
@@ -1333,7 +1330,7 @@ async def get_scan_stats(
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
     await check_project_access(scan.project_id, current_user, db)
 
-    pipeline: List[Dict[str, Any]] = [
+    pipeline: list[dict[str, Any]] = [
         {"$match": {"scan_id": scan_id}},
         {MONGO_GROUP: {"_id": "$type", "count": {"$sum": 1}}},
     ]
@@ -1385,9 +1382,9 @@ async def _assert_not_demoting_last_admin(
 def _build_member_update_fields(
     member_index: int,
     member_in: ProjectMemberUpdate,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Compose the Mongo ``$set`` payload for an in-place member update."""
-    update_fields: Dict[str, Any] = {}
+    update_fields: dict[str, Any] = {}
     if member_in.role:
         update_fields[f"members.{member_index}.role"] = member_in.role
     if member_in.notification_preferences:

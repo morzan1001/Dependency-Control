@@ -1,11 +1,10 @@
 from collections import defaultdict
-from typing import Dict, List
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import get_attr, ModelOrDict
+from app.services.recommendation.common import ModelOrDict, get_attr
 
 
-def process_sast(findings: List[ModelOrDict]) -> List[Recommendation]:
+def process_sast(findings: list[ModelOrDict]) -> list[Recommendation]:
     """Process SAST (Static Application Security Testing) findings."""
     if not findings:
         return []
@@ -36,7 +35,7 @@ def process_sast(findings: List[ModelOrDict]) -> List[Recommendation]:
     recommendations = []
 
     for category, cat_findings in findings_by_category.items():
-        severity_counts: Dict[str, int] = defaultdict(int)
+        severity_counts: dict[str, int] = defaultdict(int)
         files_affected = set()
 
         for f in cat_findings:

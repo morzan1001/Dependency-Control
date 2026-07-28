@@ -43,7 +43,7 @@ def test_serialization_contract_identical():
         "allow_network_copyleft": False,
     }
     for key in ("distribution_model", "deployment_model", "library_usage"):
-        assert type(dumped[key]) is str  # noqa: E721
+        assert type(dumped[key]) is str
 
     defaults = LicensePolicySchema().model_dump()
     assert defaults == {
@@ -54,7 +54,7 @@ def test_serialization_contract_identical():
         "allow_network_copyleft": False,
     }
     for key in ("distribution_model", "deployment_model", "library_usage"):
-        assert type(defaults[key]) is str  # noqa: E721
+        assert type(defaults[key]) is str
 
 
 def test_json_mode_serializes_to_strings():

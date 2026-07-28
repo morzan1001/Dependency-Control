@@ -1,7 +1,7 @@
 import asyncio
 import logging
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.models.project import Project
 from app.models.system import SystemSettings
@@ -25,14 +25,14 @@ class NotificationService:
     async def _send_based_on_prefs(
         self,
         user: User,
-        prefs: Dict[str, List[str]],
+        prefs: dict[str, list[str]],
         event_type: str,
         subject: str,
         message: str,
-        system_settings: Optional[SystemSettings] = None,
-        html_message: Optional[str] = None,
-        slack_blocks: Optional[List[Dict[str, Any]]] = None,
-        mattermost_props: Optional[Dict[str, Any]] = None,
+        system_settings: SystemSettings | None = None,
+        html_message: str | None = None,
+        slack_blocks: list[dict[str, Any]] | None = None,
+        mattermost_props: dict[str, Any] | None = None,
     ) -> None:
         channels = prefs.get(event_type, [])
         tasks = []
@@ -83,15 +83,15 @@ class NotificationService:
 
     async def notify_users(
         self,
-        users: List[User],
+        users: list[User],
         event_type: str,
         subject: str,
         message: str,
         db: Any = None,
-        forced_channels: Optional[List[str]] = None,
-        html_message: Optional[str] = None,
-        slack_blocks: Optional[List[Dict[str, Any]]] = None,
-        mattermost_props: Optional[Dict[str, Any]] = None,
+        forced_channels: list[str] | None = None,
+        html_message: str | None = None,
+        slack_blocks: list[dict[str, Any]] | None = None,
+        mattermost_props: dict[str, Any] | None = None,
     ) -> None:
         """Send a notification to multiple users."""
         system_settings = None
@@ -127,14 +127,14 @@ class NotificationService:
         self,
         db: Any,
         *,
-        permission: str | List[str],
+        permission: str | list[str],
         event_type: str,
         subject: str,
         message: str,
-        forced_channels: Optional[List[str]] = None,
-        html_message: Optional[str] = None,
-        slack_blocks: Optional[List[Dict[str, Any]]] = None,
-        mattermost_props: Optional[Dict[str, Any]] = None,
+        forced_channels: list[str] | None = None,
+        html_message: str | None = None,
+        slack_blocks: list[dict[str, Any]] | None = None,
+        mattermost_props: dict[str, Any] | None = None,
     ) -> None:
         """Notify all active users whose permissions include any of the given permission(s)."""
         perms = [permission] if isinstance(permission, str) else list(permission)
@@ -167,17 +167,17 @@ class NotificationService:
         subject: str,
         message: str,
         db: Any,
-        forced_channels: Optional[List[str]] = None,
-        html_message: Optional[str] = None,
-        slack_blocks: Optional[List[Dict[str, Any]]] = None,
-        mattermost_props: Optional[Dict[str, Any]] = None,
+        forced_channels: list[str] | None = None,
+        html_message: str | None = None,
+        slack_blocks: list[dict[str, Any]] | None = None,
+        mattermost_props: dict[str, Any] | None = None,
     ) -> None:
         """Send notifications to project members."""
         repo = SystemSettingsRepository(db)
         system_settings = await repo.get()
 
         # user_id -> project-specific prefs (or None if no override)
-        targets: Dict[str, Optional[Dict[str, List[str]]]] = {}
+        targets: dict[str, dict[str, list[str]] | None] = {}
 
         if project.members:
             for member in project.members:
@@ -217,7 +217,7 @@ class NotificationService:
             if not user:
                 continue
 
-            effective_prefs: Dict[str, List[str]] = {}
+            effective_prefs: dict[str, list[str]] = {}
             if forced_channels:
                 effective_prefs = {event_type: forced_channels}
             else:
@@ -257,12 +257,12 @@ notification_service = NotificationService()
 
 async def safe_notify_project_event(
     db: Any,
-    project_id: Optional[str],
+    project_id: str | None,
     event_type: str,
     subject: str,
     message: str,
     *,
-    html_message: Optional[str] = None,
+    html_message: str | None = None,
     context: str = "notify",
 ) -> None:
     """Look up the project and dispatch the event to its members; errors are logged, never raised."""

@@ -4,10 +4,11 @@ Process-local (not shared across pods). Callers that mutate underlying state mus
 call ``get_analytics_cache().clear()`` to avoid serving stale aggregations.
 """
 
-from collections import OrderedDict
-from dataclasses import dataclass
 import time
-from typing import Any, Hashable, Optional, Tuple
+from collections import OrderedDict
+from collections.abc import Hashable
+from dataclasses import dataclass
+from typing import Any
 
 
 @dataclass
@@ -22,9 +23,9 @@ class TTLCache:
     def __init__(self, maxsize: int = 512, ttl_seconds: int = 300):
         self.maxsize = maxsize
         self.ttl_seconds = ttl_seconds
-        self._store: "OrderedDict[Hashable, _Entry]" = OrderedDict()
+        self._store: OrderedDict[Hashable, _Entry] = OrderedDict()
 
-    def get(self, key: Hashable) -> Tuple[bool, Any]:
+    def get(self, key: Hashable) -> tuple[bool, Any]:
         """Return (hit, value); drops the entry if missing or expired."""
         now = time.monotonic()
         if key not in self._store:
@@ -53,7 +54,7 @@ class TTLCache:
         return len(self._store)
 
 
-_default_cache: Optional[TTLCache] = None
+_default_cache: TTLCache | None = None
 
 
 def get_analytics_cache() -> TTLCache:

@@ -3,7 +3,7 @@ import logging
 import os
 import re
 from collections import Counter
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -31,7 +31,7 @@ _WAIVER_FIELD_MAP = {
 }
 
 
-def _strip_line_number(finding_id: str) -> Optional[str]:
+def _strip_line_number(finding_id: str) -> str | None:
     """Strip the trailing line number from a SAST finding ID to get the file-level prefix.
 
     SAST finding IDs end with ``-<line_number>``.  Stripping that suffix
@@ -46,7 +46,7 @@ def _strip_line_number(finding_id: str) -> Optional[str]:
     return None
 
 
-def _extract_rule_prefix(finding_id: str, component: str) -> Optional[str]:
+def _extract_rule_prefix(finding_id: str, component: str) -> str | None:
     """Extract the scanner+rule prefix from a SAST/IAC finding ID.
 
     Given ``finding_id = {SCANNER}-{rule_id}-{file_path}-{line}``
@@ -71,8 +71,8 @@ def _extract_rule_prefix(finding_id: str, component: str) -> Optional[str]:
 
 
 async def _resolve_active_scan_id(
-    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, deleted_branches: List[str]
-) -> Optional[str]:
+    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, deleted_branches: list[str]
+) -> str | None:
     """Resolve the active scan_id, skipping deleted branches if needed."""
     if not deleted_branches:
         return scan_id
@@ -93,7 +93,7 @@ def _resolve_finding_id_query(
     finding_id: str,
     scope: str,
     component: str,
-) -> str | Dict[str, str]:
+) -> str | dict[str, str]:
     """Resolve the MongoDB query value for ``finding_id`` based on waiver scope."""
     if scope == "file":
         prefix = _strip_line_number(finding_id)
@@ -106,10 +106,10 @@ def _resolve_finding_id_query(
     return finding_id
 
 
-def _build_waiver_query(waiver: Waiver) -> Dict[str, str | Dict[str, str]]:
+def _build_waiver_query(waiver: Waiver) -> dict[str, str | dict[str, str]]:
     """Build a finding query dict from a waiver's matching fields."""
     scope = waiver.scope or "finding"
-    query: Dict[str, str | Dict[str, str]] = {}
+    query: dict[str, str | dict[str, str]] = {}
 
     waiver_values = {
         "finding_id": waiver.finding_id,
@@ -139,7 +139,7 @@ def _build_waiver_query(waiver: Waiver) -> Dict[str, str | Dict[str, str]]:
     return query
 
 
-async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: List[Waiver]) -> None:
+async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: list[Waiver]) -> None:
     """Apply all waivers for a scan."""
     for waiver in waivers:
         if waiver.vulnerability_id:
@@ -190,7 +190,7 @@ def _is_signature_waiver(waiver: Any) -> bool:
     return waiver.finding_type in FindingRepository._LOCATION_TYPES
 
 
-def _safe_match_signature(raw: dict, context: str) -> Optional[Any]:
+def _safe_match_signature(raw: dict, context: str) -> Any | None:
     """Build a MatchSignature from a stored dict, returning None (and logging) if malformed.
 
     Skipping a malformed sub-document keeps the recalc reset+reapply from aborting and
@@ -207,7 +207,7 @@ def _safe_match_signature(raw: dict, context: str) -> Optional[Any]:
         return None
 
 
-async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id: str, waivers: List) -> None:
+async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id: str, waivers: list) -> None:
     """Apply non-vulnerability waivers to a scan's location-based findings via signature matching.
 
     Persists re-anchored waiver signatures and marks lapsed findings. Vulnerability-id waivers
@@ -272,7 +272,7 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
         recomputed,
     )
     if app.dormant:
-        group_sizes: Dict[str, int] = {}
+        group_sizes: dict[str, int] = {}
         for f in findings:
             if f.sig is not None:
                 # \x00 delimiter: rule_key/file_key are scanner IDs and file paths; neither contains NUL (so no key collision).
@@ -305,7 +305,7 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
 
     # Group waive writes by reason for fewer queries.
     reason_by_waiver = {w.id: getattr(w, "reason", None) for w in enriched}
-    by_reason: Dict[Optional[str], List[str]] = {}
+    by_reason: dict[str | None, list[str]] = {}
     for fid, wid in app.waived.items():
         by_reason.setdefault(reason_by_waiver.get(wid), []).append(fid)
     for reason, fids in by_reason.items():
@@ -319,7 +319,7 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
         await waiver_repo.update(wid, {"match": new_sig.model_dump()})
 
 
-async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -> Optional[Stats]:
+async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -> Stats | None:
     """Recalculate a project's stats from its latest scan and active waivers.
 
     Resets ALL waivers for the scan and re-applies them under a distributed lock to

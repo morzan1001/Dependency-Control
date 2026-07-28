@@ -1,7 +1,5 @@
 """Pydantic models for GitLab API responses and OIDC token payloads (extra="ignore" discards unused fields)."""
 
-from typing import Optional
-
 from pydantic import BaseModel, ConfigDict
 
 
@@ -12,7 +10,7 @@ class OIDCPayload(BaseModel):
 
     project_id: str
     project_path: str
-    user_email: Optional[str] = None
+    user_email: str | None = None
 
 
 class GitLabNamespace(BaseModel):
@@ -30,7 +28,7 @@ class GitLabProjectDetails(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    namespace: Optional[GitLabNamespace] = None
+    namespace: GitLabNamespace | None = None
 
 
 class GitLabMergeRequest(BaseModel):
@@ -58,6 +56,6 @@ class GitLabMember(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
-    username: Optional[str] = None
-    email: Optional[str] = None
+    username: str | None = None
+    email: str | None = None
     access_level: int = 0

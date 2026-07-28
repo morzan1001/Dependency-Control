@@ -36,7 +36,7 @@ _RSA_CONTROL = ControlDefinition(
 
 
 def _asset(**kw):
-    defaults = dict(project_id="p", scan_id="s", bom_ref="r", name="X", asset_type=CryptoAssetType.ALGORITHM)
+    defaults = {"project_id": "p", "scan_id": "s", "bom_ref": "r", "name": "X", "asset_type": CryptoAssetType.ALGORITHM}
     defaults.update(kw)
     return CryptoAsset(**defaults)
 

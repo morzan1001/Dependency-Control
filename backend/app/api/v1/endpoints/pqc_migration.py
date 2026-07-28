@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timezone
-from typing import Literal, Optional
+from typing import Literal
 
 from fastapi import BackgroundTasks, Depends, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -27,7 +27,7 @@ router = CustomAPIRouter(prefix="/analytics/crypto", tags=["pqc-migration"])
 async def get_pqc_migration_plan(
     background_tasks: BackgroundTasks,
     scope: Literal["project", "team", "global", "user"] = Query(..., pattern="^(project|team|global|user)$"),
-    scope_id: Optional[str] = Query(None),
+    scope_id: str | None = Query(None),
     limit: int = Query(500, ge=1, le=2000),
     current_user: User = Depends(get_current_active_user),
     db: AsyncIOMotorDatabase = Depends(get_database),

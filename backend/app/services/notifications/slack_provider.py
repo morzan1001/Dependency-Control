@@ -1,13 +1,13 @@
 import asyncio
 import logging
 import time
-from typing import Any, Optional
+from typing import Any
 
 from prometheus_client import Counter
 
 from app.core.config import settings
-from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import SLACK_TOKEN_EXPIRY_BUFFER_SECONDS
+from app.core.http_utils import InstrumentedAsyncClient
 from app.db.mongodb import get_database
 from app.models.system import SystemSettings
 from app.repositories.system_settings import SystemSettingsRepository
@@ -15,8 +15,8 @@ from app.services.notifications.base import NotificationProvider
 
 logger = logging.getLogger(__name__)
 
-notifications_sent_total: Optional[Counter] = None
-notifications_failed_total: Optional[Counter] = None
+notifications_sent_total: Counter | None = None
+notifications_failed_total: Counter | None = None
 
 try:
     from app.core.metrics import notifications_failed_total, notifications_sent_total
@@ -28,7 +28,7 @@ class SlackProvider(NotificationProvider):
     def __init__(self) -> None:
         # Local lock: prevents concurrent refresh within the same pod.
         self._refresh_lock = asyncio.Lock()
-        self._cached_token: Optional[str] = None
+        self._cached_token: str | None = None
         self._cached_token_expires_at: float = 0
 
     async def _acquire_distributed_lock(self, db: Any, lock_name: str, ttl_seconds: int = 30) -> bool:
@@ -51,7 +51,7 @@ class SlackProvider(NotificationProvider):
         locks_repo = DistributedLocksRepository(db)
         await locks_repo.release_lock(lock_name, self._lock_holder_id)
 
-    async def _refresh_token(self, system_settings: SystemSettings) -> Optional[str]:
+    async def _refresh_token(self, system_settings: SystemSettings) -> str | None:
         """Refresh the Slack access token and persist the new token and expiry."""
         if (
             not system_settings.slack_client_id
@@ -116,7 +116,7 @@ class SlackProvider(NotificationProvider):
         destination: str,
         subject: str,
         message: str,
-        system_settings: Optional[SystemSettings] = None,
+        system_settings: SystemSettings | None = None,
         **kwargs: Any,
     ) -> bool:
         if not system_settings:

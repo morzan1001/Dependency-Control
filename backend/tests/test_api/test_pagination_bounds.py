@@ -15,6 +15,7 @@ def _get_query_object(func, param_name: str):
     """Return the FastAPI Query object attached to *param_name* via Annotated."""
     import inspect
     from typing import Annotated, get_args, get_origin
+
     from fastapi.params import Query as FastAPIQuery
 
     sig = inspect.signature(func)
@@ -177,11 +178,11 @@ class TestReadScanFindingsPaginationBounds:
 def _make_test_app():
     """Build a minimal FastAPI app with the projects router + stub auth so Query validation runs."""
     from fastapi import FastAPI
-    from app.api.v1.endpoints import projects as proj_module
-    from app.api.deps import get_current_active_user
-    from app.db.mongodb import get_database
 
+    from app.api.deps import get_current_active_user
+    from app.api.v1.endpoints import projects as proj_module
     from app.core.permissions import ALL_PERMISSIONS
+    from app.db.mongodb import get_database
     from app.models.user import User
 
     stub_user = User(

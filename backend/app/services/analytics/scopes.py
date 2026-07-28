@@ -8,7 +8,7 @@ enforced here so that individual query functions stay scope-agnostic.
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, List, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -31,8 +31,8 @@ class ScopeResolutionError(PermissionError):
 @dataclass
 class ResolvedScope:
     scope: Scope
-    scope_id: Optional[str]
-    project_ids: Optional[List[str]]
+    scope_id: str | None
+    project_ids: list[str] | None
 
 
 class ScopeResolver:
@@ -42,7 +42,7 @@ class ScopeResolver:
         self.db = db
         self.user = user
 
-    async def resolve(self, *, scope: Scope, scope_id: Optional[str]) -> ResolvedScope:
+    async def resolve(self, *, scope: Scope, scope_id: str | None) -> ResolvedScope:
         if scope == "project":
             return await self._resolve_project(scope_id)
         if scope == "team":
@@ -53,14 +53,14 @@ class ScopeResolver:
             return await self._resolve_user()
         raise ScopeResolutionError(f"Unknown scope: {scope!r}")
 
-    async def _resolve_project(self, scope_id: Optional[str]) -> ResolvedScope:
+    async def _resolve_project(self, scope_id: str | None) -> ResolvedScope:
         if not scope_id:
             raise ScopeResolutionError("project scope requires scope_id")
         if not await self._check_project_member(scope_id):
             raise ScopeResolutionError(f"User not authorised for project {scope_id}")
         return ResolvedScope(scope="project", scope_id=scope_id, project_ids=[scope_id])
 
-    async def _resolve_team(self, scope_id: Optional[str]) -> ResolvedScope:
+    async def _resolve_team(self, scope_id: str | None) -> ResolvedScope:
         if not scope_id:
             raise ScopeResolutionError("team scope requires scope_id")
         if not await self._check_team_member(scope_id):
@@ -86,7 +86,7 @@ class ScopeResolver:
         project_ids = await self._list_user_project_ids()
         return ResolvedScope(scope="user", scope_id=None, project_ids=project_ids)
 
-    async def _list_all_project_ids(self) -> List[str]:
+    async def _list_all_project_ids(self) -> list[str]:
         """Return every project_id in the database — super-user escape hatch."""
         cursor = self.db.projects.find({}, {"_id": 1}).limit(ANALYTICS_MAX_QUERY_LIMIT)
         docs = await cursor.to_list(length=ANALYTICS_MAX_QUERY_LIMIT)
@@ -113,13 +113,13 @@ class ScopeResolver:
         members = getattr(team, "members", [])
         return any(getattr(m, "user_id", None) == self.user.id for m in members)
 
-    async def _list_team_project_ids(self, team_id: str) -> List[str]:
+    async def _list_team_project_ids(self, team_id: str) -> list[str]:
         from app.repositories.projects import ProjectRepository
 
         projects = await ProjectRepository(self.db).find_many_minimal({"team_id": team_id}, limit=1000)
         return [str(p.id) for p in projects]
 
-    async def _list_user_project_ids(self) -> List[str]:
+    async def _list_user_project_ids(self) -> list[str]:
         """Return all project IDs the current user has any access to."""
         from app.repositories.teams import TeamRepository
 

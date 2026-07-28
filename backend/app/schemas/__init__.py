@@ -36,32 +36,32 @@ from app.schemas.recommendation import (
 from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat, SourceType
 
 __all__ = [
-    # Analytics
-    "SeverityBreakdown",
-    "DependencyUsage",
-    "DependencyTreeNode",
-    "ImpactAnalysisResult",
-    "VulnerabilityHotspot",
-    "DependencyTypeStats",
     "AnalyticsSummary",
-    "DependencyMetadata",
-    # Finding
-    "VulnerabilityEntry",
-    "SecretDetails",
-    "VulnerabilityAggregatedDetails",
-    "QualityEntry",
-    "QualityAggregatedDetails",
     # Enrichment
     "DependencyEnrichment",
-    # Recommendation
-    "RecommendationType",
-    "Priority",
+    "DependencyMetadata",
+    "DependencyTreeNode",
+    "DependencyTypeStats",
+    "DependencyUsage",
     "FindingInfo",
-    "VulnerabilityInfo",
-    "Recommendation",
-    # SBOM
-    "SBOMFormat",
-    "SourceType",
+    "ImpactAnalysisResult",
     "ParsedDependency",
     "ParsedSBOM",
+    "Priority",
+    "QualityAggregatedDetails",
+    "QualityEntry",
+    "Recommendation",
+    # Recommendation
+    "RecommendationType",
+    # SBOM
+    "SBOMFormat",
+    "SecretDetails",
+    # Analytics
+    "SeverityBreakdown",
+    "SourceType",
+    "VulnerabilityAggregatedDetails",
+    # Finding
+    "VulnerabilityEntry",
+    "VulnerabilityHotspot",
+    "VulnerabilityInfo",
 ]

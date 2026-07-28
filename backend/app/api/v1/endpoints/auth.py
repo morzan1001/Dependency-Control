@@ -2,14 +2,11 @@ import hashlib
 import logging
 import secrets
 from datetime import datetime, timedelta, timezone
-from typing import Annotated, Any, Optional
+from typing import Annotated, Any
 from urllib.parse import urlencode
 
 import httpx
 import pyotp
-from prometheus_client import Counter
-
-from app.core.http_utils import InstrumentedAsyncClient
 from fastapi import (
     BackgroundTasks,
     Body,
@@ -19,16 +16,26 @@ from fastapi import (
     Request,
     status,
 )
-
-from app.api.deps import DatabaseDep
-from app.api.router import CustomAPIRouter
 from fastapi.responses import RedirectResponse
 from fastapi.security import OAuth2PasswordRequestForm
 from jose import JWTError, jwt
+from prometheus_client import Counter
 from pydantic import ValidationError
 
 from app.api import deps
+from app.api.deps import DatabaseDep
+from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.auth import send_password_reset_email, send_verification_email
+from app.api.v1.helpers.responses import (
+    RESP_400_401_500,
+    RESP_400_403,
+    RESP_400_403_404,
+    RESP_400_404,
+    RESP_400_500,
+    RESP_501,
+    RESP_AUTH,
+    RESP_AUTH_400_501,
+)
 from app.core import security
 from app.core.cache import cache_service
 from app.core.config import settings
@@ -37,6 +44,7 @@ from app.core.constants import (
     OIDC_STATE_TTL_SECONDS,
     TOTP_VALID_WINDOW,
 )
+from app.core.http_utils import InstrumentedAsyncClient
 from app.models.system import SystemSettings
 from app.models.user import User
 from app.repositories import UserRepository
@@ -48,26 +56,16 @@ from app.schemas.auth import (
     VerificationEmailResponse,
 )
 from app.schemas.token import Token, TokenPayload
-from app.api.v1.helpers.responses import (
-    RESP_400_401_500,
-    RESP_400_403,
-    RESP_400_403_404,
-    RESP_400_404,
-    RESP_400_500,
-    RESP_AUTH,
-    RESP_AUTH_400_501,
-    RESP_501,
-)
 from app.schemas.user import User as UserSchema
 from app.schemas.user import UserPasswordReset, UserSignup
 
 logger = logging.getLogger(__name__)
 
-auth_login_attempts_total: Optional[Counter] = None
-auth_2fa_verifications_total: Optional[Counter] = None
-auth_oidc_logins_total: Optional[Counter] = None
-auth_signups_total: Optional[Counter] = None
-auth_password_resets_total: Optional[Counter] = None
+auth_login_attempts_total: Counter | None = None
+auth_2fa_verifications_total: Counter | None = None
+auth_oidc_logins_total: Counter | None = None
+auth_signups_total: Counter | None = None
+auth_password_resets_total: Counter | None = None
 
 try:
     from app.core.metrics import (
@@ -98,7 +96,7 @@ async def _check_rate_limit(key: str, max_attempts: int = 5, window_seconds: int
     await cache_service.set(cache_key, (attempts or 0) + 1, ttl_seconds=window_seconds)
 
 
-async def _lookup_user_for_login(user_repo: UserRepository, username: str) -> Optional[dict]:
+async def _lookup_user_for_login(user_repo: UserRepository, username: str) -> dict | None:
     """Try username then email lookup."""
     user = await user_repo.get_raw_by_username(username)
     if not user:
@@ -106,7 +104,7 @@ async def _lookup_user_for_login(user_repo: UserRepository, username: str) -> Op
     return user
 
 
-def _verify_totp_or_raise(user: dict, otp: Optional[str]) -> None:
+def _verify_totp_or_raise(user: dict, otp: str | None) -> None:
     """Verify TOTP code. Raises HTTPException on failure."""
     if not otp:
         raise HTTPException(
@@ -136,7 +134,7 @@ def _verify_totp_or_raise(user: dict, otp: Optional[str]) -> None:
         auth_2fa_verifications_total.labels(result="success").inc()
 
 
-def _enforce_2fa_setup_scope(user: dict, system_config: SystemSettings) -> Optional[list]:
+def _enforce_2fa_setup_scope(user: dict, system_config: SystemSettings) -> list | None:
     """Return ["auth:setup_2fa"] when enforce_2fa is on and a local user has no 2FA configured, else None."""
     if user.get("totp_enabled", False):
         return None
@@ -149,7 +147,7 @@ def _enforce_2fa_setup_scope(user: dict, system_config: SystemSettings) -> Optio
     return None
 
 
-def _resolve_login_permissions(user: dict, otp: Optional[str], system_config: SystemSettings) -> list:
+def _resolve_login_permissions(user: dict, otp: str | None, system_config: SystemSettings) -> list:
     """Resolve permissions based on 2FA status. Verifies OTP when 2FA is enabled."""
     if user.get("totp_enabled", False):
         _verify_totp_or_raise(user, otp)
@@ -171,7 +169,7 @@ def _resolve_login_permissions(user: dict, otp: Optional[str], system_config: Sy
 async def login_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: DatabaseDep,
-    otp: Annotated[Optional[str], Form()] = None,
+    otp: Annotated[str | None, Form()] = None,
 ) -> Any:
     """OAuth2-compatible token login; accepts username/email, password, and otp when 2FA is enabled."""
     await _check_rate_limit(f"login:{form_data.username}")
@@ -272,7 +270,7 @@ async def refresh_token(
             detail="Inactive user",
         )
 
-    if "last_logout_at" in user and user["last_logout_at"]:
+    if user.get("last_logout_at"):
         iat = payload.get("iat")
         if iat:
             last_logout_ts = user["last_logout_at"].timestamp()
@@ -532,7 +530,7 @@ async def login_oidc_authorize(request: Request, db: DatabaseDep) -> RedirectRes
     return RedirectResponse(url)
 
 
-async def _validate_oidc_state(state: Optional[str]) -> None:
+async def _validate_oidc_state(state: str | None) -> None:
     """Validate and atomically consume the OIDC state token."""
     if not state:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing state parameter")
@@ -718,7 +716,7 @@ async def login_oidc_callback(
     request: Request,
     code: str,
     db: DatabaseDep,
-    state: Optional[str] = None,
+    state: str | None = None,
 ) -> RedirectResponse:
     """Handle the OIDC callback: exchange the code for tokens and create/update the user."""
     system_config = await deps.get_system_settings(db)
@@ -805,15 +803,18 @@ async def forgot_password(
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_email(email)
 
-    if user and user.get("is_active", True):
-        # Skip OIDC users without a local password.
-        if user.get("auth_provider", "local") == "local" or user.get("hashed_password"):
-            await send_password_reset_email(
-                background_tasks,
-                user["email"],
-                user.get("username", "User"),
-                system_settings=system_config,
-            )
+    # Skip OIDC users without a local password.
+    if (
+        user
+        and user.get("is_active", True)
+        and (user.get("auth_provider", "local") == "local" or user.get("hashed_password"))
+    ):
+        await send_password_reset_email(
+            background_tasks,
+            user["email"],
+            user.get("username", "User"),
+            system_settings=system_config,
+        )
 
     # Pad to a constant ~200ms so response time never reveals whether the email exists.
     elapsed = time.monotonic() - start_time

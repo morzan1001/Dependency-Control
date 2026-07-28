@@ -2,7 +2,8 @@
 
 import logging
 import time
-from typing import Any, Callable, Awaitable, Dict, Optional, Type, TypeVar
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar
 
 from jose import jwt
 from pydantic import BaseModel
@@ -21,17 +22,17 @@ JWKS_FORCED_REFRESH_COOLDOWN_SECONDS = 60
 
 async def find_jwks_key(
     kid: str,
-    get_jwks: Callable[[], Awaitable[Optional[Dict[str, Any]]]],
+    get_jwks: Callable[[], Awaitable[dict[str, Any] | None]],
     invalidate_cache: Callable[[], Awaitable[None]],
     provider_name: str = "OIDC",
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     """Find a signing key in the JWKS by key ID, refreshing the cache once on a miss."""
     jwks = await get_jwks()
 
     if jwks:
         for k in jwks.get("keys", []):
             if k.get("kid") == kid:
-                matching_key: Dict[str, Any] = k
+                matching_key: dict[str, Any] = k
                 return matching_key
 
     # Unknown kid: may be a legitimate rotation, but the kid is unauthenticated, so
@@ -71,13 +72,13 @@ async def find_jwks_key(
 
 async def validate_oidc_token(
     token: str,
-    get_jwks: Callable[[], Awaitable[Optional[Dict[str, Any]]]],
+    get_jwks: Callable[[], Awaitable[dict[str, Any] | None]],
     invalidate_cache: Callable[[], Awaitable[None]],
     issuer: str,
-    audience: Optional[str],
-    payload_model: Type[T],
+    audience: str | None,
+    payload_model: type[T],
     provider_name: str = "OIDC",
-) -> Optional[T]:
+) -> T | None:
     """Validate an OIDC JWT via JWKS, returning the parsed ``payload_model`` or None.
 
     Audience verification is mandatory and fails closed: a missing ``audience`` rejects

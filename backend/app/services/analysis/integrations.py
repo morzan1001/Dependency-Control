@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 def _build_mr_comment(
     scan_id: str,
     stats: Stats,
-    scan_url: Optional[str],
+    scan_url: str | None,
 ) -> str:
     """Build the MR comment body for scan results."""
     status_label = "[OK]"
@@ -30,7 +30,7 @@ def _build_mr_comment(
     marker = "<!-- dependency-control:scan-comment -->"
     scan_marker = f"<!-- dependency-control:scan-id:{scan_id} -->"
 
-    comment_lines: List[str] = [
+    comment_lines: list[str] = [
         marker,
         scan_marker,
         f"### {status_label} Dependency Control Scan Results",
@@ -153,8 +153,8 @@ async def _update_or_create_mr_comment(
     """Upsert an MR comment identified by `marker`."""
     existing_notes = await gitlab_service.get_merge_request_notes(gitlab_project_id, mr_iid)
 
-    existing_comment_id: Optional[int] = None
-    existing_body: Optional[str] = None
+    existing_comment_id: int | None = None
+    existing_body: str | None = None
 
     for note in existing_notes:
         if marker in note.body:

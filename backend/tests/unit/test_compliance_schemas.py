@@ -1,6 +1,5 @@
 from datetime import datetime, timezone
 
-
 from app.models.finding import FindingType, Severity
 from app.schemas.compliance import (
     ControlDefinition,

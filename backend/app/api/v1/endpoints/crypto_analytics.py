@@ -1,7 +1,7 @@
 """REST endpoints for crypto analytics (hotspots, trends)."""
 
 from datetime import datetime
-from typing import Literal, Optional
+from typing import Literal
 
 from fastapi import HTTPException, Query
 
@@ -25,9 +25,9 @@ async def get_hotspots(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     scope: _ScopeLit = Query(..., pattern=_SCOPE_PATTERN),
-    scope_id: Optional[str] = Query(None),
+    scope_id: str | None = Query(None),
     group_by: GroupBy = Query("name"),
-    scan_id: Optional[str] = Query(None),
+    scan_id: str | None = Query(None),
     limit: int = Query(100, ge=1, le=500),
 ) -> HotspotResponse:
     resolved = await ScopeResolver(db, current_user).resolve(
@@ -48,7 +48,7 @@ async def get_hotspot_locations(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     scope: _ScopeLit = Query(..., pattern=_SCOPE_PATTERN),
-    scope_id: Optional[str] = Query(None),
+    scope_id: str | None = Query(None),
     grouping: GroupBy = Query("name"),
 ) -> object:
     resolved = await ScopeResolver(db, current_user).resolve(
@@ -73,7 +73,7 @@ async def get_trends(
     range_start: datetime = Query(...),
     range_end: datetime = Query(...),
     scope: _ScopeLit = Query(..., pattern=_SCOPE_PATTERN),
-    scope_id: Optional[str] = Query(None),
+    scope_id: str | None = Query(None),
     metric: Metric = Query("total_crypto_findings"),
     bucket: Bucket = Query("week"),
 ) -> TrendSeries:

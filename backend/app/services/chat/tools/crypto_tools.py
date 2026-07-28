@@ -5,7 +5,7 @@ test patches on ``app.services.chat.tools.<NAME>`` keep working.
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, Literal, Optional, cast
+from typing import Any, Literal, cast
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -24,22 +24,22 @@ async def list_crypto_assets(
     *,
     project_id: str,
     scan_id: str,
-    asset_type: Optional[str] = None,
-    primitive: Optional[str] = None,
-    name_search: Optional[str] = None,
+    asset_type: str | None = None,
+    primitive: str | None = None,
+    name_search: str | None = None,
     skip: int = 0,
     limit: int = 100,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     from app.repositories.crypto_asset import CryptoAssetRepository
     from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 
-    at_enum: Optional[CryptoAssetType] = None
+    at_enum: CryptoAssetType | None = None
     if asset_type:
         try:
             at_enum = CryptoAssetType(asset_type)
         except ValueError:
             at_enum = None
-    pr_enum: Optional[CryptoPrimitive] = None
+    pr_enum: CryptoPrimitive | None = None
     if primitive:
         try:
             pr_enum = CryptoPrimitive(primitive)
@@ -68,7 +68,7 @@ async def get_crypto_asset_details(
     *,
     project_id: str,
     asset_id: str,
-) -> Optional[Dict[str, Any]]:
+) -> dict[str, Any] | None:
     from app.repositories.crypto_asset import CryptoAssetRepository
 
     asset = await CryptoAssetRepository(db).get(project_id, asset_id)
@@ -80,7 +80,7 @@ async def get_crypto_summary(
     *,
     project_id: str,
     scan_id: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     from app.repositories.crypto_asset import CryptoAssetRepository
 
     return await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
@@ -90,7 +90,7 @@ async def get_project_crypto_policy(
     db: AsyncIOMotorDatabase,
     *,
     project_id: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
     effective = await CryptoPolicyResolver(db).resolve(project_id)
@@ -106,7 +106,7 @@ async def suggest_crypto_policy_override(
     *,
     project_id: str,
     scan_id: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Advisory only — returns rule_ids producing the most findings; does not write."""
     cursor = db.findings.aggregate(
         [
@@ -133,7 +133,7 @@ async def get_crypto_hotspots(
     project_id: str,
     group_by: str = "name",
     limit: int = 20,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     from app.services.analytics.crypto_hotspots import CryptoHotspotService, GroupBy
 
     pkg = _pkg()
@@ -153,7 +153,7 @@ async def get_crypto_trends(
     project_id: str,
     metric: str = "total_crypto_findings",
     days: int = 30,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     from app.services.analytics.crypto_trends import (
         Bucket,
         CryptoTrendService,
@@ -181,26 +181,26 @@ async def generate_pqc_migration_plan(
     user: User,
     project_id: str,
     limit: int = 500,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Generate the PQC migration plan for one project; ScopeResolver re-runs the project-member check."""
     pkg = _pkg()
     resolved = await pkg.ScopeResolver(db, user).resolve(scope="project", scope_id=project_id)
     gen = pkg.PQCMigrationPlanGenerator(db)
     resp = await gen.generate(resolved=resolved, limit=limit)
-    dumped: Dict[str, Any] = resp.model_dump()
+    dumped: dict[str, Any] = resp.model_dump()
     return dumped
 
 
 async def list_compliance_reports(
     db: AsyncIOMotorDatabase,
     *,
-    project_id: Optional[str] = None,
-    framework: Optional[str] = None,
+    project_id: str | None = None,
+    framework: str | None = None,
     limit: int = 10,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Recent compliance reports (metadata only, no artifacts)."""
     pkg = _pkg()
-    fw: Optional[Any] = None
+    fw: Any | None = None
     if framework:
         try:
             fw = pkg.ReportFramework(framework)
@@ -219,9 +219,9 @@ async def list_policy_audit_entries(
     db: AsyncIOMotorDatabase,
     *,
     policy_scope: str,
-    project_id: Optional[str] = None,
+    project_id: str | None = None,
     limit: int = 20,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     pkg = _pkg()
     entries = await pkg.PolicyAuditRepository(db).list(
         policy_scope=cast(Literal["system", "project"], policy_scope),
@@ -236,9 +236,9 @@ async def get_framework_evaluation_summary(
     *,
     user: User,
     scope: str,
-    scope_id: Optional[str],
+    scope_id: str | None,
     framework: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Run compliance evaluation in-process and return summary counts."""
     pkg = _pkg()
     try:

@@ -7,7 +7,7 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_oversized_cbom_is_truncated(client, db, api_key_headers, monkeypatch):
-    import app.api.v1.endpoints.cbom_ingest as cbom_ingest
+    from app.api.v1.endpoints import cbom_ingest
 
     monkeypatch.setattr(cbom_ingest, "MAX_CRYPTO_ASSETS_PER_SCAN", 10)
 

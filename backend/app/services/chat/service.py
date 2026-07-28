@@ -4,7 +4,8 @@ import asyncio
 import json
 import logging
 import time
-from typing import Any, AsyncIterator, Dict, List, Optional
+from collections.abc import AsyncIterator
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -37,20 +38,20 @@ class ChatService:
         self.ollama = OllamaClient()
         self.tools = ChatToolRegistry()
 
-    async def create_conversation(self, user: User, title: Optional[str] = None) -> Dict[str, Any]:
+    async def create_conversation(self, user: User, title: str | None = None) -> dict[str, Any]:
         chat_conversations_created_total.inc()
         return await self.repo.create_conversation(
             user_id=str(user.id),
             title=title or "New Conversation",
         )
 
-    async def list_conversations(self, user: User) -> List[Dict[str, Any]]:
+    async def list_conversations(self, user: User) -> list[dict[str, Any]]:
         return await self.repo.list_conversations(user_id=str(user.id))
 
-    async def get_conversation(self, conversation_id: str, user: User) -> Optional[Dict[str, Any]]:
+    async def get_conversation(self, conversation_id: str, user: User) -> dict[str, Any] | None:
         return await self.repo.get_conversation(conversation_id, user_id=str(user.id))
 
-    async def get_messages(self, conversation_id: str, user: User) -> List[Dict[str, Any]]:
+    async def get_messages(self, conversation_id: str, user: User) -> list[dict[str, Any]]:
         conv = await self.repo.get_conversation(conversation_id, user_id=str(user.id))
         if not conv:
             return []
@@ -64,14 +65,14 @@ class ChatService:
         conversation_id: str,
         user: User,
         content: str,
-        images: Optional[List[str]] = None,
+        images: list[str] | None = None,
     ) -> AsyncIterator[str]:
         """Process a user message and stream the response as SSE event strings."""
         start_time = time.time()
         first_token_recorded = False
         total_tool_calls = 0
         full_response = ""
-        all_tool_calls: List[Dict[str, Any]] = []
+        all_tool_calls: list[dict[str, Any]] = []
         assistant_saved = False
         client_notified_of_error = False
 

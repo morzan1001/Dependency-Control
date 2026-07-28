@@ -1,7 +1,7 @@
 """Analytics search endpoints: /search and /vulnerability-search."""
 
 import re
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any
 
 from fastapi import Query
 
@@ -31,7 +31,7 @@ router = CustomAPIRouter()
 
 
 def _passes_vuln_filter(
-    dep_project_id: str, dep_name: str, has_vulnerabilities: Optional[bool], vuln_status_map: Dict[str, bool]
+    dep_project_id: str, dep_name: str, has_vulnerabilities: bool | None, vuln_status_map: dict[str, bool]
 ) -> bool:
     if has_vulnerabilities is None:
         return True
@@ -40,7 +40,7 @@ def _passes_vuln_filter(
     return has_vulnerabilities == has_vulns
 
 
-def _dep_to_search_result(dep: Any, project_name_map: Dict[str, str]) -> DependencySearchResult:
+def _dep_to_search_result(dep: Any, project_name_map: dict[str, str]) -> DependencySearchResult:
     dep_project_id = get_attr(dep, "project_id")
     return DependencySearchResult(
         project_id=dep_project_id,
@@ -71,11 +71,11 @@ def _dep_to_search_result(dep: Any, project_name_map: Dict[str, str]) -> Depende
 
 
 def _build_search_results(
-    dependencies: List[Any],
-    has_vulnerabilities: Optional[bool],
-    vuln_status_map: Dict[str, bool],
-    project_name_map: Dict[str, str],
-) -> List[DependencySearchResult]:
+    dependencies: list[Any],
+    has_vulnerabilities: bool | None,
+    vuln_status_map: dict[str, bool],
+    project_name_map: dict[str, str],
+) -> list[DependencySearchResult]:
     results = []
     for dep in dependencies:
         dep_project_id = get_attr(dep, "project_id")
@@ -91,14 +91,14 @@ async def search_dependencies_advanced(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     q: Annotated[str, Query(min_length=2, description="Search query for package name")],
-    version: Annotated[Optional[str], Query(description="Filter by specific version")] = None,
-    type: Annotated[Optional[str], Query(description="Filter by package type")] = None,
+    version: Annotated[str | None, Query(description="Filter by specific version")] = None,
+    type: Annotated[str | None, Query(description="Filter by package type")] = None,
     source_type: Annotated[
-        Optional[str],
+        str | None,
         Query(description="Filter by source type (image, file-system, directory, application)"),
     ] = None,
-    has_vulnerabilities: Annotated[Optional[bool], Query(description="Filter by vulnerability status")] = None,
-    project_ids: Annotated[Optional[str], Query(description="Comma-separated list of project IDs")] = None,
+    has_vulnerabilities: Annotated[bool | None, Query(description="Filter by vulnerability status")] = None,
+    project_ids: Annotated[str | None, Query(description="Comma-separated list of project IDs")] = None,
     sort_by: Annotated[
         str,
         Query(description="Sort field: name, version, type, project_name, license, direct"),
@@ -156,12 +156,12 @@ async def search_dependencies_advanced(
         sort_order=sort_direction,
     )
 
-    vuln_status_map: Dict[str, bool] = {}
+    vuln_status_map: dict[str, bool] = {}
     if has_vulnerabilities is not None and dependencies:
         dep_keys = list({(get_attr(dep, "project_id"), get_attr(dep, "name")) for dep in dependencies})
         component_names = list({get_attr(dep, "name") for dep in dependencies})
 
-        vuln_pipeline: List[Dict[str, Any]] = [
+        vuln_pipeline: list[dict[str, Any]] = [
             {
                 "$match": {
                     "scan_id": {"$in": scan_ids},
@@ -198,7 +198,7 @@ def _get_description(vuln: dict, finding: Any) -> str | None:
     return None
 
 
-def _aggregate_kev_status(details: Dict[str, Any], nested_vulns: List[Dict[str, Any]]) -> tuple[bool, bool, Any]:
+def _aggregate_kev_status(details: dict[str, Any], nested_vulns: list[dict[str, Any]]) -> tuple[bool, bool, Any]:
     """Return (in_kev_status, kev_ransomware, kev_due_date) merged across nested vulns."""
     in_kev_status = details.get(DETAILS_KEY_IN_KEV, False)
     kev_ransomware = details.get(DETAILS_KEY_KEV_RANSOMWARE, False)
@@ -215,7 +215,7 @@ def _aggregate_kev_status(details: Dict[str, Any], nested_vulns: List[Dict[str, 
     return in_kev_status, kev_ransomware, kev_due_date
 
 
-def _check_fix_availability(details: Dict[str, Any], nested_vulns: List[Dict[str, Any]]) -> bool:
+def _check_fix_availability(details: dict[str, Any], nested_vulns: list[dict[str, Any]]) -> bool:
     if details.get("fixed_version"):
         return True
     return any(vuln.get("fixed_version") for vuln in nested_vulns)
@@ -223,11 +223,11 @@ def _check_fix_availability(details: Dict[str, Any], nested_vulns: List[Dict[str
 
 def _build_direct_vuln_result(
     finding: Any,
-    details: Dict[str, Any],
+    details: dict[str, Any],
     in_kev_status: bool,
     kev_ransomware: bool,
     kev_due_date: Any,
-    project_name_map: Dict[str, str],
+    project_name_map: dict[str, str],
 ) -> VulnerabilitySearchResult:
     return VulnerabilitySearchResult(
         vulnerability_id=finding.finding_id,
@@ -255,26 +255,26 @@ def _build_direct_vuln_result(
     )
 
 
-def _nested_vuln_aliases(vuln: Dict[str, Any], finding: Any) -> List[str]:
+def _nested_vuln_aliases(vuln: dict[str, Any], finding: Any) -> list[str]:
     if vuln.get("id") != finding.finding_id:
         return [finding.finding_id]
     return finding.aliases or []
 
 
-def _nested_vuln_waived(vuln: Dict[str, Any], finding: Any) -> bool:
+def _nested_vuln_waived(vuln: dict[str, Any], finding: Any) -> bool:
     if vuln.get("waived", False):
         return True
     return finding.waived if finding.waived is not None else False
 
 
 def _build_nested_vuln_result(
-    vuln: Dict[str, Any],
+    vuln: dict[str, Any],
     finding: Any,
-    details: Dict[str, Any],
+    details: dict[str, Any],
     in_kev_status: bool,
     kev_ransomware: bool,
     kev_due_date: Any,
-    project_name_map: Dict[str, str],
+    project_name_map: dict[str, str],
 ) -> VulnerabilitySearchResult:
     project_id = finding.project_id or ""
     return VulnerabilitySearchResult(
@@ -304,14 +304,14 @@ def _build_nested_vuln_result(
 
 
 def _build_vuln_query(
-    scan_ids: List[str],
+    scan_ids: list[str],
     q: str,
-    severity: Optional[str],
-    finding_type: Optional[str],
+    severity: str | None,
+    finding_type: str | None,
     include_waived: bool,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     search_regex = {"$regex": re.escape(q), "$options": "i"}
-    query: Dict[str, Any] = {
+    query: dict[str, Any] = {
         "scan_id": {"$in": scan_ids},
         "$or": [
             {"id": search_regex},
@@ -342,10 +342,10 @@ _VULN_SORT_FIELD_MAP = {
 def _vuln_results_for_finding(
     finding: Any,
     query_lower: str,
-    in_kev: Optional[bool],
-    has_fix: Optional[bool],
-    project_name_map: Dict[str, str],
-) -> List[VulnerabilitySearchResult]:
+    in_kev: bool | None,
+    has_fix: bool | None,
+    project_name_map: dict[str, str],
+) -> list[VulnerabilitySearchResult]:
     """Build VulnerabilitySearchResult entries for one finding, applying KEV/fix filters."""
     details = finding.details
     nested_vulns = details.get("vulnerabilities", [])
@@ -382,13 +382,13 @@ async def search_vulnerabilities(
         str,
         Query(min_length=2, description="Search query for CVE, GHSA, or other vulnerability identifiers"),
     ],
-    severity: Annotated[Optional[str], Query(description="Filter by severity: CRITICAL, HIGH, MEDIUM, LOW")] = None,
-    in_kev: Annotated[Optional[bool], Query(description="Filter by CISA KEV inclusion")] = None,
-    has_fix: Annotated[Optional[bool], Query(description="Filter by fix availability")] = None,
+    severity: Annotated[str | None, Query(description="Filter by severity: CRITICAL, HIGH, MEDIUM, LOW")] = None,
+    in_kev: Annotated[bool | None, Query(description="Filter by CISA KEV inclusion")] = None,
+    has_fix: Annotated[bool | None, Query(description="Filter by fix availability")] = None,
     finding_type: Annotated[
-        Optional[str], Query(description="Filter by finding type: vulnerability, license, secret, etc.")
+        str | None, Query(description="Filter by finding type: vulnerability, license, secret, etc.")
     ] = None,
-    project_ids: Annotated[Optional[str], Query(description="Comma-separated list of project IDs")] = None,
+    project_ids: Annotated[str | None, Query(description="Comma-separated list of project IDs")] = None,
     include_waived: Annotated[bool, Query(description="Include waived findings")] = False,
     sort_by: Annotated[
         str,
@@ -433,7 +433,7 @@ async def search_vulnerabilities(
     )
 
     query_lower = q.lower()
-    results: List[VulnerabilitySearchResult] = []
+    results: list[VulnerabilitySearchResult] = []
     for finding in findings:
         results.extend(_vuln_results_for_finding(finding, query_lower, in_kev, has_fix, project_name_map))
 

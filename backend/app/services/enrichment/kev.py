@@ -1,13 +1,13 @@
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+from typing import Any
 
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.http_utils import InstrumentedAsyncClient
 from app.core.config import settings
 from app.core.constants import ANALYZER_TIMEOUTS, KEV_CATALOG_URL
+from app.core.http_utils import InstrumentedAsyncClient
 from app.schemas.enrichment import KEVEntry
 
 logger = logging.getLogger(__name__)
@@ -18,18 +18,18 @@ class KEVProvider:
 
     def __init__(
         self,
-        max_retries: Optional[int] = None,
-        retry_delay: Optional[float] = None,
+        max_retries: int | None = None,
+        retry_delay: float | None = None,
     ):
         self._max_retries = max_retries if max_retries is not None else settings.ENRICHMENT_MAX_RETRIES
         self._retry_delay = retry_delay if retry_delay is not None else settings.ENRICHMENT_RETRY_DELAY
 
-    async def load_kev_catalog(self, client: InstrumentedAsyncClient) -> Dict[str, KEVEntry]:
+    async def load_kev_catalog(self, client: InstrumentedAsyncClient) -> dict[str, KEVEntry]:
         """Load CISA KEV catalog, using Redis cache with distributed lock."""
         cache_key = CacheKeys.kev_catalog()
         timeout = ANALYZER_TIMEOUTS.get("kev", ANALYZER_TIMEOUTS["default"])
 
-        async def fetch_kev_catalog() -> Optional[Dict[str, Any]]:
+        async def fetch_kev_catalog() -> dict[str, Any] | None:
             last_error = None
 
             for attempt in range(self._max_retries):
@@ -40,7 +40,7 @@ class KEVProvider:
                     data = response.json()
                     vulnerabilities = data.get("vulnerabilities", [])
 
-                    kev_dict: Dict[str, Any] = {}
+                    kev_dict: dict[str, Any] = {}
                     for vuln in vulnerabilities:
                         cve = vuln.get("cveID", "")
                         if cve:

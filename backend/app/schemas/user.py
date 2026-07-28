@@ -1,5 +1,4 @@
 import re
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
@@ -24,20 +23,20 @@ def validate_password_strength(password: str) -> str:
 class UserBase(BaseModel):
     email: EmailStr
     username: str
-    is_active: Optional[bool] = True
-    auth_provider: Optional[str] = "local"
+    is_active: bool | None = True
+    auth_provider: str | None = "local"
     permissions: list[str] = []
-    slack_username: Optional[str] = None
-    mattermost_username: Optional[str] = None
-    notification_preferences: Optional[dict[str, list[str]]] = None
+    slack_username: str | None = None
+    mattermost_username: str | None = None
+    notification_preferences: dict[str, list[str]] | None = None
 
 
 class UserCreate(UserBase):
-    password: Optional[str] = None
+    password: str | None = None
 
     @field_validator("password")
     @classmethod
-    def validate_password(cls, v: Optional[str]) -> Optional[str]:
+    def validate_password(cls, v: str | None) -> str | None:
         if v is None:
             return v
         return validate_password_strength(v)
@@ -47,9 +46,9 @@ class UserSignup(BaseModel):
     email: EmailStr
     username: str
     password: str
-    slack_username: Optional[str] = None
-    mattermost_username: Optional[str] = None
-    notification_preferences: Optional[dict[str, list[str]]] = None
+    slack_username: str | None = None
+    mattermost_username: str | None = None
+    notification_preferences: dict[str, list[str]] | None = None
 
     @field_validator("password")
     @classmethod
@@ -58,22 +57,22 @@ class UserSignup(BaseModel):
 
 
 class UserUpdate(BaseModel):
-    email: Optional[EmailStr] = None
-    username: Optional[str] = None
-    is_active: Optional[bool] = None
-    permissions: Optional[list[str]] = None
-    slack_username: Optional[str] = None
-    mattermost_username: Optional[str] = None
-    notification_preferences: Optional[dict[str, list[str]]] = None
-    password: Optional[str] = None
+    email: EmailStr | None = None
+    username: str | None = None
+    is_active: bool | None = None
+    permissions: list[str] | None = None
+    slack_username: str | None = None
+    mattermost_username: str | None = None
+    notification_preferences: dict[str, list[str]] | None = None
+    password: str | None = None
 
 
 class UserUpdateMe(BaseModel):
-    email: Optional[EmailStr] = None
-    username: Optional[str] = None
-    slack_username: Optional[str] = None
-    mattermost_username: Optional[str] = None
-    notification_preferences: Optional[dict[str, list[str]]] = None
+    email: EmailStr | None = None
+    username: str | None = None
+    slack_username: str | None = None
+    mattermost_username: str | None = None
+    notification_preferences: dict[str, list[str]] | None = None
 
 
 class UserPasswordUpdate(BaseModel):

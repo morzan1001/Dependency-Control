@@ -6,14 +6,14 @@ from app.services.compliance.frameworks.base import (
     EvaluationInput,
     default_evaluator,
 )
-from app.services.compliance.frameworks.nist_sp_800_131a import NistSp800_131aFramework
 from app.services.compliance.frameworks.bsi_tr_02102 import BsiTr02102Framework
 from app.services.compliance.frameworks.cnsa_2_0 import Cnsa20Framework
+from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
 from app.services.compliance.frameworks.fips_140_3 import Fips1403Framework
 from app.services.compliance.frameworks.iso_19790 import Iso19790Framework
-from app.services.compliance.frameworks.pqc_migration_plan import PQCMigrationPlanFramework
 from app.services.compliance.frameworks.license_audit import LicenseAuditFramework
-from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
+from app.services.compliance.frameworks.nist_sp_800_131a import NistSp800_131aFramework
+from app.services.compliance.frameworks.pqc_migration_plan import PQCMigrationPlanFramework
 
 FRAMEWORK_REGISTRY: "dict[ReportFramework, ComplianceFramework]" = {
     ReportFramework.NIST_SP_800_131A: NistSp800_131aFramework(),

@@ -1,14 +1,14 @@
 """Shared helpers for normalizing scanner result data."""
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from app.core.constants import SEVERITY_ALIASES
 from app.models.finding import Severity
 
 
 def safe_severity(
-    value: Optional[str],
+    value: str | None,
     default: Severity = Severity.UNKNOWN,
 ) -> Severity:
     """Parse a scanner severity string to a Severity enum, never raising."""
@@ -27,7 +27,7 @@ def safe_severity(
             return default
 
 
-def normalize_list(value: str | List[str] | None) -> List[str]:
+def normalize_list(value: str | list[str] | None) -> list[str]:
     """Coerce a string, list, or None into a list of non-empty strings."""
     if not value:
         return []
@@ -36,7 +36,7 @@ def normalize_list(value: str | List[str] | None) -> List[str]:
     return [value]
 
 
-def normalize_cwe_list(cwe: str | List[str] | None) -> List[str]:
+def normalize_cwe_list(cwe: str | list[str] | None) -> list[str]:
     """Extract bare CWE number strings from any scanner CWE format (e.g. "CWE-327" -> "327")."""
     if not cwe:
         return []
@@ -56,7 +56,7 @@ def normalize_cwe_list(cwe: str | List[str] | None) -> List[str]:
 
 
 def safe_get(
-    data: Dict[str, Any],
+    data: dict[str, Any],
     key: str,
     default: Any = "",
 ) -> Any:
@@ -79,7 +79,7 @@ def build_finding_id(
     return f"{prefix}{separator}{separator.join(valid_parts)}"
 
 
-def _find_v3_score(cvss_data: Dict[str, Any], source_priority: List[str]) -> Tuple[Optional[float], Optional[str]]:
+def _find_v3_score(cvss_data: dict[str, Any], source_priority: list[str]) -> tuple[float | None, str | None]:
     for source in source_priority:
         data = cvss_data.get(source)
         if not data or "V3Score" not in data:
@@ -91,9 +91,9 @@ def _find_v3_score(cvss_data: Dict[str, Any], source_priority: List[str]) -> Tup
 
 
 def extract_cvss(
-    cvss_data: Dict[str, Any],
+    cvss_data: dict[str, Any],
     prefer_v3: bool = True,
-) -> Tuple[Optional[float], Optional[str]]:
+) -> tuple[float | None, str | None]:
     """Extract a (score, vector) CVSS pair from Trivy/Grype data, preferring v3."""
     if not cvss_data:
         return None, None
@@ -118,16 +118,16 @@ def extract_cvss(
 
 
 def extract_grype_cvss(
-    cvss_list: List[Dict[str, Any]],
-) -> Tuple[Optional[float], Optional[str]]:
+    cvss_list: list[dict[str, Any]],
+) -> tuple[float | None, str | None]:
     """Pick the highest-version CVSS (score, vector) from Grype's CVSS list."""
     if not cvss_list:
         return None, None
 
     best_cvss = None
-    best_version: Tuple[int, ...] = (0, 0)
+    best_version: tuple[int, ...] = (0, 0)
 
-    def _parse_cvss_version(v: str) -> Tuple[int, ...]:
+    def _parse_cvss_version(v: str) -> tuple[int, ...]:
         try:
             return tuple(int(p) for p in v.split("."))
         except (ValueError, AttributeError):
@@ -151,7 +151,7 @@ def extract_grype_cvss(
     return None, best_cvss.get("vector")
 
 
-def prefer_cve_as_primary_id(vuln_id: str, aliases: List[str]) -> Tuple[str, List[str]]:
+def prefer_cve_as_primary_id(vuln_id: str, aliases: list[str]) -> tuple[str, list[str]]:
     """Swap a non-CVE primary id with a CVE from aliases, keeping the original as an alias."""
     cve_alias = next((a for a in aliases if a.startswith("CVE-")), None)
     if cve_alias and vuln_id and not vuln_id.startswith("CVE-"):

@@ -1,26 +1,26 @@
 import re
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any
 
+from app.core.constants import (
+    DEV_DEPENDENCY_PATTERNS,
+    SIGNIFICANT_FRAGMENTATION_THRESHOLD,
+)
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import get_attr, ModelOrDict, parse_version_tuple
-from app.core.constants import (
-    DEV_DEPENDENCY_PATTERNS,
-    SIGNIFICANT_FRAGMENTATION_THRESHOLD,
-)
+from app.services.recommendation.common import ModelOrDict, get_attr, parse_version_tuple
 
 
 def analyze_outdated_dependencies(
-    dependencies: List[ModelOrDict],
-) -> List[Recommendation]:
+    dependencies: list[ModelOrDict],
+) -> list[Recommendation]:
     """Identify dependencies the scanner marks outdated (having a latest_version)."""
     recommendations = []
 
-    outdated_deps: List[Dict[str, Any]] = []
+    outdated_deps: list[dict[str, Any]] = []
 
     for dep in dependencies:
         name = str(get_attr(dep, "name", "")).lower()
@@ -28,7 +28,7 @@ def analyze_outdated_dependencies(
         latest_version = get_attr(dep, "latest_version")
 
         # python3-*, python-*, *-python are library packages, not the interpreter.
-        if name.startswith("python3-") or name.startswith("python-") or name.endswith("-python"):
+        if name.startswith(("python3-", "python-")) or name.endswith("-python"):
             continue
 
         if latest_version and latest_version != version:
@@ -110,12 +110,12 @@ def analyze_outdated_dependencies(
 
 
 def analyze_version_fragmentation(
-    dependencies: List[ModelOrDict],
-) -> List[Recommendation]:
+    dependencies: list[ModelOrDict],
+) -> list[Recommendation]:
     """Detect multiple versions of the same package in the dependency tree."""
     recommendations = []
 
-    deps_by_name: Dict[str, List[Dict[str, Any]]] = defaultdict(list)
+    deps_by_name: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for dep in dependencies:
         name = str(get_attr(dep, "name", "")).lower()
         if name:
@@ -128,7 +128,7 @@ def analyze_version_fragmentation(
                 }
             )
 
-    fragmented: List[Dict[str, Any]] = []
+    fragmented: list[dict[str, Any]] = []
     for name, versions in deps_by_name.items():
         unique_versions = {v["version"] for v in versions}
         if len(unique_versions) > 1:
@@ -201,14 +201,14 @@ def analyze_version_fragmentation(
 
 
 def analyze_dev_in_production(
-    dependencies: List[ModelOrDict],
-) -> List[Recommendation]:
+    dependencies: list[ModelOrDict],
+) -> list[Recommendation]:
     """
     Identify development dependencies that may be included in production builds.
     """
     recommendations = []
 
-    potential_dev_deps: List[Dict[str, Any]] = []
+    potential_dev_deps: list[dict[str, Any]] = []
 
     for dep in dependencies:
         name = str(get_attr(dep, "name") or "").lower()
@@ -259,7 +259,7 @@ def analyze_dev_in_production(
     return recommendations
 
 
-def analyze_end_of_life(eol_findings: List[ModelOrDict]) -> List[Recommendation]:
+def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]:
     """Process end-of-life dependency findings."""
     if not eol_findings:
         return []

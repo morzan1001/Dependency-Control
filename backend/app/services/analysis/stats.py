@@ -1,7 +1,7 @@
 """Statistics calculation for SBOM analysis (EPSS/KEV and reachability)."""
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, cast
+from typing import Any, cast
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
@@ -21,7 +21,6 @@ from app.models.stats import (
     Stats,
     ThreatIntelligenceStats,
 )
-from app.services.reachability_enrichment import is_high_confidence_reachable, reachability_display_tier
 from app.services.analysis.types import (
     CallgraphInfo,
     Database,
@@ -34,9 +33,10 @@ from app.services.analysis.types import (
     ReachabilitySummary,
     VulnerabilityInfo,
 )
+from app.services.reachability_enrichment import is_high_confidence_reachable, reachability_display_tier
 
 
-def _format_datetime(value: Optional[Any]) -> Optional[str]:
+def _format_datetime(value: Any | None) -> str | None:
     """Safely format a datetime value to ISO string."""
     if value is None:
         return None
@@ -47,9 +47,7 @@ def _format_datetime(value: Optional[Any]) -> Optional[str]:
     return str(value)
 
 
-def _process_finding_epss(
-    details: Dict[str, Any], summary: EPSSKEVSummary, epss_scores: List[float]
-) -> Optional[float]:
+def _process_finding_epss(details: dict[str, Any], summary: EPSSKEVSummary, epss_scores: list[float]) -> float | None:
     """Process EPSS data for a single finding. Returns the epss_score if present."""
     epss_score = details.get("epss_score")
     if epss_score is None:
@@ -60,7 +58,7 @@ def _process_finding_epss(
     return float(epss_score)
 
 
-def _process_finding_kev(finding: Dict[str, Any], details: Dict[str, Any], summary: EPSSKEVSummary) -> None:
+def _process_finding_kev(finding: dict[str, Any], details: dict[str, Any], summary: EPSSKEVSummary) -> None:
     """Process KEV data for a single finding."""
     if not details.get("in_kev"):
         return
@@ -77,11 +75,11 @@ def _process_finding_kev(finding: Dict[str, Any], details: Dict[str, Any], summa
 
 
 def _process_finding_risk(
-    finding: Dict[str, Any],
-    details: Dict[str, Any],
-    epss_score: Optional[float],
+    finding: dict[str, Any],
+    details: dict[str, Any],
+    epss_score: float | None,
     maturity: str,
-    risk_scores: List[float],
+    risk_scores: list[float],
     summary: EPSSKEVSummary,
 ) -> None:
     """Process risk score data for a single finding."""
@@ -102,7 +100,7 @@ def _process_finding_risk(
         summary["high_risk_cves"].append(high_risk_cve)
 
 
-def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> EPSSKEVSummary:
+def build_epss_kev_summary(findings: list[dict[str, Any]]) -> EPSSKEVSummary:
     """Build a summary of EPSS/KEV enrichment for the raw data view."""
     epss_scores_counts: EPSSScoreCounts = {"high": 0, "medium": 0, "low": 0}
 
@@ -131,8 +129,8 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> EPSSKEVSummary:
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
-    epss_scores: List[float] = []
-    risk_scores: List[float] = []
+    epss_scores: list[float] = []
+    risk_scores: list[float] = []
 
     for finding in findings:
         details = finding.get("details", {})
@@ -142,7 +140,7 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> EPSSKEVSummary:
 
         # Exploit maturity
         maturity: str = details.get("exploit_maturity", "unknown")
-        exploit_maturity = cast(Dict[str, int], summary["exploit_maturity"])
+        exploit_maturity = cast(dict[str, int], summary["exploit_maturity"])
         if maturity in exploit_maturity:
             exploit_maturity[maturity] += 1
 
@@ -163,8 +161,8 @@ def build_epss_kev_summary(findings: List[Dict[str, Any]]) -> EPSSKEVSummary:
 
 
 def build_reachability_summary(
-    findings: List[Dict[str, Any]],
-    callgraphs: List[Dict[str, Any]],
+    findings: list[dict[str, Any]],
+    callgraphs: list[dict[str, Any]],
     enriched_count: int,
 ) -> ReachabilitySummary:
     """Build a summary of reachability analysis for the raw data view."""
@@ -175,7 +173,7 @@ def build_reachability_summary(
         "unreachable": 0,
     }
 
-    callgraph_info: List[CallgraphInfo] = [
+    callgraph_info: list[CallgraphInfo] = [
         {
             "language": cg.get("language", "unknown"),
             "total_modules": len(cg.get("module_usage", {})),
@@ -212,7 +210,7 @@ def build_reachability_summary(
             "is_high_confidence": is_high_confidence_reachable(reachability_data),
         }
 
-        reachability_counts = cast(Dict[str, int], summary["reachability_levels"])
+        reachability_counts = cast(dict[str, int], summary["reachability_levels"])
         if tier in reachability_counts:
             reachability_counts[tier] += 1
 
@@ -236,7 +234,7 @@ def build_reachability_summary(
 
 async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
     """Calculate comprehensive statistics including EPSS/KEV and reachability data."""
-    pipeline: List[Dict[str, Any]] = [
+    pipeline: list[dict[str, Any]] = [
         {"$match": {"scan_id": scan_id, "waived": False}},
         {
             "$project": {
@@ -656,7 +654,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
     from pymongo import ReadPreference
 
     findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-    stats_result: List[Dict[str, Any]] = await findings_primary.aggregate(pipeline).to_list(1)
+    stats_result: list[dict[str, Any]] = await findings_primary.aggregate(pipeline).to_list(1)
 
     # Initialize stats with defaults
     stats = Stats()
@@ -673,9 +671,9 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
         stats.risk_score = round(res.get("avg_risk_score", 0.0), 1)
         stats.adjusted_risk_score = round(res.get("avg_adjusted_risk_score", 0.0), 1)
 
-        epss_scores: List[float] = [s for s in res.get("epss_scores", []) if s is not None]
-        avg_epss: Optional[float] = sum(epss_scores) / len(epss_scores) if epss_scores else None
-        max_epss: Optional[float] = max(epss_scores) if epss_scores else None
+        epss_scores: list[float] = [s for s in res.get("epss_scores", []) if s is not None]
+        avg_epss: float | None = sum(epss_scores) / len(epss_scores) if epss_scores else None
+        max_epss: float | None = max(epss_scores) if epss_scores else None
 
         stats.threat_intel = ThreatIntelligenceStats(
             kev_count=res.get("kev_count", 0),

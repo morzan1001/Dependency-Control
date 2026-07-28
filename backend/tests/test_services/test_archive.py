@@ -2,7 +2,7 @@
 
 import json
 from datetime import datetime, timezone
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -50,7 +50,7 @@ def _make_archive_metadata(**overrides):
 
 
 class _AsyncCursorMock:
-    def __init__(self, docs: List[Dict[str, Any]]):
+    def __init__(self, docs: list[dict[str, Any]]):
         self._docs = docs
 
     def batch_size(self, _size: int) -> "_AsyncCursorMock":
@@ -666,7 +666,7 @@ async def test_replay_rejects_unknown_collection_marker():
 
     db = _make_mock_db(scan_doc={"_id": "scan-1"})
 
-    reason, collections_restored, gridfs_entries = await _replay_bundle(db, "scan-1", bundle())
+    reason, _collections_restored, _gridfs_entries = await _replay_bundle(db, "scan-1", bundle())
 
     assert reason == "integrity"
     # Nothing was written into the forbidden collection.

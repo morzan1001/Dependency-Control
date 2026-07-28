@@ -3,7 +3,7 @@
 import pytest
 from pydantic import ValidationError
 
-from app.models.finding import Severity, FindingType, Finding
+from app.models.finding import Finding, FindingType, Severity
 
 
 class TestSeverityEnum:

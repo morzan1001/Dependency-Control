@@ -538,17 +538,16 @@ class TestDeleteInstance:
         mock_proj_repo = MagicMock()
         mock_proj_repo.count_by_instance = AsyncMock(return_value=3)
 
-        with _patch_response():
-            with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.ProjectRepository", return_value=mock_proj_repo):
-                    asyncio.run(
-                        delete_instance(
-                            instance_id="inst-1",
-                            force=True,
-                            db=MagicMock(),
-                            current_user=admin_user,
-                        )
+        with _patch_response(), patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
+            with patch(f"{MODULE}.ProjectRepository", return_value=mock_proj_repo):
+                asyncio.run(
+                    delete_instance(
+                        instance_id="inst-1",
+                        force=True,
+                        db=MagicMock(),
+                        current_user=admin_user,
                     )
+                )
         mock_repo.delete.assert_called_once_with("inst-1")
 
     def test_success_deletes_instance(self, admin_user):
@@ -560,17 +559,16 @@ class TestDeleteInstance:
         mock_proj_repo = MagicMock()
         mock_proj_repo.count_by_instance = AsyncMock(return_value=0)
 
-        with _patch_response():
-            with patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.ProjectRepository", return_value=mock_proj_repo):
-                    asyncio.run(
-                        delete_instance(
-                            instance_id="inst-1",
-                            force=False,
-                            db=MagicMock(),
-                            current_user=admin_user,
-                        )
+        with _patch_response(), patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo):
+            with patch(f"{MODULE}.ProjectRepository", return_value=mock_proj_repo):
+                asyncio.run(
+                    delete_instance(
+                        instance_id="inst-1",
+                        force=False,
+                        db=MagicMock(),
+                        current_user=admin_user,
                     )
+                )
         mock_repo.delete.assert_called_once_with("inst-1")
 
 

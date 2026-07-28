@@ -1,35 +1,35 @@
 """Tests that stale_package and free_email_maintainer signals require corroborating evidence before surfacing as risks."""
 
-from typing import Any, Dict, List
+from typing import Any
 
 from app.services.analyzers.maintainer_risk import correlate_maintainer_risks
 
 
-def _stale() -> Dict[str, Any]:
+def _stale() -> dict[str, Any]:
     return {"type": "stale_package", "severity_score": 3, "message": "stale"}
 
 
-def _infrequent() -> Dict[str, Any]:
+def _infrequent() -> dict[str, Any]:
     return {"type": "infrequent_updates", "severity_score": 2, "message": "infrequent"}
 
 
-def _inactive() -> Dict[str, Any]:
+def _inactive() -> dict[str, Any]:
     return {"type": "inactive_repo", "severity_score": 3, "message": "inactive"}
 
 
-def _archived() -> Dict[str, Any]:
+def _archived() -> dict[str, Any]:
     return {"type": "archived_repo", "severity_score": 4, "message": "archived"}
 
 
-def _free_email() -> Dict[str, Any]:
+def _free_email() -> dict[str, Any]:
     return {"type": "free_email_maintainer", "severity_score": 1, "message": "gmail"}
 
 
-def _single_maintainer() -> Dict[str, Any]:
+def _single_maintainer() -> dict[str, Any]:
     return {"type": "single_maintainer", "severity_score": 2, "message": "solo"}
 
 
-def _types(risks: List[Dict[str, Any]]) -> List[str]:
+def _types(risks: list[dict[str, Any]]) -> list[str]:
     return [r["type"] for r in risks]
 
 

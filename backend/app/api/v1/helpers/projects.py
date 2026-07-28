@@ -1,7 +1,7 @@
 """Shared helper functions for project-related operations."""
 
 import secrets
-from typing import Any, Dict, Optional, Tuple
+from typing import Any
 
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -25,7 +25,7 @@ _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 async def build_user_project_query(
     user: User,
     team_repo: TeamRepository,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build a MongoDB query for projects the user can access (empty dict if read_all)."""
     if has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
         return {}
@@ -54,12 +54,12 @@ def is_write_superuser(user: User) -> bool:
     return has_permission(user.permissions, _WRITE_SUPERUSER_PERMISSIONS)
 
 
-def _is_write_request(required_role: Optional[str]) -> bool:
+def _is_write_request(required_role: str | None) -> bool:
     """Return True when ``required_role`` denotes a write (editor/admin) request."""
     return required_role in _WRITE_ROLES
 
 
-def _max_role(role_a: Optional[str], role_b: Optional[str]) -> Optional[str]:
+def _max_role(role_a: str | None, role_b: str | None) -> str | None:
     """Return the higher of two project roles (by PROJECT_ROLES order); either may be None."""
     if role_a is None:
         return role_b
@@ -68,7 +68,7 @@ def _max_role(role_a: Optional[str], role_b: Optional[str]) -> Optional[str]:
     return role_a if PROJECT_ROLES.index(role_a) >= PROJECT_ROLES.index(role_b) else role_b
 
 
-def _direct_member_role(project: Project, user_id: str) -> Optional[str]:
+def _direct_member_role(project: Project, user_id: str) -> str | None:
     """Return the user's direct project-member role, or ``None`` if not a member."""
     for member in project.members:
         if member.user_id == user_id:
@@ -80,7 +80,7 @@ async def _team_derived_role(
     project: Project,
     user_id: str,
     team_repo: TeamRepository,
-) -> Optional[str]:
+) -> str | None:
     """Return the project role from team membership: team admin -> admin, else viewer; None if not a team member."""
     if not project.team_id:
         return None
@@ -97,7 +97,7 @@ async def _resolve_effective_role(
     project: Project,
     user: User,
     team_repo: TeamRepository,
-) -> tuple[bool, Optional[str]]:
+) -> tuple[bool, str | None]:
     """Return (is_member, effective_role) where effective_role = MAX(direct, team-derived)."""
     user_id = str(user.id)
     direct_role = _direct_member_role(project, user_id)
@@ -110,7 +110,7 @@ async def check_project_access(
     project_id: str,
     user: User,
     db: AsyncIOMotorDatabase,
-    required_role: Optional[str] = None,
+    required_role: str | None = None,
 ) -> Project:
     """Resolve project access and return the project, or raise 403/404.
 
@@ -151,7 +151,7 @@ async def check_project_access(
     return project
 
 
-def generate_project_api_key(project_id: str) -> Tuple[str, str]:
+def generate_project_api_key(project_id: str) -> tuple[str, str]:
     """Generate a project API key, returning (api_key "project_id.secret", api_key_hash)."""
     secret = secrets.token_urlsafe(32)
     api_key = f"{project_id}.{secret}"
@@ -160,10 +160,10 @@ def generate_project_api_key(project_id: str) -> Tuple[str, str]:
 
 
 def apply_system_settings_enforcement(
-    update_data: Dict[str, Any],
+    update_data: dict[str, Any],
     retention_mode: str,
     rescan_mode: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Strip globally-enforced fields from project update data when their mode is "global"."""
     result = update_data.copy()
 

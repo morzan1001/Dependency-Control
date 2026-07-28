@@ -107,9 +107,7 @@ class TestScanFindingsDirectOnly:
     def test_direct_only_adds_direct_match_after_addfields(self):
         pipeline = self._pipeline(True)
         addfields_idx = next(i for i, st in enumerate(pipeline) if "$addFields" in st)
-        direct_matches = [
-            i for i, st in enumerate(pipeline) if st.get("$match", {}).get("direct") == {"$ne": False}
-        ]
+        direct_matches = [i for i, st in enumerate(pipeline) if st.get("$match", {}).get("direct") == {"$ne": False}]
         assert direct_matches, "expected a $match on direct when direct_only is set"
         # Must run after direct is computed and before pagination.
         assert direct_matches[0] > addfields_idx

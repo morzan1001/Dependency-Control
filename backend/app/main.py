@@ -6,9 +6,6 @@ from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
 from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
-from app.core.config import settings
-from app.core.metrics import PrometheusMiddleware, metrics_endpoint
-from app.db.mongodb import close_mongo_connection, connect_to_mongo
 from app.api import health
 from app.api.v1.endpoints import (
     analytics,
@@ -39,8 +36,11 @@ from app.api.v1.endpoints import (
     waivers,
     webhooks,
 )
+from app.core.config import settings
 from app.core.init_db import init_db
+from app.core.metrics import PrometheusMiddleware, metrics_endpoint
 from app.core.worker import worker_manager
+from app.db.mongodb import close_mongo_connection, connect_to_mongo
 from app.services.analytics.scopes import ScopeResolutionError
 
 logging.basicConfig(
@@ -87,7 +87,7 @@ async def scope_resolution_exception_handler(request: Request, exc: ScopeResolut
 
 @app.exception_handler(Exception)
 async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    logger.error(f"Global exception handler caught: {exc}", exc_info=True)
+    logger.error(f"Global exception handler caught: {exc}", exc_info=exc)
     return JSONResponse(
         status_code=500,
         content={"detail": "Internal Server Error. Please check the logs for more details."},
@@ -135,10 +135,10 @@ async def startup_event() -> None:
                 await asyncio.sleep(retry_interval)
             else:
                 logger.exception("Could not connect to database after multiple attempts.")
-                raise e
+                raise
         except (OSError, RuntimeError) as e:
             logger.exception("Unexpected error during startup: %s", e)
-            raise e
+            raise
 
 
 @app.on_event("shutdown")

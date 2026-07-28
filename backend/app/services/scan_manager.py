@@ -3,7 +3,7 @@
 import logging
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -24,9 +24,9 @@ class ScanManager:
         self.db = db
         self.project = project
         # Memoized for this request-scoped instance; no cross-request cache/TTL.
-        self._waivers: Optional[List[Waiver]] = None
+        self._waivers: list[Waiver] | None = None
 
-    def build_pipeline_url(self, data: BaseIngest) -> Optional[str]:
+    def build_pipeline_url(self, data: BaseIngest) -> str | None:
         """Construct pipeline URL if not provided."""
         if data.pipeline_url:
             return data.pipeline_url
@@ -95,7 +95,7 @@ class ScanManager:
 
         return ScanContext(scan_id=scan_id, is_new=is_new, pipeline_url=pipeline_url)
 
-    async def _get_waivers(self) -> List[Waiver]:
+    async def _get_waivers(self) -> list[Waiver]:
         """Fetch active waivers for this project, memoized for this request-scoped instance."""
         if self._waivers is None:
             from app.repositories import WaiverRepository
@@ -132,7 +132,7 @@ class ScanManager:
             matched_any = True
         return matched_any
 
-    async def apply_waivers(self, findings: List[Finding]) -> Tuple[List[Finding], int]:
+    async def apply_waivers(self, findings: list[Finding]) -> tuple[list[Finding], int]:
         """
         Apply waivers to findings.
 
@@ -154,7 +154,7 @@ class ScanManager:
 
         return final_findings, waived_count
 
-    async def store_results(self, analyzer_name: str, result: Dict[str, Any], scan_id: str) -> str:
+    async def store_results(self, analyzer_name: str, result: dict[str, Any], scan_id: str) -> str:
         """Store analysis results in the database using AnalysisResultRepository."""
         from app.repositories import AnalysisResultRepository
 
@@ -184,7 +184,7 @@ class ScanManager:
         now = datetime.now(timezone.utc)
 
         # Atomic update to avoid races across pods.
-        update_ops: Dict[str, Any] = {
+        update_ops: dict[str, Any] = {
             "$set": {
                 "last_result_at": now,
                 "updated_at": now,
@@ -231,7 +231,7 @@ class ScanManager:
         await project_repo.update_raw(str(self.project.id), {"$set": {"last_scan_at": datetime.now(timezone.utc)}})
 
     @staticmethod
-    def compute_stats(findings: List[Finding]) -> Stats:
+    def compute_stats(findings: list[Finding]) -> Stats:
         """Compute severity statistics from findings."""
         stats = Stats()
         for f in findings:

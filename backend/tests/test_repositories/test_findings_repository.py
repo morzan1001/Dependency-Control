@@ -1,7 +1,7 @@
 """Tests for FindingRepository analytics methods."""
 
 import asyncio
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from app.repositories.findings import FindingRepository
@@ -14,7 +14,7 @@ def _make_mock_db(collection):
     return db
 
 
-def _capture_pipeline(collection) -> List[Dict[str, Any]]:
+def _capture_pipeline(collection) -> list[dict[str, Any]]:
     """Return the pipeline passed to collection.aggregate()."""
     call_args = collection.aggregate.call_args
     assert call_args is not None, "collection.aggregate was never called"

@@ -1,36 +1,34 @@
-from typing import List, Optional
-
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.schemas.ingest import BaseIngest
 
 
 class KicsFile(BaseModel):
     file_name: str
-    similarity_id: Optional[str] = None
+    similarity_id: str | None = None
     line: int
-    resource_type: Optional[str] = None
-    resource_name: Optional[str] = None
-    issue_type: Optional[str] = None
-    search_key: Optional[str] = None
-    search_line: Optional[int] = None
-    search_value: Optional[str] = None
-    expected_value: Optional[str] = None
-    actual_value: Optional[str] = None
+    resource_type: str | None = None
+    resource_name: str | None = None
+    issue_type: str | None = None
+    search_key: str | None = None
+    search_line: int | None = None
+    search_value: str | None = None
+    expected_value: str | None = None
+    actual_value: str | None = None
 
 
 class KicsQuery(BaseModel):
     query_name: str
     query_id: str
-    query_url: Optional[str] = None
+    query_url: str | None = None
     severity: str
-    platform: Optional[str] = None
-    category: Optional[str] = None
-    description: Optional[str] = None
-    description_id: Optional[str] = None
-    files: List[KicsFile]
+    platform: str | None = None
+    category: str | None = None
+    description: str | None = None
+    description_id: str | None = None
+    files: list[KicsFile]
 
 
 class KicsIngest(BaseIngest):
-    kics_version: Optional[str] = None
-    queries: List[KicsQuery] = []
+    kics_version: str | None = None
+    queries: list[KicsQuery] = Field(default_factory=list)

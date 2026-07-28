@@ -51,19 +51,19 @@ class TestProcessQualityUnmaintained:
     def test_priority_is_high(self):
         finding = _quality(critical_issues=["Maintained"])
         recs = process_quality([finding])
-        unmaintained_rec = [r for r in recs if "Unmaintained" in r.title][0]
+        unmaintained_rec = next(r for r in recs if "Unmaintained" in r.title)
         assert unmaintained_rec.priority == Priority.HIGH
 
     def test_title_contains_replace_unmaintained(self):
         finding = _quality(critical_issues=["Maintained"])
         recs = process_quality([finding])
-        unmaintained_rec = [r for r in recs if "Unmaintained" in r.title][0]
+        unmaintained_rec = next(r for r in recs if "Unmaintained" in r.title)
         assert unmaintained_rec.title == "Replace Unmaintained Dependencies"
 
     def test_affected_components(self):
         finding = _quality(component="old-lib", critical_issues=["Maintained"])
         recs = process_quality([finding])
-        unmaintained_rec = [r for r in recs if "Unmaintained" in r.title][0]
+        unmaintained_rec = next(r for r in recs if "Unmaintained" in r.title)
         assert "old-lib" in unmaintained_rec.affected_components
 
     def test_multiple_unmaintained(self):
@@ -76,13 +76,13 @@ class TestProcessQualityUnmaintained:
             for i in range(3)
         ]
         recs = process_quality(findings)
-        unmaintained_rec = [r for r in recs if "Unmaintained" in r.title][0]
+        unmaintained_rec = next(r for r in recs if "Unmaintained" in r.title)
         assert unmaintained_rec.impact["total"] == 3
 
     def test_effort_is_high(self):
         finding = _quality(critical_issues=["Maintained"])
         recs = process_quality([finding])
-        unmaintained_rec = [r for r in recs if "Unmaintained" in r.title][0]
+        unmaintained_rec = next(r for r in recs if "Unmaintained" in r.title)
         assert unmaintained_rec.effort == "high"
 
     def test_description_mentions_count(self):
@@ -95,7 +95,7 @@ class TestProcessQualityUnmaintained:
             for i in range(2)
         ]
         recs = process_quality(findings)
-        unmaintained_rec = [r for r in recs if "Unmaintained" in r.title][0]
+        unmaintained_rec = next(r for r in recs if "Unmaintained" in r.title)
         assert "2" in unmaintained_rec.description
 
 
@@ -397,13 +397,13 @@ class TestProcessQualityActionStructure:
     def test_unmaintained_action_type(self):
         finding = _quality(critical_issues=["Maintained"])
         recs = process_quality([finding])
-        unmaintained_rec = [r for r in recs if "Unmaintained" in r.title][0]
+        unmaintained_rec = next(r for r in recs if "Unmaintained" in r.title)
         assert unmaintained_rec.action["type"] == "replace_unmaintained"
 
     def test_unmaintained_action_has_steps(self):
         finding = _quality(critical_issues=["Maintained"])
         recs = process_quality([finding])
-        unmaintained_rec = [r for r in recs if "Unmaintained" in r.title][0]
+        unmaintained_rec = next(r for r in recs if "Unmaintained" in r.title)
         assert len(unmaintained_rec.action["steps"]) > 0
 
     def test_unmaintained_action_packages(self):
@@ -413,7 +413,7 @@ class TestProcessQualityActionStructure:
             critical_issues=["Maintained"],
         )
         recs = process_quality([finding])
-        unmaintained_rec = [r for r in recs if "Unmaintained" in r.title][0]
+        unmaintained_rec = next(r for r in recs if "Unmaintained" in r.title)
         packages = unmaintained_rec.action["packages"]
         assert len(packages) >= 1
         assert packages[0]["name"] == "old-lib"
@@ -422,13 +422,13 @@ class TestProcessQualityActionStructure:
     def test_vulnerabilities_action_type(self):
         finding = _quality(critical_issues=["Vulnerabilities"])
         recs = process_quality([finding])
-        vuln_rec = [r for r in recs if "Vulnerability" in r.title][0]
+        vuln_rec = next(r for r in recs if "Vulnerability" in r.title)
         assert vuln_rec.action["type"] == "fix_scorecard_vulnerabilities"
 
     def test_low_quality_action_type(self):
         finding = _quality(overall_score=2.0)
         recs = process_quality([finding])
-        low_rec = [r for r in recs if "Low-Quality" in r.title][0]
+        low_rec = next(r for r in recs if "Low-Quality" in r.title)
         assert low_rec.action["type"] == "review_quality"
 
     def test_low_quality_packages_sorted_by_score(self):
@@ -438,7 +438,7 @@ class TestProcessQualityActionStructure:
             _quality(component="lib-c", overall_score=2.0, finding_id="q3"),
         ]
         recs = process_quality(findings)
-        low_rec = [r for r in recs if "Low-Quality" in r.title][0]
+        low_rec = next(r for r in recs if "Low-Quality" in r.title)
         scores = [p["score"] for p in low_rec.action["packages"]]
         assert scores == sorted(scores)
 
@@ -448,5 +448,5 @@ class TestProcessQualityActionStructure:
             failed_checks=[{"name": "Code-Review"}],
         )
         recs = process_quality([finding])
-        cr_rec = [r for r in recs if "Code Review" in r.title][0]
+        cr_rec = next(r for r in recs if "Code Review" in r.title)
         assert cr_rec.action["type"] == "code_review_concern"

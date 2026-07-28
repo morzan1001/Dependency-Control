@@ -1,5 +1,3 @@
-from typing import List, Optional
-
 from app.models.base import CreatedAtModel
 from app.models.types import MongoDocument
 
@@ -16,6 +14,6 @@ class Broadcast(MongoDocument, CreatedAtModel):
     project_count: int = 0
 
     # Configuration
-    packages: Optional[List[dict]] = None
-    channels: Optional[List[str]] = None
-    teams: Optional[List[str]] = None
+    packages: list[dict] | None = None
+    channels: list[str] | None = None
+    teams: list[str] | None = None

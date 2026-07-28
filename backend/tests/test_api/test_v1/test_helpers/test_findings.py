@@ -1,9 +1,9 @@
 """Tests for findings helper functions."""
 
 from app.api.v1.helpers.findings import (
-    get_category_type_filter,
-    get_category_for_type,
     aggregate_stats_by_category,
+    get_category_for_type,
+    get_category_type_filter,
 )
 
 

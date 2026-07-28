@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -10,7 +10,7 @@ class BearerSourceLocation(BaseModel):
 
     start: int
     end: int
-    column: Optional[Dict[str, int]] = None
+    column: dict[str, int] | None = None
 
 
 class BearerFinding(BaseModel):
@@ -18,37 +18,37 @@ class BearerFinding(BaseModel):
 
     # Core identification
     id: str = Field(description="Rule ID (e.g., 'go_lang_logger_leak')")
-    cwe_ids: List[str] = Field(default_factory=list, description="CWE identifiers")
+    cwe_ids: list[str] = Field(default_factory=list, description="CWE identifiers")
     title: str = Field(description="Human-readable title of the finding")
-    description: Optional[str] = Field(None, description="Detailed description with remediation guidance")
-    documentation_url: Optional[str] = Field(None, description="Link to Bearer documentation for this rule")
+    description: str | None = Field(None, description="Detailed description with remediation guidance")
+    documentation_url: str | None = Field(None, description="Link to Bearer documentation for this rule")
 
     # Location information
-    line_number: Optional[int] = Field(None, description="Line number of the finding")
-    full_filename: Optional[str] = Field(None, description="Full path to the file")
-    filename: Optional[str] = Field(None, description="Filename (may be relative)")
-    source: Optional[BearerSourceLocation] = Field(None, description="Source location details")
-    sink: Optional[Dict[str, Any]] = Field(None, description="Sink location and content")
-    parent_line_number: Optional[int] = Field(None, description="Parent context line number")
+    line_number: int | None = Field(None, description="Line number of the finding")
+    full_filename: str | None = Field(None, description="Full path to the file")
+    filename: str | None = Field(None, description="Filename (may be relative)")
+    source: BearerSourceLocation | None = Field(None, description="Source location details")
+    sink: dict[str, Any] | None = Field(None, description="Sink location and content")
+    parent_line_number: int | None = Field(None, description="Parent context line number")
 
     # Categorization
-    category_groups: List[str] = Field(
+    category_groups: list[str] = Field(
         default_factory=list,
         description="Category groups (e.g., 'PII', 'Personal Data')",
     )
 
     # Code context
-    code_extract: Optional[str] = Field(None, description="Code snippet showing the finding")
+    code_extract: str | None = Field(None, description="Code snippet showing the finding")
 
     # Fingerprinting for deduplication
-    fingerprint: Optional[str] = Field(None, description="Unique fingerprint for dedup")
-    old_fingerprint: Optional[str] = Field(None, description="Previous fingerprint if rule changed")
+    fingerprint: str | None = Field(None, description="Unique fingerprint for dedup")
+    old_fingerprint: str | None = Field(None, description="Previous fingerprint if rule changed")
 
 
 class BearerIngest(BaseIngest):
     """Schema for Bearer SAST/Data Security scan results."""
 
-    findings: Optional[Dict[str, Any]] = Field(
+    findings: dict[str, Any] | None = Field(
         default_factory=dict,
         description="Bearer JSON output. Findings are grouped by severity (critical, high, medium, low, warning).",
     )

@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime, timezone
-from typing import Annotated, Any, Dict
+from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, status
 
@@ -8,6 +8,7 @@ from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import build_pagination_response
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_AUTH_400_404_500, RESP_AUTH_404
 from app.core.permissions import Permissions
 from app.models.gitlab_instance import GitLabInstance
 from app.models.user import User
@@ -20,7 +21,6 @@ from app.schemas.gitlab_instance import (
     GitLabInstanceTestConnectionResponse,
     GitLabInstanceUpdate,
 )
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_AUTH_400_404_500, RESP_AUTH_404
 from app.services.gitlab import GitLabService
 
 router = CustomAPIRouter()
@@ -53,7 +53,7 @@ async def list_instances(
     page: int = 1,
     size: int = 100,
     active_only: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """List all GitLab instances."""
     instance_repo = GitLabInstanceRepository(db)
 
@@ -140,7 +140,7 @@ async def create_instance(
         except Exception as e:
             logger.exception("Connection test failed for %s: %s", instance_data.url, e)
             raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to connect to GitLab instance: {str(e)}"
+                status_code=status.HTTP_400_BAD_REQUEST, detail=f"Failed to connect to GitLab instance: {e!s}"
             )
 
     created_instance = await instance_repo.create(new_instance)
@@ -179,12 +179,15 @@ async def update_instance(
             )
         update_dict["url"] = update_dict["url"].rstrip("/")
 
-    if "name" in update_dict and update_dict["name"] != instance.name:
-        if await instance_repo.exists_by_name(update_dict["name"], exclude_id=instance_id):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Another instance with name '{update_dict['name']}' already exists",
-            )
+    if (
+        "name" in update_dict
+        and update_dict["name"] != instance.name
+        and await instance_repo.exists_by_name(update_dict["name"], exclude_id=instance_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Another instance with name '{update_dict['name']}' already exists",
+        )
 
     # Team syncing requires an access token.
     will_have_token = update_dict.get("access_token", instance.access_token)
@@ -306,7 +309,7 @@ async def test_connection(
         logger.exception("Connection test failed for instance '%s': %s", instance.name, e)
         return GitLabInstanceTestConnectionResponse(
             success=False,
-            message=f"Connection failed: {str(e)}",
+            message=f"Connection failed: {e!s}",
             gitlab_version=None,
             instance_name=instance.name,
             url=instance.url,

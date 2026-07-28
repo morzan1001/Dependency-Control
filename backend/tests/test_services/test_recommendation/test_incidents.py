@@ -228,7 +228,7 @@ class TestDetectKnownExploitsRansomware:
     def test_ransomware_urgency_immediate(self):
         findings = [_vuln("pkg", is_kev=True, kev_ransomware=True)]
         result = detect_known_exploits(findings)
-        ransomware_rec = [r for r in result if r.type == RecommendationType.RANSOMWARE_RISK][0]
+        ransomware_rec = next(r for r in result if r.type == RecommendationType.RANSOMWARE_RISK)
         assert ransomware_rec.action["urgency"] == "immediate"
 
 
@@ -331,7 +331,7 @@ class TestDetectKnownExploitsImpactSeverityCounts:
             _vuln("c", severity="MEDIUM", is_kev=True, cve_id="CVE-2024-003"),
         ]
         result = detect_known_exploits(findings)
-        kev_rec = [r for r in result if r.type == RecommendationType.KNOWN_EXPLOIT][0]
+        kev_rec = next(r for r in result if r.type == RecommendationType.KNOWN_EXPLOIT)
         assert kev_rec.impact["critical"] == 1
         assert kev_rec.impact["high"] == 1
         assert kev_rec.impact["medium"] == 1

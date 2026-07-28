@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import List, Tuple, TypeVar
+from typing import TypeVar
 
 # Per-scan cap on documents loaded into memory, bounding worker memory.
 MAX_FETCH = 50_000
@@ -10,7 +10,7 @@ MAX_FETCH = 50_000
 T = TypeVar("T")
 
 
-def paginate(items: List[T], page: int, page_size: int) -> Tuple[List[T], int]:
+def paginate(items: list[T], page: int, page_size: int) -> tuple[list[T], int]:
     """Slice ``items`` for the 1-indexed ``page``; returns (slice, total_pages >= 1). Assumes page/page_size >= 1."""
     total = len(items)
     total_pages = max(1, (total + page_size - 1) // page_size)

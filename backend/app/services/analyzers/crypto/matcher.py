@@ -1,7 +1,7 @@
 """CryptoRule -> CryptoAsset matcher. AND semantics; glob matching is case-insensitive."""
 
 from fnmatch import fnmatchcase
-from typing import Any, List, Optional
+from typing import Any
 
 from app.models.crypto_asset import CryptoAsset
 from app.schemas.cbom import CryptoPrimitive
@@ -31,32 +31,29 @@ def rule_matches(asset: CryptoAsset, rule: CryptoRule) -> bool:
 def asset_in_rule_scope(asset: CryptoAsset, rule: CryptoRule) -> bool:
     """True when the asset is within the rule's subject scope (primitive/name/curve/
     protocol/quantum class), ignoring threshold criteria; used for compliance applicability."""
-    if rule.match_primitive is not None:
-        if _coerce_primitive(asset.primitive) != _coerce_primitive(rule.match_primitive):
-            return False
+    if rule.match_primitive is not None and _coerce_primitive(asset.primitive) != _coerce_primitive(
+        rule.match_primitive
+    ):
+        return False
 
-    if rule.match_name_patterns:
-        if not _name_or_variant_matches(asset, rule.match_name_patterns):
-            return False
+    if rule.match_name_patterns and not _name_or_variant_matches(asset, rule.match_name_patterns):
+        return False
 
-    if rule.match_curves:
-        if not asset.curve or asset.curve not in rule.match_curves:
-            return False
+    if rule.match_curves and (not asset.curve or asset.curve not in rule.match_curves):
+        return False
 
-    if rule.match_protocol_versions:
-        if not _protocol_version_matches(asset, rule.match_protocol_versions):
-            return False
+    if rule.match_protocol_versions and not _protocol_version_matches(asset, rule.match_protocol_versions):
+        return False
 
+    # match_name_patterns is validator-guaranteed non-empty here, so only the
+    # primitive gate remains.
     if rule.quantum_vulnerable is True:
-        # match_name_patterns is validator-guaranteed non-empty here, so only the
-        # primitive gate remains.
-        if _coerce_primitive(asset.primitive) not in _QUANTUM_VULNERABLE_PRIMITIVES:
-            return False
+        return _coerce_primitive(asset.primitive) in _QUANTUM_VULNERABLE_PRIMITIVES
 
     return True
 
 
-def _coerce_primitive(v: Any) -> Optional[CryptoPrimitive]:
+def _coerce_primitive(v: Any) -> CryptoPrimitive | None:
     if v is None:
         return None
     if isinstance(v, CryptoPrimitive):
@@ -67,7 +64,7 @@ def _coerce_primitive(v: Any) -> Optional[CryptoPrimitive]:
         return None
 
 
-def _name_or_variant_matches(asset: CryptoAsset, patterns: List[str]) -> bool:
+def _name_or_variant_matches(asset: CryptoAsset, patterns: list[str]) -> bool:
     candidates = [asset.name]
     if asset.variant:
         candidates.append(asset.variant)
@@ -82,7 +79,7 @@ def _name_or_variant_matches(asset: CryptoAsset, patterns: List[str]) -> bool:
     return False
 
 
-def _protocol_version_matches(asset: CryptoAsset, match_list: List[str]) -> bool:
+def _protocol_version_matches(asset: CryptoAsset, match_list: list[str]) -> bool:
     proto = (asset.protocol_type or "").lower()
     ver = (asset.version or "").lower()
     combined_variants = {

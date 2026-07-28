@@ -1,6 +1,6 @@
 """Repository for webhooks."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.models.webhook import Webhook
 from app.repositories.base import BaseRepository
@@ -17,7 +17,7 @@ class WebhookRepository(BaseRepository[Webhook]):
         limit: int = 100,
         sort_by: str = "created_at",
         sort_order: int = -1,
-    ) -> List[Webhook]:
+    ) -> list[Webhook]:
         cursor = self.collection.find({"project_id": project_id}).sort(sort_by, sort_order).skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
         return self._to_model_list(docs)
@@ -29,7 +29,7 @@ class WebhookRepository(BaseRepository[Webhook]):
         limit: int = 100,
         sort_by: str = "created_at",
         sort_order: int = -1,
-    ) -> List[Webhook]:
+    ) -> list[Webhook]:
         cursor = self.collection.find({"team_id": team_id}).sort(sort_by, sort_order).skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
         return self._to_model_list(docs)
@@ -40,7 +40,7 @@ class WebhookRepository(BaseRepository[Webhook]):
         limit: int = 100,
         sort_by: str = "created_at",
         sort_order: int = -1,
-    ) -> List[Webhook]:
+    ) -> list[Webhook]:
         cursor = (
             self.collection.find({"project_id": None, "team_id": None})
             .sort(sort_by, sort_order)
@@ -52,13 +52,13 @@ class WebhookRepository(BaseRepository[Webhook]):
 
     async def find_many(
         self,
-        query: Dict[str, Any],
+        query: dict[str, Any],
         skip: int = 0,
         limit: int = 100,
-        sort_by: Optional[str] = "created_at",
+        sort_by: str | None = "created_at",
         sort_order: int = -1,
-        projection: Optional[Dict[str, int]] = None,
-    ) -> List[Webhook]:
+        projection: dict[str, int] | None = None,
+    ) -> list[Webhook]:
         cursor = self.collection.find(query, projection)
         if sort_by:
             cursor = cursor.sort(sort_by, sort_order)

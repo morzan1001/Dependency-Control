@@ -4,10 +4,10 @@ from app.schemas.compliance import (
     ReportFramework,
 )
 from app.services.analytics.scopes import ResolvedScope
+from app.services.compliance.frameworks.base import EvaluationInput
 from app.services.compliance.frameworks.nist_sp_800_131a import (
     NistSp800_131aFramework,
 )
-from app.services.compliance.frameworks.base import EvaluationInput
 
 
 def _eval_input(findings=None, assets=None):

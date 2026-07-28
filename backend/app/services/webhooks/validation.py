@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import socket
-from typing import Any, List, Literal, Optional, Union
+from typing import Any, Literal
 from urllib.parse import urlparse
 
 import httpx
@@ -18,7 +18,7 @@ from app.core.constants import (
     WEBHOOK_VALID_EVENTS,
 )
 
-IPAddress = Union[ipaddress.IPv4Address, ipaddress.IPv6Address]
+IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 
 
 def _is_blocked_ip(ip: IPAddress) -> bool:
@@ -27,7 +27,7 @@ def _is_blocked_ip(ip: IPAddress) -> bool:
     )
 
 
-def _parse_ip(host: str) -> Optional[IPAddress]:
+def _parse_ip(host: str) -> IPAddress | None:
     try:
         return ipaddress.ip_address(host)
     except ValueError:
@@ -70,13 +70,13 @@ def validate_webhook_url(url: str) -> str:
     return url
 
 
-def validate_webhook_url_optional(url: Optional[str]) -> Optional[str]:
+def validate_webhook_url_optional(url: str | None) -> str | None:
     if url is None:
         return None
     return validate_webhook_url(url)
 
 
-async def _resolve_and_vet(url: str) -> Optional[str]:
+async def _resolve_and_vet(url: str) -> str | None:
     """Resolve the host and return the first vetted-safe IP to pin to; None only for pin-exempt (empty/loopback) hosts. Raises (fail-closed) if any resolved IP is blocked or none is usable."""
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower()
@@ -95,7 +95,7 @@ async def _resolve_and_vet(url: str) -> Optional[str]:
     except socket.gaierror as exc:
         raise ValueError(f"Could not resolve webhook host '{host}': {exc}") from exc
 
-    safe_ip: Optional[str] = None
+    safe_ip: str | None = None
     for info in infos:
         addr = info[4][0]
         if not isinstance(addr, str):
@@ -115,7 +115,7 @@ async def _resolve_and_vet(url: str) -> Optional[str]:
     return safe_ip
 
 
-async def assert_safe_webhook_target(url: str) -> Optional[str]:
+async def assert_safe_webhook_target(url: str) -> str | None:
     """Return the vetted-safe IP the caller MUST pin to (httpx re-resolves at connect, so the IP alone is not DNS-rebinding-safe — use build_pinned_transport)."""
     return await _resolve_and_vet(url)
 
@@ -153,7 +153,7 @@ async def build_pinned_transport(url: str, **transport_kwargs: Any) -> httpx.Asy
     return _PinnedIPTransport(host, safe_ip, **transport_kwargs)
 
 
-def validate_webhook_events(events: List[str], allow_empty: bool = False) -> List[str]:
+def validate_webhook_events(events: list[str], allow_empty: bool = False) -> list[str]:
     if not allow_empty and not events:
         raise ValueError("At least one event type is required")
 
@@ -164,8 +164,8 @@ def validate_webhook_events(events: List[str], allow_empty: bool = False) -> Lis
 
 
 def validate_webhook_events_optional(
-    events: Optional[List[str]],
-) -> Optional[List[str]]:
+    events: list[str] | None,
+) -> list[str] | None:
     if events is None:
         return None
     return validate_webhook_events(events, allow_empty=False)

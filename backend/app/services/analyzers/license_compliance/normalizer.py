@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from app.core.constants import LICENSE_ALIASES, UNKNOWN_LICENSE_PATTERNS
 
@@ -47,10 +47,10 @@ def normalize_license(lic_id: str) -> str:
     return lic_id
 
 
-def extract_licenses(component: Dict[str, Any]) -> List[Tuple[str, Optional[str]]]:
+def extract_licenses(component: dict[str, Any]) -> list[tuple[str, str | None]]:
     """Return flat (license_id, url) tuples; OR/AND semantics need
     has_spdx_expression / parse_spdx_expression."""
-    licenses: List[Tuple[str, Optional[str]]] = []
+    licenses: list[tuple[str, str | None]] = []
 
     for lic_entry in component.get("licenses", []):
         if "license" in lic_entry:
@@ -91,14 +91,13 @@ def extract_licenses(component: Dict[str, Any]) -> List[Tuple[str, Optional[str]
     return licenses
 
 
-def has_spdx_expression(component: Dict[str, Any]) -> Optional[str]:
+def has_spdx_expression(component: dict[str, Any]) -> str | None:
     """Return the SPDX expression if the component contains an OR-expression."""
     for lic_entry in component.get("licenses", []):
         if "expression" in lic_entry:
             expr = lic_entry["expression"]
-            if expr and expr.upper() not in UNKNOWN_LICENSE_PATTERNS:
-                if SPDX_OR_SPLIT.search(expr):
-                    return str(expr)
+            if expr and expr.upper() not in UNKNOWN_LICENSE_PATTERNS and SPDX_OR_SPLIT.search(expr):
+                return str(expr)
 
     direct_license = component.get("license")
     if isinstance(direct_license, str) and SPDX_OR_SPLIT.search(direct_license):
@@ -107,20 +106,20 @@ def has_spdx_expression(component: Dict[str, Any]) -> Optional[str]:
     return None
 
 
-def parse_spdx_expression(expr: str) -> List[List[str]]:
+def parse_spdx_expression(expr: str) -> list[list[str]]:
     """Parse an SPDX expression into OR-groups of AND-connected licenses."""
     # WITH modifies the preceding license; strip it. Match only spaces/tabs to avoid \s+ backtracking.
     expr = re.sub(r"[ \t]+WITH[ \t]+\S+", "", expr)
 
     # OR has the lowest precedence in SPDX.
     or_parts = SPDX_OR_SPLIT.split(expr)
-    result: List[List[str]] = []
+    result: list[list[str]] = []
     for or_part in or_parts:
         or_part = or_part.strip("() ")
         if not or_part:
             continue
         and_parts = SPDX_AND_SPLIT.split(or_part)
-        group: List[str] = []
+        group: list[str] = []
         for and_part in and_parts:
             lic_id = and_part.strip("() ")
             if lic_id:

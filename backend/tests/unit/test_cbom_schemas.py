@@ -3,8 +3,8 @@ from datetime import datetime, timezone
 from app.schemas.cbom import (
     CryptoAssetType,
     CryptoPrimitive,
-    ParsedCryptoAsset,
     ParsedCBOM,
+    ParsedCryptoAsset,
 )
 
 

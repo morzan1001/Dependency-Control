@@ -1,7 +1,5 @@
 """Teams Adaptive Card formatter for webhook payloads."""
 
-from typing import List, Optional
-
 _ACTION_OPEN_URL = "Action.OpenUrl"
 _SEVERITY_KEYS = ("critical", "high", "medium", "low", "info", "unknown")
 
@@ -9,8 +7,8 @@ _SEVERITY_KEYS = ("critical", "high", "medium", "low", "info", "unknown")
 class TeamsFormatter:
     @staticmethod
     def _wrap_card(
-        body: List[dict],
-        actions: Optional[List[dict]] = None,
+        body: list[dict],
+        actions: list[dict] | None = None,
         summary: str = "DependencyControl",
     ) -> dict:
         card: dict = {
@@ -60,7 +58,7 @@ class TeamsFormatter:
         return TeamsFormatter._wrap_card(body, summary="DependencyControl test webhook")
 
     @staticmethod
-    def build_generic_card(subject: str, message: str, url: Optional[str] = None) -> dict:
+    def build_generic_card(subject: str, message: str, url: str | None = None) -> dict:
         body = [
             {
                 "type": "TextBlock",
@@ -83,7 +81,7 @@ class TeamsFormatter:
         project_name: str,
         _scan_id: str,
         findings: dict,
-        scan_url: Optional[str] = None,
+        scan_url: str | None = None,
     ) -> dict:
         total = findings.get("total", 0)
         stats = findings.get("stats", {})
@@ -130,7 +128,7 @@ class TeamsFormatter:
         project_name: str,
         _scan_id: str,
         vulns: dict,
-        scan_url: Optional[str] = None,
+        scan_url: str | None = None,
     ) -> dict:
         critical = int(vulns.get("critical", 0) or 0)
         high = int(vulns.get("high", 0) or 0)
@@ -152,7 +150,7 @@ class TeamsFormatter:
 
         title_text = "🚨 Critical Vulnerabilities Found" if critical > 0 else "⚠️ High Vulnerabilities Found"
 
-        body: List[dict] = [
+        body: list[dict] = [
             {
                 "type": "Container",
                 "style": container_style,
@@ -170,7 +168,7 @@ class TeamsFormatter:
         ]
 
         if top:
-            top_items: List[dict] = [{"type": "TextBlock", "text": "**Top Vulnerabilities**", "weight": "Bolder"}]
+            top_items: list[dict] = [{"type": "TextBlock", "text": "**Top Vulnerabilities**", "weight": "Bolder"}]
             for vuln in top[:3]:
                 cve_id = vuln.get("cve_id", "Unknown")
                 severity = vuln.get("severity", "Unknown")
@@ -187,7 +185,7 @@ class TeamsFormatter:
     def build_analysis_failed_card(
         project_name: str,
         error: str,
-        scan_url: Optional[str] = None,
+        scan_url: str | None = None,
     ) -> dict:
         body = [
             {

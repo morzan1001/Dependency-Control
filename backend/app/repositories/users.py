@@ -1,7 +1,7 @@
 """Repository for user database operations."""
 
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.core.metrics import track_db_operation
 from app.models.user import User
@@ -12,33 +12,33 @@ class UserRepository(BaseRepository[User]):
     collection_name = "users"
     model_class = User
 
-    async def get_by_username(self, username: str) -> Optional[User]:
+    async def get_by_username(self, username: str) -> User | None:
         with track_db_operation(self.collection_name, "find_one"):
             data = await self.collection.find_one({"username": username})
         return self._to_model(data)
 
-    async def get_by_email(self, email: str) -> Optional[User]:
+    async def get_by_email(self, email: str) -> User | None:
         with track_db_operation(self.collection_name, "find_one"):
             data = await self.collection.find_one({"email": email})
         return self._to_model(data)
 
-    async def get_raw_by_username(self, username: str) -> Optional[Dict[str, Any]]:
+    async def get_raw_by_username(self, username: str) -> dict[str, Any] | None:
         return await self.find_one_raw({"username": username})
 
-    async def get_raw_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+    async def get_raw_by_email(self, email: str) -> dict[str, Any] | None:
         return await self.find_one_raw({"email": email})
 
-    async def get_raw_by_email_ci(self, email: str) -> Optional[Dict[str, Any]]:
+    async def get_raw_by_email_ci(self, email: str) -> dict[str, Any] | None:
         """Case-insensitive email lookup; stored emails aren't normalised and the index isn't collated, so an exact match can miss a user differing only in case."""
         with track_db_operation(self.collection_name, "find_one"):
             return await self.collection.find_one({"email": {"$regex": f"^{re.escape(email)}$", "$options": "i"}})
 
-    async def get_first_admin(self) -> Optional[Dict[str, Any]]:
+    async def get_first_admin(self) -> dict[str, Any] | None:
         """Return the first user holding the system:manage permission."""
         with track_db_operation(self.collection_name, "find_one"):
             return await self.collection.find_one({"permissions": "system:manage"})
 
-    async def find_by_ids(self, user_ids: List[str]) -> List[Dict[str, Any]]:
+    async def find_by_ids(self, user_ids: list[str]) -> list[dict[str, Any]]:
         with track_db_operation(self.collection_name, "find"):
             cursor = self.collection.find({"_id": {"$in": user_ids}})
             return await cursor.to_list(None)

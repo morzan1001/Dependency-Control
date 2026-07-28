@@ -1,27 +1,25 @@
-from typing import Dict, List
-
+from app.core.constants import SIMILAR_PACKAGE_GROUPS
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
     RecommendationType,
 )
-from app.core.constants import SIMILAR_PACKAGE_GROUPS
-from app.services.recommendation.common import get_attr, ModelOrDict
+from app.services.recommendation.common import ModelOrDict, get_attr
 
 
 def analyze_deep_dependency_chains(
-    dependencies: List[ModelOrDict], max_dependency_depth: int = 8
-) -> List[Recommendation]:
+    dependencies: list[ModelOrDict], max_dependency_depth: int = 8
+) -> list[Recommendation]:
     """Identify dependencies with very deep transitive chains, and detect cycles."""
     if not dependencies:
         return []
 
     recommendations = []
 
-    depth_map: Dict[str, int] = {}
+    depth_map: dict[str, int] = {}
     in_cycle: set = set()
 
-    children_map: Dict[str, List[str]] = {}
+    children_map: dict[str, list[str]] = {}
     for dep in dependencies:
         key = get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
         parents = get_attr(dep, "parent_components", [])
@@ -31,9 +29,9 @@ def analyze_deep_dependency_chains(
             children_map[parent].append(key)
 
     # DFS coloring: 0=unseen, 1=on stack, 2=done.
-    color: Dict[str, int] = {}
+    color: dict[str, int] = {}
 
-    def has_cycle(node: str, path: List[str], on_path: set) -> bool:
+    def has_cycle(node: str, path: list[str], on_path: set) -> bool:
         if node in on_path:
             # Only nodes from the first occurrence of node onward are in the cycle.
             start = path.index(node)
@@ -185,8 +183,8 @@ def analyze_deep_dependency_chains(
 
 
 def analyze_duplicate_packages(
-    dependencies: List[ModelOrDict],
-) -> List[Recommendation]:
+    dependencies: list[ModelOrDict],
+) -> list[Recommendation]:
     """Detect packages that likely provide similar/duplicate functionality."""
     if not dependencies:
         return []

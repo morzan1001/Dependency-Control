@@ -8,10 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from statistics import median
-from typing import Any, Awaitable, Callable, Dict, List, Optional, Protocol, Sequence, Tuple, Union
+from typing import Any, Protocol
 from urllib.parse import quote
 
 from packaging.version import InvalidVersion, Version
@@ -36,7 +37,7 @@ def _is_stable_release(version: str) -> bool:
         return True
 
 
-def _stable_only(releases: Sequence[ReleaseInfo]) -> List[ReleaseInfo]:
+def _stable_only(releases: Sequence[ReleaseInfo]) -> list[ReleaseInfo]:
     return [r for r in releases if _is_stable_release(r.version)]
 
 
@@ -48,15 +49,15 @@ class ReleaseInfo:
 
 # Keyed by ``(system, name)`` so same-named packages across ecosystems don't collide.
 # A plain ``str`` key is treated as name-only (unknown system).
-HistoryKey = Union[str, Tuple[str, str]]
-ReleaseHistory = Dict[HistoryKey, List[ReleaseInfo]]
+HistoryKey = str | tuple[str, str]
+ReleaseHistory = dict[HistoryKey, list[ReleaseInfo]]
 
 # ``(name, version, scan_date)`` or ecosystem-aware ``(system, name, version, scan_date)``:
 # the 4-tuple disambiguates same-named packages across ecosystems, the 3-tuple matches name-only.
-Observation = Union[Tuple[str, str, datetime], Tuple[str, str, str, datetime]]
+Observation = tuple[str, str, datetime] | tuple[str, str, str, datetime]
 
 
-def _split_history_key(key: HistoryKey) -> Tuple[Optional[str], str]:
+def _split_history_key(key: HistoryKey) -> tuple[str | None, str]:
     """Normalise a history key into ``(system, name)``; ``system`` is None for bare-name keys."""
     if isinstance(key, tuple):
         system, name = key
@@ -64,7 +65,7 @@ def _split_history_key(key: HistoryKey) -> Tuple[Optional[str], str]:
     return None, key
 
 
-def _split_observation(obs: Observation) -> Tuple[Optional[str], str, str, datetime]:
+def _split_observation(obs: Observation) -> tuple[str | None, str, str, datetime]:
     """Normalise an observation into ``(system, name, version, scan_date)``.
 
     ``system`` is None for the 3-tuple ``(name, version, scan_date)`` form.
@@ -78,16 +79,16 @@ def _split_observation(obs: Observation) -> Tuple[Optional[str], str, str, datet
 
 @dataclass(frozen=True)
 class UpstreamCadenceMetrics:
-    upstream_releases_last_12m_median: Optional[float]
-    upstream_days_between_releases_median: Optional[float]
-    upstream_days_since_latest_release_median: Optional[float]
-    adoption_latency_days_median: Optional[float]
+    upstream_releases_last_12m_median: float | None
+    upstream_days_between_releases_median: float | None
+    upstream_days_since_latest_release_median: float | None
+    adoption_latency_days_median: float | None
 
 
 class ReleaseHistoryFetcher(Protocol):
     """Loads release histories for a set of packages, with caching."""
 
-    async def fetch(self, packages: Sequence[Tuple[str, str]]) -> ReleaseHistory: ...
+    async def fetch(self, packages: Sequence[tuple[str, str]]) -> ReleaseHistory: ...
 
 
 def releases_in_last_n_days(
@@ -100,7 +101,7 @@ def releases_in_last_n_days(
     return sum(1 for r in _stable_only(releases) if r.published_at >= cutoff)
 
 
-def median_days_between_releases(releases: Sequence[ReleaseInfo]) -> Optional[float]:
+def median_days_between_releases(releases: Sequence[ReleaseInfo]) -> float | None:
     """Median gap (in days) between consecutive stable releases, or None if <2."""
     stable = _stable_only(releases)
     if len(stable) < 2:
@@ -113,7 +114,7 @@ def median_days_between_releases(releases: Sequence[ReleaseInfo]) -> Optional[fl
 def days_since_latest_release(
     releases: Sequence[ReleaseInfo],
     ref: datetime,
-) -> Optional[int]:
+) -> int | None:
     """Days between ``ref`` and the most recent stable release, or None if empty."""
     stable = _stable_only(releases)
     if not stable:
@@ -124,15 +125,15 @@ def days_since_latest_release(
 def compute_adoption_latencies(
     history: ReleaseHistory,
     observations: Sequence[Observation],
-) -> List[int]:
+) -> list[int]:
     """Days between upstream publish and first observed scan, per package/version.
 
     An ecosystem-aware observation matches its exact ``(system, name, version)`` release;
     a name-only observation matches on name+version. Observations whose version is missing
     from the history are skipped.
     """
-    exact_lookup: Dict[Tuple[str, str, str], datetime] = {}
-    name_lookup: Dict[Tuple[str, str], datetime] = {}
+    exact_lookup: dict[tuple[str, str, str], datetime] = {}
+    name_lookup: dict[tuple[str, str], datetime] = {}
     for key, releases in history.items():
         system, name = _split_history_key(key)
         for r in releases:
@@ -141,10 +142,10 @@ def compute_adoption_latencies(
             # Name-only fallback for system-less callers; last write wins on a name collision.
             name_lookup[(name, r.version)] = r.published_at
 
-    latencies: List[int] = []
+    latencies: list[int] = []
     for obs in observations:
         system, name, version, scan_date = _split_observation(obs)
-        published_at: Optional[datetime] = None
+        published_at: datetime | None = None
         if system is not None:
             published_at = exact_lookup.get((system, name, version))
         if published_at is None:
@@ -157,7 +158,7 @@ def compute_adoption_latencies(
 def aggregate_upstream_metrics(
     history: ReleaseHistory,
     observations: Sequence[Observation],
-    ref: Optional[datetime] = None,
+    ref: datetime | None = None,
 ) -> UpstreamCadenceMetrics:
     """Project-level aggregation: median across all packages with data."""
     ref = ref or datetime.now(tz=timezone.utc)
@@ -165,9 +166,9 @@ def aggregate_upstream_metrics(
     if not history:
         return UpstreamCadenceMetrics(None, None, None, None)
 
-    releases_counts: List[int] = []
-    gap_medians: List[float] = []
-    days_since: List[int] = []
+    releases_counts: list[int] = []
+    gap_medians: list[float] = []
+    days_since: list[int] = []
 
     for releases in history.values():
         releases_counts.append(releases_in_last_n_days(releases, window_days=365, ref=ref))
@@ -188,13 +189,13 @@ def aggregate_upstream_metrics(
     )
 
 
-def parse_deps_dev_response(payload: Dict[str, Any]) -> List[ReleaseInfo]:
+def parse_deps_dev_response(payload: dict[str, Any]) -> list[ReleaseInfo]:
     """Translate a deps.dev GetPackage response into ReleaseInfo entries.
 
     Versions without a parsable ``publishedAt`` are dropped — keeping them
     would treat them as released at epoch 0.
     """
-    out: List[ReleaseInfo] = []
+    out: list[ReleaseInfo] = []
     for entry in payload.get("versions", []) or []:
         version = (entry.get("versionKey") or {}).get("version")
         published_at_str = entry.get("publishedAt")
@@ -210,9 +211,9 @@ def parse_deps_dev_response(payload: Dict[str, Any]) -> List[ReleaseInfo]:
     return out
 
 
-CacheGet = Callable[[str], Awaitable[Optional[Any]]]
+CacheGet = Callable[[str], Awaitable[Any | None]]
 CacheSet = Callable[..., Awaitable[None]]
-HttpFetch = Callable[[str], Awaitable[Optional[Dict[str, Any]]]]
+HttpFetch = Callable[[str], Awaitable[dict[str, Any] | None]]
 
 
 class DepsDevReleaseHistoryFetcher:
@@ -223,7 +224,7 @@ class DepsDevReleaseHistoryFetcher:
         cache_get: CacheGet,
         cache_set: CacheSet,
         http_fetch: HttpFetch,
-        cache_key_builder: Optional[Callable[[str, str], str]] = None,
+        cache_key_builder: Callable[[str, str], str] | None = None,
         cache_ttl_seconds: int = 24 * 3600,
     ) -> None:
         self._cache_get = cache_get
@@ -232,13 +233,13 @@ class DepsDevReleaseHistoryFetcher:
         self._cache_key_builder = cache_key_builder or (lambda system, name: f"releases:{system}:{name}")
         self._cache_ttl = cache_ttl_seconds
 
-    async def fetch(self, packages: Sequence[Tuple[str, str]]) -> ReleaseHistory:
+    async def fetch(self, packages: Sequence[tuple[str, str]]) -> ReleaseHistory:
         if not packages:
             return {}
 
         semaphore = asyncio.Semaphore(_FETCH_CONCURRENCY)
 
-        async def _bounded(system: str, name: str) -> Tuple[Tuple[str, str], Optional[List[ReleaseInfo]]]:
+        async def _bounded(system: str, name: str) -> tuple[tuple[str, str], list[ReleaseInfo] | None]:
             async with semaphore:
                 # Key by (system, name): two packages sharing a bare name across
                 # ecosystems must not overwrite each other in the result dict.
@@ -247,7 +248,7 @@ class DepsDevReleaseHistoryFetcher:
         pairs = await asyncio.gather(*(_bounded(s, n) for s, n in packages))
         return {key: releases for key, releases in pairs if releases is not None}
 
-    async def _load_one(self, system: str, name: str) -> Optional[List[ReleaseInfo]]:
+    async def _load_one(self, system: str, name: str) -> list[ReleaseInfo] | None:
         key = self._cache_key_builder(system, name)
         cached = await self._cache_get(key)
         if cached is not None:
@@ -269,14 +270,14 @@ def _build_deps_dev_url(system: str, name: str) -> str:
     return f"https://api.deps.dev/v3alpha/systems/{system}/packages/{quote(name, safe='')}"
 
 
-def _release_list_to_cache(releases: Sequence[ReleaseInfo]) -> List[Dict[str, str]]:
+def _release_list_to_cache(releases: Sequence[ReleaseInfo]) -> list[dict[str, str]]:
     return [{"version": r.version, "published_at": r.published_at.isoformat()} for r in releases]
 
 
-def _release_list_from_cache(raw: Any) -> List[ReleaseInfo]:
+def _release_list_from_cache(raw: Any) -> list[ReleaseInfo]:
     if not isinstance(raw, list):
         return []
-    out: List[ReleaseInfo] = []
+    out: list[ReleaseInfo] = []
     for item in raw:
         if not isinstance(item, dict):
             continue

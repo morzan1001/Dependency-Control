@@ -4,7 +4,6 @@ from datetime import datetime, timezone
 
 import pytest
 
-
 BASE = "/api/v1/analytics/scan-delta"
 
 

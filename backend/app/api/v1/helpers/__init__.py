@@ -44,6 +44,13 @@ from app.api.v1.helpers.integrations import (
     extract_slack_tokens,
 )
 from app.api.v1.helpers.pagination import build_pagination_response
+from app.api.v1.helpers.projects import (
+    apply_system_settings_enforcement,
+    build_user_project_query,
+    check_project_access,
+    generate_project_api_key,
+    is_write_superuser,
+)
 from app.api.v1.helpers.responses import (
     RESP_400,
     RESP_401,
@@ -55,13 +62,6 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_400,
     RESP_AUTH_400_404,
     RESP_AUTH_404,
-)
-from app.api.v1.helpers.projects import (
-    apply_system_settings_enforcement,
-    build_user_project_query,
-    check_project_access,
-    generate_project_api_key,
-    is_write_superuser,
 )
 from app.api.v1.helpers.sorting import (
     SORT_FIELDS,
@@ -99,47 +99,8 @@ from app.api.v1.helpers.webhooks import (
 )
 
 __all__ = [
-    # Auth helpers
-    "get_logo_path",
-    "send_verification_email",
-    "send_password_reset_email",
-    "send_system_invitation_email",
-    # Analytics helpers
-    "require_analytics_permission",
-    "get_user_project_ids",
-    "get_latest_scan_ids",
-    "get_projects_with_scans",
-    "calculate_days_until_due",
-    "calculate_days_known",
-    "extract_fix_versions",
-    "process_cve_enrichments",
-    "calculate_impact_score",
-    "build_priority_reasons",
-    "build_hotspot_priority_reasons",
-    "build_findings_severity_map",
-    "gather_cross_project_data",
-    "count_severities",
-    # Callgraph helpers
-    "check_callgraph_access",
-    "normalize_module_name",
-    "parse_madge_format",
-    "parse_pyan_format",
-    "parse_generic_format",
-    "detect_format",
     # Findings helpers
     "CATEGORY_TYPE_MAP",
-    "TYPE_CATEGORY_MAP",
-    "get_category_type_filter",
-    "get_category_for_type",
-    "aggregate_stats_by_category",
-    # Ingest helpers
-    "process_findings_ingest",
-    # Integration helpers
-    "SlackOAuthError",
-    "exchange_slack_code_for_token",
-    "extract_slack_tokens",
-    # Pagination helpers
-    "build_pagination_response",
     # Response definitions
     "RESP_400",
     "RESP_401",
@@ -151,40 +112,79 @@ __all__ = [
     "RESP_AUTH_400",
     "RESP_AUTH_400_404",
     "RESP_AUTH_404",
-    # Project helpers
-    "apply_system_settings_enforcement",
-    "build_user_project_query",
-    "check_project_access",
-    "generate_project_api_key",
-    "is_write_superuser",
     # Sorting helpers
     "SORT_FIELDS",
-    "get_sort_field",
-    "parse_sort_direction",
-    # Storage helpers
-    "delete_gridfs_files",
-    "load_from_gridfs",
-    "resolve_sbom_refs",
-    # System helpers
-    "get_available_channels",
+    "TYPE_CATEGORY_MAP",
+    # Integration helpers
+    "SlackOAuthError",
+    "aggregate_stats_by_category",
+    # Project helpers
+    "apply_system_settings_enforcement",
+    "build_findings_severity_map",
+    "build_hotspot_priority_reasons",
+    # Pagination helpers
+    "build_pagination_response",
+    "build_priority_reasons",
     # Team helpers
     "build_team_enrichment_pipeline",
-    "check_team_access",
-    "enrich_team_with_usernames",
-    "fetch_and_enrich_team",
-    "find_member_in_team",
-    "get_member_role",
-    "get_team_with_access",
+    "build_user_project_query",
+    "calculate_days_known",
+    "calculate_days_until_due",
+    "calculate_impact_score",
     # User helpers
     "check_admin_or_self",
-    "fetch_updated_user",
-    "get_user_or_404",
-    "is_2fa_setup_mode",
+    # Callgraph helpers
+    "check_callgraph_access",
+    "check_project_access",
+    "check_team_access",
     # Webhook helpers
     "check_team_webhook_create_permission",
     "check_team_webhook_list_permission",
     "check_webhook_create_permission",
     "check_webhook_list_permission",
     "check_webhook_permission",
+    "count_severities",
+    # Storage helpers
+    "delete_gridfs_files",
+    "detect_format",
+    "enrich_team_with_usernames",
+    "exchange_slack_code_for_token",
+    "extract_fix_versions",
+    "extract_slack_tokens",
+    "fetch_and_enrich_team",
+    "fetch_updated_user",
+    "find_member_in_team",
+    "gather_cross_project_data",
+    "generate_project_api_key",
+    # System helpers
+    "get_available_channels",
+    "get_category_for_type",
+    "get_category_type_filter",
+    "get_latest_scan_ids",
+    # Auth helpers
+    "get_logo_path",
+    "get_member_role",
+    "get_projects_with_scans",
+    "get_sort_field",
+    "get_team_with_access",
+    "get_user_or_404",
+    "get_user_project_ids",
     "get_webhook_or_404",
+    "is_2fa_setup_mode",
+    "is_write_superuser",
+    "load_from_gridfs",
+    "normalize_module_name",
+    "parse_generic_format",
+    "parse_madge_format",
+    "parse_pyan_format",
+    "parse_sort_direction",
+    "process_cve_enrichments",
+    # Ingest helpers
+    "process_findings_ingest",
+    # Analytics helpers
+    "require_analytics_permission",
+    "resolve_sbom_refs",
+    "send_password_reset_email",
+    "send_system_invitation_email",
+    "send_verification_email",
 ]

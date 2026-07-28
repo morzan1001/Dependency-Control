@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType, Severity
 from app.services.normalizers.utils import build_finding_id, safe_get, safe_severity
@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from app.services.aggregation import ResultAggregator
 
 
-def normalize_outdated(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
+def normalize_outdated(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     for item in result.get("outdated_dependencies") or []:
         component = safe_get(item, "component", "unknown")
 
@@ -46,7 +46,7 @@ def normalize_outdated(aggregator: "ResultAggregator", result: Dict[str, Any], s
         )
 
 
-def normalize_eol(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
+def normalize_eol(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     for item in result.get("eol_issues") or []:
         eol_info = item.get("eol_info") or {}
         eol_date = eol_info.get("eol")

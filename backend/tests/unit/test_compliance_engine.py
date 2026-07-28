@@ -14,15 +14,15 @@ from app.services.compliance.frameworks.nist_sp_800_131a import NistSp800_131aFr
 
 
 def _report(**overrides):
-    base = dict(
-        scope="user",
-        scope_id=None,
-        framework=ReportFramework.NIST_SP_800_131A,
-        format=ReportFormat.JSON,
-        status=ReportStatus.PENDING,
-        requested_by="u1",
-        requested_at=datetime.now(timezone.utc),
-    )
+    base = {
+        "scope": "user",
+        "scope_id": None,
+        "framework": ReportFramework.NIST_SP_800_131A,
+        "format": ReportFormat.JSON,
+        "status": ReportStatus.PENDING,
+        "requested_by": "u1",
+        "requested_at": datetime.now(timezone.utc),
+    }
     base.update(overrides)
     return ComplianceReport(**base)
 
@@ -172,7 +172,6 @@ async def test_engine_gather_inputs_builds_evaluation_input():
     async def findings_iter():
         if False:
             yield None
-        return
 
     findings_cursor.__aiter__ = lambda self: findings_iter()
     find_mock = MagicMock(limit=MagicMock(return_value=findings_cursor))
@@ -219,7 +218,6 @@ def _make_engine_db(*, agg_rows, project_doc=None):
     async def findings_iter():
         if False:
             yield None
-        return
 
     findings_cursor = MagicMock()
     findings_cursor.__aiter__ = lambda self: findings_iter()

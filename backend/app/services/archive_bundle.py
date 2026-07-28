@@ -8,8 +8,9 @@ stats and a sha256 over every byte before the footer.
 import datetime as dt
 import hashlib
 import json
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
-from typing import Any, AsyncIterator, Dict
+from typing import Any
 
 from bson import ObjectId, json_util
 
@@ -59,8 +60,8 @@ class BundleFrames:
     @staticmethod
     async def write(
         *,
-        scan_doc: Dict[str, Any],
-        collections: Dict[str, AsyncIterator[Dict[str, Any]]],
+        scan_doc: dict[str, Any],
+        collections: dict[str, AsyncIterator[dict[str, Any]]],
         stats: BundleStats,
     ) -> AsyncIterator[bytes]:
         sha = hashlib.sha256()
@@ -113,7 +114,7 @@ class BundleFrames:
         yield _json_line(footer)
 
 
-async def read_bundle_frames(source: AsyncIterator[bytes]) -> AsyncIterator[Dict[str, Any]]:
+async def read_bundle_frames(source: AsyncIterator[bytes]) -> AsyncIterator[dict[str, Any]]:
     """Read an NDJSON bundle and yield header/doc/footer events.
 
     Raises ValueError on unknown version, doc-before-collection-marker, missing header,

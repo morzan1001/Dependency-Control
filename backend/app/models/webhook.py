@@ -3,7 +3,7 @@ Webhook model for MongoDB storage.
 """
 
 from datetime import datetime
-from typing import Dict, List, Literal, Optional
+from typing import Literal
 
 from pydantic import ConfigDict, field_validator
 
@@ -18,26 +18,26 @@ from app.services.webhooks.validation import (
 class Webhook(MongoDocument, CreatedAtModel):
     """Webhook configuration for event notifications, scoped to a project, a team, or globally (both IDs None)."""
 
-    project_id: Optional[str] = None
-    team_id: Optional[str] = None
+    project_id: str | None = None
+    team_id: str | None = None
     url: str
-    events: List[str]
-    secret: Optional[str] = None
-    headers: Optional[Dict[str, str]] = None
+    events: list[str]
+    secret: str | None = None
+    headers: dict[str, str] | None = None
     is_active: bool = True
     webhook_type: Literal["generic", "teams"] = "generic"
-    last_triggered_at: Optional[datetime] = None
-    last_failure_at: Optional[datetime] = None
+    last_triggered_at: datetime | None = None
+    last_failure_at: datetime | None = None
 
     # Circuit Breaker fields (prevent hammering failing webhooks)
     consecutive_failures: int = 0
-    circuit_breaker_until: Optional[datetime] = None
+    circuit_breaker_until: datetime | None = None
     total_deliveries: int = 0
     total_failures: int = 0
 
     @field_validator("events")
     @classmethod
-    def _validate_events(cls, v: List[str]) -> List[str]:
+    def _validate_events(cls, v: list[str]) -> list[str]:
         return validate_webhook_events(v, allow_empty=False)
 
     @field_validator("url")

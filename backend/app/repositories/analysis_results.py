@@ -1,7 +1,5 @@
 """Repository for analysis results."""
 
-from typing import List
-
 from app.models.project import AnalysisResult
 from app.repositories.base import BaseRepository
 
@@ -14,14 +12,14 @@ class AnalysisResultRepository(BaseRepository[AnalysisResult]):
         self,
         scan_id: str,
         limit: int = 1000,
-    ) -> List[AnalysisResult]:
+    ) -> list[AnalysisResult]:
         return await self.find_many({"scan_id": scan_id}, limit=limit)
 
     async def find_by_scan_ids(
         self,
-        scan_ids: List[str],
+        scan_ids: list[str],
         limit: int = 1000,
-    ) -> List[AnalysisResult]:
+    ) -> list[AnalysisResult]:
         return await self.find_many({"scan_id": {"$in": scan_ids}}, limit=limit)
 
     async def delete_by_scan(self, scan_id: str) -> int:

@@ -3,43 +3,19 @@ import json
 import logging
 import time
 import uuid
+from collections.abc import Callable
 from datetime import datetime, timezone
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo import UpdateOne
 
 from app.core.constants import DETAILS_KEY_IN_KEV
-from app.db.mongodb import open_gridfs_download_with_retry, primary_gridfs_bucket
-from app.models.finding import Finding, FindingType, Severity
-from app.models.project import Project, Scan
-from app.models.waiver import Waiver
-from app.repositories import (
-    AnalysisResultRepository,
-    CallgraphRepository,
-    FindingRepository,
-    ProjectRepository,
-    ScanRepository,
-)
-from app.repositories.system_settings import SystemSettingsRepository
-from app.services.aggregation import ResultAggregator
-from app.services.analyzers import Analyzer
-from app.services.enrichment import enrich_vulnerability_findings
-from app.services.reachability_enrichment import enrich_findings_with_reachability
-from app.services.sbom_parser import parse_sbom
-from app.services.analysis.registry import CRYPTO_ANALYZERS, VULNERABILITY_ANALYZERS, analyzers, is_crypto_analyzer
-from app.services.analysis.stats import (
-    build_epss_kev_summary,
-    build_reachability_summary,
-    calculate_comprehensive_stats,
-)
-from app.services.analysis.integrations import decorate_gitlab_mr
-from app.services.analysis.notifications import send_scan_notifications
-from app.services.analysis.types import Database
 from app.core.metrics import (
     analysis_aggregation_duration_seconds,
     analysis_components_parsed_total,
+    analysis_duration_seconds,
     analysis_enrichment_total,
     analysis_epss_scores,
     analysis_errors_total,
@@ -54,8 +30,33 @@ from app.core.metrics import (
     analysis_sbom_processed_total,
     analysis_scans_total,
     analysis_waivers_applied_total,
-    analysis_duration_seconds,
 )
+from app.db.mongodb import open_gridfs_download_with_retry, primary_gridfs_bucket
+from app.models.finding import Finding, FindingType, Severity
+from app.models.project import Project, Scan
+from app.models.waiver import Waiver
+from app.repositories import (
+    AnalysisResultRepository,
+    CallgraphRepository,
+    FindingRepository,
+    ProjectRepository,
+    ScanRepository,
+)
+from app.repositories.system_settings import SystemSettingsRepository
+from app.services.aggregation import ResultAggregator
+from app.services.analysis.integrations import decorate_gitlab_mr
+from app.services.analysis.notifications import send_scan_notifications
+from app.services.analysis.registry import CRYPTO_ANALYZERS, VULNERABILITY_ANALYZERS, analyzers, is_crypto_analyzer
+from app.services.analysis.stats import (
+    build_epss_kev_summary,
+    build_reachability_summary,
+    calculate_comprehensive_stats,
+)
+from app.services.analysis.types import Database
+from app.services.analyzers import Analyzer
+from app.services.enrichment import enrich_vulnerability_findings
+from app.services.reachability_enrichment import enrich_findings_with_reachability
+from app.services.sbom_parser import parse_sbom
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,7 @@ def _get_waiver_type(waiver: Waiver) -> str:
     return "other"
 
 
-async def _get_github_instance_token(db: Database) -> Optional[str]:
+async def _get_github_instance_token(db: Database) -> str | None:
     """Fallback: Use access_token from first active GitHub instance."""
     doc = await db.github_instances.find_one(
         {"is_active": True, "access_token": {"$exists": True, "$ne": None}},
@@ -141,14 +142,14 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"],
 async def process_analyzer(
     analyzer_name: str,
     analyzer: Analyzer,
-    sbom: Dict[str, Any],
+    sbom: dict[str, Any],
     scan_id: str,
     db: Database,
     aggregator: ResultAggregator,
-    settings: Optional[Dict[str, Any]] = None,
+    settings: dict[str, Any] | None = None,
     fallback_source: str = "unknown-sbom",
-    parsed_components: Optional[List[Dict[str, Any]]] = None,
-    project_id: Optional[str] = None,
+    parsed_components: list[dict[str, Any]] | None = None,
+    project_id: str | None = None,
 ) -> str:
     analyzer_start_time = time.time()
     try:
@@ -208,7 +209,7 @@ async def process_analyzer(
 _SBOM_GRIDFS_LOAD_ERROR = "Failed to load SBOM from GridFS"
 
 
-def _all_sbom_loads_failed(sboms_to_process: List[Any], aggregated_findings: List[Any]) -> bool:
+def _all_sbom_loads_failed(sboms_to_process: list[Any], aggregated_findings: list[Any]) -> bool:
     """True when every GridFS SBOM failed to load, so the scan must not be reported as completed."""
     gridfs_expected = sum(1 for it in sboms_to_process if isinstance(it, dict) and it.get("type") == "gridfs_reference")
     if gridfs_expected == 0:
@@ -217,9 +218,7 @@ def _all_sbom_loads_failed(sboms_to_process: List[Any], aggregated_findings: Lis
     return failures >= gridfs_expected
 
 
-async def _resolve_sbom(
-    item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: ResultAggregator
-) -> Optional[Dict[str, Any]]:
+async def _resolve_sbom(item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: ResultAggregator) -> dict[str, Any] | None:
     """Resolve a single SBOM item from inline dict or GridFS reference."""
     if isinstance(item, dict) and item.get("type") == "gridfs_reference":
         gridfs_id = item.get("gridfs_id")
@@ -228,7 +227,7 @@ async def _resolve_sbom(
                 analysis_gridfs_operations_total.labels(operation="download", status="attempt").inc()
             stream = await open_gridfs_download_with_retry(fs, ObjectId(gridfs_id))
             content: bytes = await stream.read()
-            sbom: Dict[str, Any] = json.loads(content)
+            sbom: dict[str, Any] = json.loads(content)
             del content
             if analysis_gridfs_operations_total:
                 analysis_gridfs_operations_total.labels(operation="download", status="success").inc()
@@ -239,13 +238,13 @@ async def _resolve_sbom(
                 analysis_gridfs_operations_total.labels(operation="download", status="error").inc()
             aggregator.aggregate("system", {"error": f"{_SBOM_GRIDFS_LOAD_ERROR}: {gridfs_err}"})
             return None
-    result: Optional[Dict[str, Any]] = item
+    result: dict[str, Any] | None = item
     return result
 
 
-def _parse_and_track_sbom(current_sbom: Any) -> tuple[Any, List[Dict[str, Any]]]:
+def _parse_and_track_sbom(current_sbom: Any) -> tuple[Any, list[dict[str, Any]]]:
     """Try to pre-parse the SBOM and track metrics. Returns (parsed_sbom, parsed_components)."""
-    parsed_components: List[Dict[str, Any]] = []
+    parsed_components: list[dict[str, Any]] = []
     parsed_sbom = None
     try:
         parsed_sbom = parse_sbom(current_sbom)
@@ -286,11 +285,11 @@ async def _persist_embedded_crypto_assets(parsed_sbom: Any, project_id: str, sca
 
 
 def _resolve_effective_analyzers(
-    active_analyzers: List[str],
+    active_analyzers: list[str],
     parsed_sbom: Any,
-    parsed_components: List[Dict[str, Any]],
-    scan_type: Optional[str],
-) -> List[str]:
+    parsed_components: list[dict[str, Any]],
+    scan_type: str | None,
+) -> list[str]:
     """Select analyzers based on whether crypto data and SBOM content are present."""
     has_crypto = scan_type == "cbom" or (parsed_sbom is not None and bool(getattr(parsed_sbom, "crypto_assets", None)))
     if has_crypto:
@@ -306,15 +305,15 @@ def _resolve_effective_analyzers(
 
 def _build_settings_resolver(
     system_settings: Any,
-    project_license_policy: Optional[Dict[str, Any]],
-    project_analyzer_settings: Optional[Dict[str, Dict[str, Any]]],
-) -> Callable[[str], Dict[str, Any]]:
+    project_license_policy: dict[str, Any] | None,
+    project_analyzer_settings: dict[str, dict[str, Any]] | None,
+) -> Callable[[str], dict[str, Any]]:
     """Return a function that yields per-analyzer settings dicts."""
     base_settings = system_settings.model_dump() if system_settings else {}
     if project_license_policy:
         base_settings["license_policy"] = project_license_policy
 
-    def _settings_for(analyzer_name: str) -> Dict[str, Any]:
+    def _settings_for(analyzer_name: str) -> dict[str, Any]:
         merged = dict(base_settings)
         if project_analyzer_settings:
             overrides = project_analyzer_settings.get(analyzer_name)
@@ -332,13 +331,13 @@ async def _process_sbom(
     db: Database,
     fs: AsyncIOMotorGridFSBucket,
     aggregator: ResultAggregator,
-    active_analyzers: List[str],
+    active_analyzers: list[str],
     system_settings: Any,
-    project_license_policy: Optional[Dict[str, Any]] = None,
-    project_analyzer_settings: Optional[Dict[str, Dict[str, Any]]] = None,
-    project_id: Optional[str] = None,
-    scan_type: Optional[str] = None,
-) -> List[str]:
+    project_license_policy: dict[str, Any] | None = None,
+    project_analyzer_settings: dict[str, dict[str, Any]] | None = None,
+    project_id: str | None = None,
+    scan_type: str | None = None,
+) -> list[str]:
     """Process a single SBOM: resolve, parse, run analyzers. Returns results summary."""
     current_sbom = await _resolve_sbom(item, fs, aggregator)
     # CBOM-only scans synthesise an empty {}; only bail when resolution itself failed (None).
@@ -378,7 +377,7 @@ async def _process_sbom(
     return list(batch_results)
 
 
-def _track_findings_metrics(aggregated_findings: List[Any]) -> None:
+def _track_findings_metrics(aggregated_findings: list[Any]) -> None:
     """Track Prometheus metrics for aggregated findings."""
     for finding in aggregated_findings:
         finding_type = finding.type if hasattr(finding, "type") else "unknown"
@@ -391,13 +390,13 @@ def _track_findings_metrics(aggregated_findings: List[Any]) -> None:
                 analysis_findings_total.labels(analyzer=scanner_name, severity=severity).inc()
 
 
-async def _enrich_dependencies(dependency_enrichments: Dict[str, Any], scan_id: str, db: Database) -> None:
+async def _enrich_dependencies(dependency_enrichments: dict[str, Any], scan_id: str, db: Database) -> None:
     """Bulk-update dependencies with aggregated enrichment data."""
     if not dependency_enrichments:
         return
 
     logger.info(f"Enriching {len(dependency_enrichments)} dependencies with aggregated metadata")
-    bulk_ops: List[UpdateOne] = []
+    bulk_ops: list[UpdateOne] = []
     total_updated = 0
 
     for key, enrichment_data in dependency_enrichments.items():
@@ -432,11 +431,11 @@ async def _enrich_dependencies(dependency_enrichments: Dict[str, Any], scan_id: 
 
 
 async def _run_epss_kev_enrichment(
-    vulnerability_findings: List[Dict[str, Any]],
+    vulnerability_findings: list[dict[str, Any]],
     scan_id: str,
     result_repo: AnalysisResultRepository,
-    github_token: Optional[str],
-    results_summary: List[str],
+    github_token: str | None,
+    results_summary: list[str],
 ) -> None:
     """Run EPSS/KEV enrichment on vulnerability findings."""
     try:
@@ -474,7 +473,7 @@ async def _run_epss_kev_enrichment(
 
 
 async def _run_reachability_enrichment(
-    vulnerability_findings: List[Dict[str, Any]],
+    vulnerability_findings: list[dict[str, Any]],
     scan_id: str,
     project_id: str,
     scan_doc: Scan,
@@ -482,7 +481,7 @@ async def _run_reachability_enrichment(
     callgraph_repo: CallgraphRepository,
     result_repo: AnalysisResultRepository,
     scan_repo: ScanRepository,
-    results_summary: List[str],
+    results_summary: list[str],
 ) -> None:
     """Run reachability analysis on vulnerability findings."""
     callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
@@ -538,12 +537,12 @@ async def _run_reachability_enrichment(
         logger.warning(f"[reachability] Failed to enrich findings: {e}")
 
 
-def _track_waiver_metrics(active_waivers: List[Waiver]) -> None:
+def _track_waiver_metrics(active_waivers: list[Waiver]) -> None:
     """Track Prometheus metrics for applied waivers."""
     if not analysis_waivers_applied_total:
         return
 
-    waiver_types: Dict[str, int] = {}
+    waiver_types: dict[str, int] = {}
     for waiver in active_waivers:
         waiver_type = _get_waiver_type(waiver)
         waiver_types[waiver_type] = waiver_types.get(waiver_type, 0) + 1
@@ -579,8 +578,8 @@ async def _check_race_condition(scan_id: str, external_load_start: datetime, sca
 
 
 async def _load_project_settings_overrides(
-    project_id: Optional[str], project_repo: ProjectRepository
-) -> tuple[Optional[Dict[str, Any]], Optional[Dict[str, Dict[str, Any]]]]:
+    project_id: str | None, project_repo: ProjectRepository
+) -> tuple[dict[str, Any] | None, dict[str, dict[str, Any]] | None]:
     """Load license_policy and analyzer_settings from project doc."""
     if not project_id:
         return None, None
@@ -592,7 +591,7 @@ async def _load_project_settings_overrides(
     return license_policy, analyzer_settings
 
 
-def _resolve_sboms_to_process(sboms: List[Dict[str, Any]], scan_type: Optional[str]) -> List[Dict[str, Any]]:
+def _resolve_sboms_to_process(sboms: list[dict[str, Any]], scan_type: str | None) -> list[dict[str, Any]]:
     """Pick SBOMs to iterate, with a synthetic placeholder for CBOM-only scans."""
     if sboms:
         return sboms
@@ -605,7 +604,7 @@ async def _aggregate_external_results(
     aggregator: ResultAggregator,
     result_repo: AnalysisResultRepository,
     scan_id: str,
-    results_summary: List[str],
+    results_summary: list[str],
 ) -> None:
     """Fetch external analyzer results and aggregate them."""
     external_results = await result_repo.find_by_scan(scan_id, limit=10000)
@@ -637,7 +636,7 @@ async def _aggregate_external_results(
     del external_results
 
 
-def _cleanup_analyzer_names(active_analyzers: List[str]) -> List[str]:
+def _cleanup_analyzer_names(active_analyzers: list[str]) -> list[str]:
     """Analyzer result-row names to purge before a (re)run: internal, post-processor, and crypto.
 
     Crypto/post-processor rows are regenerated per run and can exist independently of
@@ -648,16 +647,16 @@ def _cleanup_analyzer_names(active_analyzers: List[str]) -> List[str]:
 
 
 def _prepare_finding_records(
-    aggregated_findings: List[Any],
+    aggregated_findings: list[Any],
     scan_id: str,
-    project_id: Optional[str],
-    scan_created_at: Optional[datetime],
-) -> tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    project_id: str | None,
+    scan_created_at: datetime | None,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Convert aggregated findings to insertion records, splitting out vulnerabilities."""
-    findings_to_insert: List[Dict[str, Any]] = []
-    vulnerability_findings: List[Dict[str, Any]] = []
+    findings_to_insert: list[dict[str, Any]] = []
+    vulnerability_findings: list[dict[str, Any]] = []
     for f in aggregated_findings:
-        record: Dict[str, Any] = f.model_dump()
+        record: dict[str, Any] = f.model_dump()
         record["scan_id"] = scan_id
         record["project_id"] = project_id
         record["finding_id"] = f.id
@@ -674,11 +673,11 @@ _FINDINGS_SUMMARY_LIMIT = 500
 
 
 def _build_findings_summary(
-    vulnerability_findings: List[Dict[str, Any]],
+    vulnerability_findings: list[dict[str, Any]],
     limit: int = _FINDINGS_SUMMARY_LIMIT,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Compact, bounded, vulnerability-only summary; details trimmed to the CVE id to bound size."""
-    summary: List[Dict[str, Any]] = []
+    summary: list[dict[str, Any]] = []
     for record in vulnerability_findings[:limit]:
         details = record.get("details") or {}
         cve_id = details.get("cve_id") or record.get("id")
@@ -698,17 +697,17 @@ def _build_findings_summary(
 
 
 async def _run_vuln_enrichments(
-    active_analyzers: List[str],
-    vulnerability_findings: List[Dict[str, Any]],
+    active_analyzers: list[str],
+    vulnerability_findings: list[dict[str, Any]],
     scan_id: str,
-    project_id: Optional[str],
+    project_id: str | None,
     scan_doc: Any,
     db: Database,
     result_repo: AnalysisResultRepository,
     callgraph_repo: CallgraphRepository,
     scan_repo: ScanRepository,
-    github_token: Optional[str],
-    results_summary: List[str],
+    github_token: str | None,
+    results_summary: list[str],
 ) -> None:
     if "epss_kev" in active_analyzers and vulnerability_findings:
         await _run_epss_kev_enrichment(vulnerability_findings, scan_id, result_repo, github_token, results_summary)
@@ -728,12 +727,12 @@ async def _run_vuln_enrichments(
 
 
 async def _persist_findings_and_waivers(
-    findings_to_insert: List[Dict[str, Any]],
+    findings_to_insert: list[dict[str, Any]],
     scan_id: str,
-    project_id: Optional[str],
+    project_id: str | None,
     finding_repo: FindingRepository,
     db: Database,
-) -> tuple[int, List[Waiver]]:
+) -> tuple[int, list[Waiver]]:
     """Insert findings, apply waivers, return (ignored_count, active_waivers)."""
     await finding_repo.delete_many({"scan_id": scan_id})
     for i in range(0, len(findings_to_insert), _BULK_CHUNK_SIZE):
@@ -741,7 +740,7 @@ async def _persist_findings_and_waivers(
 
     from app.repositories import WaiverRepository
 
-    active_waivers: List[Waiver] = []
+    active_waivers: list[Waiver] = []
     if project_id:
         waiver_repo = WaiverRepository(db)
         active_waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
@@ -756,7 +755,7 @@ async def _persist_findings_and_waivers(
     return ignored_count, active_waivers
 
 
-def _as_utc(dt: Optional[datetime]) -> Optional[datetime]:
+def _as_utc(dt: datetime | None) -> datetime | None:
     """Normalise a possibly-naive datetime to timezone-aware UTC for comparison."""
     if dt is not None and dt.tzinfo is None:
         return dt.replace(tzinfo=timezone.utc)
@@ -793,7 +792,7 @@ async def _should_update_project_latest_scan(
 async def _finalize_scan_and_project(
     scan_id: str,
     scan_doc: Any,
-    project_id: Optional[str],
+    project_id: str | None,
     total_findings_count: int,
     ignored_count: int,
     stats: Any,
@@ -801,16 +800,16 @@ async def _finalize_scan_and_project(
     scan_repo: ScanRepository,
     project_repo: ProjectRepository,
     status: str = "completed",
-    error: Optional[str] = None,
-    external_load_start: Optional[datetime] = None,
-    findings_summary: Optional[List[Dict[str, Any]]] = None,
+    error: str | None = None,
+    external_load_start: datetime | None = None,
+    findings_summary: list[dict[str, Any]] | None = None,
 ) -> bool:
     """Persist the final scan status, ignored count, and (on success) project stats.
 
     Returns True when the scan was finalised, False when completion was aborted because a
     late scanner result arrived during processing (the scan is rescheduled instead).
     """
-    set_fields: Dict[str, Any] = {
+    set_fields: dict[str, Any] = {
         "status": status,
         "findings_count": total_findings_count,
         "ignored_count": ignored_count,
@@ -881,7 +880,7 @@ async def _finalize_scan_and_project(
     return True
 
 
-async def _filter_out_waived_findings(aggregated_findings: List[Any], scan_id: str, db: Database) -> List[Any]:
+async def _filter_out_waived_findings(aggregated_findings: list[Any], scan_id: str, db: Database) -> list[Any]:
     """Drop findings waived in this scan so notifications/webhooks match the waiver-aware stats.
 
     Waivers are applied only as DB updates; in-memory Finding objects are never marked waived,
@@ -903,12 +902,12 @@ async def _filter_out_waived_findings(aggregated_findings: List[Any], scan_id: s
 
 
 async def _send_integrations_and_notifications(
-    project_id: Optional[str],
+    project_id: str | None,
     scan_id: str,
     scan_doc: Any,
     stats: Any,
-    aggregated_findings: List[Any],
-    results_summary: List[str],
+    aggregated_findings: list[Any],
+    results_summary: list[str],
     db: Database,
 ) -> None:
     if not project_id:
@@ -958,12 +957,12 @@ def _release_memory_to_os() -> None:
         pass
 
 
-async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyzers: List[str], db: Database) -> bool:
+async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyzers: list[str], db: Database) -> bool:
     """Orchestrate analysis for an SBOM scan; returns False if rescheduled due to a race condition."""
     logger.info(f"Starting analysis for scan {scan_id}")
     aggregation_start_time = time.time()
     aggregator = ResultAggregator()
-    results_summary: List[str] = []
+    results_summary: list[str] = []
 
     scan_repo = ScanRepository(db)
     result_repo = AnalysisResultRepository(db)
@@ -981,8 +980,8 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
         )
         return False
 
-    project_id: Optional[str] = scan_doc.project_id
-    scan_type: Optional[str] = getattr(scan_doc, "scan_type", None)
+    project_id: str | None = scan_doc.project_id
+    scan_type: str | None = getattr(scan_doc, "scan_type", None)
 
     # For CBOM scans, always include crypto analyzers regardless of project config.
     if scan_type == "cbom":
@@ -1033,7 +1032,7 @@ async def run_analysis(scan_id: str, sboms: List[Dict[str, Any]], active_analyze
     await _enrich_dependencies(dependency_enrichments, scan_id, db)
     del dependency_enrichments
 
-    scan_created_at: Optional[datetime] = getattr(scan_doc, "created_at", None)
+    scan_created_at: datetime | None = getattr(scan_doc, "created_at", None)
     findings_to_insert, vulnerability_findings = _prepare_finding_records(
         aggregated_findings, scan_id, project_id, scan_created_at
     )

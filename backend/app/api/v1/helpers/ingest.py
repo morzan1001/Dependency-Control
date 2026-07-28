@@ -1,6 +1,6 @@
 """Helper functions for ingest endpoints."""
 
-from typing import Any, Dict
+from typing import Any
 
 from app.services.aggregation import ResultAggregator
 from app.services.scan_manager import ScanManager
@@ -9,9 +9,9 @@ from app.services.scan_manager import ScanManager
 async def process_findings_ingest(
     manager: ScanManager,
     analyzer_name: str,
-    result_dict: Dict[str, Any],
+    result_dict: dict[str, Any],
     scan_id: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Common processing for findings-based ingests (TruffleHog, OpenGrep, KICS, Bearer).
 
     Does NOT trigger aggregation, so a fast scanner can't mark the scan

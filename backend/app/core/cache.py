@@ -10,12 +10,12 @@ import json
 import logging
 import time
 import uuid
-from typing import Any, Awaitable, Callable, Dict, List, Optional, TypeVar, cast
+from collections.abc import Awaitable, Callable
+from typing import Any, TypeVar, cast
 
 import redis.asyncio as redis
-from redis.asyncio.connection import ConnectionPool
-
 from prometheus_client import Counter, Gauge, Histogram
+from redis.asyncio.connection import ConnectionPool
 
 from app.core.config import settings
 
@@ -30,13 +30,13 @@ REDIS_OPERATION_TIMEOUT_SECONDS = 5.0
 # token, so a slow fetch can't delete a lock re-acquired by another pod.
 _UNLOCK_LUA = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
 
-cache_hits_total: Optional[Counter] = None
-cache_misses_total: Optional[Counter] = None
-cache_operations_total: Optional[Counter] = None
-cache_operation_duration_seconds: Optional[Histogram] = None
-cache_keys_total: Optional[Gauge] = None
-cache_connected_clients: Optional[Gauge] = None
-cache_size_bytes: Optional[Gauge] = None
+cache_hits_total: Counter | None = None
+cache_misses_total: Counter | None = None
+cache_operations_total: Counter | None = None
+cache_operation_duration_seconds: Histogram | None = None
+cache_keys_total: Gauge | None = None
+cache_connected_clients: Gauge | None = None
+cache_size_bytes: Gauge | None = None
 
 try:
     from app.core.metrics import (
@@ -166,8 +166,8 @@ class CacheService:
     RECONNECT_INTERVAL_SECONDS = 30
 
     def __init__(self) -> None:
-        self._pool: Optional[ConnectionPool] = None
-        self._client: Optional[redis.Redis] = None
+        self._pool: ConnectionPool | None = None
+        self._client: redis.Redis | None = None
         self._available: bool = True
         self._lock: asyncio.Lock = asyncio.Lock()
         self._unavailable_since: float = 0
@@ -241,7 +241,7 @@ class CacheService:
     def _make_key(self, key: str) -> str:
         return f"{settings.CACHE_PREFIX}{key}"
 
-    async def get(self, key: str) -> Optional[Any]:
+    async def get(self, key: str) -> Any | None:
         """Returns cached value or None if not found/expired."""
         if not await self._ensure_available():
             return None
@@ -276,7 +276,7 @@ class CacheService:
             if cache_operation_duration_seconds:
                 cache_operation_duration_seconds.labels(operation="get").observe(time.time() - _start)
 
-    async def set(self, key: str, value: Any, ttl_seconds: Optional[int] = None) -> bool:
+    async def set(self, key: str, value: Any, ttl_seconds: int | None = None) -> bool:
         """Set a JSON-serializable value with TTL (defaults to CACHE_DEFAULT_TTL_HOURS)."""
         if not await self._ensure_available():
             return False
@@ -334,7 +334,7 @@ class CacheService:
             if cache_operation_duration_seconds:
                 cache_operation_duration_seconds.labels(operation="delete").observe(time.time() - _start)
 
-    async def mget(self, keys: List[str]) -> Dict[str, Any]:
+    async def mget(self, keys: list[str]) -> dict[str, Any]:
         """Batch get; returns {key: value-or-None}."""
         if not keys:
             return {}
@@ -372,7 +372,7 @@ class CacheService:
             if cache_operation_duration_seconds:
                 cache_operation_duration_seconds.labels(operation="mget").observe(time.time() - _start)
 
-    async def mset(self, mapping: Dict[str, Any], ttl_seconds: Optional[int] = None) -> bool:
+    async def mset(self, mapping: dict[str, Any], ttl_seconds: int | None = None) -> bool:
         """Batch set with shared TTL."""
         if not mapping or not await self._ensure_available():
             return False
@@ -407,10 +407,10 @@ class CacheService:
         self,
         key: str,
         fetch_fn: Callable[[], Any],
-        ttl_seconds: Optional[int] = None,
+        ttl_seconds: int | None = None,
         lock_ttl_seconds: int = 30,
         max_wait_seconds: float = 5.0,
-    ) -> Optional[Any]:
+    ) -> Any | None:
         """Cache-through with a distributed lock so only one pod fetches on miss while
         peers wait, preventing cache-stampede on multi-pod deploys."""
         cached = await self.get(key)
@@ -497,7 +497,7 @@ class CacheService:
         except Exception as e:
             logger.warning(f"Failed to release cache lock {full_lock_key}: {e}")
 
-    async def health_check(self) -> Dict[str, Any]:
+    async def health_check(self) -> dict[str, Any]:
         try:
             client = await self.get_client()
             info = await client.info(section="memory")

@@ -5,8 +5,6 @@ roles (viewer < editor < admin) — enforced by ``check_project_access`` in
 ``app/api/v1/helpers/projects.py``. Canonical model: ``docs/superpowers/specs/authz-model.md``.
 """
 
-from typing import List
-
 
 class Permissions:
     """All available permissions in the system."""
@@ -69,7 +67,7 @@ class Permissions:
 
 
 # All permissions in the system (excluding internal/special permissions like auth:setup_2fa)
-ALL_PERMISSIONS: List[str] = [
+ALL_PERMISSIONS: list[str] = [
     # System
     Permissions.SYSTEM_MANAGE,
     # User
@@ -128,8 +126,8 @@ ALL_PERMISSIONS: List[str] = [
 
 
 def has_permission(
-    user_permissions: List[str],
-    required: str | List[str],
+    user_permissions: list[str],
+    required: str | list[str],
     require_all: bool = False,
 ) -> bool:
     """Check whether the user has ALL (require_all) or ANY (default) of the required permissions."""
@@ -142,9 +140,9 @@ def has_permission(
 
 
 def get_missing_permissions(
-    user_permissions: List[str],
-    required: str | List[str],
-) -> List[str]:
+    user_permissions: list[str],
+    required: str | list[str],
+) -> list[str]:
     """Return the subset of required permissions the user does not have."""
     if isinstance(required, str):
         required = [required]

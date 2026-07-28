@@ -2,7 +2,6 @@
 
 from datetime import datetime
 from enum import Enum
-from typing import Dict, List, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -17,9 +16,9 @@ class MigrationItemStatus(str, Enum):
 class MigrationItem(BaseModel):
     asset_bom_ref: str
     asset_name: str
-    asset_variant: Optional[str] = None
-    asset_key_size_bits: Optional[int] = None
-    project_ids: List[str] = Field(default_factory=list)
+    asset_variant: str | None = None
+    asset_key_size_bits: int | None = None
+    project_ids: list[str] = Field(default_factory=list)
     asset_count: int = Field(..., ge=1)
 
     source_family: str
@@ -31,21 +30,21 @@ class MigrationItem(BaseModel):
 
     priority_score: int = Field(..., ge=0, le=100)
     status: MigrationItemStatus
-    recommended_deadline: Optional[str] = None
+    recommended_deadline: str | None = None
 
     model_config = ConfigDict(use_enum_values=True)
 
 
 class MigrationPlanSummary(BaseModel):
     total_items: int
-    status_counts: Dict[str, int] = Field(default_factory=dict)
-    earliest_deadline: Optional[str] = None
+    status_counts: dict[str, int] = Field(default_factory=dict)
+    earliest_deadline: str | None = None
 
 
 class MigrationPlanResponse(BaseModel):
     scope: str
-    scope_id: Optional[str] = None
+    scope_id: str | None = None
     generated_at: datetime
-    items: List[MigrationItem] = Field(default_factory=list)
+    items: list[MigrationItem] = Field(default_factory=list)
     summary: MigrationPlanSummary
     mappings_version: int

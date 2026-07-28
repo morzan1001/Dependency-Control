@@ -1,6 +1,6 @@
 import logging
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any
 
 from pydantic import ConfigDict, EmailStr, Field, field_validator
 
@@ -13,21 +13,21 @@ logger = logging.getLogger(__name__)
 class User(MongoDocument):
     username: str
     email: EmailStr
-    hashed_password: Optional[str] = None
+    hashed_password: str | None = None
     is_active: bool = True
     is_verified: bool = False
     auth_provider: str = "local"  # "local", "gitlab", "google", etc.
-    permissions: list[str] = []  # e.g. "project:create", "user:read_all"
-    last_logout_at: Optional[datetime] = None
+    permissions: list[str] = Field(default_factory=list)  # e.g. "project:create", "user:read_all"
+    last_logout_at: datetime | None = None
 
     # 2FA settings
-    totp_secret: Optional[str] = None
+    totp_secret: str | None = None
     totp_enabled: bool = False
 
     # Notification settings
-    slack_username: Optional[str] = None
-    mattermost_username: Optional[str] = None
-    notification_preferences: Optional[dict[str, list[str]]] = Field(default_factory=dict)
+    slack_username: str | None = None
+    mattermost_username: str | None = None
+    notification_preferences: dict[str, list[str]] | None = Field(default_factory=dict)
 
     @field_validator("notification_preferences")
     @classmethod

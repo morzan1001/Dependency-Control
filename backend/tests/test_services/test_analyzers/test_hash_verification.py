@@ -1,6 +1,6 @@
 """Tests that the PyPI hash verifier collects every file's digest per algorithm, not just the first."""
 
-from typing import Any, Dict
+from typing import Any
 
 import pytest
 
@@ -9,16 +9,16 @@ from app.services.analyzers.hash_verification import HashVerificationAnalyzer
 
 
 class _FakeResponse:
-    def __init__(self, payload: Dict[str, Any], status_code: int = 200):
+    def __init__(self, payload: dict[str, Any], status_code: int = 200):
         self._payload = payload
         self.status_code = status_code
 
-    def json(self) -> Dict[str, Any]:
+    def json(self) -> dict[str, Any]:
         return self._payload
 
 
 class _FakeClient:
-    def __init__(self, payload: Dict[str, Any], status_code: int = 200):
+    def __init__(self, payload: dict[str, Any], status_code: int = 200):
         self._payload = payload
         self._status_code = status_code
 

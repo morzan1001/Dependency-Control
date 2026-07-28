@@ -1,11 +1,11 @@
 """Extract vulnerable function/symbol names from structured scanner data (e.g. OSV ecosystem_specific), not heuristic text parsing."""
 
-from typing import Any, Dict, List, Set
+from typing import Any
 
 from app.schemas.enrichment import ExtractedSymbols
 
 
-def extract_symbols_from_vulnerability(vuln_data: Dict[str, Any]) -> ExtractedSymbols:
+def extract_symbols_from_vulnerability(vuln_data: dict[str, Any]) -> ExtractedSymbols:
     """Extract symbols from a scanner vulnerability dict via OSV ecosystem_specific / affected_symbols."""
     cve = vuln_data.get("id", "") or vuln_data.get("cve", "")
     package = vuln_data.get("package", "") or vuln_data.get("component", "")
@@ -48,12 +48,12 @@ def extract_symbols_from_vulnerability(vuln_data: Dict[str, Any]) -> ExtractedSy
     return ExtractedSymbols(cve=cve, package=package)
 
 
-def get_symbols_for_finding(finding: Dict[str, Any]) -> ExtractedSymbols:
+def get_symbols_for_finding(finding: dict[str, Any]) -> ExtractedSymbols:
     """Combine ExtractedSymbols across all vulnerabilities in a finding's details.vulnerabilities."""
     component = finding.get("component", "")
 
-    all_symbols: Set[str] = set()
-    all_cves: List[str] = []
+    all_symbols: set[str] = set()
+    all_cves: list[str] = []
     best_confidence = "low"
     extraction_method = "none"
 

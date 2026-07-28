@@ -1,7 +1,7 @@
 """Tests that /impact and /hotspots analytics aggregations stay bounded: details slimmed before $group, scalar severity counts, id/detail sets deduped via $addToSet (not $slice-capped), and allow_disk_use threaded through."""
 
 import asyncio
-from typing import Any, Dict, List, Tuple
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.api.v1.helpers.analytics import count_severities
@@ -21,7 +21,7 @@ def _admin_user() -> User:
     )
 
 
-def _iter_push_exprs(pipeline: List[Dict[str, Any]]):
+def _iter_push_exprs(pipeline: list[dict[str, Any]]):
     """Yield every ``$push`` accumulator expression in any ``$group`` stage."""
     for stage in pipeline:
         group = stage.get("$group")
@@ -32,7 +32,7 @@ def _iter_push_exprs(pipeline: List[Dict[str, Any]]):
                 yield acc_name, acc_expr["$push"]
 
 
-def _iter_add_to_set_exprs(pipeline: List[Dict[str, Any]]):
+def _iter_add_to_set_exprs(pipeline: list[dict[str, Any]]):
     """Yield every ``$addToSet`` accumulator expression in any ``$group`` stage."""
     for stage in pipeline:
         group = stage.get("$group")
@@ -43,17 +43,17 @@ def _iter_add_to_set_exprs(pipeline: List[Dict[str, Any]]):
                 yield acc_name, acc_expr["$addToSet"]
 
 
-def _group_stage(pipeline: List[Dict[str, Any]]) -> Dict[str, Any]:
+def _group_stage(pipeline: list[dict[str, Any]]) -> dict[str, Any]:
     for stage in pipeline:
         if "$group" in stage:
             return stage["$group"]
     raise AssertionError("pipeline has no $group stage")
 
 
-def _sliced_fields_after_group(pipeline: List[Dict[str, Any]]) -> List[str]:
+def _sliced_fields_after_group(pipeline: list[dict[str, Any]]) -> list[str]:
     """Names of fields $slice-capped in a $project after the $group."""
     seen_group = False
-    sliced: List[str] = []
+    sliced: list[str] = []
     for stage in pipeline:
         if "$group" in stage:
             seen_group = True
@@ -69,7 +69,7 @@ def _sliced_fields_after_group(pipeline: List[Dict[str, Any]]) -> List[str]:
     return sliced
 
 
-def _details_is_slimmed_before_group(pipeline: List[Dict[str, Any]]) -> bool:
+def _details_is_slimmed_before_group(pipeline: list[dict[str, Any]]) -> bool:
     """True if a $project slims ``details`` to fix-version fields before the first $group."""
     for stage in pipeline:
         if "$group" in stage:
@@ -92,16 +92,16 @@ def _details_is_slimmed_before_group(pipeline: List[Dict[str, Any]]) -> bool:
 
 
 def _run_impact(
-    agg_results: List[Dict[str, Any]],
+    agg_results: list[dict[str, Any]],
     limit: int = 20,
-) -> Tuple[Any, List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> tuple[Any, list[dict[str, Any]], list[dict[str, Any]]]:
     """Run /impact with patched helpers. Returns (response, pipeline, agg_kwargs)."""
     from app.api.v1.endpoints.analytics.risk import get_impact_analysis
 
     user = _admin_user()
     db = MagicMock()
-    captured: List[List[Dict[str, Any]]] = []
-    captured_kwargs: List[Dict[str, Any]] = []
+    captured: list[list[dict[str, Any]]] = []
+    captured_kwargs: list[dict[str, Any]] = []
 
     async def _fake_get_user_project_ids(_u, _d):
         return ["proj-1"]
@@ -133,18 +133,18 @@ def _run_impact(
 
 
 def _run_hotspots(
-    agg_results: List[Dict[str, Any]],
+    agg_results: list[dict[str, Any]],
     limit: int = 20,
     sort_by: str = "finding_count",
     skip: int = 0,
-) -> Tuple[Any, List[Dict[str, Any]], List[Dict[str, Any]]]:
+) -> tuple[Any, list[dict[str, Any]], list[dict[str, Any]]]:
     """Run /hotspots with patched helpers. Returns (response, finding_pipeline, agg_kwargs)."""
     from app.api.v1.endpoints.analytics.risk import get_vulnerability_hotspots
 
     user = _admin_user()
     db = MagicMock()
-    captured: List[List[Dict[str, Any]]] = []
-    captured_kwargs: List[Dict[str, Any]] = []
+    captured: list[list[dict[str, Any]]] = []
+    captured_kwargs: list[dict[str, Any]] = []
 
     async def _fake_get_user_project_ids(_u, _d):
         return ["proj-1"]
@@ -292,7 +292,7 @@ class TestHotspotsPipelineBounded:
 
 
 class TestImpactResponseShape:
-    def _group_row(self) -> Dict[str, Any]:
+    def _group_row(self) -> dict[str, Any]:
         """A group row matching the bounded pipeline output shape."""
         return {
             "_id": {"component": "lodash", "version": "4.17.11"},
@@ -332,7 +332,7 @@ class TestImpactResponseShape:
 
 
 class TestHotspotsResponseShape:
-    def _group_row(self) -> Dict[str, Any]:
+    def _group_row(self) -> dict[str, Any]:
         return {
             "_id": {"component": "lodash", "version": "4.17.11"},
             "project_ids": ["proj-1"],
@@ -364,7 +364,7 @@ class TestHotspotsResponseShape:
 
 
 class TestSeverityCountAccumulatorsExecuted:
-    def _findings(self) -> List[Dict[str, Any]]:
+    def _findings(self) -> list[dict[str, Any]]:
         # same CVE repeated across three projects so $addToSet must collapse it
         return [
             {
@@ -409,7 +409,7 @@ class TestSeverityCountAccumulatorsExecuted:
             },  # non-CVE / no id
         ]
 
-    def _group_spec(self) -> Dict[str, Any]:
+    def _group_spec(self) -> dict[str, Any]:
         # accumulators imported from the production module, not copied
         from app.api.v1.endpoints.analytics.risk import _severity_count_accumulators
 
@@ -451,10 +451,10 @@ class TestSeverityCountAccumulatorsExecuted:
 # epss/risk come from enrichment, not Mongo, so the endpoint re-sorts in Python; the pipeline must not cap the fetch below skip+limit.
 
 
-def _limit_values_after_group(pipeline: List[Dict[str, Any]]) -> List[int]:
+def _limit_values_after_group(pipeline: list[dict[str, Any]]) -> list[int]:
     """Return every ``$limit`` value in a stage at/after the first ``$group``."""
     seen_group = False
-    limits: List[int] = []
+    limits: list[int] = []
     for stage in pipeline:
         if "$group" in stage:
             seen_group = True

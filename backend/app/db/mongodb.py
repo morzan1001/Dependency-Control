@@ -2,7 +2,7 @@
 
 import asyncio
 import logging
-from typing import Any, Optional
+from typing import Any
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorClient, AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
@@ -13,7 +13,7 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
-db_connections_active: Optional[Gauge] = None
+db_connections_active: Gauge | None = None
 
 try:
     from app.core.metrics import db_connections_active
@@ -37,7 +37,7 @@ async def open_gridfs_download_with_retry(
     fs: AsyncIOMotorGridFSBucket, file_id: ObjectId, attempts: int = 4, base_delay: float = 0.25
 ) -> Any:
     """Open a GridFS download stream, retrying with exponential backoff; a just-committed file can momentarily be unreadable under load."""
-    last_err: Optional[Exception] = None
+    last_err: Exception | None = None
     for attempt in range(attempts):
         try:
             return await fs.open_download_stream(file_id)
@@ -52,7 +52,7 @@ async def open_gridfs_download_with_retry(
 class Database:
     """Singleton database client holder."""
 
-    client: Optional[AsyncIOMotorClient[Any]] = None
+    client: AsyncIOMotorClient[Any] | None = None
 
 
 db = Database()

@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType, Severity
 from app.services.normalizers.utils import build_finding_id, safe_get, safe_severity
@@ -7,10 +7,10 @@ if TYPE_CHECKING:
     from app.services.aggregation import ResultAggregator
 
 
-def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
+def normalize_scorecard(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     """Turn deps_dev OpenSSF Scorecard results into findings and enrichment data."""
     # Package metadata is enrichment data, not findings.
-    for key, metadata in (result.get("package_metadata") or {}).items():
+    for metadata in (result.get("package_metadata") or {}).values():
         name = metadata.get("name", "")
         version = metadata.get("version", "")
         if name and version:
@@ -19,8 +19,8 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], 
     for item in result.get("scorecard_issues") or []:
         scorecard = item.get("scorecard") or {}
         overall = scorecard.get("overallScore", 0)
-        failed_checks: List[Dict[str, Any]] = item.get("failed_checks") or []
-        critical_issues: List[str] = item.get("critical_issues") or []
+        failed_checks: list[dict[str, Any]] = item.get("failed_checks") or []
+        critical_issues: list[str] = item.get("critical_issues") or []
         project_url = item.get("project_url") or ""
         component = safe_get(item, "component", "unknown")
         version = item.get("version") or ""
@@ -57,7 +57,7 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], 
 
         description = ". ".join(description_parts)
 
-        recommendations: List[str] = []
+        recommendations: list[str] = []
         for check in failed_checks:
             check_name = check.get("name", "")
             if check_name == "Maintained":
@@ -102,9 +102,7 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: Dict[str, Any], 
         )
 
 
-def normalize_typosquatting(
-    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
-) -> None:
+def normalize_typosquatting(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     for item in result.get("typosquatting_issues") or []:
         similarity = item.get("similarity", 0)
         imitated = item.get("imitated_package") or "unknown"
@@ -129,10 +127,10 @@ def normalize_typosquatting(
 
 
 def normalize_maintainer_risk(
-    aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None
+    aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None
 ) -> None:
     for item in result.get("maintainer_issues") or []:
-        risks: List[Dict[str, Any]] = item.get("risks") or []
+        risks: list[dict[str, Any]] = item.get("risks") or []
         component = safe_get(item, "component", "unknown")
 
         risk_messages = [r.get("message", "") for r in risks if r.get("message")]

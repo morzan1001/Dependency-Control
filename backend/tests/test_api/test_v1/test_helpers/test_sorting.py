@@ -1,6 +1,6 @@
 """Tests for sorting helper."""
 
-from app.api.v1.helpers.sorting import parse_sort_direction, get_sort_field
+from app.api.v1.helpers.sorting import get_sort_field, parse_sort_direction
 
 
 class TestParseSortDirection:

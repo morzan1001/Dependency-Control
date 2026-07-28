@@ -1,7 +1,7 @@
 """Renderer protocol — each format implements render(eval, report) → bytes."""
 
 from datetime import datetime
-from typing import Optional, Protocol, Tuple
+from typing import Protocol
 
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import FrameworkEvaluation, ReportFormat
@@ -17,8 +17,8 @@ class Renderer(Protocol):
         evaluation: FrameworkEvaluation,
         report: ComplianceReport,
         *,
-        disclaimer: Optional[str] = None,
-    ) -> Tuple[bytes, str, str]:
+        disclaimer: str | None = None,
+    ) -> tuple[bytes, str, str]:
         """Return (artifact_bytes, filename, mime_type)."""
         ...
 
@@ -26,7 +26,7 @@ class Renderer(Protocol):
 def build_filename(
     framework_key: str,
     scope: str,
-    scope_id: Optional[str],
+    scope_id: str | None,
     requested_at: datetime,
     extension: str,
 ) -> str:

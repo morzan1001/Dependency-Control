@@ -35,9 +35,9 @@ def test_pdf_renderer_produces_pdf_bytes():
 
 
 def test_pdf_includes_disclaimer_when_provided():
+    from app.schemas.compliance import ReportFormat
     from app.services.compliance.renderers.pdf_renderer import PdfRenderer
     from tests.unit.test_renderer_json import _evaluation, _report
-    from app.schemas.compliance import ReportFormat
 
     r = PdfRenderer()
     rep = _report()

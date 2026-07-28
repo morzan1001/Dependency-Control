@@ -5,18 +5,18 @@ from unittest.mock import patch
 import httpx
 import pytest
 
+from app.core.constants import WEBHOOK_VALID_EVENTS
 from app.services.webhooks.validation import (
     _PinnedIPTransport,
     assert_safe_webhook_target,
     build_pinned_transport,
     detect_webhook_type,
-    validate_webhook_url,
-    validate_webhook_url_optional,
+    validate_webhook_event_type,
     validate_webhook_events,
     validate_webhook_events_optional,
-    validate_webhook_event_type,
+    validate_webhook_url,
+    validate_webhook_url_optional,
 )
-from app.core.constants import WEBHOOK_VALID_EVENTS
 
 
 class TestValidateWebhookUrl:

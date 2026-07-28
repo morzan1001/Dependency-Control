@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any
 
 from app.models.finding import Finding, FindingType
 
 
-def enrich_with_scorecard(findings: List[Finding], scorecard_cache: Dict[str, Dict[str, Any]]) -> None:
+def enrich_with_scorecard(findings: list[Finding], scorecard_cache: dict[str, dict[str, Any]]) -> None:
     """Enrich non-scorecard findings with scorecard context for the same component."""
     if not scorecard_cache:
         return
@@ -41,6 +41,6 @@ def enrich_with_scorecard(findings: List[Finding], scorecard_cache: Dict[str, Di
                 if score < 4.0 or "Maintained" in critical:
                     finding.details["maintenance_warning"] = True
                     finding.details["maintenance_warning_text"] = (
-                        "This package has a low OpenSSF Scorecard score ({:.1f}/10) "
-                        "which may indicate maintenance or security concerns.".format(score)
+                        f"This package has a low OpenSSF Scorecard score ({score:.1f}/10) "
+                        "which may indicate maintenance or security concerns."
                     )

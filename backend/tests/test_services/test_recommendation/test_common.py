@@ -2,17 +2,17 @@
 
 from pydantic import BaseModel
 
-from app.services.recommendation.common import (
-    get_attr,
-    extract_cve_id,
-    parse_version_tuple,
-    calculate_best_fix_version,
-    calculate_score,
-)
 from app.schemas.recommendation import (
+    Priority,
     Recommendation,
     RecommendationType,
-    Priority,
+)
+from app.services.recommendation.common import (
+    calculate_best_fix_version,
+    calculate_score,
+    extract_cve_id,
+    get_attr,
+    parse_version_tuple,
 )
 
 

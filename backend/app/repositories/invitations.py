@@ -1,7 +1,7 @@
 """Repository for invitations."""
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import ReadPreference
@@ -23,10 +23,10 @@ class InvitationRepository:
         )
 
     # Project Invitations
-    async def get_project_invitation(self, invitation_id: str) -> Optional[Dict[str, Any]]:
+    async def get_project_invitation(self, invitation_id: str) -> dict[str, Any] | None:
         return await self.project_invitations.find_one({"_id": invitation_id})
 
-    async def get_project_invitation_by_token(self, token: str) -> Optional[Dict[str, Any]]:
+    async def get_project_invitation_by_token(self, token: str) -> dict[str, Any] | None:
         return await self._project_primary.find_one({"token": token})
 
     async def create_project_invitation(self, invitation: ProjectInvitation) -> ProjectInvitation:
@@ -42,7 +42,7 @@ class InvitationRepository:
         project_id: str,
         skip: int = 0,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         cursor = self.project_invitations.find({"project_id": project_id}).skip(skip).limit(limit)
         return await cursor.to_list(limit)
 
@@ -51,10 +51,10 @@ class InvitationRepository:
         return result.deleted_count
 
     # System Invitations
-    async def get_system_invitation(self, invitation_id: str) -> Optional[Dict[str, Any]]:
+    async def get_system_invitation(self, invitation_id: str) -> dict[str, Any] | None:
         return await self.system_invitations.find_one({"_id": invitation_id})
 
-    async def get_system_invitation_by_token(self, token: str) -> Optional[Dict[str, Any]]:
+    async def get_system_invitation_by_token(self, token: str) -> dict[str, Any] | None:
         return await self._system_primary.find_one(
             {
                 "token": token,
@@ -63,7 +63,7 @@ class InvitationRepository:
             }
         )
 
-    async def get_system_invitation_by_email(self, email: str) -> Optional[Dict[str, Any]]:
+    async def get_system_invitation_by_email(self, email: str) -> dict[str, Any] | None:
         return await self._system_primary.find_one(
             {
                 "email": email,
@@ -76,7 +76,7 @@ class InvitationRepository:
         await self.system_invitations.insert_one(invitation.model_dump(by_alias=True))
         return invitation
 
-    async def update_system_invitation(self, invitation_id: str, update_data: Dict[str, Any]) -> None:
+    async def update_system_invitation(self, invitation_id: str, update_data: dict[str, Any]) -> None:
         await self.system_invitations.update_one({"_id": invitation_id}, {"$set": update_data})
 
     async def delete_system_invitation(self, invitation_id: str) -> bool:
@@ -87,7 +87,7 @@ class InvitationRepository:
         self,
         skip: int = 0,
         limit: int = 100,
-    ) -> List[Dict[str, Any]]:
+    ) -> list[dict[str, Any]]:
         query = {
             "is_used": False,
             "expires_at": {"$gt": datetime.now(timezone.utc)},

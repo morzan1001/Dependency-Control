@@ -1,23 +1,22 @@
-from typing import Annotated, List
+from typing import Annotated
 
 from fastapi import Depends
 
-from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.responses import RESP_AUTH
-
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
+from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import get_available_channels
+from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.config import settings as app_settings
-from app.core.s3 import is_archive_enabled
 from app.core.constants import (
     NOTIFICATION_CHANNEL_EMAIL,
     NOTIFICATION_CHANNEL_MATTERMOST,
     NOTIFICATION_CHANNEL_SLACK,
 )
 from app.core.permissions import Permissions
-from app.models.user import User
+from app.core.s3 import is_archive_enabled
 from app.models.system import SystemSettings
+from app.models.user import User
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.system import (
     AppConfig,
@@ -123,7 +122,7 @@ async def get_app_config(
 async def get_notification_channels(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> List[str]:
+) -> list[str]:
     """Available notification channels based on the server configuration."""
     settings = await deps.get_system_settings(db)
     return get_available_channels(settings)

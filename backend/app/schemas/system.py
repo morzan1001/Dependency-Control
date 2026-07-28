@@ -1,10 +1,8 @@
-from typing import List, Optional
-
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 
 class SystemSettingsBase(BaseModel):
-    instance_name: Optional[str] = "Dependency Control"
+    instance_name: str | None = "Dependency Control"
 
     # Limits
     project_limit_per_user: int = 0  # 0 means unlimited
@@ -14,47 +12,47 @@ class SystemSettingsBase(BaseModel):
     enforce_email_verification: bool = False
 
     # Integrations
-    github_token: Optional[str] = None
+    github_token: str | None = None
 
-    smtp_host: Optional[str] = None
+    smtp_host: str | None = None
     smtp_port: int = 587
-    smtp_user: Optional[str] = None
-    smtp_password: Optional[str] = None
+    smtp_user: str | None = None
+    smtp_password: str | None = None
     smtp_encryption: str = "starttls"
-    emails_from_email: Optional[str] = "info@dependencycontrol.local"
-    emails_from_name: Optional[str] = "Dependency Control"
+    emails_from_email: str | None = "info@dependencycontrol.local"
+    emails_from_name: str | None = "Dependency Control"
 
-    open_source_malware_api_key: Optional[str] = None
-    slack_bot_token: Optional[str] = None
-    slack_client_id: Optional[str] = None
-    slack_client_secret: Optional[str] = None
+    open_source_malware_api_key: str | None = None
+    slack_bot_token: str | None = None
+    slack_client_id: str | None = None
+    slack_client_secret: str | None = None
     slack_oauth_scopes: str = "channels:read,chat:write,chat:write.customize,files:write"
-    slack_refresh_token: Optional[str] = None
-    slack_token_expires_at: Optional[float] = None
-    mattermost_bot_token: Optional[str] = None
-    mattermost_url: Optional[str] = None
+    slack_refresh_token: str | None = None
+    slack_token_expires_at: float | None = None
+    mattermost_bot_token: str | None = None
+    mattermost_url: str | None = None
 
     # OIDC / SSO
     oidc_enabled: bool = False
     oidc_provider_name: str = "GitLab"
-    oidc_client_id: Optional[str] = None
-    oidc_client_secret: Optional[str] = None
-    oidc_issuer: Optional[str] = None
-    oidc_authorization_endpoint: Optional[str] = None
-    oidc_token_endpoint: Optional[str] = None
-    oidc_userinfo_endpoint: Optional[str] = None
+    oidc_client_id: str | None = None
+    oidc_client_secret: str | None = None
+    oidc_issuer: str | None = None
+    oidc_authorization_endpoint: str | None = None
+    oidc_token_endpoint: str | None = None
+    oidc_userinfo_endpoint: str | None = None
     oidc_scopes: str = "openid profile email"
 
     # GitLab Integration
     gitlab_integration_enabled: bool = False
     gitlab_url: str = "https://gitlab.com"
-    gitlab_access_token: Optional[str] = None
+    gitlab_access_token: str | None = None
     gitlab_auto_create_projects: bool = False
     gitlab_sync_teams: bool = False
-    gitlab_oidc_audience: Optional[str] = None
+    gitlab_oidc_audience: str | None = None
 
     # Default Analyzers for auto-created projects
-    default_active_analyzers: List[str] = ["trivy", "osv", "license_compliance", "end_of_life"]
+    default_active_analyzers: list[str] = ["trivy", "osv", "license_compliance", "end_of_life"]
 
     # Retention
     retention_mode: str = "project"
@@ -92,15 +90,15 @@ class SystemSettingsResponse(SystemSettingsBase):
     model_config = ConfigDict(from_attributes=True)
 
     # Secret fields: accepted from the stored model, excluded from output.
-    github_token: Optional[str] = Field(default=None, exclude=True)
-    smtp_password: Optional[str] = Field(default=None, exclude=True)
-    open_source_malware_api_key: Optional[str] = Field(default=None, exclude=True)
-    slack_bot_token: Optional[str] = Field(default=None, exclude=True)
-    slack_client_secret: Optional[str] = Field(default=None, exclude=True)
-    slack_refresh_token: Optional[str] = Field(default=None, exclude=True)
-    oidc_client_secret: Optional[str] = Field(default=None, exclude=True)
-    gitlab_access_token: Optional[str] = Field(default=None, exclude=True)
-    mattermost_bot_token: Optional[str] = Field(default=None, exclude=True)
+    github_token: str | None = Field(default=None, exclude=True)
+    smtp_password: str | None = Field(default=None, exclude=True)
+    open_source_malware_api_key: str | None = Field(default=None, exclude=True)
+    slack_bot_token: str | None = Field(default=None, exclude=True)
+    slack_client_secret: str | None = Field(default=None, exclude=True)
+    slack_refresh_token: str | None = Field(default=None, exclude=True)
+    oidc_client_secret: str | None = Field(default=None, exclude=True)
+    gitlab_access_token: str | None = Field(default=None, exclude=True)
+    mattermost_bot_token: str | None = Field(default=None, exclude=True)
 
     @computed_field
     @property
@@ -195,8 +193,8 @@ class AppConfig(BaseModel):
     notifications: NotificationChannels = NotificationChannels()
 
     # Slack OAuth (non-sensitive, needed for "Add to Slack" button)
-    slack_client_id: Optional[str] = None
-    slack_oauth_scopes: Optional[str] = None
+    slack_client_id: str | None = None
+    slack_oauth_scopes: str | None = None
 
     # Chat / AI Assistant feature flag
     chat_enabled: bool = False

@@ -1,7 +1,7 @@
 import pytest
 
-from app.repositories.crypto_asset import CryptoAssetRepository
 from app.models.crypto_asset import CryptoAsset
+from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 

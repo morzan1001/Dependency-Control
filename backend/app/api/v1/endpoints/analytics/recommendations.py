@@ -1,7 +1,7 @@
 """Analytics recommendations endpoint: /projects/{project_id}/recommendations."""
 
 import hashlib
-from typing import Any, Dict, Optional
+from typing import Any
 
 from fastapi import HTTPException
 
@@ -38,7 +38,7 @@ async def get_project_recommendations(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    scan_id: Optional[str] = None,
+    scan_id: str | None = None,
 ) -> RecommendationsResponse:
     """Generate remediation recommendations for a project's findings."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
@@ -129,7 +129,7 @@ async def get_project_recommendations(
     quality_count = sum(1 for f in findings if f.type == "quality")
     crypto_count = sum(1 for f in findings if isinstance(f.type, str) and f.type.startswith("crypto_"))
 
-    summary: Dict[str, Any] = {
+    summary: dict[str, Any] = {
         "base_image_updates": 0,
         "direct_updates": 0,
         "transitive_updates": 0,

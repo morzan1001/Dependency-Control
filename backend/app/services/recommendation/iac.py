@@ -1,11 +1,10 @@
 from collections import defaultdict
-from typing import Dict, List
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import get_attr, ModelOrDict
+from app.services.recommendation.common import ModelOrDict, get_attr
 
 
-def process_iac(findings: List[ModelOrDict]) -> List[Recommendation]:
+def process_iac(findings: list[ModelOrDict]) -> list[Recommendation]:
     """Process IAC (Infrastructure as Code) findings."""
     if not findings:
         return []
@@ -38,7 +37,7 @@ def process_iac(findings: List[ModelOrDict]) -> List[Recommendation]:
     recommendations = []
 
     for platform, plat_findings in findings_by_platform.items():
-        severity_counts: Dict[str, int] = defaultdict(int)
+        severity_counts: dict[str, int] = defaultdict(int)
         files_affected = set()
 
         for f in plat_findings:
@@ -90,9 +89,9 @@ def process_iac(findings: List[ModelOrDict]) -> List[Recommendation]:
     return recommendations
 
 
-def _get_common_iac_issues(findings: List[ModelOrDict]) -> List[str]:
+def _get_common_iac_issues(findings: list[ModelOrDict]) -> list[str]:
     """Extract common IAC issue types."""
-    issues: Dict[str, int] = defaultdict(int)
+    issues: dict[str, int] = defaultdict(int)
     for f in findings:
         details = get_attr(f, "details", {})
         issue_type = (

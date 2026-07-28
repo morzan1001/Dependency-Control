@@ -1,12 +1,14 @@
 import logging
 from datetime import datetime, timezone
-from typing import Annotated, Any, Dict
+from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, status
+
 from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import build_pagination_response
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_AUTH_400_404_500, RESP_AUTH_404
 from app.core.permissions import Permissions
 from app.models.github_instance import GitHubInstance
 from app.models.user import User
@@ -19,7 +21,6 @@ from app.schemas.github_instance import (
     GitHubInstanceTestConnectionResponse,
     GitHubInstanceUpdate,
 )
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_AUTH_400_404_500, RESP_AUTH_404
 from app.services.github import GitHubService
 
 router = CustomAPIRouter()
@@ -50,7 +51,7 @@ async def list_instances(
     page: int = 1,
     size: int = 100,
     active_only: bool = False,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """List all GitHub instances."""
     instance_repo = GitHubInstanceRepository(db)
 
@@ -135,7 +136,7 @@ async def create_instance(
         logger.exception("JWKS connectivity test failed for %s: %s", instance_data.url, e)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Failed to reach OIDC endpoint: {str(e)}",
+            detail=f"Failed to reach OIDC endpoint: {e!s}",
         )
 
     created_instance = await instance_repo.create(new_instance)
@@ -171,12 +172,15 @@ async def update_instance(
             )
         update_dict["url"] = update_dict["url"].rstrip("/")
 
-    if "name" in update_dict and update_dict["name"] != instance.name:
-        if await instance_repo.exists_by_name(update_dict["name"], exclude_id=instance_id):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Another instance with name '{update_dict['name']}' already exists",
-            )
+    if (
+        "name" in update_dict
+        and update_dict["name"] != instance.name
+        and await instance_repo.exists_by_name(update_dict["name"], exclude_id=instance_id)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Another instance with name '{update_dict['name']}' already exists",
+        )
 
     update_dict["last_modified_at"] = datetime.now(timezone.utc)
 
@@ -274,7 +278,7 @@ async def test_connection(
         logger.exception("Connection test failed for GitHub instance '%s': %s", instance.name, e)
         return GitHubInstanceTestConnectionResponse(
             success=False,
-            message=f"Connection failed: {str(e)}",
+            message=f"Connection failed: {e!s}",
             instance_name=instance.name,
             url=instance.url,
         )

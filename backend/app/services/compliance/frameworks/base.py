@@ -4,7 +4,7 @@ import hashlib
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -28,14 +28,14 @@ logger = logging.getLogger(__name__)
 class EvaluationInput:
     resolved: ResolvedScope
     scope_description: str
-    crypto_assets: List[CryptoAsset]
-    findings: List[dict]
-    policy_rules: List[dict]  # CryptoRule dumps from the effective policy
-    policy_version: Optional[int]
-    iana_catalog_version: Optional[int]
-    scan_ids: List[str]
+    crypto_assets: list[CryptoAsset]
+    findings: list[dict]
+    policy_rules: list[dict]  # CryptoRule dumps from the effective policy
+    policy_version: int | None
+    iana_catalog_version: int | None
+    scan_ids: list[str]
     # Set for meta-frameworks that run their own DB queries (e.g. PQC).
-    db: Optional[AsyncIOMotorDatabase[Any]] = None
+    db: AsyncIOMotorDatabase[Any] | None = None
 
 
 @runtime_checkable
@@ -48,11 +48,11 @@ class ComplianceFramework(Protocol):
     source_url: str
 
     @property
-    def disclaimer(self) -> Optional[str]:  # shown on report cover
+    def disclaimer(self) -> str | None:  # shown on report cover
         ...
 
     @property
-    def controls(self) -> List[ControlDefinition]: ...
+    def controls(self) -> list[ControlDefinition]: ...
 
     def evaluate(self, data: EvaluationInput) -> FrameworkEvaluation: ...
 
@@ -112,18 +112,19 @@ def _finding_matches_control(finding: dict, control: ControlDefinition) -> bool:
 
 def _rules_for_control(
     control: ControlDefinition,
-    policy_rules: List[dict],
-) -> List[CryptoRule]:
+    policy_rules: list[dict],
+) -> list[CryptoRule]:
     """Reconstruct the CryptoRule objects this control maps to from policy_rules dumps; skip absent/unparseable rules."""
     if not control.maps_to_rule_ids:
         return []
     wanted = set(control.maps_to_rule_ids)
-    rules: List[CryptoRule] = []
+    rules: list[CryptoRule] = []
     for raw in policy_rules:
         if raw.get("rule_id") in wanted:
             try:
                 rules.append(CryptoRule.model_validate(raw))
             except Exception:  # pragma: no cover
+                logger.debug("compliance: skipping unparseable policy rule %s", raw.get("rule_id"))
                 continue
     return rules
 
@@ -160,8 +161,8 @@ def _is_applicable(
     return any(asset_in_rule_scope(asset, rule) for asset in data.crypto_assets for rule in enabled_rules)
 
 
-def _extract_bom_refs(findings: List[dict]) -> List[str]:
-    refs: List[str] = []
+def _extract_bom_refs(findings: list[dict]) -> list[str]:
+    refs: list[str] = []
     for f in findings:
         details = f.get("details") or {}
         if ref := details.get("bom_ref"):
@@ -174,7 +175,7 @@ def evaluate_framework(
     data: EvaluationInput,
 ) -> FrameworkEvaluation:
     """Run every control and build the FrameworkEvaluation."""
-    control_results: List[ControlResult] = []
+    control_results: list[ControlResult] = []
     for control in framework.controls:
         if control.custom_evaluator is not None:
             result = control.custom_evaluator(data)
@@ -205,12 +206,12 @@ def status_value(status: Any) -> str:
     return status.value if hasattr(status, "value") else str(status)
 
 
-def extract_finding_id(finding: Dict[str, Any]) -> str:
+def extract_finding_id(finding: dict[str, Any]) -> str:
     """Finding ID from _id or id ('' when neither is present)."""
     return str(finding.get("_id") or finding.get("id") or "")
 
 
-def _classify(matching: List[Dict[str, Any]]) -> tuple[ControlStatus, List[str]]:
+def _classify(matching: list[dict[str, Any]]) -> tuple[ControlStatus, list[str]]:
     """Map matched findings to (status, evidence_ids): empty -> PASSED, any active -> FAILED, else WAIVED."""
     if not matching:
         return ControlStatus.PASSED, []
@@ -221,12 +222,12 @@ def _classify(matching: List[Dict[str, Any]]) -> tuple[ControlStatus, List[str]]
     return ControlStatus.WAIVED, evidence_ids
 
 
-def _waiver_reason(f: Dict[str, Any]) -> str:
+def _waiver_reason(f: dict[str, Any]) -> str:
     """Best-effort waiver-reason accessor ('' when absent/None)."""
     return str(f.get("waiver_reason") or "")
 
 
-def build_summary(results: List[ControlResult]) -> Dict[str, int]:
+def build_summary(results: list[ControlResult]) -> dict[str, int]:
     """Count controls by status bucket."""
     counts = {"passed": 0, "failed": 0, "waived": 0, "not_applicable": 0, "total": len(results)}
     for r in results:
@@ -235,7 +236,7 @@ def build_summary(results: List[ControlResult]) -> Dict[str, int]:
     return counts
 
 
-def build_residual_risks(results: List[ControlResult]) -> List[ResidualRisk]:
+def build_residual_risks(results: list[ControlResult]) -> list[ResidualRisk]:
     """Convert every FAILED ControlResult into a ResidualRisk entry."""
     return [
         ResidualRisk(

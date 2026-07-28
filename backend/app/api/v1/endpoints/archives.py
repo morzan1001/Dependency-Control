@@ -3,18 +3,18 @@
 import logging
 import math
 import time
+from collections.abc import AsyncIterator
 from datetime import datetime
-from typing import Annotated, AsyncIterator, List, Optional
+from typing import Annotated
 
 from fastapi import HTTPException, Query
 from fastapi.responses import StreamingResponse
 
-from app.api.router import CustomAPIRouter
 from app.api.deps import CurrentUserDep, DatabaseDep
+from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_500
 from app.core.constants import PROJECT_ROLE_ADMIN
-from app.core.permissions import Permissions, has_permission
 from app.core.encryption import decrypt_stream, is_encryption_enabled
 from app.core.metrics import (
     ArchiveFailureReason,
@@ -22,6 +22,7 @@ from app.core.metrics import (
     archive_operation_duration_seconds,
     archive_operations_total,
 )
+from app.core.permissions import Permissions, has_permission
 from app.core.s3 import download_stream, is_archive_enabled
 from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.schemas.archive import (
@@ -42,7 +43,7 @@ admin_router = CustomAPIRouter()
 _MSG_ARCHIVE_NOT_CONFIGURED = "Archive storage is not configured"
 
 
-def _require_archive_permission(user_permissions: List[str], permission: str) -> None:
+def _require_archive_permission(user_permissions: list[str], permission: str) -> None:
     """Raise 403 if user lacks the given archive permission."""
     if not has_permission(user_permissions, permission):
         raise HTTPException(status_code=403, detail="Not enough permissions")
@@ -65,9 +66,9 @@ async def list_archives(
     db: DatabaseDep,
     page: Annotated[int, Query(ge=1)] = 1,
     size: Annotated[int, Query(ge=1, le=100)] = 20,
-    branch: Annotated[Optional[str], Query(description="Filter by branch name")] = None,
-    date_from: Annotated[Optional[datetime], Query(description="Filter scans created from this date")] = None,
-    date_to: Annotated[Optional[datetime], Query(description="Filter scans created until this date")] = None,
+    branch: Annotated[str | None, Query(description="Filter by branch name")] = None,
+    date_from: Annotated[datetime | None, Query(description="Filter scans created from this date")] = None,
+    date_to: Annotated[datetime | None, Query(description="Filter scans created until this date")] = None,
 ) -> ArchiveListResponse:
     """List all archived scans for a project. Requires archive:read permission."""
     _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_READ)
@@ -123,7 +124,7 @@ async def list_archive_branches(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> List[str]:
+) -> list[str]:
     """Get all unique branch names in a project's archives. Requires archive:read."""
     _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_READ)
     await check_project_access(project_id, current_user, db)
@@ -316,10 +317,10 @@ async def list_all_archives(
     db: DatabaseDep,
     page: Annotated[int, Query(ge=1)] = 1,
     size: Annotated[int, Query(ge=1, le=100)] = 20,
-    project_id: Annotated[Optional[str], Query(description="Filter by project ID")] = None,
-    branch: Annotated[Optional[str], Query(description="Filter by branch name")] = None,
-    date_from: Annotated[Optional[datetime], Query(description="Filter scans created from this date")] = None,
-    date_to: Annotated[Optional[datetime], Query(description="Filter scans created until this date")] = None,
+    project_id: Annotated[str | None, Query(description="Filter by project ID")] = None,
+    branch: Annotated[str | None, Query(description="Filter by branch name")] = None,
+    date_from: Annotated[datetime | None, Query(description="Filter scans created from this date")] = None,
+    date_to: Annotated[datetime | None, Query(description="Filter scans created until this date")] = None,
 ) -> AdminArchiveListResponse:
     """List all archived scans across all projects. Requires archive:read_all permission."""
     _require_archive_permission(current_user.permissions, Permissions.ARCHIVE_READ_ALL)

@@ -1,19 +1,20 @@
-from datetime import datetime, timezone
+import contextlib
 import re
-from typing import Annotated, Any, Dict, Optional
+from datetime import datetime, timezone
+from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.api.v1.helpers import (
     build_pagination_response,
     check_project_access,
     get_user_project_ids,
     parse_sort_direction,
 )
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.constants import (
     PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
@@ -29,10 +30,8 @@ from app.services.stats import _build_waiver_query, recalculate_all_projects, re
 
 def _invalidate_analytics_cache() -> None:
     """Best-effort flush of the analytics TTL cache; waiver mutations change waived-derived counts."""
-    try:
+    with contextlib.suppress(Exception):
         get_analytics_cache().clear()
-    except Exception:  # pragma: no cover
-        pass
 
 
 _MSG_NO_MATCHING_FINDING = (
@@ -42,7 +41,7 @@ _MSG_NO_MATCHING_FINDING = (
 )
 
 
-async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> Optional[dict]:
+async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> dict | None:
     """Reject finding-scope project waivers matching no finding in the latest scan; return the matched finding doc, or None when validation is skipped."""
     if not waiver_in.project_id:
         return None
@@ -64,7 +63,7 @@ async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMot
         return None  # nothing concrete to validate against
 
     finding_query["scan_id"] = latest_scan_id
-    finding: Optional[dict] = await db.findings.find_one(finding_query, {"match": 1, "type": 1, "component": 1})
+    finding: dict | None = await db.findings.find_one(finding_query, {"match": 1, "type": 1, "component": 1})
     if finding is None:
         raise HTTPException(status_code=422, detail=_MSG_NO_MATCHING_FINDING)
     return finding
@@ -124,11 +123,11 @@ async def create_waiver(
 async def list_waivers(
     db: DatabaseDep,
     current_user: CurrentUserDep,
-    project_id: Optional[str] = None,
+    project_id: str | None = None,
     global_only: Annotated[bool, Query(description="Only return global waivers (project_id=None)")] = False,
-    finding_id: Optional[str] = None,
-    package_name: Optional[str] = None,
-    search: Annotated[Optional[str], Query(description="Search in package name, reason, or finding ID")] = None,
+    finding_id: str | None = None,
+    package_name: str | None = None,
+    search: Annotated[str | None, Query(description="Search in package name, reason, or finding ID")] = None,
     orphaned: Annotated[
         bool, Query(description="Only return orphaned waivers (evaluated but matching 0 findings)")
     ] = False,
@@ -136,9 +135,9 @@ async def list_waivers(
     sort_order: Annotated[str, Query(description="Sort order: asc or desc")] = "desc",
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=500, description="Number of items to return")] = 50,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """List waivers with pagination."""
-    query: Dict[str, Any] = {}
+    query: dict[str, Any] = {}
 
     has_read_all = has_permission(current_user.permissions, Permissions.WAIVER_READ_ALL)
     has_read_own = has_permission(current_user.permissions, Permissions.WAIVER_READ)
@@ -183,7 +182,7 @@ async def list_waivers(
     if orphaned:
         # Mirror the UI badge: evaluated, suppressing 0 findings, and not expired.
         now = datetime.now(timezone.utc)
-        orphaned_clause: Dict[str, Any] = {
+        orphaned_clause: dict[str, Any] = {
             "last_eval_scan_id": {"$ne": None},
             "last_match_count": 0,
             "$or": [
@@ -297,5 +296,3 @@ async def delete_waiver(
         background_tasks.add_task(recalculate_project_stats, waiver.project_id, db)
     else:
         background_tasks.add_task(recalculate_all_projects, db)
-
-    return None

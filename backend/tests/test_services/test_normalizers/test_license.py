@@ -45,7 +45,7 @@ class TestNormalizeLicense:
             ]
         }
         self.agg.aggregate("license_compliance", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["license"] == "AGPL-3.0"
         assert f.details["category"] == "copyleft"
         assert f.details["explanation"] == "Strong copyleft license"
@@ -55,13 +55,13 @@ class TestNormalizeLicense:
     def test_default_severity_medium(self):
         result = {"license_issues": [{"component": "pkg", "version": "1.0", "license": "MIT"}]}
         self.agg.aggregate("license_compliance", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.severity == "MEDIUM"
 
     def test_default_description(self):
         result = {"license_issues": [{"component": "pkg", "version": "1.0", "license": "GPL-2.0"}]}
         self.agg.aggregate("license_compliance", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert "GPL-2.0" in f.description
 
     def test_enrichment_called(self):
@@ -86,5 +86,5 @@ class TestNormalizeLicense:
     def test_unknown_license(self):
         result = {"license_issues": [{"component": "pkg", "version": "1.0"}]}
         self.agg.aggregate("license_compliance", result)
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.details["license"] == "UNKNOWN"

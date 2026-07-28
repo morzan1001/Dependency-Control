@@ -206,7 +206,7 @@ class TestReadTeam:
 class TestUpdateTeam:
     def test_success_updates_team(self, admin_user):
         from app.api.v1.endpoints.teams import update_team
-        from app.schemas.team import TeamUpdate, TeamResponse
+        from app.schemas.team import TeamResponse, TeamUpdate
 
         team = _make_team()
         enriched_response = TeamResponse(

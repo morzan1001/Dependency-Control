@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.core.constants import ANALYZER_TIMEOUTS, EXPLOIT_MATURITY_ORDER
 from app.core.http_utils import InstrumentedAsyncClient
@@ -18,9 +18,9 @@ logger = logging.getLogger(__name__)
 
 def _build_enrichment(
     cve: str,
-    kev_entry: Optional[KEVEntry],
-    epss_entry: Optional[EPSSData],
-    cvss: Optional[float],
+    kev_entry: KEVEntry | None,
+    epss_entry: EPSSData | None,
+    cvss: float | None,
 ) -> VulnerabilityEnrichment:
     is_kev = kev_entry is not None
     kev_ransomware = kev_entry.known_ransomware_use if kev_entry else False
@@ -42,9 +42,9 @@ def _build_enrichment(
 
 
 def _add_finding_to_map(
-    cve_to_findings: Dict[str, List[Dict[str, Any]]],
+    cve_to_findings: dict[str, list[dict[str, Any]]],
     cve: str,
-    finding: Dict[str, Any],
+    finding: dict[str, Any],
 ) -> None:
     if cve not in cve_to_findings:
         cve_to_findings[cve] = []
@@ -53,10 +53,10 @@ def _add_finding_to_map(
 
 
 def _extract_finding_id_cve(
-    finding: Dict[str, Any],
-    details: Dict[str, Any],
-    cve_to_findings: Dict[str, List[Dict[str, Any]]],
-    cvss_scores: Dict[str, float],
+    finding: dict[str, Any],
+    details: dict[str, Any],
+    cve_to_findings: dict[str, list[dict[str, Any]]],
+    cvss_scores: dict[str, float],
 ) -> None:
     finding_id = finding.get("finding_id") or finding.get("id", "")
     if not (finding_id and finding_id.startswith("CVE-")):
@@ -67,9 +67,9 @@ def _extract_finding_id_cve(
 
 
 def _extract_aliases(
-    aliases: List[str],
-    finding: Dict[str, Any],
-    cve_to_findings: Dict[str, List[Dict[str, Any]]],
+    aliases: list[str],
+    finding: dict[str, Any],
+    cve_to_findings: dict[str, list[dict[str, Any]]],
 ) -> None:
     for alias in aliases:
         if alias.startswith("CVE-"):
@@ -77,13 +77,13 @@ def _extract_aliases(
 
 
 def _extract_vuln_cves(
-    vuln: Dict[str, Any],
-    finding: Dict[str, Any],
-    cve_to_findings: Dict[str, List[Dict[str, Any]]],
-    cvss_scores: Dict[str, float],
+    vuln: dict[str, Any],
+    finding: dict[str, Any],
+    cve_to_findings: dict[str, list[dict[str, Any]]],
+    cvss_scores: dict[str, float],
 ) -> None:
     cve = vuln.get("id", "")
-    if cve and (cve.startswith("CVE-") or cve.startswith("GHSA-")):
+    if cve and (cve.startswith(("CVE-", "GHSA-"))):
         _add_finding_to_map(cve_to_findings, cve, finding)
         if vuln.get("cvss_score") is not None and cve not in cvss_scores:
             cvss_scores[cve] = vuln["cvss_score"]
@@ -91,9 +91,9 @@ def _extract_vuln_cves(
 
 
 def _extract_cves_from_finding(
-    finding: Dict[str, Any],
-    cve_to_findings: Dict[str, List[Dict[str, Any]]],
-    cvss_scores: Dict[str, float],
+    finding: dict[str, Any],
+    cve_to_findings: dict[str, list[dict[str, Any]]],
+    cvss_scores: dict[str, float],
 ) -> None:
     details = finding.get("details", {})
     if not isinstance(details, dict):
@@ -108,11 +108,11 @@ def _extract_cves_from_finding(
 
 
 def _apply_ghsa_to_vuln(
-    vuln: Dict[str, Any],
+    vuln: dict[str, Any],
     ghsa_id: str,
     ghsa_data: GHSAData,
-    cve_to_findings: Dict[str, List[Dict[str, Any]]],
-    finding: Dict[str, Any],
+    cve_to_findings: dict[str, list[dict[str, Any]]],
+    finding: dict[str, Any],
 ) -> None:
     if vuln.get("id") != ghsa_id:
         return
@@ -135,8 +135,8 @@ def _apply_ghsa_to_vuln(
 
 
 def _apply_ghsa_cve_alias_to_finding(
-    finding: Dict[str, Any],
-    cve_id: Optional[str],
+    finding: dict[str, Any],
+    cve_id: str | None,
 ) -> None:
     if not cve_id:
         return
@@ -147,10 +147,10 @@ def _apply_ghsa_cve_alias_to_finding(
 
 
 def _apply_ghsa_to_finding(
-    finding: Dict[str, Any],
+    finding: dict[str, Any],
     ghsa_id: str,
     ghsa_data: GHSAData,
-    cve_to_findings: Dict[str, List[Dict[str, Any]]],
+    cve_to_findings: dict[str, list[dict[str, Any]]],
 ) -> None:
     if "details" not in finding:
         finding["details"] = {}
@@ -164,9 +164,9 @@ def _apply_ghsa_to_finding(
 
 
 def _apply_ghsa_resolutions(
-    ghsa_resolutions: Dict[str, GHSAData],
-    cve_to_findings: Dict[str, List[Dict[str, Any]]],
-    cvss_scores: Dict[str, float],
+    ghsa_resolutions: dict[str, GHSAData],
+    cve_to_findings: dict[str, list[dict[str, Any]]],
+    cvss_scores: dict[str, float],
 ) -> None:
     for ghsa_id, ghsa_data in ghsa_resolutions.items():
         # GHSA-first ecosystems record cvss_score only under the GHSA id; carry it
@@ -178,7 +178,7 @@ def _apply_ghsa_resolutions(
 
 
 def _apply_enrichment_to_vuln(
-    vuln: Dict[str, Any],
+    vuln: dict[str, Any],
     cve: str,
     enrichment: VulnerabilityEnrichment,
 ) -> None:
@@ -196,7 +196,7 @@ def _apply_enrichment_to_vuln(
 
 
 def _apply_enrichment_to_finding(
-    finding: Dict[str, Any],
+    finding: dict[str, Any],
     enrichment: VulnerabilityEnrichment,
 ) -> None:
     details = finding.setdefault("details", {})
@@ -234,13 +234,13 @@ class VulnerabilityEnrichmentService:
     """Enrich vulnerabilities with EPSS, KEV, and GHSA data, using Redis for cross-pod caching."""
 
     def __init__(self) -> None:
-        self._http_client: Optional[InstrumentedAsyncClient] = None
+        self._http_client: InstrumentedAsyncClient | None = None
         self._client_lock = asyncio.Lock()
         self._epss_provider = EPSSProvider()
         self._kev_provider = KEVProvider()
         self._ghsa_provider = GHSAProvider()
 
-    def set_github_token(self, token: Optional[str]) -> None:
+    def set_github_token(self, token: str | None) -> None:
         self._ghsa_provider.set_token(token)
 
     async def _get_client(self) -> InstrumentedAsyncClient:
@@ -260,15 +260,15 @@ class VulnerabilityEnrichmentService:
         if self._http_client:
             await self._http_client.close()
 
-    async def resolve_ghsa_to_cve(self, ghsa_ids: List[str]) -> Dict[str, GHSAData]:
+    async def resolve_ghsa_to_cve(self, ghsa_ids: list[str]) -> dict[str, GHSAData]:
         client = await self._get_client()
         return await self._ghsa_provider.resolve_ghsa_to_cve(client, ghsa_ids)
 
     async def enrich_cves(
         self,
-        cves: List[str],
-        cvss_scores: Optional[Dict[str, float]] = None,
-    ) -> Dict[str, VulnerabilityEnrichment]:
+        cves: list[str],
+        cvss_scores: dict[str, float] | None = None,
+    ) -> dict[str, VulnerabilityEnrichment]:
         """Enrich CVEs with EPSS and KEV data; returns {cve: VulnerabilityEnrichment}."""
         if not cves:
             return {}
@@ -302,13 +302,13 @@ class VulnerabilityEnrichmentService:
 
         return results
 
-    async def enrich_findings(self, findings: List[Dict[str, Any]]) -> None:
+    async def enrich_findings(self, findings: list[dict[str, Any]]) -> None:
         """Enrich vulnerability findings in-place with EPSS and KEV data."""
         if not findings:
             return
 
-        cve_to_findings: Dict[str, List[Dict[str, Any]]] = {}
-        cvss_scores: Dict[str, float] = {}
+        cve_to_findings: dict[str, list[dict[str, Any]]] = {}
+        cvss_scores: dict[str, float] = {}
 
         for finding in findings:
             _extract_cves_from_finding(finding, cve_to_findings, cvss_scores)
@@ -316,13 +316,13 @@ class VulnerabilityEnrichmentService:
         if not cve_to_findings:
             return
 
-        ghsa_ids = [vid for vid in cve_to_findings.keys() if vid.startswith("GHSA-")]
+        ghsa_ids = [vid for vid in cve_to_findings if vid.startswith("GHSA-")]
         if ghsa_ids:
             logger.info(f"Resolving {len(ghsa_ids)} GHSA IDs to CVEs")
             ghsa_resolutions = await self.resolve_ghsa_to_cve(ghsa_ids)
             _apply_ghsa_resolutions(ghsa_resolutions, cve_to_findings, cvss_scores)
 
-        cves_to_enrich = [cve for cve in cve_to_findings.keys() if cve.startswith("CVE-")]
+        cves_to_enrich = [cve for cve in cve_to_findings if cve.startswith("CVE-")]
         enrichments = await self.enrich_cves(cves_to_enrich, cvss_scores)
 
         for cve, enrichment in enrichments.items():

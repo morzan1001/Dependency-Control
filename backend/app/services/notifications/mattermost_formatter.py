@@ -1,6 +1,6 @@
 """Mattermost message attachment formatting."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 _COLOR_SUCCESS = "#36a64f"
 _COLOR_DANGER = "#dc3545"
@@ -15,7 +15,7 @@ _SEVERITY_EMOJI = {
 }
 
 
-def build_generic_props(subject: str, message: str) -> Dict[str, Any]:
+def build_generic_props(subject: str, message: str) -> dict[str, Any]:
     """Default Mattermost props: a simple attachment from subject + message."""
     return {
         "attachments": [
@@ -32,10 +32,10 @@ def build_analysis_completed_props(
     project_name: str,
     scan_id: str,
     total_findings: int,
-    severity_counts: Dict[str, int],
-    results_summary: List[str],
+    severity_counts: dict[str, int],
+    results_summary: list[str],
     scan_link: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build Mattermost attachment props for analysis completed notification."""
     critical = severity_counts.get("CRITICAL", 0)
     high = severity_counts.get("HIGH", 0)
@@ -79,7 +79,7 @@ def build_analysis_completed_props(
     }
 
 
-def _format_vuln_line(index: int, vuln: Dict[str, Any]) -> str:
+def _format_vuln_line(index: int, vuln: dict[str, Any]) -> str:
     """Format a single vulnerability line for Mattermost markdown."""
     emoji = _SEVERITY_EMOJI.get(vuln.get("severity", ""), "\u26aa")
     line = f"{index}. `{vuln['id']}` {emoji} {vuln['severity']} \u2014 {vuln['package']}"
@@ -102,11 +102,11 @@ def build_vulnerability_found_props(
     kev_count: int,
     high_epss_count: int,
     critical_count: int,
-    top_vulns: List[Dict[str, Any]],
+    top_vulns: list[dict[str, Any]],
     scan_link: str,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """Build Mattermost attachment props for vulnerability found notification."""
-    fields: List[Dict[str, Any]] = []
+    fields: list[dict[str, Any]] = []
     if kev_count:
         fields.append({"short": True, "title": "\u26a0\ufe0f KEV Vulnerabilities", "value": str(kev_count)})
     if high_epss_count:
@@ -139,9 +139,9 @@ def build_vulnerability_found_props(
 def build_advisory_props(
     subject: str,
     message: str,
-    affected_projects: Optional[List[Dict[str, Any]]] = None,
-    dashboard_link: Optional[str] = None,
-) -> Dict[str, Any]:
+    affected_projects: list[dict[str, Any]] | None = None,
+    dashboard_link: str | None = None,
+) -> dict[str, Any]:
     """Build Mattermost attachment props for advisory / broadcast notifications."""
     text = message
 

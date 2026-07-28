@@ -1,6 +1,6 @@
 """Repository for system settings."""
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -25,10 +25,10 @@ class SystemSettingsRepository:
             await self.collection.insert_one(default_settings.model_dump(by_alias=True))
         return default_settings
 
-    async def get_raw(self) -> Optional[Dict[str, Any]]:
+    async def get_raw(self) -> dict[str, Any] | None:
         return await self.collection.find_one({"_id": self.SETTINGS_ID})
 
-    async def update(self, update_data: Dict[str, Any]) -> SystemSettings:
+    async def update(self, update_data: dict[str, Any]) -> SystemSettings:
         await self.collection.update_one(
             {"_id": self.SETTINGS_ID},
             {"$set": update_data},

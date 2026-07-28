@@ -1,7 +1,6 @@
 """PDF renderer: renders a Jinja2 template with evaluation data to PDF bytes via WeasyPrint."""
 
 from pathlib import Path
-from typing import Optional, Tuple
 
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import FrameworkEvaluation, ReportFormat
@@ -20,8 +19,8 @@ class PdfRenderer:
         evaluation: FrameworkEvaluation,
         report: ComplianceReport,
         *,
-        disclaimer: Optional[str] = None,
-    ) -> Tuple[bytes, str, str]:
+        disclaimer: str | None = None,
+    ) -> tuple[bytes, str, str]:
         # Lazy imports so module import never fails on missing native libs.
         from jinja2 import Environment, FileSystemLoader, select_autoescape
         from weasyprint import CSS, HTML

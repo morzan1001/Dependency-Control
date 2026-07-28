@@ -1,12 +1,13 @@
 """Tests for Callgraph, ImportEntry, CallEdge, and ModuleUsage models."""
 
-import pytest
 from datetime import datetime, timezone
+
+import pytest
 from pydantic import ValidationError
 
 from app.models.callgraph import (
-    Callgraph,
     CallEdge,
+    Callgraph,
     ImportEntry,
     ModuleUsage,
 )

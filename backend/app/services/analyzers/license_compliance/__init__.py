@@ -3,4 +3,4 @@
 from .analyzer import LicenseAnalyzer
 from .constants import LICENSE_DATABASE
 
-__all__ = ["LicenseAnalyzer", "LICENSE_DATABASE"]
+__all__ = ["LICENSE_DATABASE", "LicenseAnalyzer"]

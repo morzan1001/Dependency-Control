@@ -1,7 +1,8 @@
 """CRYPTO_* FindingType values work with the existing waiver machinery: _build_waiver_query and FindingRepository.apply_finding_waiver."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from app.models.finding import FindingType
 from app.models.waiver import Waiver

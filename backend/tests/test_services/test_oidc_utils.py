@@ -3,6 +3,7 @@
 import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -10,7 +11,6 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 from jose import jwk, jwt
 from jose.constants import ALGORITHMS
-
 from pydantic import ValidationError
 
 from app.models.gitlab_api import OIDCPayload
@@ -161,7 +161,7 @@ class _FakeCooldownCache:
 class TestJwksForcedRefreshCooldown:
     """An unknown kid must not force unbounded JWKS invalidations/refetches: after one forced refresh, further unknown-kid lookups within the cooldown fail fast."""
 
-    _KNOWN_KEY = {"kid": "known", "kty": "RSA", "n": "n", "e": "AQAB"}
+    _KNOWN_KEY: ClassVar[dict[str, str]] = {"kid": "known", "kty": "RSA", "n": "n", "e": "AQAB"}
 
     def test_unknown_kid_forces_refresh_only_once_within_cooldown(self):
         """Repeated unknown kids trigger at most ONE forced refresh per provider within the cooldown window."""

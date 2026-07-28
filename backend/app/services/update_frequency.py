@@ -9,7 +9,7 @@ import logging
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any, Deque, Dict, List, Optional, Tuple
+from typing import Any
 
 from packaging.version import InvalidVersion, Version
 
@@ -43,7 +43,7 @@ _COMPARISON_CONCURRENCY = 3
 _DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "purl": 1, "scan_id": 1}
 
 
-def _release_tuple(version: Version) -> Tuple[int, int, int]:
+def _release_tuple(version: Version) -> tuple[int, int, int]:
     """``(major, minor, patch)`` padded with zeros for shorter release tuples."""
     release = version.release
     return (
@@ -80,10 +80,10 @@ def classify_version_change(old_version: str, new_version: str) -> str:
 
 
 def _pregroup_deps_by_scan(
-    all_deps: List[Dict[str, Any]],
-) -> Dict[str, Dict[str, Dict[str, str]]]:
+    all_deps: list[dict[str, Any]],
+) -> dict[str, dict[str, dict[str, str]]]:
     """Group dependencies by ``scan_id`` into ``{scan_id: {pkg_name: {version, type, purl}}}``."""
-    grouped: Dict[str, Dict[str, Dict[str, str]]] = defaultdict(dict)
+    grouped: dict[str, dict[str, dict[str, str]]] = defaultdict(dict)
     for dep in all_deps:
         scan_id = dep.get("scan_id", "")
         name = dep.get("name", "")
@@ -99,7 +99,7 @@ def _pregroup_deps_by_scan(
 async def _load_outdated_for_scan(
     analysis_repo: AnalysisResultRepository,
     scan_id: str,
-    package_latest_info: Dict[str, Dict[str, str]],
+    package_latest_info: dict[str, dict[str, str]],
 ) -> set:
     """Load one scan's outdated_packages result, returning component names.
 
@@ -129,20 +129,20 @@ async def _load_outdated_for_scan(
 
 
 def _compare_scan_pair(
-    deps_by_scan: Dict[str, Dict[str, Dict[str, str]]],
+    deps_by_scan: dict[str, dict[str, dict[str, str]]],
     prev_scan_id: str,
     prev_scan_date: datetime,
     curr_scan_id: str,
     curr_scan_date: datetime,
     prev_outdated: set,
-) -> List[DependencyUpdateEvent]:
+) -> list[DependencyUpdateEvent]:
     """Compare dependencies between two consecutive scans and return update events."""
     days_between = max(1, (curr_scan_date - prev_scan_date).days)
 
     prev_deps = deps_by_scan.get(prev_scan_id, {})
     curr_deps = deps_by_scan.get(curr_scan_id, {})
 
-    events: List[DependencyUpdateEvent] = []
+    events: list[DependencyUpdateEvent] = []
     for pkg_name, curr_info in curr_deps.items():
         prev_info = prev_deps.get(pkg_name)
         if not prev_info or curr_info["version"] == prev_info["version"]:
@@ -172,7 +172,7 @@ def _compare_scan_pair(
 def _build_timeline_entry(
     scan_id: str,
     scan_date: datetime,
-    events: List[DependencyUpdateEvent],
+    events: list[DependencyUpdateEvent],
     outdated_count: int,
 ) -> ScanTimelineEntry:
     """Build a timeline entry from a list of update events for a scan."""
@@ -189,8 +189,8 @@ def _build_timeline_entry(
 
 
 def _compute_trend(
-    scan_timeline: List[ScanTimelineEntry],
-) -> Tuple[str, str]:
+    scan_timeline: list[ScanTimelineEntry],
+) -> tuple[str, str]:
     """Trend ``(direction, detail)`` from comparing the first vs second half of the timeline."""
     if len(scan_timeline) < 4:
         return "unknown", "Not enough scans to determine trend (need at least 4)"
@@ -228,7 +228,7 @@ def _compute_trend(
     return "stable", (f"Consistent (~{newer_avg_updates:.1f} updates/scan, ~{newer_avg_outdated:.0f} outdated)")
 
 
-def _granularity_ratio(type_counter: Counter, total_updates: int) -> Dict[str, float]:
+def _granularity_ratio(type_counter: Counter, total_updates: int) -> dict[str, float]:
     """Per-update-type share of all updates, rounded to 2 dp."""
     if not total_updates:
         return {"patch": 0.0, "minor": 0.0, "major": 0.0, "unknown": 0.0}
@@ -239,19 +239,19 @@ def _granularity_ratio(type_counter: Counter, total_updates: int) -> Dict[str, f
 
 
 def _aggregate_metrics(
-    completed_scans: List[Dict[str, Any]],
+    completed_scans: list[dict[str, Any]],
     ever_outdated: set,
     ever_resolved: set,
-    scan_timeline: List[ScanTimelineEntry],
-    dep_type_map: Dict[str, str],
-    package_outdated_counts: Dict[str, int],
-    package_latest_info: Dict[str, Dict[str, str]],
+    scan_timeline: list[ScanTimelineEntry],
+    dep_type_map: dict[str, str],
+    package_outdated_counts: dict[str, int],
+    package_latest_info: dict[str, dict[str, str]],
     project_id: str,
     project_name: str,
     *,
     type_counter: Counter,
-    recent_events: List[DependencyUpdateEvent],
-    upstream: Optional[UpstreamCadenceMetrics] = None,
+    recent_events: list[DependencyUpdateEvent],
+    upstream: UpstreamCadenceMetrics | None = None,
 ) -> UpdateFrequencyMetrics:
     """Build the final metrics response from streamed counters."""
     total_updates = sum(type_counter.values())
@@ -273,7 +273,7 @@ def _aggregate_metrics(
     total_outdated_detected = len(ever_outdated)
     outdated_resolved_count = len(ever_outdated & ever_resolved)
     # None means "nothing was ever outdated" — distinct from 0.0 ("nothing resolved").
-    update_coverage_pct: Optional[float] = (
+    update_coverage_pct: float | None = (
         round(outdated_resolved_count / total_outdated_detected * 100, 1) if total_outdated_detected else None
     )
 
@@ -316,10 +316,10 @@ def _aggregate_metrics(
 
 
 def _build_slowest_packages(
-    package_outdated_counts: Dict[str, int],
-    package_latest_info: Dict[str, Dict[str, str]],
-    dep_type_map: Dict[str, str],
-) -> List[SlowPackage]:
+    package_outdated_counts: dict[str, int],
+    package_latest_info: dict[str, dict[str, str]],
+    dep_type_map: dict[str, str],
+) -> list[SlowPackage]:
     """Build the list of slowest-to-update packages (most scans outdated)."""
     slowest = sorted(package_outdated_counts.items(), key=lambda x: x[1], reverse=True)[:15]
     return [
@@ -372,7 +372,7 @@ _MAX_OBSERVATIONS = 10_000
 _ECOSYSTEM_DOMINANCE_THRESHOLD = 0.7
 
 
-def _dominant_ecosystem(dep_type_map: Dict[str, str]) -> Optional[str]:
+def _dominant_ecosystem(dep_type_map: dict[str, str]) -> str | None:
     """Ecosystem owning ≥70% of classified deps; ``"mixed"`` otherwise; ``None`` if empty.
 
     Excludes ``"unknown"`` so missing-PURL noise doesn't tilt the result.
@@ -395,19 +395,19 @@ class _AccumulatorState:
     """Streaming-loop state, bundled so each helper takes a single argument."""
 
     type_counter: Counter = field(default_factory=Counter)
-    recent_events_buffer: Deque[DependencyUpdateEvent] = field(
+    recent_events_buffer: deque[DependencyUpdateEvent] = field(
         default_factory=lambda: deque(maxlen=_RECENT_EVENTS_BUFFER_SIZE)
     )
-    scan_timeline: List[ScanTimelineEntry] = field(default_factory=list)
-    package_outdated_counts: Dict[str, int] = field(default_factory=lambda: defaultdict(int))
-    package_latest_info: Dict[str, Dict[str, str]] = field(default_factory=dict)
-    dep_type_map: Dict[str, str] = field(default_factory=dict)
+    scan_timeline: list[ScanTimelineEntry] = field(default_factory=list)
+    package_outdated_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
+    package_latest_info: dict[str, dict[str, str]] = field(default_factory=dict)
+    dep_type_map: dict[str, str] = field(default_factory=dict)
     ever_outdated: set = field(default_factory=set)
     ever_resolved: set = field(default_factory=set)
-    first_seen_versions: Dict[Tuple[str, str], datetime] = field(default_factory=dict)
-    package_purls: Dict[str, str] = field(default_factory=dict)
+    first_seen_versions: dict[tuple[str, str], datetime] = field(default_factory=dict)
+    package_purls: dict[str, str] = field(default_factory=dict)
 
-    def accumulate_types(self, deps: Dict[str, Dict[str, str]]) -> None:
+    def accumulate_types(self, deps: dict[str, dict[str, str]]) -> None:
         for name, info in deps.items():
             if name not in self.dep_type_map:
                 self.dep_type_map[name] = info.get("type", "unknown")
@@ -420,7 +420,7 @@ class _AccumulatorState:
             self.package_outdated_counts[pkg] += 1
             self.ever_outdated.add(pkg)
 
-    def absorb_events(self, events: List[DependencyUpdateEvent], curr_scan_date: datetime) -> None:
+    def absorb_events(self, events: list[DependencyUpdateEvent], curr_scan_date: datetime) -> None:
         for e in events:
             if e.was_outdated:
                 self.ever_resolved.add(e.package_name)
@@ -436,9 +436,9 @@ async def _load_completed_scans(
     scan_repo: ScanRepository,
     project_id: str,
     max_scans: int,
-    since: Optional[datetime],
+    since: datetime | None,
     hard_limit: int,
-) -> List[Dict[str, Any]]:
+) -> list[dict[str, Any]]:
     """Return completed scans for the project, chronologically ordered.
 
     When ``since`` is set the calendar window dominates (capped by
@@ -454,7 +454,7 @@ async def _load_completed_scans(
         limit=fetch_limit,
         projection={"_id": 1, "created_at": 1, "status": 1, "project_id": 1, "branch": 1},
     )
-    scans_raw: List[Dict[str, Any]] = [{"_id": s.id, "created_at": s.created_at, "status": s.status} for s in scans]
+    scans_raw: list[dict[str, Any]] = [{"_id": s.id, "created_at": s.created_at, "status": s.status} for s in scans]
     if since is not None:
         scans_raw = [s for s in scans_raw if s["created_at"] >= since]
     scans_raw.reverse()
@@ -468,8 +468,8 @@ async def compute_update_frequency(
     dep_repo: DependencyRepository,
     analysis_repo: AnalysisResultRepository,
     max_scans: int = 20,
-    since: Optional[datetime] = None,
-    release_fetcher: Optional[ReleaseHistoryFetcher] = None,
+    since: datetime | None = None,
+    release_fetcher: ReleaseHistoryFetcher | None = None,
     hard_limit: int = _DEFAULT_HARD_LIMIT,
 ) -> UpdateFrequencyMetrics:
     """Compute update-frequency metrics for one project.
@@ -485,7 +485,7 @@ async def compute_update_frequency(
 
     state = _AccumulatorState()
 
-    async def _load_scan_deps(scan_id: str) -> Dict[str, Dict[str, str]]:
+    async def _load_scan_deps(scan_id: str) -> dict[str, dict[str, str]]:
         docs = await dep_repo.find_all({"scan_id": scan_id}, projection=_DEP_PROJECTION)
         return _pregroup_deps_by_scan(docs).get(scan_id, {})
 
@@ -543,10 +543,10 @@ async def compute_update_frequency(
 
 
 async def _maybe_fetch_upstream_cadence(
-    release_fetcher: Optional[ReleaseHistoryFetcher],
-    package_purls: Dict[str, str],
-    first_seen_versions: Dict[Tuple[str, str], datetime],
-) -> Optional[UpstreamCadenceMetrics]:
+    release_fetcher: ReleaseHistoryFetcher | None,
+    package_purls: dict[str, str],
+    first_seen_versions: dict[tuple[str, str], datetime],
+) -> UpstreamCadenceMetrics | None:
     """Call the fetcher and aggregate cadence; supplementary, never load-bearing.
 
     Failures and a missing fetcher both yield ``None`` so the rest of the
@@ -560,9 +560,9 @@ async def _maybe_fetch_upstream_cadence(
     # the raw name 404s every Maven lookup. The fetcher returns history keyed by
     # the name we pass, so remember dep_name -> deps_dev_name to re-key
     # observations and keep adoption-latency matching intact.
-    package_specs: List[Tuple[str, str]] = []
+    package_specs: list[tuple[str, str]] = []
     seen: set = set()
-    name_to_registry_name: Dict[str, str] = {}
+    name_to_registry_name: dict[str, str] = {}
     for name, purl in package_purls.items():
         parsed = parse_purl(purl)
         if parsed is None or not parsed.registry_system:
@@ -584,7 +584,7 @@ async def _maybe_fetch_upstream_cadence(
         logger.warning("release-history fetcher failed; skipping upstream cadence", exc_info=True)
         return None
 
-    observations: List[Observation] = [
+    observations: list[Observation] = [
         (name_to_registry_name.get(pkg, pkg), version, scan_date)
         for (pkg, version), scan_date in first_seen_versions.items()
     ]
@@ -592,13 +592,13 @@ async def _maybe_fetch_upstream_cadence(
 
 
 async def compute_update_frequency_comparison(
-    projects: List[Dict[str, Any]],
+    projects: list[dict[str, Any]],
     scan_repo: ScanRepository,
     dep_repo: DependencyRepository,
     analysis_repo: AnalysisResultRepository,
     max_scans: int = 10,
-    since: Optional[datetime] = None,
-    release_fetcher: Optional[ReleaseHistoryFetcher] = None,
+    since: datetime | None = None,
+    release_fetcher: ReleaseHistoryFetcher | None = None,
 ) -> UpdateFrequencyComparison:
     """Cross-project update-frequency ranking.
 
@@ -610,7 +610,7 @@ async def compute_update_frequency_comparison(
     # at module top); a module-global semaphore would pin to the first loop.
     semaphore = asyncio.Semaphore(_COMPARISON_CONCURRENCY)
 
-    async def _compute_single(project: Dict[str, Any]) -> Optional[ProjectUpdateSummary]:
+    async def _compute_single(project: dict[str, Any]) -> ProjectUpdateSummary | None:
         project_id = project.get("_id") or project.get("id", "")
         project_name = project.get("name", "")
         team_name = project.get("team_name")
@@ -649,7 +649,7 @@ async def compute_update_frequency_comparison(
             )
 
     results = await asyncio.gather(*[_compute_single(p) for p in projects], return_exceptions=True)
-    summaries: List[ProjectUpdateSummary] = [s for s in results if isinstance(s, ProjectUpdateSummary)]
+    summaries: list[ProjectUpdateSummary] = [s for s in results if isinstance(s, ProjectUpdateSummary)]
 
     # None coverage == "nothing to resolve" — rank above any measured coverage.
     def _coverage_key(s: ProjectUpdateSummary) -> float:
@@ -683,15 +683,15 @@ async def compute_update_frequency_comparison(
 
 
 def _per_ecosystem_winners(
-    summaries: List[ProjectUpdateSummary],
-) -> Tuple[Dict[str, str], Dict[str, str]]:
+    summaries: list[ProjectUpdateSummary],
+) -> tuple[dict[str, str], dict[str, str]]:
     """Per-ecosystem ``(best, worst)`` from a globally-sorted summary list.
 
     Skips ``"mixed"`` and unclassified projects — only the global ranking
     is meaningful for them.
     """
-    best: Dict[str, str] = {}
-    worst: Dict[str, str] = {}
+    best: dict[str, str] = {}
+    worst: dict[str, str] = {}
     for s in summaries:
         eco = s.dominant_ecosystem
         if not eco or eco == "mixed":

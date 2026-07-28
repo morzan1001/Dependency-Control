@@ -1,4 +1,4 @@
-from typing import Any, Dict, List, Optional, TypedDict
+from typing import Any, TypedDict
 
 from app.models.finding import Severity
 
@@ -7,16 +7,16 @@ class VulnerabilityEnrichmentData(TypedDict, total=False):
     """EPSS and CISA KEV enrichment data for a vulnerability."""
 
     cve: str
-    epss_score: Optional[float]  # 0.0 - 1.0
-    epss_percentile: Optional[float]  # 0.0 - 100.0
-    epss_date: Optional[str]
+    epss_score: float | None  # 0.0 - 1.0
+    epss_percentile: float | None  # 0.0 - 100.0
+    epss_date: str | None
     is_kev: bool
-    kev_date_added: Optional[str]
-    kev_due_date: Optional[str]
-    kev_required_action: Optional[str]
+    kev_date_added: str | None
+    kev_due_date: str | None
+    kev_required_action: str | None
     kev_ransomware_use: bool
     exploit_maturity: str  # unknown, low, medium, high, active, weaponized
-    risk_score: Optional[float]  # 0-100
+    risk_score: float | None  # 0-100
 
 
 class VulnerabilityEntry(TypedDict, total=False):
@@ -24,37 +24,37 @@ class VulnerabilityEntry(TypedDict, total=False):
     severity: Severity
     description: str
     description_source: str
-    fixed_version: Optional[str]
-    cvss_score: Optional[float]
-    cvss_vector: Optional[str]
-    references: List[str]
-    aliases: List[str]
-    scanners: List[str]
-    source: Optional[str]
-    details: Dict[str, Any]
+    fixed_version: str | None
+    cvss_score: float | None
+    cvss_vector: str | None
+    references: list[str]
+    aliases: list[str]
+    scanners: list[str]
+    source: str | None
+    details: dict[str, Any]
     enrichment: VulnerabilityEnrichmentData
 
 
 class SecretDetails(TypedDict):
     detector: str
-    decoder: Optional[str]
-    verified: Optional[bool]
-    redacted: Optional[str]
-    commit: Optional[str]
-    commit_timestamp: Optional[str]
-    line: Optional[int]
-    in_current_tree: Optional[bool]
+    decoder: str | None
+    verified: bool | None
+    redacted: str | None
+    commit: str | None
+    commit_timestamp: str | None
+    line: int | None
+    in_current_tree: bool | None
     risk_score: float
     adjusted_risk_score: float
 
 
 class VulnerabilityAggregatedDetails(TypedDict, total=False):
-    vulnerabilities: List[VulnerabilityEntry]
-    fixed_version: Optional[str]
-    max_epss_score: Optional[float]
+    vulnerabilities: list[VulnerabilityEntry]
+    fixed_version: str | None
+    max_epss_score: float | None
     has_kev: bool
     has_active_exploit: bool
-    max_risk_score: Optional[float]
+    max_risk_score: float | None
     kev_count: int
 
 
@@ -65,16 +65,16 @@ class QualityEntry(TypedDict, total=False):
     type: str  # "scorecard", "maintainer_risk", etc.
     severity: str
     description: str
-    scanners: List[str]
-    source: Optional[str]
-    details: Dict[str, Any]
+    scanners: list[str]
+    source: str | None
+    details: dict[str, Any]
 
 
 class QualityAggregatedDetails(TypedDict, total=False):
     """Aggregated quality data from multiple sources."""
 
-    quality_issues: List[QualityEntry]
-    overall_score: Optional[float]
+    quality_issues: list[QualityEntry]
+    overall_score: float | None
     has_maintenance_issues: bool
     issue_count: int
-    scanners: List[str]
+    scanners: list[str]

@@ -1,6 +1,6 @@
 """Shared constants used across the application."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 # Canonical keys for KEV (CISA Known Exploited Vulnerabilities) state persisted in a
 # finding's ``details`` dict by the enrichment writer. Every reader of persisted
@@ -9,7 +9,7 @@ DETAILS_KEY_IN_KEV = "in_kev"
 DETAILS_KEY_KEV_RANSOMWARE = "kev_ransomware_use"
 
 # Severity order for sorting (higher value = more severe)
-SEVERITY_ORDER: Dict[str, int] = {
+SEVERITY_ORDER: dict[str, int] = {
     "CRITICAL": 5,
     "HIGH": 4,
     "MEDIUM": 3,
@@ -20,7 +20,7 @@ SEVERITY_ORDER: Dict[str, int] = {
 }
 
 
-def get_severity_value(severity: Optional[str]) -> int:
+def get_severity_value(severity: str | None) -> int:
     """Get numeric value for severity. Higher = more severe."""
     if not severity:
         return 0
@@ -62,7 +62,7 @@ SPDX_MPL_1_1 = "MPL-1.1"
 
 # License URL Patterns
 # Common license URL patterns to SPDX ID mapping
-LICENSE_URL_PATTERNS: Dict[str, str] = {
+LICENSE_URL_PATTERNS: dict[str, str] = {
     # GNU Licenses
     r"gnu\.org/licenses/gpl-3\.0": SPDX_GPL_3_0,
     r"gnu\.org/licenses/gpl-2\.0": SPDX_GPL_2_0,
@@ -102,7 +102,7 @@ LICENSE_URL_PATTERNS: Dict[str, str] = {
 
 # License Aliases
 # Common license names to SPDX ID mapping
-LICENSE_ALIASES: Dict[str, str] = {
+LICENSE_ALIASES: dict[str, str] = {
     "MIT/X11": SPDX_MIT,
     "Expat": SPDX_MIT,
     # Apache variations
@@ -178,7 +178,7 @@ TEAM_ROLE_MEMBER = "member"
 TEAM_ROLES = [TEAM_ROLE_MEMBER, TEAM_ROLE_ADMIN]
 
 # Weights for calculating risk scores
-SEVERITY_WEIGHTS: Dict[str, float] = {
+SEVERITY_WEIGHTS: dict[str, float] = {
     "CRITICAL": 10.0,
     "HIGH": 7.0,
     "MEDIUM": 4.0,
@@ -188,7 +188,7 @@ SEVERITY_WEIGHTS: Dict[str, float] = {
 }
 
 
-def get_severity_weight(severity: Optional[str]) -> float:
+def get_severity_weight(severity: str | None) -> float:
     """Get risk weight for a severity level (case-insensitive)."""
     if not severity:
         return 0.0
@@ -226,7 +226,7 @@ DEV_DEPENDENCY_PATTERNS = [
 
 
 # Scoring weights for identifying "Quick Win" updates
-QUICK_WIN_SCORING_WEIGHTS: Dict[str, int] = {
+QUICK_WIN_SCORING_WEIGHTS: dict[str, int] = {
     "base_per_vuln": 10,
     "critical": 50,
     "high": 20,
@@ -236,7 +236,7 @@ QUICK_WIN_SCORING_WEIGHTS: Dict[str, int] = {
 
 
 # Weights for calculating recommendation priority scores
-RECOMMENDATION_SCORING_WEIGHTS: Dict[str, int] = {
+RECOMMENDATION_SCORING_WEIGHTS: dict[str, int] = {
     # Base priority scores
     "priority_critical": 10000,
     "priority_high": 1000,
@@ -257,13 +257,13 @@ RECOMMENDATION_SCORING_WEIGHTS: Dict[str, int] = {
 
 
 # Weights for reachability analysis
-REACHABILITY_SCORING_WEIGHTS: Dict[str, int] = {
+REACHABILITY_SCORING_WEIGHTS: dict[str, int] = {
     "critical_bonus": 150,
     "high_bonus": 75,
     "other_bonus": 25,
 }
 
-REACHABILITY_MODIFIERS: Dict[str, float] = {
+REACHABILITY_MODIFIERS: dict[str, float] = {
     "high_unreachable_ratio_threshold": 0.8,
     "high_unreachable_penalty": 0.4,
     "medium_unreachable_ratio_threshold": 0.5,
@@ -275,7 +275,7 @@ ACTIONABLE_VULN_BONUS: int = 100
 
 # Type-based bonuses for recommendation scoring
 # Higher values = higher priority in the recommendation list
-RECOMMENDATION_TYPE_BONUSES: Dict[str, int] = {
+RECOMMENDATION_TYPE_BONUSES: dict[str, int] = {
     # Critical security issues - highest priority
     "malware_detected": 5000,
     "ransomware_risk": 4000,
@@ -314,7 +314,7 @@ RECOMMENDATION_TYPE_BONUSES: Dict[str, int] = {
 }
 
 # Effort-based bonuses (lower effort = higher bonus)
-EFFORT_BONUSES: Dict[str, int] = {
+EFFORT_BONUSES: dict[str, int] = {
     "low": 50,
     "medium": 20,
     "high": 0,
@@ -350,7 +350,7 @@ TYPOSQUATTING_SIMILARITY_THRESHOLD: float = 0.82
 TYPOSQUATTING_MAX_FALLBACK_PACKAGES: int = 10000
 
 # Analyzer batch sizes for API rate limiting
-ANALYZER_BATCH_SIZES: Dict[str, int] = {
+ANALYZER_BATCH_SIZES: dict[str, int] = {
     "osv": 500,
     "deps_dev": 10,
     "outdated": 25,
@@ -362,7 +362,7 @@ ANALYZER_BATCH_SIZES: Dict[str, int] = {
 }
 
 # Analyzer HTTP timeouts (seconds)
-ANALYZER_TIMEOUTS: Dict[str, float] = {
+ANALYZER_TIMEOUTS: dict[str, float] = {
     "osv": 60.0,
     "deps_dev": 10.0,
     "outdated": 30.0,
@@ -382,7 +382,7 @@ GHSA_CONCURRENT_REQUESTS_AUTHENTICATED: int = 10
 GHSA_CONCURRENT_REQUESTS_UNAUTHENTICATED: int = 2
 
 # Exploit maturity levels for risk prioritization (higher = more severe)
-EXPLOIT_MATURITY_ORDER: Dict[str, int] = {
+EXPLOIT_MATURITY_ORDER: dict[str, int] = {
     "unknown": 0,
     "low": 1,
     "medium": 2,
@@ -393,7 +393,7 @@ EXPLOIT_MATURITY_ORDER: Dict[str, int] = {
 }
 
 # Exploit maturity boost factors for impact score calculation
-EXPLOIT_MATURITY_BOOST: Dict[str, float] = {
+EXPLOIT_MATURITY_BOOST: dict[str, float] = {
     "weaponized": 1.4,
     "active": 1.3,
     "high": 1.2,
@@ -457,7 +457,7 @@ GITHUB_API_URL = "https://api.github.com"
 
 # Mapping from package/component names to endoflife.date product IDs
 # See https://endoflife.date/api for all available products
-NAME_TO_EOL_MAPPING: Dict[str, str] = {
+NAME_TO_EOL_MAPPING: dict[str, str] = {
     # Programming Languages & Runtimes
     "python": "python",
     "python3": "python",
@@ -602,7 +602,7 @@ NAME_TO_EOL_MAPPING: Dict[str, str] = {
 }
 
 # Severity aliases for normalizing different scanner output formats
-SEVERITY_ALIASES: Dict[str, str] = {
+SEVERITY_ALIASES: dict[str, str] = {
     "MODERATE": "MEDIUM",
     "WARNING": "MEDIUM",
     "ERROR": "HIGH",
@@ -611,19 +611,19 @@ SEVERITY_ALIASES: Dict[str, str] = {
 
 # KICS (IaC scanner) severity mapping - only non-identity mappings needed
 # Standard severities (HIGH, MEDIUM, LOW, INFO) pass through via safe_severity()
-KICS_SEVERITY_MAP: Dict[str, str] = {
+KICS_SEVERITY_MAP: dict[str, str] = {
     "TRACE": "INFO",
 }
 
 # OpenGrep/Semgrep (SAST scanner) severity mapping
-OPENGREP_SEVERITY_MAP: Dict[str, str] = {
+OPENGREP_SEVERITY_MAP: dict[str, str] = {
     "ERROR": "HIGH",
     "WARNING": "MEDIUM",
     "INFO": "LOW",
 }
 
 # Bearer (SAST scanner) severity mapping
-BEARER_SEVERITY_MAP: Dict[str, str] = {
+BEARER_SEVERITY_MAP: dict[str, str] = {
     "critical": "CRITICAL",
     "high": "HIGH",
     "medium": "MEDIUM",
@@ -675,7 +675,7 @@ SMTP_TIMEOUT_SECONDS: int = 60
 SLACK_TOKEN_EXPIRY_BUFFER_SECONDS: int = 300
 
 # Groups of packages that often provide similar/duplicate functionality
-SIMILAR_PACKAGE_GROUPS: List[Dict[str, Any]] = [
+SIMILAR_PACKAGE_GROUPS: list[dict[str, Any]] = [
     {
         "category": "HTTP Clients",
         "packages": ["axios", "node-fetch", "got", "request", "superagent", "ky"],
@@ -900,7 +900,7 @@ WAIVER_STATUSES = [
 ]
 
 # Default CVSS scores used when actual score is not available
-CVSS_SEVERITY_SCORES: Dict[str, float] = {
+CVSS_SEVERITY_SCORES: dict[str, float] = {
     "CRITICAL": 10.0,
     "HIGH": 7.5,
     "MEDIUM": 4.0,
@@ -912,7 +912,7 @@ CVSS_SEVERITY_SCORES: Dict[str, float] = {
 # Per-severity fallback risk score (0-100) for findings without EPSS/KEV enrichment.
 # Uses the same CVSS contribution as calculate_risk_score ((cvss/10)*40) so enriched
 # and non-enriched findings share one comparable scale and neither outranks the other.
-SEVERITY_CALCULATED_RISK_SCORES: Dict[str, float] = {
+SEVERITY_CALCULATED_RISK_SCORES: dict[str, float] = {
     sev: round((cvss / 10.0) * 40.0, 1) for sev, cvss in CVSS_SEVERITY_SCORES.items()
 }
 # Resulting anchors: CRITICAL=40.0, HIGH=30.0, MEDIUM=16.0, LOW=4.0, INFO/UNKNOWN=0.0

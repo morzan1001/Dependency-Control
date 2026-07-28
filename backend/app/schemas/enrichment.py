@@ -1,6 +1,6 @@
 """Models for aggregating dependency enrichment data from multiple sources."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field, computed_field
 
@@ -32,14 +32,14 @@ class GHSAData(BaseModel):
     """GitHub Security Advisory data."""
 
     ghsa_id: str
-    cve_id: Optional[str] = None
-    summary: Optional[str] = None
-    severity: Optional[str] = None
-    published_at: Optional[str] = None
-    updated_at: Optional[str] = None
-    withdrawn_at: Optional[str] = None
+    cve_id: str | None = None
+    summary: str | None = None
+    severity: str | None = None
+    published_at: str | None = None
+    updated_at: str | None = None
+    withdrawn_at: str | None = None
     github_url: str = ""
-    aliases: List[str] = Field(default_factory=list)
+    aliases: list[str] = Field(default_factory=list)
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -54,18 +54,18 @@ class VulnerabilityEnrichment(BaseModel):
 
     cve: str
 
-    epss_score: Optional[float] = None  # 0.0 - 1.0
-    epss_percentile: Optional[float] = None  # 0.0 - 100.0
-    epss_date: Optional[str] = None
+    epss_score: float | None = None  # 0.0 - 1.0
+    epss_percentile: float | None = None  # 0.0 - 100.0
+    epss_date: str | None = None
 
     is_kev: bool = False
-    kev_date_added: Optional[str] = None
-    kev_due_date: Optional[str] = None
-    kev_required_action: Optional[str] = None
+    kev_date_added: str | None = None
+    kev_due_date: str | None = None
+    kev_required_action: str | None = None
     kev_ransomware_use: bool = False
 
     exploit_maturity: str = "unknown"  # unknown, poc, active, weaponized
-    risk_score: Optional[float] = None  # 0-100
+    risk_score: float | None = None  # 0-100
 
 
 class ExtractedSymbols(BaseModel):
@@ -73,10 +73,10 @@ class ExtractedSymbols(BaseModel):
 
     cve: str
     package: str
-    symbols: List[str] = Field(default_factory=list)
+    symbols: list[str] = Field(default_factory=list)
     confidence: str = "low"  # low, medium, high
     extraction_method: str = "none"  # none, regex, osv_ecosystem
-    raw_text: Optional[str] = None
+    raw_text: str | None = None
 
 
 class DependencyEnrichment(BaseModel):
@@ -85,47 +85,47 @@ class DependencyEnrichment(BaseModel):
     name: str
     version: str
 
-    licenses: List[Dict[str, Any]] = Field(default_factory=list)  # [{spdx_id, source, category, ...}]
-    primary_license: Optional[str] = None
-    license_category: Optional[str] = None  # permissive, copyleft, etc.
-    license_risks: List[str] = Field(default_factory=list)
-    license_obligations: List[str] = Field(default_factory=list)
+    licenses: list[dict[str, Any]] = Field(default_factory=list)  # [{spdx_id, source, category, ...}]
+    primary_license: str | None = None
+    license_category: str | None = None  # permissive, copyleft, etc.
+    license_risks: list[str] = Field(default_factory=list)
+    license_obligations: list[str] = Field(default_factory=list)
 
-    homepage: Optional[str] = None
-    repository_url: Optional[str] = None
-    documentation_url: Optional[str] = None
-    issues_url: Optional[str] = None
-    changelog_url: Optional[str] = None
-    download_url: Optional[str] = None
-    additional_links: Dict[str, str] = Field(default_factory=dict)
+    homepage: str | None = None
+    repository_url: str | None = None
+    documentation_url: str | None = None
+    issues_url: str | None = None
+    changelog_url: str | None = None
+    download_url: str | None = None
+    additional_links: dict[str, str] = Field(default_factory=dict)
 
-    stars: Optional[int] = None
-    forks: Optional[int] = None
-    open_issues: Optional[int] = None
-    dependents_total: Optional[int] = None
-    dependents_direct: Optional[int] = None
+    stars: int | None = None
+    forks: int | None = None
+    open_issues: int | None = None
+    dependents_total: int | None = None
+    dependents_direct: int | None = None
 
-    scorecard_score: Optional[float] = None
-    scorecard_date: Optional[str] = None
-    scorecard_checks_count: Optional[int] = None
-    scorecard_checks: List[Dict[str, Any]] = Field(default_factory=list)
-    scorecard_critical_issues: List[str] = Field(default_factory=list)
+    scorecard_score: float | None = None
+    scorecard_date: str | None = None
+    scorecard_checks_count: int | None = None
+    scorecard_checks: list[dict[str, Any]] = Field(default_factory=list)
+    scorecard_critical_issues: list[str] = Field(default_factory=list)
 
-    published_at: Optional[str] = None
+    published_at: str | None = None
     is_deprecated: bool = False
     is_default_version: bool = False
 
-    known_advisories: List[str] = Field(default_factory=list)
+    known_advisories: list[str] = Field(default_factory=list)
     has_attestations: bool = False
     has_slsa_provenance: bool = False
 
-    description: Optional[str] = None
+    description: str | None = None
 
-    sources: List[str] = Field(default_factory=list)
+    sources: list[str] = Field(default_factory=list)
 
-    def to_mongo_dict(self) -> Dict[str, Any]:
+    def to_mongo_dict(self) -> dict[str, Any]:
         """Convert to a sparse dict for MongoDB storage (no None values)."""
-        result: Dict[str, Any] = {}
+        result: dict[str, Any] = {}
 
         if self.primary_license:
             result["license"] = self.primary_license
@@ -145,7 +145,7 @@ class DependencyEnrichment(BaseModel):
         if self.download_url:
             result["download_url"] = self.download_url
 
-        deps_dev: Dict[str, Any] = {}
+        deps_dev: dict[str, Any] = {}
         if self.stars is not None:
             deps_dev["stars"] = self.stars
         if self.forks is not None:

@@ -1,14 +1,14 @@
 import logging
 import re
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional, Set, Tuple, cast
+from typing import Any, cast
 from urllib.parse import quote
 
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.http_utils import InstrumentedAsyncClient
 from app.core.constants import ANALYZER_TIMEOUTS, EOL_API_URL, NAME_TO_EOL_MAPPING
+from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
 from .base import Analyzer
@@ -16,9 +16,9 @@ from .base import Analyzer
 logger = logging.getLogger(__name__)
 
 
-def _extract_products_from_cpes(cpes: List[str]) -> Set[str]:
+def _extract_products_from_cpes(cpes: list[str]) -> set[str]:
     """Map CPE strings to endoflife.date product IDs (accepts cpe:2.3:a:, cpe:/2.3:a:, and legacy cpe:/a:)."""
-    products: Set[str] = set()
+    products: set[str] = set()
     for cpe in cpes:
         match = re.match(r"cpe:/?2\.3:a:([^:]+):([^:]+)", cpe) or re.match(r"cpe:/a:([^:]+):([^:]+)", cpe)
         if not match:
@@ -34,7 +34,7 @@ def _extract_products_from_cpes(cpes: List[str]) -> Set[str]:
     return products
 
 
-def _resolve_eol_products(name: str, cpes: List[str]) -> Set[str]:
+def _resolve_eol_products(name: str, cpes: list[str]) -> set[str]:
     """Map a component to endoflife.date product IDs (CPEs first, then name)."""
     products = _extract_products_from_cpes(cpes)
     if products:
@@ -44,10 +44,10 @@ def _resolve_eol_products(name: str, cpes: List[str]) -> Set[str]:
 
 
 def collect_products_to_check(
-    components: List[Dict[str, Any]],
-) -> Dict[str, List[Tuple[str, str]]]:
+    components: list[dict[str, Any]],
+) -> dict[str, list[tuple[str, str]]]:
     """Build ``product -> [(component_name, version), ...]``; each version is checked independently."""
-    out: Dict[str, List[Tuple[str, str]]] = {}
+    out: dict[str, list[tuple[str, str]]] = {}
     for component in components:
         name = component.get("name", "").lower()
         version = component.get("version", "")
@@ -67,18 +67,18 @@ class EndOfLifeAnalyzer(Analyzer):
 
     async def analyze(
         self,
-        sbom: Dict[str, Any],
-        settings: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
+        sbom: dict[str, Any],
+        settings: dict[str, Any] | None = None,
+        parsed_components: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
         components = self._get_components(sbom, parsed_components)
         self._apply_settings(settings)
 
-        products_to_check: Dict[str, List[Tuple[str, str]]] = collect_products_to_check(components)
+        products_to_check: dict[str, list[tuple[str, str]]] = collect_products_to_check(components)
         if not products_to_check:
             return {"eol_issues": []}
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         cached_cycles, products_to_fetch = await self._partition_by_cache(products_to_check)
 
         for product, cycles in cached_cycles.items():
@@ -89,7 +89,7 @@ class EndOfLifeAnalyzer(Analyzer):
 
         return {"eol_issues": results}
 
-    def _apply_settings(self, settings: Optional[Dict[str, Any]]) -> None:
+    def _apply_settings(self, settings: dict[str, Any] | None) -> None:
         """Stash configurable thresholds on the instance."""
         s = settings or {}
         self._high_after_days = int(s.get("eol_high_after_days", 365))
@@ -98,9 +98,9 @@ class EndOfLifeAnalyzer(Analyzer):
     def _emit_for_versions(
         self,
         product: str,
-        occurrences: List[Tuple[str, str]],
-        cycles: List[Dict[str, Any]],
-        results: List[Dict[str, Any]],
+        occurrences: list[tuple[str, str]],
+        cycles: list[dict[str, Any]],
+        results: list[dict[str, Any]],
     ) -> None:
         """Append an EOL issue for each (component, version) of ``product`` that matches an EOL cycle."""
         for comp_name, version in occurrences:
@@ -110,14 +110,14 @@ class EndOfLifeAnalyzer(Analyzer):
 
     async def _partition_by_cache(
         self,
-        products_to_check: Dict[str, List[Tuple[str, str]]],
-    ) -> Tuple[Dict[str, List[Dict[str, Any]]], List[str]]:
+        products_to_check: dict[str, list[tuple[str, str]]],
+    ) -> tuple[dict[str, list[dict[str, Any]]], list[str]]:
         """Split products into already-cached cycles and ones we still have to fetch."""
-        cache_keys = [CacheKeys.eol(product) for product in products_to_check.keys()]
+        cache_keys = [CacheKeys.eol(product) for product in products_to_check]
         cached_data = await cache_service.mget(cache_keys) if cache_keys else {}
 
-        cached_cycles: Dict[str, List[Dict[str, Any]]] = {}
-        to_fetch: List[str] = []
+        cached_cycles: dict[str, list[dict[str, Any]]] = {}
+        to_fetch: list[str] = []
         for product in products_to_check:
             cache_key = CacheKeys.eol(product)
             value = cached_data.get(cache_key)
@@ -131,9 +131,9 @@ class EndOfLifeAnalyzer(Analyzer):
 
     async def _fetch_and_emit(
         self,
-        products_to_fetch: List[str],
-        products_to_check: Dict[str, List[Tuple[str, str]]],
-        results: List[Dict[str, Any]],
+        products_to_fetch: list[str],
+        products_to_check: dict[str, list[tuple[str, str]]],
+        results: list[dict[str, Any]],
     ) -> None:
         """Fetch missing products from endoflife.date and emit issues for each."""
         timeout = ANALYZER_TIMEOUTS.get("end_of_life", ANALYZER_TIMEOUTS["default"])
@@ -154,12 +154,12 @@ class EndOfLifeAnalyzer(Analyzer):
     ) -> Any:
         """Build the closure ``cache_service`` calls on a miss for ``product``."""
 
-        async def fetch_eol_data() -> Optional[List[Dict[str, Any]]]:
+        async def fetch_eol_data() -> list[dict[str, Any]] | None:
             try:
                 safe_product = quote(product, safe="")
                 response = await client.get(f"{self.api_url}/{safe_product}.json")
                 if response.status_code == 200:
-                    return cast(List[Dict[str, Any]], response.json())
+                    return cast(list[dict[str, Any]], response.json())
                 if response.status_code == 404:
                     return []  # negative cache
             except httpx.TimeoutException:
@@ -177,8 +177,8 @@ class EndOfLifeAnalyzer(Analyzer):
         component: str,
         version: str,
         product: str,
-        eol_info: Dict[str, Any],
-    ) -> Dict[str, Any]:
+        eol_info: dict[str, Any],
+    ) -> dict[str, Any]:
         """Build an EOL finding with severity scaled by days past the EOL date."""
         eol_date = eol_info.get("eol")
         if eol_date is True:
@@ -224,7 +224,7 @@ class EndOfLifeAnalyzer(Analyzer):
         except ValueError:
             return False
 
-    def _check_version(self, version: str, cycles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    def _check_version(self, version: str, cycles: list[dict[str, Any]]) -> dict[str, Any] | None:
         """Match a version to its most-specific EOL cycle (LTS wins ties); if EOL, add the recommended upgrade cycle."""
         if not version:
             return None
@@ -235,7 +235,7 @@ class EndOfLifeAnalyzer(Analyzer):
         clean_version = version.lstrip("v").lower()
 
         # Rank by (specificity desc, LTS desc, original-order asc) for determinism.
-        matches: List[Tuple[int, int, int, Dict[str, Any]]] = []
+        matches: list[tuple[int, int, int, dict[str, Any]]] = []
         for idx, cycle in enumerate(cycles):
             cycle_version = str(cycle.get("cycle", ""))
             if not self._version_matches_cycle(clean_version, cycle_version):
@@ -258,7 +258,7 @@ class EndOfLifeAnalyzer(Analyzer):
         return best_cycle
 
     @staticmethod
-    def _find_active_cycle(cycles: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    def _find_active_cycle(cycles: list[dict[str, Any]]) -> dict[str, Any] | None:
         """Find the newest active (non-EOL) cycle from the list."""
         for cycle in cycles:
             eol = cycle.get("eol")

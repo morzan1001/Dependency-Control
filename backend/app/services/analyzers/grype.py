@@ -1,6 +1,5 @@
 import json
-from typing import Any, Dict, List, Optional
-
+from typing import Any
 
 from .base import map_vendor_severity
 from .cli_base import CLIAnalyzer
@@ -39,7 +38,7 @@ class GrypeAnalyzer(CLIAnalyzer):
             return True
         return any(p in msg for p in self._RETRYABLE_PATTERNS)
 
-    def _build_command_args(self, sbom_path: str, settings: Optional[Dict[str, Any]]) -> List[str]:
+    def _build_command_args(self, sbom_path: str, settings: dict[str, Any] | None) -> list[str]:
         """Build Grype command arguments.
 
         Do not add ``--quiet``: it suppresses the stderr that ``_is_retryable_error``
@@ -52,7 +51,7 @@ class GrypeAnalyzer(CLIAnalyzer):
             "json",
         ]
 
-    def _parse_output(self, stdout: bytes) -> Dict[str, Any]:
+    def _parse_output(self, stdout: bytes) -> dict[str, Any]:
         """Parse Grype JSON output and normalize vulnerabilities."""
         try:
             output_str = stdout.decode()
@@ -73,7 +72,7 @@ class GrypeAnalyzer(CLIAnalyzer):
                 "output": output_str,
             }
 
-    def _normalize_vulnerabilities(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _normalize_vulnerabilities(self, data: dict[str, Any]) -> list[dict[str, Any]]:
         """Normalize Grype matches with consistent severity and message."""
         normalized = []
         matches = data.get("matches", [])

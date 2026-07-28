@@ -1,7 +1,8 @@
 """Tests for Broadcast model."""
 
-import pytest
 from datetime import datetime, timezone
+
+import pytest
 from pydantic import ValidationError
 
 from app.models.broadcast import Broadcast

@@ -1,8 +1,9 @@
 """Unit tests for the OSV analyzer's pure helpers (CVSS-score extraction, withdrawn handling)."""
 
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 import pytest
+from typing_extensions import Self
 
 from app.services.analyzers.osv import OSVAnalyzer
 
@@ -116,11 +117,11 @@ class TestCvssVersionAwareSeverity:
 class _Response:
     """Minimal stand-in for httpx.Response."""
 
-    def __init__(self, status_code: int, payload: Optional[Dict[str, Any]] = None) -> None:
+    def __init__(self, status_code: int, payload: dict[str, Any] | None = None) -> None:
         self.status_code = status_code
         self._payload = payload or {}
 
-    def json(self) -> Dict[str, Any]:
+    def json(self) -> dict[str, Any]:
         return self._payload
 
 
@@ -128,25 +129,25 @@ class _FakeCache:
     """In-memory replacement for cache_service (mget/mset only)."""
 
     def __init__(self) -> None:
-        self.store: Dict[str, Any] = {}
+        self.store: dict[str, Any] = {}
 
-    async def mget(self, keys: List[str]) -> Dict[str, Any]:
+    async def mget(self, keys: list[str]) -> dict[str, Any]:
         return {k: self.store.get(k) for k in keys}
 
-    async def mset(self, mapping: Dict[str, Any], ttl_seconds: int = 0) -> None:  # noqa: ARG002
+    async def mset(self, mapping: dict[str, Any], ttl_seconds: int = 0) -> None:
         self.store.update(mapping)
 
 
-def _scripted_client_factory(responses: List[_Response], call_counter: List[int]):
+def _scripted_client_factory(responses: list[_Response], call_counter: list[int]):
     """InstrumentedAsyncClient replacement returning ``responses`` in order (repeating the last) and counting .post calls."""
 
     class _ScriptedClient:
         def __init__(self, *_a: Any, **_k: Any) -> None: ...
 
-        async def __aenter__(self) -> "_ScriptedClient":
+        async def __aenter__(self) -> Self:
             return self
 
-        async def __aexit__(self, *_a: Any) -> None:
+        async def __aexit__(self, *_a: object) -> None:
             return None
 
         async def post(self, _url: str, **_kwargs: Any) -> _Response:
@@ -188,7 +189,7 @@ class TestRateLimitRetry:
         monkeypatch.setattr("app.services.analyzers.osv.cache_service", _FakeCache())
         monkeypatch.setattr("app.services.analyzers.osv.asyncio.sleep", _noop_sleep)
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         await self.analyzer._fetch_uncached([self.component], results)
 
         assert counter[0] == 2
@@ -205,7 +206,7 @@ class TestRateLimitRetry:
         monkeypatch.setattr("app.services.analyzers.osv.cache_service", _FakeCache())
         monkeypatch.setattr("app.services.analyzers.osv.asyncio.sleep", _noop_sleep)
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         await self.analyzer._fetch_uncached([self.component], results)
 
         assert counter[0] == 1 + self.analyzer.max_retries
@@ -219,7 +220,7 @@ class TestRateLimitRetry:
         monkeypatch.setattr("app.services.analyzers.osv.cache_service", _FakeCache())
         monkeypatch.setattr("app.services.analyzers.osv.asyncio.sleep", _noop_sleep)
 
-        results: List[Dict[str, Any]] = []
+        results: list[dict[str, Any]] = []
         await self.analyzer._fetch_uncached([self.component], results)
 
         assert counter[0] == 1
@@ -228,4 +229,4 @@ class TestRateLimitRetry:
 
 async def _noop_sleep(_seconds: float) -> None:
     """Skip real backoff delays in tests."""
-    return None
+    return

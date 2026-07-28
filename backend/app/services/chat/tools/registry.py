@@ -4,7 +4,7 @@ import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -17,8 +17,8 @@ from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import compute_findings_delta
 
 from ._helpers import (
-    KEV_EQUIVALENT_MATURITY,
     _SEVERITY_RANK,
+    KEV_EQUIVALENT_MATURITY,
     _breaking_risk,
     _clamp_limit,
     _clip_value,
@@ -62,14 +62,14 @@ _FIELD_EPSS_SCORE = "details.epss_score"
 _FINDING_RANK_FETCH_CAP = 1000
 
 
-def _finding_detail_number(finding: Dict[str, Any], field: str) -> float:
+def _finding_detail_number(finding: dict[str, Any], field: str) -> float:
     """Return a numeric `details.<field>` for tiebreak sorting; missing/non-numeric -> -1.0."""
     details = finding.get("details") or {}
     value = details.get(field)
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else -1.0
 
 
-def _rank_findings(findings: List[Dict[str, Any]]) -> None:
+def _rank_findings(findings: list[dict[str, Any]]) -> None:
     """Sort findings in place by severity rank desc, then details.epss_score and details.cvss_score desc."""
     findings.sort(
         key=lambda f: (
@@ -82,28 +82,26 @@ def _rank_findings(findings: List[Dict[str, Any]]) -> None:
 
 
 class ChatToolRegistry:
-    def get_available_tool_names(self, user_permissions: List[str]) -> set[str]:
+    def get_available_tool_names(self, user_permissions: list[str]) -> set[str]:
         available = set()
         for tool_def in TOOL_DEFINITIONS:
             name = tool_def["function"]["name"]
             required = TOOL_PERMISSIONS.get(name)
-            if required is None:
-                available.add(name)
-            elif has_permission(user_permissions, required):
+            if required is None or has_permission(user_permissions, required):
                 available.add(name)
         return available
 
-    def get_available_tool_definitions(self, user_permissions: List[str]) -> List[Dict[str, Any]]:
+    def get_available_tool_definitions(self, user_permissions: list[str]) -> list[dict[str, Any]]:
         available_names = self.get_available_tool_names(user_permissions)
         return [t for t in TOOL_DEFINITIONS if t["function"]["name"] in available_names]
 
     async def execute_tool(
         self,
         tool_name: str,
-        arguments: Dict[str, Any],
+        arguments: dict[str, Any],
         user: User,
         db: AsyncIOMotorDatabase,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         required = TOOL_PERMISSIONS.get(tool_name)
         if required and not has_permission(user.permissions, required):
             return {"error": f"You don't have permission to use {tool_name}"}
@@ -123,15 +121,15 @@ class ChatToolRegistry:
             chat_tool_calls_total.labels(tool_name=tool_name, status="error").inc()
             chat_tool_duration_seconds.labels(tool_name=tool_name).observe(duration)
             logger.exception(f"Tool {tool_name} failed: {e}")
-            return {"error": f"Tool execution failed: {str(e)}"}
+            return {"error": f"Tool execution failed: {e!s}"}
 
     async def _dispatch(
         self,
         tool_name: str,
-        args: Dict[str, Any],
+        args: dict[str, Any],
         user: User,
         db: AsyncIOMotorDatabase,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         team_repo = TeamRepository(db)
         user_project_query = await build_user_project_query(user, team_repo)
 
@@ -387,7 +385,7 @@ class ChatToolRegistry:
             project_ids = await self._get_authorized_project_ids(user_project_query, db)
             days = args.get("days", 30)
             cutoff = datetime.now(timezone.utc) - timedelta(days=days)
-            match_query: Dict[str, Any] = {"project_id": {"$in": project_ids}, "created_at": {"$gte": cutoff}}
+            match_query: dict[str, Any] = {"project_id": {"$in": project_ids}, "created_at": {"$gte": cutoff}}
             if args.get("project_id"):
                 if args["project_id"] not in project_ids:
                     return {"error": _ERR_PROJECT_NOT_FOUND}
@@ -456,9 +454,10 @@ class ChatToolRegistry:
             team = await team_repo.get_by_id(args["team_id"])
             if not team:
                 return {"error": _ERR_TEAM_NOT_FOUND}
-            if not await team_repo.is_member(args["team_id"], str(user.id)):
-                if not has_permission(user.permissions, Permissions.TEAM_READ_ALL):
-                    return {"error": _ERR_ACCESS_DENIED}
+            if not await team_repo.is_member(args["team_id"], str(user.id)) and not has_permission(
+                user.permissions, Permissions.TEAM_READ_ALL
+            ):
+                return {"error": _ERR_ACCESS_DENIED}
             return {
                 "team": {
                     "id": team.id,
@@ -472,9 +471,10 @@ class ChatToolRegistry:
             team = await team_repo.get_by_id(args["team_id"])
             if not team:
                 return {"error": _ERR_TEAM_NOT_FOUND}
-            if not await team_repo.is_member(args["team_id"], str(user.id)):
-                if not has_permission(user.permissions, Permissions.TEAM_READ_ALL):
-                    return {"error": _ERR_ACCESS_DENIED}
+            if not await team_repo.is_member(args["team_id"], str(user.id)) and not has_permission(
+                user.permissions, Permissions.TEAM_READ_ALL
+            ):
+                return {"error": _ERR_ACCESS_DENIED}
             query = {**user_project_query, "team_id": args["team_id"]}
             cursor = db["projects"].find(query, limit=50)
             projects = await cursor.to_list(length=50)
@@ -492,7 +492,7 @@ class ChatToolRegistry:
                     {"waived": 1, "waiver_reason": 1, "waiver_lapsed": 1, "lapsed_waiver_id": 1},
                 )
             if finding is not None:
-                resp: Dict[str, Any] = {"waived": bool(finding.get("waived"))}
+                resp: dict[str, Any] = {"waived": bool(finding.get("waived"))}
                 if finding.get("waiver_reason"):
                     resp["waiver_reason"] = finding["waiver_reason"]
                 if finding.get("waiver_lapsed"):
@@ -534,7 +534,7 @@ class ChatToolRegistry:
 
         if tool_name == "get_top_priority_findings":
             limit = _clamp_limit(args.get("limit"), 5, maximum=20)
-            match: Dict[str, Any] = {}
+            match: dict[str, Any] = {}
             if args.get("project_id"):
                 proj = await self._get_authorized_project(args["project_id"], user_project_query, db)
                 if not proj:
@@ -566,7 +566,7 @@ class ChatToolRegistry:
             findings = findings[:limit]
 
             project_ids_hit = list({f.get("project_id") for f in findings if f.get("project_id")})
-            project_names: Dict[str, str] = {}
+            project_names: dict[str, str] = {}
             if project_ids_hit:
                 async for p in db["projects"].find({"_id": {"$in": project_ids_hit}}, {"name": 1}):
                     project_names[p["_id"]] = p.get("name", "")
@@ -616,7 +616,7 @@ class ChatToolRegistry:
 
             # Keyed by lowercase component name — purl would be more precise
             # but findings don't consistently carry it.
-            dep_index: Dict[str, Dict[str, Any]] = {}
+            dep_index: dict[str, dict[str, Any]] = {}
             async for dep in db["dependencies"].find(
                 {"scan_id": latest_scan_id},
                 {"name": 1, "version": 1, "direct": 1, "direct_inferred": 1, "type": 1, "purl": 1},
@@ -630,7 +630,7 @@ class ChatToolRegistry:
                     continue
                 dep_index[key] = dep
 
-            groups: Dict[str, Dict[str, Any]] = {}
+            groups: dict[str, dict[str, Any]] = {}
             for f in findings:
                 comp = f.get("component") or f.get("component_name") or f.get("package") or f.get("package_name")
                 if not comp:
@@ -653,10 +653,10 @@ class ChatToolRegistry:
                 if isinstance(single, str) and single:
                     g["fix_candidates"].append(single)
 
-            steps: List[Dict[str, Any]] = []
+            steps: list[dict[str, Any]] = []
             for key, g in groups.items():
                 # Pick largest fix version — resolves the most CVEs at once.
-                target: Optional[str] = None
+                target: str | None = None
                 for cand in g["fix_candidates"]:
                     if target is None or _compare_versions(cand, target) > 0:
                         target = cand
@@ -705,7 +705,7 @@ class ChatToolRegistry:
             # then critical count desc, then total findings desc.
             risk_order = {"low": 0, "medium": 1, "high": 2, "unknown": 3}
 
-            def sort_key(s: Dict[str, Any]) -> tuple:
+            def sort_key(s: dict[str, Any]) -> tuple:
                 return (
                     0 if s["has_fix"] else 1,
                     0 if s["is_direct"] else 1,
@@ -897,7 +897,7 @@ class ChatToolRegistry:
                 return {"matches": [], "message": "No accessible projects"}
             latest = await self._latest_scan_ids_for_user(user_project_query, None, db)
             latest_scan_ids = list(latest.values())
-            dep_query: Dict[str, Any] = {
+            dep_query: dict[str, Any] = {
                 "name": {"$regex": re.escape(args["component_name"]), "$options": "i"},
                 "scan_id": {"$in": latest_scan_ids},
             }
@@ -939,7 +939,7 @@ class ChatToolRegistry:
             )
             rows = await cursor.to_list(length=25)
             names = await self._project_names(db, list({f.get("project_id") for f in rows}))
-            by_project: Dict[str, Dict[str, Any]] = {}
+            by_project: dict[str, dict[str, Any]] = {}
             for f in rows:
                 pid = f.get("project_id")
                 slot = by_project.setdefault(
@@ -991,7 +991,9 @@ class ChatToolRegistry:
             }
 
         if tool_name == "get_stale_findings":
-            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            from datetime import datetime as _dt
+            from datetime import timedelta as _td
+            from datetime import timezone as _tz
 
             days = _clamp_limit(args.get("days_open"), 30, maximum=365)
             limit = _clamp_limit(args.get("limit"), 10, maximum=25)
@@ -1068,7 +1070,9 @@ class ChatToolRegistry:
             return {"findings": out, "count": len(out)}
 
         if tool_name == "get_expiring_waivers":
-            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            from datetime import datetime as _dt
+            from datetime import timedelta as _td
+            from datetime import timezone as _tz
 
             days = _clamp_limit(args.get("days"), 30, maximum=365)
             project_ids = await self._get_authorized_project_ids(user_project_query, db)
@@ -1107,14 +1111,15 @@ class ChatToolRegistry:
             team = await team_repo.get_by_id(args["team_id"])
             if not team:
                 return {"error": _ERR_TEAM_NOT_FOUND}
-            if not await team_repo.is_member(args["team_id"], str(user.id)):
-                if not has_permission(user.permissions, Permissions.TEAM_READ_ALL):
-                    return {"error": _ERR_ACCESS_DENIED}
+            if not await team_repo.is_member(args["team_id"], str(user.id)) and not has_permission(
+                user.permissions, Permissions.TEAM_READ_ALL
+            ):
+                return {"error": _ERR_ACCESS_DENIED}
             cursor = db["projects"].find(
                 {"team_id": args["team_id"]}, {"_id": 1, "name": 1, "stats": 1, "last_scan_at": 1}
             )
             projects = await cursor.to_list(length=500)
-            totals: Dict[str, int] = {}
+            totals: dict[str, int] = {}
             risky = []
             for p in projects:
                 stats = p.get("stats") or {}
@@ -1141,7 +1146,9 @@ class ChatToolRegistry:
             }
 
         if tool_name == "get_projects_without_recent_scan":
-            from datetime import datetime as _dt, timezone as _tz, timedelta as _td
+            from datetime import datetime as _dt
+            from datetime import timedelta as _td
+            from datetime import timezone as _tz
 
             days = _clamp_limit(args.get("days"), 14, maximum=365)
             limit = _clamp_limit(args.get("limit"), 10, maximum=50)
@@ -1352,7 +1359,7 @@ class ChatToolRegistry:
             authorized_project_ids = await self._get_authorized_project_ids(user_project_query, db)
             visibility = await self._compliance_visibility_filter(user, authorized_project_ids, team_repo)
             framework = args.get("framework")
-            fw: Optional[Any] = None
+            fw: Any | None = None
             if framework:
                 try:
                     fw = _pkg.ReportFramework(framework)
@@ -1400,8 +1407,8 @@ class ChatToolRegistry:
         return {"error": f"Unknown tool: {tool_name}"}
 
     async def _get_authorized_project(
-        self, project_id: str, user_project_query: Dict[str, Any], db: AsyncIOMotorDatabase
-    ) -> Optional[Dict[str, Any]]:
+        self, project_id: str, user_project_query: dict[str, Any], db: AsyncIOMotorDatabase
+    ) -> dict[str, Any] | None:
         """Fetch a project only if the user has access.
 
         `user_project_query` MUST come from build_user_project_query (returns {}
@@ -1415,16 +1422,16 @@ class ChatToolRegistry:
     async def _compliance_visibility_filter(
         self,
         user: User,
-        authorized_project_ids: List[str],
+        authorized_project_ids: list[str],
         team_repo: TeamRepository,
-    ) -> Dict[str, Any]:
+    ) -> dict[str, Any]:
         """Build the ``$or`` visibility filter for compliance reports, mirroring compliance_reports._build_visibility_filter."""
         perms = getattr(user, "permissions", []) or []
         is_super = has_permission(perms, Permissions.SYSTEM_MANAGE)
         user_id = str(user.id)
 
-        branches: List[Dict[str, Any]] = []
-        user_branch: Dict[str, Any] = {"scope": "user"}
+        branches: list[dict[str, Any]] = []
+        user_branch: dict[str, Any] = {"scope": "user"}
         if not is_super:
             user_branch["requested_by"] = user_id
         branches.append(user_branch)
@@ -1443,18 +1450,18 @@ class ChatToolRegistry:
         return {"$or": branches}
 
     async def _get_authorized_project_ids(
-        self, user_project_query: Dict[str, Any], db: AsyncIOMotorDatabase
-    ) -> List[str]:
+        self, user_project_query: dict[str, Any], db: AsyncIOMotorDatabase
+    ) -> list[str]:
         cursor = db["projects"].find(user_project_query, projection={"_id": 1})
         projects = await cursor.to_list(length=1000)
         return [p["_id"] for p in projects]
 
     async def _latest_scan_ids_for_user(
         self,
-        user_project_query: Dict[str, Any],
-        restrict_to_project_id: Optional[str],
+        user_project_query: dict[str, Any],
+        restrict_to_project_id: str | None,
         db: AsyncIOMotorDatabase,
-    ) -> Dict[str, str]:
+    ) -> dict[str, str]:
         """Return {project_id: latest_scan_id} for authorised projects, validated against
         `restrict_to_project_id` when provided (returns {} on access denial)."""
         if restrict_to_project_id:
@@ -1475,11 +1482,11 @@ class ChatToolRegistry:
         return {row["_id"]: row["latest_scan_id"] for row in rows if row.get("latest_scan_id")}
 
     @staticmethod
-    async def _project_names(db: AsyncIOMotorDatabase, project_ids: List[str]) -> Dict[str, str]:
+    async def _project_names(db: AsyncIOMotorDatabase, project_ids: list[str]) -> dict[str, str]:
         cleaned = [pid for pid in project_ids if pid]
         if not cleaned:
             return {}
-        names: Dict[str, str] = {}
+        names: dict[str, str] = {}
         async for p in db["projects"].find({"_id": {"$in": cleaned}}, {"name": 1}):
             names[p["_id"]] = p.get("name", "")
         return names

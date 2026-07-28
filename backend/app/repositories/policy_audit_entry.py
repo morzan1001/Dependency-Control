@@ -1,7 +1,7 @@
 """MongoDB access for crypto_policy_history; a policy_type discriminator (default crypto) lets crypto and license policies share one collection, and docs missing the field are treated as crypto."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Literal, Optional
+from typing import Any, Literal
 
 from pymongo import DESCENDING
 
@@ -12,7 +12,7 @@ from app.repositories.base import BaseRepository
 PolicyType = Literal["crypto", "license"]
 
 
-def _policy_type_filter(policy_type: PolicyType) -> Dict[str, Any]:
+def _policy_type_filter(policy_type: PolicyType) -> dict[str, Any]:
     """crypto also matches docs missing the field (treated as crypto)."""
     if policy_type == "crypto":
         return {"$or": [{"policy_type": "crypto"}, {"policy_type": {"$exists": False}}]}
@@ -31,12 +31,12 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
         self,
         *,
         policy_scope: Literal["system", "project"],
-        project_id: Optional[str] = None,
+        project_id: str | None = None,
         policy_type: PolicyType = "crypto",
         skip: int = 0,
         limit: int = 50,
-    ) -> List[PolicyAuditEntry]:
-        query: Dict[str, Any] = {
+    ) -> list[PolicyAuditEntry]:
+        query: dict[str, Any] = {
             "policy_scope": policy_scope,
             "project_id": project_id,
             **_policy_type_filter(policy_type),
@@ -50,11 +50,11 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
         self,
         *,
         policy_scope: str,
-        project_id: Optional[str],
+        project_id: str | None,
         version: int,
         policy_type: PolicyType = "crypto",
-    ) -> Optional[PolicyAuditEntry]:
-        query: Dict[str, Any] = {
+    ) -> PolicyAuditEntry | None:
+        query: dict[str, Any] = {
             "policy_scope": policy_scope,
             "project_id": project_id,
             "version": version,
@@ -68,10 +68,10 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
         self,
         *,
         policy_scope: Literal["system", "project"],
-        project_id: Optional[str] = None,
+        project_id: str | None = None,
         policy_type: PolicyType = "crypto",
     ) -> int:
-        query: Dict[str, Any] = {
+        query: dict[str, Any] = {
             "policy_scope": policy_scope,
             "project_id": project_id,
             **_policy_type_filter(policy_type),
@@ -83,11 +83,11 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
         self,
         *,
         policy_scope: str,
-        project_id: Optional[str],
+        project_id: str | None,
         cutoff: datetime,
         policy_type: PolicyType = "crypto",
     ) -> int:
-        query: Dict[str, Any] = {
+        query: dict[str, Any] = {
             "policy_scope": policy_scope,
             "project_id": project_id,
             "timestamp": {"$lt": cutoff},

@@ -1,14 +1,14 @@
 """Stateless helpers for chat tool registry and crypto/compliance tool wrappers."""
 
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.core.config import settings
 
 
-def _waiver_is_active(waiver: Dict[str, Any], now: Optional[datetime] = None) -> bool:
+def _waiver_is_active(waiver: dict[str, Any], now: datetime | None = None) -> bool:
     """True if expiration_date is absent, null, or in the future; mirrors WaiverRepository._non_expired_filter."""
-    expiration: Optional[datetime] = waiver.get("expiration_date")
+    expiration: datetime | None = waiver.get("expiration_date")
     if expiration is None:
         return True
     reference = now or datetime.now(timezone.utc)
@@ -66,7 +66,7 @@ def _clamp_limit(raw: Any, default: int, maximum: int = MAX_TOOL_LIMIT) -> int:
     return max(1, min(value, maximum))
 
 
-def _ensure_list(value: Any) -> Optional[List[Any]]:
+def _ensure_list(value: Any) -> list[Any] | None:
     """Coerce an LLM-supplied scalar to a single-element list for Mongo ``$in`` queries."""
     if value is None:
         return None
@@ -86,7 +86,7 @@ def _clip_value(value: Any) -> Any:
     return value
 
 
-def _flatten_primary_vuln(out: Dict[str, Any], vulns: List[Dict[str, Any]]) -> None:
+def _flatten_primary_vuln(out: dict[str, Any], vulns: list[dict[str, Any]]) -> None:
     """Mutate `out` with fields lifted from the first nested CVE."""
     if not vulns:
         return
@@ -102,11 +102,11 @@ def _flatten_primary_vuln(out: Dict[str, Any], vulns: List[Dict[str, Any]]) -> N
     out["cve_count"] = len(vulns)
 
 
-def _serialize_finding_for_llm(doc: Dict[str, Any]) -> Dict[str, Any]:
+def _serialize_finding_for_llm(doc: dict[str, Any]) -> dict[str, Any]:
     """Compact LLM projection: flattens `details` and the first CVE to the top level."""
     if not doc:
         return {}
-    out: Dict[str, Any] = {}
+    out: dict[str, Any] = {}
     for key in _FINDING_TOPLEVEL_FIELDS:
         if doc.get(key) is not None:
             out[key] = _clip_value(doc[key])
@@ -121,7 +121,7 @@ def _serialize_finding_for_llm(doc: Dict[str, Any]) -> Dict[str, Any]:
     return out
 
 
-def _parse_major(version: Optional[str]) -> Optional[int]:
+def _parse_major(version: str | None) -> int | None:
     if not version or not isinstance(version, str):
         return None
     cleaned = version.lstrip("vV=^~ ").strip()
@@ -135,8 +135,8 @@ def _parse_major(version: Optional[str]) -> Optional[int]:
 def _compare_versions(a: str, b: str) -> int:
     """Naive numeric-tuple comparison (-1/0/1) to pick the 'largest' fix_version, not full semver."""
 
-    def parts(v: str) -> List[Any]:
-        out: List[Any] = []
+    def parts(v: str) -> list[Any]:
+        out: list[Any] = []
         for token in v.lstrip("vV=^~ ").split("."):
             head = token.split("-", 1)[0].split("+", 1)[0]
             try:
@@ -158,7 +158,7 @@ def _compare_versions(a: str, b: str) -> int:
     return 0
 
 
-def _breaking_risk(current: Optional[str], target: Optional[str]) -> str:
+def _breaking_risk(current: str | None, target: str | None) -> str:
     cur_major = _parse_major(current)
     tgt_major = _parse_major(target)
     if cur_major is None or tgt_major is None:
@@ -193,7 +193,7 @@ def _inject_urls(node: Any) -> None:
         _inject_urls(value)
 
 
-def _truncate_if_too_large(result: Dict[str, Any]) -> Dict[str, Any]:
+def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
     """Truncate the largest list in `result` so its JSON stays under MAX_TOOL_RESULT_BYTES."""
     import json as _json
 
@@ -233,7 +233,7 @@ def _truncate_if_too_large(result: Dict[str, Any]) -> Dict[str, Any]:
     return result
 
 
-def _serialize_doc(doc: Optional[Dict[str, Any]], fields: Optional[List[str]] = None) -> Dict[str, Any]:
+def _serialize_doc(doc: dict[str, Any] | None, fields: list[str] | None = None) -> dict[str, Any]:
     """Serialize a MongoDB doc for LLM consumption (renames _id and isoformats datetimes)."""
     if doc is None:
         return {}

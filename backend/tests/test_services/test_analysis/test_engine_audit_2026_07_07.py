@@ -96,7 +96,7 @@ class TestShouldUpdateProjectLatestScan:
 
     def test_naive_created_at_compared_as_utc(self):
         # stored datetimes are often tz-naive UTC; comparison must not raise
-        naive_old = datetime(2020, 1, 1)
+        naive_old = datetime(2020, 1, 1)  # noqa: DTZ001
         aware_new = datetime(2026, 1, 1, tzinfo=timezone.utc)
         assert self._run(naive_old, "scan-newer", aware_new) is False
 

@@ -1,7 +1,5 @@
 """Shared utilities for system settings operations."""
 
-from typing import List
-
 from app.core.constants import (
     NOTIFICATION_CHANNEL_EMAIL,
     NOTIFICATION_CHANNEL_MATTERMOST,
@@ -10,9 +8,9 @@ from app.core.constants import (
 from app.models.system import SystemSettings
 
 
-def get_available_channels(settings: SystemSettings) -> List[str]:
+def get_available_channels(settings: SystemSettings) -> list[str]:
     """Return the notification channels configured in system settings."""
-    channels: List[str] = []
+    channels: list[str] = []
 
     if settings.smtp_host and settings.smtp_user:
         channels.append(NOTIFICATION_CHANNEL_EMAIL)

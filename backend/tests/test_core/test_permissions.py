@@ -1,10 +1,10 @@
 """Tests for the permission system."""
 
 from app.core.permissions import (
-    Permissions,
     ALL_PERMISSIONS,
-    has_permission,
+    Permissions,
     get_missing_permissions,
+    has_permission,
 )
 from tests.helpers.permission_presets import (
     PRESET_ADMIN,

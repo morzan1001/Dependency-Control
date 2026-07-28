@@ -1,10 +1,8 @@
-from typing import Optional, Tuple
-
 from app.core.constants import EPSS_HIGH_THRESHOLD, EPSS_MEDIUM_THRESHOLD, SEVERITY_CALCULATED_RISK_SCORES
 from app.core.epss import bucket_epss
 
 
-def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: Optional[float]) -> str:
+def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: float | None) -> str:
     """Maturity level: weaponized > active > high/medium/low (EPSS) > unknown."""
     if kev_ransomware:
         return "weaponized"
@@ -30,8 +28,8 @@ def _calculate_epss_contribution(epss_score: float) -> float:
 
 def _apply_reachability_modifier(
     score: float,
-    is_reachable: Optional[bool],
-    reachability_level: Optional[str],
+    is_reachable: bool | None,
+    reachability_level: str | None,
 ) -> float:
     """Scale by reachability: 0.4 if unreachable, 1.1 if confirmed, else identity (not 0 — analysis is imperfect)."""
     if is_reachable is None and reachability_level is None:
@@ -44,12 +42,12 @@ def _apply_reachability_modifier(
 
 
 def calculate_risk_score(
-    cvss_score: Optional[float],
-    epss_score: Optional[float],
+    cvss_score: float | None,
+    epss_score: float | None,
     is_kev: bool,
     kev_ransomware: bool,
-    is_reachable: Optional[bool] = None,
-    reachability_level: Optional[str] = None,
+    is_reachable: bool | None = None,
+    reachability_level: str | None = None,
 ) -> float:
     """Combined 0..100 risk = CVSS (<=40, 20 default) + EPSS (<=25) + KEV (+20) + ransomware (+5), then reachability multiplier, capped at 100."""
     score = (cvss_score / 10.0) * 40 if cvss_score is not None else 20.0
@@ -65,8 +63,8 @@ def calculate_risk_score(
 
 def calculate_adjusted_risk_score(
     base_risk_score: float,
-    is_reachable: Optional[bool] = None,
-    reachability_level: Optional[str] = None,
+    is_reachable: bool | None = None,
+    reachability_level: str | None = None,
 ) -> float:
     """Apply only the reachability modifier to an already-computed risk score."""
     if is_reachable is None and reachability_level is None:
@@ -79,9 +77,9 @@ def calculate_adjusted_risk_score(
 
 
 def map_reachability_level_to_modifier(
-    analysis_level: Optional[str],
-    is_reachable: Optional[bool],
-) -> Optional[str]:
+    analysis_level: str | None,
+    is_reachable: bool | None,
+) -> str | None:
     """Map reachability enrichment (analysis_level + is_reachable) to the scoring modifier vocab: not-reachable -> "unreachable", symbol-level reachable -> "confirmed", else identity."""
     if analysis_level in ("confirmed", "unreachable"):
         return analysis_level
@@ -93,9 +91,9 @@ def map_reachability_level_to_modifier(
 
 
 def calculate_secret_risk_score(
-    verified: Optional[bool],
-    in_current_tree: Optional[bool],
-) -> Tuple[float, float]:
+    verified: bool | None,
+    in_current_tree: bool | None,
+) -> tuple[float, float]:
     """CRITICAL-anchor (risk_score, adjusted_risk_score): verified secrets stay urgent regardless of tree state (already exposed until rotated), else 0.4x if gone from the tree."""
     base = SEVERITY_CALCULATED_RISK_SCORES["CRITICAL"]
     if verified is True:

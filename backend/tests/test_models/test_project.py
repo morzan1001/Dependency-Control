@@ -1,7 +1,7 @@
 """Tests for Project, Scan, and AnalysisResult models."""
 
-from app.models.project import Project, Scan, AnalysisResult, ProjectMember
 from app.core.constants import PROJECT_ROLE_VIEWER
+from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 
 
 class TestProjectModel:

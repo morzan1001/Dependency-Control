@@ -2,7 +2,6 @@
 
 from functools import cached_property
 from pathlib import Path
-from typing import List, Optional
 
 import yaml
 
@@ -21,10 +20,10 @@ class NistSp800_131aFramework:
     name: str = "NIST SP 800-131A (Transitioning Cryptographic Algorithms and Key Lengths)"
     version: str = "Rev.3"
     source_url: str = "https://csrc.nist.gov/pubs/sp/800/131/a/r3/final"
-    disclaimer: Optional[str] = None
+    disclaimer: str | None = None
 
     @cached_property
-    def controls(self) -> List[ControlDefinition]:
+    def controls(self) -> list[ControlDefinition]:
         return _derive_controls_from_seed(
             _SEED_PATH,
             control_id_prefix="NIST-131A",
@@ -38,11 +37,11 @@ def _derive_controls_from_seed(
     yaml_path: Path,
     *,
     control_id_prefix: str,
-) -> List[ControlDefinition]:
+) -> list[ControlDefinition]:
     """Turn a seed-rule file into ControlDefinitions, one control per rule."""
     with yaml_path.open() as f:
         doc = yaml.safe_load(f) or {}
-    controls: List[ControlDefinition] = []
+    controls: list[ControlDefinition] = []
     for rule in doc.get("rules", []):
         rule_id = rule.get("rule_id")
         if not rule_id:

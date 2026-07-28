@@ -1,19 +1,19 @@
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any
 
-from app.schemas.recommendation import (
-    PackageHotspot,
-    Priority,
-    Recommendation,
-    RecommendationType,
-)
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     EPSS_HIGH_THRESHOLD,
     SCORECARD_LOW_THRESHOLD,
     get_severity_weight,
 )
-from app.services.recommendation.common import get_attr, ModelOrDict
+from app.schemas.recommendation import (
+    PackageHotspot,
+    Priority,
+    Recommendation,
+    RecommendationType,
+)
+from app.services.recommendation.common import ModelOrDict, get_attr
 
 
 def _vuln_risk_severity(critical: int, high: int, kev: int) -> str:
@@ -25,7 +25,7 @@ def _vuln_risk_severity(critical: int, high: int, kev: int) -> str:
     return "MEDIUM"
 
 
-def get_hotspot_remediation_steps(hotspot: PackageHotspot) -> List[str]:
+def get_hotspot_remediation_steps(hotspot: PackageHotspot) -> list[str]:
     """Generate specific remediation steps for a hotspot."""
     steps = []
 
@@ -72,7 +72,7 @@ def get_hotspot_remediation_steps(hotspot: PackageHotspot) -> List[str]:
     return steps
 
 
-def _new_hotspot_bucket() -> Dict[str, Any]:
+def _new_hotspot_bucket() -> dict[str, Any]:
     """Build an empty per-package aggregation bucket for hotspot detection."""
     return {
         "vulnerabilities": [],
@@ -90,7 +90,7 @@ def _new_hotspot_bucket() -> Dict[str, Any]:
     }
 
 
-def _record_vulnerability(pkg_data: Dict[str, Any], f: ModelOrDict, severity: str, details: Any) -> None:
+def _record_vulnerability(pkg_data: dict[str, Any], f: ModelOrDict, severity: str, details: Any) -> None:
     """Update a package aggregation bucket with a vulnerability finding."""
     pkg_data["vulnerabilities"].append(f)
     if severity == "CRITICAL":
@@ -118,9 +118,9 @@ _FINDING_TYPE_BUCKETS = {
 }
 
 
-def _aggregate_findings_by_package(findings: List[ModelOrDict]) -> Dict[str, Dict[str, Any]]:
+def _aggregate_findings_by_package(findings: list[ModelOrDict]) -> dict[str, dict[str, Any]]:
     """Aggregate findings grouped by package component."""
-    package_findings: Dict[str, Dict[str, Any]] = defaultdict(_new_hotspot_bucket)
+    package_findings: dict[str, dict[str, Any]] = defaultdict(_new_hotspot_bucket)
 
     for f in findings:
         component = get_attr(f, "component", "")
@@ -143,10 +143,10 @@ def _aggregate_findings_by_package(findings: List[ModelOrDict]) -> Dict[str, Dic
     return package_findings
 
 
-def _collect_hotspot_reasons(pkg_data: Dict[str, Any]) -> tuple[bool, List[str]]:
+def _collect_hotspot_reasons(pkg_data: dict[str, Any]) -> tuple[bool, list[str]]:
     """Determine if a package is a hotspot and gather its reasons."""
     is_hotspot = False
-    reasons: List[str] = []
+    reasons: list[str] = []
 
     if pkg_data["malware"]:
         is_hotspot = True
@@ -179,7 +179,7 @@ def _collect_hotspot_reasons(pkg_data: Dict[str, Any]) -> tuple[bool, List[str]]
     return is_hotspot, reasons
 
 
-def _build_hotspot(pkg_name: str, pkg_data: Dict[str, Any], reasons: List[str]) -> PackageHotspot:
+def _build_hotspot(pkg_name: str, pkg_data: dict[str, Any], reasons: list[str]) -> PackageHotspot:
     """Build a PackageHotspot record from aggregated per-package data."""
     version = "unknown"
     if pkg_data["vulnerabilities"]:
@@ -255,16 +255,16 @@ def _build_hotspot_recommendation(hotspot: PackageHotspot) -> Recommendation:
 
 
 def detect_critical_hotspots(
-    findings: List[ModelOrDict],
-    _dependencies: List[ModelOrDict],
-) -> List[Recommendation]:
+    findings: list[ModelOrDict],
+    _dependencies: list[ModelOrDict],
+) -> list[Recommendation]:
     """Detect critical hotspots - packages that accumulate multiple severe issues."""
     if not findings:
         return []
 
     package_findings = _aggregate_findings_by_package(findings)
 
-    hotspots: List[PackageHotspot] = []
+    hotspots: list[PackageHotspot] = []
     for pkg_name, pkg_data in package_findings.items():
         is_hotspot, reasons = _collect_hotspot_reasons(pkg_data)
         if is_hotspot:
@@ -279,7 +279,7 @@ def detect_critical_hotspots(
     return [_build_hotspot_recommendation(h) for h in hotspots[:10]]
 
 
-def _record_quality_risk(pkg: Dict[str, Any], details: Any) -> None:
+def _record_quality_risk(pkg: dict[str, Any], details: Any) -> None:
     """Record a low-scorecard risk factor if applicable."""
     score = details.get("scorecard_score", 10) if isinstance(details, dict) else 10
     if score >= SCORECARD_LOW_THRESHOLD:
@@ -292,7 +292,7 @@ def _record_quality_risk(pkg: Dict[str, Any], details: Any) -> None:
     pkg["total_score"] += 30
 
 
-def _record_eol_risk(pkg: Dict[str, Any]) -> None:
+def _record_eol_risk(pkg: dict[str, Any]) -> None:
     """Record EOL risk factor if not already present."""
     if "eol" in [r["type"] for r in pkg["risk_factors"]]:
         return
@@ -300,7 +300,7 @@ def _record_eol_risk(pkg: Dict[str, Any]) -> None:
     pkg["total_score"] += 40
 
 
-def _record_license_risk(pkg: Dict[str, Any], severity: str, details: Any) -> None:
+def _record_license_risk(pkg: dict[str, Any], severity: str, details: Any) -> None:
     """Record a license risk factor if severity warrants it."""
     if severity not in ("CRITICAL", "HIGH"):
         return
@@ -317,15 +317,15 @@ def _record_license_risk(pkg: Dict[str, Any], severity: str, details: Any) -> No
     pkg["total_score"] += 20
 
 
-def _record_malware_risk(pkg: Dict[str, Any]) -> None:
+def _record_malware_risk(pkg: dict[str, Any]) -> None:
     """Record a malware risk factor."""
     pkg["risk_factors"].append({"type": "malware", "severity": "CRITICAL", "description": "Known malware package"})
     pkg["total_score"] += 100
 
 
-def _aggregate_package_risks(findings: List[ModelOrDict]) -> Dict[str, Dict[str, Any]]:
+def _aggregate_package_risks(findings: list[ModelOrDict]) -> dict[str, dict[str, Any]]:
     """Aggregate risk factors per package from findings."""
-    package_risks: Dict[str, Dict[str, Any]] = defaultdict(
+    package_risks: dict[str, dict[str, Any]] = defaultdict(
         lambda: {"risk_factors": [], "total_score": 0, "vulns": [], "details": {}}
     )
 
@@ -354,7 +354,7 @@ def _aggregate_package_risks(findings: List[ModelOrDict]) -> Dict[str, Dict[str,
     return package_risks
 
 
-def _append_vuln_risk_factor(pkg: Dict[str, Any]) -> None:
+def _append_vuln_risk_factor(pkg: dict[str, Any]) -> None:
     """Append a summarized vulnerability risk factor and score."""
     vuln_count = len(pkg["vulns"])
     if vuln_count == 0:
@@ -378,7 +378,7 @@ def _append_vuln_risk_factor(pkg: Dict[str, Any]) -> None:
     pkg["total_score"] += critical * 50 + high * 20 + vuln_count * 5 + kev * 100
 
 
-def _build_toxic_recommendation(component: str, pkg: Dict[str, Any]) -> Recommendation:
+def _build_toxic_recommendation(component: str, pkg: dict[str, Any]) -> Recommendation:
     """Build a toxic-dependency recommendation."""
     risk_descriptions = [r["description"] for r in pkg["risk_factors"]]
     version = pkg["details"].get("version", "unknown")
@@ -420,9 +420,9 @@ def _build_toxic_recommendation(component: str, pkg: Dict[str, Any]) -> Recommen
 
 
 def detect_toxic_dependencies(
-    findings: List[ModelOrDict],
-    dependencies: List[ModelOrDict],
-) -> List[Recommendation]:
+    findings: list[ModelOrDict],
+    dependencies: list[ModelOrDict],
+) -> list[Recommendation]:
     """Detect "toxic" dependencies - packages with 2+ independent risk factors."""
     if not findings:
         return []
@@ -439,16 +439,16 @@ def detect_toxic_dependencies(
 
 
 def analyze_attack_surface(
-    dependencies: List[ModelOrDict],
-    findings: List[ModelOrDict],
-) -> List[Recommendation]:
+    dependencies: list[ModelOrDict],
+    findings: list[ModelOrDict],
+) -> list[Recommendation]:
     """Analyze attack surface and recommend reduction strategies."""
     if not dependencies:
         return []
 
     recommendations = []
 
-    vuln_count_by_pkg: Dict[str, int] = defaultdict(int)
+    vuln_count_by_pkg: dict[str, int] = defaultdict(int)
     for f in findings:
         if get_attr(f, "type") == "vulnerability":
             vuln_count_by_pkg[get_attr(f, "component", "")] += 1

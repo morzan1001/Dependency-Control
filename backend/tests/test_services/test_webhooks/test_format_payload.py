@@ -1,9 +1,9 @@
 """Unit tests for WebhookService._format_payload and test_webhook."""
 
 import json
-import pytest
-
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from app.models.webhook import Webhook
 from app.services.webhooks.webhook_service import WebhookService

@@ -1,6 +1,6 @@
 """Analytics summary endpoints: /summary, /dependencies/top, /dependency-types."""
 
-from typing import Annotated, Any, Dict, List, Optional
+from typing import Annotated, Any
 
 from fastapi import Query
 
@@ -102,8 +102,8 @@ async def get_top_dependencies(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
-    type: Annotated[Optional[str], Query(description="Filter by dependency type (npm, pypi, maven, etc.)")] = None,
-) -> List[DependencyUsage]:
+    type: Annotated[str | None, Query(description="Filter by dependency type (npm, pypi, maven, etc.)")] = None,
+) -> list[DependencyUsage]:
     """Get most frequently used dependencies across all accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_DEPENDENCIES)
 
@@ -117,11 +117,11 @@ async def get_top_dependencies(
     if not scan_ids:
         return []
 
-    match_stage: Dict[str, Any] = {"scan_id": {"$in": scan_ids}}
+    match_stage: dict[str, Any] = {"scan_id": {"$in": scan_ids}}
     if type:
         match_stage["type"] = type
 
-    pipeline: List[Dict[str, Any]] = [
+    pipeline: list[dict[str, Any]] = [
         {"$match": match_stage},
         {
             "$group": {
@@ -175,7 +175,7 @@ async def get_top_dependencies(
 async def get_dependency_types(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> List[str]:
+) -> list[str]:
     """Get list of all dependency types used across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
 

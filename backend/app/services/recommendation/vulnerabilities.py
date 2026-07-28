@@ -1,24 +1,23 @@
 from collections import defaultdict
-from typing import Any, Dict, List, Optional
+from typing import Any
 
-
+from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, OS_PACKAGE_TYPES
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
     RecommendationType,
     VulnerabilityInfo,
 )
-from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, OS_PACKAGE_TYPES
-from app.services.recommendation.common import calculate_best_fix_version, get_attr, ModelOrDict
+from app.services.recommendation.common import ModelOrDict, calculate_best_fix_version, get_attr
 
 
 def process_vulnerabilities(
-    findings: List[ModelOrDict],
-    dep_by_purl: Dict[str, ModelOrDict],
-    dep_by_name_version: Dict[str, ModelOrDict],
-    dependencies: List[ModelOrDict],
-    source_target: Optional[str],
-) -> List[Recommendation]:
+    findings: list[ModelOrDict],
+    dep_by_purl: dict[str, ModelOrDict],
+    dep_by_name_version: dict[str, ModelOrDict],
+    dependencies: list[ModelOrDict],
+    source_target: str | None,
+) -> list[Recommendation]:
     """Process vulnerability findings."""
     recommendations = []
 
@@ -44,9 +43,9 @@ def _resolve_dep(
     details: dict,
     component: str,
     version: str,
-    dep_by_purl: Dict[str, ModelOrDict],
-    dep_by_name_version: Dict[str, ModelOrDict],
-) -> Optional[ModelOrDict]:
+    dep_by_purl: dict[str, ModelOrDict],
+    dep_by_name_version: dict[str, ModelOrDict],
+) -> ModelOrDict | None:
     """Resolve a dependency from purl or name@version lookup."""
     purl = details.get("purl") if isinstance(details, dict) else None
     purl = purl or (details.get("package_url") if isinstance(details, dict) else None)
@@ -90,7 +89,7 @@ def _build_vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
     )
 
 
-def _classify_category(vuln_info: VulnerabilityInfo, dep: Optional[ModelOrDict]) -> str:
+def _classify_category(vuln_info: VulnerabilityInfo, dep: ModelOrDict | None) -> str:
     """Determine which category a vulnerability belongs to."""
     if not vuln_info.fixed_version:
         return "no_fix"
@@ -106,10 +105,10 @@ def _classify_category(vuln_info: VulnerabilityInfo, dep: Optional[ModelOrDict])
 
 
 def _categorize_by_source(
-    findings: List[ModelOrDict],
-    dep_by_purl: Dict[str, ModelOrDict],
-    dep_by_name_version: Dict[str, ModelOrDict],
-) -> Dict[str, List[VulnerabilityInfo]]:
+    findings: list[ModelOrDict],
+    dep_by_purl: dict[str, ModelOrDict],
+    dep_by_name_version: dict[str, ModelOrDict],
+) -> dict[str, list[VulnerabilityInfo]]:
     """Categorize vulnerabilities by their source type."""
 
     categories = defaultdict(list)
@@ -151,16 +150,16 @@ def _is_os_package(dep: ModelOrDict) -> bool:
 
 
 def _analyze_base_image_vulns(
-    vulns: List[VulnerabilityInfo],
-    _dependencies: List[ModelOrDict],
-    source_target: Optional[str],
-) -> Optional[Recommendation]:
+    vulns: list[VulnerabilityInfo],
+    _dependencies: list[ModelOrDict],
+    source_target: str | None,
+) -> Recommendation | None:
     """Analyze if a base image update would be beneficial."""
 
     if not vulns:
         return None
 
-    severity_counts: Dict[str, int] = defaultdict(int)
+    severity_counts: dict[str, int] = defaultdict(int)
     affected_packages = set()
 
     for v in vulns:
@@ -221,10 +220,10 @@ def _analyze_base_image_vulns(
     )
 
 
-def _aggregate_vuln_stats(component_vulns: List[VulnerabilityInfo]) -> Dict[str, Any]:
+def _aggregate_vuln_stats(component_vulns: list[VulnerabilityInfo]) -> dict[str, Any]:
     """Aggregate severity, EPSS/KEV, and reachability stats for a component's vulns."""
-    severity_counts: Dict[str, int] = defaultdict(int)
-    stats: Dict[str, Any] = {
+    severity_counts: dict[str, int] = defaultdict(int)
+    stats: dict[str, Any] = {
         "cves": [],
         "kev_count": 0,
         "kev_ransomware_count": 0,
@@ -270,7 +269,7 @@ def _aggregate_vuln_stats(component_vulns: List[VulnerabilityInfo]) -> Dict[str,
     return stats
 
 
-def _score_priority(component_vulns: List[VulnerabilityInfo], stats: Dict[str, Any]) -> Priority:
+def _score_priority(component_vulns: list[VulnerabilityInfo], stats: dict[str, Any]) -> Priority:
     """Determine recommendation priority from aggregated stats."""
     severity_counts = stats["severity_counts"]
 
@@ -296,8 +295,8 @@ def _build_direct_description(
     component: str,
     current_version: str,
     best_fix: str,
-    component_vulns: List[VulnerabilityInfo],
-    stats: Dict[str, Any],
+    component_vulns: list[VulnerabilityInfo],
+    stats: dict[str, Any],
 ) -> str:
     """Build the description string for a direct-dependency update recommendation."""
     desc_parts = [
@@ -318,8 +317,8 @@ def _build_direct_description(
 
 def _build_direct_recommendation(
     component: str,
-    component_vulns: List[VulnerabilityInfo],
-) -> Optional[Recommendation]:
+    component_vulns: list[VulnerabilityInfo],
+) -> Recommendation | None:
     """Build a single direct-dependency recommendation, returning None if no fix is known."""
     fixed_versions = [v.fixed_version for v in component_vulns if v.fixed_version]
     if not fixed_versions:
@@ -371,10 +370,10 @@ def _build_direct_recommendation(
 
 
 def _analyze_direct_dependencies(
-    vulns: List[VulnerabilityInfo],
-    _dep_by_purl: Dict[str, ModelOrDict],
-    _dep_by_name_version: Dict[str, ModelOrDict],
-) -> List[Recommendation]:
+    vulns: list[VulnerabilityInfo],
+    _dep_by_purl: dict[str, ModelOrDict],
+    _dep_by_name_version: dict[str, ModelOrDict],
+) -> list[Recommendation]:
     """Analyze direct dependency updates with EPSS/KEV/Reachability prioritization."""
 
     recommendations = []
@@ -392,14 +391,16 @@ def _analyze_direct_dependencies(
 
 
 def _build_transitive_description(
-    component: str, current_version: str, best_fix: str, component_vulns: List[VulnerabilityInfo], stats: Dict[str, Any]
+    component: str, current_version: str, best_fix: str, component_vulns: list[VulnerabilityInfo], stats: dict[str, Any]
 ) -> str:
     """Build the description for a transitive-dependency recommendation."""
     desc_parts = [
-        f"Transitive dependency {component}@{current_version} has "
-        f"{len(component_vulns)} vulnerabilities. "
-        f"Update a parent dependency that includes a fixed version ({best_fix}), "
-        f"or override the transitive version directly."
+        (
+            f"Transitive dependency {component}@{current_version} has "
+            f"{len(component_vulns)} vulnerabilities. "
+            f"Update a parent dependency that includes a fixed version ({best_fix}), "
+            f"or override the transitive version directly."
+        )
     ]
     if stats["kev_count"] > 0:
         desc_parts.append(f"{stats['kev_count']} are actively exploited (KEV).")
@@ -410,9 +411,7 @@ def _build_transitive_description(
     return " ".join(desc_parts)
 
 
-def _build_transitive_recommendation(
-    component: str, component_vulns: List[VulnerabilityInfo]
-) -> Optional[Recommendation]:
+def _build_transitive_recommendation(component: str, component_vulns: list[VulnerabilityInfo]) -> Recommendation | None:
     """Build a transitive recommendation, returning None when there is no fix."""
     fixed_versions = [v.fixed_version for v in component_vulns if v.fixed_version]
     if not fixed_versions:
@@ -460,8 +459,8 @@ def _build_transitive_recommendation(
 
 
 def _analyze_transitive_dependencies(
-    vulns: List[VulnerabilityInfo], _dependencies: List[ModelOrDict]
-) -> List[Recommendation]:
+    vulns: list[VulnerabilityInfo], _dependencies: list[ModelOrDict]
+) -> list[Recommendation]:
     """Analyze transitive dependency vulnerabilities with EPSS/KEV/Reachability prioritization."""
 
     recommendations = []
@@ -478,13 +477,13 @@ def _analyze_transitive_dependencies(
     return recommendations
 
 
-def _analyze_no_fix_vulns(vulns: List[VulnerabilityInfo]) -> List[Recommendation]:
+def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation]:
     """Analyze vulnerabilities with no available fix."""
 
     if not vulns:
         return []
 
-    severity_counts: Dict[str, int] = defaultdict(int)
+    severity_counts: dict[str, int] = defaultdict(int)
     components = set()
     crit_high_vulns = []
 

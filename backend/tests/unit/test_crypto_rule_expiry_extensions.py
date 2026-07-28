@@ -8,14 +8,14 @@ from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 
 
 def _base_rule_kwargs(**overrides):
-    base = dict(
-        rule_id="r",
-        name="r",
-        description="",
-        finding_type=FindingType.CRYPTO_CERT_EXPIRING_SOON,
-        default_severity=Severity.HIGH,
-        source=CryptoPolicySource.CUSTOM,
-    )
+    base = {
+        "rule_id": "r",
+        "name": "r",
+        "description": "",
+        "finding_type": FindingType.CRYPTO_CERT_EXPIRING_SOON,
+        "default_severity": Severity.HIGH,
+        "source": CryptoPolicySource.CUSTOM,
+    }
     base.update(overrides)
     return base
 

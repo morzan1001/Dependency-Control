@@ -1,13 +1,12 @@
 """Repository for teams."""
 
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.metrics import track_db_operation
 from app.models.team import Team
-
 
 _MEMBERS_USER_ID = "members.user_id"
 _COL = "teams"
@@ -18,25 +17,25 @@ class TeamRepository:
         self.db = db
         self.collection = db.teams
 
-    async def get_by_id(self, team_id: str) -> Optional[Team]:
+    async def get_by_id(self, team_id: str) -> Team | None:
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one({"_id": team_id})
         if data:
             return Team(**data)
         return None
 
-    async def get_raw_by_id(self, team_id: str) -> Optional[Dict[str, Any]]:
+    async def get_raw_by_id(self, team_id: str) -> dict[str, Any] | None:
         return await self.collection.find_one({"_id": team_id})
 
     # Don't match synced GitLab teams by name — names aren't unique across instances
     # (cross-tenant collision); use get_raw_by_gitlab_group instead.
-    async def get_by_name(self, name: str) -> Optional[Team]:
+    async def get_by_name(self, name: str) -> Team | None:
         data = await self.collection.find_one({"name": name})
         if data:
             return Team(**data)
         return None
 
-    async def get_raw_by_gitlab_group(self, gitlab_instance_id: str, gitlab_group_id: int) -> Optional[Dict[str, Any]]:
+    async def get_raw_by_gitlab_group(self, gitlab_instance_id: str, gitlab_group_id: int) -> dict[str, Any] | None:
         return await self.collection.find_one(
             {"gitlab_instance_id": gitlab_instance_id, "gitlab_group_id": gitlab_group_id}
         )
@@ -45,11 +44,11 @@ class TeamRepository:
         await self.collection.insert_one(team.model_dump(by_alias=True))
         return team
 
-    async def update(self, team_id: str, update_data: Dict[str, Any]) -> Optional[Team]:
+    async def update(self, team_id: str, update_data: dict[str, Any]) -> Team | None:
         await self.collection.update_one({"_id": team_id}, {"$set": update_data})
         return await self.get_by_id(team_id)
 
-    async def update_raw(self, team_id: str, update_ops: Dict[str, Any]) -> None:
+    async def update_raw(self, team_id: str, update_ops: dict[str, Any]) -> None:
         await self.collection.update_one({"_id": team_id}, update_ops)
 
     async def delete(self, team_id: str) -> bool:
@@ -58,25 +57,25 @@ class TeamRepository:
 
     async def find_many(
         self,
-        query: Dict[str, Any],
+        query: dict[str, Any],
         skip: int = 0,
         limit: int = 100,
         sort_by: str = "name",
         sort_order: int = 1,
-    ) -> List[Team]:
+    ) -> list[Team]:
         cursor = self.collection.find(query).sort(sort_by, sort_order).skip(skip).limit(limit)
         docs = await cursor.to_list(limit)
         return [Team(**doc) for doc in docs]
 
-    async def count(self, query: Optional[Dict[str, Any]] = None) -> int:
+    async def count(self, query: dict[str, Any] | None = None) -> int:
         return await self.collection.count_documents(query or {})
 
-    async def find_by_member(self, user_id: str) -> List[Team]:
+    async def find_by_member(self, user_id: str) -> list[Team]:
         cursor = self.collection.find({_MEMBERS_USER_ID: user_id})
         docs = await cursor.to_list(None)
         return [Team(**doc) for doc in docs]
 
-    async def add_member(self, team_id: str, member_data: Dict[str, Any]) -> None:
+    async def add_member(self, team_id: str, member_data: dict[str, Any]) -> None:
         await self.collection.update_one({"_id": team_id}, {"$push": {"members": member_data}})
 
     async def remove_member(self, team_id: str, user_id: str) -> None:
@@ -88,12 +87,12 @@ class TeamRepository:
             {"$set": {"members.$.role": role}},
         )
 
-    async def set_members(self, team_id: str, members: List[Dict[str, Any]], updated_at: datetime) -> None:
+    async def set_members(self, team_id: str, members: list[dict[str, Any]], updated_at: datetime) -> None:
         await self.collection.update_one({"_id": team_id}, {"$set": {"members": members, "updated_at": updated_at}})
 
     async def is_member(self, team_id: str, user_id: str) -> bool:
         result = await self.collection.find_one({"_id": team_id, _MEMBERS_USER_ID: user_id}, {"_id": 1})
         return result is not None
 
-    async def aggregate(self, pipeline: List[Dict[str, Any]], limit: Optional[int] = None) -> List[Dict[str, Any]]:
+    async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
         return await self.collection.aggregate(pipeline).to_list(limit)

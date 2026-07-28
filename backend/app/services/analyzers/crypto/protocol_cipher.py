@@ -3,7 +3,7 @@ one finding per weak suite plus optional amplification findings for match_cipher
 
 import logging
 import uuid
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -46,14 +46,14 @@ class ProtocolCipherSuiteAnalyzer(Analyzer):
 
     async def analyze(
         self,
-        sbom: Dict[str, Any],
-        settings: Optional[Dict[str, Any]] = None,
-        parsed_components: Optional[List[Dict[str, Any]]] = None,
+        sbom: dict[str, Any],
+        settings: dict[str, Any] | None = None,
+        parsed_components: list[dict[str, Any]] | None = None,
         *,
-        project_id: Optional[str] = None,
-        scan_id: Optional[str] = None,
-        db: Optional[AsyncIOMotorDatabase] = None,
-    ) -> Dict[str, Any]:
+        project_id: str | None = None,
+        scan_id: str | None = None,
+        db: AsyncIOMotorDatabase | None = None,
+    ) -> dict[str, Any]:
         if db is None or project_id is None or scan_id is None:
             return {"findings": []}
 
@@ -70,7 +70,7 @@ class ProtocolCipherSuiteAnalyzer(Analyzer):
             effective = await CryptoPolicyResolver(db).resolve(project_id)
             amp_rules = [r for r in effective.rules if r.enabled and r.match_cipher_weaknesses]
 
-            findings: List[Dict[str, Any]] = []
+            findings: list[dict[str, Any]] = []
             for proto in assets:
                 for suite_name in proto.cipher_suites:
                     key = suite_name.strip()
@@ -104,7 +104,7 @@ class ProtocolCipherSuiteAnalyzer(Analyzer):
             return {"error": str(e), "findings": []}
 
 
-def _severity_from_weaknesses(tags: List[str]) -> Severity:
+def _severity_from_weaknesses(tags: list[str]) -> Severity:
     tagset = set(tags)
     for tag, sev in _WEAKNESS_SEVERITY_ORDER:
         if tag in tagset:
@@ -123,8 +123,8 @@ def _rule_severity(rule: CryptoRule) -> Severity:
 
 
 def _build_finding(
-    proto: CryptoAsset, suite_name: str, entry: CipherSuiteEntry, severity: Severity, rule: Optional[CryptoRule]
-) -> Dict[str, Any]:
+    proto: CryptoAsset, suite_name: str, entry: CipherSuiteEntry, severity: Severity, rule: CryptoRule | None
+) -> dict[str, Any]:
     comp_label = f"{proto.protocol_type or proto.name} {proto.version or ''} [bom-ref:{proto.bom_ref}]".strip()
     if rule is None:
         description = f"Cipher suite {suite_name} has weaknesses: {', '.join(entry.weaknesses)}"

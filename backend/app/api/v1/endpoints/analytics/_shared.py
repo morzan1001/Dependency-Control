@@ -1,6 +1,6 @@
 """Private helpers shared by multiple analytics submodules."""
 
-from typing import Any, Dict, Optional
+from typing import Any
 
 from app.api.deps import DatabaseDep
 from app.repositories import (
@@ -11,7 +11,7 @@ from app.repositories import (
 _MSG_ACCESS_DENIED = "Access denied to this project"
 
 
-async def _resolve_scan_id(project_id: str, db: DatabaseDep) -> Optional[str]:
+async def _resolve_scan_id(project_id: str, db: DatabaseDep) -> str | None:
     """Latest scan ID for a project, preferring branches that aren't deleted."""
     project_repo = ProjectRepository(db)
     project = await project_repo.get_by_id(project_id)
@@ -30,8 +30,8 @@ async def _resolve_scan_id(project_id: str, db: DatabaseDep) -> Optional[str]:
     return scan_doc["_id"] if scan_doc else None
 
 
-async def _get_enrichment_info(enrichment_repo: DependencyEnrichmentRepository, purl: Optional[str]) -> Dict[str, Any]:
-    result: Dict[str, Any] = {
+async def _get_enrichment_info(enrichment_repo: DependencyEnrichmentRepository, purl: str | None) -> dict[str, Any]:
+    result: dict[str, Any] = {
         "deps_dev_data": None,
         "enrichment_sources": [],
         "license_category": None,

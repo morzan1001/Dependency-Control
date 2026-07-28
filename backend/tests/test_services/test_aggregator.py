@@ -378,7 +378,7 @@ class TestAddVulnerabilityFinding:
         finding = self._make_vuln("CVE-1", "lodash", "4.17.0")
         self.agg.add_finding(finding)
         assert len(self.agg.findings) == 1
-        key = list(self.agg.findings.keys())[0]
+        key = next(iter(self.agg.findings.keys()))
         agg = self.agg.findings[key]
         assert agg.component == "lodash"
         assert len(agg.details["vulnerabilities"]) == 1
@@ -388,7 +388,7 @@ class TestAddVulnerabilityFinding:
         self.agg.add_finding(self._make_vuln("CVE-1", "lodash", "4.17.0"))
         self.agg.add_finding(self._make_vuln("CVE-2", "lodash", "4.17.0"))
         assert len(self.agg.findings) == 1
-        agg = list(self.agg.findings.values())[0]
+        agg = next(iter(self.agg.findings.values()))
         assert len(agg.details["vulnerabilities"]) == 2
 
     def test_different_components_separate(self):
@@ -400,7 +400,7 @@ class TestAddVulnerabilityFinding:
         """Aggregate severity should be the max of all findings."""
         self.agg.add_finding(self._make_vuln("CVE-1", "pkg", "1.0", severity="LOW"))
         self.agg.add_finding(self._make_vuln("CVE-2", "pkg", "1.0", severity="CRITICAL"))
-        agg = list(self.agg.findings.values())[0]
+        agg = next(iter(self.agg.findings.values()))
         assert agg.severity == "CRITICAL"
 
     def test_go_version_normalization(self):
@@ -408,7 +408,7 @@ class TestAddVulnerabilityFinding:
         self.agg.add_finding(self._make_vuln("CVE-1", "golang.org/x/net", "go1.25.4"))
         self.agg.add_finding(self._make_vuln("CVE-2", "golang.org/x/net", "1.25.4"))
         assert len(self.agg.findings) == 1
-        agg = list(self.agg.findings.values())[0]
+        agg = next(iter(self.agg.findings.values()))
         assert len(agg.details["vulnerabilities"]) == 2
 
     def test_v_prefix_normalization(self):
@@ -420,13 +420,13 @@ class TestAddVulnerabilityFinding:
     def test_source_tracked(self):
         finding = self._make_vuln("CVE-1", "pkg", "1.0")
         self.agg.add_finding(finding, source="sbom.json")
-        agg = list(self.agg.findings.values())[0]
+        agg = next(iter(self.agg.findings.values()))
         assert "sbom.json" in agg.found_in
 
     def test_fixed_version_calculated(self):
         self.agg.add_finding(self._make_vuln("CVE-1", "pkg", "1.0", fixed_version="1.2.3"))
         self.agg.add_finding(self._make_vuln("CVE-2", "pkg", "1.0", fixed_version="1.2.5"))
-        agg = list(self.agg.findings.values())[0]
+        agg = next(iter(self.agg.findings.values()))
         # Should calculate aggregated fix covering both vulns
         assert agg.details.get("fixed_version") is not None
 
@@ -476,7 +476,7 @@ class TestAddQualityFinding:
         self.agg.add_finding(scorecard)
         self.agg.add_finding(maintainer)
         assert len(self.agg.findings) == 1
-        agg = list(self.agg.findings.values())[0]
+        agg = next(iter(self.agg.findings.values()))
         assert len(agg.details["quality_issues"]) == 2
         # Severity should escalate to HIGH
         assert agg.severity == "HIGH"
@@ -704,7 +704,7 @@ class TestAggregateDispatch:
     def test_error_result_creates_system_warning(self):
         self.agg.aggregate("trivy", {"error": "Scanner crashed"})
         assert len(self.agg.findings) == 1
-        f = list(self.agg.findings.values())[0]
+        f = next(iter(self.agg.findings.values()))
         assert f.type == "system_warning"
         assert "trivy" in f.description
 

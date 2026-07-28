@@ -1,7 +1,8 @@
 """Tests for ChatService orchestration (mocks Ollama + DB)."""
 
 import asyncio
-from typing import Any, AsyncIterator, Dict, List
+from collections.abc import AsyncIterator
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -26,7 +27,7 @@ def _make_user(user_id: str = "user-1", permissions: list[str] | None = None) ->
     )
 
 
-async def _async_gen(chunks: List[Dict[str, Any]]) -> AsyncIterator[Dict[str, Any]]:
+async def _async_gen(chunks: list[dict[str, Any]]) -> AsyncIterator[dict[str, Any]]:
     for c in chunks:
         yield c
 
@@ -178,7 +179,7 @@ async def test_current_user_message_not_duplicated_in_prompt():
     user = _make_user()
 
     # In-memory store so get_recent_messages reflects what add_message persisted.
-    stored: List[Dict[str, Any]] = []
+    stored: list[dict[str, Any]] = []
 
     async def fake_add(conversation_id, role, content="", images=None, **kwargs):
         stored.append(
@@ -197,7 +198,7 @@ async def test_current_user_message_not_duplicated_in_prompt():
     service.repo.add_message = AsyncMock(side_effect=fake_add)
     service.repo.get_recent_messages = AsyncMock(side_effect=fake_recent)
 
-    captured: Dict[str, Any] = {}
+    captured: dict[str, Any] = {}
 
     def capture_chat_stream(messages, tools=None):
         captured["messages"] = [dict(m) for m in messages]

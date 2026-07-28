@@ -1,7 +1,7 @@
 """Tests for Waiver model."""
 
-from app.models.waiver import Waiver
 from app.core.constants import WAIVER_STATUS_ACCEPTED_RISK
+from app.models.waiver import Waiver
 
 
 class TestWaiverModel:

@@ -2,7 +2,6 @@
 
 import asyncio
 
-
 from app.repositories.distributed_locks import DistributedLocksRepository
 
 
@@ -26,12 +25,10 @@ class _InMemoryLockCollection:
                     exists = key in doc
                     if exists != cond["$exists"]:
                         return False
-                if "$lt" in cond:
-                    if not (key in doc and doc[key] < cond["$lt"]):
-                        return False
-                if "$gt" in cond:
-                    if not (key in doc and doc[key] > cond["$gt"]):
-                        return False
+                if "$lt" in cond and not (key in doc and doc[key] < cond["$lt"]):
+                    return False
+                if "$gt" in cond and not (key in doc and doc[key] > cond["$gt"]):
+                    return False
             else:
                 if doc.get(key) != cond:
                     return False

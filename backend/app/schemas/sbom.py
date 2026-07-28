@@ -1,7 +1,7 @@
 """Pydantic models for normalized SBOM representations (CycloneDX, SPDX, Syft)."""
 
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -34,47 +34,47 @@ class ParsedDependency(BaseModel):
     # Core Identity
     name: str
     version: str
-    purl: Optional[str] = None
+    purl: str | None = None
     type: str = "unknown"
 
     # Licensing
     license: str = ""
-    license_url: Optional[str] = None
+    license_url: str | None = None
 
     # Scope and relationships
-    scope: Optional[str] = None
+    scope: str | None = None
     direct: bool = False
     direct_inferred: bool = Field(False, description="True if 'direct' was inferred (no dependency graph in SBOM)")
-    parent_components: List[str] = Field(default_factory=list)
+    parent_components: list[str] = Field(default_factory=list)
 
     # Source/Origin information
-    source_type: Optional[str] = None
-    source_target: Optional[str] = None
-    layer_digest: Optional[str] = None
-    found_by: Optional[str] = None
-    locations: List[str] = Field(default_factory=list)
+    source_type: str | None = None
+    source_target: str | None = None
+    layer_digest: str | None = None
+    found_by: str | None = None
+    locations: list[str] = Field(default_factory=list)
 
     # Security identifiers
-    cpes: List[str] = Field(default_factory=list)
+    cpes: list[str] = Field(default_factory=list)
 
     # Package metadata
-    description: Optional[str] = None
-    author: Optional[str] = None
-    publisher: Optional[str] = None
-    group: Optional[str] = None
+    description: str | None = None
+    author: str | None = None
+    publisher: str | None = None
+    group: str | None = None
 
     # External references
-    homepage: Optional[str] = None
-    repository_url: Optional[str] = None
-    download_url: Optional[str] = None
+    homepage: str | None = None
+    repository_url: str | None = None
+    download_url: str | None = None
 
     # Checksums
-    hashes: Dict[str, str] = Field(default_factory=dict)
+    hashes: dict[str, str] = Field(default_factory=dict)
 
     # Additional properties from SBOM
-    properties: Dict[str, str] = Field(default_factory=dict)
+    properties: dict[str, str] = Field(default_factory=dict)
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         return self.model_dump()
 
 
@@ -82,19 +82,19 @@ class ParsedSBOM(BaseModel):
     """Normalized SBOM representation."""
 
     format: SBOMFormat
-    format_version: Optional[str] = None
+    format_version: str | None = None
 
     # Source information
-    source_type: Optional[str] = None
-    source_target: Optional[str] = None
+    source_type: str | None = None
+    source_target: str | None = None
 
     # Components/Dependencies
-    dependencies: List[ParsedDependency] = Field(default_factory=list)
+    dependencies: list[ParsedDependency] = Field(default_factory=list)
 
     # Metadata
-    tool_name: Optional[str] = None
-    tool_version: Optional[str] = None
-    created_at: Optional[str] = None
+    tool_name: str | None = None
+    tool_version: str | None = None
+    created_at: str | None = None
 
     # Statistics
     total_components: int = 0
@@ -102,4 +102,4 @@ class ParsedSBOM(BaseModel):
     skipped_components: int = 0
 
     # CBOM extension — populated if SBOM contains cryptographic-asset components
-    crypto_assets: List["ParsedCryptoAsset"] = Field(default_factory=list)
+    crypto_assets: list["ParsedCryptoAsset"] = Field(default_factory=list)

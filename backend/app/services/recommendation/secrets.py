@@ -1,11 +1,10 @@
 from collections import defaultdict
-from typing import Dict, List
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import get_attr, ModelOrDict
+from app.services.recommendation.common import ModelOrDict, get_attr
 
 
-def process_secrets(findings: List[ModelOrDict]) -> List[Recommendation]:
+def process_secrets(findings: list[ModelOrDict]) -> list[Recommendation]:
     """Process secret/credential findings."""
     if not findings:
         return []
@@ -22,7 +21,7 @@ def process_secrets(findings: List[ModelOrDict]) -> List[Recommendation]:
 
     recommendations = []
 
-    severity_counts: Dict[str, int] = defaultdict(int)
+    severity_counts: dict[str, int] = defaultdict(int)
     files_affected = set()
 
     for f in findings:

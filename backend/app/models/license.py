@@ -2,7 +2,6 @@
 
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import List
 
 
 class LicenseCategory(str, Enum):
@@ -61,8 +60,8 @@ class LicenseInfo:
     category: LicenseCategory
     name: str
     description: str
-    obligations: List[str] = field(default_factory=list)
-    risks: List[str] = field(default_factory=list)
+    obligations: list[str] = field(default_factory=list)
+    risks: list[str] = field(default_factory=list)
     compatible_with_proprietary: bool = False
     requires_attribution: bool = True
     requires_source_disclosure: bool = False

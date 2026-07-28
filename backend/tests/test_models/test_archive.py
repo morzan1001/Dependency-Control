@@ -96,13 +96,11 @@ class TestArchiveMetadata:
 
     def test_validation_alias_accepts_underscore_id(self):
         metadata = ArchiveMetadata(
-            **{
-                "_id": "custom-id",
-                "project_id": "proj-1",
-                "scan_id": "scan-1",
-                "s3_key": "proj-1/scan-1.json.gz",
-                "s3_bucket": "dc-archives",
-            }
+            _id="custom-id",
+            project_id="proj-1",
+            scan_id="scan-1",
+            s3_key="proj-1/scan-1.json.gz",
+            s3_bucket="dc-archives",
         )
         assert metadata.id == "custom-id"
 

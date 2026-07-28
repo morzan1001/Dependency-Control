@@ -2,7 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
@@ -98,7 +98,7 @@ class ComplianceReportEngine:
         self,
         db: AsyncIOMotorDatabase,
         resolved: ResolvedScope,
-        framework: Optional[ComplianceFramework] = None,
+        framework: ComplianceFramework | None = None,
     ) -> EvaluationInput:
         scan_pairs = await self._pick_scan_ids(db, resolved)
         scan_ids = [sid for _, sid in scan_pairs]
@@ -126,7 +126,7 @@ class ComplianceReportEngine:
             db=db,
         )
 
-    async def _pick_scan_ids(self, db: AsyncIOMotorDatabase, resolved: ResolvedScope) -> List[Tuple[str, str]]:
+    async def _pick_scan_ids(self, db: AsyncIOMotorDatabase, resolved: ResolvedScope) -> list[tuple[str, str]]:
         match: dict[str, Any] = {"status": {"$in": ["completed", "partial"]}}
         if resolved.project_ids is not None:
             match["project_id"] = {"$in": resolved.project_ids}
@@ -138,9 +138,9 @@ class ComplianceReportEngine:
         # Return (project_id, scan_id) pairs so callers avoid re-querying each scan's project.
         return [(row["_id"], row["scan_id"]) async for row in db.scans.aggregate(pipeline)]
 
-    async def _collect_crypto_assets(self, db: AsyncIOMotorDatabase, scan_pairs: List[Tuple[str, str]]) -> List[Any]:
+    async def _collect_crypto_assets(self, db: AsyncIOMotorDatabase, scan_pairs: list[tuple[str, str]]) -> list[Any]:
         repo = CryptoAssetRepository(db)
-        out: List[Any] = []
+        out: list[Any] = []
         for pid, sid in scan_pairs:
             if pid is None or sid is None:
                 continue
@@ -152,9 +152,9 @@ class ComplianceReportEngine:
         self,
         db: AsyncIOMotorDatabase,
         resolved: ResolvedScope,
-        scan_ids: List[str],
-        framework: Optional[ComplianceFramework] = None,
-    ) -> List[dict]:
+        scan_ids: list[str],
+        framework: ComplianceFramework | None = None,
+    ) -> list[dict]:
         query: dict[str, Any] = {
             "scan_id": {"$in": scan_ids},
             "type": self._finding_type_filter(framework),
@@ -180,7 +180,7 @@ class ComplianceReportEngine:
             )
         return results
 
-    def _finding_type_filter(self, framework: Optional[ComplianceFramework]) -> Any:
+    def _finding_type_filter(self, framework: ComplianceFramework | None) -> Any:
         """Findings-query `type` clause per framework; unknown framework loads the union."""
         key = getattr(framework, "key", None)
         if key == ReportFramework.CVE_REMEDIATION_SLA:
@@ -195,8 +195,8 @@ class ComplianceReportEngine:
         self,
         db: AsyncIOMotorDatabase,
         resolved: ResolvedScope,
-        framework: Optional[ComplianceFramework],
-    ) -> Optional[Dict[str, Any]]:
+        framework: ComplianceFramework | None,
+    ) -> dict[str, Any] | None:
         """Effective project license policy; None unless scope is a single project carrying the toggles."""
         key = getattr(framework, "key", None)
         if key not in (ReportFramework.LICENSE_AUDIT, None):
@@ -213,7 +213,7 @@ class ComplianceReportEngine:
         return self._effective_license_policy(doc)
 
     @staticmethod
-    def _effective_license_policy(project_doc: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    def _effective_license_policy(project_doc: dict[str, Any]) -> dict[str, Any] | None:
         """Precedence: analyzer_settings.license_compliance (or its nested license_policy) over top-level project.license_policy."""
         license_keys = ("allow_strong_copyleft", "allow_network_copyleft", "distribution_model")
 
@@ -249,7 +249,7 @@ class ComplianceReportEngine:
         framework: ComplianceFramework,
         evaluation: FrameworkEvaluation,
         report: ComplianceReport,
-    ) -> Tuple[bytes, str, str]:
+    ) -> tuple[bytes, str, str]:
         renderer = RENDERER_REGISTRY[fmt]
         disclaimer = getattr(framework, "disclaimer", None)
         return renderer.render(evaluation, report, disclaimer=disclaimer)

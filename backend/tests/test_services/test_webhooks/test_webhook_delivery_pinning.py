@@ -1,11 +1,10 @@
 """The real webhook delivery path must connect through the DNS-rebinding-safe pinned transport."""
 
+import importlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-
-import importlib
 
 from app.services.webhooks.validation import _PinnedIPTransport
 
@@ -75,8 +74,8 @@ async def test_send_webhook_connects_through_pinned_transport():
     transport = captured.get("kwargs", {}).get("transport")
     assert isinstance(transport, _PinnedIPTransport), (
         "WebhookService._send_webhook must deliver through build_pinned_transport()'s "
-        "pinned transport to defeat DNS rebinding; got transport=%r. The SSRF fix "
-        "(finding #1) is still unwired in webhook_service.py." % (transport,)
+        f"pinned transport to defeat DNS rebinding; got transport={transport!r}. The SSRF fix "
+        "(finding #1) is still unwired in webhook_service.py."
     )
 
 
@@ -98,6 +97,6 @@ async def test_test_webhook_connects_through_pinned_transport():
     transport = captured.get("kwargs", {}).get("transport")
     assert isinstance(transport, _PinnedIPTransport), (
         "WebhookService.test_webhook must deliver through build_pinned_transport()'s "
-        "pinned transport to defeat DNS rebinding; got transport=%r. The SSRF fix "
-        "(finding #1) is still unwired in webhook_service.py." % (transport,)
+        f"pinned transport to defeat DNS rebinding; got transport={transport!r}. The SSRF fix "
+        "(finding #1) is still unwired in webhook_service.py."
     )

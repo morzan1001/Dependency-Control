@@ -1,6 +1,6 @@
 """Shared utilities for user-related operations."""
 
-from typing import Any, Dict
+from typing import Any
 
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -10,7 +10,7 @@ from app.models.user import User
 from app.repositories import UserRepository
 
 
-async def get_user_or_404(user_id: str, db: AsyncIOMotorDatabase) -> Dict[str, Any]:
+async def get_user_or_404(user_id: str, db: AsyncIOMotorDatabase) -> dict[str, Any]:
     """Fetch a raw user document by ID, raising 404 if not found."""
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_id(user_id)
@@ -19,7 +19,7 @@ async def get_user_or_404(user_id: str, db: AsyncIOMotorDatabase) -> Dict[str, A
     return user
 
 
-async def fetch_updated_user(user_id: str, db: AsyncIOMotorDatabase) -> Dict[str, Any]:
+async def fetch_updated_user(user_id: str, db: AsyncIOMotorDatabase) -> dict[str, Any]:
     """Fetch a raw user document by ID after modification, raising 500 if retrieval fails."""
     user_repo = UserRepository(db)
     user = await user_repo.get_raw_by_id(user_id)

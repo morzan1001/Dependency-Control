@@ -10,17 +10,15 @@ without depending on the backend. Keep them in sync with the frontend presets.
 that constant stays in the backend (used by the bootstrap admin in init_db).
 """
 
-from typing import List
-
 from app.core.permissions import ALL_PERMISSIONS, Permissions
 
 # Admin: All permissions (mirrors frontend PRESET_ADMIN).
-PRESET_ADMIN: List[str] = list(ALL_PERMISSIONS)
+PRESET_ADMIN: list[str] = list(ALL_PERMISSIONS)
 
 # Regular User: Can create/manage own projects and teams, view analytics,
 # use chat + MCP. Mirrors frontend PRESET_USER exactly.
 # Analytics stays own-projects-only (no analytics:global / project:read_all).
-PRESET_USER: List[str] = [
+PRESET_USER: list[str] = [
     # User - can view own profile
     Permissions.USER_READ,
     # Team - can create and view teams
@@ -51,7 +49,7 @@ PRESET_USER: List[str] = [
 ]
 
 # Viewer: Read-only access (mirrors frontend PRESET_VIEWER).
-PRESET_VIEWER: List[str] = [
+PRESET_VIEWER: list[str] = [
     # User - can view own profile
     Permissions.USER_READ,
     # Team - can view teams they belong to

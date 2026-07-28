@@ -1,12 +1,11 @@
 """The vuln_status_map pipeline in search_dependencies_advanced must restrict to the active scan_ids so a component fixed in the latest scan is not flagged vulnerable by older-scan findings."""
 
 import asyncio
-from typing import Any, Dict, List
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-
-from app.models.user import User
 from app.core.permissions import ALL_PERMISSIONS
+from app.models.user import User
 
 MODULE = "app.api.v1.endpoints.analytics.search"
 
@@ -63,7 +62,7 @@ class TestSearchDependenciesVulnScanScope:
 
         user = _admin_user()
         db = MagicMock()
-        captured_pipelines: List[List[Dict[str, Any]]] = []
+        captured_pipelines: list[list[dict[str, Any]]] = []
 
         async def _fake_get_user_project_ids(_u, _d):
             return ["proj-1"]

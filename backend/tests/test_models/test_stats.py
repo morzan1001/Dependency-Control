@@ -1,11 +1,11 @@
 """Tests for Stats models."""
 
 from app.models.stats import (
+    PrioritizedCounts,
+    ReachabilityStats,
+    SecretPrioritizedCounts,
     Stats,
     ThreatIntelligenceStats,
-    ReachabilityStats,
-    PrioritizedCounts,
-    SecretPrioritizedCounts,
 )
 
 

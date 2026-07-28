@@ -1,5 +1,5 @@
 import hashlib
-from typing import Any, Dict, Optional, TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType, Severity
 from app.schemas.finding import SecretDetails
@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from app.services.aggregation import ResultAggregator
 
 
-def _extract_file_path(finding: Dict[str, Any]) -> str:
+def _extract_file_path(finding: dict[str, Any]) -> str:
     source_metadata = finding.get("SourceMetadata") or {}
     data = source_metadata.get("Data") or {}
 
@@ -25,7 +25,7 @@ def _extract_file_path(finding: Dict[str, Any]) -> str:
     return "unknown"
 
 
-def _extract_git_metadata(finding: Dict[str, Any]) -> Dict[str, Any]:
+def _extract_git_metadata(finding: dict[str, Any]) -> dict[str, Any]:
     source_metadata = finding.get("SourceMetadata") or {}
     git = (source_metadata.get("Data") or {}).get("Git") or {}
     line = git.get("line")
@@ -36,7 +36,7 @@ def _extract_git_metadata(finding: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
-def normalize_trufflehog(aggregator: "ResultAggregator", result: Dict[str, Any], source: Optional[str] = None) -> None:
+def normalize_trufflehog(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     for finding in result.get("findings") or []:
         file_path = _extract_file_path(finding)
         # Prefer DetectorName; DetectorType is a numeric ordinal that loses the credential type.

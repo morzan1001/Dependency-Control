@@ -1,7 +1,7 @@
 """Tests for Team and TeamMember models."""
 
-from app.models.team import Team, TeamMember
 from app.core.constants import TEAM_ROLE_MEMBER
+from app.models.team import Team, TeamMember
 
 
 class TestTeamMember:

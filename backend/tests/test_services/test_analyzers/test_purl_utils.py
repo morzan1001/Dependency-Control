@@ -1,19 +1,19 @@
 """Tests for PURL parsing and utility functions."""
 
 from app.services.analyzers.purl_utils import (
-    parse_purl,
+    MAX_NAME_LENGTH,
+    MAX_PURL_LENGTH,
+    MAX_VERSION_LENGTH,
     get_purl_type,
+    is_cargo,
+    is_go,
+    is_maven,
+    is_npm,
+    is_nuget,
     is_purl_type,
     is_pypi,
-    is_npm,
-    is_maven,
-    is_go,
-    is_cargo,
-    is_nuget,
     normalize_hash_algorithm,
-    MAX_PURL_LENGTH,
-    MAX_NAME_LENGTH,
-    MAX_VERSION_LENGTH,
+    parse_purl,
 )
 
 

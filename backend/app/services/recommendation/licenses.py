@@ -1,8 +1,8 @@
 from collections import defaultdict
-from typing import Any, Dict, List
+from typing import Any
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import get_attr, ModelOrDict
+from app.services.recommendation.common import ModelOrDict, get_attr
 
 # Category restrictiveness rank (higher = more restrictive)
 _CATEGORY_RANK = {
@@ -16,7 +16,7 @@ _CATEGORY_RANK = {
 }
 
 
-def process_licenses(findings: List[ModelOrDict]) -> List[Recommendation]:
+def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
     """Process license compliance findings."""
     if not findings:
         return []
@@ -31,7 +31,7 @@ def process_licenses(findings: List[ModelOrDict]) -> List[Recommendation]:
         )
         by_license[license_name].append(f)
 
-    severity_counts: Dict[str, int] = defaultdict(int)
+    severity_counts: dict[str, int] = defaultdict(int)
     components = set()
 
     for f in findings:
@@ -86,7 +86,7 @@ def _license_key(f: ModelOrDict) -> str:
     return f"{get_attr(f, 'component', '')}@{get_attr(f, 'version', '')}"
 
 
-def _license_info(f: ModelOrDict) -> Dict[str, Any]:
+def _license_info(f: ModelOrDict) -> dict[str, Any]:
     details = get_attr(f, "details", {})
     return {
         "license": details.get("license", "unknown") if isinstance(details, dict) else "unknown",
@@ -95,9 +95,9 @@ def _license_info(f: ModelOrDict) -> Dict[str, Any]:
     }
 
 
-def _build_prev_license_index(previous_findings: List[ModelOrDict]) -> Dict[str, Dict[str, Any]]:
+def _build_prev_license_index(previous_findings: list[ModelOrDict]) -> dict[str, dict[str, Any]]:
     """Build a component@version → license info lookup for the previous scan."""
-    prev_by_component: Dict[str, Dict[str, Any]] = {}
+    prev_by_component: dict[str, dict[str, Any]] = {}
     for f in previous_findings:
         if get_attr(f, "type") != "license":
             continue
@@ -107,8 +107,8 @@ def _build_prev_license_index(previous_findings: List[ModelOrDict]) -> Dict[str,
 
 def _check_license_drift(
     f: ModelOrDict,
-    prev_by_component: Dict[str, Dict[str, Any]],
-) -> Dict[str, Any]:
+    prev_by_component: dict[str, dict[str, Any]],
+) -> dict[str, Any]:
     """Return a drift entry if the finding represents restrictive license drift, else empty dict."""
     if get_attr(f, "type") != "license":
         return {}
@@ -136,16 +136,16 @@ def _check_license_drift(
 
 
 def detect_license_drift(
-    current_findings: List[ModelOrDict],
-    previous_findings: List[ModelOrDict],
-) -> List[Recommendation]:
+    current_findings: list[ModelOrDict],
+    previous_findings: list[ModelOrDict],
+) -> list[Recommendation]:
     """Flag components whose license changed to a more restrictive category (e.g. MIT → GPL)."""
     if not previous_findings or not current_findings:
         return []
 
     prev_by_component = _build_prev_license_index(previous_findings)
 
-    drifted: List[Dict[str, Any]] = []
+    drifted: list[dict[str, Any]] = []
     for f in current_findings:
         drift = _check_license_drift(f, prev_by_component)
         if drift:

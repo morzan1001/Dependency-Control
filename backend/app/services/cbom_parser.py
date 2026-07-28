@@ -3,7 +3,7 @@
 import hashlib
 import logging
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any
 
 from app.schemas.cbom import (
     CryptoAssetType,
@@ -15,7 +15,7 @@ from app.schemas.cbom import (
 logger = logging.getLogger(__name__)
 
 
-def parse_cbom(raw: Dict[str, Any]) -> ParsedCBOM:
+def parse_cbom(raw: dict[str, Any]) -> ParsedCBOM:
     components = raw.get("components") or []
     tool_meta = (raw.get("metadata") or {}).get("tools") or []
     tool_name, tool_version = _tool_from_metadata(tool_meta)
@@ -35,14 +35,14 @@ def parse_cbom(raw: Dict[str, Any]) -> ParsedCBOM:
     )
 
 
-def _tool_from_metadata(tools: Any) -> tuple[Optional[str], Optional[str]]:
+def _tool_from_metadata(tools: Any) -> tuple[str | None, str | None]:
     """Extract (name, version) of the producing tool from metadata.tools.
 
     CycloneDX allows metadata.tools to be either the modern object form
     ({"components": [...]}) or the legacy list form ([{...}]). Both carry the
     tool as a component dict with "name"/"version".
     """
-    tool: Optional[Dict[str, Any]] = None
+    tool: dict[str, Any] | None = None
     if isinstance(tools, dict):
         comps = tools.get("components") or []
         if comps:
@@ -62,9 +62,9 @@ def _tool_from_metadata(tools: Any) -> tuple[Optional[str], Optional[str]]:
 
 
 def parse_crypto_components(
-    components: List[Dict[str, Any]],
-) -> List[ParsedCryptoAsset]:
-    out: List[ParsedCryptoAsset] = []
+    components: list[dict[str, Any]],
+) -> list[ParsedCryptoAsset]:
+    out: list[ParsedCryptoAsset] = []
     for idx, comp in enumerate(components):
         if comp.get("type") != "cryptographic-asset":
             continue
@@ -77,7 +77,7 @@ def parse_crypto_components(
     return out
 
 
-def _parse_one(comp: Dict[str, Any], idx: int) -> Optional[ParsedCryptoAsset]:
+def _parse_one(comp: dict[str, Any], idx: int) -> ParsedCryptoAsset | None:
     name = comp.get("name")
     if not name:
         return None
@@ -114,7 +114,7 @@ def _parse_one(comp: Dict[str, Any], idx: int) -> Optional[ParsedCryptoAsset]:
     return asset
 
 
-def _populate_algorithm(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> None:
+def _populate_algorithm(asset: ParsedCryptoAsset, props: dict[str, Any]) -> None:
     raw_prim = props.get("primitive")
     asset.primitive = _parse_primitive(raw_prim)
     asset.variant = props.get("variant")
@@ -134,7 +134,7 @@ _KEY_SIZE_PROPERTY_NAMES = (
 )
 
 
-def _resolve_key_size_bits(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> Optional[int]:
+def _resolve_key_size_bits(asset: ParsedCryptoAsset, props: dict[str, Any]) -> int | None:
     """Best-effort key-size extraction.
 
     parameterSetIdentifier is a CycloneDX 1.6 string (e.g. "P-256", "1024"); treat it as a
@@ -172,7 +172,7 @@ def _resolve_key_size_bits(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> O
     return None
 
 
-def _coerce_positive_int(raw: Any) -> Optional[int]:
+def _coerce_positive_int(raw: Any) -> int | None:
     """Reject bools (Python's int(True)==1 footgun) and non-positive values."""
     if raw is None or isinstance(raw, bool):
         return None
@@ -183,7 +183,7 @@ def _coerce_positive_int(raw: Any) -> Optional[int]:
     return value if value > 0 else None
 
 
-def _parse_primitive(raw: Any) -> Optional[CryptoPrimitive]:
+def _parse_primitive(raw: Any) -> CryptoPrimitive | None:
     if raw is None:
         return None
     try:
@@ -192,7 +192,7 @@ def _parse_primitive(raw: Any) -> Optional[CryptoPrimitive]:
         return CryptoPrimitive.OTHER
 
 
-def _populate_certificate(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> None:
+def _populate_certificate(asset: ParsedCryptoAsset, props: dict[str, Any]) -> None:
     asset.subject_name = props.get("subjectName")
     asset.issuer_name = props.get("issuerName")
     asset.not_valid_before = _parse_iso_date(props.get("notValidBefore"))
@@ -202,7 +202,7 @@ def _populate_certificate(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> No
     asset.certificate_format = props.get("certificateFormat")
 
 
-def _populate_protocol(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> None:
+def _populate_protocol(asset: ParsedCryptoAsset, props: dict[str, Any]) -> None:
     asset.protocol_type = props.get("type")
     asset.version = props.get("version")
     cipher_suites = props.get("cipherSuites") or []
@@ -217,7 +217,7 @@ def _populate_protocol(asset: ParsedCryptoAsset, props: Dict[str, Any]) -> None:
         asset.cipher_suites = names
 
 
-def _populate_evidence(asset: ParsedCryptoAsset, evidence: Dict[str, Any]) -> None:
+def _populate_evidence(asset: ParsedCryptoAsset, evidence: dict[str, Any]) -> None:
     occurrences = evidence.get("occurrences") or []
     asset.occurrence_locations = [
         str(o.get("location")) for o in occurrences if isinstance(o, dict) and o.get("location")
@@ -230,7 +230,7 @@ def _populate_evidence(asset: ParsedCryptoAsset, evidence: Dict[str, Any]) -> No
         asset.confidence = float(confidence)
 
 
-def _extract_properties(comp: Dict[str, Any]) -> Dict[str, str]:
+def _extract_properties(comp: dict[str, Any]) -> dict[str, str]:
     props = {}
     for p in comp.get("properties") or []:
         name = p.get("name")
@@ -240,7 +240,7 @@ def _extract_properties(comp: Dict[str, Any]) -> Dict[str, str]:
     return props
 
 
-def _parse_iso_date(raw: Any) -> Optional[datetime]:
+def _parse_iso_date(raw: Any) -> datetime | None:
     if not raw or not isinstance(raw, str):
         return None
     try:
@@ -249,6 +249,6 @@ def _parse_iso_date(raw: Any) -> Optional[datetime]:
         return None
 
 
-def _synthesize_bom_ref(comp: Dict[str, Any], idx: int) -> str:
+def _synthesize_bom_ref(comp: dict[str, Any], idx: int) -> str:
     basis = f"{comp.get('name', '')}|{idx}|{comp.get('cryptoProperties', {})}"
     return "synth-" + hashlib.sha256(basis.encode()).hexdigest()[:16]

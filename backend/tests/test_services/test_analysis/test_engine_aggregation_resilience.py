@@ -2,6 +2,7 @@
 
 import asyncio
 from types import SimpleNamespace
+from typing import ClassVar
 from unittest.mock import AsyncMock
 
 from app.models.finding import FindingType
@@ -53,7 +54,9 @@ class TestAggregateExternalResultsResilience:
         # simulates corrupt stored data
         class BoomResult:
             analyzer_name = "bad_analyzer"
-            result = {"corrupt": object()}  # not JSON-serialisable, triggers normaliser errors
+            result: ClassVar[dict[str, object]] = {
+                "corrupt": object()
+            }  # not JSON-serialisable, triggers normaliser errors
 
         bad_result = BoomResult()
 
@@ -117,7 +120,7 @@ class TestAggregateExternalResultsResilience:
 
         class BoomResult:
             analyzer_name = "bad_analyzer"
-            result = {}
+            result: ClassVar[dict[str, object]] = {}
 
         bad_result = BoomResult()
 

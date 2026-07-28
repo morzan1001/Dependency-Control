@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from app.core.config import settings
 
@@ -36,7 +36,7 @@ class TrivyAnalyzer(CLIAnalyzer):
         msg = stderr.decode(errors="replace").lower()
         return any(p in msg for p in self._RETRYABLE_PATTERNS)
 
-    def _build_command_args(self, sbom_path: str, settings_dict: Optional[Dict[str, Any]]) -> List[str]:
+    def _build_command_args(self, sbom_path: str, settings_dict: dict[str, Any] | None) -> list[str]:
         """Build Trivy CLI command arguments; adds --server when TRIVY_SERVER_URL is set."""
         args = [
             "trivy",
@@ -54,10 +54,10 @@ class TrivyAnalyzer(CLIAnalyzer):
 
     async def _preprocess_sbom(
         self,
-        sbom: Dict[str, Any],
+        sbom: dict[str, Any],
         tmp_sbom_path: str,
-        settings_dict: Optional[Dict[str, Any]],
-    ) -> Tuple[str, List[str]]:
+        settings_dict: dict[str, Any] | None,
+    ) -> tuple[str, list[str]]:
         """Convert to CycloneDX via syft when the SBOM isn't already CycloneDX or SPDX (both native to Trivy)."""
         is_cyclonedx = "bomFormat" in sbom and sbom["bomFormat"] == "CycloneDX"
         is_spdx = "spdxVersion" in sbom
@@ -87,7 +87,7 @@ class TrivyAnalyzer(CLIAnalyzer):
         logger.warning(f"Syft conversion failed: {stderr.decode()}. Proceeding with original file.")
         return tmp_sbom_path, []
 
-    def _parse_output(self, stdout: bytes) -> Dict[str, Any]:
+    def _parse_output(self, stdout: bytes) -> dict[str, Any]:
         """Parse Trivy JSON output and normalize vulnerabilities."""
         try:
             output_str = stdout.decode()
@@ -108,7 +108,7 @@ class TrivyAnalyzer(CLIAnalyzer):
                 "output": output_str,
             }
 
-    def _normalize_vulnerabilities(self, data: Dict[str, Any]) -> List[Dict[str, Any]]:
+    def _normalize_vulnerabilities(self, data: dict[str, Any]) -> list[dict[str, Any]]:
         """Normalize Trivy vulnerabilities with consistent severity and message."""
         normalized = []
         results = data.get("Results", [])

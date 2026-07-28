@@ -5,13 +5,12 @@ import logging
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Annotated, Optional
+from typing import Annotated
 
 from fastapi import HTTPException, Query
-
-from app.api.router import CustomAPIRouter
 from fastapi.responses import PlainTextResponse
 
+from app.api.router import CustomAPIRouter
 from app.schemas.scripts import ScriptInfo, ScriptManifest
 
 logger = logging.getLogger(__name__)
@@ -60,7 +59,7 @@ def compute_sha256(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def _resolve_script_path(script_name: str, version: Optional[str]) -> Path:
+def _resolve_script_path(script_name: str, version: str | None) -> Path:
     """Resolve the file path for script_name: the latest pointer if no version, else the validated frozen file under versions/."""
     if version is None:
         return (SCRIPTS_DIR / script_name).resolve()
@@ -90,7 +89,7 @@ def _read_and_describe_frozen(script_path_str: str) -> tuple[str, str, str]:
     return _read_and_describe(Path(script_path_str))
 
 
-def get_script_content(script_name: str, version: Optional[str] = None) -> tuple[str, str, str]:
+def get_script_content(script_name: str, version: str | None = None) -> tuple[str, str, str]:
     """Return (content, version, sha256) for the latest pointer (version=None) or a specific frozen release."""
     script_path = _resolve_script_path(script_name, version)
     base = VERSIONS_DIR.resolve() if version else SCRIPTS_DIR.resolve()
@@ -124,7 +123,7 @@ def list_available_versions(script_name: str) -> list[str]:
     return sorted(versions, key=lambda v: tuple(int(p) for p in v.split(".")))
 
 
-def build_script_info(script_name: str, version: Optional[str] = None) -> ScriptInfo:
+def build_script_info(script_name: str, version: str | None = None) -> ScriptInfo:
     """Build a ScriptInfo for a script at the given version (or the latest pointer)."""
     _, detected_version, sha256_hash = get_script_content(script_name, version)
     base_url = f"/api/v1/scripts/{script_name}"
@@ -151,7 +150,7 @@ def build_script_info(script_name: str, version: Optional[str] = None) -> Script
 async def get_script_hash(
     script_name: str,
     v: Annotated[
-        Optional[str],
+        str | None,
         Query(description="Pin a specific frozen release (e.g. '1.1.0'); omit for the latest pointer"),
     ] = None,
 ) -> ScriptInfo:
@@ -192,7 +191,7 @@ async def get_script_hash(
 async def get_script(
     script_name: str,
     v: Annotated[
-        Optional[str],
+        str | None,
         Query(description="Pin a specific frozen release (e.g. '1.1.0'); omit for the latest pointer"),
     ] = None,
 ) -> PlainTextResponse:

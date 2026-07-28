@@ -3,18 +3,17 @@
 import json
 import logging
 import uuid
-from typing import Annotated, Any, Dict, List
 from datetime import datetime, timezone
+from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException
-
-from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 
 from app.api import deps
 from app.api.deps import DatabaseDep
+from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.ingest import process_findings_ingest
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from app.core.constants import WEBHOOK_EVENT_SBOM_INGESTED
 from app.models.dependency import Dependency
 from app.models.project import Project
@@ -182,7 +181,7 @@ def _parsed_dep_to_dependency(parsed_dep: Any, project_id: str, scan_id: str) ->
     )
 
 
-async def _upload_sbom_to_gridfs(fs: AsyncIOMotorGridFSBucket, sbom: Any, scan_id: str) -> Dict[str, Any]:
+async def _upload_sbom_to_gridfs(fs: AsyncIOMotorGridFSBucket, sbom: Any, scan_id: str) -> dict[str, Any]:
     """Upload a single SBOM to GridFS and return the reference dict."""
     filename = f"sbom-{uuid.uuid4()}.json"
     sbom_bytes = json.dumps(sbom).encode("utf-8")
@@ -212,7 +211,7 @@ async def _insert_dependencies_chunked(
 ) -> int:
     """Insert parsed dependencies in chunks. Returns total inserted."""
     total_inserted = 0
-    chunk: List[Dict[str, Any]] = []
+    chunk: list[dict[str, Any]] = []
     for parsed_dep in parsed_sbom.dependencies:
         dep = _parsed_dep_to_dependency(parsed_dep, project_id, scan_id)
         chunk.append(dep.model_dump(by_alias=True))
@@ -252,15 +251,15 @@ async def _parse_and_store_sbom_deps(
 
 
 async def _process_sboms(
-    sboms: List[Any],
+    sboms: list[Any],
     fs: AsyncIOMotorGridFSBucket,
     project_id: str,
     scan_id: str,
     dep_repo: "DependencyRepository",
-) -> tuple[List[Dict[str, Any]], List[str], int, int, int]:
+) -> tuple[list[dict[str, Any]], list[str], int, int, int]:
     """Upload all SBOMs to GridFS and extract dependencies (chunked); returns (sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted)."""
-    sbom_refs: List[Dict[str, Any]] = []
-    warnings: List[str] = []
+    sbom_refs: list[dict[str, Any]] = []
+    warnings: list[str] = []
     sboms_processed = 0
     sboms_failed = 0
     total_deps_inserted = 0
@@ -334,7 +333,7 @@ async def ingest_sbom(
 
     now = datetime.now(timezone.utc)
 
-    scan_update: Dict[str, Any] = {
+    scan_update: dict[str, Any] = {
         "$set": {
             "branch": data.branch or "unknown",
             "commit_hash": data.commit_hash,

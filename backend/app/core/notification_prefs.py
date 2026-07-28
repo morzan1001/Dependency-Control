@@ -7,7 +7,7 @@ old persisted data readable after we add or remove valid events.
 """
 
 import logging
-from typing import Any, Dict, List
+from typing import Any
 
 from app.core.constants import NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS
 
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 _VALID_CHANNELS = set(NOTIFICATION_CHANNELS)
 
 
-def sanitize_notification_preferences(value: Any) -> Dict[str, List[str]]:
+def sanitize_notification_preferences(value: Any) -> dict[str, list[str]]:
     """Drop unknown events/channels, return a normalized dict."""
     if value is None:
         return {}
@@ -24,7 +24,7 @@ def sanitize_notification_preferences(value: Any) -> Dict[str, List[str]]:
         logger.warning("Invalid notification_preferences type: %s. Using empty dict.", type(value))
         return {}
 
-    cleaned: Dict[str, List[str]] = {}
+    cleaned: dict[str, list[str]] = {}
     for event, channels in value.items():
         if event not in NOTIFICATION_EVENTS:
             logger.warning("Unknown notification event '%s' (valid: %s). Dropping.", event, NOTIFICATION_EVENTS)

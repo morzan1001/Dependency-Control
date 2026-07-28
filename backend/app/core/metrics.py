@@ -3,9 +3,10 @@
 import logging
 import re
 import time
+from collections.abc import Generator
 from contextlib import AbstractContextManager, contextmanager
 from importlib.metadata import version as get_version
-from typing import Any, Generator
+from typing import Any
 
 from fastapi import Request, Response
 from prometheus_client import (

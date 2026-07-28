@@ -2,14 +2,12 @@
 
 import logging
 import uuid
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 from fastapi import HTTPException
 
-from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404
-
 from app.api.deps import CurrentUserDep, DatabaseDep
+from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.callgraph import (
     check_callgraph_access,
     detect_format,
@@ -17,8 +15,8 @@ from app.api.v1.helpers.callgraph import (
     parse_madge_format,
     parse_pyan_format,
 )
-from app.models.callgraph import CallEdge, ImportEntry, ModuleUsage
-from app.models.callgraph import Callgraph
+from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404
+from app.models.callgraph import CallEdge, Callgraph, ImportEntry, ModuleUsage
 from app.repositories import CallgraphRepository
 from app.schemas.callgraph import (
     CallgraphResponse,
@@ -47,7 +45,7 @@ _FORMAT_PARSERS = {
 }
 
 
-def _resolve_format(request_format: str, data: Dict[str, Any]) -> str:
+def _resolve_format(request_format: str, data: dict[str, Any]) -> str:
     """Resolve the callgraph format, auto-detecting if needed."""
     if request_format != "auto":
         return request_format
@@ -61,8 +59,8 @@ def _resolve_format(request_format: str, data: Dict[str, Any]) -> str:
 
 
 def _resolve_scan_id(
-    request_scan_id: Optional[str], project_id: str, pipeline_id: Optional[int], commit_hash: Optional[str]
-) -> Optional[str]:
+    request_scan_id: str | None, project_id: str, pipeline_id: int | None, commit_hash: str | None
+) -> str | None:
     """Resolve the scan_id from request context."""
     if request_scan_id:
         return request_scan_id
@@ -76,8 +74,8 @@ def _resolve_scan_id(
 
 
 def _build_upsert_filter(
-    project_id: str, language: str, scan_id: Optional[str], pipeline_id: Optional[int], warnings: List[str]
-) -> Tuple[Dict[str, Any], str]:
+    project_id: str, language: str, scan_id: str | None, pipeline_id: int | None, warnings: list[str]
+) -> tuple[dict[str, Any], str]:
     """Build the MongoDB upsert filter and a context string for logging."""
     if scan_id:
         return {"project_id": project_id, "language": language, "scan_id": scan_id}, f"scan {scan_id} ({language})"
@@ -97,8 +95,8 @@ def _build_upsert_filter(
 
 
 def _parse_callgraph(
-    format_type: str, data: Dict[str, Any], language: str
-) -> Tuple[List[ImportEntry], List[CallEdge], Dict[str, ModuleUsage]]:
+    format_type: str, data: dict[str, Any], language: str
+) -> tuple[list[ImportEntry], list[CallEdge], dict[str, ModuleUsage]]:
     """Parse callgraph data using the appropriate parser for the format."""
     parser = _FORMAT_PARSERS.get(format_type)
     if not parser:
@@ -121,14 +119,14 @@ async def upload_callgraph(
     format_type = _resolve_format(request.format, request.data)
     language = request.language or _FORMAT_LANGUAGE_MAP.get(format_type, "unknown")
 
-    warnings: List[str] = []
+    warnings: list[str] = []
     try:
         imports, calls, module_usage = _parse_callgraph(format_type, request.data, language)
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("Failed to parse callgraph: %s", e)
-        raise HTTPException(status_code=400, detail=f"Failed to parse callgraph: {str(e)}")
+        raise HTTPException(status_code=400, detail=f"Failed to parse callgraph: {e!s}")
 
     scan_id = _resolve_scan_id(request.scan_id, project_id, request.pipeline_id, request.commit_hash)
     if scan_id and not request.scan_id:
@@ -181,7 +179,7 @@ async def upload_callgraph(
                 )
         except Exception as e:
             logger.warning(f"Failed to run pending reachability analysis: {e}")
-            warnings.append(f"Reachability analysis deferred: {str(e)}")
+            warnings.append(f"Reachability analysis deferred: {e!s}")
 
     return CallgraphUploadResponse(
         success=True,
@@ -199,13 +197,13 @@ async def get_callgraph(
     project_id: str,
     db: DatabaseDep,
     current_user: CurrentUserDep,
-    language: Optional[str] = None,
+    language: str | None = None,
 ) -> CallgraphResponse:
     """Get the current callgraph for a project, optionally filtered by language."""
     await check_callgraph_access(project_id, current_user, db)
 
     callgraph_repo = CallgraphRepository(db)
-    query: Dict[str, Any] = {"project_id": project_id}
+    query: dict[str, Any] = {"project_id": project_id}
     if language:
         query["language"] = language
     callgraph = await callgraph_repo.find_one(query)
@@ -221,13 +219,13 @@ async def get_module_usage(
     project_id: str,
     db: DatabaseDep,
     current_user: CurrentUserDep,
-    language: Optional[str] = None,
+    language: str | None = None,
 ) -> ModuleUsageResponse:
     """Get external module usage (import counts and locations) from the callgraph, optionally filtered by language."""
     await check_callgraph_access(project_id, current_user, db)
 
     callgraph_repo = CallgraphRepository(db)
-    query: Dict[str, Any] = {"project_id": project_id}
+    query: dict[str, Any] = {"project_id": project_id}
     if language:
         query["language"] = language
     callgraph = await callgraph_repo.find_one(query)

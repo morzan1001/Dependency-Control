@@ -1,6 +1,6 @@
 """PURL parsing. Format: pkg:type/namespace/name@version?qualifiers#subpath. See package-url/purl-spec."""
 
-from typing import Dict, NamedTuple, Optional
+from typing import NamedTuple
 from urllib.parse import unquote
 
 # Maximum lengths for PURL components to prevent DoS via unbounded strings
@@ -14,11 +14,11 @@ class ParsedPURL(NamedTuple):
     """Parsed PURL components."""
 
     type: str  # pypi, npm, maven, go, cargo, nuget, etc.
-    namespace: Optional[str]  # org name for maven, scope for npm, etc.
+    namespace: str | None  # org name for maven, scope for npm, etc.
     name: str  # package name
-    version: Optional[str]  # version
-    qualifiers: Dict[str, str]  # optional qualifiers
-    subpath: Optional[str]  # optional subpath
+    version: str | None  # version
+    qualifiers: dict[str, str]  # optional qualifiers
+    subpath: str | None  # optional subpath
 
     @property
     def full_name(self) -> str:
@@ -28,7 +28,7 @@ class ParsedPURL(NamedTuple):
         return self.name
 
     @property
-    def registry_system(self) -> Optional[str]:
+    def registry_system(self) -> str | None:
         """Get the registry system name for deps.dev API."""
         return PURL_TYPE_TO_SYSTEM.get(self.type)
 
@@ -63,7 +63,7 @@ PURL_TYPE_TO_SYSTEM = {
 }
 
 
-def parse_purl(purl: str) -> Optional[ParsedPURL]:
+def parse_purl(purl: str) -> ParsedPURL | None:
     """Parse a PURL string into its components, or None if parsing fails."""
     if not purl or not purl.startswith("pkg:"):
         return None
@@ -142,7 +142,7 @@ def parse_purl(purl: str) -> Optional[ParsedPURL]:
         return None
 
 
-def get_purl_type(purl: str) -> Optional[str]:
+def get_purl_type(purl: str) -> str | None:
     """Extract just the type from a PURL string."""
     if not purl or not purl.startswith("pkg:"):
         return None

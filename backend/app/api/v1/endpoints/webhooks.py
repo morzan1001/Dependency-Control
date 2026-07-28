@@ -1,14 +1,12 @@
 """CRUD and test endpoints for project, team, and global webhook configurations."""
 
-from typing import Annotated, Any, Dict, Optional
+from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, Query
 
-from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_404, RESP_AUTH_404
-
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
+from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import (
     build_pagination_response,
     check_team_webhook_create_permission,
@@ -18,6 +16,7 @@ from app.api.v1.helpers import (
     check_webhook_permission,
     get_webhook_or_404,
 )
+from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_404, RESP_AUTH_404
 from app.core.permissions import Permissions
 from app.models.user import User
 from app.models.webhook import Webhook
@@ -60,7 +59,7 @@ async def list_webhooks(
     db: DatabaseDep,
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=100, description="Number of items to return")] = 50,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """List all webhooks for a project with pagination."""
     await check_webhook_list_permission(project_id, current_user, db)
 
@@ -93,7 +92,7 @@ async def list_global_webhooks(
     db: DatabaseDep,
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=100, description="Number of items to return")] = 50,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """List global webhooks with pagination."""
     webhook_repo = WebhookRepository(db)
     total = await webhook_repo.count_global()
@@ -128,7 +127,7 @@ async def list_team_webhooks(
     db: DatabaseDep,
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=100, description="Number of items to return")] = 50,
-) -> Dict[str, Any]:
+) -> dict[str, Any]:
     """List all webhooks for a team with pagination."""
     await check_team_webhook_list_permission(team_id, current_user, db)
 
@@ -159,7 +158,7 @@ async def update_webhook(
     webhook_update: WebhookUpdate,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Optional[Webhook]:
+) -> Webhook | None:
     """Update a webhook configuration; only provided fields are changed."""
     webhook_repo = WebhookRepository(db)
     webhook = await get_webhook_or_404(webhook_repo, webhook_id)
@@ -196,9 +195,10 @@ async def test_webhook(
     webhook_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    test_request: WebhookTestRequest = WebhookTestRequest(),
+    test_request: WebhookTestRequest | None = None,
 ) -> WebhookTestResponse:
     """Send a test payload to the webhook URL and return the result."""
+    test_request = test_request or WebhookTestRequest()
     webhook_repo = WebhookRepository(db)
     webhook = await get_webhook_or_404(webhook_repo, webhook_id)
     await check_webhook_permission(webhook, current_user, db, Permissions.WEBHOOK_UPDATE)

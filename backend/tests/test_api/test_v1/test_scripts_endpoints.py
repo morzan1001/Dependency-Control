@@ -9,7 +9,6 @@ from fastapi import HTTPException
 
 from app.api.v1.endpoints import scripts as scripts_module
 
-
 MODULE = "app.api.v1.endpoints.scripts"
 
 LATEST_CONTENT = '#!/usr/bin/env bash\nSCRIPT_VERSION="1.1.0"\n# latest body\n'

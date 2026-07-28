@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import Optional
 
 from pydantic import ConfigDict, Field
 
@@ -13,19 +12,19 @@ class GitLabInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     # Identity
     name: str = Field(..., description="Human-readable name (e.g. 'GitLab.com', 'Internal GitLab')")
     url: str = Field(..., description="Base URL of the GitLab instance (e.g. 'https://gitlab.com')")
-    description: Optional[str] = Field(None, description="Optional description of this instance")
+    description: str | None = Field(None, description="Optional description of this instance")
     is_active: bool = Field(True, description="Whether this instance is currently active")
     is_default: bool = Field(False, description="Whether this is the default instance for new projects")
 
     # Authentication
-    access_token: Optional[str] = Field(
+    access_token: str | None = Field(
         None,
         exclude=True,  # Never expose in API responses
         description="Personal or Group Access Token with 'api' scope for GitLab API operations",
     )
     # oidc_audience is effectively required (enforced by API schemas and fail-closed
     # OIDC validation); stored Optional only so legacy documents still hydrate.
-    oidc_audience: Optional[str] = Field(None, description="Expected 'aud' claim for OIDC tokens from this instance")
+    oidc_audience: str | None = Field(None, description="Expected 'aud' claim for OIDC tokens from this instance")
 
     # Features
     auto_create_projects: bool = Field(
@@ -42,6 +41,6 @@ class GitLabInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
 
     # Metadata
     created_by: str = Field(..., description="User ID of the admin who created this instance")
-    last_modified_at: Optional[datetime] = None
+    last_modified_at: datetime | None = None
 
     model_config = ConfigDict(arbitrary_types_allowed=True)

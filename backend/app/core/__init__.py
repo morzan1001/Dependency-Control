@@ -1,8 +1,7 @@
 from datetime import datetime, timezone
-from typing import Optional
 
 
-def ensure_utc(dt: Optional[datetime]) -> Optional[datetime]:
+def ensure_utc(dt: datetime | None) -> datetime | None:
     """Add UTC tzinfo to naive datetimes (MongoDB returns UTC without tzinfo) for safe comparison."""
     if dt is None:
         return None

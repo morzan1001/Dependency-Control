@@ -1,6 +1,6 @@
 """Shared CRUD/list/count for VCS (GitLab/GitHub) instance repositories."""
 
-from typing import Any, Dict, List, Optional, Type
+from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
@@ -11,22 +11,22 @@ class VcsInstanceRepository[T: VcsInstanceModel]:
     """Subclasses set ``collection_name`` and ``model_class``."""
 
     collection_name: str
-    model_class: Type[T]
+    model_class: type[T]
 
     def __init__(self, db: AsyncIOMotorDatabase):
         self.db = db
         self.collection = db[self.collection_name]
 
-    async def get_by_id(self, instance_id: str) -> Optional[T]:
+    async def get_by_id(self, instance_id: str) -> T | None:
         data = await self.collection.find_one({"_id": instance_id})
         if data:
             return self.model_class(**data)
         return None
 
-    async def get_raw_by_id(self, instance_id: str) -> Optional[Dict[str, Any]]:
+    async def get_raw_by_id(self, instance_id: str) -> dict[str, Any] | None:
         return await self.collection.find_one({"_id": instance_id})
 
-    async def get_by_url(self, url: str) -> Optional[T]:
+    async def get_by_url(self, url: str) -> T | None:
         """Matches on the URL with any trailing slash stripped."""
         normalized_url = url.rstrip("/")
         data = await self.collection.find_one({"url": normalized_url})
@@ -34,12 +34,12 @@ class VcsInstanceRepository[T: VcsInstanceModel]:
             return self.model_class(**data)
         return None
 
-    async def list_active(self, skip: int = 0, limit: int = 100) -> List[T]:
+    async def list_active(self, skip: int = 0, limit: int = 100) -> list[T]:
         cursor = self.collection.find({"is_active": True}).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [self.model_class(**doc) for doc in docs]
 
-    async def list_all(self, skip: int = 0, limit: int = 100) -> List[T]:
+    async def list_all(self, skip: int = 0, limit: int = 100) -> list[T]:
         cursor = self.collection.find({}).skip(skip).limit(limit)
         docs = await cursor.to_list(length=limit)
         return [self.model_class(**doc) for doc in docs]
@@ -58,7 +58,7 @@ class VcsInstanceRepository[T: VcsInstanceModel]:
         await self.collection.insert_one(doc)
         return instance
 
-    async def update(self, instance_id: str, update_data: Dict[str, Any]) -> bool:
+    async def update(self, instance_id: str, update_data: dict[str, Any]) -> bool:
         result = await self.collection.update_one({"_id": instance_id}, {"$set": update_data})
         return result.modified_count > 0
 
@@ -67,15 +67,15 @@ class VcsInstanceRepository[T: VcsInstanceModel]:
         result = await self.collection.delete_one({"_id": instance_id})
         return result.deleted_count > 0
 
-    async def exists_by_url(self, url: str, exclude_id: Optional[str] = None) -> bool:
+    async def exists_by_url(self, url: str, exclude_id: str | None = None) -> bool:
         normalized_url = url.rstrip("/")
-        query: Dict[str, Any] = {"url": normalized_url}
+        query: dict[str, Any] = {"url": normalized_url}
         if exclude_id:
             query["_id"] = {"$ne": exclude_id}
         return await self.collection.find_one(query, {"_id": 1}) is not None
 
-    async def exists_by_name(self, name: str, exclude_id: Optional[str] = None) -> bool:
-        query: Dict[str, Any] = {"name": name}
+    async def exists_by_name(self, name: str, exclude_id: str | None = None) -> bool:
+        query: dict[str, Any] = {"name": name}
         if exclude_id:
             query["_id"] = {"$ne": exclude_id}
         return await self.collection.find_one(query, {"_id": 1}) is not None
