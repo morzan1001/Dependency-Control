@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Any, AsyncGenerator, AsyncIterator, Optional
 
 from aiobotocore.session import AioSession, get_session  # type: ignore[import-untyped]
+from botocore.config import Config as BotoConfig
 
 from app.core.config import settings
 from app.core.constants import S3_MULTIPART_PART_SIZE
@@ -33,6 +34,12 @@ async def get_s3_client() -> AsyncGenerator[Any, None]:
         "aws_access_key_id": settings.S3_ACCESS_KEY,
         "aws_secret_access_key": settings.S3_SECRET_KEY,
         "use_ssl": settings.S3_USE_SSL,
+        # botocore >= 1.36 injects x-amz-checksum-* headers by default; S3-compatible
+        # providers (GCS interop) reject them with SignatureDoesNotMatch.
+        "config": BotoConfig(
+            request_checksum_calculation="when_required",
+            response_checksum_validation="when_required",
+        ),
     }
     if settings.S3_ENDPOINT_URL:
         kwargs["endpoint_url"] = settings.S3_ENDPOINT_URL

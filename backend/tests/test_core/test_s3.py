@@ -1,15 +1,58 @@
 """Tests for the async S3-compatible storage client."""
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.core.s3 import (
     delete_object,
     ensure_bucket_exists,
+    get_s3_client,
     is_archive_enabled,
 )
 
 MODULE = "app.core.s3"
+
+
+# ---------------------------------------------------------------------------
+# get_s3_client
+# ---------------------------------------------------------------------------
+
+
+class TestGetS3Client:
+    def test_checksums_only_when_required(self):
+        # botocore >= 1.36 injects x-amz-checksum-* headers by default, which
+        # S3-compatible providers (GCS interop) reject with SignatureDoesNotMatch.
+        captured = {}
+
+        class FakeClientCtx:
+            async def __aenter__(self):
+                return AsyncMock()
+
+            async def __aexit__(self, *args):
+                return False
+
+        mock_session = MagicMock()
+        mock_session.create_client = lambda service, **kwargs: (captured.update(kwargs), FakeClientCtx())[1]
+
+        async def run():
+            async with get_s3_client():
+                pass
+
+        with (
+            patch(f"{MODULE}._get_session", return_value=mock_session),
+            patch(f"{MODULE}.settings") as mock_settings,
+        ):
+            mock_settings.S3_REGION = "europe-west1"
+            mock_settings.S3_ACCESS_KEY = "ak"
+            mock_settings.S3_SECRET_KEY = "sk"
+            mock_settings.S3_USE_SSL = True
+            mock_settings.S3_ENDPOINT_URL = "https://storage.googleapis.com"
+            asyncio.run(run())
+
+        config = captured.get("config")
+        assert config is not None
+        assert config.request_checksum_calculation == "when_required"
+        assert config.response_checksum_validation == "when_required"
 
 
 # ---------------------------------------------------------------------------
