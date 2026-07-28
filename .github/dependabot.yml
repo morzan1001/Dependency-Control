@@ -20,10 +20,6 @@ updates:
       python-dependencies:
         patterns:
           - "*"
-    ignore:
-      # ruff 0.x minors enable new lint rules en masse; bump deliberately with a fix pass
-      - dependency-name: "ruff"
-        update-types: ["version-update:semver-minor", "version-update:semver-major"]
 
   # Maintain dependencies for Frontend (pnpm/npm)
   - package-ecosystem: "npm"

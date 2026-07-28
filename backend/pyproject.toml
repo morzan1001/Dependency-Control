@@ -34,7 +34,7 @@ packaging = ">=24.0"
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.3"
 black = "^26.3.1"
-ruff = "^0.15.10"
+ruff = "^0.16.0"
 pylint = "^4.0.5"
 mypy = ">=1.20.1,<3.0.0"
 types-python-jose = "^3.5.0.20260408"
@@ -72,7 +72,16 @@ line-length = 120
 exclude = [".git", "__pycache__", "docs/source/conf.py", "old", "build", "dist"]
 
 [tool.ruff.lint]
-ignore = ["E203", "W293"]
+# BLE001/TRY401: analyzers, workers, and housekeeping deliberately catch-log-continue
+# broad exceptions and keep the error text in the message line for log indexing.
+ignore = ["E203", "W293", "BLE001", "TRY401"]
+
+[tool.ruff.lint.per-file-ignores]
+# Stacked `with patch(...)` blocks in tests stay nested for readability.
+"tests/**" = ["SIM117"]
+
+[tool.ruff.lint.flake8-bugbear]
+extend-immutable-calls = ["fastapi.Depends", "fastapi.Security", "fastapi.Query", "fastapi.Header", "fastapi.Path", "fastapi.Body"]
 
 [tool.coverage.run]
 source = ["app"]
