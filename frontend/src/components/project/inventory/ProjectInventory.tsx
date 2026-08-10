@@ -9,6 +9,8 @@ import { useInventoryStats } from '@/hooks/queries/use-inventory'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
 import { InventoryStatCards } from './InventoryStatCards'
 import { ComponentsTable } from './ComponentsTable'
+import { LicensesTable } from './LicensesTable'
+import { CryptoTable } from './CryptoTable'
 
 interface ProjectInventoryProps {
   projectId: string
@@ -79,6 +81,10 @@ export function ProjectInventory({ projectId, projectName, defaultBranch }: Proj
           <>
             <InventoryStatCards stats={stats} isLoading={isLoading} />
             <ComponentsTable projectId={projectId} projectName={projectName} branch={branch} />
+            <div className="grid gap-4 lg:grid-cols-2">
+              <LicensesTable projectId={projectId} projectName={projectName} branch={branch} />
+              <CryptoTable projectId={projectId} projectName={projectName} branch={branch} />
+            </div>
           </>
         )
       )}
