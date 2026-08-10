@@ -56,12 +56,12 @@ def _project_cache_key(
     max_scans: int,
     window_days: int | None,
     branch: str | None,
-    latest_scan_id: str | None,
+    version_token: str,
 ) -> str:
-    """Cache key that carries the newest scan id so a new scan misses the cache."""
+    """Cache key carrying a completion-monotonic token so a finished scan misses the cache."""
     return (
         f"{CacheKeys.update_frequency(project_id)}"
-        f":m{max_scans}:w{window_days or 0}:b{branch or 'auto'}:s{latest_scan_id or 'none'}"
+        f":m{max_scans}:w{window_days or 0}:b{branch or 'auto'}:v{version_token}"
     )
 
 
@@ -71,33 +71,27 @@ def _comparison_cache_key(
     *,
     max_scans: int,
     window_days: int | None,
-    newest_scan_at: str | None,
+    version_token: str,
 ) -> str:
-    """Cache key that carries the newest scan timestamp across the user's projects."""
+    """Cache key carrying a completion-monotonic token across the scoped projects."""
     return (
         f"{CacheKeys.update_frequency_comparison(user_id, team_id)}"
-        f":m{max_scans}:w{window_days or 0}:t{newest_scan_at or 'none'}"
+        f":m{max_scans}:w{window_days or 0}:v{version_token}"
     )
 
 
-async def _latest_completed_scan_id(db: DatabaseDep, project_id: str) -> str | None:
-    doc = await db.scans.find_one(
-        {"project_id": project_id, "status": "completed"},
-        sort=[("created_at", -1), ("_id", -1)],
-        projection={"_id": 1},
-    )
-    return str(doc["_id"]) if doc else None
+async def _completed_scan_version(db: DatabaseDep, project_ids: list[str]) -> str:
+    """Count of completed scans across the projects.
 
-
-async def _newest_completed_scan_at(db: DatabaseDep, project_ids: list[str]) -> str | None:
-    doc = await db.scans.find_one(
-        {"project_id": {"$in": project_ids}, "status": "completed"},
-        sort=[("created_at", -1)],
-        projection={"created_at": 1},
-    )
-    if not doc or doc.get("created_at") is None:
-        return None
-    return str(doc["created_at"].isoformat())
+    ``created_at`` is set at scan creation, so a scan that finishes after a
+    later-created one already completed would not advance a max(created_at)
+    token, serving stale metrics. A completion count only ever increases as
+    scans finish, so it busts the cache on out-of-order completion too.
+    """
+    if not project_ids:
+        return "0"
+    count = await db.scans.count_documents({"project_id": {"$in": project_ids}, "status": "completed"})
+    return str(count)
 
 
 def _build_release_fetcher() -> ReleaseHistoryFetcher:
@@ -157,9 +151,9 @@ async def get_project_update_frequency(
     if project_id not in user_project_ids:
         raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
 
-    latest_scan_id = await _latest_completed_scan_id(db, project_id)
+    version_token = await _completed_scan_version(db, [project_id])
     cache_key = _project_cache_key(
-        project_id, max_scans=max_scans, window_days=window_days, branch=branch, latest_scan_id=latest_scan_id
+        project_id, max_scans=max_scans, window_days=window_days, branch=branch, version_token=version_token
     )
     cached = await cache_service.get(cache_key)
     if cached:
@@ -180,6 +174,7 @@ async def get_project_update_frequency(
         release_fetcher=_build_release_fetcher(),
         branch=branch,
         deleted_branches=project.get("deleted_branches"),
+        default_branch=project.get("default_branch"),
     )
 
     await cache_service.set(cache_key, metrics.model_dump(), ttl_seconds=CacheTTL.UPDATE_FREQUENCY)
@@ -207,23 +202,26 @@ async def get_update_frequency_comparison(
             team_avg_coverage_pct=None,
         )
 
-    newest_scan_at = await _newest_completed_scan_at(db, user_project_ids)
-    cache_key = _comparison_cache_key(
-        current_user.id, team_id or "all", max_scans=max_scans, window_days=window_days, newest_scan_at=newest_scan_at
-    )
-    cached = await cache_service.get(cache_key)
-    if cached:
-        return UpdateFrequencyComparison(**cached)
-
     query: dict[str, Any] = {"_id": {"$in": user_project_ids}}
     if team_id:
         query["team_id"] = team_id
 
     projects_raw = await project_repo.find_many_raw(
         query,
-        projection={"_id": 1, "name": 1, "team_id": 1, "deleted_branches": 1},
+        projection={"_id": 1, "name": 1, "team_id": 1, "deleted_branches": 1, "default_branch": 1},
         limit=len(user_project_ids),
     )
+
+    # Version the cache over the scoped projects so a team filter never serves
+    # a token computed across the user's other teams.
+    scoped_ids = [str(p["_id"]) for p in projects_raw]
+    version_token = await _completed_scan_version(db, scoped_ids)
+    cache_key = _comparison_cache_key(
+        current_user.id, team_id or "all", max_scans=max_scans, window_days=window_days, version_token=version_token
+    )
+    cached = await cache_service.get(cache_key)
+    if cached:
+        return UpdateFrequencyComparison(**cached)
 
     if projects_raw:
         unique_team_ids = list({str(p["team_id"]) for p in projects_raw if p.get("team_id")})

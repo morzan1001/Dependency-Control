@@ -77,6 +77,10 @@ class TestClassifyVersionChange:
         # An epoch bump resets the release tuple; treat it as the biggest possible jump.
         assert classify_version_change("2024.01.15", "1!1.0.0") == "major"
 
+    def test_epoch_bump_to_lower_release_is_still_major(self):
+        # The epoch dominates: 1.0.0 -> 1!0.5.0 moves forward despite the lower tuple.
+        assert classify_version_change("1.0.0", "1!0.5.0") == "major"
+
     def test_epoch_rollback_is_downgrade(self):
         assert classify_version_change("1!1.0.0", "2.0.0") == "downgrade"
 
@@ -457,6 +461,75 @@ class TestBranchScopedScanSelection:
         assert m.total_updates == 0
 
     @pytest.mark.asyncio
+    async def test_default_branch_preferred_over_newest_scan_branch(self):
+        # main has ample history; a single newer scan on a feature branch must
+        # not hijack the analysis when default_branch is configured.
+        scans = [
+            _make_scan("m1", 0, branch="main"),
+            _make_scan("m2", 1, branch="main"),
+            _make_scan("m3", 2, branch="main"),
+            _make_scan("f1", 3, branch="feature"),
+        ]
+        deps = {
+            "m1": [_make_dep("m1", "pkg-a", "1.0.0")],
+            "m2": [_make_dep("m2", "pkg-a", "1.1.0")],
+            "m3": [_make_dep("m3", "pkg-a", "1.2.0")],
+            "f1": [_make_dep("f1", "pkg-a", "9.0.0")],
+        }
+        m = await self._compute(scans, deps, default_branch="main")
+        assert m.branch == "main"
+        assert m.scan_count == 3
+
+    @pytest.mark.asyncio
+    async def test_default_branch_ignored_when_too_sparse(self):
+        # default_branch has a single scan -> fall back to the active branch.
+        scans = [
+            _make_scan("d1", 0, branch="release"),
+            _make_scan("m1", 1, branch="main"),
+            _make_scan("m2", 2, branch="main"),
+        ]
+        deps = {
+            "m1": [_make_dep("m1", "pkg-a", "1.0.0")],
+            "m2": [_make_dep("m2", "pkg-a", "1.0.1")],
+        }
+        m = await self._compute(scans, deps, default_branch="release")
+        assert m.branch == "main"
+        assert m.scan_count == 2
+
+    @pytest.mark.asyncio
+    async def test_rescans_excluded_from_the_analyzed_branch_timeline(self):
+        # A rescan ON the analyzed branch must not enter the timeline.
+        scans = [
+            _make_scan("m1", 0, branch="main"),
+            _make_scan("m2", 1, branch="main"),
+            _make_scan("r1", 2, branch="main", is_rescan=True),
+        ]
+        deps = {
+            "m1": [_make_dep("m1", "pkg-a", "1.0.0")],
+            "m2": [_make_dep("m2", "pkg-a", "1.0.1")],
+            "r1": [_make_dep("r1", "pkg-a", "0.5.0")],
+        }
+        m = await self._compute(scans, deps, branch="main")
+        assert m.scan_count == 2
+        assert all(e.new_version != "0.5.0" for e in m.recent_updates)
+
+    @pytest.mark.asyncio
+    async def test_head_commit_storm_does_not_starve_window(self):
+        # The newest max_scans raw scans are all the same head commit; distinct
+        # older commits must still fill the window after collapse.
+        scans = [_make_scan(f"h{i}", 100 + i, commit_hash="head") for i in range(5)]
+        scans += [_make_scan(f"c{i}", i, commit_hash=f"c{i}") for i in range(5)]
+        deps: dict[str, list[dict[str, Any]]] = {}
+        for i in range(5):
+            deps[f"h{i}"] = [_make_dep(f"h{i}", "pkg-a", "2.0.0")]
+        for i in range(5):
+            deps[f"c{i}"] = [_make_dep(f"c{i}", "pkg-a", f"1.0.{i}")]
+        m = await self._compute(scans, deps, branch="main", max_scans=5)
+        # Without collapse-before-cap this returns 1 scan and empty metrics.
+        assert m.scan_count >= 2
+        assert m.total_updates >= 1
+
+    @pytest.mark.asyncio
     async def test_explicit_branch_parameter_wins(self):
         scans = [
             _make_scan("m1", 0, branch="main"),
@@ -587,6 +660,29 @@ class TestIdentityKeying:
         }
         m = await self._compute(deps)
         assert m.total_updates == 0
+
+    @pytest.mark.asyncio
+    async def test_pypi_name_variants_are_one_identity(self):
+        # PEP 503 equivalent names (case/underscore/dot) must not read as remove+add.
+        deps = {
+            "s1": [self._raw_dep("s1", "My_Package", "1.0.0", "pkg:pypi/My_Package@1.0.0")],
+            "s2": [self._raw_dep("s2", "my-package", "1.1.0", "pkg:pypi/my-package@1.1.0")],
+        }
+        m = await self._compute(deps)
+        assert m.total_updates == 1
+        assert m.recent_updates[0].update_type == "minor"
+
+    @pytest.mark.asyncio
+    async def test_deps_without_purl_key_by_name_and_type(self):
+        # The non-purl fallback identity path must still diff correctly.
+        deps = {
+            "s1": [{"scan_id": "s1", "name": "internal-lib", "version": "1.0.0", "type": "internal", "purl": ""}],
+            "s2": [{"scan_id": "s2", "name": "internal-lib", "version": "1.0.1", "type": "internal", "purl": ""}],
+        }
+        m = await self._compute(deps)
+        assert m.total_updates == 1
+        assert m.recent_updates[0].package_name == "internal-lib"
+        assert m.recent_updates[0].update_type == "patch"
 
     @pytest.mark.asyncio
     async def test_scoped_npm_packages_do_not_collide(self):
@@ -753,6 +849,56 @@ class TestAggregationAccuracy:
         names = [p.name for p in m.slowest_packages]
         assert names == ["pkg-b"]  # pkg-a was resolved; only remaining backlog is listed
         assert m.slowest_packages[0].current_version == "1.2.0"  # from the final scan, not stale analyzer data
+
+    @pytest.mark.asyncio
+    async def test_avg_cadence_is_not_floored_for_subday_histories(self):
+        scans = [
+            _make_scan("s1", 0),
+            {**_make_scan("s2", 1), "created_at": _BASE_SCAN_DATE + timedelta(hours=12)},
+        ]
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
+        }
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+        )
+        assert m.avg_days_between_scans == 0.5
+
+    @pytest.mark.asyncio
+    async def test_slowest_current_version_not_borrowed_from_same_name_sibling(self):
+        # Two npm packages stored under the bare name "core"; one is outdated,
+        # the other up-to-date. The backlog row must not show the sibling's version.
+        def _npm(scan_id: str, scope: str, version: str) -> dict[str, Any]:
+            return {
+                "scan_id": scan_id,
+                "name": "core",
+                "version": version,
+                "type": "library",
+                "purl": f"pkg:npm/%40{scope}/core@{version}",
+            }
+
+        deps = {
+            "s1": [_npm("s1", "babel", "7.0.0"), _npm("s1", "angular", "21.0.0")],
+            "s2": [_npm("s2", "babel", "7.0.0"), _npm("s2", "angular", "21.2.0")],
+        }
+        results = [
+            _outdated_result("s1", [{"component": "core", "current_version": "7.0.0", "latest_version": "7.5.0"}]),
+            _outdated_result("s2", [{"component": "core", "current_version": "7.0.0", "latest_version": "7.5.0"}]),
+        ]
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo([_make_scan("s1", 0), _make_scan("s2", 30)]),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo(results),
+        )
+        assert m.slowest_packages[0].name == "core"
+        assert m.slowest_packages[0].current_version == "7.0.0"
 
     @pytest.mark.asyncio
     async def test_package_types_use_purl_ecosystem(self):
@@ -1115,6 +1261,18 @@ class TestStreamingOrchestrator:
 
         assert len(result.projects) == 1
         assert result.skipped_projects == 1
+
+    @pytest.mark.asyncio
+    async def test_summary_carries_time_range_days(self):
+        scans, deps = self._two_scan_project("proj-a", "pkg-a", ("1.0.0", "1.0.1"))
+        result = await compute_update_frequency_comparison(
+            projects=[{"_id": "proj-a", "name": "A"}],
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+        )
+        # _two_scan_project spans 30 days.
+        assert result.projects[0].time_range_days == 30.0
 
     @pytest.mark.asyncio
     async def test_outdated_loaded_per_pair_not_upfront(self):

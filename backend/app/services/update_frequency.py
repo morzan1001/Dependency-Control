@@ -99,7 +99,10 @@ def _dep_record(dep: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
     purl = dep.get("purl", "")
     parsed = parse_purl(purl) if purl else None
     if parsed:
-        identity = f"{parsed.type}:{parsed.namespace or ''}:{parsed.name}"
+        # deps_dev_name folds ecosystem naming (Maven group:artifact, npm scope,
+        # PEP 503 for PyPI) so the same package keeps one identity across scans
+        # even when the purl name casing/separators vary.
+        identity = f"{parsed.type}:{parsed.deps_dev_name}"
         display = parsed.full_name
     else:
         identity = f"{dep.get('type', 'unknown')}::{name}"
@@ -336,8 +339,9 @@ def _aggregate_metrics(
 
     first_date: datetime = completed_scans[0]["created_at"]
     last_date: datetime = completed_scans[-1]["created_at"]
-    # Sub-day precision; floored at one day so a single CI burst can't explode the monthly rate.
-    time_range_days = max(1.0, (last_date - first_date).total_seconds() / 86400.0)
+    raw_range_days = (last_date - first_date).total_seconds() / 86400.0
+    # Floored at one day so a single CI burst can't explode the monthly rate.
+    time_range_days = max(1.0, raw_range_days)
     time_range_months = time_range_days / 30.44
 
     patch_total = type_counter.get("patch", 0)
@@ -346,7 +350,8 @@ def _aggregate_metrics(
     unknown_total = type_counter.get("unknown", 0)
 
     granularity_ratio = _granularity_ratio(type_counter, total_updates)
-    avg_days_between = time_range_days / num_intervals if num_intervals else 0
+    # Cadence reports the real average interval, not the floored range.
+    avg_days_between = raw_range_days / num_intervals if num_intervals else 0
 
     total_outdated_detected = len(ever_outdated)
     outdated_resolved_count = len(ever_outdated & ever_resolved)
@@ -399,6 +404,18 @@ def _aggregate_metrics(
         adoption_latency_days_median=(upstream.adoption_latency_days_median if upstream else None),
         dominant_ecosystem=_dominant_ecosystem(dep_type_map),
     )
+
+
+def _final_versions_by_name(final_deps: dict[str, dict[str, str]]) -> dict[str, str]:
+    """Newest-scan version per bare name, only where the name is unambiguous.
+
+    The outdated analyzer keys by bare name, but two purl identities can
+    share one name (npm scopes are dropped in storage). Mapping such a name
+    to a single version would show one sibling's version for the other, so
+    ambiguous names are omitted and the analyzer's own current_version stands.
+    """
+    counts: Counter = Counter(info["name"] for info in final_deps.values())
+    return {info["name"]: info["version"] for info in final_deps.values() if counts[info["name"]] == 1}
 
 
 def _build_slowest_packages(
@@ -548,15 +565,36 @@ def _as_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
+async def _branch_scan_count(scan_repo: ScanRepository, project_id: str, branch: str) -> int:
+    scans = await scan_repo.find_many(
+        {"project_id": project_id, "status": "completed", "branch": branch, "is_rescan": {"$ne": True}},
+        limit=2,
+        projection={"_id": 1},
+    )
+    return len(scans)
+
+
 async def _resolve_primary_branch(
     scan_repo: ScanRepository,
     project_id: str,
     deleted_branches: list[str] | None,
+    default_branch: str | None,
 ) -> str | None:
-    """Branch of the newest completed non-rescan scan on a live branch."""
+    """Branch to analyze when the caller names none.
+
+    The project's configured ``default_branch`` wins when it has enough
+    history to compute anything; only then do we fall back to the newest
+    scanned live branch, so a one-off scan on a feature branch can't hijack
+    the analysis.
+    """
+    deleted = deleted_branches or []
+    if default_branch and default_branch not in deleted:
+        if await _branch_scan_count(scan_repo, project_id, default_branch) >= 2:
+            return default_branch
+
     query: dict[str, Any] = {"project_id": project_id, "status": "completed", "is_rescan": {"$ne": True}}
-    if deleted_branches:
-        query["branch"] = {"$nin": list(deleted_branches)}
+    if deleted:
+        query["branch"] = {"$nin": list(deleted)}
     doc = await scan_repo.find_one(query, sort=[("created_at", -1), ("_id", -1)])
     return doc.get("branch") if doc else None
 
@@ -577,6 +615,11 @@ def _collapse_same_commit_runs(scans_raw: list[dict[str, Any]]) -> list[dict[str
     return collapsed
 
 
+# Same-commit collapse can shrink the fetched set; over-fetch so a burst of
+# CI retries on the head commit can't starve the window below max_scans.
+_COLLAPSE_HEADROOM = 5
+
+
 async def _load_completed_scans(
     scan_repo: ScanRepository,
     project_id: str,
@@ -590,7 +633,7 @@ async def _load_completed_scans(
     When ``since`` is set the calendar window dominates (capped by
     ``hard_limit``) and ``max_scans`` is ignored.
     """
-    fetch_limit = hard_limit if since is not None else max_scans
+    fetch_limit = hard_limit if since is not None else min(hard_limit, max_scans * _COLLAPSE_HEADROOM)
     # Filter status in the query so the limit counts only completed scans; filtering after
     # the limit would empty the window when the newest scans are failed/processing.
     # find_many returns Scan models, so project the fields Scan requires (project_id, branch).
@@ -607,7 +650,11 @@ async def _load_completed_scans(
     if since is not None:
         scans_raw = [s for s in scans_raw if s["created_at"] >= since]
     scans_raw.reverse()
-    return _collapse_same_commit_runs(scans_raw)
+    collapsed = _collapse_same_commit_runs(scans_raw)
+    # Collapse first, THEN cap, so distinct commits fill the window even after a storm.
+    if since is None and len(collapsed) > max_scans:
+        collapsed = collapsed[-max_scans:]
+    return collapsed
 
 
 async def compute_update_frequency(
@@ -622,16 +669,19 @@ async def compute_update_frequency(
     hard_limit: int = _DEFAULT_HARD_LIMIT,
     branch: str | None = None,
     deleted_branches: list[str] | None = None,
+    default_branch: str | None = None,
 ) -> UpdateFrequencyMetrics:
     """Compute update-frequency metrics for one project on one branch.
 
-    ``branch`` defaults to the branch of the newest completed non-rescan
-    scan; comparing across branches would count branch differences as
-    updates. With ``since`` set, all scans newer than the cutoff are
-    analysed (up to ``hard_limit``). Otherwise the newest ``max_scans``
-    are taken.
+    ``branch`` defaults to the project's ``default_branch`` (if scanned),
+    else the branch of the newest completed non-rescan scan; comparing
+    across branches would count branch differences as updates. With
+    ``since`` set, all scans newer than the cutoff are analysed (up to
+    ``hard_limit``). Otherwise the newest ``max_scans`` are taken.
     """
-    analyzed_branch = branch or await _resolve_primary_branch(scan_repo, project_id, deleted_branches)
+    analyzed_branch = branch or await _resolve_primary_branch(
+        scan_repo, project_id, deleted_branches, default_branch
+    )
     if analyzed_branch is None:
         return _empty_metrics(project_id, project_name, 0, "", branch=None)
 
@@ -700,7 +750,7 @@ async def compute_update_frequency(
         upstream=upstream,
         branch=analyzed_branch,
         final_outdated=prev_outdated,
-        final_versions={info["name"]: info["version"] for info in prev_deps.values()},
+        final_versions=_final_versions_by_name(prev_deps),
     )
 
 
@@ -790,6 +840,7 @@ async def compute_update_frequency_comparison(
                     since=since,
                     release_fetcher=release_fetcher,
                     deleted_branches=project.get("deleted_branches"),
+                    default_branch=project.get("default_branch"),
                 )
             except Exception:
                 logger.warning(f"Failed to compute update frequency for project {project_id}", exc_info=True)
