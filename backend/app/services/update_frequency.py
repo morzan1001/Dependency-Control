@@ -802,6 +802,7 @@ async def compute_update_frequency_comparison(
                 project_name=metrics.project_name,
                 team_name=team_name,
                 scan_count=metrics.scan_count,
+                time_range_days=metrics.time_range_days,
                 updates_per_month=metrics.updates_per_month,
                 update_coverage_pct=metrics.update_coverage_pct,
                 patch_ratio=metrics.granularity_ratio.get("patch", 0),
@@ -814,52 +815,28 @@ async def compute_update_frequency_comparison(
     results = await asyncio.gather(*[_compute_single(p) for p in projects], return_exceptions=True)
     summaries: list[ProjectUpdateSummary] = [s for s in results if isinstance(s, ProjectUpdateSummary)]
 
-    # None coverage == "nothing to resolve" — rank above any measured coverage.
-    def _coverage_key(s: ProjectUpdateSummary) -> float:
-        return float("inf") if s.update_coverage_pct is None else s.update_coverage_pct
+    # None coverage means "nothing was ever outdated" — no measurement, so those
+    # projects rank after every measured one and never become best or worst.
+    measured = [s for s in summaries if s.update_coverage_pct is not None]
+    unmeasured = [s for s in summaries if s.update_coverage_pct is None]
+    measured.sort(key=lambda s: (s.update_coverage_pct, s.updates_per_month), reverse=True)
+    unmeasured.sort(key=lambda s: s.updates_per_month, reverse=True)
+    summaries = measured + unmeasured
 
-    summaries.sort(key=lambda s: (_coverage_key(s), s.updates_per_month), reverse=True)
-
-    if summaries:
-        avg_updates = sum(s.updates_per_month for s in summaries) / len(summaries)
-        coverage_values = [s.update_coverage_pct for s in summaries if s.update_coverage_pct is not None]
-        avg_coverage = sum(coverage_values) / len(coverage_values) if coverage_values else 0.0
-        best = summaries[0].project_name
-        worst = summaries[-1].project_name
-    else:
-        avg_updates = 0.0
-        avg_coverage = 0.0
-        best = None
-        worst = None
-
-    best_per_ecosystem, worst_per_ecosystem = _per_ecosystem_winners(summaries)
+    avg_updates = sum(s.updates_per_month for s in summaries) / len(summaries) if summaries else 0.0
+    avg_coverage = (
+        round(sum(s.update_coverage_pct for s in measured) / len(measured), 1)  # type: ignore[misc]
+        if measured
+        else None
+    )
+    best = measured[0].project_name if measured else None
+    worst = measured[-1].project_name if len(measured) >= 2 else None
 
     return UpdateFrequencyComparison(
         projects=summaries,
         team_avg_updates_per_month=round(avg_updates, 2),
-        team_avg_coverage_pct=round(avg_coverage, 1),
+        team_avg_coverage_pct=avg_coverage,
         best_project=best,
         worst_project=worst,
-        best_per_ecosystem=best_per_ecosystem,
-        worst_per_ecosystem=worst_per_ecosystem,
+        skipped_projects=len(projects) - len(summaries),
     )
-
-
-def _per_ecosystem_winners(
-    summaries: list[ProjectUpdateSummary],
-) -> tuple[dict[str, str], dict[str, str]]:
-    """Per-ecosystem ``(best, worst)`` from a globally-sorted summary list.
-
-    Skips ``"mixed"`` and unclassified projects — only the global ranking
-    is meaningful for them.
-    """
-    best: dict[str, str] = {}
-    worst: dict[str, str] = {}
-    for s in summaries:
-        eco = s.dominant_ecosystem
-        if not eco or eco == "mixed":
-            continue
-        if eco not in best:
-            best[eco] = s.project_name
-        worst[eco] = s.project_name  # last wins -> worst (summaries sorted desc)
-    return best, worst

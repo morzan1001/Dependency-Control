@@ -376,6 +376,7 @@ class ProjectUpdateSummary(BaseModel):
     project_name: str
     team_name: str | None = None
     scan_count: int
+    time_range_days: float = 0.0  # window the per-month figure was extrapolated from
     updates_per_month: float
     update_coverage_pct: float | None = None
     patch_ratio: float  # proportion of patch updates (0-1)
@@ -386,15 +387,19 @@ class ProjectUpdateSummary(BaseModel):
 
 
 class UpdateFrequencyComparison(BaseModel):
-    """Cross-project comparison of update frequency metrics."""
+    """Cross-project comparison of update frequency metrics.
+
+    Ranking: measured coverage first (descending), then projects where
+    nothing was ever outdated (no measurable coverage). best/worst are
+    drawn from measured projects only.
+    """
 
     projects: list[ProjectUpdateSummary]
     team_avg_updates_per_month: float
-    team_avg_coverage_pct: float
+    team_avg_coverage_pct: float | None = None  # None when no project has measurable coverage
     best_project: str | None = None
     worst_project: str | None = None
-    best_per_ecosystem: dict[str, str] = {}
-    worst_per_ecosystem: dict[str, str] = {}
+    skipped_projects: int = 0  # projects dropped for lacking >=2 completed scans
 
 
 # Crypto analytics schemas

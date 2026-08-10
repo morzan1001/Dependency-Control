@@ -1050,43 +1050,71 @@ class TestStreamingOrchestrator:
         assert len(result.projects) == 1
         assert result.projects[0].dominant_ecosystem == "pypi"
 
-    @pytest.mark.asyncio
-    async def test_comparison_emits_per_ecosystem_winners(self):
-        # Two projects in different ecosystems; the global best_project
-        # is still set, but the per-ecosystem maps let UIs avoid claiming
-        # an npm project "beat" a maven project on raw updates_per_month.
-        scans_a = [
-            {**_make_scan("a1", 0, project_id="proj-py"), "project_id": "proj-py"},
-            {**_make_scan("a2", 30, project_id="proj-py"), "project_id": "proj-py"},
-        ]
-        scans_b = [
-            {**_make_scan("b1", 0, project_id="proj-js"), "project_id": "proj-js"},
-            {**_make_scan("b2", 30, project_id="proj-js"), "project_id": "proj-js"},
-        ]
+    @staticmethod
+    def _two_scan_project(pid: str, pkg: str, versions: tuple[str, str]) -> tuple[list, dict]:
+        scans = [_make_scan(f"{pid}-s1", 0, project_id=pid), _make_scan(f"{pid}-s2", 30, project_id=pid)]
         deps = {
-            "a1": [_make_dep("a1", "pkg-py", "1.0.0", "pypi")],
-            "a2": [_make_dep("a2", "pkg-py", "1.0.1", "pypi")],
-            "b1": [_make_dep("b1", "pkg-js", "1.0.0", "npm")],
-            "b2": [_make_dep("b2", "pkg-js", "1.0.1", "npm")],
+            f"{pid}-s1": [_make_dep(f"{pid}-s1", pkg, versions[0])],
+            f"{pid}-s2": [_make_dep(f"{pid}-s2", pkg, versions[1])],
         }
-        scan_repo = FakeScanRepo(scans_a + scans_b)
-        dep_repo = FakeDepRepo(deps)
-        analysis_repo = FakeAnalysisRepo([])
+        return scans, deps
+
+    @pytest.mark.asyncio
+    async def test_unmeasured_coverage_ranks_after_measured(self):
+        # proj-a: pkg outdated then resolved -> measured 100% coverage.
+        # proj-b: nothing ever outdated -> coverage None; must NOT outrank a
+        # measured project or be crowned best_project.
+        scans_a, deps_a = self._two_scan_project("proj-a", "pkg-a", ("1.0.0", "3.0.0"))
+        scans_b, deps_b = self._two_scan_project("proj-b", "pkg-b", ("1.0.0", "1.0.1"))
+        results = [
+            _outdated_result(
+                "proj-a-s1", [{"component": "pkg-a", "current_version": "1.0.0", "latest_version": "3.0.0"}]
+            ),
+        ]
 
         result = await compute_update_frequency_comparison(
-            projects=[
-                {"_id": "proj-py", "name": "Python Project"},
-                {"_id": "proj-js", "name": "JS Project"},
-            ],
-            scan_repo=scan_repo,
-            dep_repo=dep_repo,
-            analysis_repo=analysis_repo,
+            projects=[{"_id": "proj-b", "name": "Unmeasured"}, {"_id": "proj-a", "name": "Measured"}],
+            scan_repo=FakeScanRepo(scans_a + scans_b),
+            dep_repo=FakeDepRepo({**deps_a, **deps_b}),
+            analysis_repo=FakeAnalysisRepo(results),
         )
 
-        assert "pypi" in result.best_per_ecosystem
-        assert "npm" in result.best_per_ecosystem
-        assert result.best_per_ecosystem["pypi"] == "Python Project"
-        assert result.best_per_ecosystem["npm"] == "JS Project"
+        assert [p.project_name for p in result.projects] == ["Measured", "Unmeasured"]
+        assert result.best_project == "Measured"
+        # A single measured project cannot be both best and worst.
+        assert result.worst_project is None
+        assert result.skipped_projects == 0
+
+    @pytest.mark.asyncio
+    async def test_all_unmeasured_yields_no_best_worst_and_null_avg(self):
+        scans_a, deps_a = self._two_scan_project("proj-a", "pkg-a", ("1.0.0", "1.0.1"))
+        scans_b, deps_b = self._two_scan_project("proj-b", "pkg-b", ("1.0.0", "1.0.1"))
+
+        result = await compute_update_frequency_comparison(
+            projects=[{"_id": "proj-a", "name": "A"}, {"_id": "proj-b", "name": "B"}],
+            scan_repo=FakeScanRepo(scans_a + scans_b),
+            dep_repo=FakeDepRepo({**deps_a, **deps_b}),
+            analysis_repo=FakeAnalysisRepo([]),
+        )
+
+        assert result.best_project is None
+        assert result.worst_project is None
+        assert result.team_avg_coverage_pct is None
+
+    @pytest.mark.asyncio
+    async def test_projects_without_enough_scans_are_counted_as_skipped(self):
+        scans_a, deps_a = self._two_scan_project("proj-a", "pkg-a", ("1.0.0", "1.0.1"))
+        single_scan = [_make_scan("proj-c-s1", 0, project_id="proj-c")]
+
+        result = await compute_update_frequency_comparison(
+            projects=[{"_id": "proj-a", "name": "A"}, {"_id": "proj-c", "name": "C"}],
+            scan_repo=FakeScanRepo(scans_a + single_scan),
+            dep_repo=FakeDepRepo(deps_a),
+            analysis_repo=FakeAnalysisRepo([]),
+        )
+
+        assert len(result.projects) == 1
+        assert result.skipped_projects == 1
 
     @pytest.mark.asyncio
     async def test_outdated_loaded_per_pair_not_upfront(self):
