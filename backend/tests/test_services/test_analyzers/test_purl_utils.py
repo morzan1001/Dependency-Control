@@ -164,6 +164,12 @@ class TestParsedPURLProperties:
         result = parse_purl("pkg:pypi/requests@1.0")
         assert result.deps_dev_name == "requests"
 
+    def test_deps_dev_name_pypi_pep503_normalized(self):
+        # deps.dev serves PyPI packages under their PEP 503 name; unnormalized
+        # purls (underscores, dots, mixed case) 404 otherwise.
+        result = parse_purl("pkg:pypi/My_Package.Name@1.0")
+        assert result.deps_dev_name == "my-package-name"
+
     def test_deps_dev_name_go_no_doubling(self):
         """Go module names must not double the domain prefix."""
         result = parse_purl("pkg:golang/github.com/gin-gonic/gin@1.9.1")

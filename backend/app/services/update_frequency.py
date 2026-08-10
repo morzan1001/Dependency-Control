@@ -718,20 +718,18 @@ async def _maybe_fetch_upstream_cadence(
         return None
 
     # deps.dev keys packages by "group:artifact" (Maven), "scope/name" (npm),
-    # etc. — ParsedPURL.deps_dev_name — not the bare DB dependency name. Using
-    # the raw name 404s every Maven lookup. The fetcher returns history keyed by
-    # the name we pass, so remember dep_name -> deps_dev_name to re-key
-    # observations and keep adoption-latency matching intact.
+    # PEP 503 name (PyPI), etc. — ParsedPURL.deps_dev_name — not the bare DB
+    # dependency name. Map each dep identity to its (system, deps_dev_name) so
+    # observations carry the ecosystem and adoption-latency matches exactly.
     package_specs: list[tuple[str, str]] = []
     seen: set = set()
-    name_to_registry_name: dict[str, str] = {}
-    for name, purl in package_purls.items():
+    identity_to_spec: dict[str, tuple[str, str]] = {}
+    for identity, purl in package_purls.items():
         parsed = parse_purl(purl)
         if parsed is None or not parsed.registry_system:
             continue
-        registry_name = parsed.deps_dev_name
-        name_to_registry_name[name] = registry_name
-        spec = (parsed.registry_system, registry_name)
+        spec = (parsed.registry_system, parsed.deps_dev_name)
+        identity_to_spec[identity] = spec
         if spec in seen:
             continue
         seen.add(spec)
@@ -746,10 +744,13 @@ async def _maybe_fetch_upstream_cadence(
         logger.warning("release-history fetcher failed; skipping upstream cadence", exc_info=True)
         return None
 
-    observations: list[Observation] = [
-        (name_to_registry_name.get(pkg, pkg), version, scan_date)
-        for (pkg, version), scan_date in first_seen_versions.items()
-    ]
+    observations: list[Observation] = []
+    for (identity, version), scan_date in first_seen_versions.items():
+        spec = identity_to_spec.get(identity)
+        if spec is None:
+            continue
+        system, registry_name = spec
+        observations.append((system, registry_name, version, scan_date))
     return aggregate_upstream_metrics(history, observations=observations)
 
 
