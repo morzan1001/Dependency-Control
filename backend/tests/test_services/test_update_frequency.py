@@ -582,6 +582,76 @@ class TestIdentityKeying:
         assert m.recent_updates[0].update_type == "minor"
 
 
+class TestOutdatedTracking:
+    """Outdated results union across SBOMs; resolution means leaving the outdated set."""
+
+    @staticmethod
+    async def _compute(deps, analysis_results):
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        return await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo(analysis_results),
+        )
+
+    @pytest.mark.asyncio
+    async def test_multi_sbom_outdated_results_are_unioned(self):
+        # The engine writes one outdated_packages row per SBOM of a scan.
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0"), _make_dep("s1", "pkg-b", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "1.0.0"), _make_dep("s2", "pkg-b", "1.0.0")],
+        }
+        results = [
+            _outdated_result("s1", [{"component": "pkg-a", "current_version": "1.0.0", "latest_version": "2.0.0"}]),
+            _outdated_result("s1", [{"component": "pkg-b", "current_version": "1.0.0", "latest_version": "3.0.0"}]),
+        ]
+        m = await self._compute(deps, results)
+        assert m.total_outdated_detected == 2
+        assert m.scan_timeline[0].outdated_count == 2
+
+    @pytest.mark.asyncio
+    async def test_update_while_still_outdated_is_not_resolved(self):
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "1.1.0")],
+        }
+        results = [
+            _outdated_result("s1", [{"component": "pkg-a", "current_version": "1.0.0", "latest_version": "3.0.0"}]),
+            _outdated_result("s2", [{"component": "pkg-a", "current_version": "1.1.0", "latest_version": "3.0.0"}]),
+        ]
+        m = await self._compute(deps, results)
+        assert m.outdated_resolved == 0
+        assert m.update_coverage_pct == 0.0
+
+    @pytest.mark.asyncio
+    async def test_resolution_requires_leaving_outdated_set(self):
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "3.0.0")],
+        }
+        results = [
+            _outdated_result("s1", [{"component": "pkg-a", "current_version": "1.0.0", "latest_version": "3.0.0"}]),
+        ]
+        m = await self._compute(deps, results)
+        assert m.outdated_resolved == 1
+        assert m.update_coverage_pct == 100.0
+
+    @pytest.mark.asyncio
+    async def test_removed_package_is_not_resolved(self):
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0"), _make_dep("s1", "pkg-b", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-b", "1.0.0")],
+        }
+        results = [
+            _outdated_result("s1", [{"component": "pkg-a", "current_version": "1.0.0", "latest_version": "3.0.0"}]),
+        ]
+        m = await self._compute(deps, results)
+        assert m.outdated_resolved == 0
+        assert m.update_coverage_pct == 0.0
+
+
 class TestStreamingOrchestrator:
     @pytest.mark.asyncio
     async def test_basic_two_scan_history(self):

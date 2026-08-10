@@ -150,12 +150,16 @@ def _pregroup_deps_by_scan(
     }
 
 
+# One outdated_packages row is stored per SBOM of a scan; well above any real SBOM count.
+_MAX_OUTDATED_RESULTS_PER_SCAN = 50
+
+
 async def _load_outdated_for_scan(
     analysis_repo: AnalysisResultRepository,
     scan_id: str,
     package_latest_info: dict[str, dict[str, str]],
 ) -> set:
-    """Load one scan's outdated_packages result, returning component names.
+    """Union of the scan's outdated_packages results, returning component names.
 
     Updates ``package_latest_info`` in-place; later writes for the same
     package overwrite earlier ones, which is fine since ``slowest_packages``
@@ -163,22 +167,20 @@ async def _load_outdated_for_scan(
     """
     results = await analysis_repo.find_many(
         {"scan_id": scan_id, "analyzer_name": "outdated_packages"},
-        limit=1,
+        limit=_MAX_OUTDATED_RESULTS_PER_SCAN,
     )
     outdated_names: set = set()
-    if not results:
-        return outdated_names
-
-    result_data = getattr(results[0], "result", {}) or {}
-    for entry in result_data.get("outdated_dependencies", []):
-        comp = entry.get("component", "")
-        if not comp:
-            continue
-        outdated_names.add(comp)
-        package_latest_info[comp] = {
-            "current_version": entry.get("current_version", ""),
-            "latest_version": entry.get("latest_version", ""),
-        }
+    for result in results:
+        result_data = getattr(result, "result", {}) or {}
+        for entry in result_data.get("outdated_dependencies", []):
+            comp = entry.get("component", "")
+            if not comp:
+                continue
+            outdated_names.add(comp)
+            package_latest_info[comp] = {
+                "current_version": entry.get("current_version", ""),
+                "latest_version": entry.get("latest_version", ""),
+            }
     return outdated_names
 
 
@@ -487,10 +489,19 @@ class _AccumulatorState:
             self.package_outdated_counts[pkg] += 1
             self.ever_outdated.add(pkg)
 
+    def record_resolved(self, prev_outdated: set, curr_outdated: set, curr_deps: dict[str, dict[str, str]]) -> None:
+        """Resolved = still present but no longer flagged outdated.
+
+        A version bump that stays behind latest is not a resolution, and
+        neither is removing the package.
+        """
+        curr_names = {info.get("name", "") for info in curr_deps.values()}
+        for pkg in prev_outdated:
+            if pkg in curr_names and pkg not in curr_outdated:
+                self.ever_resolved.add(pkg)
+
     def absorb_events(self, events: list[tuple[DependencyUpdateEvent, str]], curr_scan_date: datetime) -> None:
         for e, identity in events:
-            if e.was_outdated:
-                self.ever_resolved.add(identity)
             self.type_counter[e.update_type] += 1
             self.recent_events_buffer.append(e)
             if len(self.first_seen_versions) < _MAX_OBSERVATIONS:
@@ -621,6 +632,7 @@ async def compute_update_frequency(
 
         curr_outdated = await _load_outdated_for_scan(analysis_repo, curr_scan["_id"], state.package_latest_info)
         state.record_outdated(curr_outdated)
+        state.record_resolved(prev_outdated, curr_outdated, curr_deps)
 
         events = _compare_scan_pair(
             {prev_scan["_id"]: prev_deps, curr_scan["_id"]: curr_deps},
