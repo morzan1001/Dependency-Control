@@ -13,6 +13,7 @@ import { ProjectWaivers } from '@/components/project/ProjectWaivers'
 import { ProjectMembers } from '@/components/project/ProjectMembers'
 import { ProjectSettings } from '@/components/project/ProjectSettings'
 import { ProjectArchives } from '@/components/project/ProjectArchives'
+import { ProjectInventory } from '@/components/project/inventory/ProjectInventory'
 
 
 import { useState, useMemo } from 'react'
@@ -143,6 +144,7 @@ export default function ProjectDetails() {
         <div className="flex items-center justify-between">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="inventory">Inventory</TabsTrigger>
             <TabsTrigger value="scans">Pipelines</TabsTrigger>
             <TabsTrigger value="waivers">Waivers</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
@@ -228,7 +230,11 @@ export default function ProjectDetails() {
         <TabsContent value="overview" className="space-y-4">
           <ProjectOverview projectId={project.id} selectedBranches={selectedBranches} />
         </TabsContent>
-        
+
+        <TabsContent value="inventory" className="space-y-4">
+          <ProjectInventory projectId={id!} projectName={project.name} defaultBranch={project.default_branch} />
+        </TabsContent>
+
         <TabsContent value="scans" className="space-y-4">
           <ProjectScans projectId={project.id} />
         </TabsContent>
