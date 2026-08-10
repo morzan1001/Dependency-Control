@@ -42,8 +42,8 @@ async def get_crypto_page(
     assets = await repo.list_by_scan(
         project_id, scan_id, limit=page_size, skip=(page - 1) * page_size, name_search=search
     )
-    total = await repo.count_by_scan(project_id, scan_id)
-    return [_to_item(a.model_dump(by_alias=True)) for a in assets], total
+    total = await repo.count_by_scan(project_id, scan_id, name_search=search)
+    return [_to_item(a.model_dump()) for a in assets], total
 
 
 async def iter_crypto_rows(

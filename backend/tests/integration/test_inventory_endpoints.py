@@ -284,3 +284,20 @@ async def test_crypto_page_and_export(client, db, member_auth_headers):
     )
     assert {r["name"] for r in rows} == {"AES-256-GCM", "MD5"}
     assert next(r for r in rows if r["name"] == "AES-256-GCM")["locations"] == "src/a.py; src/b.py"
+
+
+@pytest.mark.asyncio
+async def test_crypto_search_respects_total_count(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_crypto(db, "s1", "AES-128-GCM")
+    await _seed_crypto(db, "s1", "AES-256-GCM")
+    await _seed_crypto(db, "s1", "MD5")
+
+    resp = await client.get(
+        f"/api/v1/projects/{_PID}/inventory/crypto",
+        params={"search": "AES", "page": 1, "page_size": 1},
+        headers=member_auth_headers,
+    )
+    body = resp.json()
+    assert body["total"] == 2
+    assert len(body["items"]) == 1
