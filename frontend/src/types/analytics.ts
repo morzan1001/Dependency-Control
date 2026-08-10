@@ -433,13 +433,16 @@ export interface AdvancedSearchOptions {
     limit?: number;
 }
 
+export type UpdateType = 'patch' | 'minor' | 'major' | 'unknown' | 'downgrade';
+export type TrendDirection = 'improving' | 'stable' | 'deteriorating' | 'unknown';
+
 export interface DependencyUpdateEvent {
     package_name: string;
     package_type: string;
     purl?: string;
     old_version: string;
     new_version: string;
-    update_type: 'patch' | 'minor' | 'major' | 'unknown';
+    update_type: UpdateType;
     scan_date: string;
     previous_scan_date: string;
     days_between_scans: number;
@@ -454,6 +457,8 @@ export interface ScanTimelineEntry {
     patch: number;
     minor: number;
     major: number;
+    unknown: number;
+    downgrades: number;
 }
 
 export interface SlowPackage {
@@ -467,6 +472,7 @@ export interface SlowPackage {
 export interface UpdateFrequencyMetrics {
     project_id: string;
     project_name: string;
+    branch: string | null;
     scan_count: number;
     time_range_days: number;
     first_scan_date: string;
@@ -478,13 +484,20 @@ export interface UpdateFrequencyMetrics {
     minor_updates: number;
     major_updates: number;
     unknown_updates: number;
+    downgrade_updates: number;
     granularity_ratio: Record<string, number>;
     avg_days_between_scans: number;
     total_outdated_detected: number;
     outdated_resolved: number;
-    update_coverage_pct: number;
-    trend_direction: 'improving' | 'stable' | 'deteriorating';
+    // null means nothing was ever outdated (N/A, distinct from 0%).
+    update_coverage_pct: number | null;
+    trend_direction: TrendDirection;
     trend_detail: string;
+    upstream_releases_last_12m_median: number | null;
+    upstream_days_between_releases_median: number | null;
+    upstream_days_since_latest_release_median: number | null;
+    adoption_latency_days_median: number | null;
+    dominant_ecosystem: string | null;
     scan_timeline: ScanTimelineEntry[];
     slowest_packages: SlowPackage[];
     recent_updates: DependencyUpdateEvent[];
@@ -495,18 +508,21 @@ export interface ProjectUpdateSummary {
     project_name: string;
     team_name?: string;
     scan_count: number;
+    time_range_days: number;
     updates_per_month: number;
-    update_coverage_pct: number;
+    update_coverage_pct: number | null;
     patch_ratio: number;
-    trend_direction: 'improving' | 'stable' | 'deteriorating';
+    trend_direction: TrendDirection;
     total_outdated: number;
     last_scan_date: string;
+    dominant_ecosystem: string | null;
 }
 
 export interface UpdateFrequencyComparison {
     projects: ProjectUpdateSummary[];
     team_avg_updates_per_month: number;
-    team_avg_coverage_pct: number;
+    team_avg_coverage_pct: number | null;
     best_project?: string;
     worst_project?: string;
+    skipped_projects: number;
 }

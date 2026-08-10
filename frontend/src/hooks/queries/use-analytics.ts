@@ -2,6 +2,17 @@ import { useQuery } from '@tanstack/react-query';
 import { analyticsApi } from '@/api/analytics';
 import type { ApiError } from '@/api/client';
 
+export interface UpdateFrequencyOpts {
+    maxScans?: number;
+    windowDays?: number;
+    branch?: string;
+}
+
+export interface ComparisonOpts {
+    maxScans?: number;
+    windowDays?: number;
+}
+
 export const analyticsKeys = {
     all: ['analytics'] as const,
     dashboardStats: () => [...analyticsKeys.all, 'dashboard-stats'] as const,
@@ -14,8 +25,8 @@ export const analyticsKeys = {
     dependencyMetadata: (component: string, version?: string, type?: string) => [...analyticsKeys.all, 'dependency-metadata', { component, version, type }] as const,
     dependencyTypes: () => [...analyticsKeys.all, 'dependency-types'] as const,
     recommendations: (projectId: string, scanId?: string) => [...analyticsKeys.all, 'recommendations', projectId, { scanId }] as const,
-    updateFrequency: (projectId: string, maxScans?: number) => [...analyticsKeys.all, 'update-frequency', projectId, { maxScans }] as const,
-    updateFrequencyComparison: (teamId?: string, maxScans?: number) => [...analyticsKeys.all, 'update-frequency-comparison', { teamId, maxScans }] as const,
+    updateFrequency: (projectId: string, opts?: UpdateFrequencyOpts) => [...analyticsKeys.all, 'update-frequency', projectId, { ...opts }] as const,
+    updateFrequencyComparison: (teamId?: string, opts?: ComparisonOpts) => [...analyticsKeys.all, 'update-frequency-comparison', { teamId, ...opts }] as const,
 }
 
 export const useDashboardStats = () => {
@@ -108,20 +119,20 @@ export const useProjectRecommendations = (projectId: string, scanId?: string) =>
     });
 }
 
-export const useUpdateFrequency = (projectId: string, maxScans?: number) => {
+export const useUpdateFrequency = (projectId: string, opts?: UpdateFrequencyOpts) => {
     return useQuery({
-        queryKey: analyticsKeys.updateFrequency(projectId, maxScans),
-        queryFn: () => analyticsApi.getUpdateFrequency(projectId, maxScans),
+        queryKey: analyticsKeys.updateFrequency(projectId, opts),
+        queryFn: () => analyticsApi.getUpdateFrequency(projectId, opts),
         enabled: !!projectId,
         staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: true,
     });
 }
 
-export const useUpdateFrequencyComparison = (teamId?: string, maxScans?: number) => {
+export const useUpdateFrequencyComparison = (teamId?: string, opts?: ComparisonOpts) => {
     return useQuery({
-        queryKey: analyticsKeys.updateFrequencyComparison(teamId, maxScans),
-        queryFn: () => analyticsApi.getUpdateFrequencyComparison(teamId, maxScans),
+        queryKey: analyticsKeys.updateFrequencyComparison(teamId, opts),
+        queryFn: () => analyticsApi.getUpdateFrequencyComparison(teamId, opts),
         staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: true,
     });
