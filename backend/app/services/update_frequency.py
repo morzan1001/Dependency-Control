@@ -56,9 +56,11 @@ def _release_tuple(version: Version) -> tuple[int, int, int]:
 def classify_version_change(old_version: str, new_version: str) -> str:
     """Classify a version change via PEP 440 parsing.
 
-    Returns ``"major" | "minor" | "patch" | "none" | "unknown"``. Same
-    release tuple with differing pre/post/local segments collapses to
-    ``"patch"`` since the smallest meaningful tier still applies.
+    Returns ``"major" | "minor" | "patch" | "downgrade" | "none" | "unknown"``.
+    Any backwards move is ``"downgrade"`` regardless of distance, so rollbacks
+    are never counted as update activity. Same release tuple with differing
+    pre/post/local segments collapses to ``"patch"`` since the smallest
+    meaningful tier still applies.
     """
     try:
         old_v = Version(old_version)
@@ -68,6 +70,10 @@ def classify_version_change(old_version: str, new_version: str) -> str:
 
     if old_v == new_v:
         return "none"
+    if new_v < old_v:
+        return "downgrade"
+    if new_v.epoch != old_v.epoch:
+        return "major"
 
     old_major, old_minor, _ = _release_tuple(old_v)
     new_major, new_minor, _ = _release_tuple(new_v)

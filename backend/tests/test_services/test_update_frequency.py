@@ -61,11 +61,24 @@ class TestClassifyVersionChange:
         assert classify_version_change("v1.0.0", "1.0.0") == "none"
 
     # pre-release identifiers must be respected
-    def test_stable_to_prerelease_is_not_no_change(self):
-        # 1.0.0 -> 1.0.0-beta1 is a real change (downgrade), must not be "none"
-        result = classify_version_change("1.0.0", "1.0.0-beta1")
-        assert result != "none"
-        assert result in ("patch", "prerelease")
+    def test_stable_to_prerelease_is_downgrade(self):
+        assert classify_version_change("1.0.0", "1.0.0-beta1") == "downgrade"
+
+    def test_major_rollback_is_downgrade(self):
+        assert classify_version_change("2.0.0", "1.0.0") == "downgrade"
+
+    def test_minor_rollback_is_downgrade(self):
+        assert classify_version_change("1.5.0", "1.4.0") == "downgrade"
+
+    def test_patch_rollback_is_downgrade(self):
+        assert classify_version_change("1.0.1", "1.0.0") == "downgrade"
+
+    def test_epoch_bump_is_major(self):
+        # An epoch bump resets the release tuple; treat it as the biggest possible jump.
+        assert classify_version_change("2024.01.15", "1!1.0.0") == "major"
+
+    def test_epoch_rollback_is_downgrade(self):
+        assert classify_version_change("1!1.0.0", "2.0.0") == "downgrade"
 
     def test_prerelease_to_stable_is_not_no_change(self):
         # 1.0.0-beta1 -> 1.0.0 is a real change (graduation), must not be "none"
