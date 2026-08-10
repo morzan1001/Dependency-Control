@@ -70,3 +70,8 @@ export function shortCommitHash(hash: string | undefined | null): string {
   if (!hash) return ''
   return hash.substring(0, 7)
 }
+
+// null coverage means nothing was ever outdated (N/A), distinct from 0%.
+export function formatCoveragePct(pct: number | null): string {
+  return pct === null ? 'N/A' : `${pct}%`
+}

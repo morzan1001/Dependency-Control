@@ -5,12 +5,6 @@ import type { ApiError } from '@/api/client';
 export interface UpdateFrequencyOpts {
     maxScans?: number;
     windowDays?: number;
-    branch?: string;
-}
-
-export interface ComparisonOpts {
-    maxScans?: number;
-    windowDays?: number;
 }
 
 export const analyticsKeys = {
@@ -26,7 +20,7 @@ export const analyticsKeys = {
     dependencyTypes: () => [...analyticsKeys.all, 'dependency-types'] as const,
     recommendations: (projectId: string, scanId?: string) => [...analyticsKeys.all, 'recommendations', projectId, { scanId }] as const,
     updateFrequency: (projectId: string, opts?: UpdateFrequencyOpts) => [...analyticsKeys.all, 'update-frequency', projectId, { ...opts }] as const,
-    updateFrequencyComparison: (teamId?: string, opts?: ComparisonOpts) => [...analyticsKeys.all, 'update-frequency-comparison', { teamId, ...opts }] as const,
+    updateFrequencyComparison: (teamId?: string, opts?: UpdateFrequencyOpts) => [...analyticsKeys.all, 'update-frequency-comparison', { teamId, ...opts }] as const,
 }
 
 export const useDashboardStats = () => {
@@ -129,7 +123,7 @@ export const useUpdateFrequency = (projectId: string, opts?: UpdateFrequencyOpts
     });
 }
 
-export const useUpdateFrequencyComparison = (teamId?: string, opts?: ComparisonOpts) => {
+export const useUpdateFrequencyComparison = (teamId?: string, opts?: UpdateFrequencyOpts) => {
     return useQuery({
         queryKey: analyticsKeys.updateFrequencyComparison(teamId, opts),
         queryFn: () => analyticsApi.getUpdateFrequencyComparison(teamId, opts),

@@ -139,12 +139,11 @@ export const analyticsApi = {
 
     getUpdateFrequency: async (
         projectId: string,
-        opts?: { maxScans?: number; windowDays?: number; branch?: string }
+        opts?: { maxScans?: number; windowDays?: number }
     ): Promise<UpdateFrequencyMetrics> => {
         const params = buildQueryParams({
             max_scans: opts?.maxScans,
             window_days: opts?.windowDays,
-            branch: opts?.branch,
         });
         const response = await api.get<UpdateFrequencyMetrics>(
             `/analytics/projects/${projectId}/update-frequency`,

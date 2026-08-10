@@ -4,13 +4,8 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { ProjectCombobox } from '@/components/ui/project-combobox'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { WindowSelect } from './WindowSelect'
+import { TREND_CONFIG } from './trend-config'
 import {
   Bar,
   XAxis,
@@ -27,9 +22,6 @@ import {
 } from 'recharts'
 import {
   RefreshCw,
-  TrendingUp,
-  TrendingDown,
-  Minus,
   Clock,
   Package,
   ArrowRight,
@@ -37,8 +29,8 @@ import {
   GitBranch,
 } from 'lucide-react'
 import { useUpdateFrequency } from '@/hooks/queries/use-analytics'
-import { formatDate } from '@/lib/utils'
-import type { UpdateFrequencyMetrics, DependencyUpdateEvent, TrendDirection } from '@/types/analytics'
+import { formatDate, formatCoveragePct } from '@/lib/utils'
+import type { UpdateFrequencyMetrics, DependencyUpdateEvent } from '@/types/analytics'
 
 interface UpdateFrequencyProps {
   projectId?: string
@@ -60,20 +52,13 @@ const updateTypeBadgeVariants: Record<string, string> = {
   downgrade: 'bg-purple-500/10 text-purple-600 border-purple-500/20',
 }
 
-const trendConfig: Record<TrendDirection, { icon: typeof Minus; color: string; label: string }> = {
-  improving: { icon: TrendingUp, color: 'text-green-500', label: 'Improving' },
-  stable: { icon: Minus, color: 'text-gray-500', label: 'Stable' },
-  deteriorating: { icon: TrendingDown, color: 'text-red-500', label: 'Deteriorating' },
-  unknown: { icon: Minus, color: 'text-muted-foreground', label: 'Insufficient data' },
-}
-
 function formatDays(days: number): string {
   if (days < 1) return `${(days * 24).toFixed(1)}h`
   return `${days.toFixed(days < 10 ? 1 : 0)}d`
 }
 
 function SummaryCards({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
-  const trend = trendConfig[data.trend_direction] ?? trendConfig.unknown
+  const trend = TREND_CONFIG[data.trend_direction] ?? TREND_CONFIG.unknown
   const TrendIcon = trend.icon
   const coverageKnown = data.update_coverage_pct !== null
 
@@ -111,7 +96,7 @@ function SummaryCards({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
           <Package className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{coverageKnown ? `${data.update_coverage_pct}%` : 'N/A'}</div>
+          <div className="text-2xl font-bold">{formatCoveragePct(data.update_coverage_pct)}</div>
           <p className="text-xs text-muted-foreground">
             {coverageKnown
               ? `${data.outdated_resolved} of ${data.total_outdated_detected} outdated resolved`
@@ -346,10 +331,10 @@ function RecentUpdatesTable({ data }: Readonly<{ data: UpdateFrequencyMetrics }>
 
 function UpstreamCadenceCard({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
   const metrics = [
-    { label: 'Releases / 12 mo', value: data.upstream_releases_last_12m_median, suffix: '' },
-    { label: 'Days between releases', value: data.upstream_days_between_releases_median, suffix: 'd' },
-    { label: 'Days since latest release', value: data.upstream_days_since_latest_release_median, suffix: 'd' },
-    { label: 'Adoption latency', value: data.adoption_latency_days_median, suffix: 'd' },
+    { label: 'Releases / 12 mo', value: data.upstream_releases_last_12m_median, suffix: '', digits: 1 },
+    { label: 'Days between releases', value: data.upstream_days_between_releases_median, suffix: 'd', digits: 0 },
+    { label: 'Days since latest release', value: data.upstream_days_since_latest_release_median, suffix: 'd', digits: 0 },
+    { label: 'Adoption latency', value: data.adoption_latency_days_median, suffix: 'd', digits: 0 },
   ]
 
   if (metrics.every((m) => m.value === null)) return null
@@ -368,7 +353,7 @@ function UpstreamCadenceCard({ data }: Readonly<{ data: UpdateFrequencyMetrics }
           {metrics.map((m) => (
             <div key={m.label}>
               <div className="text-2xl font-bold">
-                {m.value === null ? '—' : `${m.value.toFixed(m.suffix === 'd' ? 0 : 1)}${m.suffix}`}
+                {m.value === null ? '—' : `${m.value.toFixed(m.digits)}${m.suffix}`}
               </div>
               <p className="text-xs text-muted-foreground">{m.label}</p>
             </div>
@@ -486,36 +471,5 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
         </>
       )}
     </div>
-  )
-}
-
-const WINDOW_OPTIONS: { value: string; label: string; days?: number }[] = [
-  { value: '30', label: 'Last 30 days', days: 30 },
-  { value: '90', label: 'Last 90 days', days: 90 },
-  { value: '365', label: 'Last 12 months', days: 365 },
-  { value: 'scans', label: 'Last 20 scans' },
-]
-
-function WindowSelect({
-  value,
-  onChange,
-}: Readonly<{ value: number | undefined; onChange: (v: number | undefined) => void }>) {
-  const current = value === undefined ? 'scans' : String(value)
-  return (
-    <Select
-      value={current}
-      onValueChange={(v) => onChange(v === 'scans' ? undefined : Number(v))}
-    >
-      <SelectTrigger className="w-[180px]">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {WINDOW_OPTIONS.map((opt) => (
-          <SelectItem key={opt.value} value={opt.value}>
-            {opt.label}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
   )
 }

@@ -20,24 +20,16 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import {
-  TrendingUp,
-  TrendingDown,
-  Minus,
   Trophy,
   AlertTriangle,
   Users,
 } from 'lucide-react'
 import { useUpdateFrequencyComparison } from '@/hooks/queries/use-analytics'
 import { useTeams } from '@/hooks/queries/use-teams'
-import { formatDate } from '@/lib/utils'
-import type { ProjectUpdateSummary, UpdateFrequencyComparison as Comparison, TrendDirection } from '@/types/analytics'
-
-const trendIcons: Record<TrendDirection, { icon: typeof Minus; color: string }> = {
-  improving: { icon: TrendingUp, color: 'text-green-500' },
-  stable: { icon: Minus, color: 'text-gray-500' },
-  deteriorating: { icon: TrendingDown, color: 'text-red-500' },
-  unknown: { icon: Minus, color: 'text-muted-foreground' },
-}
+import { formatDate, formatCoveragePct } from '@/lib/utils'
+import type { ProjectUpdateSummary, UpdateFrequencyComparison as Comparison } from '@/types/analytics'
+import { WindowSelect } from './WindowSelect'
+import { TREND_CONFIG } from './trend-config'
 
 function ComparisonSummaryCards({ data }: Readonly<{ data: Comparison }>) {
   return (
@@ -62,9 +54,7 @@ function ComparisonSummaryCards({ data }: Readonly<{ data: Comparison }>) {
           <Users className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">
-            {data.team_avg_coverage_pct === null ? 'N/A' : `${data.team_avg_coverage_pct}%`}
-          </div>
+          <div className="text-2xl font-bold">{formatCoveragePct(data.team_avg_coverage_pct)}</div>
           <p className="text-xs text-muted-foreground">
             {data.team_avg_coverage_pct === null ? 'no measurable coverage' : 'of outdated deps resolved'}
           </p>
@@ -194,7 +184,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
             </TableHeader>
             <TableBody>
               {projects.map((project, idx) => {
-                const trend = trendIcons[project.trend_direction] || trendIcons.stable
+                const trend = TREND_CONFIG[project.trend_direction] ?? TREND_CONFIG.stable
                 const TrendIcon = trend.icon
 
                 return (
@@ -208,7 +198,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                         variant="outline"
                         className={getCoverageBadgeClass(project.update_coverage_pct)}
                       >
-                        {project.update_coverage_pct === null ? 'N/A' : `${project.update_coverage_pct}%`}
+                        {formatCoveragePct(project.update_coverage_pct)}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right font-mono">
@@ -231,13 +221,6 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
     </Card>
   )
 }
-
-const WINDOW_OPTIONS: { value: string; label: string }[] = [
-  { value: '30', label: 'Last 30 days' },
-  { value: '90', label: 'Last 90 days' },
-  { value: '365', label: 'Last 12 months' },
-  { value: 'scans', label: 'Last 20 scans' },
-]
 
 export function UpdateFrequencyComparison() {
   const [selectedTeamId, setSelectedTeamId] = useState<string | undefined>(undefined)
@@ -273,21 +256,7 @@ export function UpdateFrequencyComparison() {
                 ))}
               </SelectContent>
             </Select>
-            <Select
-              value={windowDays === undefined ? 'scans' : String(windowDays)}
-              onValueChange={(v) => setWindowDays(v === 'scans' ? undefined : Number(v))}
-            >
-              <SelectTrigger className="w-[180px]">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {WINDOW_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <WindowSelect value={windowDays} onChange={setWindowDays} />
           </div>
         </CardContent>
       </Card>
