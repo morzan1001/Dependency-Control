@@ -15,7 +15,7 @@ interface ProjectInventoryProps {
   defaultBranch?: string | null
 }
 
-// projectName is unused here; Tasks 10/11 tables (added to this component) use it for export filenames.
+// Renamed with underscore to satisfy noUnusedParameters until the table children consume it for export filenames.
 export function ProjectInventory({ projectId, projectName: _projectName, defaultBranch }: ProjectInventoryProps) {
   const { data: branches } = useProjectBranches(projectId)
   const activeBranches = useMemo(() => branches?.filter(b => b.is_active).map(b => b.name) || [], [branches])
