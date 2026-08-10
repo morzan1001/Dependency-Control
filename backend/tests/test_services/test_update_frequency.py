@@ -1173,29 +1173,6 @@ class TestStreamingOrchestrator:
         # Only the newest 100 scans should be analysed under the safety cap.
         assert m.scan_count == 100
 
-    @pytest.mark.asyncio
-    async def test_summary_carries_dominant_ecosystem(self):
-        # All deps are pypi -> dominant_ecosystem on the comparison summary
-        # must reflect that, so the UI/caller can group fairly.
-        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
-        deps = {
-            "s1": [_make_dep("s1", "pkg-a", "1.0.0", "pypi")],
-            "s2": [_make_dep("s2", "pkg-a", "1.0.1", "pypi")],
-        }
-        scan_repo = FakeScanRepo(scans)
-        dep_repo = FakeDepRepo(deps)
-        analysis_repo = FakeAnalysisRepo([])
-
-        result = await compute_update_frequency_comparison(
-            projects=[{"_id": "proj-1", "name": "Project One"}],
-            scan_repo=scan_repo,
-            dep_repo=dep_repo,
-            analysis_repo=analysis_repo,
-        )
-
-        assert len(result.projects) == 1
-        assert result.projects[0].dominant_ecosystem == "pypi"
-
     @staticmethod
     def _two_scan_project(pid: str, pkg: str, versions: tuple[str, str]) -> tuple[list, dict]:
         scans = [_make_scan(f"{pid}-s1", 0, project_id=pid), _make_scan(f"{pid}-s2", 30, project_id=pid)]
@@ -1261,18 +1238,6 @@ class TestStreamingOrchestrator:
 
         assert len(result.projects) == 1
         assert result.skipped_projects == 1
-
-    @pytest.mark.asyncio
-    async def test_summary_carries_time_range_days(self):
-        scans, deps = self._two_scan_project("proj-a", "pkg-a", ("1.0.0", "1.0.1"))
-        result = await compute_update_frequency_comparison(
-            projects=[{"_id": "proj-a", "name": "A"}],
-            scan_repo=FakeScanRepo(scans),
-            dep_repo=FakeDepRepo(deps),
-            analysis_repo=FakeAnalysisRepo([]),
-        )
-        # _two_scan_project spans 30 days.
-        assert result.projects[0].time_range_days == 30.0
 
     @pytest.mark.asyncio
     async def test_outdated_loaded_per_pair_not_upfront(self):

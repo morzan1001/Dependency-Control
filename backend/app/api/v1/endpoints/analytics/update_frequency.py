@@ -81,13 +81,7 @@ def _comparison_cache_key(
 
 
 async def _completed_scan_version(db: DatabaseDep, project_ids: list[str]) -> str:
-    """Count of completed scans across the projects.
-
-    ``created_at`` is set at scan creation, so a scan that finishes after a
-    later-created one already completed would not advance a max(created_at)
-    token, serving stale metrics. A completion count only ever increases as
-    scans finish, so it busts the cache on out-of-order completion too.
-    """
+    """Completed-scan count: a cache token monotonic per completion, unlike max(created_at) on out-of-order finishes."""
     if not project_ids:
         return "0"
     count = await db.scans.count_documents({"project_id": {"$in": project_ids}, "status": "completed"})
@@ -223,19 +217,18 @@ async def get_update_frequency_comparison(
     if cached:
         return UpdateFrequencyComparison(**cached)
 
-    if projects_raw:
-        unique_team_ids = list({str(p["team_id"]) for p in projects_raw if p.get("team_id")})
-        team_names: dict[str, str] = {}
-        if unique_team_ids:
-            cursor = db.teams.find(
-                {"_id": {"$in": unique_team_ids}},
-                {"_id": 1, "name": 1},
-            )
-            async for t in cursor:
-                team_names[str(t["_id"])] = t.get("name", "")
+    unique_team_ids = list({str(p["team_id"]) for p in projects_raw if p.get("team_id")})
+    team_names: dict[str, str] = {}
+    if unique_team_ids:
+        cursor = db.teams.find(
+            {"_id": {"$in": unique_team_ids}},
+            {"_id": 1, "name": 1},
+        )
+        async for t in cursor:
+            team_names[str(t["_id"])] = t.get("name", "")
 
-        for p in projects_raw:
-            p["team_name"] = team_names.get(p.get("team_id", ""))
+    for p in projects_raw:
+        p["team_name"] = team_names.get(p.get("team_id", ""))
 
     scan_repo = ScanRepository(db)
     dep_repo = DependencyRepository(db)

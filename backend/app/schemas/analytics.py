@@ -288,7 +288,7 @@ class DependencyUpdateEvent(BaseModel):
     purl: str | None = None
     old_version: str
     new_version: str
-    update_type: str  # "patch" | "minor" | "major" | "unknown"
+    update_type: str  # "patch" | "minor" | "major" | "unknown" | "downgrade"
     scan_date: str  # ISO timestamp of the scan where the update was detected
     previous_scan_date: str
     days_between_scans: int
@@ -376,14 +376,12 @@ class ProjectUpdateSummary(BaseModel):
     project_name: str
     team_name: str | None = None
     scan_count: int
-    time_range_days: float = 0.0  # window the per-month figure was extrapolated from
     updates_per_month: float
     update_coverage_pct: float | None = None
     patch_ratio: float  # proportion of patch updates (0-1)
     trend_direction: str  # "improving" | "stable" | "deteriorating" | "unknown"
     total_outdated: int
     last_scan_date: str
-    dominant_ecosystem: str | None = None
 
 
 class UpdateFrequencyComparison(BaseModel):

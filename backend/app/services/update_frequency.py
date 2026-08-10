@@ -43,13 +43,12 @@ _COMPARISON_CONCURRENCY = 3
 _DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "purl": 1, "scan_id": 1}
 
 
-def _release_tuple(version: Version) -> tuple[int, int, int]:
-    """``(major, minor, patch)`` padded with zeros for shorter release tuples."""
+def _release_tuple(version: Version) -> tuple[int, int]:
+    """``(major, minor)`` padded with zeros for shorter release tuples."""
     release = version.release
     return (
         release[0] if len(release) > 0 else 0,
         release[1] if len(release) > 1 else 0,
-        release[2] if len(release) > 2 else 0,
     )
 
 
@@ -75,8 +74,8 @@ def classify_version_change(old_version: str, new_version: str) -> str:
     if new_v.epoch != old_v.epoch:
         return "major"
 
-    old_major, old_minor, _ = _release_tuple(old_v)
-    new_major, new_minor, _ = _release_tuple(new_v)
+    old_major, old_minor = _release_tuple(old_v)
+    new_major, new_minor = _release_tuple(new_v)
 
     if new_major != old_major:
         return "major"
@@ -102,18 +101,26 @@ def _dep_record(dep: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
         # deps_dev_name folds ecosystem naming (Maven group:artifact, npm scope,
         # PEP 503 for PyPI) so the same package keeps one identity across scans
         # even when the purl name casing/separators vary.
-        identity = f"{parsed.type}:{parsed.deps_dev_name}"
+        deps_dev_name = parsed.deps_dev_name
+        identity = f"{parsed.type}:{deps_dev_name}"
         display = parsed.full_name
+        # SBOM component types ("library") say nothing about the ecosystem; the purl type does.
+        dep_type = parsed.type
+        registry_system = parsed.registry_system or ""
     else:
+        deps_dev_name = ""
         identity = f"{dep.get('type', 'unknown')}::{name}"
         display = name
+        dep_type = dep.get("type", "unknown")
+        registry_system = ""
     return identity, {
         "version": dep.get("version", ""),
-        # SBOM component types ("library") say nothing about the ecosystem; the purl type does.
-        "type": parsed.type if parsed else dep.get("type", "unknown"),
+        "type": dep_type,
         "purl": purl,
         "name": name,
         "display": display,
+        "registry_system": registry_system,
+        "deps_dev_name": deps_dev_name,
     }
 
 
@@ -129,12 +136,12 @@ def _resolve_duplicate(candidates: list[dict[str, str]]) -> dict[str, str]:
     parseable: list[tuple[Version, dict[str, str]]] = []
     for cand in candidates:
         try:
-            parseable.append((Version(cand.get("version", "")), cand))
+            parseable.append((Version(cand["version"]), cand))
         except InvalidVersion:
             continue
     if parseable:
         return max(parseable, key=lambda pair: pair[0])[1]
-    return max(candidates, key=lambda cand: cand.get("version", ""))
+    return max(candidates, key=lambda cand: cand["version"])
 
 
 def _pregroup_deps_by_scan(
@@ -281,17 +288,12 @@ def _compute_trend(
     update_deteriorating = newer_avg_updates < older_avg_updates * 0.9
     outdated_deteriorating = newer_avg_outdated > older_avg_outdated * 1.1
 
-    improving_parts = []
-    if update_improving:
-        improving_parts.append(f"Updates/scan: {older_avg_updates:.1f} → {newer_avg_updates:.1f}")
-    if outdated_improving:
-        improving_parts.append(f"Outdated: {older_avg_outdated:.1f} → {newer_avg_outdated:.1f}")
-
-    deteriorating_parts = []
-    if update_deteriorating:
-        deteriorating_parts.append(f"Updates/scan: {older_avg_updates:.1f} → {newer_avg_updates:.1f}")
-    if outdated_deteriorating:
-        deteriorating_parts.append(f"Outdated: {older_avg_outdated:.1f} → {newer_avg_outdated:.1f}")
+    updates_msg = f"Updates/scan: {older_avg_updates:.1f} → {newer_avg_updates:.1f}"
+    outdated_msg = f"Outdated: {older_avg_outdated:.1f} → {newer_avg_outdated:.1f}"
+    improving_parts = [m for m, ok in ((updates_msg, update_improving), (outdated_msg, outdated_improving)) if ok]
+    deteriorating_parts = [
+        m for m, ok in ((updates_msg, update_deteriorating), (outdated_msg, outdated_deteriorating)) if ok
+    ]
 
     if improving_parts and deteriorating_parts:
         return "stable", f"Mixed signals. {'. '.join(improving_parts + deteriorating_parts)}"
@@ -523,16 +525,17 @@ class _AccumulatorState:
     ever_outdated: set = field(default_factory=set)
     ever_resolved: set = field(default_factory=set)
     first_seen_versions: dict[tuple[str, str], datetime] = field(default_factory=dict)
-    package_purls: dict[str, str] = field(default_factory=dict)
+    # identity -> (deps.dev system, deps_dev_name); deps.dev keys by deps_dev_name, not the bare DB name.
+    package_specs: dict[str, tuple[str, str]] = field(default_factory=dict)
 
     def accumulate_types(self, deps: dict[str, dict[str, str]]) -> None:
         for identity, info in deps.items():
-            name = info.get("name", "")
-            if name and name not in self.dep_type_map:
-                self.dep_type_map[name] = info.get("type", "unknown")
-            purl = info.get("purl") or ""
-            if purl and identity not in self.package_purls:
-                self.package_purls[identity] = purl
+            name = info["name"]
+            if name not in self.dep_type_map:
+                self.dep_type_map[name] = info["type"]
+            system = info["registry_system"]
+            if system and identity not in self.package_specs:
+                self.package_specs[identity] = (system, info["deps_dev_name"])
 
     def record_outdated(self, outdated: set) -> None:
         for pkg in outdated:
@@ -545,7 +548,7 @@ class _AccumulatorState:
         A version bump that stays behind latest is not a resolution, and
         neither is removing the package.
         """
-        curr_names = {info.get("name", "") for info in curr_deps.values()}
+        curr_names = {info["name"] for info in curr_deps.values()}
         for pkg in prev_outdated:
             if pkg in curr_names and pkg not in curr_outdated:
                 self.ever_resolved.add(pkg)
@@ -733,7 +736,7 @@ async def compute_update_frequency(
         prev_deps = curr_deps
         prev_outdated = curr_outdated
 
-    upstream = await _maybe_fetch_upstream_cadence(release_fetcher, state.package_purls, state.first_seen_versions)
+    upstream = await _maybe_fetch_upstream_cadence(release_fetcher, state.package_specs, state.first_seen_versions)
 
     return _aggregate_metrics(
         completed_scans,
@@ -756,7 +759,7 @@ async def compute_update_frequency(
 
 async def _maybe_fetch_upstream_cadence(
     release_fetcher: ReleaseHistoryFetcher | None,
-    package_purls: dict[str, str],
+    package_specs: dict[str, tuple[str, str]],
     first_seen_versions: dict[tuple[str, str], datetime],
 ) -> UpstreamCadenceMetrics | None:
     """Call the fetcher and aggregate cadence; supplementary, never load-bearing.
@@ -764,42 +767,21 @@ async def _maybe_fetch_upstream_cadence(
     Failures and a missing fetcher both yield ``None`` so the rest of the
     report still ships.
     """
-    if release_fetcher is None:
-        return None
-
-    # deps.dev keys packages by "group:artifact" (Maven), "scope/name" (npm),
-    # PEP 503 name (PyPI), etc. — ParsedPURL.deps_dev_name — not the bare DB
-    # dependency name. Map each dep identity to its (system, deps_dev_name) so
-    # observations carry the ecosystem and adoption-latency matches exactly.
-    package_specs: list[tuple[str, str]] = []
-    seen: set = set()
-    identity_to_spec: dict[str, tuple[str, str]] = {}
-    for identity, purl in package_purls.items():
-        parsed = parse_purl(purl)
-        if parsed is None or not parsed.registry_system:
-            continue
-        spec = (parsed.registry_system, parsed.deps_dev_name)
-        identity_to_spec[identity] = spec
-        if spec in seen:
-            continue
-        seen.add(spec)
-        package_specs.append(spec)
-
-    if not package_specs:
+    if release_fetcher is None or not package_specs:
         return None
 
     try:
-        history = await release_fetcher.fetch(package_specs)
+        history = await release_fetcher.fetch(list(dict.fromkeys(package_specs.values())))
     except Exception:
         logger.warning("release-history fetcher failed; skipping upstream cadence", exc_info=True)
         return None
 
     observations: list[Observation] = []
     for (identity, version), scan_date in first_seen_versions.items():
-        obs_spec = identity_to_spec.get(identity)
-        if obs_spec is None:
+        spec = package_specs.get(identity)
+        if spec is None:
             continue
-        system, registry_name = obs_spec
+        system, registry_name = spec
         observations.append((system, registry_name, version, scan_date))
     return aggregate_upstream_metrics(history, observations=observations)
 
@@ -854,14 +836,12 @@ async def compute_update_frequency_comparison(
                 project_name=metrics.project_name,
                 team_name=team_name,
                 scan_count=metrics.scan_count,
-                time_range_days=metrics.time_range_days,
                 updates_per_month=metrics.updates_per_month,
                 update_coverage_pct=metrics.update_coverage_pct,
                 patch_ratio=metrics.granularity_ratio.get("patch", 0),
                 trend_direction=metrics.trend_direction,
                 total_outdated=metrics.total_outdated_detected,
                 last_scan_date=metrics.last_scan_date,
-                dominant_ecosystem=metrics.dominant_ecosystem,
             )
 
     results = await asyncio.gather(*[_compute_single(p) for p in projects], return_exceptions=True)
