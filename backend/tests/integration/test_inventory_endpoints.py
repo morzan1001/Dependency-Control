@@ -218,3 +218,41 @@ async def test_components_sort_by_license_uses_enrichment_fallback(client, db, m
 
     assert resp.status_code == 200
     assert [i["name"] for i in resp.json()["items"]] == ["dep-a", "dep-b"]
+
+
+@pytest.mark.asyncio
+async def test_licenses_grouped_with_category_and_unknown_bucket(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(db, "s1", "a", license_id="MIT")
+    await _seed_dep(db, "s1", "b", license_id="MIT")
+    await _seed_dep(db, "s1", "c", license_id="GPL-3.0-only", purl="pkg:npm/c@1.0.0")
+    await _seed_dep(db, "s1", "d")
+    await db.dependency_enrichments.insert_one(
+        {"purl": "pkg:npm/c@1.0.0", "license": "GPL-3.0-only",
+         "license_category": "strong_copyleft", "license_risks": ["copyleft obligations"]}
+    )
+
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/licenses", headers=member_auth_headers)
+
+    assert resp.status_code == 200
+    items = {i["license"]: i for i in resp.json()["items"]}
+    assert items["MIT"]["component_count"] == 2
+    assert sorted(items["MIT"]["components"]) == ["a@1.0.0", "b@1.0.0"]
+    assert items["GPL-3.0-only"]["category"] == "strong_copyleft"
+    assert items["GPL-3.0-only"]["risks"] == ["copyleft obligations"]
+    assert items["unknown"]["component_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_licenses_export_contains_full_component_list(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(db, "s1", "a", license_id="MIT")
+    await _seed_dep(db, "s1", "b", license_id="MIT")
+
+    rows = _parse_csv(
+        await client.get(f"/api/v1/projects/{_PID}/inventory/licenses/export", headers=member_auth_headers)
+    )
+    assert rows[0]["license"] == "MIT"
+    assert rows[0]["component_count"] == "2"
+    assert "a@1.0.0" in rows[0]["components"]
+    assert "b@1.0.0" in rows[0]["components"]

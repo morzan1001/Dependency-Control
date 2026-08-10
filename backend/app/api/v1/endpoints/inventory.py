@@ -9,11 +9,16 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404
 from app.models.project import Project, Scan
-from app.schemas.inventory import ComponentsPageResponse, InventoryStatsResponse
+from app.schemas.inventory import ComponentsPageResponse, InventoryStatsResponse, LicensesResponse
 from app.services.inventory.components import (
     COMPONENT_COLUMNS,
     get_components_page,
     iter_component_rows,
+)
+from app.services.inventory.licenses import (
+    LICENSE_COLUMNS,
+    build_license_rows,
+    iter_license_rows,
 )
 from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.scan_resolution import resolve_inventory_scan
@@ -75,3 +80,28 @@ async def inventory_components_export(
     scan = await _resolve_scan_or_404(db, project, branch)
     filename = export_filename(project.name, "components", scan.branch)
     return csv_response(filename, COMPONENT_COLUMNS, iter_component_rows(db, scan))
+
+
+@router.get("/projects/{project_id}/inventory/licenses", responses=RESP_AUTH_404)
+async def inventory_licenses(
+    project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    branch: str | None = Query(None),
+) -> LicensesResponse:
+    project = await check_project_access(project_id, current_user, db, required_role="viewer")
+    scan = await _resolve_scan_or_404(db, project, branch)
+    return LicensesResponse(scan=scan_context(scan), items=await build_license_rows(db, scan))
+
+
+@router.get("/projects/{project_id}/inventory/licenses/export", responses=RESP_AUTH_404)
+async def inventory_licenses_export(
+    project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    branch: str | None = Query(None),
+) -> StreamingResponse:
+    project = await check_project_access(project_id, current_user, db, required_role="viewer")
+    scan = await _resolve_scan_or_404(db, project, branch)
+    filename = export_filename(project.name, "licenses", scan.branch)
+    return csv_response(filename, LICENSE_COLUMNS, iter_license_rows(db, scan))
