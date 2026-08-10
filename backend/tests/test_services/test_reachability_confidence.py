@@ -3,7 +3,15 @@
 import pytest
 
 from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD
-from app.services.reachability_enrichment import is_high_confidence_reachable
+from app.services.analysis.stats import build_reachability_summary
+from app.services.reachability_enrichment import (
+    _build_component_language_map,
+    _check_package_in_imports,
+    _enrich_finding_from_callgraphs,
+    _enrich_single_finding,
+    _match_symbols,
+    is_high_confidence_reachable,
+)
 
 
 class TestIsHighConfidenceReachable:
@@ -39,16 +47,6 @@ class TestIsHighConfidenceReachable:
 
     def test_none_returns_false(self):
         assert is_high_confidence_reachable(None) is False
-
-
-from app.services.analysis.stats import build_reachability_summary
-from app.services.reachability_enrichment import (
-    _build_component_language_map,
-    _check_package_in_imports,
-    _enrich_finding_from_callgraphs,
-    _enrich_single_finding,
-    _match_symbols,
-)
 
 
 class TestPendingSummaryTiers:
