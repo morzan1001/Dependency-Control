@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, Download, Filter, Trash2 } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
-import { toast } from "sonner"
+import { downloadFile } from '@/lib/download'
 import { ProjectOverview } from '@/components/project/ProjectOverview'
 import { ProjectScans } from '@/components/project/ProjectScans'
 import { ProjectWaivers } from '@/components/project/ProjectWaivers'
@@ -73,22 +73,6 @@ export default function ProjectDetails() {
       } else {
           setSelectedBranches(activeBranchNames)
       }
-  }
-
-  const downloadFile = async (fetchBlob: () => Promise<Blob>, filename: string, errorMsg: string) => {
-    try {
-      const blob = await fetchBlob()
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      a.remove()
-    } catch {
-      toast.error(errorMsg)
-    }
   }
 
   const handleExportCsv = () => downloadFile(
