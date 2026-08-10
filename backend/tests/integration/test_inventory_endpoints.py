@@ -131,3 +131,90 @@ async def test_components_export_streams_all_rows_with_purl(client, db, member_a
     rows = _parse_csv(resp)
     assert len(rows) == 3
     assert rows[0]["purl"].startswith("pkg:npm/")
+
+
+@pytest.mark.asyncio
+async def test_components_export_merges_lifecycle_and_enrichment(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(db, "s1", "lodash", version="4.17.20")
+    await _seed_dep(db, "s1", "leftpad", version="0.9.0")
+    await _seed_lifecycle_finding(db, "s1", "lodash", "4.17.20", "outdated", latest="9.9.9")
+    await db.dependency_enrichments.insert_one(
+        {"purl": "pkg:npm/leftpad@0.9.0", "license": "ISC", "license_category": "permissive"}
+    )
+
+    resp = await client.get(
+        f"/api/v1/projects/{_PID}/inventory/components/export", headers=member_auth_headers
+    )
+
+    by_name = {r["name"]: r for r in _parse_csv(resp)}
+    assert by_name["lodash"]["latest_version"] == "9.9.9"
+    assert by_name["lodash"]["outdated"] == "true"
+    assert by_name["leftpad"]["license"] == "ISC"
+    assert by_name["leftpad"]["license_category"] == "permissive"
+
+
+@pytest.mark.asyncio
+async def test_components_sort_by_name_desc_orders_reverse_alphabetically(client, db, member_auth_headers):
+    await _seed_scan(db)
+    for name in ("alpha", "beta", "gamma"):
+        await _seed_dep(db, "s1", name)
+
+    resp = await client.get(
+        f"/api/v1/projects/{_PID}/inventory/components",
+        params={"sort_by": "name", "sort_order": "desc"},
+        headers=member_auth_headers,
+    )
+
+    assert resp.status_code == 200
+    assert [i["name"] for i in resp.json()["items"]] == ["gamma", "beta", "alpha"]
+
+
+@pytest.mark.asyncio
+async def test_components_sort_by_version_ascending(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(db, "s1", "a", version="3.0.0")
+    await _seed_dep(db, "s1", "b", version="1.0.0")
+    await _seed_dep(db, "s1", "c", version="2.0.0")
+
+    resp = await client.get(
+        f"/api/v1/projects/{_PID}/inventory/components",
+        params={"sort_by": "version", "sort_order": "asc"},
+        headers=member_auth_headers,
+    )
+
+    assert resp.status_code == 200
+    assert [i["version"] for i in resp.json()["items"]] == ["1.0.0", "2.0.0", "3.0.0"]
+
+
+@pytest.mark.asyncio
+async def test_components_invalid_sort_by_falls_back_to_name(client, db, member_auth_headers):
+    await _seed_scan(db)
+    for name in ("beta", "alpha"):
+        await _seed_dep(db, "s1", name)
+
+    resp = await client.get(
+        f"/api/v1/projects/{_PID}/inventory/components",
+        params={"sort_by": "bogus"},
+        headers=member_auth_headers,
+    )
+
+    assert resp.status_code == 200
+    assert [i["name"] for i in resp.json()["items"]] == ["alpha", "beta"]
+
+
+@pytest.mark.asyncio
+async def test_components_sort_by_license_uses_enrichment_fallback(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(db, "s1", "dep-a")
+    await _seed_dep(db, "s1", "dep-b", license_id="MIT")
+    await db.dependency_enrichments.insert_one({"purl": "pkg:npm/dep-a@1.0.0", "license": "ISC"})
+
+    resp = await client.get(
+        f"/api/v1/projects/{_PID}/inventory/components",
+        params={"sort_by": "license", "sort_order": "asc"},
+        headers=member_auth_headers,
+    )
+
+    assert resp.status_code == 200
+    assert [i["name"] for i in resp.json()["items"]] == ["dep-a", "dep-b"]

@@ -77,6 +77,28 @@ def _query(scan_id: str, search: str | None) -> dict[str, Any]:
     return query
 
 
+def _effective_license(doc: dict[str, Any], enrichment: dict[str, dict[str, Any]]) -> str:
+    enriched = enrichment.get(doc.get("purl") or "", {})
+    return doc.get("license") or enriched.get("license") or ""
+
+
+async def _license_sorted_page(
+    db: AsyncIOMotorDatabase,
+    deps: DependencyRepository,
+    query: dict[str, Any],
+    reverse: bool,
+    page: int,
+    page_size: int,
+) -> tuple[list[dict[str, Any]], dict[str, dict[str, Any]]]:
+    # The displayed license falls back to the enrichment doc, so a Mongo-side
+    # sort on dependency.license alone would misorder enrichment-only licenses.
+    all_docs = await deps.collection.find(query, _DEP_PROJECTION).to_list(None)
+    enrichment = await _enrichment_by_purl(db, [d["purl"] for d in all_docs if d.get("purl")])
+    all_docs.sort(key=lambda d: (_effective_license(d, enrichment), d.get("name", "")), reverse=reverse)
+    start = (page - 1) * page_size
+    return all_docs[start : start + page_size], enrichment
+
+
 async def get_components_page(
     db: AsyncIOMotorDatabase,
     scan: Scan,
@@ -92,15 +114,21 @@ async def get_components_page(
     total = await deps.count(query)
     sort_field = sort_by if sort_by in _SORT_FIELDS else "name"
     direction = -1 if sort_order == "desc" else 1
-    cursor = (
-        deps.collection.find(query, _DEP_PROJECTION)
-        .sort([(sort_field, direction), ("name", 1)])
-        .skip((page - 1) * page_size)
-        .limit(page_size)
-    )
-    docs = await cursor.to_list(page_size)
+
+    if sort_field == "license":
+        docs, enrichment = await _license_sorted_page(db, deps, query, direction == -1, page, page_size)
+    else:
+        sort_spec = [(sort_field, direction)] if sort_field == "name" else [(sort_field, direction), ("name", 1)]
+        cursor = (
+            deps.collection.find(query, _DEP_PROJECTION)
+            .sort(sort_spec)
+            .skip((page - 1) * page_size)
+            .limit(page_size)
+        )
+        docs = await cursor.to_list(page_size)
+        enrichment = await _enrichment_by_purl(db, [d["purl"] for d in docs if d.get("purl")])
+
     lifecycle = await _lifecycle_by_component(db, scan.id)
-    enrichment = await _enrichment_by_purl(db, [d["purl"] for d in docs if d.get("purl")])
     return [_to_item(d, lifecycle, enrichment) for d in docs], total
 
 
