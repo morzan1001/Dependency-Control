@@ -67,3 +67,11 @@ async def test_resolve_returns_none_for_deleted_or_unknown_branch(db):
     project = _project(deleted_branches=["old"])
     assert await resolve_inventory_scan(db, project, "old") is None
     assert await resolve_inventory_scan(db, project, "nope") is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_skips_deleted_default_branch(db):
+    await db.scans.insert_one(_scan("s1", "old", age_hours=1))
+    await db.scans.insert_one(_scan("s2", "main", age_hours=2))
+    project = _project(default_branch="old", deleted_branches=["old"])
+    assert (await resolve_inventory_scan(db, project, None)).id == "s2"
