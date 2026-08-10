@@ -29,12 +29,17 @@ function ScanSide({ label, scanId, options, onSelect }: {
   readonly onSelect: (id: string) => void
 }) {
   const { data: scan } = useQuery({ queryKey: ['scan', scanId], queryFn: () => scanApi.getOne(scanId) })
+  // The compared scan can be a rescan excluded from `options`; without this the trigger renders blank.
+  const currentInOptions = options.some((option) => option.id === scanId)
   return (
     <div className="flex-1 space-y-2">
       <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
       <Select value={scanId} onValueChange={onSelect}>
         <SelectTrigger><SelectValue /></SelectTrigger>
         <SelectContent>
+          {scan && !currentInOptions && (
+            <SelectItem value={scanId}>{scanLabel(scan)}</SelectItem>
+          )}
           {options.map((option) => (
             <SelectItem key={option.id} value={option.id}>{scanLabel(option)}</SelectItem>
           ))}
