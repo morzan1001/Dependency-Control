@@ -22,6 +22,7 @@ from app.api.v1.endpoints import (
     gitlab_instances,
     ingest,
     integrations,
+    inventory,
     invitations,
     mcp,
     mcp_keys,
@@ -190,6 +191,7 @@ app.include_router(archives.router, prefix=f"{settings.API_V1_STR}/projects", ta
 app.include_router(archives.admin_router, prefix=f"{settings.API_V1_STR}/archives", tags=["archives-admin"])
 app.include_router(callgraph.router, prefix=f"{settings.API_V1_STR}/projects", tags=["callgraph"])
 app.include_router(crypto_assets.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-assets"])
+app.include_router(inventory.router, prefix=f"{settings.API_V1_STR}", tags=["inventory"])
 app.include_router(crypto_policies.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-policies"])
 app.include_router(policy_audit.router, prefix=f"{settings.API_V1_STR}", tags=["policy-audit"])
 app.include_router(crypto_analytics.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-analytics"])
