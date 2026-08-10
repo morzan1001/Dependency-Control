@@ -9,11 +9,21 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404
 from app.models.project import Project, Scan
-from app.schemas.inventory import ComponentsPageResponse, InventoryStatsResponse, LicensesResponse
+from app.schemas.inventory import (
+    ComponentsPageResponse,
+    CryptoPageResponse,
+    InventoryStatsResponse,
+    LicensesResponse,
+)
 from app.services.inventory.components import (
     COMPONENT_COLUMNS,
     get_components_page,
     iter_component_rows,
+)
+from app.services.inventory.crypto import (
+    CRYPTO_COLUMNS,
+    get_crypto_page,
+    iter_crypto_rows,
 )
 from app.services.inventory.licenses import (
     LICENSE_COLUMNS,
@@ -105,3 +115,36 @@ async def inventory_licenses_export(
     scan = await _resolve_scan_or_404(db, project, branch)
     filename = export_filename(project.name, "licenses", scan.branch)
     return csv_response(filename, LICENSE_COLUMNS, iter_license_rows(db, scan))
+
+
+@router.get("/projects/{project_id}/inventory/crypto", responses=RESP_AUTH_404)
+async def inventory_crypto(
+    project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    branch: str | None = Query(None),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(25, ge=1, le=200),
+    search: str | None = Query(None),
+) -> CryptoPageResponse:
+    project = await check_project_access(project_id, current_user, db, required_role="viewer")
+    scan = await _resolve_scan_or_404(db, project, branch)
+    items, total = await get_crypto_page(
+        db, project.id, scan.id, page=page, page_size=page_size, search=search
+    )
+    return CryptoPageResponse(
+        scan=scan_context(scan), items=items, total=total, page=page, page_size=page_size
+    )
+
+
+@router.get("/projects/{project_id}/inventory/crypto/export", responses=RESP_AUTH_404)
+async def inventory_crypto_export(
+    project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    branch: str | None = Query(None),
+) -> StreamingResponse:
+    project = await check_project_access(project_id, current_user, db, required_role="viewer")
+    scan = await _resolve_scan_or_404(db, project, branch)
+    filename = export_filename(project.name, "crypto", scan.branch)
+    return csv_response(filename, CRYPTO_COLUMNS, iter_crypto_rows(db, project.id, scan.id))

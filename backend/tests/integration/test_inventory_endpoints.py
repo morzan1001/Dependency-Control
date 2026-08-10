@@ -25,6 +25,14 @@ async def _seed_dep(db, scan_id, name, *, direct=False, dep_type="npm", license_
     )
 
 
+async def _seed_crypto(db, scan_id, name, *, asset_type="algorithm", primitive=None, locations=None):
+    await db.crypto_assets.insert_one(
+        {"project_id": _PID, "scan_id": scan_id, "bom_ref": name, "name": name,
+         "asset_type": asset_type, "primitive": primitive,
+         "occurrence_locations": locations or []}
+    )
+
+
 @pytest.mark.asyncio
 async def test_stats_counts_and_scan_context(client, db, member_auth_headers):
     await _seed_scan(db)
@@ -256,3 +264,23 @@ async def test_licenses_export_contains_full_component_list(client, db, member_a
     assert rows[0]["component_count"] == "2"
     assert "a@1.0.0" in rows[0]["components"]
     assert "b@1.0.0" in rows[0]["components"]
+
+
+@pytest.mark.asyncio
+async def test_crypto_page_and_export(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_crypto(db, "s1", "AES-256-GCM", primitive="block-cipher", locations=["src/a.py", "src/b.py"])
+    await _seed_crypto(db, "s1", "MD5", primitive="hash")
+
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/crypto", headers=member_auth_headers)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["total"] == 2
+    aes = next(i for i in body["items"] if i["name"] == "AES-256-GCM")
+    assert aes["location_count"] == 2
+
+    rows = _parse_csv(
+        await client.get(f"/api/v1/projects/{_PID}/inventory/crypto/export", headers=member_auth_headers)
+    )
+    assert {r["name"] for r in rows} == {"AES-256-GCM", "MD5"}
+    assert next(r for r in rows if r["name"] == "AES-256-GCM")["locations"] == "src/a.py; src/b.py"
