@@ -8,6 +8,7 @@ import { useProjectBranches } from '@/hooks/queries/use-projects'
 import { useInventoryStats } from '@/hooks/queries/use-inventory'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
 import { InventoryStatCards } from './InventoryStatCards'
+import { ComponentsTable } from './ComponentsTable'
 
 interface ProjectInventoryProps {
   projectId: string
@@ -15,8 +16,7 @@ interface ProjectInventoryProps {
   defaultBranch?: string | null
 }
 
-// Renamed with underscore to satisfy noUnusedParameters until the table children consume it for export filenames.
-export function ProjectInventory({ projectId, projectName: _projectName, defaultBranch }: ProjectInventoryProps) {
+export function ProjectInventory({ projectId, projectName, defaultBranch }: ProjectInventoryProps) {
   const { data: branches } = useProjectBranches(projectId)
   const activeBranches = useMemo(() => branches?.filter(b => b.is_active).map(b => b.name) || [], [branches])
 
@@ -60,7 +60,10 @@ export function ProjectInventory({ projectId, projectName: _projectName, default
           </CardContent>
         </Card>
       ) : (
-        <InventoryStatCards stats={stats} isLoading={isLoading} />
+        <>
+          <InventoryStatCards stats={stats} isLoading={isLoading} />
+          <ComponentsTable projectId={projectId} projectName={projectName} branch={branch} />
+        </>
       )}
     </div>
   )
