@@ -70,8 +70,8 @@ export function CryptoTable({ projectId, projectName, branch }: CryptoTableProps
                   ))}
                 </TableRow>
               ))}
-              {!isLoading && data?.items.map((item) => (
-                <TableRow key={`${item.name}-${item.asset_type}`}>
+              {!isLoading && data?.items.map((item, index) => (
+                <TableRow key={`${item.name}-${item.asset_type}-${index}`}>
                   <TableCell className="font-medium">{item.name}</TableCell>
                   <TableCell><Badge variant="secondary">{item.asset_type}</Badge></TableCell>
                   <TableCell>{item.primitive}</TableCell>

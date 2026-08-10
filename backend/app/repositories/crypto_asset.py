@@ -1,5 +1,6 @@
 """MongoDB access for the crypto_assets collection."""
 
+import re
 from typing import Any
 
 from pymongo import UpdateOne
@@ -24,7 +25,7 @@ def _scan_query(
     if primitive is not None:
         query["primitive"] = primitive.value if hasattr(primitive, "value") else primitive
     if name_search:
-        query["name"] = {"$regex": name_search, "$options": "i"}
+        query["name"] = {"$regex": re.escape(name_search), "$options": "i"}
     return query
 
 
@@ -74,7 +75,7 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
         limit = min(limit, CRYPTO_ASSET_MAX_LIST_LIMIT)
         query = _scan_query(project_id, scan_id, asset_type, primitive, name_search)
         with track_db_operation(self.collection_name, "find"):
-            cursor = self.collection.find(query).skip(skip).limit(limit)
+            cursor = self.collection.find(query).sort("name", 1).skip(skip).limit(limit)
             docs = await cursor.to_list(length=limit)
         return [CryptoAsset.model_validate(d) for d in docs]
 

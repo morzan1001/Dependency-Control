@@ -30,7 +30,7 @@ _SEVERITY_ORDER = [
 _PROJECTION = {
     "finding_id": 1, "type": 1, "severity": 1, "description": 1,
     "component": 1, "version": 1,
-    "found_in": 1, "locations": 1, "scanners": 1, "aliases": 1,
+    "found_in": 1, "scanners": 1, "aliases": 1,
     "waived": 1, "waiver_reason": 1,
     "details.epss_score": 1, "details.epss_percentile": 1,
     f"details.{DETAILS_KEY_IN_KEV}": 1, "details.exploit_maturity": 1,
@@ -62,7 +62,7 @@ def _row(scan: Scan, doc: dict[str, Any], dep_lookup: _DepLookup) -> dict[str, A
         "version": doc.get("version"),
         "purl": dep_purl or details.get("purl"),
         "direct": direct,
-        "locations": doc.get("found_in") or doc.get("locations") or [],
+        "locations": doc.get("found_in") or [],
         "epss_score": details.get("epss_score") if is_vuln else None,
         "epss_percentile": details.get("epss_percentile") if is_vuln else None,
         "kev": bool(details.get(DETAILS_KEY_IN_KEV, False)) if is_vuln else None,

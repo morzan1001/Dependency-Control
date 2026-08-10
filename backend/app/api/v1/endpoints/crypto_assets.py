@@ -41,7 +41,9 @@ async def list_crypto_assets(
         primitive=primitive,
         name_search=name_search,
     )
-    total = await repo.count_by_scan(project_id, scan_id)
+    total = await repo.count_by_scan(
+        project_id, scan_id, asset_type=asset_type, primitive=primitive, name_search=name_search
+    )
     return {
         "items": [i.model_dump(by_alias=True) for i in items],
         "total": total,

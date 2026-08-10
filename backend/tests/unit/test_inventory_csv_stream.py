@@ -51,6 +51,19 @@ def test_format_cell_variants():
     assert format_cell(0.42) == "0.42"
 
 
+def test_format_cell_guards_formula_prefixes():
+    assert format_cell('=HYPERLINK("x")') == '\'=HYPERLINK("x")'
+    assert format_cell("+SUM(A1)") == "'+SUM(A1)"
+    assert format_cell("@cmd") == "'@cmd"
+    assert format_cell("-1") == "-1"
+    assert format_cell(-1) == "-1"
+    assert format_cell(["=x", "ok"]) == "'=x; ok"
+
+
+def test_format_cell_renders_none_in_list_as_empty_string():
+    assert format_cell(["x", None, "y"]) == "x; ; y"
+
+
 def test_export_filename_sanitizes_and_appends_date():
     name = export_filename("My Project/x", "findings")
     assert name.endswith(".csv")

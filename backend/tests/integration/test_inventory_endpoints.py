@@ -301,3 +301,27 @@ async def test_crypto_search_respects_total_count(client, db, member_auth_header
     body = resp.json()
     assert body["total"] == 2
     assert len(body["items"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_crypto_search_escapes_regex_metacharacters(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_crypto(db, "s1", "AES-256-GCM")
+
+    resp = await client.get(
+        f"/api/v1/projects/{_PID}/inventory/crypto",
+        params={"search": "["},
+        headers=member_auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 0
+
+    await _seed_crypto(db, "s1", "AES[legacy]")
+
+    resp = await client.get(
+        f"/api/v1/projects/{_PID}/inventory/crypto",
+        params={"search": "AES["},
+        headers=member_auth_headers,
+    )
+    assert resp.status_code == 200
+    assert resp.json()["total"] == 1
