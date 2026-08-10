@@ -13,7 +13,6 @@ import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert,
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
-import { ScanDeltaModal } from '@/components/scans/delta/ScanDeltaModal'
 
 interface ProjectScansProps {
   projectId: string
@@ -28,17 +27,11 @@ const getEffectiveScanData = (scan: Scan) => {
     };
 };
 
-interface DeltaState {
-  from: string;
-  to: string;
-}
-
 export function ProjectScans({ projectId }: ProjectScansProps) {
   const [page, setPage] = useState(1)
   const [selectedBranch, setSelectedBranch] = useState<string | undefined>(undefined)
   const [sortBy, setSortBy] = useState("created_at")
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
-  const [deltaState, setDeltaState] = useState<DeltaState | null>(null)
   const limit = DEFAULT_PAGE_SIZE
   const navigate = useNavigate()
 
@@ -353,7 +346,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                         variant="outline"
                         size="sm"
                         onClick={() =>
-                          setDeltaState({ from: prevScan.latest_rescan_id || prevScan.id, to: scan.latest_rescan_id || scan.id })
+                          navigate(`/projects/${projectId}/delta?from=${prevScan.latest_rescan_id || prevScan.id}&to=${scan.latest_rescan_id || scan.id}`)
                         }
                       >
                         Delta
@@ -400,12 +393,6 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
           </div>
         )}
       </CardContent>
-      <ScanDeltaModal
-        projectId={projectId}
-        fromScanId={deltaState?.from ?? null}
-        toScanId={deltaState?.to ?? null}
-        onClose={() => setDeltaState(null)}
-      />
     </Card>
   )
 }
