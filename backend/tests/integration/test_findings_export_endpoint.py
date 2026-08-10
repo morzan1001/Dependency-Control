@@ -55,7 +55,10 @@ async def test_export_covers_latest_scan_of_each_active_branch(client, db, membe
     await _seed_scan(db, "s-dev", "dev")
     await _seed_scan(db, "s-pending", "feat", status="processing")  # branch skipped: no completed scan
     await _seed_finding(db, "s-main-old", finding_id="CVE-OLD")
-    await _seed_finding(db, "s-main", finding_id="CVE-1", details={"epss_score": 0.97, "in_kev": True})
+    await _seed_finding(
+        db, "s-main", finding_id="CVE-1",
+        details={"epss_score": 0.97, "in_kev": True, "fixed_version": "4.17.21"},
+    )
     await _seed_finding(db, "s-dev", finding_id="CVE-2", severity="CRITICAL")
 
     resp = await client.get(f"/api/v1/projects/{_PID}/export/csv", headers=member_auth_headers)
@@ -67,6 +70,7 @@ async def test_export_covers_latest_scan_of_each_active_branch(client, db, membe
     assert kev_row["kev"] == "true"
     assert kev_row["epss_score"] == "0.97"
     assert kev_row["commit"] == "c-s-main"
+    assert kev_row["fixed_version"] == "4.17.21"
 
 
 @pytest.mark.asyncio
@@ -104,3 +108,52 @@ async def test_404_when_no_branch_has_a_completed_scan(client, db, member_auth_h
     await _seed_scan(db, "s1", "main", status="processing")
     resp = await client.get(f"/api/v1/projects/{_PID}/export/csv", headers=member_auth_headers)
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_export_includes_every_finding_type(client, db, member_auth_headers):
+    """No type filter: a non-vulnerability finding must still appear in the export."""
+    await _seed_scan(db, "s1", "main")
+    await _seed_finding(db, "s1", finding_id="CVE-1")
+    await _seed_finding(
+        db, "s1", finding_id="SECRET-1", ftype="secret", severity="HIGH",
+        component="config.yaml", version="",
+    )
+
+    rows = _parse(await client.get(f"/api/v1/projects/{_PID}/export/csv", headers=member_auth_headers))
+
+    assert {r["finding_id"] for r in rows} == {"CVE-1", "SECRET-1"}
+    secret_row = next(r for r in rows if r["finding_id"] == "SECRET-1")
+    assert secret_row["purl"] == ""
+    assert secret_row["direct"] == ""
+
+
+@pytest.mark.asyncio
+async def test_purl_and_direct_are_joined_from_dependencies(client, db, member_auth_headers):
+    await _seed_scan(db, "s1", "main")
+    await db.dependencies.insert_one(
+        {
+            "project_id": _PID,
+            "scan_id": "s1",
+            "name": "lodash",
+            "version": "4.17.20",
+            "purl": "pkg:npm/lodash@4.17.20",
+            "direct": True,
+        }
+    )
+    await _seed_finding(db, "s1", finding_id="CVE-1")
+
+    row = _parse(await client.get(f"/api/v1/projects/{_PID}/export/csv", headers=member_auth_headers))[0]
+
+    assert row["purl"] == "pkg:npm/lodash@4.17.20"
+    assert row["direct"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_reachable_column_reads_is_reachable_flag(client, db, member_auth_headers):
+    await _seed_scan(db, "s1", "main")
+    await _seed_finding(db, "s1", finding_id="CVE-1", details={"reachability": {"is_reachable": True}})
+
+    row = _parse(await client.get(f"/api/v1/projects/{_PID}/export/csv", headers=member_auth_headers))[0]
+
+    assert row["reachable"] == "true"
