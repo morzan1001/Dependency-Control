@@ -85,21 +85,69 @@ def classify_version_change(old_version: str, new_version: str) -> str:
     return "patch"
 
 
+def _dep_record(dep: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
+    """``(identity, info)`` for one dependency document.
+
+    Identity comes from the purl (type + namespace + name) so same-named
+    packages across ecosystems/namespaces — and npm names stored without
+    their scope — never collide; bare ``name`` stays in the info for joins
+    against analyzer results, which are keyed by that name.
+    """
+    name = dep.get("name", "")
+    if not name:
+        return None
+    purl = dep.get("purl", "")
+    parsed = parse_purl(purl) if purl else None
+    if parsed:
+        identity = f"{parsed.type}:{parsed.namespace or ''}:{parsed.name}"
+        display = parsed.full_name
+    else:
+        identity = f"{dep.get('type', 'unknown')}::{name}"
+        display = name
+    return identity, {
+        "version": dep.get("version", ""),
+        "type": dep.get("type", "unknown"),
+        "purl": purl,
+        "name": name,
+        "display": display,
+    }
+
+
+def _resolve_duplicate(candidates: list[dict[str, str]]) -> dict[str, str]:
+    """Deterministic survivor when one identity appears at several versions in a scan.
+
+    Highest parseable version wins (nested trees usually hoist the newest);
+    the tie-break must not depend on Mongo document order, which is unstable
+    across scans and would fabricate version changes.
+    """
+    if len(candidates) == 1:
+        return candidates[0]
+    parseable: list[tuple[Version, dict[str, str]]] = []
+    for cand in candidates:
+        try:
+            parseable.append((Version(cand.get("version", "")), cand))
+        except InvalidVersion:
+            continue
+    if parseable:
+        return max(parseable, key=lambda pair: pair[0])[1]
+    return max(candidates, key=lambda cand: cand.get("version", ""))
+
+
 def _pregroup_deps_by_scan(
     all_deps: list[dict[str, Any]],
 ) -> dict[str, dict[str, dict[str, str]]]:
-    """Group dependencies by ``scan_id`` into ``{scan_id: {pkg_name: {version, type, purl}}}``."""
-    grouped: dict[str, dict[str, dict[str, str]]] = defaultdict(dict)
+    """Group dependencies by ``scan_id`` into ``{scan_id: {identity: info}}``."""
+    candidates: dict[str, dict[str, list[dict[str, str]]]] = defaultdict(lambda: defaultdict(list))
     for dep in all_deps:
         scan_id = dep.get("scan_id", "")
-        name = dep.get("name", "")
-        if scan_id and name:
-            grouped[scan_id][name] = {
-                "version": dep.get("version", ""),
-                "type": dep.get("type", "unknown"),
-                "purl": dep.get("purl", ""),
-            }
-    return dict(grouped)
+        record = _dep_record(dep)
+        if scan_id and record:
+            identity, info = record
+            candidates[scan_id][identity].append(info)
+    return {
+        scan_id: {identity: _resolve_duplicate(infos) for identity, infos in per_identity.items()}
+        for scan_id, per_identity in candidates.items()
+    }
 
 
 async def _load_outdated_for_scan(
@@ -141,16 +189,16 @@ def _compare_scan_pair(
     curr_scan_id: str,
     curr_scan_date: datetime,
     prev_outdated: set,
-) -> list[DependencyUpdateEvent]:
-    """Compare dependencies between two consecutive scans and return update events."""
+) -> list[tuple[DependencyUpdateEvent, str]]:
+    """Compare two consecutive scans, returning ``(event, identity)`` pairs."""
     days_between = max(1, (curr_scan_date - prev_scan_date).days)
 
     prev_deps = deps_by_scan.get(prev_scan_id, {})
     curr_deps = deps_by_scan.get(curr_scan_id, {})
 
-    events: list[DependencyUpdateEvent] = []
-    for pkg_name, curr_info in curr_deps.items():
-        prev_info = prev_deps.get(pkg_name)
+    events: list[tuple[DependencyUpdateEvent, str]] = []
+    for identity, curr_info in curr_deps.items():
+        prev_info = prev_deps.get(identity)
         if not prev_info or curr_info["version"] == prev_info["version"]:
             continue
 
@@ -159,17 +207,20 @@ def _compare_scan_pair(
             continue
 
         events.append(
-            DependencyUpdateEvent(
-                package_name=pkg_name,
-                package_type=curr_info["type"],
-                purl=curr_info["purl"] or None,
-                old_version=prev_info["version"],
-                new_version=curr_info["version"],
-                update_type=update_type,
-                scan_date=curr_scan_date.isoformat(),
-                previous_scan_date=prev_scan_date.isoformat(),
-                days_between_scans=days_between,
-                was_outdated=pkg_name in prev_outdated,
+            (
+                DependencyUpdateEvent(
+                    package_name=curr_info["display"],
+                    package_type=curr_info["type"],
+                    purl=curr_info["purl"] or None,
+                    old_version=prev_info["version"],
+                    new_version=curr_info["version"],
+                    update_type=update_type,
+                    scan_date=curr_scan_date.isoformat(),
+                    previous_scan_date=prev_scan_date.isoformat(),
+                    days_between_scans=days_between,
+                    was_outdated=prev_info["name"] in prev_outdated,
+                ),
+                identity,
             )
         )
     return events
@@ -414,26 +465,27 @@ class _AccumulatorState:
     package_purls: dict[str, str] = field(default_factory=dict)
 
     def accumulate_types(self, deps: dict[str, dict[str, str]]) -> None:
-        for name, info in deps.items():
-            if name not in self.dep_type_map:
+        for identity, info in deps.items():
+            name = info.get("name", "")
+            if name and name not in self.dep_type_map:
                 self.dep_type_map[name] = info.get("type", "unknown")
             purl = info.get("purl") or ""
-            if purl and name not in self.package_purls:
-                self.package_purls[name] = purl
+            if purl and identity not in self.package_purls:
+                self.package_purls[identity] = purl
 
     def record_outdated(self, outdated: set) -> None:
         for pkg in outdated:
             self.package_outdated_counts[pkg] += 1
             self.ever_outdated.add(pkg)
 
-    def absorb_events(self, events: list[DependencyUpdateEvent], curr_scan_date: datetime) -> None:
-        for e in events:
+    def absorb_events(self, events: list[tuple[DependencyUpdateEvent, str]], curr_scan_date: datetime) -> None:
+        for e, identity in events:
             if e.was_outdated:
-                self.ever_resolved.add(e.package_name)
+                self.ever_resolved.add(identity)
             self.type_counter[e.update_type] += 1
             self.recent_events_buffer.append(e)
             if len(self.first_seen_versions) < _MAX_OBSERVATIONS:
-                key = (e.package_name, e.new_version)
+                key = (identity, e.new_version)
                 if key not in self.first_seen_versions:
                     self.first_seen_versions[key] = curr_scan_date
 
@@ -524,7 +576,7 @@ async def compute_update_frequency(
         )
         state.absorb_events(events, curr_scan["created_at"])
         state.scan_timeline.append(
-            _build_timeline_entry(curr_scan["_id"], curr_scan["created_at"], events, len(curr_outdated))
+            _build_timeline_entry(curr_scan["_id"], curr_scan["created_at"], [e for e, _ in events], len(curr_outdated))
         )
 
         prev_deps = curr_deps

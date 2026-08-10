@@ -362,6 +362,71 @@ def _outdated_result(scan_id: str, entries: list[dict[str, str]]) -> _AnalysisRe
     )
 
 
+class TestIdentityKeying:
+    """Version diffing must key on purl identity, not the bare dependency name."""
+
+    @staticmethod
+    def _raw_dep(scan_id: str, name: str, version: str, purl: str, ptype: str = "library") -> dict[str, Any]:
+        return {"scan_id": scan_id, "name": name, "version": version, "type": ptype, "purl": purl}
+
+    async def _compute(self, deps: dict[str, list[dict[str, Any]]]):
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        return await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+        )
+
+    @pytest.mark.asyncio
+    async def test_same_name_different_namespaces_do_not_collide(self):
+        # Two maven groups both shipping "jackson-core"; document order flips between scans.
+        old_core = self._raw_dep("s1", "jackson-core", "2.21.4", "pkg:maven/com.fasterxml.jackson.core/jackson-core@2.21.4")
+        new_core = self._raw_dep("s1", "jackson-core", "3.1.4", "pkg:maven/tools.jackson.core/jackson-core@3.1.4")
+        deps = {
+            "s1": [old_core, new_core],
+            "s2": [
+                {**new_core, "scan_id": "s2"},
+                {**old_core, "scan_id": "s2"},
+            ],
+        }
+        m = await self._compute(deps)
+        assert m.total_updates == 0
+
+    @pytest.mark.asyncio
+    async def test_duplicate_identity_survivor_is_order_independent(self):
+        # Same package twice per scan (nested dependency trees); insertion order flips.
+        v1 = self._raw_dep("s1", "lodash", "1.0.0", "pkg:npm/lodash@1.0.0")
+        v2 = self._raw_dep("s1", "lodash", "2.0.0", "pkg:npm/lodash@2.0.0")
+        deps = {
+            "s1": [v1, v2],
+            "s2": [{**v2, "scan_id": "s2"}, {**v1, "scan_id": "s2"}],
+        }
+        m = await self._compute(deps)
+        assert m.total_updates == 0
+
+    @pytest.mark.asyncio
+    async def test_scoped_npm_packages_do_not_collide(self):
+        # Ingest stores npm names without their scope; purls keep it.
+        deps = {
+            "s1": [
+                self._raw_dep("s1", "cdk", "21.0.0", "pkg:npm/%40angular/cdk@21.0.0"),
+                self._raw_dep("s1", "core", "21.0.0", "pkg:npm/%40angular/core@21.0.0"),
+                self._raw_dep("s1", "core", "7.0.0", "pkg:npm/%40babel/core@7.0.0"),
+            ],
+            "s2": [
+                self._raw_dep("s2", "cdk", "21.2.0", "pkg:npm/%40angular/cdk@21.2.0"),
+                self._raw_dep("s2", "core", "21.0.0", "pkg:npm/%40angular/core@21.0.0"),
+                self._raw_dep("s2", "core", "7.0.0", "pkg:npm/%40babel/core@7.0.0"),
+            ],
+        }
+        m = await self._compute(deps)
+        assert m.total_updates == 1
+        assert m.recent_updates[0].package_name == "@angular/cdk"
+        assert m.recent_updates[0].update_type == "minor"
+
+
 class TestStreamingOrchestrator:
     @pytest.mark.asyncio
     async def test_basic_two_scan_history(self):
