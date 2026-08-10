@@ -4,8 +4,9 @@ import csv
 import io
 
 import pytest
+from fastapi.responses import StreamingResponse
 
-from app.services.inventory.csv_stream import export_filename, format_cell, iter_csv
+from app.services.inventory.csv_stream import csv_response, export_filename, format_cell, iter_csv
 
 
 async def _rows(items):
@@ -55,3 +56,17 @@ def test_export_filename_sanitizes_and_appends_date():
     assert name.endswith(".csv")
     assert "/" not in name and " " not in name
     assert "findings" in name
+
+
+@pytest.mark.asyncio
+async def test_csv_response_sets_headers_and_streams_with_bom():
+    response = csv_response("some_file.csv", ["a"], _rows([{"a": "value1"}]))
+    assert isinstance(response, StreamingResponse)
+    assert response.media_type == "text/csv; charset=utf-8"
+    assert response.headers["Content-Disposition"] == 'attachment; filename="some_file.csv"'
+    chunks = [chunk async for chunk in response.body_iterator]
+    body = "".join(chunks)
+    assert body.startswith("﻿")
+    reader = csv.reader(io.StringIO(body.lstrip("﻿")))
+    assert next(reader) == ["a"]
+    assert next(reader) == ["value1"]
