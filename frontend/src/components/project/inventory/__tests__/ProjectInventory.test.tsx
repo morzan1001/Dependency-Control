@@ -49,4 +49,16 @@ describe('ProjectInventory', () => {
 
     await waitFor(() => expect(screen.getByText(/no completed scan/i)).toBeInTheDocument())
   })
+
+  it('shows an empty state when the project has no active branches', async () => {
+    vi.mocked(projectHooks.useProjectBranches).mockReturnValue({
+      data: [],
+    } as ReturnType<typeof projectHooks.useProjectBranches>)
+
+    renderInventory()
+
+    await waitFor(() => expect(screen.getByText(/no active branches/i)).toBeInTheDocument())
+    expect(inventoryApiModule.inventoryApi.getStats).not.toHaveBeenCalled()
+    expect(screen.queryByText('Components')).not.toBeInTheDocument()
+  })
 })

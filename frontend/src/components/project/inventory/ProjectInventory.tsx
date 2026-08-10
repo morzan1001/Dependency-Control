@@ -18,6 +18,7 @@ interface ProjectInventoryProps {
 
 export function ProjectInventory({ projectId, projectName, defaultBranch }: ProjectInventoryProps) {
   const { data: branches } = useProjectBranches(projectId)
+  const branchesLoaded = branches !== undefined
   const activeBranches = useMemo(() => branches?.filter(b => b.is_active).map(b => b.name) || [], [branches])
 
   const [selectedBranch, setSelectedBranch] = useState<string | undefined>(undefined)
@@ -49,21 +50,37 @@ export function ProjectInventory({ projectId, projectName, defaultBranch }: Proj
         </Select>
       </div>
 
-      {isError ? (
+      {!branchesLoaded && <InventoryStatCards stats={undefined} isLoading />}
+
+      {branchesLoaded && !branch && (
         <Card>
           <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
             <PackageSearch className="h-8 w-8 text-muted-foreground" />
-            <p className="font-medium">No completed scan on this branch</p>
+            <p className="font-medium">No active branches</p>
             <p className="text-sm text-muted-foreground">
-              Run a pipeline on {branch ?? 'a branch'} to populate the inventory.
+              Run a pipeline to populate the inventory.
             </p>
           </CardContent>
         </Card>
-      ) : (
-        <>
-          <InventoryStatCards stats={stats} isLoading={isLoading} />
-          <ComponentsTable projectId={projectId} projectName={projectName} branch={branch} />
-        </>
+      )}
+
+      {branchesLoaded && branch && (
+        isError ? (
+          <Card>
+            <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
+              <PackageSearch className="h-8 w-8 text-muted-foreground" />
+              <p className="font-medium">No completed scan on this branch</p>
+              <p className="text-sm text-muted-foreground">
+                Run a pipeline on {branch} to populate the inventory.
+              </p>
+            </CardContent>
+          </Card>
+        ) : (
+          <>
+            <InventoryStatCards stats={stats} isLoading={isLoading} />
+            <ComponentsTable projectId={projectId} projectName={projectName} branch={branch} />
+          </>
+        )
       )}
     </div>
   )
