@@ -8,7 +8,7 @@ import asyncio
 import logging
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from packaging.version import InvalidVersion, Version
@@ -309,6 +309,7 @@ def _aggregate_metrics(
     type_counter: Counter,
     recent_events: list[DependencyUpdateEvent],
     upstream: UpstreamCadenceMetrics | None = None,
+    branch: str | None = None,
 ) -> UpdateFrequencyMetrics:
     """Build the final metrics response from streamed counters."""
     total_updates = sum(type_counter.values())
@@ -341,6 +342,7 @@ def _aggregate_metrics(
     return UpdateFrequencyMetrics(
         project_id=project_id,
         project_name=project_name,
+        branch=branch,
         scan_count=len(completed_scans),
         time_range_days=time_range_days,
         first_scan_date=first_date.isoformat(),
@@ -391,11 +393,18 @@ def _build_slowest_packages(
     ]
 
 
-def _empty_metrics(project_id: str, project_name: str, scan_count: int, scan_date: str) -> UpdateFrequencyMetrics:
+def _empty_metrics(
+    project_id: str,
+    project_name: str,
+    scan_count: int,
+    scan_date: str,
+    branch: str | None = None,
+) -> UpdateFrequencyMetrics:
     """Return empty metrics when there are fewer than 2 scans."""
     return UpdateFrequencyMetrics(
         project_id=project_id,
         project_name=project_name,
+        branch=branch,
         scan_count=scan_count,
         time_range_days=0,
         first_scan_date=scan_date,
@@ -490,14 +499,49 @@ class _AccumulatorState:
                     self.first_seen_versions[key] = curr_scan_date
 
 
+def _as_utc(dt: datetime) -> datetime:
+    """Mongo/Motor returns naive UTC datetimes; make them aware once at load."""
+    return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
+
+
+async def _resolve_primary_branch(
+    scan_repo: ScanRepository,
+    project_id: str,
+    deleted_branches: list[str] | None,
+) -> str | None:
+    """Branch of the newest completed non-rescan scan on a live branch."""
+    query: dict[str, Any] = {"project_id": project_id, "status": "completed", "is_rescan": {"$ne": True}}
+    if deleted_branches:
+        query["branch"] = {"$nin": list(deleted_branches)}
+    doc = await scan_repo.find_one(query, sort=[("created_at", -1), ("_id", -1)])
+    return doc.get("branch") if doc else None
+
+
+def _collapse_same_commit_runs(scans_raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep only the first scan of each consecutive same-commit run.
+
+    CI retries and duplicate ingests produce bursts of scans for one commit;
+    they carry identical SBOMs, so extra entries only pad the timeline with
+    zero-update bars and compress the covered time range.
+    """
+    collapsed: list[dict[str, Any]] = []
+    for scan in scans_raw:
+        prev = collapsed[-1] if collapsed else None
+        if prev is not None and scan["commit_hash"] and prev["commit_hash"] == scan["commit_hash"]:
+            continue
+        collapsed.append(scan)
+    return collapsed
+
+
 async def _load_completed_scans(
     scan_repo: ScanRepository,
     project_id: str,
+    branch: str,
     max_scans: int,
     since: datetime | None,
     hard_limit: int,
 ) -> list[dict[str, Any]]:
-    """Return completed scans for the project, chronologically ordered.
+    """Completed non-rescan scans of one branch, chronologically ordered.
 
     When ``since`` is set the calendar window dominates (capped by
     ``hard_limit``) and ``max_scans`` is ignored.
@@ -507,16 +551,19 @@ async def _load_completed_scans(
     # the limit would empty the window when the newest scans are failed/processing.
     # find_many returns Scan models, so project the fields Scan requires (project_id, branch).
     scans = await scan_repo.find_many(
-        {"project_id": project_id, "status": "completed"},
-        sort=[("created_at", -1)],
+        {"project_id": project_id, "status": "completed", "branch": branch, "is_rescan": {"$ne": True}},
+        sort=[("created_at", -1), ("_id", -1)],
         limit=fetch_limit,
-        projection={"_id": 1, "created_at": 1, "status": 1, "project_id": 1, "branch": 1},
+        projection={"_id": 1, "created_at": 1, "status": 1, "project_id": 1, "branch": 1, "commit_hash": 1},
     )
-    scans_raw: list[dict[str, Any]] = [{"_id": s.id, "created_at": s.created_at, "status": s.status} for s in scans]
+    scans_raw: list[dict[str, Any]] = [
+        {"_id": s.id, "created_at": _as_utc(s.created_at), "status": s.status, "commit_hash": s.commit_hash}
+        for s in scans
+    ]
     if since is not None:
         scans_raw = [s for s in scans_raw if s["created_at"] >= since]
     scans_raw.reverse()
-    return scans_raw
+    return _collapse_same_commit_runs(scans_raw)
 
 
 async def compute_update_frequency(
@@ -529,17 +576,26 @@ async def compute_update_frequency(
     since: datetime | None = None,
     release_fetcher: ReleaseHistoryFetcher | None = None,
     hard_limit: int = _DEFAULT_HARD_LIMIT,
+    branch: str | None = None,
+    deleted_branches: list[str] | None = None,
 ) -> UpdateFrequencyMetrics:
-    """Compute update-frequency metrics for one project.
+    """Compute update-frequency metrics for one project on one branch.
 
-    With ``since`` set, all scans newer than the cutoff are analysed (up
-    to ``hard_limit``). Otherwise the newest ``max_scans`` are taken.
+    ``branch`` defaults to the branch of the newest completed non-rescan
+    scan; comparing across branches would count branch differences as
+    updates. With ``since`` set, all scans newer than the cutoff are
+    analysed (up to ``hard_limit``). Otherwise the newest ``max_scans``
+    are taken.
     """
-    completed_scans = await _load_completed_scans(scan_repo, project_id, max_scans, since, hard_limit)
+    analyzed_branch = branch or await _resolve_primary_branch(scan_repo, project_id, deleted_branches)
+    if analyzed_branch is None:
+        return _empty_metrics(project_id, project_name, 0, "", branch=None)
+
+    completed_scans = await _load_completed_scans(scan_repo, project_id, analyzed_branch, max_scans, since, hard_limit)
 
     if len(completed_scans) < 2:
         first_date_str = completed_scans[0]["created_at"].isoformat() if completed_scans else ""
-        return _empty_metrics(project_id, project_name, len(completed_scans), first_date_str)
+        return _empty_metrics(project_id, project_name, len(completed_scans), first_date_str, branch=analyzed_branch)
 
     state = _AccumulatorState()
 
@@ -597,6 +653,7 @@ async def compute_update_frequency(
         type_counter=state.type_counter,
         recent_events=list(state.recent_events_buffer)[::-1],  # newest first
         upstream=upstream,
+        branch=analyzed_branch,
     )
 
 
@@ -684,6 +741,7 @@ async def compute_update_frequency_comparison(
                     max_scans=max_scans,
                     since=since,
                     release_fetcher=release_fetcher,
+                    deleted_branches=project.get("deleted_branches"),
                 )
             except Exception:
                 logger.warning(f"Failed to compute update frequency for project {project_id}", exc_info=True)

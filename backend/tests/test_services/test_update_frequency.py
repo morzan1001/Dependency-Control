@@ -250,18 +250,44 @@ class TestAggregateMetricsCoverage:
 
 
 class _FakeScanObj:
-    """Mirrors the attribute access (.id/.created_at/.status) of the real Scan model."""
+    """Mirrors the attribute access (.id/.created_at/...) of the real Scan model."""
 
     def __init__(self, doc: dict[str, Any]):
         self.id = doc["_id"]
         self.created_at = doc["created_at"]
         self.status = doc.get("status", "completed")
+        self.branch = doc.get("branch", "main")
+        self.commit_hash = doc.get("commit_hash")
+
+
+def _matches_scan_query(scan: dict[str, Any], query: dict[str, Any]) -> bool:
+    for field, cond in query.items():
+        value = scan.get(field)
+        if isinstance(cond, dict):
+            if "$ne" in cond and value == cond["$ne"]:
+                return False
+            if "$nin" in cond and value in cond["$nin"]:
+                return False
+        elif value != cond:
+            return False
+    return True
 
 
 class FakeScanRepo:
     def __init__(self, scans: list[dict[str, Any]]):
-        # scans must include _id, created_at, status, project_id
+        # scans must include _id, created_at, status, project_id, branch
         self._scans = scans
+
+    def _filtered(self, query: dict[str, Any], sort: list[tuple[str, int]] | None) -> list[dict[str, Any]]:
+        matched = [s for s in self._scans if _matches_scan_query(s, query)]
+        if sort:
+            for field, order in reversed(sort):
+                matched.sort(key=lambda s: s[field], reverse=(order == -1))
+        return matched
+
+    async def find_one(self, query: dict[str, Any], sort: list[tuple[str, int]] | None = None) -> dict[str, Any] | None:
+        matched = self._filtered(query, sort)
+        return matched[0] if matched else None
 
     async def find_many(
         self,
@@ -273,13 +299,7 @@ class FakeScanRepo:
     ) -> list[_FakeScanObj]:
         # Mirrors ScanRepository.find_many: filter by the query (incl. status),
         # sort, then apply the limit — status is filtered BEFORE the limit.
-        matched = [s for s in self._scans if s.get("project_id") == query.get("project_id")]
-        status = query.get("status")
-        if status is not None:
-            matched = [s for s in matched if s.get("status") == status]
-        if sort:
-            field, order = sort[0]
-            matched.sort(key=lambda s: s[field], reverse=(order == -1))
+        matched = self._filtered(query, sort)
         if limit is not None:
             matched = matched[skip : skip + limit]
         else:
@@ -335,12 +355,22 @@ class FakeAnalysisRepo:
 _BASE_SCAN_DATE = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
-def _make_scan(scan_id: str, day_offset: int, project_id: str = "proj-1") -> dict[str, Any]:
+def _make_scan(
+    scan_id: str,
+    day_offset: int,
+    project_id: str = "proj-1",
+    branch: str = "main",
+    is_rescan: bool = False,
+    commit_hash: str | None = None,
+) -> dict[str, Any]:
     return {
         "_id": scan_id,
         "created_at": _BASE_SCAN_DATE + timedelta(days=day_offset),
         "status": "completed",
         "project_id": project_id,
+        "branch": branch,
+        "is_rescan": is_rescan,
+        "commit_hash": commit_hash,
     }
 
 
@@ -360,6 +390,131 @@ def _outdated_result(scan_id: str, entries: list[dict[str, str]]) -> _AnalysisRe
         analyzer_name="outdated_packages",
         result={"outdated_dependencies": entries},
     )
+
+
+class TestBranchScopedScanSelection:
+    """The timeline must cover exactly one branch and exclude rescans/storms."""
+
+    @staticmethod
+    async def _compute(scans, deps, **kwargs):
+        return await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+            **kwargs,
+        )
+
+    @pytest.mark.asyncio
+    async def test_mixed_branch_history_analyzes_only_primary_branch(self):
+        # Feature-branch scans interleave with main; the feature branch bumps
+        # pkg-a, main never does. Without branch scoping this counts 4 updates.
+        scans = [
+            _make_scan("m1", 0, branch="main"),
+            _make_scan("f1", 1, branch="feature"),
+            _make_scan("m2", 2, branch="main"),
+            _make_scan("f2", 3, branch="feature"),
+            _make_scan("m3", 4, branch="main"),
+        ]
+        deps = {
+            "m1": [_make_dep("m1", "pkg-a", "1.0.0")],
+            "f1": [_make_dep("f1", "pkg-a", "2.0.0")],
+            "m2": [_make_dep("m2", "pkg-a", "1.0.0")],
+            "f2": [_make_dep("f2", "pkg-a", "2.0.0")],
+            "m3": [_make_dep("m3", "pkg-a", "1.0.0")],
+        }
+        m = await self._compute(scans, deps)
+        assert m.branch == "main"
+        assert m.scan_count == 3
+        assert m.total_updates == 0
+
+    @pytest.mark.asyncio
+    async def test_explicit_branch_parameter_wins(self):
+        scans = [
+            _make_scan("m1", 0, branch="main"),
+            _make_scan("f1", 1, branch="feature"),
+            _make_scan("f2", 2, branch="feature"),
+            _make_scan("m2", 3, branch="main"),
+        ]
+        deps = {
+            "f1": [_make_dep("f1", "pkg-a", "1.0.0")],
+            "f2": [_make_dep("f2", "pkg-a", "1.1.0")],
+        }
+        m = await self._compute(scans, deps, branch="feature")
+        assert m.branch == "feature"
+        assert m.scan_count == 2
+        assert m.minor_updates == 1
+
+    @pytest.mark.asyncio
+    async def test_rescans_are_excluded(self):
+        # The newest scan is a rescan carrying a stale snapshot; it must drive
+        # neither branch resolution nor the timeline.
+        scans = [
+            _make_scan("m1", 0, branch="main"),
+            _make_scan("m2", 1, branch="main"),
+            _make_scan("r1", 2, branch="feature", is_rescan=True),
+        ]
+        deps = {
+            "m1": [_make_dep("m1", "pkg-a", "1.0.0")],
+            "m2": [_make_dep("m2", "pkg-a", "1.0.1")],
+            "r1": [_make_dep("r1", "pkg-a", "0.9.0")],
+        }
+        m = await self._compute(scans, deps)
+        assert m.branch == "main"
+        assert m.scan_count == 2
+        assert m.total_updates == 1
+        assert all(e.new_version != "0.9.0" for e in m.recent_updates)
+
+    @pytest.mark.asyncio
+    async def test_deleted_branches_excluded_from_auto_resolution(self):
+        scans = [
+            _make_scan("m1", 0, branch="main"),
+            _make_scan("m2", 1, branch="main"),
+            _make_scan("d1", 2, branch="gone"),
+        ]
+        deps = {
+            "m1": [_make_dep("m1", "pkg-a", "1.0.0")],
+            "m2": [_make_dep("m2", "pkg-a", "1.0.1")],
+        }
+        m = await self._compute(scans, deps, deleted_branches=["gone"])
+        assert m.branch == "main"
+        assert m.scan_count == 2
+
+    @pytest.mark.asyncio
+    async def test_naive_created_at_is_coerced_to_utc(self):
+        # Motor returns naive UTC datetimes; a tz-aware `since` cutoff and the
+        # downstream date math must both survive that.
+        naive = _BASE_SCAN_DATE.replace(tzinfo=None)
+        scans = [
+            {**_make_scan("s1", 0), "created_at": naive},
+            {**_make_scan("s2", 30), "created_at": naive + timedelta(days=30)},
+        ]
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
+        }
+        m = await self._compute(scans, deps, since=_BASE_SCAN_DATE - timedelta(days=1))
+        assert m.scan_count == 2
+        assert m.first_scan_date.endswith("+00:00")
+        assert m.last_scan_date.endswith("+00:00")
+
+    @pytest.mark.asyncio
+    async def test_same_commit_scan_storm_collapses(self):
+        # 5 CI runs of one commit within a day, then a real new commit.
+        scans = [
+            _make_scan("s0", 0, commit_hash="aaa"),
+            *[_make_scan(f"s{i}", 0, commit_hash="bbb") for i in range(1, 6)],
+            _make_scan("s6", 1, commit_hash="ccc"),
+        ]
+        # Same commit -> identical dep sets.
+        deps = {"s0": [_make_dep("s0", "pkg-a", "1.0.0")]}
+        for i in range(1, 6):
+            deps[f"s{i}"] = [_make_dep(f"s{i}", "pkg-a", "1.0.1")]
+        deps["s6"] = [_make_dep("s6", "pkg-a", "1.1.0")]
+        m = await self._compute(scans, deps)
+        assert m.scan_count == 3
+        assert m.total_updates == 2
 
 
 class TestIdentityKeying:

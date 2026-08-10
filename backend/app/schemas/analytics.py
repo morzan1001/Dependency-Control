@@ -322,6 +322,8 @@ class UpdateFrequencyMetrics(BaseModel):
 
     project_id: str
     project_name: str
+    # Branch the timeline covers; None only when the project has no completed scans.
+    branch: str | None = None
     scan_count: int
     time_range_days: int
     first_scan_date: str
