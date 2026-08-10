@@ -591,9 +591,12 @@ async def _resolve_primary_branch(
     the analysis.
     """
     deleted = deleted_branches or []
-    if default_branch and default_branch not in deleted:
-        if await _branch_scan_count(scan_repo, project_id, default_branch) >= 2:
-            return default_branch
+    if (
+        default_branch
+        and default_branch not in deleted
+        and await _branch_scan_count(scan_repo, project_id, default_branch) >= 2
+    ):
+        return default_branch
 
     query: dict[str, Any] = {"project_id": project_id, "status": "completed", "is_rescan": {"$ne": True}}
     if deleted:
