@@ -746,10 +746,10 @@ async def _maybe_fetch_upstream_cadence(
 
     observations: list[Observation] = []
     for (identity, version), scan_date in first_seen_versions.items():
-        spec = identity_to_spec.get(identity)
-        if spec is None:
+        obs_spec = identity_to_spec.get(identity)
+        if obs_spec is None:
             continue
-        system, registry_name = spec
+        system, registry_name = obs_spec
         observations.append((system, registry_name, version, scan_date))
     return aggregate_upstream_metrics(history, observations=observations)
 
