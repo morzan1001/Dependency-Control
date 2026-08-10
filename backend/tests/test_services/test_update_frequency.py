@@ -160,29 +160,56 @@ class TestDominantEcosystem:
         assert _dominant_ecosystem(deps) == "pypi"
 
 
+def _baseline_entry() -> ScanTimelineEntry:
+    # Orchestrator timelines always start with the no-predecessor baseline scan.
+    return _make_timeline_entry(0, updates=0, outdated=5)
+
+
 class TestComputeTrend:
     # trend is "unknown" when there isn't enough data, not "stable"
     def test_empty_timeline_returns_unknown(self):
         direction, _ = _compute_trend([])
         assert direction == "unknown"
 
-    def test_three_scans_returns_unknown(self):
-        timeline = [_make_timeline_entry(i, updates=2) for i in range(3)]
+    def test_four_scans_returns_unknown(self):
+        # Baseline + 3 real entries is still too little signal.
+        timeline = [_baseline_entry()] + [_make_timeline_entry(i + 1, updates=2) for i in range(3)]
         direction, detail = _compute_trend(timeline)
         assert direction == "unknown"
-        assert "4" in detail or "enough" in detail.lower()
+        assert "enough" in detail.lower()
 
-    def test_four_scans_consistent_returns_stable(self):
-        timeline = [_make_timeline_entry(i, updates=2, outdated=5) for i in range(4)]
+    def test_consistent_rate_returns_stable(self):
+        timeline = [_baseline_entry()] + [_make_timeline_entry(i + 1, updates=2, outdated=5) for i in range(4)]
         direction, _ = _compute_trend(timeline)
         assert direction == "stable"
 
+    def test_constant_rate_never_improving_regardless_of_length(self):
+        # The structural zero of the baseline entry must not fabricate acceleration.
+        for n in (4, 6, 9, 19):
+            timeline = [_baseline_entry()] + [_make_timeline_entry(i + 1, updates=3, outdated=7) for i in range(n)]
+            direction, _ = _compute_trend(timeline)
+            assert direction == "stable", f"length {n} classified {direction}"
+
     def test_improving_trend(self):
-        timeline = [_make_timeline_entry(i, updates=1, outdated=10) for i in range(3)] + [
-            _make_timeline_entry(i + 3, updates=10, outdated=10) for i in range(3)
-        ]
+        timeline = (
+            [_baseline_entry()]
+            + [_make_timeline_entry(i + 1, updates=1, outdated=10) for i in range(3)]
+            + [_make_timeline_entry(i + 4, updates=10, outdated=10) for i in range(3)]
+        )
         direction, _ = _compute_trend(timeline)
         assert direction == "improving"
+
+    def test_conflicting_signals_return_stable(self):
+        # Updates accelerate while the outdated backlog grows: not "improving".
+        timeline = (
+            [_baseline_entry()]
+            + [_make_timeline_entry(i + 1, updates=1, outdated=2) for i in range(3)]
+            + [_make_timeline_entry(i + 4, updates=10, outdated=30) for i in range(3)]
+        )
+        direction, detail = _compute_trend(timeline)
+        assert direction == "stable"
+        assert "Updates/scan" in detail
+        assert "Outdated" in detail
 
 
 class TestEmptyMetrics:
@@ -650,6 +677,116 @@ class TestOutdatedTracking:
         m = await self._compute(deps, results)
         assert m.outdated_resolved == 0
         assert m.update_coverage_pct == 0.0
+
+
+class TestAggregationAccuracy:
+    @pytest.mark.asyncio
+    async def test_downgrades_are_not_counted_as_updates(self):
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "2.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "1.0.0")],
+        }
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+        )
+        assert m.total_updates == 0
+        assert m.downgrade_updates == 1
+        assert m.updates_per_month == 0.0
+        assert m.scan_timeline[1].updates_count == 0
+        assert m.scan_timeline[1].downgrades == 1
+        # Still visible in the event list, labeled as what it is.
+        assert m.recent_updates[0].update_type == "downgrade"
+
+    @pytest.mark.asyncio
+    async def test_subday_precision_in_time_range(self):
+        # 36h between scans must count as 1.5 days, not truncate to 1.
+        scans = [
+            _make_scan("s1", 0),
+            {**_make_scan("s2", 1), "created_at": _BASE_SCAN_DATE + timedelta(hours=36)},
+        ]
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
+        }
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+        )
+        assert m.time_range_days == pytest.approx(1.5)
+        assert m.updates_per_month == pytest.approx(1 / (1.5 / 30.44), abs=0.01)
+
+    @pytest.mark.asyncio
+    async def test_slowest_packages_only_lists_still_outdated_with_fresh_versions(self):
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0"), _make_dep("s1", "pkg-b", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "3.0.0"), _make_dep("s2", "pkg-b", "1.2.0")],
+        }
+        results = [
+            _outdated_result(
+                "s1",
+                [
+                    {"component": "pkg-a", "current_version": "1.0.0", "latest_version": "3.0.0"},
+                    {"component": "pkg-b", "current_version": "1.0.0", "latest_version": "9.9.9"},
+                ],
+            ),
+            _outdated_result(
+                "s2",
+                [{"component": "pkg-b", "current_version": "1.0.0", "latest_version": "9.9.9"}],
+            ),
+        ]
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo(results),
+        )
+        names = [p.name for p in m.slowest_packages]
+        assert names == ["pkg-b"]  # pkg-a was resolved; only remaining backlog is listed
+        assert m.slowest_packages[0].current_version == "1.2.0"  # from the final scan, not stale analyzer data
+
+    @pytest.mark.asyncio
+    async def test_package_types_use_purl_ecosystem(self):
+        # CycloneDX stores type "library"; the ecosystem must come from the purl.
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {
+            "s1": [
+                {
+                    "scan_id": "s1",
+                    "name": "jackson-core",
+                    "version": "2.0.0",
+                    "type": "library",
+                    "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-core@2.0.0",
+                }
+            ],
+            "s2": [
+                {
+                    "scan_id": "s2",
+                    "name": "jackson-core",
+                    "version": "2.1.0",
+                    "type": "library",
+                    "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-core@2.1.0",
+                }
+            ],
+        }
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+        )
+        assert m.dominant_ecosystem == "maven"
+        assert m.recent_updates[0].package_type == "maven"
 
 
 class TestStreamingOrchestrator:

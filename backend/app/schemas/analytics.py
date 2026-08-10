@@ -300,11 +300,13 @@ class ScanTimelineEntry(BaseModel):
 
     scan_id: str
     date: str
-    updates_count: int
+    updates_count: int  # excludes downgrades
     outdated_count: int
     patch: int
     minor: int
     major: int
+    unknown: int = 0
+    downgrades: int = 0
 
 
 class SlowPackage(BaseModel):
@@ -325,18 +327,20 @@ class UpdateFrequencyMetrics(BaseModel):
     # Branch the timeline covers; None only when the project has no completed scans.
     branch: str | None = None
     scan_count: int
-    time_range_days: int
+    time_range_days: float
     first_scan_date: str
     last_scan_date: str
 
+    # Downgrades/rollbacks are tracked separately and never counted as updates.
     total_updates: int
     updates_per_scan: float
-    updates_per_month: float
+    updates_per_month: float  # extrapolated from time_range_days
 
     patch_updates: int
     minor_updates: int
     major_updates: int
     unknown_updates: int
+    downgrade_updates: int = 0
     granularity_ratio: dict[str, float]  # {"patch": 0.6, "minor": 0.3, "major": 0.1}
 
     avg_days_between_scans: float

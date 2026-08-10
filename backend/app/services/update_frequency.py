@@ -106,7 +106,8 @@ def _dep_record(dep: dict[str, Any]) -> tuple[str, dict[str, str]] | None:
         display = name
     return identity, {
         "version": dep.get("version", ""),
-        "type": dep.get("type", "unknown"),
+        # SBOM component types ("library") say nothing about the ecosystem; the purl type does.
+        "type": parsed.type if parsed else dep.get("type", "unknown"),
         "purl": purl,
         "name": name,
         "display": display,
@@ -236,27 +237,36 @@ def _build_timeline_entry(
 ) -> ScanTimelineEntry:
     """Build a timeline entry from a list of update events for a scan."""
     type_counts = Counter(e.update_type for e in events)
+    downgrades = type_counts.get("downgrade", 0)
     return ScanTimelineEntry(
         scan_id=scan_id,
         date=scan_date.isoformat(),
-        updates_count=len(events),
+        updates_count=len(events) - downgrades,
         outdated_count=outdated_count,
         patch=type_counts.get("patch", 0),
         minor=type_counts.get("minor", 0),
         major=type_counts.get("major", 0),
+        unknown=type_counts.get("unknown", 0),
+        downgrades=downgrades,
     )
 
 
 def _compute_trend(
     scan_timeline: list[ScanTimelineEntry],
 ) -> tuple[str, str]:
-    """Trend ``(direction, detail)`` from comparing the first vs second half of the timeline."""
-    if len(scan_timeline) < 4:
-        return "unknown", "Not enough scans to determine trend (need at least 4)"
+    """Trend ``(direction, detail)`` from comparing the first vs second half of the timeline.
 
-    mid = len(scan_timeline) // 2
-    older = scan_timeline[:mid]
-    newer = scan_timeline[mid:]
+    The leading baseline entry (no predecessor, structurally zero updates)
+    is excluded — averaging it in would report "improving" for every
+    project with a steady update rate.
+    """
+    timeline = scan_timeline[1:]
+    if len(timeline) < 4:
+        return "unknown", "Not enough scans to determine trend (need at least 5)"
+
+    mid = len(timeline) // 2
+    older = timeline[:mid]
+    newer = timeline[mid:]
 
     older_avg_updates = sum(s.updates_count for s in older) / len(older)
     newer_avg_updates = sum(s.updates_count for s in newer) / len(newer)
@@ -268,21 +278,24 @@ def _compute_trend(
     update_deteriorating = newer_avg_updates < older_avg_updates * 0.9
     outdated_deteriorating = newer_avg_outdated > older_avg_outdated * 1.1
 
-    if update_improving or outdated_improving:
-        parts = []
-        if update_improving:
-            parts.append(f"Updates/scan: {older_avg_updates:.1f} → {newer_avg_updates:.1f}")
-        if outdated_improving:
-            parts.append(f"Outdated: {older_avg_outdated:.1f} → {newer_avg_outdated:.1f}")
-        return "improving", ". ".join(parts)
+    improving_parts = []
+    if update_improving:
+        improving_parts.append(f"Updates/scan: {older_avg_updates:.1f} → {newer_avg_updates:.1f}")
+    if outdated_improving:
+        improving_parts.append(f"Outdated: {older_avg_outdated:.1f} → {newer_avg_outdated:.1f}")
 
-    if update_deteriorating or outdated_deteriorating:
-        parts = []
-        if update_deteriorating:
-            parts.append(f"Updates/scan: {older_avg_updates:.1f} → {newer_avg_updates:.1f}")
-        if outdated_deteriorating:
-            parts.append(f"Outdated: {older_avg_outdated:.1f} → {newer_avg_outdated:.1f}")
-        return "deteriorating", ". ".join(parts)
+    deteriorating_parts = []
+    if update_deteriorating:
+        deteriorating_parts.append(f"Updates/scan: {older_avg_updates:.1f} → {newer_avg_updates:.1f}")
+    if outdated_deteriorating:
+        deteriorating_parts.append(f"Outdated: {older_avg_outdated:.1f} → {newer_avg_outdated:.1f}")
+
+    if improving_parts and deteriorating_parts:
+        return "stable", f"Mixed signals. {'. '.join(improving_parts + deteriorating_parts)}"
+    if improving_parts:
+        return "improving", ". ".join(improving_parts)
+    if deteriorating_parts:
+        return "deteriorating", ". ".join(deteriorating_parts)
 
     return "stable", (f"Consistent (~{newer_avg_updates:.1f} updates/scan, ~{newer_avg_outdated:.0f} outdated)")
 
@@ -312,14 +325,19 @@ def _aggregate_metrics(
     recent_events: list[DependencyUpdateEvent],
     upstream: UpstreamCadenceMetrics | None = None,
     branch: str | None = None,
+    final_outdated: set | None = None,
+    final_versions: dict[str, str] | None = None,
 ) -> UpdateFrequencyMetrics:
     """Build the final metrics response from streamed counters."""
-    total_updates = sum(type_counter.values())
+    downgrade_total = type_counter.get("downgrade", 0)
+    # Downgrades are recorded but are not update activity.
+    total_updates = sum(type_counter.values()) - downgrade_total
     num_intervals = len(completed_scans) - 1
 
     first_date: datetime = completed_scans[0]["created_at"]
     last_date: datetime = completed_scans[-1]["created_at"]
-    time_range_days = max(1, (last_date - first_date).days)
+    # Sub-day precision; floored at one day so a single CI burst can't explode the monthly rate.
+    time_range_days = max(1.0, (last_date - first_date).total_seconds() / 86400.0)
     time_range_months = time_range_days / 30.44
 
     patch_total = type_counter.get("patch", 0)
@@ -339,14 +357,20 @@ def _aggregate_metrics(
 
     trend_direction, trend_detail = _compute_trend(scan_timeline)
 
-    slowest_packages = _build_slowest_packages(package_outdated_counts, package_latest_info, dep_type_map)
+    slowest_packages = _build_slowest_packages(
+        package_outdated_counts,
+        package_latest_info,
+        dep_type_map,
+        final_outdated or set(),
+        final_versions or {},
+    )
 
     return UpdateFrequencyMetrics(
         project_id=project_id,
         project_name=project_name,
         branch=branch,
         scan_count=len(completed_scans),
-        time_range_days=time_range_days,
+        time_range_days=round(time_range_days, 2),
         first_scan_date=first_date.isoformat(),
         last_scan_date=last_date.isoformat(),
         total_updates=total_updates,
@@ -356,6 +380,7 @@ def _aggregate_metrics(
         minor_updates=minor_total,
         major_updates=major_total,
         unknown_updates=unknown_total,
+        downgrade_updates=downgrade_total,
         granularity_ratio=granularity_ratio,
         avg_days_between_scans=round(avg_days_between, 1),
         total_outdated_detected=total_outdated_detected,
@@ -380,14 +405,22 @@ def _build_slowest_packages(
     package_outdated_counts: dict[str, int],
     package_latest_info: dict[str, dict[str, str]],
     dep_type_map: dict[str, str],
+    final_outdated: set,
+    final_versions: dict[str, str],
 ) -> list[SlowPackage]:
-    """Build the list of slowest-to-update packages (most scans outdated)."""
-    slowest = sorted(package_outdated_counts.items(), key=lambda x: x[1], reverse=True)[:15]
+    """Slowest-to-update packages: the remaining backlog, ranked by scans outdated.
+
+    Only packages still outdated in the newest scan qualify — resolved ones
+    are history, not backlog. ``current_version`` comes from the newest
+    scan's dependency set; analyzer entries may be scans old.
+    """
+    remaining = {pkg: count for pkg, count in package_outdated_counts.items() if pkg in final_outdated}
+    slowest = sorted(remaining.items(), key=lambda x: x[1], reverse=True)[:15]
     return [
         SlowPackage(
             name=pkg_name,
             type=dep_type_map.get(pkg_name, "unknown"),
-            current_version=package_latest_info.get(pkg_name, {}).get("current_version"),
+            current_version=final_versions.get(pkg_name) or package_latest_info.get(pkg_name, {}).get("current_version"),
             latest_version=package_latest_info.get(pkg_name, {}).get("latest_version"),
             scans_outdated=count,
         )
@@ -666,6 +699,8 @@ async def compute_update_frequency(
         recent_events=list(state.recent_events_buffer)[::-1],  # newest first
         upstream=upstream,
         branch=analyzed_branch,
+        final_outdated=prev_outdated,
+        final_versions={info["name"]: info["version"] for info in prev_deps.values()},
     )
 
 
