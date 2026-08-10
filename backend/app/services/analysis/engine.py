@@ -19,7 +19,7 @@ from app.core.metrics import (
     analysis_enrichment_total,
     analysis_epss_scores,
     analysis_errors_total,
-    analysis_findings_by_type,
+    analysis_findings_by_type_total,
     analysis_findings_total,
     analysis_gridfs_operations_total,
     analysis_kev_vulnerabilities_total,
@@ -382,8 +382,8 @@ def _track_findings_metrics(aggregated_findings: list[Any]) -> None:
     for finding in aggregated_findings:
         finding_type = finding.type if hasattr(finding, "type") else "unknown"
         severity = finding.severity if hasattr(finding, "severity") else "unknown"
-        if analysis_findings_by_type:
-            analysis_findings_by_type.labels(type=finding_type, severity=severity).inc()
+        if analysis_findings_by_type_total:
+            analysis_findings_by_type_total.labels(type=finding_type, severity=severity).inc()
         if analysis_findings_total:
             scanners = finding.scanners if hasattr(finding, "scanners") else []
             for scanner_name in scanners:
