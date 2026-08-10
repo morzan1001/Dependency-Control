@@ -5,6 +5,13 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { ProjectCombobox } from '@/components/ui/project-combobox'
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Bar,
   XAxis,
   YAxis,
@@ -27,10 +34,11 @@ import {
   Package,
   ArrowRight,
   AlertTriangle,
+  GitBranch,
 } from 'lucide-react'
 import { useUpdateFrequency } from '@/hooks/queries/use-analytics'
 import { formatDate } from '@/lib/utils'
-import type { UpdateFrequencyMetrics, DependencyUpdateEvent } from '@/types/analytics'
+import type { UpdateFrequencyMetrics, DependencyUpdateEvent, TrendDirection } from '@/types/analytics'
 
 interface UpdateFrequencyProps {
   projectId?: string
@@ -41,6 +49,7 @@ const updateTypeColors: Record<string, string> = {
   minor: '#eab308',
   major: '#ef4444',
   unknown: '#94a3b8',
+  downgrade: '#a855f7',
 }
 
 const updateTypeBadgeVariants: Record<string, string> = {
@@ -48,17 +57,25 @@ const updateTypeBadgeVariants: Record<string, string> = {
   minor: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20',
   major: 'bg-red-500/10 text-red-600 border-red-500/20',
   unknown: 'bg-gray-500/10 text-gray-500 border-gray-500/20',
+  downgrade: 'bg-purple-500/10 text-purple-600 border-purple-500/20',
 }
 
-const trendConfig = {
+const trendConfig: Record<TrendDirection, { icon: typeof Minus; color: string; label: string }> = {
   improving: { icon: TrendingUp, color: 'text-green-500', label: 'Improving' },
   stable: { icon: Minus, color: 'text-gray-500', label: 'Stable' },
   deteriorating: { icon: TrendingDown, color: 'text-red-500', label: 'Deteriorating' },
+  unknown: { icon: Minus, color: 'text-muted-foreground', label: 'Insufficient data' },
+}
+
+function formatDays(days: number): string {
+  if (days < 1) return `${(days * 24).toFixed(1)}h`
+  return `${days.toFixed(days < 10 ? 1 : 0)}d`
 }
 
 function SummaryCards({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
-  const trend = trendConfig[data.trend_direction] || trendConfig.stable
+  const trend = trendConfig[data.trend_direction] ?? trendConfig.unknown
   const TrendIcon = trend.icon
+  const coverageKnown = data.update_coverage_pct !== null
 
   return (
     <div className="grid gap-4 md:grid-cols-4">
@@ -70,7 +87,7 @@ function SummaryCards({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
         <CardContent>
           <div className="text-2xl font-bold">{data.updates_per_month}</div>
           <p className="text-xs text-muted-foreground">
-            {data.total_updates} total across {data.scan_count} scans
+            {data.total_updates} updates over {formatDays(data.time_range_days)}, extrapolated
           </p>
         </CardContent>
       </Card>
@@ -81,9 +98,9 @@ function SummaryCards({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
           <Clock className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{data.avg_days_between_scans}d</div>
+          <div className="text-2xl font-bold">{formatDays(data.avg_days_between_scans)}</div>
           <p className="text-xs text-muted-foreground">
-            avg. days between scans
+            avg. between {data.scan_count} scans
           </p>
         </CardContent>
       </Card>
@@ -94,9 +111,11 @@ function SummaryCards({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
           <Package className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{data.update_coverage_pct}%</div>
+          <div className="text-2xl font-bold">{coverageKnown ? `${data.update_coverage_pct}%` : 'N/A'}</div>
           <p className="text-xs text-muted-foreground">
-            {data.outdated_resolved} of {data.total_outdated_detected} outdated resolved
+            {coverageKnown
+              ? `${data.outdated_resolved} of ${data.total_outdated_detected} outdated resolved`
+              : 'nothing outdated in this window'}
           </p>
         </CardContent>
       </Card>
@@ -150,6 +169,8 @@ function TimelineChart({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
               <Bar yAxisId="left" dataKey="patch" stackId="updates" fill={updateTypeColors.patch} name="Patch" />
               <Bar yAxisId="left" dataKey="minor" stackId="updates" fill={updateTypeColors.minor} name="Minor" />
               <Bar yAxisId="left" dataKey="major" stackId="updates" fill={updateTypeColors.major} name="Major" />
+              <Bar yAxisId="left" dataKey="unknown" stackId="updates" fill={updateTypeColors.unknown} name="Unknown" />
+              <Bar yAxisId="left" dataKey="downgrades" stackId="updates" fill={updateTypeColors.downgrade} name="Downgrade" />
               <Line
                 yAxisId="right"
                 type="monotone"
@@ -182,7 +203,7 @@ function GranularityChart({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) 
     <Card>
       <CardHeader>
         <CardTitle>Update Granularity</CardTitle>
-        <CardDescription>Distribution of update types (patch, minor, major)</CardDescription>
+        <CardDescription>Share of forward updates by tier (patch, minor, major, unknown)</CardDescription>
       </CardHeader>
       <CardContent>
         <div className="h-[250px] w-full min-w-0">
@@ -323,10 +344,46 @@ function RecentUpdatesTable({ data }: Readonly<{ data: UpdateFrequencyMetrics }>
   )
 }
 
+function UpstreamCadenceCard({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
+  const metrics = [
+    { label: 'Releases / 12 mo', value: data.upstream_releases_last_12m_median, suffix: '' },
+    { label: 'Days between releases', value: data.upstream_days_between_releases_median, suffix: 'd' },
+    { label: 'Days since latest release', value: data.upstream_days_since_latest_release_median, suffix: 'd' },
+    { label: 'Adoption latency', value: data.adoption_latency_days_median, suffix: 'd' },
+  ]
+
+  if (metrics.every((m) => m.value === null)) return null
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>Upstream Release Cadence</CardTitle>
+        <CardDescription>
+          How often your dependencies publish upstream (median across packages, via deps.dev), independent of your scan
+          frequency
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid gap-4 grid-cols-2 md:grid-cols-4">
+          {metrics.map((m) => (
+            <div key={m.label}>
+              <div className="text-2xl font-bold">
+                {m.value === null ? '—' : `${m.value.toFixed(m.suffix === 'd' ? 0 : 1)}${m.suffix}`}
+              </div>
+              <p className="text-xs text-muted-foreground">{m.label}</p>
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
 export function UpdateFrequency({ projectId: initialProjectId }: Readonly<UpdateFrequencyProps>) {
   const [selectedProjectId, setSelectedProjectId] = useState<string>(initialProjectId || '')
+  const [windowDays, setWindowDays] = useState<number | undefined>(90)
 
-  const { data, isLoading, error } = useUpdateFrequency(selectedProjectId)
+  const { data, isLoading, error } = useUpdateFrequency(selectedProjectId, { windowDays })
 
   return (
     <div className="space-y-6">
@@ -339,15 +396,22 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="flex items-center gap-4">
+            <div className="flex flex-wrap items-center gap-4">
               <ProjectCombobox
                 value={selectedProjectId}
                 onValueChange={setSelectedProjectId}
                 className="w-[350px]"
               />
+              <WindowSelect value={windowDays} onChange={setWindowDays} />
             </div>
           </CardContent>
         </Card>
+      )}
+
+      {initialProjectId && selectedProjectId && (
+        <div className="flex justify-end">
+          <WindowSelect value={windowDays} onChange={setWindowDays} />
+        </div>
       )}
 
       {isLoading && selectedProjectId && (
@@ -397,6 +461,16 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
 
       {data && data.scan_count >= 2 && (
         <>
+          {data.branch && (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <GitBranch className="h-4 w-4" />
+              <span>
+                Branch <span className="font-medium text-foreground">{data.branch}</span>
+                {data.dominant_ecosystem && ` · ${data.dominant_ecosystem}`}
+              </span>
+            </div>
+          )}
+
           <SummaryCards data={data} />
 
           <TimelineChart data={data} />
@@ -406,9 +480,42 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
             <SlowPackagesTable data={data} />
           </div>
 
+          <UpstreamCadenceCard data={data} />
+
           <RecentUpdatesTable data={data} />
         </>
       )}
     </div>
+  )
+}
+
+const WINDOW_OPTIONS: { value: string; label: string; days?: number }[] = [
+  { value: '30', label: 'Last 30 days', days: 30 },
+  { value: '90', label: 'Last 90 days', days: 90 },
+  { value: '365', label: 'Last 12 months', days: 365 },
+  { value: 'scans', label: 'Last 20 scans' },
+]
+
+function WindowSelect({
+  value,
+  onChange,
+}: Readonly<{ value: number | undefined; onChange: (v: number | undefined) => void }>) {
+  const current = value === undefined ? 'scans' : String(value)
+  return (
+    <Select
+      value={current}
+      onValueChange={(v) => onChange(v === 'scans' ? undefined : Number(v))}
+    >
+      <SelectTrigger className="w-[180px]">
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent>
+        {WINDOW_OPTIONS.map((opt) => (
+          <SelectItem key={opt.value} value={opt.value}>
+            {opt.label}
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
   )
 }
