@@ -36,7 +36,7 @@ async def _lifecycle_by_component(db: AsyncIOMotorDatabase, scan_id: str) -> dic
     lifecycle: dict[str, dict[str, Any]] = {}
     cursor = FindingRepository(db).collection.find(
         {"scan_id": scan_id, "type": {"$in": [FindingType.EOL.value, FindingType.OUTDATED.value]}},
-        {"component": 1, "version": 1, "type": 1, "details.latest_version": 1},
+        {"component": 1, "version": 1, "type": 1, "details.fixed_version": 1},
     )
     async for doc in cursor:
         key = f"{doc.get('component')}@{doc.get('version')}"
@@ -45,7 +45,8 @@ async def _lifecycle_by_component(db: AsyncIOMotorDatabase, scan_id: str) -> dic
             entry["eol"] = True
         else:
             entry["outdated"] = True
-            entry["latest_version"] = (doc.get("details") or {}).get("latest_version")
+            # The lifecycle normalizer stores the newest version as fixed_version.
+            entry["latest_version"] = (doc.get("details") or {}).get("fixed_version")
     return lifecycle
 
 

@@ -124,7 +124,8 @@ def _parse_csv(resp) -> list[dict]:
 
 
 async def _seed_lifecycle_finding(db, scan_id, component, version, ftype, latest=None):
-    details = {"latest_version": latest} if latest else {}
+    # The lifecycle normalizer persists the newest version as fixed_version.
+    details = {"fixed_version": latest} if latest else {}
     await db.findings.insert_one(
         {
             "project_id": _PID,
