@@ -250,6 +250,10 @@ class SBOMParser:
         for comp in components:
             if comp.get("type") == "cryptographic-asset":
                 continue
+            if comp.get("type") == "file":
+                # File-catalog entries (e.g. syft filesystem scans) aren't dependencies.
+                result.skipped_components += 1
+                continue
             parsed = self._parse_cyclonedx_component(
                 comp,
                 global_source_type,
@@ -334,7 +338,6 @@ class SBOMParser:
             "operating-system": "generic",
             "device": "generic",
             "firmware": "generic",
-            "file": "generic",
             "framework": "generic",
         }
         purl_type = type_mapping.get(pkg_type, pkg_type)
