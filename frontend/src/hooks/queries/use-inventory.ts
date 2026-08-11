@@ -3,7 +3,7 @@ import { inventoryApi, ComponentsParams } from '@/api/inventory';
 import { ApiError } from '@/api/client';
 
 // 4xx responses won't succeed on retry (bad request/not found on this branch); only transient/server errors should retry.
-const retryUnlessClientError = (failureCount: number, error: unknown) => {
+export const retryUnlessClientError = (failureCount: number, error: unknown) => {
   const status = (error as ApiError).response?.status;
   if (status !== undefined && status >= 400 && status < 500) return false;
   return failureCount < 2;
