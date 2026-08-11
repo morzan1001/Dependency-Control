@@ -427,7 +427,7 @@ async def _enrich_dependencies(dependency_enrichments: dict[str, Any], scan_id: 
                 enrichment_ops.append(
                     UpdateOne(
                         {"purl": purl},
-                        {"$set": {**enrichment_data, "purl": purl}},
+                        {"$set": {**enrichment_data, "purl": purl, "name": name, "version": version}},
                         upsert=True,
                     )
                 )

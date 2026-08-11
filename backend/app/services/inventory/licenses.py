@@ -26,6 +26,7 @@ def _add_to_group(
     purl: str | None,
     category: str | None,
     risks: list[str] | None,
+    single_token: bool,
 ) -> None:
     group = groups.setdefault(
         license_id, {"components": [], "component_names": set(), "purls": [], "category": None, "risks": []}
@@ -33,7 +34,9 @@ def _add_to_group(
     if component not in group["component_names"]:
         group["component_names"].add(component)
         group["components"].append(component)
-    if purl and len(group["purls"]) < _SAMPLE_PURLS_PER_LICENSE:
+    # A composite expression's purl reflects the worst-member license, not any single token,
+    # so it must not seed the enrichment lookup for its constituent groups.
+    if single_token and purl and len(group["purls"]) < _SAMPLE_PURLS_PER_LICENSE:
         group["purls"].append(purl)
     group["category"] = group["category"] or category
     for risk in risks or []:
@@ -66,9 +69,16 @@ async def build_license_rows(db: AsyncIOMotorDatabase, scan: Scan) -> list[Licen
     async for doc in cursor:
         tokens = tokenize_license_string(doc.get("license") or "") or [UNKNOWN_LICENSE]
         component = f"{doc.get('name')}@{doc.get('version')}"
+        single_token = len(tokens) == 1
         for license_id in tokens:
             _add_to_group(
-                groups, license_id, component, doc.get("purl"), doc.get("license_category"), doc.get("license_risks")
+                groups,
+                license_id,
+                component,
+                doc.get("purl"),
+                doc.get("license_category"),
+                doc.get("license_risks"),
+                single_token,
             )
 
     # Skip the enrichment lookup entirely for groups the dependency docs already fully cover.

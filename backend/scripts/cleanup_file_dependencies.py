@@ -1,5 +1,7 @@
 """One-off cleanup for `dependencies` docs with `type: "file"` from CycloneDX file-catalog ingestion.
 
+Usage (in-pod): `python -m scripts.cleanup_file_dependencies --help` from /app.
+
 Filter matches ~56% of the collection on a Percona PSMDB replica set, so deletes run in
 bounded batches — a single delete_many would flood the oplog and stall replication.
 """
@@ -45,8 +47,8 @@ def run_delete(collection: Collection[dict[str, Any]], batch_size: int, sleep_ms
         batch_ids = [doc["_id"] for doc in collection.find(query, {"_id": 1}).sort("_id", 1).limit(batch_size)]
         if not batch_ids:
             break
-        collection.delete_many({"_id": {"$in": batch_ids}})
-        deleted_total += len(batch_ids)
+        result = collection.delete_many({"_id": {"$in": batch_ids}})
+        deleted_total += result.deleted_count
         last_id = batch_ids[-1]
         print(f"Deleted so far: {deleted_total}")
         if len(batch_ids) < batch_size:

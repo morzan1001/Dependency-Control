@@ -26,6 +26,8 @@ def test_upserts_dependency_enrichment_by_purl_when_dependency_has_purl():
     assert enrichment_doc["purl"] == "pkg:npm/lodash@4.17.21"
     assert enrichment_doc["license_category"] == "permissive"
     assert enrichment_doc["license"] == "MIT"
+    assert enrichment_doc["name"] == "lodash"
+    assert enrichment_doc["version"] == "4.17.21"
 
 
 def test_skips_dependency_enrichment_upsert_when_dependency_has_no_purl():

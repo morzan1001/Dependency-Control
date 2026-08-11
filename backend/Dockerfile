@@ -36,6 +36,9 @@ RUN poetry config virtualenvs.create false \
 # Copy application code
 COPY backend/app ./app
 
+# Copy operational scripts (e.g. cleanup_file_dependencies, run via kubectl exec)
+COPY backend/scripts ./scripts
+
 # Copy CI/CD scripts (for serving via API)
 COPY ci-cd/scripts ./ci-cd/scripts
 

@@ -93,6 +93,19 @@ async def test_stats_counts_and_scan_context(client, db, member_auth_headers):
 
 
 @pytest.mark.asyncio
+async def test_stats_license_count_counts_tokenized_units(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(db, "s1", "a", license_id="MIT")
+    await _seed_dep(db, "s1", "b", license_id="MIT AND GPL-3.0-only")
+    await _seed_dep(db, "s1", "c", license_id="GPL-3.0-only")
+
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/stats", headers=member_auth_headers)
+
+    assert resp.status_code == 200
+    assert resp.json()["license_count"] == 2
+
+
+@pytest.mark.asyncio
 async def test_stats_404_for_branch_without_completed_scan(client, db, member_auth_headers):
     await _seed_scan(db)
     resp = await client.get(
@@ -396,6 +409,23 @@ async def test_licenses_tokenizes_composite_spdx_expressions(client, db, member_
     assert items["BSD-3-Clause"]["component_count"] == 2
     assert items["LGPL-2.1-or-later"]["component_count"] == 1
     assert not any(" AND " in license_id for license_id in items)
+
+
+@pytest.mark.asyncio
+async def test_licenses_composite_doc_does_not_stamp_enrichment_onto_constituent_groups(
+    client, db, member_auth_headers
+):
+    await _seed_scan(db)
+    await _seed_dep(db, "s1", "c", license_id="Apache-2.0 AND GPL-3.0-only", purl="pkg:npm/c@1.0.0")
+    await db.dependency_enrichments.insert_one(
+        {"purl": "pkg:npm/c@1.0.0", "license_category": "strong_copyleft", "license_risks": ["copyleft"]}
+    )
+
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/licenses", headers=member_auth_headers)
+
+    assert resp.status_code == 200
+    items = {i["license"]: i for i in resp.json()["items"]}
+    assert items["Apache-2.0"]["category"] is None
 
 
 @pytest.mark.asyncio
