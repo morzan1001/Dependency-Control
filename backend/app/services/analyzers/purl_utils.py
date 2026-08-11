@@ -1,7 +1,10 @@
 """PURL parsing. Format: pkg:type/namespace/name@version?qualifiers#subpath. See package-url/purl-spec."""
 
+import re
 from typing import NamedTuple
 from urllib.parse import unquote
+
+_PYPI_NORMALIZE_RE = re.compile(r"[-_.]+")
 
 # Maximum lengths for PURL components to prevent DoS via unbounded strings
 MAX_PURL_LENGTH = 2048  # Total PURL length
@@ -40,6 +43,9 @@ class ParsedPURL(NamedTuple):
         if self.type in ("golang", "go"):
             # Go module names already include the full path (e.g. github.com/cespare/xxhash/v2)
             return self.name
+        if self.type == "pypi":
+            # deps.dev serves PyPI packages under their PEP 503 normalized name.
+            return _PYPI_NORMALIZE_RE.sub("-", self.name).lower()
         if self.namespace:
             return f"{self.namespace}/{self.name}"
         return self.name

@@ -288,7 +288,7 @@ class DependencyUpdateEvent(BaseModel):
     purl: str | None = None
     old_version: str
     new_version: str
-    update_type: str  # "patch" | "minor" | "major" | "unknown"
+    update_type: str  # "patch" | "minor" | "major" | "unknown" | "downgrade"
     scan_date: str  # ISO timestamp of the scan where the update was detected
     previous_scan_date: str
     days_between_scans: int
@@ -300,11 +300,13 @@ class ScanTimelineEntry(BaseModel):
 
     scan_id: str
     date: str
-    updates_count: int
+    updates_count: int  # excludes downgrades
     outdated_count: int
     patch: int
     minor: int
     major: int
+    unknown: int = 0
+    downgrades: int = 0
 
 
 class SlowPackage(BaseModel):
@@ -322,19 +324,23 @@ class UpdateFrequencyMetrics(BaseModel):
 
     project_id: str
     project_name: str
+    # Branch the timeline covers; None only when the project has no completed scans.
+    branch: str | None = None
     scan_count: int
-    time_range_days: int
+    time_range_days: float
     first_scan_date: str
     last_scan_date: str
 
+    # Downgrades/rollbacks are tracked separately and never counted as updates.
     total_updates: int
     updates_per_scan: float
-    updates_per_month: float
+    updates_per_month: float  # extrapolated from time_range_days
 
     patch_updates: int
     minor_updates: int
     major_updates: int
     unknown_updates: int
+    downgrade_updates: int = 0
     granularity_ratio: dict[str, float]  # {"patch": 0.6, "minor": 0.3, "major": 0.1}
 
     avg_days_between_scans: float
@@ -376,19 +382,22 @@ class ProjectUpdateSummary(BaseModel):
     trend_direction: str  # "improving" | "stable" | "deteriorating" | "unknown"
     total_outdated: int
     last_scan_date: str
-    dominant_ecosystem: str | None = None
 
 
 class UpdateFrequencyComparison(BaseModel):
-    """Cross-project comparison of update frequency metrics."""
+    """Cross-project comparison of update frequency metrics.
+
+    Ranking: measured coverage first (descending), then projects where
+    nothing was ever outdated (no measurable coverage). best/worst are
+    drawn from measured projects only.
+    """
 
     projects: list[ProjectUpdateSummary]
     team_avg_updates_per_month: float
-    team_avg_coverage_pct: float
+    team_avg_coverage_pct: float | None = None  # None when no project has measurable coverage
     best_project: str | None = None
     worst_project: str | None = None
-    best_per_ecosystem: dict[str, str] = {}
-    worst_per_ecosystem: dict[str, str] = {}
+    skipped_projects: int = 0  # projects dropped for lacking >=2 completed scans
 
 
 # Crypto analytics schemas

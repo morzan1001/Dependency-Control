@@ -21,11 +21,11 @@ os.environ["DATABASE_NAME"] = "test_dependency_control"
 
 import pytest
 
-# Test constants for commonly used PURLs
-TEST_PURL_REQUESTS = "pkg:pypi/requests@2.31.0"
-
 from tests.mocks.github import make_github_instance
 from tests.mocks.gitlab import make_gitlab_instance
+
+# Test constants for commonly used PURLs
+TEST_PURL_REQUESTS = "pkg:pypi/requests@2.31.0"
 
 
 @pytest.fixture

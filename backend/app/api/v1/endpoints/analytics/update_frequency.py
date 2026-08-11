@@ -50,6 +50,44 @@ def _resolve_since(window_days: int | None) -> datetime | None:
     return datetime.now(tz=timezone.utc) - timedelta(days=window_days)
 
 
+def _project_cache_key(
+    project_id: str,
+    *,
+    max_scans: int,
+    window_days: int | None,
+    branch: str | None,
+    version_token: str,
+) -> str:
+    """Cache key carrying a completion-monotonic token so a finished scan misses the cache."""
+    return (
+        f"{CacheKeys.update_frequency(project_id)}"
+        f":m{max_scans}:w{window_days or 0}:b{branch or 'auto'}:v{version_token}"
+    )
+
+
+def _comparison_cache_key(
+    user_id: str,
+    team_id: str,
+    *,
+    max_scans: int,
+    window_days: int | None,
+    version_token: str,
+) -> str:
+    """Cache key carrying a completion-monotonic token across the scoped projects."""
+    return (
+        f"{CacheKeys.update_frequency_comparison(user_id, team_id)}"
+        f":m{max_scans}:w{window_days or 0}:v{version_token}"
+    )
+
+
+async def _completed_scan_version(db: DatabaseDep, project_ids: list[str]) -> str:
+    """Completed-scan count: a cache token monotonic per completion, unlike max(created_at) on out-of-order finishes."""
+    if not project_ids:
+        return "0"
+    count = await db.scans.count_documents({"project_id": {"$in": project_ids}, "status": "completed"})
+    return str(count)
+
+
 def _build_release_fetcher() -> ReleaseHistoryFetcher:
     """Production deps.dev fetcher wired to Redis + httpx, built per request."""
 
@@ -89,8 +127,13 @@ async def get_project_update_frequency(
     db: DatabaseDep,
     max_scans: Annotated[int, Query(ge=2, le=500)] = 20,
     window_days: Annotated[int | None, Query(ge=1, le=3650)] = None,
+    branch: Annotated[str | None, Query(max_length=512)] = None,
 ) -> UpdateFrequencyMetrics:
-    """Update-frequency metrics from version diffs; window_days scopes by time, else max_scans."""
+    """Update-frequency metrics from version diffs; window_days scopes by time, else max_scans.
+
+    The timeline covers one branch (``branch`` if given, else the newest
+    scanned live branch) so cross-branch differences are not counted as updates.
+    """
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
     project_repo = ProjectRepository(db)
@@ -102,7 +145,10 @@ async def get_project_update_frequency(
     if project_id not in user_project_ids:
         raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
 
-    cache_key = f"{CacheKeys.update_frequency(project_id)}:m{max_scans}:w{window_days or 0}"
+    version_token = await _completed_scan_version(db, [project_id])
+    cache_key = _project_cache_key(
+        project_id, max_scans=max_scans, window_days=window_days, branch=branch, version_token=version_token
+    )
     cached = await cache_service.get(cache_key)
     if cached:
         return UpdateFrequencyMetrics(**cached)
@@ -120,6 +166,9 @@ async def get_project_update_frequency(
         max_scans=max_scans,
         since=_resolve_since(window_days),
         release_fetcher=_build_release_fetcher(),
+        branch=branch,
+        deleted_branches=project.get("deleted_branches"),
+        default_branch=project.get("default_branch"),
     )
 
     await cache_service.set(cache_key, metrics.model_dump(), ttl_seconds=CacheTTL.UPDATE_FREQUENCY)
@@ -131,18 +180,11 @@ async def get_update_frequency_comparison(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     team_id: str | None = None,
-    max_scans: Annotated[int, Query(ge=2, le=200)] = 10,
+    max_scans: Annotated[int, Query(ge=2, le=200)] = 20,
     window_days: Annotated[int | None, Query(ge=1, le=3650)] = None,
 ) -> UpdateFrequencyComparison:
     """Cross-project ranking. Pass ``window_days`` to align scan cadences."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
-
-    cache_key = (
-        f"{CacheKeys.update_frequency_comparison(current_user.id, team_id or 'all')}:m{max_scans}:w{window_days or 0}"
-    )
-    cached = await cache_service.get(cache_key)
-    if cached:
-        return UpdateFrequencyComparison(**cached)
 
     project_repo = ProjectRepository(db)
     user_project_ids = await get_user_project_ids(current_user, db)
@@ -151,7 +193,7 @@ async def get_update_frequency_comparison(
         return UpdateFrequencyComparison(
             projects=[],
             team_avg_updates_per_month=0.0,
-            team_avg_coverage_pct=0.0,
+            team_avg_coverage_pct=None,
         )
 
     query: dict[str, Any] = {"_id": {"$in": user_project_ids}}
@@ -160,23 +202,33 @@ async def get_update_frequency_comparison(
 
     projects_raw = await project_repo.find_many_raw(
         query,
-        projection={"_id": 1, "name": 1, "team_id": 1},
+        projection={"_id": 1, "name": 1, "team_id": 1, "deleted_branches": 1, "default_branch": 1},
         limit=len(user_project_ids),
     )
 
-    if projects_raw:
-        unique_team_ids = list({str(p["team_id"]) for p in projects_raw if p.get("team_id")})
-        team_names: dict[str, str] = {}
-        if unique_team_ids:
-            cursor = db.teams.find(
-                {"_id": {"$in": unique_team_ids}},
-                {"_id": 1, "name": 1},
-            )
-            async for t in cursor:
-                team_names[str(t["_id"])] = t.get("name", "")
+    # Version the cache over the scoped projects so a team filter never serves
+    # a token computed across the user's other teams.
+    scoped_ids = [str(p["_id"]) for p in projects_raw]
+    version_token = await _completed_scan_version(db, scoped_ids)
+    cache_key = _comparison_cache_key(
+        current_user.id, team_id or "all", max_scans=max_scans, window_days=window_days, version_token=version_token
+    )
+    cached = await cache_service.get(cache_key)
+    if cached:
+        return UpdateFrequencyComparison(**cached)
 
-        for p in projects_raw:
-            p["team_name"] = team_names.get(p.get("team_id", ""))
+    unique_team_ids = list({str(p["team_id"]) for p in projects_raw if p.get("team_id")})
+    team_names: dict[str, str] = {}
+    if unique_team_ids:
+        cursor = db.teams.find(
+            {"_id": {"$in": unique_team_ids}},
+            {"_id": 1, "name": 1},
+        )
+        async for t in cursor:
+            team_names[str(t["_id"])] = t.get("name", "")
+
+    for p in projects_raw:
+        p["team_name"] = team_names.get(p.get("team_id", ""))
 
     scan_repo = ScanRepository(db)
     dep_repo = DependencyRepository(db)

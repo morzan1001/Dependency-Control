@@ -137,8 +137,14 @@ export const analyticsApi = {
         return response.data;
     },
 
-    getUpdateFrequency: async (projectId: string, maxScans?: number): Promise<UpdateFrequencyMetrics> => {
-        const params = buildQueryParams({ max_scans: maxScans });
+    getUpdateFrequency: async (
+        projectId: string,
+        opts?: { maxScans?: number; windowDays?: number }
+    ): Promise<UpdateFrequencyMetrics> => {
+        const params = buildQueryParams({
+            max_scans: opts?.maxScans,
+            window_days: opts?.windowDays,
+        });
         const response = await api.get<UpdateFrequencyMetrics>(
             `/analytics/projects/${projectId}/update-frequency`,
             { params }
@@ -146,8 +152,15 @@ export const analyticsApi = {
         return response.data;
     },
 
-    getUpdateFrequencyComparison: async (teamId?: string, maxScans?: number): Promise<UpdateFrequencyComparison> => {
-        const params = buildQueryParams({ team_id: teamId, max_scans: maxScans });
+    getUpdateFrequencyComparison: async (
+        teamId?: string,
+        opts?: { maxScans?: number; windowDays?: number }
+    ): Promise<UpdateFrequencyComparison> => {
+        const params = buildQueryParams({
+            team_id: teamId,
+            max_scans: opts?.maxScans,
+            window_days: opts?.windowDays,
+        });
         const response = await api.get<UpdateFrequencyComparison>(
             '/analytics/update-frequency/comparison',
             { params }

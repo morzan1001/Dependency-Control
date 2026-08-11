@@ -1048,7 +1048,7 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(analysis_findings_by_type{job=~\".*dependency-control-backend.*\"}[5m])) by (severity)",
+          "expr": "sum(rate(analysis_findings_by_type_total{job=~\".*dependency-control-backend.*\"}[5m])) by (severity)",
           "legendFormat": "{{severity}}",
           "refId": "A"
         }
@@ -4834,12 +4834,12 @@
       "pluginVersion": "10.0.0",
       "targets": [
         {
-          "expr": "sum(rate(archive_housekeeping_scans_processed{job=~\".*dependency-control-backend.*\", status=\"archived\"}[5m]))",
+          "expr": "sum(rate(archive_housekeeping_scans_processed_total{job=~\".*dependency-control-backend.*\", status=\"archived\"}[5m]))",
           "legendFormat": "Archived",
           "refId": "A"
         },
         {
-          "expr": "sum(rate(archive_housekeeping_scans_processed{job=~\".*dependency-control-backend.*\", status=\"failed\"}[5m]))",
+          "expr": "sum(rate(archive_housekeeping_scans_processed_total{job=~\".*dependency-control-backend.*\", status=\"failed\"}[5m]))",
           "legendFormat": "Failed",
           "refId": "B"
         }

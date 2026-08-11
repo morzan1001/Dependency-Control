@@ -202,8 +202,8 @@ analysis_findings_total = Counter(
     ["analyzer", "severity"],
 )
 
-analysis_findings_by_type = Counter(
-    "analysis_findings_by_type",
+analysis_findings_by_type_total = Counter(
+    "analysis_findings_by_type_total",
     "Total findings by finding type",
     ["type", "severity"],
 )
@@ -338,8 +338,8 @@ archive_housekeeping_batch_total = Counter(
     ["status"],  # success|partial_failure
 )
 
-archive_housekeeping_scans_processed = Counter(
-    "archive_housekeeping_scans_processed",
+archive_housekeeping_scans_processed_total = Counter(
+    "archive_housekeeping_scans_processed_total",
     "Scans processed by housekeeping by outcome.",
     ["status"],  # archived|failed|orphan_reaped
 )

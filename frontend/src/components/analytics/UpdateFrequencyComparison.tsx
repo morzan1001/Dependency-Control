@@ -20,33 +20,18 @@ import {
   ResponsiveContainer,
 } from 'recharts'
 import {
-  TrendingUp,
-  TrendingDown,
-  Minus,
   Trophy,
   AlertTriangle,
   Users,
 } from 'lucide-react'
 import { useUpdateFrequencyComparison } from '@/hooks/queries/use-analytics'
 import { useTeams } from '@/hooks/queries/use-teams'
-import { formatDate } from '@/lib/utils'
-import type { ProjectUpdateSummary } from '@/types/analytics'
+import { formatDate, formatCoveragePct } from '@/lib/utils'
+import type { ProjectUpdateSummary, UpdateFrequencyComparison as Comparison } from '@/types/analytics'
+import { WindowSelect } from './WindowSelect'
+import { TREND_CONFIG } from './trend-config'
 
-const trendIcons = {
-  improving: { icon: TrendingUp, color: 'text-green-500' },
-  stable: { icon: Minus, color: 'text-gray-500' },
-  deteriorating: { icon: TrendingDown, color: 'text-red-500' },
-}
-
-interface ComparisonSummaryData {
-  readonly team_avg_updates_per_month: number
-  readonly team_avg_coverage_pct: number
-  readonly best_project?: string
-  readonly worst_project?: string
-  readonly projects: ProjectUpdateSummary[]
-}
-
-function ComparisonSummaryCards({ data }: Readonly<{ data: ComparisonSummaryData }>) {
+function ComparisonSummaryCards({ data }: Readonly<{ data: Comparison }>) {
   return (
     <div className="grid gap-4 md:grid-cols-4">
       <Card>
@@ -58,6 +43,7 @@ function ComparisonSummaryCards({ data }: Readonly<{ data: ComparisonSummaryData
           <div className="text-2xl font-bold">{data.team_avg_updates_per_month}</div>
           <p className="text-xs text-muted-foreground">
             across {data.projects.length} projects
+            {data.skipped_projects > 0 && ` · ${data.skipped_projects} skipped (need 2+ scans)`}
           </p>
         </CardContent>
       </Card>
@@ -68,9 +54,9 @@ function ComparisonSummaryCards({ data }: Readonly<{ data: ComparisonSummaryData
           <Users className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{data.team_avg_coverage_pct}%</div>
+          <div className="text-2xl font-bold">{formatCoveragePct(data.team_avg_coverage_pct)}</div>
           <p className="text-xs text-muted-foreground">
-            of outdated deps resolved
+            {data.team_avg_coverage_pct === null ? 'no measurable coverage' : 'of outdated deps resolved'}
           </p>
         </CardContent>
       </Card>
@@ -84,7 +70,7 @@ function ComparisonSummaryCards({ data }: Readonly<{ data: ComparisonSummaryData
           <div className="text-lg font-bold truncate" title={data.best_project}>
             {data.best_project || '—'}
           </div>
-          <p className="text-xs text-muted-foreground">highest update coverage</p>
+          <p className="text-xs text-muted-foreground">highest measured coverage</p>
         </CardContent>
       </Card>
 
@@ -97,7 +83,7 @@ function ComparisonSummaryCards({ data }: Readonly<{ data: ComparisonSummaryData
           <div className="text-lg font-bold truncate" title={data.worst_project}>
             {data.worst_project || '—'}
           </div>
-          <p className="text-xs text-muted-foreground">lowest update coverage</p>
+          <p className="text-xs text-muted-foreground">lowest measured coverage</p>
         </CardContent>
       </Card>
     </div>
@@ -110,7 +96,8 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
   const chartData = projects.map((p) => ({
     name: p.project_name.length > 20 ? p.project_name.substring(0, 20) + '...' : p.project_name,
     fullName: p.project_name,
-    value: metric === 'coverage' ? p.update_coverage_pct : p.updates_per_month,
+    // null coverage (nothing ever outdated) leaves a gap rather than a zero bar.
+    value: metric === 'coverage' ? p.update_coverage_pct ?? undefined : p.updates_per_month,
   }))
 
   return (
@@ -163,7 +150,8 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
   )
 }
 
-function getCoverageBadgeClass(pct: number): string {
+function getCoverageBadgeClass(pct: number | null): string {
+  if (pct === null) return 'bg-gray-500/10 text-gray-500 border-gray-500/20'
   if (pct >= 70) return 'bg-green-500/10 text-green-600 border-green-500/20'
   if (pct >= 40) return 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20'
   return 'bg-red-500/10 text-red-600 border-red-500/20'
@@ -196,7 +184,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
             </TableHeader>
             <TableBody>
               {projects.map((project, idx) => {
-                const trend = trendIcons[project.trend_direction] || trendIcons.stable
+                const trend = TREND_CONFIG[project.trend_direction] ?? TREND_CONFIG.stable
                 const TrendIcon = trend.icon
 
                 return (
@@ -210,7 +198,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                         variant="outline"
                         className={getCoverageBadgeClass(project.update_coverage_pct)}
                       >
-                        {project.update_coverage_pct}%
+                        {formatCoveragePct(project.update_coverage_pct)}
                       </Badge>
                     </TableCell>
                     <TableCell className="text-right font-mono">
@@ -236,9 +224,10 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
 
 export function UpdateFrequencyComparison() {
   const [selectedTeamId, setSelectedTeamId] = useState<string | undefined>(undefined)
+  const [windowDays, setWindowDays] = useState<number | undefined>(90)
 
   const { data: teamsData } = useTeams()
-  const { data, isLoading, error } = useUpdateFrequencyComparison(selectedTeamId)
+  const { data, isLoading, error } = useUpdateFrequencyComparison(selectedTeamId, { windowDays })
 
   return (
     <div className="space-y-6">
@@ -250,7 +239,7 @@ export function UpdateFrequencyComparison() {
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="flex items-center gap-4">
+          <div className="flex flex-wrap items-center gap-4">
             <Select
               value={selectedTeamId || 'all'}
               onValueChange={(v) => setSelectedTeamId(v === 'all' ? undefined : v)}
@@ -267,6 +256,7 @@ export function UpdateFrequencyComparison() {
                 ))}
               </SelectContent>
             </Select>
+            <WindowSelect value={windowDays} onChange={setWindowDays} />
           </div>
         </CardContent>
       </Card>

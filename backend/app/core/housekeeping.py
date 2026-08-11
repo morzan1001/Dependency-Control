@@ -24,7 +24,7 @@ from app.core.constants import (
 )
 from app.core.metrics import (
     archive_housekeeping_batch_total,
-    archive_housekeeping_scans_processed,
+    archive_housekeeping_scans_processed_total,
     update_archive_stats,
     update_db_stats,
 )
@@ -370,7 +370,7 @@ async def _reap_orphan_s3_objects(db: Any) -> int:
         try:
             await delete_object(key)
             deleted += 1
-            archive_housekeeping_scans_processed.labels(status="orphan_reaped").inc()
+            archive_housekeeping_scans_processed_total.labels(status="orphan_reaped").inc()
             logger.info(f"Reaped orphan S3 object: {key}")
         except Exception as e:
             logger.warning(f"Failed to delete orphan {key}: {e}")
@@ -397,14 +397,14 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str = "
             metadata = await archive_scan(db, scan_id)
             if metadata:
                 archived_count += 1
-                archive_housekeeping_scans_processed.labels(status="archived").inc()
+                archive_housekeeping_scans_processed_total.labels(status="archived").inc()
             else:
                 failed_ids.append(scan_id)
-                archive_housekeeping_scans_processed.labels(status="failed").inc()
+                archive_housekeeping_scans_processed_total.labels(status="failed").inc()
         except Exception as e:
             logger.exception("Failed to archive scan %s: %s", scan_id, e)
             failed_ids.append(scan_id)
-            archive_housekeeping_scans_processed.labels(status="failed").inc()
+            archive_housekeeping_scans_processed_total.labels(status="failed").inc()
 
     if failed_ids:
         logger.warning(f"{label}: {len(failed_ids)} scan(s) failed to archive and will NOT be deleted.")
