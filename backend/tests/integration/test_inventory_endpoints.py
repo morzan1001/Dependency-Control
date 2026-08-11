@@ -298,6 +298,21 @@ async def test_licenses_export_contains_full_component_list(client, db, member_a
 
 
 @pytest.mark.asyncio
+async def test_licenses_tokenizes_composite_spdx_expressions(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(db, "s1", "a", license_id="LGPL-2.1-or-later AND BSD-3-Clause")
+    await _seed_dep(db, "s1", "b", license_id="BSD-3-Clause")
+
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/licenses", headers=member_auth_headers)
+
+    assert resp.status_code == 200
+    items = {i["license"]: i for i in resp.json()["items"]}
+    assert items["BSD-3-Clause"]["component_count"] == 2
+    assert items["LGPL-2.1-or-later"]["component_count"] == 1
+    assert not any(" AND " in license_id for license_id in items)
+
+
+@pytest.mark.asyncio
 async def test_crypto_page_and_export(client, db, member_auth_headers):
     await _seed_scan(db)
     await _seed_crypto(db, "s1", "AES-256-GCM", primitive="block-cipher", locations=["src/a.py", "src/b.py"])

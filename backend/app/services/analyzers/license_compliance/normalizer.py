@@ -47,6 +47,18 @@ def normalize_license(lic_id: str) -> str:
     return lic_id
 
 
+def tokenize_license_string(raw: str) -> list[str]:
+    """Split a stored license value (SPDX expression or comma list) into constituent license units."""
+    tokens: list[str] = []
+    for part in (raw or "").split(","):
+        for or_part in SPDX_OR_SPLIT.split(part):
+            for and_part in SPDX_AND_SPLIT.split(or_part):
+                lic = normalize_license(and_part.strip("() "))
+                if lic and lic not in tokens:
+                    tokens.append(lic)
+    return tokens
+
+
 def extract_licenses(component: dict[str, Any]) -> list[tuple[str, str | None]]:
     """Return flat (license_id, url) tuples; OR/AND semantics need
     has_spdx_expression / parse_spdx_expression."""
