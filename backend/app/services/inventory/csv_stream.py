@@ -4,7 +4,7 @@ import csv
 import io
 import re
 from collections.abc import AsyncIterator
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from typing import Any
 
 from fastapi.responses import StreamingResponse
@@ -57,7 +57,7 @@ async def iter_csv(columns: list[str], rows: AsyncIterator[dict[str, Any]]) -> A
 
 def export_filename(*parts: str) -> str:
     safe = [re.sub(r"[^A-Za-z0-9._-]+", "-", part).strip("-") for part in parts if part]
-    return "_".join([*safe, date.today().isoformat()]) + ".csv"
+    return "_".join([*safe, datetime.now(timezone.utc).date().isoformat()]) + ".csv"
 
 
 def csv_response(filename: str, columns: list[str], rows: AsyncIterator[dict[str, Any]]) -> StreamingResponse:

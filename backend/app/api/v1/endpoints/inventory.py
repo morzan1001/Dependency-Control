@@ -25,12 +25,12 @@ from app.services.inventory.crypto import (
     get_crypto_page,
     iter_crypto_rows,
 )
+from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.licenses import (
     LICENSE_COLUMNS,
     build_license_rows,
     iter_license_rows,
 )
-from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.scan_resolution import resolve_inventory_scan
 from app.services.inventory.stats import build_inventory_stats, scan_context
 
