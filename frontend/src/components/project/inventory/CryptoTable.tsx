@@ -41,7 +41,8 @@ export function CryptoTable({ projectId, projectName, branch }: CryptoTableProps
         <div className="flex items-center justify-between">
           <div>
             <CardTitle>Cryptography</CardTitle>
-            <CardDescription>Cryptographic assets detected on this branch.</CardDescription>
+            {/* min-h keeps both grid cards' headers equal when one description wraps. */}
+            <CardDescription className="min-h-10">Cryptographic assets detected on this branch.</CardDescription>
           </div>
           <Button variant="outline" size="sm" onClick={handleDownload}>
             <Download className="mr-2 h-4 w-4" />
