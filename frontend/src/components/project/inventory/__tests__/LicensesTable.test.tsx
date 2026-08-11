@@ -48,4 +48,27 @@ describe('LicensesTable', () => {
     const [, filename] = vi.mocked(downloadModule.downloadFile).mock.calls[0]
     expect(filename).toMatch(/proj_licenses_main_\d{4}-\d{2}-\d{2}\.csv/)
   })
+
+  it('shows an error row with a retry button when loading fails', async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getLicenses).mockRejectedValue(
+      Object.assign(new Error('not found'), { response: { status: 404 } }),
+    )
+    renderTable()
+
+    await waitFor(() => expect(screen.getByText('Failed to load licenses.')).toBeInTheDocument())
+    expect(screen.queryByText(/no licenses found/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
+  })
+
+  it('reloads the table when Retry is clicked after a failure', async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getLicenses)
+      .mockRejectedValueOnce(Object.assign(new Error('not found'), { response: { status: 404 } }))
+      .mockResolvedValueOnce(payload)
+    renderTable()
+    await waitFor(() => expect(screen.getByText('Failed to load licenses.')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }))
+
+    await waitFor(() => expect(screen.getByText('MIT')).toBeInTheDocument())
+  })
 })

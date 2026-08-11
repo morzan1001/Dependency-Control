@@ -40,7 +40,7 @@ export function ComponentsTable({ projectId, projectName, branch }: ComponentsTa
   const [sortBy, setSortBy] = useState('name')
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('asc')
 
-  const { data, isLoading, isPlaceholderData } = useInventoryComponents(projectId, branch, {
+  const { data, isPending, isError, isPlaceholderData, refetch } = useInventoryComponents(projectId, branch, {
     page, pageSize: DEFAULT_PAGE_SIZE, search: search || undefined, sortBy, sortOrder,
   })
 
@@ -111,15 +111,25 @@ export function ComponentsTable({ projectId, projectName, branch }: ComponentsTa
                 <TableHead>Status</TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody>
-              {isLoading && ['c1', 'c2', 'c3'].map((id) => (
+            <TableBody className={isPlaceholderData ? 'opacity-60' : undefined}>
+              {isPending && ['c1', 'c2', 'c3'].map((id) => (
                 <TableRow key={id}>
                   {['n', 'v', 'l', 'e', 'li', 'd', 's'].map((c) => (
                     <TableCell key={c}><Skeleton className="h-5 w-20" /></TableCell>
                   ))}
                 </TableRow>
               ))}
-              {!isLoading && data?.items.map((item) => (
+              {!isPending && isError && (
+                <TableRow>
+                  <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
+                    <div className="flex flex-col items-center gap-2">
+                      <span>Failed to load components.</span>
+                      <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
+              {!isPending && !isError && data?.items.map((item) => (
                 <TableRow key={item.purl ?? `${item.name}@${item.version}`}>
                   <TableCell className="font-medium">{item.name}</TableCell>
                   <TableCell className="font-mono text-xs">{item.version}</TableCell>
@@ -130,7 +140,7 @@ export function ComponentsTable({ projectId, projectName, branch }: ComponentsTa
                   <TableCell><LifecycleBadge item={item} /></TableCell>
                 </TableRow>
               ))}
-              {!isLoading && (data?.items.length ?? 0) === 0 && (
+              {!isPending && !isError && data?.items.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={7} className="py-8 text-center text-muted-foreground">
                     No components found.

@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react'
+import { cleanup, render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProjectInventory } from '../ProjectInventory'
@@ -43,11 +43,32 @@ describe('ProjectInventory', () => {
     vi.mocked(projectHooks.useProjectBranches).mockReturnValue({
       data: [{ name: 'main', is_active: true }],
     } as ReturnType<typeof projectHooks.useProjectBranches>)
-    vi.mocked(inventoryApiModule.inventoryApi.getStats).mockRejectedValue(new Error('404'))
+    vi.mocked(inventoryApiModule.inventoryApi.getStats).mockRejectedValue(
+      Object.assign(new Error('not found'), { response: { status: 404 } }),
+    )
 
     renderInventory()
 
     await waitFor(() => expect(screen.getByText(/no completed scan/i)).toBeInTheDocument())
+  })
+
+  it('shows a generic error card with retry for non-404 stats failures', async () => {
+    // status 400 (not 404) fails fast under retryUnlessClientError, unlike a 5xx which would retry first.
+    vi.mocked(projectHooks.useProjectBranches).mockReturnValue({
+      data: [{ name: 'main', is_active: true }],
+    } as ReturnType<typeof projectHooks.useProjectBranches>)
+    vi.mocked(inventoryApiModule.inventoryApi.getStats)
+      .mockRejectedValueOnce(Object.assign(new Error('bad request'), { response: { status: 400 } }))
+      .mockResolvedValueOnce(stats)
+
+    renderInventory()
+
+    await waitFor(() => expect(screen.getByText(/could not load inventory/i)).toBeInTheDocument())
+    expect(screen.queryByText(/no completed scan/i)).not.toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }))
+
+    await waitFor(() => expect(screen.getByText('42')).toBeInTheDocument())
   })
 
   it('shows an empty state when the project has no active branches', async () => {

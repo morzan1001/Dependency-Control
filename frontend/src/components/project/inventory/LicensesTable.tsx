@@ -34,7 +34,7 @@ function CategoryBadge({ category }: { readonly category?: string | null }) {
 }
 
 export function LicensesTable({ projectId, projectName, branch }: LicensesTableProps) {
-  const { data, isLoading } = useInventoryLicenses(projectId, branch)
+  const { data, isPending, isError, refetch } = useInventoryLicenses(projectId, branch)
 
   const handleDownload = () => downloadFile(
     () => inventoryApi.exportTable(projectId, 'licenses', branch),
@@ -43,7 +43,7 @@ export function LicensesTable({ projectId, projectName, branch }: LicensesTableP
   )
 
   return (
-    <Card>
+    <Card className="flex h-full flex-col">
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
@@ -56,7 +56,7 @@ export function LicensesTable({ projectId, projectName, branch }: LicensesTableP
           </Button>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex-1">
         <div className="rounded-md border">
           <Table>
             <TableHeader>
@@ -68,14 +68,24 @@ export function LicensesTable({ projectId, projectName, branch }: LicensesTableP
               </TableRow>
             </TableHeader>
             <TableBody>
-              {isLoading && ['l1', 'l2', 'l3'].map((id) => (
+              {isPending && ['l1', 'l2', 'l3'].map((id) => (
                 <TableRow key={id}>
                   {['li', 'c', 'r', 'n'].map((c) => (
                     <TableCell key={c}><Skeleton className="h-5 w-20" /></TableCell>
                   ))}
                 </TableRow>
               ))}
-              {!isLoading && data?.items.map((item) => (
+              {!isPending && isError && (
+                <TableRow>
+                  <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                    <div className="flex flex-col items-center gap-2">
+                      <span>Failed to load licenses.</span>
+                      <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
+              {!isPending && !isError && data?.items.map((item) => (
                 <TableRow key={item.license}>
                   <TableCell className="font-medium">{item.license}</TableCell>
                   <TableCell><CategoryBadge category={item.category} /></TableCell>
@@ -85,7 +95,7 @@ export function LicensesTable({ projectId, projectName, branch }: LicensesTableP
                   <TableCell className="text-right">{item.component_count}</TableCell>
                 </TableRow>
               ))}
-              {!isLoading && (data?.items.length ?? 0) === 0 && (
+              {!isPending && !isError && data?.items.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
                     No licenses found.

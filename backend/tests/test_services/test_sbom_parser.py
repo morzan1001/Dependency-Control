@@ -199,6 +199,22 @@ class TestCycloneDXParsing:
         assert result.skipped_components == 1
         assert result.total_components == 2
 
+    def test_file_component_skipped(self):
+        sbom = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "metadata": {"component": {"type": "application", "name": "app", "bom-ref": "root"}},
+            "components": [
+                {"type": "library", "name": "valid", "version": "2.0", "purl": "pkg:pypi/valid@2.0"},
+                {"type": "file", "name": "/etc/selinux/semanage.conf"},
+            ],
+            "dependencies": [],
+        }
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["valid"]
+        assert result.skipped_components == 1
+        assert result.total_components == 2
+
     def test_purl_constructed_when_missing(self):
         sbom = {
             "bomFormat": "CycloneDX",
