@@ -11,8 +11,12 @@ from app.schemas.inventory import CryptoItem
 CRYPTO_COLUMNS = ["name", "asset_type", "primitive", "variant", "key_size_bits", "location_count", "locations"]
 
 _EXPORT_PROJECTION = {
-    "name": 1, "asset_type": 1, "primitive": 1, "variant": 1,
-    "key_size_bits": 1, "occurrence_locations": 1,
+    "name": 1,
+    "asset_type": 1,
+    "primitive": 1,
+    "variant": 1,
+    "key_size_bits": 1,
+    "occurrence_locations": 1,
 }
 
 
@@ -46,12 +50,12 @@ async def get_crypto_page(
     return [_to_item(a.model_dump()) for a in assets], total
 
 
-async def iter_crypto_rows(
-    db: AsyncIOMotorDatabase, project_id: str, scan_id: str
-) -> AsyncIterator[dict[str, Any]]:
+async def iter_crypto_rows(db: AsyncIOMotorDatabase, project_id: str, scan_id: str) -> AsyncIterator[dict[str, Any]]:
     # Direct cursor instead of list_by_scan: the export must not be capped by the list limit.
-    cursor = CryptoAssetRepository(db).collection.find(
-        {"project_id": project_id, "scan_id": scan_id}, _EXPORT_PROJECTION
-    ).sort("name", 1)
+    cursor = (
+        CryptoAssetRepository(db)
+        .collection.find({"project_id": project_id, "scan_id": scan_id}, _EXPORT_PROJECTION)
+        .sort("name", 1)
+    )
     async for doc in cursor:
         yield _to_item(doc).model_dump()

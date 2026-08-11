@@ -14,8 +14,16 @@ from app.repositories.findings import FindingRepository
 from app.schemas.inventory import ComponentItem
 
 COMPONENT_COLUMNS = [
-    "name", "version", "latest_version", "ecosystem",
-    "license", "license_category", "direct", "eol", "outdated", "purl",
+    "name",
+    "version",
+    "latest_version",
+    "ecosystem",
+    "license",
+    "license_category",
+    "direct",
+    "eol",
+    "outdated",
+    "purl",
 ]
 
 _SORT_FIELDS = {"name", "version", "type", "license", "direct"}
@@ -120,10 +128,7 @@ async def get_components_page(
     else:
         sort_spec = [(sort_field, direction)] if sort_field == "name" else [(sort_field, direction), ("name", 1)]
         cursor = (
-            deps.collection.find(query, _DEP_PROJECTION)
-            .sort(sort_spec)
-            .skip((page - 1) * page_size)
-            .limit(page_size)
+            deps.collection.find(query, _DEP_PROJECTION).sort(sort_spec).skip((page - 1) * page_size).limit(page_size)
         )
         docs = await cursor.to_list(page_size)
         enrichment = await _enrichment_by_purl(db, [d["purl"] for d in docs if d.get("purl")])

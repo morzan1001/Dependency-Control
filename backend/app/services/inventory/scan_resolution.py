@@ -29,9 +29,7 @@ async def latest_completed_scans_by_branch(db: AsyncIOMotorDatabase, project: Pr
     return scans
 
 
-async def resolve_inventory_scan(
-    db: AsyncIOMotorDatabase, project: Project, branch: str | None
-) -> Scan | None:
+async def resolve_inventory_scan(db: AsyncIOMotorDatabase, project: Project, branch: str | None) -> Scan | None:
     if branch:
         if branch in (project.deleted_branches or []):
             return None

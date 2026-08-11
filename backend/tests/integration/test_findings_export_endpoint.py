@@ -56,7 +56,9 @@ async def test_export_covers_latest_scan_of_each_active_branch(client, db, membe
     await _seed_scan(db, "s-pending", "feat", status="processing")  # branch skipped: no completed scan
     await _seed_finding(db, "s-main-old", finding_id="CVE-OLD")
     await _seed_finding(
-        db, "s-main", finding_id="CVE-1",
+        db,
+        "s-main",
+        finding_id="CVE-1",
         details={"epss_score": 0.97, "in_kev": True, "fixed_version": "4.17.21"},
     )
     await _seed_finding(db, "s-dev", finding_id="CVE-2", severity="CRITICAL")
@@ -89,9 +91,14 @@ async def test_rows_sorted_by_severity_within_branch(client, db, member_auth_hea
 async def test_license_and_waived_columns(client, db, member_auth_headers):
     await _seed_scan(db, "s1", "main")
     await _seed_finding(
-        db, "s1", finding_id="LIC-GPL", ftype="license", severity="MEDIUM",
+        db,
+        "s1",
+        finding_id="LIC-GPL",
+        ftype="license",
+        severity="MEDIUM",
         details={"license": "GPL-3.0-only", "category": "strong_copyleft"},
-        waived=True, waiver_reason="approved by legal",
+        waived=True,
+        waiver_reason="approved by legal",
     )
 
     row = _parse(await client.get(f"/api/v1/projects/{_PID}/export/csv", headers=member_auth_headers))[0]
@@ -116,8 +123,13 @@ async def test_export_includes_every_finding_type(client, db, member_auth_header
     await _seed_scan(db, "s1", "main")
     await _seed_finding(db, "s1", finding_id="CVE-1")
     await _seed_finding(
-        db, "s1", finding_id="SECRET-1", ftype="secret", severity="HIGH",
-        component="config.yaml", version="",
+        db,
+        "s1",
+        finding_id="SECRET-1",
+        ftype="secret",
+        severity="HIGH",
+        component="config.yaml",
+        version="",
     )
 
     rows = _parse(await client.get(f"/api/v1/projects/{_PID}/export/csv", headers=member_auth_headers))

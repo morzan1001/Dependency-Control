@@ -12,24 +12,43 @@ _NOW = datetime(2026, 8, 10, 12, 0, tzinfo=timezone.utc)
 
 async def _seed_scan(db, scan_id="s1", branch="main"):
     await db.scans.insert_one(
-        {"_id": scan_id, "project_id": _PID, "branch": branch, "status": "completed",
-         "created_at": _NOW, "commit_hash": "abc123"}
+        {
+            "_id": scan_id,
+            "project_id": _PID,
+            "branch": branch,
+            "status": "completed",
+            "created_at": _NOW,
+            "commit_hash": "abc123",
+        }
     )
 
 
 async def _seed_dep(db, scan_id, name, *, direct=False, dep_type="npm", license_id=None, purl=None, version="1.0.0"):
     await db.dependencies.insert_one(
-        {"project_id": _PID, "scan_id": scan_id, "name": name, "version": version,
-         "type": dep_type, "direct": direct, "license": license_id,
-         "purl": purl or f"pkg:{dep_type}/{name}@{version}"}
+        {
+            "project_id": _PID,
+            "scan_id": scan_id,
+            "name": name,
+            "version": version,
+            "type": dep_type,
+            "direct": direct,
+            "license": license_id,
+            "purl": purl or f"pkg:{dep_type}/{name}@{version}",
+        }
     )
 
 
 async def _seed_crypto(db, scan_id, name, *, asset_type="algorithm", primitive=None, locations=None):
     await db.crypto_assets.insert_one(
-        {"project_id": _PID, "scan_id": scan_id, "bom_ref": name, "name": name,
-         "asset_type": asset_type, "primitive": primitive,
-         "occurrence_locations": locations or []}
+        {
+            "project_id": _PID,
+            "scan_id": scan_id,
+            "bom_ref": name,
+            "name": name,
+            "asset_type": asset_type,
+            "primitive": primitive,
+            "occurrence_locations": locations or [],
+        }
     )
 
 
@@ -44,8 +63,12 @@ async def test_stats_counts_and_scan_context(client, db, member_auth_headers):
 
     assert resp.status_code == 200
     body = resp.json()
-    assert body["scan"] == {"scan_id": "s1", "branch": "main",
-                            "created_at": body["scan"]["created_at"], "commit_hash": "abc123"}
+    assert body["scan"] == {
+        "scan_id": "s1",
+        "branch": "main",
+        "created_at": body["scan"]["created_at"],
+        "commit_hash": "abc123",
+    }
     assert body["components_total"] == 3
     assert body["direct_count"] == 1
     assert body["transitive_count"] == 2
@@ -75,9 +98,19 @@ def _parse_csv(resp) -> list[dict]:
 async def _seed_lifecycle_finding(db, scan_id, component, version, ftype, latest=None):
     details = {"latest_version": latest} if latest else {}
     await db.findings.insert_one(
-        {"project_id": _PID, "scan_id": scan_id, "finding_id": f"{ftype}-{component}",
-         "type": ftype, "severity": "LOW", "component": component, "version": version,
-         "description": "", "scanners": ["deps_dev"], "details": details, "waived": False}
+        {
+            "project_id": _PID,
+            "scan_id": scan_id,
+            "finding_id": f"{ftype}-{component}",
+            "type": ftype,
+            "severity": "LOW",
+            "component": component,
+            "version": version,
+            "description": "",
+            "scanners": ["deps_dev"],
+            "details": details,
+            "waived": False,
+        }
     )
 
 
@@ -92,9 +125,7 @@ async def test_components_page_merges_license_and_lifecycle(client, db, member_a
         {"purl": "pkg:npm/leftpad@0.9.0", "license": "ISC", "license_category": "permissive"}
     )
 
-    resp = await client.get(
-        f"/api/v1/projects/{_PID}/inventory/components", headers=member_auth_headers
-    )
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/components", headers=member_auth_headers)
 
     assert resp.status_code == 200
     body = resp.json()
@@ -104,7 +135,7 @@ async def test_components_page_merges_license_and_lifecycle(client, db, member_a
     assert by_name["lodash"]["latest_version"] == "4.17.21"
     assert by_name["lodash"]["license"] == "MIT"
     assert by_name["leftpad"]["eol"] is True
-    assert by_name["leftpad"]["license"] == "ISC"          # enrichment fallback
+    assert by_name["leftpad"]["license"] == "ISC"  # enrichment fallback
     assert by_name["leftpad"]["license_category"] == "permissive"
 
 
@@ -131,9 +162,7 @@ async def test_components_export_streams_all_rows_with_purl(client, db, member_a
     for i in range(3):
         await _seed_dep(db, "s1", f"pkg-{i}")
 
-    resp = await client.get(
-        f"/api/v1/projects/{_PID}/inventory/components/export", headers=member_auth_headers
-    )
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/components/export", headers=member_auth_headers)
 
     assert resp.status_code == 200
     rows = _parse_csv(resp)
@@ -151,9 +180,7 @@ async def test_components_export_merges_lifecycle_and_enrichment(client, db, mem
         {"purl": "pkg:npm/leftpad@0.9.0", "license": "ISC", "license_category": "permissive"}
     )
 
-    resp = await client.get(
-        f"/api/v1/projects/{_PID}/inventory/components/export", headers=member_auth_headers
-    )
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/components/export", headers=member_auth_headers)
 
     by_name = {r["name"]: r for r in _parse_csv(resp)}
     assert by_name["lodash"]["latest_version"] == "9.9.9"
@@ -236,8 +263,12 @@ async def test_licenses_grouped_with_category_and_unknown_bucket(client, db, mem
     await _seed_dep(db, "s1", "c", license_id="GPL-3.0-only", purl="pkg:npm/c@1.0.0")
     await _seed_dep(db, "s1", "d")
     await db.dependency_enrichments.insert_one(
-        {"purl": "pkg:npm/c@1.0.0", "license": "GPL-3.0-only",
-         "license_category": "strong_copyleft", "license_risks": ["copyleft obligations"]}
+        {
+            "purl": "pkg:npm/c@1.0.0",
+            "license": "GPL-3.0-only",
+            "license_category": "strong_copyleft",
+            "license_risks": ["copyleft obligations"],
+        }
     )
 
     resp = await client.get(f"/api/v1/projects/{_PID}/inventory/licenses", headers=member_auth_headers)
@@ -279,9 +310,7 @@ async def test_crypto_page_and_export(client, db, member_auth_headers):
     aes = next(i for i in body["items"] if i["name"] == "AES-256-GCM")
     assert aes["location_count"] == 2
 
-    rows = _parse_csv(
-        await client.get(f"/api/v1/projects/{_PID}/inventory/crypto/export", headers=member_auth_headers)
-    )
+    rows = _parse_csv(await client.get(f"/api/v1/projects/{_PID}/inventory/crypto/export", headers=member_auth_headers))
     assert {r["name"] for r in rows} == {"AES-256-GCM", "MD5"}
     assert next(r for r in rows if r["name"] == "AES-256-GCM")["locations"] == "src/a.py; src/b.py"
 

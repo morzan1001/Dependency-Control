@@ -12,30 +12,66 @@ from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
 
 FINDINGS_COLUMNS = [
-    "branch", "scan_date", "commit",
-    "finding_id", "type", "severity", "title",
-    "component", "version", "purl", "direct", "locations",
-    "epss_score", "epss_percentile", "kev", "reachable", "exploit_maturity",
-    "fixed_version", "recommendation", "license", "license_category",
-    "scanners", "waived", "waiver_reason", "cve_aliases",
+    "branch",
+    "scan_date",
+    "commit",
+    "finding_id",
+    "type",
+    "severity",
+    "title",
+    "component",
+    "version",
+    "purl",
+    "direct",
+    "locations",
+    "epss_score",
+    "epss_percentile",
+    "kev",
+    "reachable",
+    "exploit_maturity",
+    "fixed_version",
+    "recommendation",
+    "license",
+    "license_category",
+    "scanners",
+    "waived",
+    "waiver_reason",
+    "cve_aliases",
 ]
 
 _SEVERITY_ORDER = [
-    Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW,
-    Severity.NEGLIGIBLE, Severity.INFO, Severity.UNKNOWN,
+    Severity.CRITICAL,
+    Severity.HIGH,
+    Severity.MEDIUM,
+    Severity.LOW,
+    Severity.NEGLIGIBLE,
+    Severity.INFO,
+    Severity.UNKNOWN,
 ]
 
 # Findings carry no top-level purl/direct; those come from the dependencies join below.
 # `details.purl` is the license normalizer's nesting spot, used as a fallback.
 _PROJECTION = {
-    "finding_id": 1, "type": 1, "severity": 1, "description": 1,
-    "component": 1, "version": 1,
-    "found_in": 1, "scanners": 1, "aliases": 1,
-    "waived": 1, "waiver_reason": 1,
-    "details.epss_score": 1, "details.epss_percentile": 1,
-    f"details.{DETAILS_KEY_IN_KEV}": 1, "details.exploit_maturity": 1,
-    "details.reachability.is_reachable": 1, "details.fixed_version": 1,
-    "details.recommendation": 1, "details.license": 1, "details.category": 1,
+    "finding_id": 1,
+    "type": 1,
+    "severity": 1,
+    "description": 1,
+    "component": 1,
+    "version": 1,
+    "found_in": 1,
+    "scanners": 1,
+    "aliases": 1,
+    "waived": 1,
+    "waiver_reason": 1,
+    "details.epss_score": 1,
+    "details.epss_percentile": 1,
+    f"details.{DETAILS_KEY_IN_KEV}": 1,
+    "details.exploit_maturity": 1,
+    "details.reachability.is_reachable": 1,
+    "details.fixed_version": 1,
+    "details.recommendation": 1,
+    "details.license": 1,
+    "details.category": 1,
     "details.purl": 1,
 }
 
@@ -90,8 +126,8 @@ async def iter_findings_rows(db: AsyncIOMotorDatabase, scans: list[Scan]) -> Asy
         dep_lookup = await _dependency_lookup(db, scan)
         # One query per severity bucket keeps streaming order without an in-memory sort.
         for severity in _SEVERITY_ORDER:
-            cursor = collection.find(
-                {"scan_id": scan.id, "severity": severity.value}, _PROJECTION
-            ).sort([("type", 1), ("finding_id", 1)])
+            cursor = collection.find({"scan_id": scan.id, "severity": severity.value}, _PROJECTION).sort(
+                [("type", 1), ("finding_id", 1)]
+            )
             async for doc in cursor:
                 yield _row(scan, doc, dep_lookup)

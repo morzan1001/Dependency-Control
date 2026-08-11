@@ -74,9 +74,7 @@ async def inventory_components(
     items, total = await get_components_page(
         db, scan, page=page, page_size=page_size, search=search, sort_by=sort_by, sort_order=sort_order
     )
-    return ComponentsPageResponse(
-        scan=scan_context(scan), items=items, total=total, page=page, page_size=page_size
-    )
+    return ComponentsPageResponse(scan=scan_context(scan), items=items, total=total, page=page, page_size=page_size)
 
 
 @router.get("/projects/{project_id}/inventory/components/export", responses=RESP_AUTH_404)
@@ -129,12 +127,8 @@ async def inventory_crypto(
 ) -> CryptoPageResponse:
     project = await check_project_access(project_id, current_user, db, required_role="viewer")
     scan = await _resolve_scan_or_404(db, project, branch)
-    items, total = await get_crypto_page(
-        db, project.id, scan.id, page=page, page_size=page_size, search=search
-    )
-    return CryptoPageResponse(
-        scan=scan_context(scan), items=items, total=total, page=page, page_size=page_size
-    )
+    items, total = await get_crypto_page(db, project.id, scan.id, page=page, page_size=page_size, search=search)
+    return CryptoPageResponse(scan=scan_context(scan), items=items, total=total, page=page, page_size=page_size)
 
 
 @router.get("/projects/{project_id}/inventory/crypto/export", responses=RESP_AUTH_404)

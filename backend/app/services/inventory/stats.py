@@ -14,9 +14,7 @@ def scan_context(scan: Scan) -> InventoryScanContext:
     )
 
 
-async def build_inventory_stats(
-    db: AsyncIOMotorDatabase, project: Project, scan: Scan
-) -> InventoryStatsResponse:
+async def build_inventory_stats(db: AsyncIOMotorDatabase, project: Project, scan: Scan) -> InventoryStatsResponse:
     deps = DependencyRepository(db)
     total = await deps.count({"scan_id": scan.id})
     direct = await deps.count({"scan_id": scan.id, "direct": True})
