@@ -1,4 +1,16 @@
-# Release 1.8.2
+# Release 1.8.3
+
+## 🐛 Fixes
+
+- fix: read outdated latest version from fixed_version and align inventory card headers (#101) (#0)
+
+## 📦 Build & CI
+
+- chore: bump version to 1.8.3 (#0)
+
+
+
+# Release 1.8.3
 
 ## 📦 Build & CI
 
