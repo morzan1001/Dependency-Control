@@ -6,13 +6,14 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, Download, Filter, Trash2 } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
-import { toast } from "sonner"
+import { downloadFile } from '@/lib/download'
 import { ProjectOverview } from '@/components/project/ProjectOverview'
 import { ProjectScans } from '@/components/project/ProjectScans'
 import { ProjectWaivers } from '@/components/project/ProjectWaivers'
 import { ProjectMembers } from '@/components/project/ProjectMembers'
 import { ProjectSettings } from '@/components/project/ProjectSettings'
 import { ProjectArchives } from '@/components/project/ProjectArchives'
+import { ProjectInventory } from '@/components/project/inventory/ProjectInventory'
 
 
 import { useState, useMemo } from 'react'
@@ -73,22 +74,6 @@ export default function ProjectDetails() {
       } else {
           setSelectedBranches(activeBranchNames)
       }
-  }
-
-  const downloadFile = async (fetchBlob: () => Promise<Blob>, filename: string, errorMsg: string) => {
-    try {
-      const blob = await fetchBlob()
-      const url = window.URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = filename
-      document.body.appendChild(a)
-      a.click()
-      window.URL.revokeObjectURL(url)
-      a.remove()
-    } catch {
-      toast.error(errorMsg)
-    }
   }
 
   const handleExportCsv = () => downloadFile(
@@ -159,6 +144,7 @@ export default function ProjectDetails() {
         <div className="flex items-center justify-between">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="inventory">Inventory</TabsTrigger>
             <TabsTrigger value="scans">Pipelines</TabsTrigger>
             <TabsTrigger value="waivers">Waivers</TabsTrigger>
             <TabsTrigger value="members">Members</TabsTrigger>
@@ -244,7 +230,11 @@ export default function ProjectDetails() {
         <TabsContent value="overview" className="space-y-4">
           <ProjectOverview projectId={project.id} selectedBranches={selectedBranches} />
         </TabsContent>
-        
+
+        <TabsContent value="inventory" className="space-y-4">
+          <ProjectInventory projectId={id!} projectName={project.name} defaultBranch={project.default_branch} />
+        </TabsContent>
+
         <TabsContent value="scans" className="space-y-4">
           <ProjectScans projectId={project.id} />
         </TabsContent>

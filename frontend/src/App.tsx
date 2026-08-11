@@ -15,6 +15,7 @@ const TeamsPage = lazy(() => import('./pages/Teams'))
 const ProjectsPage = lazy(() => import('./pages/Projects'))
 const ProjectDetails = lazy(() => import('./pages/ProjectDetails'))
 const ScanDetails = lazy(() => import('./pages/ScanDetails'))
+const ScanDelta = lazy(() => import('./pages/ScanDelta'))
 const ProfilePage = lazy(() => import('./pages/Profile'))
 const SystemSettings = lazy(() => import('./pages/SystemSettings'))
 const Broadcasts = lazy(() => import('./pages/Broadcasts'))
@@ -162,6 +163,11 @@ function AppRoutes() {
         <Route path="/projects/:id" element={
           <RequirePermission permission={['project:read', 'project:read_all']}>
             <ProjectDetails />
+          </RequirePermission>
+        } />
+        <Route path="/projects/:id/delta" element={
+          <RequirePermission permission={['project:read', 'project:read_all']}>
+            <ScanDelta />
           </RequirePermission>
         } />
         <Route path="/projects/:projectId/scans/:scanId" element={
