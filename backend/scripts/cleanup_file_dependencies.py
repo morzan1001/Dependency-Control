@@ -21,7 +21,7 @@ DEFAULT_BATCH_SIZE = 5000
 DEFAULT_SLEEP_MS = 100
 
 
-def run_dry_run(collection: Collection[dict[str, Any]]) -> None:
+def print_dry_run_summary(collection: Collection[dict[str, Any]]) -> None:
     total = collection.estimated_document_count()
     print(f"Collection estimated_document_count: {total}")
     try:
@@ -33,13 +33,24 @@ def run_dry_run(collection: Collection[dict[str, Any]]) -> None:
 
 def run_delete(collection: Collection[dict[str, Any]], batch_size: int, sleep_ms: int) -> None:
     deleted_total = 0
+    last_id: Any = None
     while True:
-        batch_ids = [doc["_id"] for doc in collection.find(FILTER, {"_id": 1}).limit(batch_size)]
+        # Walk by _id > last_id instead of re-running find(FILTER) from the start each round:
+        # `type` is unindexed, so a plain limit()-loop would full-scan the collection per batch.
+        # This also makes the run crash-safe — restarting just resumes, since deleted docs no
+        # longer match FILTER.
+        query: dict[str, Any] = dict(FILTER)
+        if last_id is not None:
+            query["_id"] = {"$gt": last_id}
+        batch_ids = [doc["_id"] for doc in collection.find(query, {"_id": 1}).sort("_id", 1).limit(batch_size)]
         if not batch_ids:
             break
-        result = collection.delete_many({"_id": {"$in": batch_ids}})
-        deleted_total += result.deleted_count
+        collection.delete_many({"_id": {"$in": batch_ids}})
+        deleted_total += len(batch_ids)
+        last_id = batch_ids[-1]
         print(f"Deleted so far: {deleted_total}")
+        if len(batch_ids) < batch_size:
+            break
         if sleep_ms > 0:
             time.sleep(sleep_ms / 1000)
     print(f"Done. Total deleted: {deleted_total}")
@@ -66,15 +77,27 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    if args.batch_size < 1:
+        parser.error("--batch-size must be >= 1")
+    if args.sleep_ms < 0:
+        parser.error("--sleep-ms must be >= 0")
+
     client: MongoClient = MongoClient(settings.MONGODB_URL)
     try:
-        collection = client.get_default_database().dependencies
+        # Select the database explicitly rather than via the connection string's default-db
+        # segment, matching every other DB access in this codebase.
+        db = client[settings.DATABASE_NAME]
+        collection = db.dependencies
+        print(f"Database: {db.name}, Collection: {collection.name}")
+        print_dry_run_summary(collection)
 
         if args.execute:
             run_delete(collection, args.batch_size, args.sleep_ms)
         else:
-            print(f"Dry-run (pass --execute to delete). Filter: {FILTER}")
-            run_dry_run(collection)
+            print("Dry-run (pass --execute to delete).")
+    except Exception as exc:
+        print(f"cleanup_file_dependencies: ERROR — {exc}", file=sys.stderr)
+        return 1
     finally:
         client.close()
 
