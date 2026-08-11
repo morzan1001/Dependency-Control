@@ -23,7 +23,7 @@ interface CryptoTableProps {
 export function CryptoTable({ projectId, projectName, branch }: CryptoTableProps) {
   const [page, setPage] = useState(1)
 
-  const { data, isLoading, isPlaceholderData } = useInventoryCrypto(projectId, branch, {
+  const { data, isPending, isError, isPlaceholderData, refetch } = useInventoryCrypto(projectId, branch, {
     page, pageSize: DEFAULT_PAGE_SIZE,
   })
 
@@ -36,7 +36,7 @@ export function CryptoTable({ projectId, projectName, branch }: CryptoTableProps
   )
 
   return (
-    <Card>
+    <Card className="flex h-full flex-col">
       <CardHeader>
         <div className="flex items-center justify-between">
           <div>
@@ -49,7 +49,7 @@ export function CryptoTable({ projectId, projectName, branch }: CryptoTableProps
           </Button>
         </div>
       </CardHeader>
-      <CardContent>
+      <CardContent className="flex-1">
         <div className="rounded-md border">
           <Table>
             <TableHeader>
@@ -62,15 +62,25 @@ export function CryptoTable({ projectId, projectName, branch }: CryptoTableProps
                 <TableHead>Locations</TableHead>
               </TableRow>
             </TableHeader>
-            <TableBody>
-              {isLoading && ['ca1', 'ca2', 'ca3'].map((id) => (
+            <TableBody className={isPlaceholderData ? 'opacity-60' : undefined}>
+              {isPending && ['ca1', 'ca2', 'ca3'].map((id) => (
                 <TableRow key={id}>
                   {['n', 't', 'p', 'v', 'k', 'l'].map((c) => (
                     <TableCell key={c}><Skeleton className="h-5 w-20" /></TableCell>
                   ))}
                 </TableRow>
               ))}
-              {!isLoading && data?.items.map((item, index) => (
+              {!isPending && isError && (
+                <TableRow>
+                  <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
+                    <div className="flex flex-col items-center gap-2">
+                      <span>Failed to load crypto assets.</span>
+                      <Button variant="outline" size="sm" onClick={() => refetch()}>Retry</Button>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              )}
+              {!isPending && !isError && data?.items.map((item, index) => (
                 <TableRow key={`${item.name}-${item.asset_type}-${index}`}>
                   <TableCell className="font-medium">{item.name}</TableCell>
                   <TableCell><Badge variant="secondary">{item.asset_type}</Badge></TableCell>
@@ -80,7 +90,7 @@ export function CryptoTable({ projectId, projectName, branch }: CryptoTableProps
                   <TableCell title={item.locations.join('\n')}>{item.location_count}</TableCell>
                 </TableRow>
               ))}
-              {!isLoading && (data?.items.length ?? 0) === 0 && (
+              {!isPending && !isError && data?.items.length === 0 && (
                 <TableRow>
                   <TableCell colSpan={6} className="py-8 text-center text-muted-foreground">
                     No cryptographic assets found.

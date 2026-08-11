@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
@@ -7,6 +8,7 @@ import { GitBranch, PackageSearch } from 'lucide-react'
 import { useProjectBranches } from '@/hooks/queries/use-projects'
 import { useInventoryStats } from '@/hooks/queries/use-inventory'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
+import { ApiError } from '@/api/client'
 import { InventoryStatCards } from './InventoryStatCards'
 import { ComponentsTable } from './ComponentsTable'
 import { LicensesTable } from './LicensesTable'
@@ -27,7 +29,10 @@ export function ProjectInventory({ projectId, projectName, defaultBranch }: Proj
   const fallbackBranch = defaultBranch && activeBranches.includes(defaultBranch) ? defaultBranch : activeBranches[0]
   const branch = selectedBranch ?? fallbackBranch
 
-  const { data: stats, isLoading, isError } = useInventoryStats(projectId, branch)
+  const {
+    data: stats, isLoading, isError, error: statsError, refetch: refetchStats,
+  } = useInventoryStats(projectId, branch)
+  const statsStatus = (statsError as ApiError | null)?.response?.status
 
   return (
     <div className="space-y-4">
@@ -66,27 +71,40 @@ export function ProjectInventory({ projectId, projectName, defaultBranch }: Proj
         </Card>
       )}
 
-      {branchesLoaded && branch && (
-        isError ? (
-          <Card>
-            <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
-              <PackageSearch className="h-8 w-8 text-muted-foreground" />
-              <p className="font-medium">No completed scan on this branch</p>
-              <p className="text-sm text-muted-foreground">
-                Run a pipeline on {branch} to populate the inventory.
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
-          <>
-            <InventoryStatCards stats={stats} isLoading={isLoading} />
-            <ComponentsTable projectId={projectId} projectName={projectName} branch={branch} />
-            <div className="grid gap-4 lg:grid-cols-2">
-              <LicensesTable projectId={projectId} projectName={projectName} branch={branch} />
-              <CryptoTable projectId={projectId} projectName={projectName} branch={branch} />
-            </div>
-          </>
-        )
+      {branchesLoaded && branch && isError && statsStatus === 404 && (
+        <Card>
+          <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
+            <PackageSearch className="h-8 w-8 text-muted-foreground" />
+            <p className="font-medium">No completed scan on this branch</p>
+            <p className="text-sm text-muted-foreground">
+              Run a pipeline on {branch} to populate the inventory.
+            </p>
+          </CardContent>
+        </Card>
+      )}
+
+      {branchesLoaded && branch && isError && statsStatus !== 404 && (
+        <Card>
+          <CardContent className="flex flex-col items-center gap-2 py-12 text-center">
+            <PackageSearch className="h-8 w-8 text-muted-foreground" />
+            <p className="font-medium">Could not load inventory.</p>
+            <p className="text-sm text-muted-foreground">
+              Something went wrong loading the inventory for {branch}.
+            </p>
+            <Button variant="outline" size="sm" onClick={() => refetchStats()}>Retry</Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {branchesLoaded && branch && !isError && (
+        <>
+          <InventoryStatCards stats={stats} isLoading={isLoading} />
+          <ComponentsTable projectId={projectId} projectName={projectName} branch={branch} />
+          <div className="grid items-stretch gap-4 lg:grid-cols-2">
+            <LicensesTable projectId={projectId} projectName={projectName} branch={branch} />
+            <CryptoTable projectId={projectId} projectName={projectName} branch={branch} />
+          </div>
+        </>
       )}
     </div>
   )

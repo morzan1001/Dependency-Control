@@ -48,4 +48,27 @@ describe('CryptoTable', () => {
     const [, filename] = vi.mocked(downloadModule.downloadFile).mock.calls[0]
     expect(filename).toMatch(/proj_crypto_main_\d{4}-\d{2}-\d{2}\.csv/)
   })
+
+  it('shows an error row with a retry button when loading fails', async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getCrypto).mockRejectedValue(
+      Object.assign(new Error('not found'), { response: { status: 404 } }),
+    )
+    renderTable()
+
+    await waitFor(() => expect(screen.getByText('Failed to load crypto assets.')).toBeInTheDocument())
+    expect(screen.queryByText(/no cryptographic assets found/i)).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /retry/i })).toBeInTheDocument()
+  })
+
+  it('reloads the table when Retry is clicked after a failure', async () => {
+    vi.mocked(inventoryApiModule.inventoryApi.getCrypto)
+      .mockRejectedValueOnce(Object.assign(new Error('not found'), { response: { status: 404 } }))
+      .mockResolvedValueOnce(page)
+    renderTable()
+    await waitFor(() => expect(screen.getByText('Failed to load crypto assets.')).toBeInTheDocument())
+
+    fireEvent.click(screen.getByRole('button', { name: /retry/i }))
+
+    await waitFor(() => expect(screen.getByText('TLS handshake')).toBeInTheDocument())
+  })
 })
