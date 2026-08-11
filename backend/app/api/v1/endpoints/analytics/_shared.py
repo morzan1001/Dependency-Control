@@ -50,11 +50,14 @@ async def _get_enrichment_info(enrichment_repo: DependencyEnrichmentRepository, 
         result["deps_dev_data"] = deps_dev_data
         result["enrichment_sources"].append("deps_dev")
 
-    license_info = enrichment.get("license_compliance")
-    if license_info:
+    # DependencyEnrichment.to_mongo_dict() stores these top-level, not nested under license_compliance.
+    license_category = enrichment.get("license_category")
+    license_risks = enrichment.get("license_risks")
+    license_obligations = enrichment.get("license_obligations")
+    if license_category or license_risks or license_obligations:
         result["enrichment_sources"].append("license_compliance")
-        result["license_category"] = license_info.get("category")
-        result["license_risks"] = license_info.get("risks", [])
-        result["license_obligations"] = license_info.get("obligations", [])
+        result["license_category"] = license_category
+        result["license_risks"] = license_risks or []
+        result["license_obligations"] = license_obligations or []
 
     return result

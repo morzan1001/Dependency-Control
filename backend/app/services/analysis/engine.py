@@ -396,8 +396,18 @@ async def _enrich_dependencies(dependency_enrichments: dict[str, Any], scan_id: 
         return
 
     logger.info(f"Enriching {len(dependency_enrichments)} dependencies with aggregated metadata")
+
+    # purl is the cross-scan join key for dependency_enrichments; name@version only identifies a dep within this scan.
+    purl_by_key: dict[str, str] = {}
+    async for dep_doc in db.dependencies.find({"scan_id": scan_id}, {"name": 1, "version": 1, "purl": 1}):
+        purl = dep_doc.get("purl")
+        if purl:
+            purl_by_key[f"{dep_doc.get('name')}@{dep_doc.get('version')}"] = purl
+
     bulk_ops: list[UpdateOne] = []
+    enrichment_ops: list[UpdateOne] = []
     total_updated = 0
+    total_enrichments_persisted = 0
 
     for key, enrichment_data in dependency_enrichments.items():
         parts = key.rsplit("@", 1)
@@ -412,6 +422,16 @@ async def _enrich_dependencies(dependency_enrichments: dict[str, Any], scan_id: 
                 )
             )
 
+            purl = purl_by_key.get(key)
+            if purl:
+                enrichment_ops.append(
+                    UpdateOne(
+                        {"purl": purl},
+                        {"$set": {**enrichment_data, "purl": purl}},
+                        upsert=True,
+                    )
+                )
+
         if len(bulk_ops) >= _BULK_CHUNK_SIZE:
             try:
                 await db.dependencies.bulk_write(bulk_ops, ordered=False)
@@ -420,6 +440,14 @@ async def _enrich_dependencies(dependency_enrichments: dict[str, Any], scan_id: 
                 logger.exception("Failed to bulk update dependencies: %s", e)
             bulk_ops.clear()
 
+        if len(enrichment_ops) >= _BULK_CHUNK_SIZE:
+            try:
+                await db.dependency_enrichments.bulk_write(enrichment_ops, ordered=False)
+                total_enrichments_persisted += len(enrichment_ops)
+            except Exception as e:
+                logger.exception("Failed to bulk upsert dependency enrichments: %s", e)
+            enrichment_ops.clear()
+
     if bulk_ops:
         try:
             await db.dependencies.bulk_write(bulk_ops, ordered=False)
@@ -427,7 +455,15 @@ async def _enrich_dependencies(dependency_enrichments: dict[str, Any], scan_id: 
         except Exception as e:
             logger.exception("Failed to bulk update dependencies: %s", e)
 
+    if enrichment_ops:
+        try:
+            await db.dependency_enrichments.bulk_write(enrichment_ops, ordered=False)
+            total_enrichments_persisted += len(enrichment_ops)
+        except Exception as e:
+            logger.exception("Failed to bulk upsert dependency enrichments: %s", e)
+
     logger.info(f"Bulk updated {total_updated} dependencies.")
+    logger.info(f"Upserted {total_enrichments_persisted} dependency enrichments.")
 
 
 async def _run_epss_kev_enrichment(
