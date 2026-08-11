@@ -1,4 +1,23 @@
-# Release 1.7.8
+# Release 1.8.0
+
+## 🚀 Features
+
+- feat(secrets): capture git origin commit and current-tree status (#0)
+- feat(secrets): score secrets by verified + current-tree status (#0)
+- feat(stats): add SecretPrioritizedCounts model (#0)
+- feat(stats): compute secret_priority per scan (#0)
+- feat(types): add secret git-context and priority fields (#0)
+- feat(findings-table): show tree-status badge for secret findings (#0)
+- feat(finding-details): show origin commit and tree status for secrets (#0)
+- feat(project-overview): add secret priority dashboard card (#0)
+
+## 🐛 Fixes
+
+- fix(finding-details): format commit timestamp with formatDate (#0)
+
+
+
+# Release 1.8.0
 
 ## 🐛 Fixes
 
