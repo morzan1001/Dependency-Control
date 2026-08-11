@@ -1,12 +1,7 @@
-"""One-off cleanup: remove `dependencies` docs with `type: "file"` left over from CycloneDX file-catalog ingestion.
+"""One-off cleanup for `dependencies` docs with `type: "file"` from CycloneDX file-catalog ingestion.
 
-Run via `kubectl exec` into the backend pod, e.g.:
-    python -m scripts.cleanup_file_dependencies          # dry-run: count only
-    python -m scripts.cleanup_file_dependencies --execute
-
-The filter matches ~17.9M docs (56% of the collection) on a Percona PSMDB
-replica set, so deletes run in bounded batches instead of one delete_many —
-a single giant delete would flood the oplog and stall replication.
+Filter matches ~56% of the collection on a Percona PSMDB replica set, so deletes run in
+bounded batches — a single delete_many would flood the oplog and stall replication.
 """
 
 import argparse
