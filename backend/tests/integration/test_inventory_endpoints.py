@@ -23,19 +23,34 @@ async def _seed_scan(db, scan_id="s1", branch="main"):
     )
 
 
-async def _seed_dep(db, scan_id, name, *, direct=False, dep_type="npm", license_id=None, purl=None, version="1.0.0"):
-    await db.dependencies.insert_one(
-        {
-            "project_id": _PID,
-            "scan_id": scan_id,
-            "name": name,
-            "version": version,
-            "type": dep_type,
-            "direct": direct,
-            "license": license_id,
-            "purl": purl or f"pkg:{dep_type}/{name}@{version}",
-        }
-    )
+async def _seed_dep(
+    db,
+    scan_id,
+    name,
+    *,
+    direct=False,
+    dep_type="npm",
+    license_id=None,
+    purl=None,
+    version="1.0.0",
+    license_category=None,
+    license_risks=None,
+):
+    doc = {
+        "project_id": _PID,
+        "scan_id": scan_id,
+        "name": name,
+        "version": version,
+        "type": dep_type,
+        "direct": direct,
+        "license": license_id,
+        "purl": purl or f"pkg:{dep_type}/{name}@{version}",
+    }
+    if license_category is not None:
+        doc["license_category"] = license_category
+    if license_risks is not None:
+        doc["license_risks"] = license_risks
+    await db.dependencies.insert_one(doc)
 
 
 async def _seed_crypto(db, scan_id, name, *, asset_type="algorithm", primitive=None, locations=None):
@@ -137,6 +152,32 @@ async def test_components_page_merges_license_and_lifecycle(client, db, member_a
     assert by_name["leftpad"]["eol"] is True
     assert by_name["leftpad"]["license"] == "ISC"  # enrichment fallback
     assert by_name["leftpad"]["license_category"] == "permissive"
+
+
+@pytest.mark.asyncio
+async def test_components_page_reads_license_category_from_dependency_doc(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(db, "s1", "c", license_id="GPL-3.0-only", license_category="strong_copyleft")
+
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/components", headers=member_auth_headers)
+
+    assert resp.status_code == 200
+    item = resp.json()["items"][0]
+    assert item["license_category"] == "strong_copyleft"
+
+
+@pytest.mark.asyncio
+async def test_components_dependency_doc_license_category_wins_over_enrichment(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(
+        db, "s1", "c", license_id="GPL-3.0-only", purl="pkg:npm/c@1.0.0", license_category="strong_copyleft"
+    )
+    await db.dependency_enrichments.insert_one({"purl": "pkg:npm/c@1.0.0", "license_category": "permissive"})
+
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/components", headers=member_auth_headers)
+
+    assert resp.status_code == 200
+    assert resp.json()["items"][0]["license_category"] == "strong_copyleft"
 
 
 @pytest.mark.asyncio
@@ -280,6 +321,51 @@ async def test_licenses_grouped_with_category_and_unknown_bucket(client, db, mem
     assert items["GPL-3.0-only"]["category"] == "strong_copyleft"
     assert items["GPL-3.0-only"]["risks"] == ["copyleft obligations"]
     assert items["unknown"]["component_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_licenses_reads_category_and_risks_from_dependency_doc(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(
+        db,
+        "s1",
+        "c",
+        license_id="GPL-3.0-only",
+        purl="pkg:npm/c@1.0.0",
+        license_category="strong_copyleft",
+        license_risks=["copyleft obligations"],
+    )
+
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/licenses", headers=member_auth_headers)
+
+    assert resp.status_code == 200
+    items = {i["license"]: i for i in resp.json()["items"]}
+    assert items["GPL-3.0-only"]["category"] == "strong_copyleft"
+    assert items["GPL-3.0-only"]["risks"] == ["copyleft obligations"]
+
+
+@pytest.mark.asyncio
+async def test_licenses_dependency_doc_fields_win_over_enrichment(client, db, member_auth_headers):
+    await _seed_scan(db)
+    await _seed_dep(
+        db,
+        "s1",
+        "c",
+        license_id="GPL-3.0-only",
+        purl="pkg:npm/c@1.0.0",
+        license_category="strong_copyleft",
+        license_risks=["copyleft obligations"],
+    )
+    await db.dependency_enrichments.insert_one(
+        {"purl": "pkg:npm/c@1.0.0", "license_category": "permissive", "license_risks": ["should not be used"]}
+    )
+
+    resp = await client.get(f"/api/v1/projects/{_PID}/inventory/licenses", headers=member_auth_headers)
+
+    assert resp.status_code == 200
+    items = {i["license"]: i for i in resp.json()["items"]}
+    assert items["GPL-3.0-only"]["category"] == "strong_copyleft"
+    assert items["GPL-3.0-only"]["risks"] == ["copyleft obligations"]
 
 
 @pytest.mark.asyncio

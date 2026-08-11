@@ -29,7 +29,7 @@ COMPONENT_COLUMNS = [
 _SORT_FIELDS = {"name", "version", "type", "license", "direct"}
 _ENRICHMENT_CHUNK = 500
 
-_DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "license": 1, "direct": 1, "purl": 1}
+_DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "license": 1, "license_category": 1, "direct": 1, "purl": 1}
 
 
 async def _lifecycle_by_component(db: AsyncIOMotorDatabase, scan_id: str) -> dict[str, dict[str, Any]]:
@@ -70,7 +70,7 @@ def _to_item(
         latest_version=life.get("latest_version"),
         ecosystem=doc.get("type") or "unknown",
         license=doc.get("license") or enriched.get("license"),
-        license_category=enriched.get("license_category"),
+        license_category=doc.get("license_category") or enriched.get("license_category"),
         direct=bool(doc.get("direct")),
         eol=bool(life.get("eol")),
         outdated=bool(life.get("outdated")),

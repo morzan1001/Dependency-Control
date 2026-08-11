@@ -19,18 +19,33 @@ UNKNOWN_LICENSE = "unknown"
 _SAMPLE_PURLS_PER_LICENSE = 5
 
 
-def _add_to_group(groups: dict[str, dict[str, Any]], license_id: str, component: str, purl: str | None) -> None:
-    group = groups.setdefault(license_id, {"components": [], "component_names": set(), "purls": []})
+def _add_to_group(
+    groups: dict[str, dict[str, Any]],
+    license_id: str,
+    component: str,
+    purl: str | None,
+    category: str | None,
+    risks: list[str] | None,
+) -> None:
+    group = groups.setdefault(
+        license_id, {"components": [], "component_names": set(), "purls": [], "category": None, "risks": []}
+    )
     if component not in group["component_names"]:
         group["component_names"].add(component)
         group["components"].append(component)
     if purl and len(group["purls"]) < _SAMPLE_PURLS_PER_LICENSE:
         group["purls"].append(purl)
+    group["category"] = group["category"] or category
+    for risk in risks or []:
+        if risk not in group["risks"]:
+            group["risks"].append(risk)
 
 
 def _aggregate_category_risks(group: dict[str, Any], enrichment: dict[str, Any]) -> tuple[str | None, list[str]]:
-    category = None
-    risks: list[str] = []
+    category = group["category"]
+    risks: list[str] = list(group["risks"])
+    if category and risks:
+        return category, risks
     for purl in group["purls"]:
         doc = enrichment.get(purl)
         if not doc:
@@ -45,15 +60,19 @@ def _aggregate_category_risks(group: dict[str, Any], enrichment: dict[str, Any])
 async def build_license_rows(db: AsyncIOMotorDatabase, scan: Scan) -> list[LicenseItem]:
     groups: dict[str, dict[str, Any]] = {}
     cursor = DependencyRepository(db).collection.find(
-        {"scan_id": scan.id}, {"name": 1, "version": 1, "license": 1, "purl": 1}
+        {"scan_id": scan.id},
+        {"name": 1, "version": 1, "license": 1, "purl": 1, "license_category": 1, "license_risks": 1},
     )
     async for doc in cursor:
         tokens = tokenize_license_string(doc.get("license") or "") or [UNKNOWN_LICENSE]
         component = f"{doc.get('name')}@{doc.get('version')}"
         for license_id in tokens:
-            _add_to_group(groups, license_id, component, doc.get("purl"))
+            _add_to_group(
+                groups, license_id, component, doc.get("purl"), doc.get("license_category"), doc.get("license_risks")
+            )
 
-    sample_purls = [p for g in groups.values() for p in g["purls"]]
+    # Skip the enrichment lookup entirely for groups the dependency docs already fully cover.
+    sample_purls = [p for g in groups.values() if not g["category"] or not g["risks"] for p in g["purls"]]
     enrichment = await DependencyEnrichmentRepository(db).get_many_by_purls(sample_purls)
 
     items: list[LicenseItem] = []
