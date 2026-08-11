@@ -102,8 +102,8 @@ def api_key_headers():
     return {"X-API-Key": "test-project-id.dummy-secret"}
 
 
-@pytest.fixture
-def member_auth_headers(_project):
+@pytest_asyncio.fixture
+async def member_auth_headers(_project, db):
     from jose import jwt
 
     from app.core.config import settings
@@ -119,10 +119,20 @@ def member_auth_headers(_project):
         is_active=True,
     )
 
-    member = ProjectMember(user_id=str(user.id), role="viewer")
+    # _fake_get_current_user derives current_user.id from the JWT "sub" (username),
+    # so membership must key off the username too, not User.id.
+    member = ProjectMember(user_id=user.username, role="viewer")
     if not _project.members:
         _project.members = []
     _project.members.append(member)
+
+    # The `client` fixture may have already persisted a member-less snapshot of
+    # `_project`; push the membership into the DB doc so check_project_access sees it.
+    await db.projects.update_one(
+        {"_id": str(_project.id)},
+        {"$set": {"members": [m.model_dump(by_alias=True) for m in _project.members]}},
+        upsert=True,
+    )
 
     payload = {
         "sub": user.username,

@@ -15,22 +15,10 @@ vi.mock('@/hooks/queries/use-projects', () => ({
   useProjectBranches: (...args: unknown[]) => mockUseProjectBranches(...args),
 }))
 
-vi.mock('react-router-dom', () => ({
-  useNavigate: () => vi.fn(),
-}))
+const mockNavigate = vi.fn()
 
-// Expose the scan pair the Delta button hands to the modal.
-vi.mock('@/components/scans/delta/ScanDeltaModal', () => ({
-  ScanDeltaModal: ({
-    fromScanId,
-    toScanId,
-  }: {
-    fromScanId: string | null
-    toScanId: string | null
-  }) =>
-    fromScanId && toScanId ? (
-      <div data-testid="delta-modal" data-from={fromScanId} data-to={toScanId} />
-    ) : null,
+vi.mock('react-router-dom', () => ({
+  useNavigate: () => mockNavigate,
 }))
 
 function makeScan(overrides: Partial<Scan>): Scan {
@@ -74,9 +62,7 @@ describe('ProjectScans - Delta comparison partner', () => {
 
     fireEvent.click(deltaButtons[0])
 
-    const modal = screen.getByTestId('delta-modal')
-    expect(modal).toHaveAttribute('data-from', 'main-old')
-    expect(modal).toHaveAttribute('data-to', 'main-new')
+    expect(mockNavigate).toHaveBeenCalledWith('/projects/p1/delta?from=main-old&to=main-new')
   })
 
   it('does not offer a Delta when the only same-branch neighbor is a different branch', () => {

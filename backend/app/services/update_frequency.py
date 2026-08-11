@@ -439,7 +439,8 @@ def _build_slowest_packages(
         SlowPackage(
             name=pkg_name,
             type=dep_type_map.get(pkg_name, "unknown"),
-            current_version=final_versions.get(pkg_name) or package_latest_info.get(pkg_name, {}).get("current_version"),
+            current_version=final_versions.get(pkg_name)
+            or package_latest_info.get(pkg_name, {}).get("current_version"),
             latest_version=package_latest_info.get(pkg_name, {}).get("latest_version"),
             scans_outdated=count,
         )
@@ -685,9 +686,7 @@ async def compute_update_frequency(
     ``since`` set, all scans newer than the cutoff are analysed (up to
     ``hard_limit``). Otherwise the newest ``max_scans`` are taken.
     """
-    analyzed_branch = branch or await _resolve_primary_branch(
-        scan_repo, project_id, deleted_branches, default_branch
-    )
+    analyzed_branch = branch or await _resolve_primary_branch(scan_repo, project_id, deleted_branches, default_branch)
     if analyzed_branch is None:
         return _empty_metrics(project_id, project_name, 0, "", branch=None)
 

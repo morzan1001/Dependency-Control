@@ -75,8 +75,7 @@ def _comparison_cache_key(
 ) -> str:
     """Cache key carrying a completion-monotonic token across the scoped projects."""
     return (
-        f"{CacheKeys.update_frequency_comparison(user_id, team_id)}"
-        f":m{max_scans}:w{window_days or 0}:v{version_token}"
+        f"{CacheKeys.update_frequency_comparison(user_id, team_id)}:m{max_scans}:w{window_days or 0}:v{version_token}"
     )
 
 

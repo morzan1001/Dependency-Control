@@ -637,7 +637,9 @@ class TestIdentityKeying:
     @pytest.mark.asyncio
     async def test_same_name_different_namespaces_do_not_collide(self):
         # Two maven groups both shipping "jackson-core"; document order flips between scans.
-        old_core = self._raw_dep("s1", "jackson-core", "2.21.4", "pkg:maven/com.fasterxml.jackson.core/jackson-core@2.21.4")
+        old_core = self._raw_dep(
+            "s1", "jackson-core", "2.21.4", "pkg:maven/com.fasterxml.jackson.core/jackson-core@2.21.4"
+        )
         new_core = self._raw_dep("s1", "jackson-core", "3.1.4", "pkg:maven/tools.jackson.core/jackson-core@3.1.4")
         deps = {
             "s1": [old_core, new_core],

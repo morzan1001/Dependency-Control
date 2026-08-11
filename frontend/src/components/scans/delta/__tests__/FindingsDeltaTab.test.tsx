@@ -1,4 +1,4 @@
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FindingsDeltaTab } from "../tabs/FindingsDeltaTab";
@@ -21,9 +21,9 @@ const sampleResponse = {
   to_scan_id: "b",
   project_id: "p1",
   totals: {
-    added: 1,
-    removed: 0,
-    unchanged: 0,
+    added: 2,
+    removed: 1,
+    unchanged: 5,
     changed: 0,
     by_severity: { critical: 1 },
     by_type: { vulnerability: 1 },
@@ -49,10 +49,30 @@ const sampleResponse = {
 describe("FindingsDeltaTab", () => {
   beforeEach(() => vi.clearAllMocks());
 
-  it("renders finding rows", async () => {
+  it("renders finding rows in a table with change and severity badges", async () => {
     (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(sampleResponse);
     renderTab();
     await waitFor(() => expect(screen.getByText("CVE-1")).toBeInTheDocument());
+
+    const table = screen.getByRole("table");
+    expect(within(table).getByText("+ added")).toBeInTheDocument();
+    expect(within(table).getByText("CRITICAL")).toBeInTheDocument();
+  });
+
+  it("renders summary totals from the response", async () => {
+    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(sampleResponse);
+    renderTab();
+    await waitFor(() => expect(screen.getByText("+2")).toBeInTheDocument());
+    expect(screen.getByText("−1")).toBeInTheDocument();
+    expect(screen.getByText("5")).toBeInTheDocument();
+    expect(screen.getByText("Unchanged")).toBeInTheDocument();
+  });
+
+  it("shows skeleton rows while loading", () => {
+    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockReturnValue(new Promise(() => {}));
+    renderTab();
+    const table = screen.getByRole("table");
+    expect(within(table).getAllByRole("row")).toHaveLength(1 + 3); // header + 3 skeleton rows
   });
 
   it("re-fetches when severity filter changes", async () => {
@@ -60,7 +80,7 @@ describe("FindingsDeltaTab", () => {
     renderTab();
     await waitFor(() => expect(api.getScanDelta).toHaveBeenCalledTimes(1));
 
-    const sevToggle = screen.getByRole("button", { name: /critical/i });
+    const sevToggle = screen.getByRole("button", { name: /^critical$/i });
     fireEvent.click(sevToggle);
     await waitFor(() => {
       const calls = (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mock.calls;
