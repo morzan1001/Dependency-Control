@@ -1,5 +1,3 @@
-import csv
-import io
 import json
 import logging
 import re
@@ -8,6 +6,7 @@ from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Response, status
+from fastapi.responses import StreamingResponse
 
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
@@ -68,6 +67,9 @@ from app.schemas.project import (
     RiskyProject,
     ScanFindingsResponse,
 )
+from app.services.inventory.csv_stream import csv_response, export_filename
+from app.services.inventory.findings_export import FINDINGS_COLUMNS, iter_findings_rows
+from app.services.inventory.scan_resolution import latest_completed_scans_by_branch
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
@@ -1467,71 +1469,26 @@ async def remove_project_member(
     raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 
 
-@router.get("/{project_id}/export/csv", summary="Export latest scan results as CSV", responses=RESP_AUTH_404)
+@router.get(
+    "/{project_id}/export/csv",
+    summary="Export findings of the latest scan per active branch as CSV",
+    responses=RESP_AUTH_404,
+)
 async def export_project_csv(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Response:
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+) -> StreamingResponse:
+    project = await check_project_access(project_id, current_user, db, required_role="viewer")
 
-    scan_repo = ScanRepository(db)
+    scans = await latest_completed_scans_by_branch(db, project)
+    if not scans:
+        raise HTTPException(status_code=404, detail="No completed scans found on any active branch")
 
-    # Get latest scan
-    scan = await scan_repo.get_latest_for_project(project_id, status="completed")
-
-    if not scan:
-        raise HTTPException(status_code=404, detail="No completed scans found for this project")
-
-    # Prepare CSV
-    output = io.StringIO()
-    writer = csv.writer(output)
-
-    # Header
-    writer.writerow(
-        [
-            "Component",
-            "Version",
-            "Type",
-            "Vulnerability ID",
-            "Severity",
-            "Description",
-            "Fixed Version",
-        ]
-    )
-
-    # Stream from the complete findings collection, not the capped vulnerability-only
-    # findings_summary, so no findings are dropped and memory stays bounded.
-    finding_repo = FindingRepository(db)
-    async for f_dict in finding_repo.iterate_raw(
-        {"scan_id": scan.id},
-        {
-            "finding_id": 1,
-            "component": 1,
-            "version": 1,
-            "type": 1,
-            "severity": 1,
-            "description": 1,
-            "details.fixed_version": 1,
-        },
-    ):
-        details = f_dict.get("details") or {}
-        writer.writerow(
-            [
-                f_dict.get("component", ""),
-                f_dict.get("version", ""),
-                f_dict.get("type", ""),
-                f_dict.get("finding_id", ""),
-                f_dict.get("severity", ""),
-                f_dict.get("description", ""),
-                details.get("fixed_version", ""),
-            ]
-        )
-
-    return Response(
-        content=output.getvalue(),
-        media_type="text/csv",
-        headers={"Content-Disposition": f"attachment; filename=project_{project_id}_scan.csv"},
+    return csv_response(
+        export_filename(project.name, "findings"),
+        FINDINGS_COLUMNS,
+        iter_findings_rows(db, scans),
     )
 
 

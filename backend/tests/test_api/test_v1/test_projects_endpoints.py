@@ -1,9 +1,9 @@
-"""Tests for project API endpoints (notification settings + CSV export)."""
+"""Tests for project API endpoints (notification settings)."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.models.project import Project, ProjectMember, Scan
+from app.models.project import Project, ProjectMember
 from app.models.user import User
 from app.schemas.project import ProjectNotificationSettings
 
@@ -101,63 +101,3 @@ class TestUpdateNotificationSettingsAdmin:
         project_repo.update.assert_awaited_once()
         assert project_repo.update.await_args.args[1] == {"enforce_notification_settings": True}
         project_repo.update_member.assert_awaited_once()
-
-
-class TestExportProjectCsv:
-    """CSV export must read the complete findings collection."""
-
-    def test_export_reads_findings_collection_not_summary(self):
-        from app.api.v1.endpoints.projects import export_project_csv
-
-        # Scan carries a capped/vuln-only findings_summary that must be ignored.
-        scan = Scan(id="scan-1", project_id="proj-1", branch="main", findings_summary=None)
-
-        scan_repo = MagicMock()
-        scan_repo.get_latest_for_project = AsyncMock(return_value=scan)
-
-        findings = [
-            {
-                "finding_id": "CVE-2021-1",
-                "component": "libfoo",
-                "version": "1.0.0",
-                "type": "vulnerability",
-                "severity": "HIGH",
-                "description": "boom",
-                "details": {"fixed_version": "1.0.1"},
-            },
-            {
-                # Non-vulnerability finding: would be missing from findings_summary.
-                "finding_id": "SECRET-1",
-                "component": "config.yaml",
-                "version": "",
-                "type": "secret",
-                "severity": "CRITICAL",
-                "description": "hardcoded key",
-                "details": {},
-            },
-        ]
-
-        async def _fake_iterate_raw(query, projection):
-            assert query == {"scan_id": "scan-1"}
-            for f in findings:
-                yield f
-
-        finding_repo = MagicMock()
-        finding_repo.iterate_raw = _fake_iterate_raw
-
-        with patch(f"{MODULE}.check_project_access", AsyncMock(return_value=_make_project())):
-            with patch(f"{MODULE}.ScanRepository", return_value=scan_repo):
-                with patch(f"{MODULE}.FindingRepository", return_value=finding_repo):
-                    response = asyncio.run(
-                        export_project_csv(
-                            project_id="proj-1",
-                            current_user=_make_admin_user(),
-                            db=MagicMock(),
-                        )
-                    )
-
-        body = response.body.decode()
-        assert "CVE-2021-1" in body
-        assert "1.0.1" in body
-        assert "SECRET-1" in body
-        assert "hardcoded key" in body

@@ -1,5 +1,6 @@
 """MongoDB access for the crypto_assets collection."""
 
+import re
 from typing import Any
 
 from pymongo import UpdateOne
@@ -9,6 +10,23 @@ from app.core.metrics import track_db_operation
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.base import BaseRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+
+
+def _scan_query(
+    project_id: str,
+    scan_id: str,
+    asset_type: CryptoAssetType | None = None,
+    primitive: CryptoPrimitive | None = None,
+    name_search: str | None = None,
+) -> dict[str, Any]:
+    query: dict[str, Any] = {"project_id": project_id, "scan_id": scan_id}
+    if asset_type is not None:
+        query["asset_type"] = asset_type.value if hasattr(asset_type, "value") else asset_type
+    if primitive is not None:
+        query["primitive"] = primitive.value if hasattr(primitive, "value") else primitive
+    if name_search:
+        query["name"] = {"$regex": re.escape(name_search), "$options": "i"}
+    return query
 
 
 class CryptoAssetRepository(BaseRepository[CryptoAsset]):
@@ -55,15 +73,9 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
         name_search: str | None = None,
     ) -> list[CryptoAsset]:
         limit = min(limit, CRYPTO_ASSET_MAX_LIST_LIMIT)
-        query: dict[str, Any] = {"project_id": project_id, "scan_id": scan_id}
-        if asset_type is not None:
-            query["asset_type"] = asset_type.value if hasattr(asset_type, "value") else asset_type
-        if primitive is not None:
-            query["primitive"] = primitive.value if hasattr(primitive, "value") else primitive
-        if name_search:
-            query["name"] = {"$regex": name_search, "$options": "i"}
+        query = _scan_query(project_id, scan_id, asset_type, primitive, name_search)
         with track_db_operation(self.collection_name, "find"):
-            cursor = self.collection.find(query).skip(skip).limit(limit)
+            cursor = self.collection.find(query).sort("name", 1).skip(skip).limit(limit)
             docs = await cursor.to_list(length=limit)
         return [CryptoAsset.model_validate(d) for d in docs]
 
@@ -72,9 +84,17 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
             doc = await self.collection.find_one({"project_id": project_id, "_id": asset_id})
         return CryptoAsset.model_validate(doc) if doc else None
 
-    async def count_by_scan(self, project_id: str, scan_id: str) -> int:
+    async def count_by_scan(
+        self,
+        project_id: str,
+        scan_id: str,
+        asset_type: CryptoAssetType | None = None,
+        primitive: CryptoPrimitive | None = None,
+        name_search: str | None = None,
+    ) -> int:
+        query = _scan_query(project_id, scan_id, asset_type, primitive, name_search)
         with track_db_operation(self.collection_name, "count"):
-            return await self.collection.count_documents({"project_id": project_id, "scan_id": scan_id})
+            return await self.collection.count_documents(query)
 
     async def summary_for_scan(self, project_id: str, scan_id: str) -> dict[str, Any]:
         pipeline: list[dict[str, Any]] = [

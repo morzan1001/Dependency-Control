@@ -1,27 +1,23 @@
 import { useEffect, useState } from "react";
 import type { ComponentDeltaItem } from "@/types/scanDelta";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import { ChangeBadge } from "../shared/ChangeBadge";
 import { DeltaError } from "../shared/DeltaError";
-import { DeltaList } from "../shared/DeltaList";
 import { DeltaPagination } from "../shared/DeltaPagination";
-import { DeltaSummary } from "../shared/DeltaSummary";
+import { DeltaSummaryCards } from "../shared/DeltaSummaryCards";
 import { type DeltaTabProps, useDeltaTabQuery } from "../shared/useDeltaTabQuery";
 
 const CHANGES = ["all", "added", "removed", "changed"] as const;
 type ComponentChangeFilter = (typeof CHANGES)[number];
-
-const CHANGE_PREFIX: Record<ComponentDeltaItem["change"], string> = {
-  added: "+",
-  removed: "−",
-  version_changed: "↻",
-  license_changed: "⚖",
-};
-const CHANGE_COLOR: Record<ComponentDeltaItem["change"], string> = {
-  added: "text-green-600",
-  removed: "text-red-600",
-  version_changed: "text-amber-600",
-  license_changed: "text-blue-600",
-};
 
 export function ComponentsDeltaTab({
   projectId,
@@ -49,60 +45,77 @@ export function ComponentsDeltaTab({
 
   return (
     <div className="space-y-3 text-sm">
-      <DeltaSummary
+      <DeltaSummaryCards
         added={data?.totals.added ?? 0}
         removed={data?.totals.removed ?? 0}
-        changed={data?.totals.changed ?? 0}
         unchanged={data?.totals.unchanged ?? 0}
+        changed={data?.totals.changed ?? 0}
       />
-      <div className="flex flex-wrap items-center gap-2 text-xs">
-        <span className="text-muted-foreground">Change:</span>
-        {CHANGES.map((c) => (
-          <Button
-            key={c}
-            size="sm"
-            variant={change === c ? "default" : "outline"}
-            onClick={() => {
-              setPage(1);
-              setChange(c);
-            }}
-          >
-            {c}
-          </Button>
-        ))}
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-md border bg-muted/30 p-2 text-xs">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-muted-foreground">Change:</span>
+          {CHANGES.map((c) => (
+            <Button
+              key={c}
+              size="sm"
+              variant={change === c ? "default" : "outline"}
+              onClick={() => {
+                setPage(1);
+                setChange(c);
+              }}
+            >
+              {c}
+            </Button>
+          ))}
+        </div>
       </div>
-      <DeltaList<ComponentDeltaItem & { id: string }>
-        isLoading={isLoading}
-        emptyMessage="No component changes"
-        items={
-          (data?.items as ComponentDeltaItem[] | undefined)?.map((it, i) => ({
-            ...it,
-            id: `${it.change}-${it.name}-${i}`,
-          })) ?? []
-        }
-        renderRow={(it) => (
-          <div className="flex items-baseline gap-2 font-mono text-xs">
-            <span className={CHANGE_COLOR[it.change]}>{CHANGE_PREFIX[it.change]}</span>
-            <span className="text-sm">{it.name}</span>
-            {(it.change === "added" || it.change === "removed") && it.version && (
-              <span className="text-muted-foreground">@{it.version}</span>
+      <div className="rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead className="w-[110px]">Change</TableHead>
+              <TableHead>Name</TableHead>
+              <TableHead>Version</TableHead>
+              <TableHead>License</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {isLoading &&
+              ["s1", "s2", "s3"].map((id) => (
+                <TableRow key={id}>
+                  {["c1", "c2", "c3", "c4"].map((c) => (
+                    <TableCell key={c}>
+                      <Skeleton className="h-5 w-20" />
+                    </TableCell>
+                  ))}
+                </TableRow>
+              ))}
+            {(data?.items as ComponentDeltaItem[] | undefined)?.map((item, i) => (
+              <TableRow key={`${item.change}-${item.name}-${i}`}>
+                <TableCell><ChangeBadge change={item.change} /></TableCell>
+                <TableCell>{item.name}</TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">
+                  {item.change === "version_changed"
+                    ? `${item.from_version} → ${item.to_version}`
+                    : item.version ?? ""}
+                </TableCell>
+                <TableCell className="font-mono text-xs text-muted-foreground">
+                  {item.change === "license_changed"
+                    ? `${item.from_license} → ${item.to_license}`
+                    : item.license ?? ""}
+                </TableCell>
+              </TableRow>
+            ))}
+            {!isLoading && (data?.items.length ?? 0) === 0 && (
+              <TableRow>
+                <TableCell colSpan={4} className="py-8 text-center text-muted-foreground">
+                  No component changes
+                </TableCell>
+              </TableRow>
             )}
-            {it.change === "version_changed" && (
-              <span className="text-muted-foreground">
-                {it.from_version} → {it.to_version}
-              </span>
-            )}
-            {it.from_license && it.to_license && it.from_license !== it.to_license && (
-              <span className="text-blue-600">
-                {it.from_license} → {it.to_license}
-              </span>
-            )}
-            {(it.change === "added" || it.change === "removed") && it.license && (
-              <span className="text-muted-foreground">[{it.license}]</span>
-            )}
-          </div>
-        )}
-      />
+          </TableBody>
+        </Table>
+      </div>
       <DeltaPagination
         page={data?.page ?? 1}
         totalPages={data?.total_pages ?? 1}
