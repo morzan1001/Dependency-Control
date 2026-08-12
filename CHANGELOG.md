@@ -1,4 +1,16 @@
-# Release 1.8.3
+# Release 1.8.4
+
+## 🐛 Fixes
+
+- fix: surface configured state for stored secrets in system settings UI (#102) (#0)
+
+## 📦 Build & CI
+
+- chore: bump version to 1.8.4 (#0)
+
+
+
+# Release 1.8.4
 
 ## 🐛 Fixes
 
