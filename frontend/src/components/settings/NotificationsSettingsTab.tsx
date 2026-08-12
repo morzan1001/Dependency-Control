@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { CheckCircle2 } from "lucide-react"
 import { Slack, Mattermost } from "@/components/icons"
 import { WebhookManager } from "@/components/WebhookManager"
+import { SecretInput } from "@/components/settings/SecretInput"
 import {
   Select,
   SelectContent,
@@ -87,12 +88,12 @@ export function NotificationsSettingsTab({
           </div>
           <div className="grid gap-2">
             <Label htmlFor="smtp-password">SMTP Password</Label>
-            <Input 
-              id="smtp-password" 
-              type="password"
-              placeholder="••••••••" 
+            <SecretInput
+              id="smtp-password"
+              placeholder="••••••••"
               value={formData.smtp_password || ''}
-              onChange={(e) => handleInputChange('smtp_password', e.target.value)}
+              configured={!!formData.smtp_password_configured}
+              onChange={(value) => handleInputChange('smtp_password', value)}
             />
           </div>
           <div className="grid gap-2">
@@ -146,7 +147,7 @@ export function NotificationsSettingsTab({
           <div className="flex items-center gap-2 mb-4">
             <Slack className="h-5 w-5" />
             <h3 className="font-semibold text-lg">Slack Integration</h3>
-            {formData.slack_bot_token && (
+            {(formData.slack_bot_token || formData.slack_bot_token_configured) && (
               <div className="flex items-center gap-1 text-sm text-green-600 bg-green-50 px-2 py-0.5 rounded-full border border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-900">
                 <CheckCircle2 className="h-3 w-3" />
                 <span>Connected</span>
@@ -175,12 +176,12 @@ export function NotificationsSettingsTab({
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="slack-client-secret">Client Secret</Label>
-                  <Input
+                  <SecretInput
                     id="slack-client-secret"
-                    type="password"
                     placeholder="e.g. 8f7d6e5c4b3a2..."
                     value={formData.slack_client_secret || ''}
-                    onChange={(e) => handleInputChange('slack_client_secret', e.target.value)}
+                    configured={!!formData.slack_client_secret_configured}
+                    onChange={(value) => handleInputChange('slack_client_secret', value)}
                   />
                 </div>
                 <div className="grid gap-2">
@@ -196,9 +197,9 @@ export function NotificationsSettingsTab({
                   </p>
                 </div>
 
-                {formData.slack_client_id && formData.slack_client_secret && (
+                {formData.slack_client_id && (formData.slack_client_secret || formData.slack_client_secret_configured) && (
                   <div className="mt-4 space-y-4">
-                    {!formData.slack_bot_token && (
+                    {!(formData.slack_bot_token || formData.slack_bot_token_configured) && (
                       <>
                         <h4 className="text-sm font-medium mb-2">Setup Instructions</h4>
                         <ol className="list-decimal list-inside text-sm text-muted-foreground space-y-1 mb-4">
@@ -220,7 +221,7 @@ export function NotificationsSettingsTab({
                       <>
                         <Button
                           type="button"
-                          variant={formData.slack_bot_token ? "outline" : "default"}
+                          variant={formData.slack_bot_token || formData.slack_bot_token_configured ? "outline" : "default"}
                           className="w-full sm:w-auto"
                           onClick={() => {
                             const redirectUri = `${window.location.origin}/api/v1/integrations/slack/callback`;
@@ -230,10 +231,10 @@ export function NotificationsSettingsTab({
                           }}
                         >
                           <Slack className="mr-2 h-4 w-4" />
-                          {formData.slack_bot_token ? "Reconnect Workspace" : "Connect to Slack Workspace"}
+                          {formData.slack_bot_token || formData.slack_bot_token_configured ? "Reconnect Workspace" : "Connect to Slack Workspace"}
                         </Button>
                         <p className="text-xs text-muted-foreground mt-2">
-                          {formData.slack_bot_token 
+                          {(formData.slack_bot_token || formData.slack_bot_token_configured)
                             ? "Clicking this will re-authorize the app, which can be useful if permissions have changed or the token has expired."
                             : "Clicking this will redirect you to Slack to authorize the app."
                           }
@@ -252,12 +253,12 @@ export function NotificationsSettingsTab({
               </p>
               <div className="grid gap-2">
                 <Label htmlFor="slack-token-manual">Bot User OAuth Token</Label>
-                <Input 
-                  id="slack-token-manual" 
-                  type="password"
+                <SecretInput
+                  id="slack-token-manual"
                   placeholder="xoxb-..."
                   value={formData.slack_bot_token || ''}
-                  onChange={(e) => handleInputChange('slack_bot_token', e.target.value)}
+                  configured={!!formData.slack_bot_token_configured}
+                  onChange={(value) => handleInputChange('slack_bot_token', value)}
                 />
                 <p className="text-xs text-muted-foreground">
                   You can find this token in your Slack App settings under <strong>OAuth & Permissions</strong>.
@@ -271,7 +272,7 @@ export function NotificationsSettingsTab({
           <div className="flex items-center gap-2 mb-4">
             <Mattermost className="h-5 w-5" />
             <h3 className="font-semibold text-lg">Mattermost Integration</h3>
-            {formData.mattermost_url && formData.mattermost_bot_token && (
+            {formData.mattermost_url && (formData.mattermost_bot_token || formData.mattermost_bot_token_configured) && (
               <div className="flex items-center gap-1 text-sm text-green-600 bg-green-50 px-2 py-0.5 rounded-full border border-green-200 dark:bg-green-900/20 dark:text-green-400 dark:border-green-900">
                 <CheckCircle2 className="h-3 w-3" />
                 <span>Configured</span>
@@ -290,11 +291,11 @@ export function NotificationsSettingsTab({
           </div>
           <div className="grid gap-2">
             <Label htmlFor="mattermost-token">Mattermost Bot Token</Label>
-            <Input 
-              id="mattermost-token" 
-              type="password"
+            <SecretInput
+              id="mattermost-token"
               value={formData.mattermost_bot_token || ''}
-              onChange={(e) => handleInputChange('mattermost_bot_token', e.target.value)}
+              configured={!!formData.mattermost_bot_token_configured}
+              onChange={(value) => handleInputChange('mattermost_bot_token', value)}
             />
           </div>
           <Button onClick={handleSave} disabled={!hasPermission('system:manage') || isPending}>

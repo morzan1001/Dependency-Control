@@ -1,6 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
 import { Input } from "@/components/ui/input"
+import { SecretInput } from "@/components/settings/SecretInput"
 import { Button } from "@/components/ui/button"
 import { Switch } from "@/components/ui/switch"
 import { SettingsTabProps } from "@/types/system"
@@ -113,11 +114,11 @@ export function SecuritySettingsTab({
                 </div>
                 <div className="grid gap-2">
                   <Label htmlFor="oidc-client-secret">Client Secret</Label>
-                  <Input 
-                    id="oidc-client-secret" 
-                    type="password"
+                  <SecretInput
+                    id="oidc-client-secret"
                     value={formData.oidc_client_secret || ''}
-                    onChange={(e) => handleInputChange('oidc_client_secret', e.target.value)}
+                    configured={!!formData.oidc_client_secret_configured}
+                    onChange={(value) => handleInputChange('oidc_client_secret', value)}
                   />
                 </div>
               </div>

@@ -1,7 +1,7 @@
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Label } from "@/components/ui/label"
-import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
+import { SecretInput } from "@/components/settings/SecretInput"
 import { SettingsTabProps } from "@/types/system"
 import { CICDInstancesManagement } from "@/components/settings/CICDInstancesManagement"
 
@@ -25,12 +25,12 @@ export function IntegrationsSettingsTab({
           <div className="space-y-4">
             <div className="grid gap-2">
               <Label htmlFor="github-token">GitHub Personal Access Token</Label>
-              <Input 
-                id="github-token" 
-                type="password"
+              <SecretInput
+                id="github-token"
                 placeholder="ghp_..."
                 value={formData.github_token || ''}
-                onChange={(e) => handleInputChange('github_token', e.target.value)}
+                configured={!!formData.github_token_configured}
+                onChange={(value) => handleInputChange('github_token', value)}
               />
               <p className="text-sm text-muted-foreground">
                 Used for GitHub Security Advisories (GHSA) lookups and maintainer health checks.
@@ -49,11 +49,11 @@ export function IntegrationsSettingsTab({
 
             <div className="grid gap-2">
               <Label htmlFor="malware-api">Open Source Malware API Key</Label>
-              <Input 
-                id="malware-api" 
-                type="password"
+              <SecretInput
+                id="malware-api"
                 value={formData.open_source_malware_api_key || ''}
-                onChange={(e) => handleInputChange('open_source_malware_api_key', e.target.value)}
+                configured={!!formData.open_source_malware_api_key_configured}
+                onChange={(value) => handleInputChange('open_source_malware_api_key', value)}
               />
             </div>
           </div>

@@ -8,6 +8,7 @@ import { useAuth } from "@/context/useAuth"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toast } from "sonner"
 import { Skeleton } from "@/components/ui/skeleton"
+import { stripEmptySecrets } from "@/lib/settings-secrets"
 import {
   GeneralSettingsTab,
   SecuritySettingsTab,
@@ -58,7 +59,7 @@ function SystemSettingsForm({ settings }: Readonly<{ settings: SystemSettingsTyp
   }
 
   const handleSave = () => {
-    mutation.mutate(formData, {
+    mutation.mutate(stripEmptySecrets(formData), {
       onSuccess: () => toast.success("Settings updated successfully"),
       onError: () => toast.error("Failed to update settings")
     })
