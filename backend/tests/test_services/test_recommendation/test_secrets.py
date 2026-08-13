@@ -7,14 +7,15 @@ from app.services.recommendation.secrets import process_secrets
 def _secret(
     severity="HIGH",
     component="src/config.py",
-    detector_type="AWS Key",
+    detector="AWS Key",
     finding_id="s1",
 ):
+    # Mirrors the stored TruffleHog shape: the credential type is details.detector.
     return {
         "type": "secret",
         "severity": severity,
         "component": component,
-        "details": {"detector_type": detector_type},
+        "details": {"detector": detector, "verified": True},
         "id": finding_id,
     }
 
@@ -69,8 +70,8 @@ class TestProcessSecretsSingleFinding:
 class TestProcessSecretsMultipleGroupedByDetector:
     def test_multiple_same_detector_grouped(self):
         findings = [
-            _secret(detector_type="AWS Key", finding_id="s1"),
-            _secret(detector_type="AWS Key", finding_id="s2"),
+            _secret(detector="AWS Key", finding_id="s1"),
+            _secret(detector="AWS Key", finding_id="s2"),
         ]
         result = process_secrets(findings)
         assert len(result) == 1
@@ -78,8 +79,8 @@ class TestProcessSecretsMultipleGroupedByDetector:
 
     def test_different_detectors_listed_in_description(self):
         findings = [
-            _secret(detector_type="AWS Key", finding_id="s1"),
-            _secret(detector_type="GitHub Token", finding_id="s2"),
+            _secret(detector="AWS Key", finding_id="s1"),
+            _secret(detector="GitHub Token", finding_id="s2"),
         ]
         rec = process_secrets(findings)[0]
         assert "AWS Key" in rec.description
@@ -87,9 +88,9 @@ class TestProcessSecretsMultipleGroupedByDetector:
 
     def test_secret_types_in_action(self):
         findings = [
-            _secret(detector_type="AWS Key", finding_id="s1"),
-            _secret(detector_type="GitHub Token", finding_id="s2"),
-            _secret(detector_type="Slack Webhook", finding_id="s3"),
+            _secret(detector="AWS Key", finding_id="s1"),
+            _secret(detector="GitHub Token", finding_id="s2"),
+            _secret(detector="Slack Webhook", finding_id="s3"),
         ]
         rec = process_secrets(findings)[0]
         secret_types = rec.action["secret_types"]
@@ -98,7 +99,7 @@ class TestProcessSecretsMultipleGroupedByDetector:
         assert "Slack Webhook" in secret_types
 
     def test_secret_types_limited_to_five(self):
-        findings = [_secret(detector_type=f"Detector{i}", finding_id=f"s{i}") for i in range(8)]
+        findings = [_secret(detector=f"Detector{i}", finding_id=f"s{i}") for i in range(8)]
         rec = process_secrets(findings)[0]
         assert len(rec.action["secret_types"]) <= 5
 
@@ -186,18 +187,12 @@ class TestProcessSecretsSeverityCounts:
 
 
 class TestProcessSecretsDetectorFallbacks:
-    """Detector type extraction falls back through rule_id then 'generic'."""
+    """Credential type comes from details.detector, falling back to 'generic'."""
 
-    def test_rule_id_fallback(self):
-        finding = {
-            "type": "secret",
-            "severity": "HIGH",
-            "component": "src/x.py",
-            "details": {"rule_id": "secret-rule-42"},
-            "id": "s1",
-        }
-        rec = process_secrets([finding])[0]
-        assert "secret-rule-42" in rec.description
+    def test_detector_named_in_description(self):
+        rec = process_secrets([_secret(detector="GitHub Token")])[0]
+        assert "GitHub Token" in rec.description
+        assert rec.action["secret_types"] == ["GitHub Token"]
 
     def test_generic_fallback(self):
         finding = {

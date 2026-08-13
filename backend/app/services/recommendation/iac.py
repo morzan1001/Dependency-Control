@@ -12,10 +12,10 @@ def process_iac(findings: list[ModelOrDict]) -> list[Recommendation]:
     findings_by_platform = defaultdict(list)
     for f in findings:
         details = get_attr(f, "details", {})
-        query_name = details.get("query_name", "") if isinstance(details, dict) else ""
+        title = details.get("title", "") if isinstance(details, dict) else ""
         platform = (
             (details.get("platform") if isinstance(details, dict) else None)
-            or (query_name.split(".")[0] if query_name else None)
+            or (title.split(".")[0] if title else None)
             or "infrastructure"
         )
         platform_lower = platform.lower()
@@ -95,8 +95,8 @@ def _get_common_iac_issues(findings: list[ModelOrDict]) -> list[str]:
     for f in findings:
         details = get_attr(f, "details", {})
         issue_type = (
-            (details.get("query_name") if isinstance(details, dict) else None)
-            or (details.get("check_id") if isinstance(details, dict) else None)
+            (details.get("title") if isinstance(details, dict) else None)
+            or (details.get("rule_id") if isinstance(details, dict) else None)
             or get_attr(f, "description", "")[:50]
         )
         issues[issue_type] += 1

@@ -36,6 +36,7 @@ Supported aggregation expression operators (in ``$project`` / accumulator args)
 from __future__ import annotations
 
 import asyncio
+import copy as _copy
 import operator as _op
 import re as _re
 from datetime import datetime as _datetime
@@ -192,8 +193,9 @@ def _eval_expr(doc: dict, expr):
     """Evaluate a MongoDB aggregation expression against a single document.
 
     Handles the operator subset used by the stats pipelines: $ifNull, $cond,
-    $switch, comparison ($eq/$ne/$gt/$gte/$lt/$lte), logical ($and/$or),
-    $toDouble, and the $$REMOVE / $field / dotted-path / literal cases.
+    $switch, comparison ($eq/$ne/$gt/$gte/$lt/$lte), logical ($and/$or/$in),
+    arithmetic ($add/$multiply/$divide/$round), $toDouble, and the $$REMOVE /
+    $field / dotted-path / literal cases.
     """
     if isinstance(expr, str):
         if expr == "$$REMOVE":
@@ -232,8 +234,27 @@ def _eval_expr(doc: dict, expr):
             if _eval_bool(doc, branch["case"]):
                 return _eval_expr(doc, branch["then"])
         return _eval_expr(doc, switch.get("default"))
+    if "$add" in expr:
+        operands = [_to_number(_eval_expr(doc, e)) for e in expr["$add"]]
+        return None if any(v is None for v in operands) else sum(operands)
+    if "$multiply" in expr:
+        operands = [_to_number(_eval_expr(doc, e)) for e in expr["$multiply"]]
+        if any(v is None for v in operands):
+            return None
+        product = 1.0
+        for v in operands:
+            product *= v
+        return product
+    if "$divide" in expr:
+        dividend, divisor = (_to_number(_eval_expr(doc, e)) for e in expr["$divide"])
+        return None if dividend is None or divisor in (None, 0) else dividend / divisor
+    if "$round" in expr:
+        spec = expr["$round"]
+        value_expr, places = spec if isinstance(spec, list) else (spec, 0)
+        value = _to_number(_eval_expr(doc, value_expr))
+        return None if value is None else round(value, int(places))
 
-    for op in ("$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$and", "$or"):
+    for op in ("$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$and", "$or", "$in"):
         if op in expr:
             return _eval_bool(doc, expr)
     return expr
@@ -249,6 +270,9 @@ def _eval_bool(doc: dict, expr) -> bool:
         return all(_eval_bool(doc, sub) for sub in expr["$and"])
     if "$or" in expr:
         return any(_eval_bool(doc, sub) for sub in expr["$or"])
+    if "$in" in expr:
+        needle, haystack = expr["$in"]
+        return _eval_expr(doc, needle) in (_eval_expr(doc, haystack) or [])
     for op, cmp_fn in (
         ("$eq", lambda a, b: a == b),
         ("$ne", lambda a, b: a != b),
@@ -412,13 +436,20 @@ def _run_pipeline(docs: list, pipeline: list) -> list:
         elif "$unwind" in stage:
             field_expr = stage["$unwind"]
             field = field_expr.lstrip("$") if isinstance(field_expr, str) else field_expr
+            parts = field.split(".")
             unwound = []
             for d in results:
-                values = d.get(field, [])
+                parent: Any = d
+                for p in parts[:-1]:
+                    parent = parent.get(p) if isinstance(parent, dict) else None
+                values = parent.get(parts[-1]) if isinstance(parent, dict) else None
                 if isinstance(values, list):
                     for v in values:
-                        new_d = dict(d)
-                        new_d[field] = v
+                        new_d = _copy.deepcopy(d)
+                        target = new_d
+                        for p in parts[:-1]:
+                            target = target[p]
+                        target[parts[-1]] = v
                         unwound.append(new_d)
                 elif values is not None:
                     unwound.append(d)
@@ -602,19 +633,39 @@ class FakeCollection:
     def _apply_update(target: dict, update: dict, skip_set_on_insert: bool = False) -> None:
         for op, payload in update.items():
             if op == "$set":
-                target.update(payload)
+                for k, v in payload.items():
+                    FakeCollection._set_dotted(target, k, v)
             elif op == "$setOnInsert" and not skip_set_on_insert:
                 # only applied when called outside upsert insert path
                 for k, v in payload.items():
                     target.setdefault(k, v)
             elif op == "$inc":
                 for field, delta in payload.items():
-                    target[field] = target.get(field, 0) + delta
+                    parent, leaf = FakeCollection._resolve_parent(target, field)
+                    parent[leaf] = parent.get(leaf, 0) + delta
             elif op == "$addToSet":
                 for field, value in payload.items():
                     bucket = target.setdefault(field, [])
                     if value not in bucket:
                         bucket.append(value)
+
+    @staticmethod
+    def _resolve_parent(target: dict, dotted_key: str) -> tuple[dict, str]:
+        """Walk (creating) nested dicts so dotted update paths behave like real Mongo."""
+        parts = dotted_key.split(".")
+        node = target
+        for part in parts[:-1]:
+            nxt = node.get(part)
+            if not isinstance(nxt, dict):
+                nxt = {}
+                node[part] = nxt
+            node = nxt
+        return node, parts[-1]
+
+    @staticmethod
+    def _set_dotted(target: dict, dotted_key: str, value) -> None:
+        parent, leaf = FakeCollection._resolve_parent(target, dotted_key)
+        parent[leaf] = value
 
     async def delete_one(self, query):
         await asyncio.sleep(0)
@@ -691,8 +742,9 @@ class FakeCollection:
                 return doc
         return None
 
-    async def count_documents(self, query):
-        return sum(1 for doc in self._docs.values() if _match_doc(doc, query))
+    async def count_documents(self, query, limit: int = 0, **_kwargs):
+        count = sum(1 for doc in self._docs.values() if _match_doc(doc, query))
+        return min(count, limit) if limit else count
 
     async def distinct(self, field: str, filter: dict | None = None):
         seen: list = []

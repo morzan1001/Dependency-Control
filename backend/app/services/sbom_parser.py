@@ -22,6 +22,10 @@ from app.services.cbom_parser import parse_crypto_components
 
 logger = logging.getLogger(__name__)
 
+# SBOMs are untrusted input; without a cap, hostile nesting raises RecursionError
+# and the format handler degrades the whole SBOM to zero components.
+MAX_COMPONENT_NESTING_DEPTH = 100
+
 
 def is_url(value: str) -> bool:
     """Check if a string is a URL."""
@@ -151,10 +155,37 @@ class SBOMParser:
                 except Exception as e:
                     logger.exception("Error parsing %s SBOM: %s", format_type.value, e)
 
-        result.total_components = len(result.dependencies) + result.skipped_components
+        self._merge_duplicate_dependencies(result)
+
+        result.total_components = len(result.dependencies) + result.skipped_components + result.merged_components
         result.parsed_components = len(result.dependencies)
 
         return result
+
+    @staticmethod
+    def _merge_duplicate_dependencies(result: ParsedSBOM) -> None:
+        """Collapse (name, version, purl) duplicates so the unique DB index doesn't silently drop them."""
+        by_key: dict[tuple[str, str, str | None], ParsedDependency] = {}
+        for dep in result.dependencies:
+            key = (dep.name, dep.version, dep.purl)
+            kept = by_key.get(key)
+            if kept is None:
+                by_key[key] = dep
+                continue
+            for attr in ("locations", "parent_components", "cpes"):
+                kept_values = getattr(kept, attr)
+                kept_values.extend(v for v in getattr(dep, attr) if v not in kept_values)
+            for alg, digest in dep.hashes.items():
+                kept.hashes.setdefault(alg, digest)
+            kept.layer_digest = kept.layer_digest or dep.layer_digest
+            kept.found_by = kept.found_by or dep.found_by
+            # Graph-confirmed directness beats guesses; direct anywhere in the SBOM wins.
+            if kept.direct_inferred and not dep.direct_inferred:
+                kept.direct, kept.direct_inferred = dep.direct, False
+            elif kept.direct_inferred == dep.direct_inferred:
+                kept.direct = kept.direct or dep.direct
+            result.merged_components += 1
+        result.dependencies = list(by_key.values())
 
     @staticmethod
     def _extract_cyclonedx_tool(tools: Any) -> tuple[str | None, str | None]:
@@ -195,10 +226,10 @@ class SBOMParser:
     @staticmethod
     def _resolve_cyclonedx_direct_refs(
         deps_graph: dict[str, list], all_transitive_refs: set, main_bom_ref: str | None
-    ) -> set:
-        """Resolve the set of direct refs given the dep graph and main component."""
+    ) -> tuple[set, bool]:
+        """Resolve (direct_refs, inferred) given the dep graph and main component."""
         if main_bom_ref and main_bom_ref in deps_graph:
-            return set(deps_graph[main_bom_ref])
+            return set(deps_graph[main_bom_ref]), False
         # Fallback when the SBOM's metadata.component bom-ref does not match any graph node
         # (varies by SBOM tool). The root(s) are the refs nothing depends on; the DIRECT
         # dependencies are those roots' children — NOT the roots themselves (a root is the
@@ -210,7 +241,36 @@ class SBOMParser:
             direct.update(deps_graph.get(root, []))
         # Degenerate graph (roots have no recorded children): treat the roots as direct so
         # we don't mark everything transitive.
-        return direct or roots
+        return direct or roots, True
+
+    @classmethod
+    def _flatten_cyclonedx_components(cls, components: Any, depth: int = 0) -> tuple[list[dict[str, Any]], int]:
+        """Flatten nested components; returns (flat, skipped) where skipped counts subtrees below the depth cap."""
+        flat: list[dict[str, Any]] = []
+        skipped = 0
+        for comp in components if isinstance(components, list) else []:
+            if not isinstance(comp, dict):
+                continue
+            if depth >= MAX_COMPONENT_NESTING_DEPTH:
+                skipped += cls._count_component_subtree(comp)
+                continue
+            flat.append(comp)
+            nested, nested_skipped = cls._flatten_cyclonedx_components(comp.get("components"), depth + 1)
+            flat.extend(nested)
+            skipped += nested_skipped
+        return flat, skipped
+
+    @staticmethod
+    def _count_component_subtree(comp: dict[str, Any]) -> int:
+        count = 0
+        stack = [comp]
+        while stack:
+            node = stack.pop()
+            count += 1
+            children = node.get("components")
+            if isinstance(children, list):
+                stack.extend(child for child in children if isinstance(child, dict))
+        return count
 
     def _parse_cyclonedx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         """Parse CycloneDX format SBOM."""
@@ -235,7 +295,9 @@ class SBOMParser:
         # Parse the dependencies array to build dependency graph
         dependencies_map = sbom.get("dependencies", [])
         deps_graph, reverse_deps_graph, all_transitive_refs = self._build_cyclonedx_deps_graph(dependencies_map)
-        direct_refs = self._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, main_bom_ref)
+        direct_refs, direct_refs_inferred = self._resolve_cyclonedx_direct_refs(
+            deps_graph, all_transitive_refs, main_bom_ref
+        )
 
         logger.debug(
             f"CycloneDX dependency analysis: has_graph={bool(dependencies_map)}, "
@@ -244,7 +306,15 @@ class SBOMParser:
             f"reverse_deps_entries={len(reverse_deps_graph)}"
         )
 
-        components = sbom.get("components", [])
+        # cyclonedx-npm/-maven nest sub-dependencies in components[].components[].
+        components, depth_skipped = self._flatten_cyclonedx_components(sbom.get("components", []))
+        result.skipped_components += depth_skipped
+        if depth_skipped:
+            logger.warning(
+                "CycloneDX components nested deeper than %d levels; skipped %d component(s)",
+                MAX_COMPONENT_NESTING_DEPTH,
+                depth_skipped,
+            )
         result.crypto_assets = parse_crypto_components(components)
 
         for comp in components:
@@ -261,6 +331,7 @@ class SBOMParser:
                 direct_refs,
                 all_transitive_refs,
                 reverse_deps_graph,
+                direct_refs_inferred,
             )
             if parsed:
                 result.dependencies.append(parsed)
@@ -352,15 +423,16 @@ class SBOMParser:
         check_ref: str | None,
         direct_refs: set | None,
         all_transitive_refs: set | None,
+        direct_refs_inferred: bool,
     ) -> tuple[bool, bool]:
         """Return (direct, direct_inferred) for a cyclonedx component."""
-        has_dependency_graph = bool(direct_refs) or bool(all_transitive_refs)
-        if not (has_dependency_graph and direct_refs is not None and all_transitive_refs is not None):
-            # No dependency graph - assume top-level direct, mark as inferred
-            return True, True
-        if check_ref in direct_refs or (check_ref not in all_transitive_refs and direct_refs):
-            return True, False
-        return False, False
+        if direct_refs and check_ref in direct_refs:
+            return True, direct_refs_inferred
+        if all_transitive_refs and check_ref in all_transitive_refs:
+            return False, False
+        # The graph says nothing about this ref (or there is no graph): keep it
+        # direct so inventory counts hold, but flag the guess.
+        return True, True
 
     _LAYER_DIGEST_PROPS = ("trivy:LayerDigest", "aquasecurity:trivy:LayerDigest")
     _LAYER_DIFFID_PROP = "aquasecurity:trivy:LayerDiffID"
@@ -450,6 +522,7 @@ class SBOMParser:
         direct_refs: set | None = None,
         all_transitive_refs: set | None = None,
         reverse_deps_graph: dict | None = None,
+        direct_refs_inferred: bool = False,
     ) -> ParsedDependency | None:
         """Parse a single CycloneDX component with all available fields."""
 
@@ -468,7 +541,9 @@ class SBOMParser:
             logger.debug(f"Constructed PURL for {name}@{version}: {purl}")
 
         check_ref = bom_ref or purl
-        direct, direct_inferred = self._resolve_cyclonedx_directness(check_ref, direct_refs, all_transitive_refs)
+        direct, direct_inferred = self._resolve_cyclonedx_directness(
+            check_ref, direct_refs, all_transitive_refs, direct_refs_inferred
+        )
 
         parent_components = []
         if reverse_deps_graph and check_ref in reverse_deps_graph:

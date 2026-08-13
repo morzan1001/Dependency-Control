@@ -168,7 +168,9 @@ def _collect_hotspot_reasons(pkg_data: dict[str, Any]) -> tuple[bool, list[str]]
 
     for qi in pkg_data["quality_issues"]:
         qi_details = get_attr(qi, "details", {})
-        score = qi_details.get("scorecard_score", 10) if isinstance(qi_details, dict) else 10
+        score = qi_details.get("overall_score", 10) if isinstance(qi_details, dict) else 10
+        if score is None:
+            score = 10
         if score < SCORECARD_LOW_THRESHOLD:
             reasons.append(f"Low OpenSSF Scorecard: {score}/10")
             break
@@ -281,7 +283,9 @@ def detect_critical_hotspots(
 
 def _record_quality_risk(pkg: dict[str, Any], details: Any) -> None:
     """Record a low-scorecard risk factor if applicable."""
-    score = details.get("scorecard_score", 10) if isinstance(details, dict) else 10
+    score = details.get("overall_score", 10) if isinstance(details, dict) else 10
+    if score is None:
+        score = 10
     if score >= SCORECARD_LOW_THRESHOLD:
         return
     if "low_scorecard" in [r["type"] for r in pkg["risk_factors"]]:

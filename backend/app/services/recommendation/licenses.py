@@ -24,11 +24,7 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
     by_license = defaultdict(list)
     for f in findings:
         details = get_attr(f, "details", {})
-        license_name = (
-            (details.get("license") if isinstance(details, dict) else None)
-            or (details.get("license_id") if isinstance(details, dict) else None)
-            or "unknown"
-        )
+        license_name = (details.get("license") if isinstance(details, dict) else None) or "unknown"
         by_license[license_name].append(f)
 
     severity_counts: dict[str, int] = defaultdict(int)

@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType, Severity
+from app.schemas.finding_details import EolDetails, OutdatedDetails
 from app.services.normalizers.utils import build_finding_id, safe_get, safe_severity
 
 if TYPE_CHECKING:
@@ -20,7 +21,7 @@ def normalize_outdated(aggregator: "ResultAggregator", result: dict[str, Any], s
                 version=item.get("current_version"),
                 description=item.get("message") or f"Outdated: {component}",
                 scanners=["outdated_packages"],
-                details={"fixed_version": item.get("latest_version")},
+                details=OutdatedDetails(fixed_version=item.get("latest_version")).model_dump(exclude_none=True),
             ),
             source=source,
         )
@@ -37,10 +38,10 @@ def normalize_outdated(aggregator: "ResultAggregator", result: dict[str, Any], s
                 version=item.get("current_version"),
                 description=item.get("message") or f"Ahead of default: {component}",
                 scanners=["outdated_packages"],
-                details={
-                    "default_version": item.get("default_version"),
-                    "ahead_of_default": True,
-                },
+                details=OutdatedDetails(
+                    default_version=item.get("default_version"),
+                    ahead_of_default=True,
+                ).model_dump(exclude_none=True),
             ),
             source=source,
         )
@@ -74,14 +75,14 @@ def normalize_eol(aggregator: "ResultAggregator", result: dict[str, Any], source
                 version=item.get("version"),
                 description=description,
                 scanners=["end_of_life"],
-                details={
-                    "fixed_version": recommended,
-                    "eol_date": eol_date,
-                    "cycle": cycle,
-                    "recommended_cycle": recommended_cycle,
-                    "link": eol_info.get("link"),
-                    "lts": eol_info.get("lts"),
-                },
+                details=EolDetails(
+                    fixed_version=recommended,
+                    eol_date=eol_date,
+                    cycle=cycle,
+                    recommended_cycle=recommended_cycle,
+                    link=eol_info.get("link"),
+                    lts=eol_info.get("lts"),
+                ).model_dump(exclude_none=True),
             ),
             source=source,
         )

@@ -38,11 +38,13 @@ from app.models.waiver import Waiver
 from app.repositories import (
     AnalysisResultRepository,
     CallgraphRepository,
+    DependencyRepository,
     FindingRepository,
     ProjectRepository,
     ScanRepository,
 )
 from app.repositories.system_settings import SystemSettingsRepository
+from app.schemas.finding_details import SystemWarningDetails, VulnerabilitySummaryDetails
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.integrations import decorate_gitlab_mr
 from app.services.analysis.notifications import send_scan_notifications
@@ -54,6 +56,7 @@ from app.services.analysis.stats import (
 )
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
+from app.services.dependency_store import store_sbom_dependencies
 from app.services.enrichment import enrich_vulnerability_findings
 from app.services.reachability_enrichment import enrich_findings_with_reachability
 from app.services.sbom_parser import parse_sbom
@@ -326,10 +329,9 @@ def _build_settings_resolver(
 
 async def _process_sbom(
     index: int,
-    item: Any,
+    current_sbom: dict[str, Any],
     scan_id: str,
     db: Database,
-    fs: AsyncIOMotorGridFSBucket,
     aggregator: ResultAggregator,
     active_analyzers: list[str],
     system_settings: Any,
@@ -337,16 +339,22 @@ async def _process_sbom(
     project_analyzer_settings: dict[str, dict[str, Any]] | None = None,
     project_id: str | None = None,
     scan_type: str | None = None,
-) -> list[str]:
-    """Process a single SBOM: resolve, parse, run analyzers. Returns results summary."""
-    current_sbom = await _resolve_sbom(item, fs, aggregator)
-    # CBOM-only scans synthesise an empty {}; only bail when resolution itself failed (None).
-    if current_sbom is None:
-        return []
-
+    persist_deps: bool = True,
+    old_deps_deleted: bool = False,
+) -> tuple[list[str], bool]:
+    """Process a single resolved SBOM: parse, persist deps, run analyzers; returns (results summary, old_deps_deleted)."""
     fallback_source = f"SBOM #{index + 1}"
 
     parsed_sbom, parsed_components = _parse_and_track_sbom(current_sbom)
+
+    # Rescans run under a fresh scan_id with no stored deps; delete-once-then-insert keeps
+    # ingest-origin re-runs idempotent. persist_deps=False (an SBOM of this run failed to
+    # resolve) and the falsy CBOM-only {} placeholder skip it so stored deps are never wiped.
+    if persist_deps and parsed_sbom is not None and project_id and current_sbom:
+        inserted, old_deps_deleted = await store_sbom_dependencies(
+            parsed_sbom, project_id, scan_id, DependencyRepository(db), old_deps_deleted
+        )
+        logger.info(f"Stored {inserted} dependencies for scan {scan_id} (SBOM #{index + 1})")
 
     if parsed_sbom is not None and parsed_sbom.crypto_assets and project_id:
         await _persist_embedded_crypto_assets(parsed_sbom, project_id, scan_id, db)
@@ -374,7 +382,7 @@ async def _process_sbom(
 
     batch_results = await asyncio.gather(*tasks)
     del current_sbom, parsed_components
-    return list(batch_results)
+    return list(batch_results), old_deps_deleted
 
 
 def _track_findings_metrics(aggregated_findings: list[Any]) -> None:
@@ -399,10 +407,14 @@ async def _enrich_dependencies(dependency_enrichments: dict[str, Any], scan_id: 
 
     # purl is the cross-scan join key for dependency_enrichments; name@version only identifies a dep within this scan.
     purl_by_key: dict[str, str] = {}
-    async for dep_doc in db.dependencies.find({"scan_id": scan_id}, {"name": 1, "version": 1, "purl": 1}):
+    keys_with_sbom_license: set[str] = set()
+    async for dep_doc in db.dependencies.find({"scan_id": scan_id}, {"name": 1, "version": 1, "purl": 1, "license": 1}):
+        dep_key = f"{dep_doc.get('name')}@{dep_doc.get('version')}"
         purl = dep_doc.get("purl")
         if purl:
-            purl_by_key[f"{dep_doc.get('name')}@{dep_doc.get('version')}"] = purl
+            purl_by_key[dep_key] = purl
+        if dep_doc.get("license"):
+            keys_with_sbom_license.add(dep_key)
 
     bulk_ops: list[UpdateOne] = []
     enrichment_ops: list[UpdateOne] = []
@@ -415,12 +427,17 @@ async def _enrich_dependencies(dependency_enrichments: dict[str, Any], scan_id: 
             continue
         name, version = parts
         if enrichment_data:
-            bulk_ops.append(
-                UpdateOne(
-                    {"scan_id": scan_id, "name": name, "version": version},
-                    {"$set": enrichment_data},
+            # The SBOM-declared license is authoritative; enrichment guesses must not replace it.
+            dep_update = enrichment_data
+            if "license" in dep_update and key in keys_with_sbom_license:
+                dep_update = {k: v for k, v in dep_update.items() if k != "license"}
+            if dep_update:
+                bulk_ops.append(
+                    UpdateOne(
+                        {"scan_id": scan_id, "name": name, "version": version},
+                        {"$set": dep_update},
+                    )
                 )
-            )
 
             purl = purl_by_key.get(key)
             if purl:
@@ -666,7 +683,7 @@ async def _aggregate_external_results(
                         version="",
                         description=f"External result for '{res.analyzer_name}' could not be aggregated: {exc}",
                         scanners=[res.analyzer_name],
-                        details={"error_details": str(exc)},
+                        details=SystemWarningDetails(error_details=str(exc)).model_dump(exclude_none=True),
                     )
                 )
     del external_results
@@ -708,6 +725,21 @@ def _prepare_finding_records(
 _FINDINGS_SUMMARY_LIMIT = 500
 
 
+def _summary_cve_id(record: dict[str, Any]) -> str:
+    """First CVE id found on the aggregated record; falls back to the component:version id."""
+    details = record.get("details") or {}
+    for entry in details.get("vulnerabilities") or []:
+        if not isinstance(entry, dict):
+            continue
+        for candidate in (entry.get("id"), entry.get("resolved_cve"), *(entry.get("aliases") or [])):
+            if isinstance(candidate, str) and candidate.startswith("CVE-"):
+                return candidate
+    for alias in record.get("aliases") or []:
+        if isinstance(alias, str) and alias.startswith("CVE-"):
+            return alias
+    return str(record.get("id") or "")
+
+
 def _build_findings_summary(
     vulnerability_findings: list[dict[str, Any]],
     limit: int = _FINDINGS_SUMMARY_LIMIT,
@@ -715,8 +747,7 @@ def _build_findings_summary(
     """Compact, bounded, vulnerability-only summary; details trimmed to the CVE id to bound size."""
     summary: list[dict[str, Any]] = []
     for record in vulnerability_findings[:limit]:
-        details = record.get("details") or {}
-        cve_id = details.get("cve_id") or record.get("id")
+        cve_id = _summary_cve_id(record)
         summary.append(
             {
                 "id": record.get("id"),
@@ -726,7 +757,7 @@ def _build_findings_summary(
                 "version": record.get("version"),
                 "description": (record.get("description") or "")[:200],
                 "scanners": record.get("scanners") or [],
-                "details": {"cve_id": cve_id},
+                "details": VulnerabilitySummaryDetails(cve_id=cve_id).model_dump(exclude_none=True),
             }
         )
     return summary
@@ -1040,13 +1071,29 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
     fs = primary_gridfs_bucket(db)
     sboms_to_process = _resolve_sboms_to_process(sboms, scan_type)
 
-    for index, item in enumerate(sboms_to_process):
-        sbom_results = await _process_sbom(
+    # Resolve every SBOM before the first dependency delete: a partial GridFS failure must
+    # not wipe the stored deps of the SBOMs that did not load.
+    resolved_sboms: list[dict[str, Any] | None] = [
+        await _resolve_sbom(item, fs, aggregator) for item in sboms_to_process
+    ]
+    persist_deps = all(resolved is not None for resolved in resolved_sboms)
+    if not persist_deps:
+        logger.warning(
+            "Scan %s: %d/%d SBOMs failed to resolve; skipping dependency persistence to keep stored dependencies",
+            scan_id,
+            sum(1 for resolved in resolved_sboms if resolved is None),
+            len(resolved_sboms),
+        )
+
+    old_deps_deleted = False
+    for index, current_sbom in enumerate(resolved_sboms):
+        if current_sbom is None:
+            continue
+        sbom_results, old_deps_deleted = await _process_sbom(
             index,
-            item,
+            current_sbom,
             scan_id,
             db,
-            fs,
             aggregator,
             active_analyzers,
             system_settings,
@@ -1054,7 +1101,10 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
             project_analyzer_settings=project_analyzer_settings,
             project_id=project_id,
             scan_type=scan_type,
+            persist_deps=persist_deps,
+            old_deps_deleted=old_deps_deleted,
         )
+        resolved_sboms[index] = None
         results_summary.extend(sbom_results)
 
     external_load_start = datetime.now(timezone.utc)

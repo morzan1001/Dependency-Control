@@ -38,17 +38,6 @@ class TestExtractSymbolsFromVulnerability:
         assert result.confidence == "high"
         assert result.extraction_method == "osv_go_imports"
 
-    def test_affected_symbols(self):
-        vuln = {
-            "id": "CVE-2023-5678",
-            "component": "lodash",
-            "affected_symbols": ["merge", "template"],
-        }
-        result = extract_symbols_from_vulnerability(vuln)
-        assert result.symbols == ["merge", "template"]
-        assert result.confidence == "high"
-        assert result.extraction_method == "scanner_provided"
-
     def test_no_symbols_found(self):
         vuln = {"id": "CVE-2023-0000", "package": "pkg"}
         result = extract_symbols_from_vulnerability(vuln)
@@ -88,11 +77,13 @@ class TestExtractSymbolsFromVulnerability:
         # No symbols key in imports -> falls through
         assert result.symbols == []
 
-    def test_osv_symbols_prioritized_over_affected_symbols(self):
+    def test_symbols_prioritized_over_imports(self):
         vuln = {
             "id": "CVE-1",
-            "ecosystem_specific": {"symbols": ["osv_func"]},
-            "affected_symbols": ["other_func"],
+            "ecosystem_specific": {
+                "symbols": ["osv_func"],
+                "imports": [{"path": "net/http", "symbols": ["other_func"]}],
+            },
         }
         result = extract_symbols_from_vulnerability(vuln)
         assert result.symbols == ["osv_func"]
@@ -105,8 +96,8 @@ class TestGetSymbolsForFinding:
             "component": "requests",
             "details": {
                 "vulnerabilities": [
-                    {"id": "CVE-2023-1", "affected_symbols": ["func_a"]},
-                    {"id": "CVE-2023-2", "affected_symbols": ["func_b"]},
+                    {"id": "CVE-2023-1", "ecosystem_specific": {"symbols": ["func_a"]}},
+                    {"id": "CVE-2023-2", "ecosystem_specific": {"symbols": ["func_b"]}},
                 ],
             },
         }
@@ -133,8 +124,8 @@ class TestGetSymbolsForFinding:
             "component": "pkg",
             "details": {
                 "vulnerabilities": [
-                    {"id": "CVE-1", "affected_symbols": ["func_a", "func_b"]},
-                    {"id": "CVE-2", "affected_symbols": ["func_b", "func_c"]},
+                    {"id": "CVE-1", "ecosystem_specific": {"symbols": ["func_a", "func_b"]}},
+                    {"id": "CVE-2", "ecosystem_specific": {"symbols": ["func_b", "func_c"]}},
                 ],
             },
         }
@@ -147,7 +138,7 @@ class TestGetSymbolsForFinding:
             "details": {
                 "vulnerabilities": [
                     {"id": "CVE-1"},  # no symbols -> low
-                    {"id": "CVE-2", "affected_symbols": ["func"]},  # high
+                    {"id": "CVE-2", "ecosystem_specific": {"symbols": ["func"]}},  # high
                 ],
             },
         }

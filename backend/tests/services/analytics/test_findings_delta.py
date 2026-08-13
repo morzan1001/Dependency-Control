@@ -9,16 +9,6 @@ from app.services.analytics.findings_delta import (
 )
 
 
-def test_identity_key_vulnerability_uses_cve_id():
-    # Flat shape supported via fallback.
-    f = {
-        "type": "vulnerability",
-        "component": "log4j-core@2.17.1",
-        "details": {"cve_id": "CVE-2025-1234"},
-    }
-    assert finding_identity_key(f) == ("vulnerability", "log4j-core@2.17.1", "CVE-2025-1234")
-
-
 def test_identity_key_vulnerability_uses_aggregated_shape():
     """Aggregated shape: ids live under details.vulnerabilities[].id and version is top-level; key is the sorted id set plus version."""
     f = {
@@ -58,22 +48,92 @@ def test_identity_key_outdated_uses_fixed_version():
     assert finding_identity_key(f) == ("outdated", "requests", "2.32.0")
 
 
-def test_identity_key_sast_uses_rule_id():
+def test_identity_key_sast_uses_sast_finding_ids():
+    """Merged SAST details carry the rule ids in sast_findings[].id, never a top-level rule_id."""
     f = {
         "type": "sast",
         "component": "src/api/keys.py",
-        "details": {"rule_id": "py/sql-injection", "line": 42},
+        "details": {
+            "sast_findings": [{"id": "py/tainted-query"}, {"id": "py/sql-injection"}],
+            "file": "src/api/keys.py",
+            "line": 42,
+            "cwe_ids": [],
+            "category_groups": [],
+            "owasp": [],
+        },
     }
-    assert finding_identity_key(f) == ("sast", "src/api/keys.py", "py/sql-injection:42")
+    assert finding_identity_key(f) == ("sast", "src/api/keys.py", "py/sql-injection,py/tainted-query:42")
 
 
-def test_identity_key_license_uses_license_id():
+def test_identity_key_sast_distinguishes_rules_on_same_line():
+    base = {
+        "type": "sast",
+        "component": "src/api/keys.py",
+        "details": {"sast_findings": [{"id": "rule-a"}], "file": "src/api/keys.py", "line": 42},
+    }
+    other = {
+        "type": "sast",
+        "component": "src/api/keys.py",
+        "details": {"sast_findings": [{"id": "rule-b"}], "file": "src/api/keys.py", "line": 42},
+    }
+    assert finding_identity_key(base) != finding_identity_key(other)
+
+
+def test_identity_key_iac_uses_rule_id():
+    """KICS normalizer stores the check id as details.rule_id."""
+    f = {
+        "type": "iac",
+        "component": "deploy/main.tf",
+        "details": {"rule_id": "aws-s3-public", "title": "Public bucket"},
+    }
+    assert finding_identity_key(f) == ("iac", "deploy/main.tf", "aws-s3-public")
+
+
+def test_identity_key_license_uses_license():
+    """License findings carry the SPDX id in details.license; license_id is never written."""
     f = {
         "type": "license",
         "component": "lodash@4.17.21",
-        "details": {"license_id": "GPL-3.0"},
+        "details": {"license": "GPL-3.0-only", "category": "strong_copyleft"},
     }
-    assert finding_identity_key(f) == ("license", "lodash@4.17.21", "GPL-3.0")
+    assert finding_identity_key(f) == ("license", "lodash@4.17.21", "GPL-3.0-only")
+
+
+def test_identity_key_malware_typosquat_uses_imitated_package():
+    f = {
+        "type": "malware",
+        "component": "axios2",
+        "details": {"imitated_package": "axios", "similarity": 0.92},
+    }
+    assert finding_identity_key(f) == ("malware", "axios2", "axios")
+
+
+def test_identity_key_malware_os_malware_uses_info_id():
+    f = {
+        "type": "malware",
+        "component": "evil-pkg",
+        "details": {
+            "info": {"id": "MAL-2023-1234", "description": "bad"},
+            "threats": ["trojan"],
+            "reference": "https://example.com/mal",
+            "source": "opensourcemalware",
+        },
+    }
+    assert finding_identity_key(f) == ("malware", "evil-pkg", "MAL-2023-1234")
+
+
+def test_identity_key_malware_os_malware_falls_back_to_reference():
+    f = {
+        "type": "malware",
+        "component": "evil-pkg",
+        "details": {
+            "info": {"description": "bad"},
+            "threats": [],
+            "reference": "https://example.com/mal",
+            "source": "opensourcemalware",
+        },
+    }
+    assert finding_identity_key(f) == ("malware", "evil-pkg", "https://example.com/mal")
 
 
 def test_identity_key_unknown_falls_back_to_full_fingerprint():
@@ -89,60 +149,55 @@ def test_identity_key_unknown_falls_back_to_full_fingerprint():
     assert key[2] != ""  # some fallback identifier present
 
 
-@pytest.mark.asyncio
-async def test_findings_delta_added_and_removed(db):
+def _agg_vuln_doc(_id, scan_id, component, version, cve_ids, severity="CRITICAL", description=""):
+    """Build a persisted vulnerability finding in the real AGGREGATED shape."""
+    return {
+        "_id": _id,
+        "project_id": "p1",
+        "scan_id": scan_id,
+        "finding_id": f"{component}:{version}",
+        "type": "vulnerability",
+        "severity": severity,
+        "component": component,
+        "version": version,
+        "description": description,
+        "details": {
+            "vulnerabilities": [{"id": c, "description": f"desc {c}"} for c in cve_ids],
+            "fixed_version": None,
+        },
+        "scan_created_at": datetime.now(timezone.utc),
+    }
+
+
+def _secret_doc(_id, scan_id, description="leaked"):
+    return {
+        "_id": _id,
+        "project_id": "p1",
+        "scan_id": scan_id,
+        "finding_id": "SECRET-AWS-abcd1234",
+        "type": "secret",
+        "severity": "HIGH",
+        "component": "src/x.py",
+        "description": description,
+        "details": {"detector": "AWS", "verified": True},
+        "scan_created_at": datetime.now(timezone.utc),
+    }
+
+
+async def _seed_added_removed(db):
     await db["findings"].insert_many(
         [
-            {
-                "_id": "fa1",
-                "project_id": "p1",
-                "scan_id": "sa",
-                "finding_id": "fa1",
-                "type": "vulnerability",
-                "severity": "CRITICAL",
-                "component": "lib@1",
-                "description": "CVE-A",
-                "details": {"cve_id": "CVE-A"},
-                "created_at": datetime.now(timezone.utc),
-            },
-            {
-                "_id": "fa2",
-                "project_id": "p1",
-                "scan_id": "sa",
-                "finding_id": "fa2",
-                "type": "secret",
-                "severity": "HIGH",
-                "component": "src/x.py",
-                "description": "leaked",
-                "details": {"pattern_hash": "h1"},
-                "created_at": datetime.now(timezone.utc),
-            },
-            {
-                "_id": "fb1",
-                "project_id": "p1",
-                "scan_id": "sb",
-                "finding_id": "fb1",
-                "type": "vulnerability",
-                "severity": "CRITICAL",
-                "component": "lib@1",
-                "description": "CVE-A again",
-                "details": {"cve_id": "CVE-A"},
-                "created_at": datetime.now(timezone.utc),
-            },
-            {
-                "_id": "fb2",
-                "project_id": "p1",
-                "scan_id": "sb",
-                "finding_id": "fb2",
-                "type": "vulnerability",
-                "severity": "MEDIUM",
-                "component": "other@2",
-                "description": "CVE-NEW",
-                "details": {"cve_id": "CVE-NEW"},
-                "created_at": datetime.now(timezone.utc),
-            },
+            _agg_vuln_doc("fa1", "sa", "lib", "1", ["CVE-A"], description="CVE-A"),
+            _secret_doc("fa2", "sa"),
+            _agg_vuln_doc("fb1", "sb", "lib", "1", ["CVE-A"], description="CVE-A again"),
+            _agg_vuln_doc("fb2", "sb", "other", "2", ["CVE-NEW"], severity="MEDIUM"),
         ]
     )
+
+
+@pytest.mark.asyncio
+async def test_findings_delta_added_and_removed(db):
+    await _seed_added_removed(db)
 
     resp = await compute_findings_delta(
         db,
@@ -164,62 +219,8 @@ async def test_findings_delta_added_and_removed(db):
     added = [i for i in resp.items if i.change == "added"]
     removed = [i for i in resp.items if i.change == "removed"]
     assert len(added) == 1 and added[0].cve_id == "CVE-NEW"
+    assert added[0].first_seen is not None
     assert len(removed) == 1 and removed[0].finding_type == "secret"
-
-
-async def _seed_added_removed(db):
-    await db["findings"].insert_many(
-        [
-            {
-                "_id": "fa1",
-                "project_id": "p1",
-                "scan_id": "sa",
-                "finding_id": "fa1",
-                "type": "vulnerability",
-                "severity": "CRITICAL",
-                "component": "lib@1",
-                "description": "CVE-A",
-                "details": {"cve_id": "CVE-A"},
-                "created_at": datetime.now(timezone.utc),
-            },
-            {
-                "_id": "fa2",
-                "project_id": "p1",
-                "scan_id": "sa",
-                "finding_id": "fa2",
-                "type": "secret",
-                "severity": "HIGH",
-                "component": "src/x.py",
-                "description": "leaked",
-                "details": {"pattern_hash": "h1"},
-                "created_at": datetime.now(timezone.utc),
-            },
-            {
-                "_id": "fb1",
-                "project_id": "p1",
-                "scan_id": "sb",
-                "finding_id": "fb1",
-                "type": "vulnerability",
-                "severity": "CRITICAL",
-                "component": "lib@1",
-                "description": "CVE-A again",
-                "details": {"cve_id": "CVE-A"},
-                "created_at": datetime.now(timezone.utc),
-            },
-            {
-                "_id": "fb2",
-                "project_id": "p1",
-                "scan_id": "sb",
-                "finding_id": "fb2",
-                "type": "vulnerability",
-                "severity": "MEDIUM",
-                "component": "other@2",
-                "description": "CVE-NEW",
-                "details": {"cve_id": "CVE-NEW"},
-                "created_at": datetime.now(timezone.utc),
-            },
-        ]
-    )
 
 
 @pytest.mark.asyncio
@@ -254,28 +255,8 @@ async def test_breakdowns_decompose_full_totals_under_change_filter(db):
 async def test_findings_delta_severity_filter(db):
     await db["findings"].insert_many(
         [
-            {
-                "_id": "x1",
-                "project_id": "p1",
-                "scan_id": "sb",
-                "type": "vulnerability",
-                "severity": "CRITICAL",
-                "component": "c",
-                "description": "d",
-                "details": {"cve_id": "C1"},
-                "created_at": datetime.now(timezone.utc),
-            },
-            {
-                "_id": "x2",
-                "project_id": "p1",
-                "scan_id": "sb",
-                "type": "vulnerability",
-                "severity": "LOW",
-                "component": "c",
-                "description": "d",
-                "details": {"cve_id": "C2"},
-                "created_at": datetime.now(timezone.utc),
-            },
+            _agg_vuln_doc("x1", "sb", "c", "1", ["C1"], severity="CRITICAL"),
+            _agg_vuln_doc("x2", "sb", "c", "2", ["C2"], severity="LOW"),
         ]
     )
     resp = await compute_findings_delta(
@@ -295,20 +276,7 @@ async def test_findings_delta_severity_filter(db):
 
 @pytest.mark.asyncio
 async def test_findings_delta_pagination(db):
-    docs = [
-        {
-            "_id": f"y{i}",
-            "project_id": "p1",
-            "scan_id": "sb",
-            "type": "vulnerability",
-            "severity": "LOW",
-            "component": "c",
-            "description": "d",
-            "details": {"cve_id": f"CVE-{i}"},
-            "created_at": datetime.now(timezone.utc),
-        }
-        for i in range(120)
-    ]
+    docs = [_agg_vuln_doc(f"y{i}", "sb", "c", str(i), [f"CVE-{i}"], severity="LOW") for i in range(120)]
     await db["findings"].insert_many(docs)
     resp = await compute_findings_delta(
         db,
@@ -326,26 +294,6 @@ async def test_findings_delta_pagination(db):
     assert resp.page_size == 50
     assert resp.total_pages == 3
     assert len(resp.items) == 50
-
-
-def _agg_vuln_doc(_id, scan_id, component, version, cve_ids, severity="CRITICAL"):
-    """Build a persisted vulnerability finding in the real AGGREGATED shape."""
-    return {
-        "_id": _id,
-        "project_id": "p1",
-        "scan_id": scan_id,
-        "finding_id": f"{component}:{version}",
-        "type": "vulnerability",
-        "severity": severity,
-        "component": component,
-        "version": version,
-        "description": "",
-        "details": {
-            "vulnerabilities": [{"id": c, "description": f"desc {c}"} for c in cve_ids],
-            "fixed_version": None,
-        },
-        "created_at": datetime.now(timezone.utc),
-    }
 
 
 @pytest.mark.asyncio
@@ -423,35 +371,105 @@ async def test_aggregated_vuln_unchanged_when_cve_set_identical(db):
     assert resp.totals.unchanged == 1
 
 
+def _sast_doc(_id, scan_id, rule_ids, line=42):
+    return {
+        "_id": _id,
+        "project_id": "p1",
+        "scan_id": scan_id,
+        "finding_id": _id,
+        "type": "sast",
+        "severity": "HIGH",
+        "component": "src/api/keys.py",
+        "description": "injection",
+        "details": {
+            "sast_findings": [{"id": r} for r in rule_ids],
+            "file": "src/api/keys.py",
+            "line": line,
+            "cwe_ids": [],
+            "category_groups": [],
+            "owasp": [],
+        },
+        "scan_created_at": datetime.now(timezone.utc),
+    }
+
+
+@pytest.mark.asyncio
+async def test_sast_rule_swap_on_same_line_is_added_and_removed(db):
+    """Swapping rule A for rule B on the same file/line must not read as unchanged."""
+    await db["findings"].insert_many(
+        [
+            _sast_doc("sa1", "sa", ["rule-a"]),
+            _sast_doc("sb1", "sb", ["rule-b"]),
+        ]
+    )
+    resp = await compute_findings_delta(
+        db,
+        project_id="p1",
+        from_scan="sa",
+        to_scan="sb",
+        page=1,
+        page_size=50,
+        change=None,
+        severity=None,
+        finding_type=None,
+    )
+    assert resp.totals.added == 1
+    assert resp.totals.removed == 1
+    assert resp.totals.unchanged == 0
+
+
+@pytest.mark.asyncio
+async def test_malware_similarity_text_change_stays_unchanged(db):
+    """A typosquat whose similarity/description changes keeps its identity via imitated_package."""
+    base = {
+        "project_id": "p1",
+        "finding_id": "TYPO-axios2",
+        "type": "malware",
+        "severity": "CRITICAL",
+        "component": "axios2",
+        "scan_created_at": datetime.now(timezone.utc),
+    }
+    await db["findings"].insert_many(
+        [
+            {
+                **base,
+                "_id": "m_a",
+                "scan_id": "sa",
+                "description": "'axios2' is 92% similar to 'axios'",
+                "details": {"imitated_package": "axios", "similarity": 0.92},
+            },
+            {
+                **base,
+                "_id": "m_b",
+                "scan_id": "sb",
+                "description": "'axios2' is 95% similar to 'axios'",
+                "details": {"imitated_package": "axios", "similarity": 0.95},
+            },
+        ]
+    )
+    resp = await compute_findings_delta(
+        db,
+        project_id="p1",
+        from_scan="sa",
+        to_scan="sb",
+        page=1,
+        page_size=50,
+        change=None,
+        severity=None,
+        finding_type=None,
+    )
+    assert resp.totals.added == 0
+    assert resp.totals.removed == 0
+    assert resp.totals.unchanged == 1
+
+
 @pytest.mark.asyncio
 async def test_secret_identity_stable_across_scans_by_finding_id(db):
     """Same finding_id in both scans stays unchanged even though per-scan _id differs and details carry no hash."""
     await db["findings"].insert_many(
         [
-            {
-                "_id": "s_a",
-                "project_id": "p1",
-                "scan_id": "sa",
-                "finding_id": "SECRET-AWS-abcd1234",
-                "type": "secret",
-                "severity": "CRITICAL",
-                "component": "src/x.py",
-                "description": "Secret detected: AWS",
-                "details": {"detector": "AWS", "verified": True},
-                "created_at": datetime.now(timezone.utc),
-            },
-            {
-                "_id": "s_b",
-                "project_id": "p1",
-                "scan_id": "sb",
-                "finding_id": "SECRET-AWS-abcd1234",
-                "type": "secret",
-                "severity": "CRITICAL",
-                "component": "src/x.py",
-                "description": "Secret detected: AWS",
-                "details": {"detector": "AWS", "verified": True},
-                "created_at": datetime.now(timezone.utc),
-            },
+            _secret_doc("s_a", "sa", description="Secret detected: AWS"),
+            _secret_doc("s_b", "sb", description="Secret detected: AWS"),
         ]
     )
     resp = await compute_findings_delta(
@@ -506,8 +524,22 @@ async def test_fetch_uses_projection(db, monkeypatch):
         "description",
         "found_in",
         "finding_id",
-        "created_at",
+        "scan_created_at",
         "details.vulnerabilities.id",
         "details.fixed_version",
+        "details.sast_findings.id",
+        "details.imitated_package",
+        "details.info.id",
+        "details.reference",
+        "details.license",
     ):
         assert proj.get(field) == 1
+    # Keys no writer ever emits must not be fetched.
+    for gone in (
+        "created_at",
+        "details.cve_id",
+        "details.vuln_id",
+        "details.license_id",
+        "details.signature",
+    ):
+        assert gone not in proj

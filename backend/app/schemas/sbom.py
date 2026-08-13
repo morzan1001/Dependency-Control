@@ -44,7 +44,10 @@ class ParsedDependency(BaseModel):
     # Scope and relationships
     scope: str | None = None
     direct: bool = False
-    direct_inferred: bool = Field(False, description="True if 'direct' was inferred (no dependency graph in SBOM)")
+    direct_inferred: bool = Field(
+        False,
+        description="True if 'direct' is a guess (no graph, ref absent from the graph, or fallback root resolution)",
+    )
     parent_components: list[str] = Field(default_factory=list)
 
     # Source/Origin information
@@ -100,6 +103,7 @@ class ParsedSBOM(BaseModel):
     total_components: int = 0
     parsed_components: int = 0
     skipped_components: int = 0
+    merged_components: int = 0
 
     # CBOM extension — populated if SBOM contains cryptographic-asset components
     crypto_assets: list["ParsedCryptoAsset"] = Field(default_factory=list)

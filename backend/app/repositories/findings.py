@@ -19,7 +19,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         waived: bool,
         waiver_reason: str | None = None,
     ) -> int:
-        """Apply waiver to a specific nested vulnerability via array_filters."""
+        """Waive the nested entry known under vulnerability_id, its aliases, or its resolved CVE."""
         update_data: dict[str, Any] = {"details.vulnerabilities.$[vuln].waived": waived}
         if waiver_reason:
             update_data["details.vulnerabilities.$[vuln].waiver_reason"] = waiver_reason
@@ -28,10 +28,22 @@ class FindingRepository(BaseRepository[FindingRecord]):
             {
                 "scan_id": scan_id,
                 "type": "vulnerability",
-                "details.vulnerabilities.id": vulnerability_id,
+                "$or": [
+                    {"details.vulnerabilities.id": vulnerability_id},
+                    {"details.vulnerabilities.aliases": vulnerability_id},
+                    {"details.vulnerabilities.resolved_cve": vulnerability_id},
+                ],
             },
             {"$set": update_data},
-            array_filters=[{"vuln.id": vulnerability_id}],
+            array_filters=[
+                {
+                    "$or": [
+                        {"vuln.id": vulnerability_id},
+                        {"vuln.aliases": vulnerability_id},
+                        {"vuln.resolved_cve": vulnerability_id},
+                    ]
+                }
+            ],
         )
         return result.modified_count
 

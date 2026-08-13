@@ -221,6 +221,16 @@ def _check_fix_availability(details: dict[str, Any], nested_vulns: list[dict[str
     return any(vuln.get("fixed_version") for vuln in nested_vulns)
 
 
+def _max_nested_cvss(details: dict[str, Any]) -> float | None:
+    """Aggregated findings carry CVSS only per CVE in details.vulnerabilities[]."""
+    scores = [
+        vuln["cvss_score"]
+        for vuln in details.get("vulnerabilities") or []
+        if isinstance(vuln, dict) and vuln.get("cvss_score") is not None
+    ]
+    return max(scores) if scores else None
+
+
 def _build_direct_vuln_result(
     finding: Any,
     details: dict[str, Any],
@@ -233,7 +243,7 @@ def _build_direct_vuln_result(
         vulnerability_id=finding.finding_id,
         aliases=finding.aliases or [],
         severity=finding.severity or "UNKNOWN",
-        cvss_score=details.get("cvss_score"),
+        cvss_score=_max_nested_cvss(details),
         epss_score=details.get("epss_score"),
         epss_percentile=details.get("epss_percentile"),
         in_kev=in_kev_status,
@@ -281,7 +291,7 @@ def _build_nested_vuln_result(
         vulnerability_id=(vuln.get("id") or vuln.get("resolved_cve") or finding.finding_id),
         aliases=_nested_vuln_aliases(vuln, finding),
         severity=(vuln.get("severity") or finding.severity or "UNKNOWN"),
-        cvss_score=(vuln.get("cvss_score") or details.get("cvss_score")),
+        cvss_score=vuln.get("cvss_score"),
         epss_score=(vuln.get("epss_score") or details.get("epss_score")),
         epss_percentile=(vuln.get("epss_percentile") or details.get("epss_percentile")),
         in_kev=vuln.get(DETAILS_KEY_IN_KEV, False) or in_kev_status,
@@ -332,7 +342,8 @@ def _build_vuln_query(
 
 _VULN_SORT_FIELD_MAP = {
     "severity": "severity",
-    "cvss": "details.cvss_score",
+    # CVSS only exists per CVE; Mongo sorts array paths by max (desc) / min (asc).
+    "cvss": "details.vulnerabilities.cvss_score",
     "epss": "details.epss_score",
     "component": "component",
     "project_name": "project_id",

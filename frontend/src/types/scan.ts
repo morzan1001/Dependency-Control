@@ -462,6 +462,7 @@ export interface EnhancedStats {
   high?: number;
   medium?: number;
   low?: number;
+  negligible?: number;
   info?: number;
   unknown?: number;
   risk_score?: number;

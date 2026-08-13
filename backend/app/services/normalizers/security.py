@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType, Severity
+from app.schemas.finding_details import HashVerificationDetails, OsMalwareDetails
 from app.services.normalizers.utils import build_finding_id, safe_get
 
 if TYPE_CHECKING:
@@ -34,12 +35,12 @@ def normalize_malware(aggregator: "ResultAggregator", result: dict[str, Any], so
                 version=version,
                 description=description,
                 scanners=["os_malware"],
-                details={
-                    "info": malware_info,
-                    "threats": threats,
-                    "reference": malware_info.get("reference"),
-                    "source": "opensourcemalware",
-                },
+                details=OsMalwareDetails(
+                    info=malware_info,
+                    threats=threats,
+                    reference=malware_info.get("reference"),
+                    source="opensourcemalware",
+                ).model_dump(exclude_none=True),
             ),
             source=source,
         )
@@ -62,13 +63,13 @@ def normalize_hash_verification(
                 version=version,
                 description=f"Package integrity check failed! {item.get('message') or 'Hash mismatch detected'}",
                 scanners=["hash_verification"],
-                details={
-                    "registry": item.get("registry"),
-                    "algorithm": algorithm,
-                    "sbom_hash": item.get("sbom_hash"),
-                    "expected_hashes": item.get("expected_hashes") or [],
-                    "verification_failed": True,
-                },
+                details=HashVerificationDetails(
+                    registry=item.get("registry"),
+                    algorithm=algorithm,
+                    sbom_hash=item.get("sbom_hash"),
+                    expected_hashes=item.get("expected_hashes") or [],
+                    verification_failed=True,
+                ).model_dump(exclude_none=True),
             ),
             source=source,
         )

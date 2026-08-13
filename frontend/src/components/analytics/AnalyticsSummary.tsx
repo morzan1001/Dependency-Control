@@ -75,7 +75,14 @@ export function SeverityDistribution() {
   const severity = summary?.severity_distribution
   if (!severity) return null
 
-  const total = severity.critical + severity.high + severity.medium + severity.low
+  const total =
+    severity.critical +
+    severity.high +
+    severity.medium +
+    severity.low +
+    (severity.negligible ?? 0) +
+    (severity.info ?? 0) +
+    (severity.unknown ?? 0)
   if (total === 0) {
     return (
       <Card>
@@ -94,6 +101,12 @@ export function SeverityDistribution() {
     { label: 'High', value: severity.high, color: 'bg-severity-high' },
     { label: 'Medium', value: severity.medium, color: 'bg-severity-medium' },
     { label: 'Low', value: severity.low, color: 'bg-severity-low' },
+    // Low-signal buckets appear only when present, so the bar still reconciles with the headline total.
+    ...[
+      { label: 'Negligible', value: severity.negligible ?? 0, color: 'bg-gray-300' },
+      { label: 'Info', value: severity.info ?? 0, color: 'bg-severity-info' },
+      { label: 'Unknown', value: severity.unknown ?? 0, color: 'bg-gray-400' },
+    ].filter((s) => s.value > 0),
   ]
 
   return (

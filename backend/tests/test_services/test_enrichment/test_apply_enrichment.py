@@ -1,7 +1,10 @@
 """Tests for finding-level enrichment application."""
 
+import pytest
+
 from app.schemas.enrichment import GHSAData, VulnerabilityEnrichment
 from app.services.enrichment.service import (
+    VulnerabilityEnrichmentService,
     _apply_enrichment_to_finding,
     _apply_ghsa_resolutions,
 )
@@ -44,3 +47,58 @@ def test_ghsa_resolution_does_not_clobber_existing_cve_cvss():
     _apply_ghsa_resolutions(ghsa_resolutions, cve_to_findings, cvss_scores)
 
     assert cvss_scores["CVE-2024-9999"] == 7.5
+
+
+@pytest.mark.asyncio
+async def test_ghsa_resolution_collapses_cve_and_ghsa_entries(monkeypatch):
+    """Entries stored separately per scanner must fold into one once GHSA->CVE links them (C10)."""
+    service = VulnerabilityEnrichmentService()
+    finding = {
+        "_id": "f1",
+        "details": {
+            "vulnerabilities": [
+                {
+                    "id": "CVE-2026-59888",
+                    "severity": "HIGH",
+                    "aliases": [],
+                    "scanners": ["trivy"],
+                    "fixed_version": "2.18.8, 2.21.4",
+                    "cvss_score": 7.5,
+                    "references": [],
+                },
+                {
+                    "id": "GHSA-3pjw-73gf-8qr5",
+                    "severity": "HIGH",
+                    "aliases": [],
+                    "scanners": ["grype"],
+                    "fixed_version": "2.21.4",
+                    "cvss_score": 7.7,
+                    "references": [],
+                },
+            ],
+            "fixed_version": "2.21.4",
+        },
+    }
+
+    async def fake_resolve(ghsa_ids):
+        return {"GHSA-3pjw-73gf-8qr5": GHSAData(ghsa_id="GHSA-3pjw-73gf-8qr5", cve_id="CVE-2026-59888")}
+
+    async def fake_enrich_cves(cves, cvss_scores=None):
+        return {}
+
+    monkeypatch.setattr(service, "resolve_ghsa_to_cve", fake_resolve)
+    monkeypatch.setattr(service, "enrich_cves", fake_enrich_cves)
+
+    await service.enrich_findings([finding])
+
+    vulns = finding["details"]["vulnerabilities"]
+    assert len(vulns) == 1
+    merged = vulns[0]
+    assert merged["id"] == "CVE-2026-59888"
+    assert "GHSA-3pjw-73gf-8qr5" in merged["aliases"]
+    assert merged["resolved_cve"] == "CVE-2026-59888"
+    assert set(merged["scanners"]) == {"trivy", "grype"}
+    assert merged["fixed_version"] == "2.18.8, 2.21.4"
+    assert merged["cvss_score"] == 7.7
+    # Recomputed from the merged entry: the duplicate pair no longer forces 2.21.4 as covers-all fix.
+    assert finding["details"]["fixed_version"] == "2.18.8"

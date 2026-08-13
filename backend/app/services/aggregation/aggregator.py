@@ -1,10 +1,12 @@
 """ResultAggregator - aggregates findings from multiple analyzers."""
 
+import re
 from typing import Any
 
 from app.core.constants import (
     AGG_KEY_QUALITY,
     AGG_KEY_VULNERABILITY,
+    UNKNOWN_LICENSE_PATTERNS,
     get_severity_value,
 )
 from app.models.finding import Finding, FindingType, Severity
@@ -15,6 +17,7 @@ from app.schemas.finding import (
     VulnerabilityAggregatedDetails,
     VulnerabilityEntry,
 )
+from app.schemas.finding_details import SystemWarningDetails
 from app.services.aggregation.components import (
     extract_artifact_name,
     normalize_component,
@@ -33,6 +36,13 @@ from app.services.aggregation.scorecard import enrich_with_scorecard
 from app.services.aggregation.versions import (
     normalize_version,
     resolve_fixed_versions,
+)
+from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE
+from app.services.analyzers.license_compliance.normalizer import (
+    normalize_license as normalize_spdx_id,
+)
+from app.services.analyzers.license_compliance.normalizer import (
+    tokenize_license_string,
 )
 from app.services.normalizers.crypto import normalize_crypto
 from app.services.normalizers.iac import normalize_kics
@@ -55,6 +65,10 @@ from app.services.normalizers.vulnerability import (
     normalize_trivy,
 )
 
+_LICENSE_SENTINELS = UNKNOWN_LICENSE_PATTERNS | {"NON-STANDARD"}
+_SPDX_TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+-]*$")
+_SPDX_WITH_SPLIT = re.compile(r"\s+WITH\s+")
+
 
 class ResultAggregator:
     def __init__(self) -> None:
@@ -72,6 +86,30 @@ class ResultAggregator:
         return self._dependency_enrichments[key]
 
     @staticmethod
+    def _plausible_spdx_token(token: str) -> bool:
+        if token.upper() in _LICENSE_SENTINELS:
+            return False
+        if token.startswith("LicenseRef-"):
+            return True
+        return all(_SPDX_TOKEN_SHAPE.match(part) for part in _SPDX_WITH_SPLIT.split(token))
+
+    @staticmethod
+    def _sanitize_deps_dev_license(lic: Any) -> str | None:
+        """deps.dev emits sentinels like 'non-standard'; drop those but keep any plausible SPDX id or expression."""
+        if not isinstance(lic, str):
+            return None
+        value = lic.strip()
+        if not value or value.upper() in _LICENSE_SENTINELS:
+            return None
+        normalized = normalize_spdx_id(value)
+        if normalized in LICENSE_DATABASE:
+            return normalized
+        tokens = tokenize_license_string(value)
+        if tokens and all(ResultAggregator._plausible_spdx_token(t) for t in tokens):
+            return value
+        return None
+
+    @staticmethod
     def _apply_deps_dev_project(enrichment: DependencyEnrichment, project: dict[str, Any]) -> None:
         """Apply deps.dev project block to enrichment."""
         if not project:
@@ -83,9 +121,10 @@ class ResultAggregator:
             enrichment.description = project.get("description")
         if project.get("url"):
             enrichment.repository_url = project.get("url")
-        if project.get("license") and not enrichment.primary_license:
-            enrichment.primary_license = project.get("license")
-            enrichment.licenses.append({"spdx_id": project.get("license"), "source": "deps_dev_project"})
+        project_license = ResultAggregator._sanitize_deps_dev_license(project.get("license"))
+        if project_license and not enrichment.primary_license:
+            enrichment.primary_license = project_license
+            enrichment.licenses.append({"spdx_id": project_license, "source": "deps_dev_project"})
 
     @staticmethod
     def _apply_deps_dev_links(enrichment: DependencyEnrichment, links: dict[str, Any]) -> None:
@@ -127,10 +166,11 @@ class ResultAggregator:
     def _apply_deps_dev_licenses(enrichment: DependencyEnrichment, licenses: list[Any]) -> None:
         """Apply deps.dev license list to enrichment."""
         for lic in licenses:
-            if isinstance(lic, str):
-                enrichment.licenses.append({"spdx_id": lic, "source": "deps_dev"})
+            spdx_id = ResultAggregator._sanitize_deps_dev_license(lic)
+            if spdx_id:
+                enrichment.licenses.append({"spdx_id": spdx_id, "source": "deps_dev"})
                 if not enrichment.primary_license:
-                    enrichment.primary_license = lic
+                    enrichment.primary_license = spdx_id
 
     def enrich_from_deps_dev(self, name: str, version: str, metadata: dict[str, Any]) -> None:
         """Enrich dependency with data from deps.dev."""
@@ -169,6 +209,8 @@ class ResultAggregator:
         if spdx_id:
             enrichment.primary_license = spdx_id
             enrichment.license_category = license_info.get("category")
+            if license_info.get("spdx_expression"):
+                enrichment.license_expression = license_info["spdx_expression"]
             enrichment.licenses.append(
                 {
                     "spdx_id": spdx_id,
@@ -202,7 +244,9 @@ class ResultAggregator:
                     version="",
                     description=f"Scanner '{analyzer_name}' failed: {result.get('error')}",
                     scanners=[analyzer_name],
-                    details={"error_details": result.get("details", result.get("output", "No details provided"))},
+                    details=SystemWarningDetails(
+                        error_details=result.get("details", result.get("output", "No details provided"))
+                    ).model_dump(exclude_none=True),
                 ),
                 source=source,
             )
@@ -391,10 +435,8 @@ class ResultAggregator:
     def _build_vuln_entry(self, finding: Finding, source: str | None) -> VulnerabilityEntry:
         """Build a vulnerability entry dict from a finding."""
         refs_from_details = finding.details.get("references", []) or []
-        urls_from_details = finding.details.get("urls", []) or []
-        combined_refs = list(set(refs_from_details) | set(urls_from_details))
 
-        return {
+        entry: VulnerabilityEntry = {
             "id": finding.id,
             "severity": finding.severity,
             "description": finding.description,
@@ -404,12 +446,18 @@ class ResultAggregator:
             ),
             "cvss_score": (float(cvss) if (cvss := finding.details.get("cvss_score")) is not None else None),
             "cvss_vector": (str(finding.details.get("cvss_vector")) if finding.details.get("cvss_vector") else None),
-            "references": combined_refs,
+            "references": list(set(refs_from_details)),
             "aliases": finding.aliases or [],
             "scanners": finding.scanners or [],
             "source": source,
-            "details": {k: v for k, v in (finding.details or {}).items() if k != "urls"},
+            # ecosystem_specific is lifted to the entry level below, not duplicated here.
+            "details": {k: v for k, v in (finding.details or {}).items() if k != "ecosystem_specific"},
         }
+        ecosystem_specific = finding.details.get("ecosystem_specific")
+        if ecosystem_specific:
+            # get_symbols_for_finding reads it at the entry level for symbol reachability.
+            entry["ecosystem_specific"] = ecosystem_specific
+        return entry
 
     def _merge_vuln_into_existing(
         self, existing: Finding, finding: Finding, vuln_entry: VulnerabilityEntry, source: str | None

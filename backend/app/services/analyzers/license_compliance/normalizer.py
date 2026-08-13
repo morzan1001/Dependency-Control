@@ -103,6 +103,21 @@ def extract_licenses(component: dict[str, Any]) -> list[tuple[str, str | None]]:
     return licenses
 
 
+def composite_license_expression(component: dict[str, Any]) -> str | None:
+    """Return the raw license string when it declares more than one license (AND/WITH/comma list)."""
+    direct_license = component.get("license")
+    if isinstance(direct_license, str) and (SPDX_EXPR_SPLIT.search(direct_license) or "," in direct_license):
+        return direct_license
+
+    for lic_entry in component.get("licenses", []):
+        if "expression" in lic_entry:
+            expr = lic_entry["expression"]
+            if isinstance(expr, str) and SPDX_EXPR_SPLIT.search(expr):
+                return expr
+
+    return None
+
+
 def has_spdx_expression(component: dict[str, Any]) -> str | None:
     """Return the SPDX expression if the component contains an OR-expression."""
     for lic_entry in component.get("licenses", []):

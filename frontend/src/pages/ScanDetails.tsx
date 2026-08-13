@@ -177,13 +177,14 @@ export default function ScanDetails() {
   const showCompliance = activeAnalyzers.some(a => ['trivy', 'license_compliance', 'end_of_life'].includes(a));
   const showQuality = activeAnalyzers.some(a => ['outdated_packages', 'maintainer_risk'].includes(a));
 
-  const stats = scan.stats || { critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0 };
+  const stats = scan.stats || { critical: 0, high: 0, medium: 0, low: 0, negligible: 0, info: 0, unknown: 0 };
   
   const severityData = [
       { name: 'Critical', value: stats.critical || 0, color: SEVERITY_CHART_COLORS.CRITICAL },
       { name: 'High', value: stats.high || 0, color: SEVERITY_CHART_COLORS.HIGH },
       { name: 'Medium', value: stats.medium || 0, color: SEVERITY_CHART_COLORS.MEDIUM },
       { name: 'Low', value: stats.low || 0, color: SEVERITY_CHART_COLORS.LOW },
+      { name: 'Negligible', value: stats.negligible || 0, color: SEVERITY_CHART_COLORS.NEGLIGIBLE },
       { name: 'Info', value: stats.info || 0, color: SEVERITY_CHART_COLORS.INFO },
       { name: 'Unknown', value: stats.unknown || 0, color: SEVERITY_CHART_COLORS.UNKNOWN },
   ].filter(d => d.value > 0);

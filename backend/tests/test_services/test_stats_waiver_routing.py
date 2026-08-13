@@ -40,8 +40,8 @@ class TestIsSignatureWaiver:
 
 # ---------------------------------------------------------------------------
 # recalculate_project_stats must produce the same authoritative Stats as
-# calculate_comprehensive_stats (severity counts excluding waived, avg-based
-# risk_score, populated enrichment fields).
+# calculate_comprehensive_stats (severity counts excluding waived, saturating
+# severity-weighted risk_score, populated enrichment fields).
 # ---------------------------------------------------------------------------
 
 PROJECT_ID = "proj-w4"
@@ -144,7 +144,6 @@ class TestRecalculateUnifiedStats:
         assert result.critical == comprehensive.critical == 1
         assert result.high == comprehensive.high == 1
         assert result.medium == comprehensive.medium == 1
-        # risk_score is the avg (not a sum); identical to comprehensive.
         assert result.risk_score == comprehensive.risk_score
 
     @pytest.mark.asyncio

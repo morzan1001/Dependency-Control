@@ -5,6 +5,8 @@ from typing import Any
 from app.core.constants import ANALYZER_TIMEOUTS, EXPLOIT_MATURITY_ORDER
 from app.core.http_utils import InstrumentedAsyncClient
 from app.schemas.enrichment import EPSSData, GHSAData, KEVEntry, VulnerabilityEnrichment
+from app.services.aggregation.merging import dedupe_vulnerability_entries
+from app.services.aggregation.versions import resolve_fixed_versions
 from app.services.enrichment.epss import EPSSProvider
 from app.services.enrichment.ghsa import GHSAProvider
 from app.services.enrichment.kev import KEVProvider
@@ -177,6 +179,19 @@ def _apply_ghsa_resolutions(
             _apply_ghsa_to_finding(finding, ghsa_id, ghsa_data, cve_to_findings)
 
 
+def _dedupe_finding_vulnerabilities(findings: list[dict[str, Any]]) -> None:
+    """GHSA->CVE resolution can link entries that were distinct at aggregation time."""
+    for finding in findings:
+        vulns = finding.get("details", {}).get("vulnerabilities")
+        if not vulns or len(vulns) < 2:
+            continue
+        before = len(vulns)
+        dedupe_vulnerability_entries(vulns)
+        if len(vulns) != before:
+            fvs = [str(v["fixed_version"]) for v in vulns if v.get("fixed_version")]
+            finding["details"]["fixed_version"] = resolve_fixed_versions(fvs) if fvs else None
+
+
 def _apply_enrichment_to_vuln(
     vuln: dict[str, Any],
     cve: str,
@@ -321,6 +336,7 @@ class VulnerabilityEnrichmentService:
             logger.info(f"Resolving {len(ghsa_ids)} GHSA IDs to CVEs")
             ghsa_resolutions = await self.resolve_ghsa_to_cve(ghsa_ids)
             _apply_ghsa_resolutions(ghsa_resolutions, cve_to_findings, cvss_scores)
+            _dedupe_finding_vulnerabilities(findings)
 
         cves_to_enrich = [cve for cve in cve_to_findings if cve.startswith("CVE-")]
         enrichments = await self.enrich_cves(cves_to_enrich, cvss_scores)

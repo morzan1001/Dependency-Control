@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, Any
 
 from app.core.constants import BEARER_SEVERITY_MAP, OPENGREP_SEVERITY_MAP
 from app.models.finding import Finding, FindingType
+from app.schemas.finding_details import LineSpan, SastScannerDetails
 from app.services.normalizers.utils import (
     build_finding_id,
     normalize_cwe_list,
@@ -59,30 +60,30 @@ def _parse_opengrep_item(item: dict[str, Any]) -> Finding:
 
     description = _build_opengrep_description(check_id, message)
 
-    details = {
-        "rule_id": check_id,
-        "check_id": check_id,
-        "title": message,
-        "code_extract": extra.get("lines"),
-        "start": {"line": start_line, "column": start_col},
-        "end": {"line": end_line, "column": end_col},
-        "cwe_ids": normalize_cwe_list(cwe),
-        "owasp": normalize_list(owasp),
-        "impact": metadata.get("impact"),
-        "confidence": metadata.get("confidence"),
-        "likelihood": metadata.get("likelihood"),
-        "category": metadata.get("category"),
-        "category_groups": metadata.get("category_groups") or [],
-        "subcategory": normalize_list(metadata.get("subcategory")),
-        "technology": normalize_list(metadata.get("technology")),
-        "vulnerability_class": normalize_list(metadata.get("vulnerability_class")),
-        "references": metadata.get("references") or [],
-        "source_rule_url": metadata.get("source-rule-url") or metadata.get("source_rule_url"),
-        "source": metadata.get("source"),
-        "shortlink": metadata.get("shortlink"),
-        "license": metadata.get("license"),
-        "fingerprint": extra.get("fingerprint"),
-    }
+    details = SastScannerDetails(
+        rule_id=check_id,
+        check_id=check_id,
+        title=message,
+        code_extract=extra.get("lines"),
+        start=LineSpan(line=start_line, column=start_col),
+        end=LineSpan(line=end_line, column=end_col),
+        cwe_ids=normalize_cwe_list(cwe),
+        owasp=normalize_list(owasp),
+        impact=metadata.get("impact"),
+        confidence=metadata.get("confidence"),
+        likelihood=metadata.get("likelihood"),
+        category=metadata.get("category"),
+        category_groups=metadata.get("category_groups") or [],
+        subcategory=normalize_list(metadata.get("subcategory")),
+        technology=normalize_list(metadata.get("technology")),
+        vulnerability_class=normalize_list(metadata.get("vulnerability_class")),
+        references=metadata.get("references") or [],
+        source_rule_url=metadata.get("source-rule-url") or metadata.get("source_rule_url"),
+        source=metadata.get("source"),
+        shortlink=metadata.get("shortlink"),
+        license=metadata.get("license"),
+        fingerprint=extra.get("fingerprint"),
+    ).model_dump(exclude_none=True)
 
     return Finding(
         id=finding_id,
@@ -148,21 +149,21 @@ def normalize_bearer(aggregator: "ResultAggregator", result: dict[str, Any], sou
 
         finding_id = build_finding_id("BEARER", rule_id, filename, line_number)
 
-        details = {
-            "rule_id": rule_id,
-            "title": title,
-            "code_extract": item.get("code_extract") or item.get("snippet"),
-            "start": {"line": line_number, "column": start_col},
-            "end": {"line": end_line, "column": end_col},
-            "cwe_ids": normalize_cwe_list(item.get("cwe_ids") or item.get("cwe_id")),
-            "category": item.get("category"),
-            "category_groups": item.get("category_groups") or [],
-            "documentation_url": item.get("documentation_url"),
-            "references": item.get("references") or [],
-            "full_description": desc,
-            "fingerprint": item.get("fingerprint"),
-            "old_fingerprint": item.get("old_fingerprint"),
-        }
+        details = SastScannerDetails(
+            rule_id=rule_id,
+            title=title,
+            code_extract=item.get("code_extract") or item.get("snippet"),
+            start=LineSpan(line=line_number, column=start_col),
+            end=LineSpan(line=end_line, column=end_col),
+            cwe_ids=normalize_cwe_list(item.get("cwe_ids") or item.get("cwe_id")),
+            category=item.get("category"),
+            category_groups=item.get("category_groups") or [],
+            documentation_url=item.get("documentation_url"),
+            references=item.get("references") or [],
+            full_description=desc,
+            fingerprint=item.get("fingerprint"),
+            old_fingerprint=item.get("old_fingerprint"),
+        ).model_dump(exclude_none=True)
 
         aggregator.add_finding(
             Finding(

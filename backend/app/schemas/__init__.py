@@ -18,7 +18,6 @@ from app.schemas.enrichment import DependencyEnrichment
 from app.schemas.finding import (
     QualityAggregatedDetails,
     QualityEntry,
-    SecretDetails,
     VulnerabilityAggregatedDetails,
     VulnerabilityEntry,
 )
@@ -55,7 +54,6 @@ __all__ = [
     "RecommendationType",
     # SBOM
     "SBOMFormat",
-    "SecretDetails",
     # Analytics
     "SeverityBreakdown",
     "SourceType",

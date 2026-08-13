@@ -12,6 +12,7 @@ from app.models.finding import FindingType, Severity
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 from app.schemas.crypto_policy import CryptoRule
+from app.schemas.finding_details import CryptoCertificateDetails
 from app.services.analyzers.base import Analyzer
 from app.services.analyzers.crypto.matcher import rule_matches
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
@@ -401,12 +402,12 @@ def _build(
         "version": "",
         "description": description,
         "scanners": ["crypto_certificate_lifecycle"],
-        "details": {
-            "bom_ref": cert.bom_ref,
-            "subject_name": cert.subject_name,
-            "issuer_name": cert.issuer_name,
+        "details": CryptoCertificateDetails(
+            bom_ref=cert.bom_ref,
+            subject_name=cert.subject_name,
+            issuer_name=cert.issuer_name,
             **details,
-        },
+        ).model_dump(exclude_none=True),
         "found_in": list(cert.occurrence_locations),
         "aliases": [],
     }

@@ -4,6 +4,24 @@ from app.schemas.recommendation import Priority, Recommendation, RecommendationT
 from app.services.recommendation.common import ModelOrDict, get_attr
 
 
+def _sast_entries(details: ModelOrDict) -> list[dict]:
+    """Merged SAST findings keep rule ids and categories in details.sast_findings[]."""
+    if not isinstance(details, dict):
+        return []
+    return [e for e in details.get("sast_findings") or [] if isinstance(e, dict)]
+
+
+def _finding_category(details: ModelOrDict) -> str:
+    for entry in _sast_entries(details):
+        entry_details = entry.get("details")
+        if isinstance(entry_details, dict) and entry_details.get("category"):
+            return str(entry_details["category"])
+    for entry in _sast_entries(details):
+        if entry.get("id"):
+            return str(entry["id"])
+    return "security"
+
+
 def process_sast(findings: list[ModelOrDict]) -> list[Recommendation]:
     """Process SAST (Static Application Security Testing) findings."""
     if not findings:
@@ -12,12 +30,7 @@ def process_sast(findings: list[ModelOrDict]) -> list[Recommendation]:
     findings_by_category = defaultdict(list)
     for f in findings:
         details = get_attr(f, "details", {})
-        category = (
-            (details.get("category") if isinstance(details, dict) else None)
-            or (details.get("rule_id") if isinstance(details, dict) else None)
-            or (details.get("check_id") if isinstance(details, dict) else None)
-            or "security"
-        )
+        category = _finding_category(details)
         category_lower = category.lower()
         if "inject" in category_lower or "sqli" in category_lower:
             category = "Injection"
@@ -59,10 +72,9 @@ def process_sast(findings: list[ModelOrDict]) -> list[Recommendation]:
         rule_ids = set()
         for f in cat_findings:
             details = get_attr(f, "details", {})
-            if isinstance(details, dict):
-                rule_id = details.get("rule_id")
-                if rule_id:
-                    rule_ids.add(rule_id)
+            for entry in _sast_entries(details):
+                if entry.get("id"):
+                    rule_ids.add(str(entry["id"]))
 
         recommendations.append(
             Recommendation(

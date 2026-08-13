@@ -48,7 +48,6 @@ def _resolve_dep(
 ) -> ModelOrDict | None:
     """Resolve a dependency from purl or name@version lookup."""
     purl = details.get("purl") if isinstance(details, dict) else None
-    purl = purl or (details.get("package_url") if isinstance(details, dict) else None)
 
     if purl and purl in dep_by_purl:
         return dep_by_purl[purl]

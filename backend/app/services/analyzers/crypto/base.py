@@ -10,6 +10,7 @@ from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.crypto_policy import CryptoRule
+from app.schemas.finding_details import CryptoRuleDetails, MatchedRuleEntry
 from app.services.analyzers.base import Analyzer
 from app.services.analyzers.crypto.matcher import rule_matches
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
@@ -72,12 +73,12 @@ def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule]) -> dict[st
     component_label = f"{asset.name}" + (f" ({asset.variant})" if asset.variant else "") + f" [bom-ref:{asset.bom_ref}]"
 
     matched_rules_detail = [
-        {
-            "rule_id": r.rule_id,
-            "rule_name": r.name,
-            "policy_source": r.source.value if hasattr(r.source, "value") else r.source,
-            "severity": _severity_str(r.default_severity),
-        }
+        MatchedRuleEntry(
+            rule_id=r.rule_id,
+            rule_name=r.name,
+            policy_source=r.source.value if hasattr(r.source, "value") else r.source,
+            severity=_severity_str(r.default_severity),
+        )
         for r in rules
     ]
     aggregated_references: list[str] = []
@@ -96,22 +97,22 @@ def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule]) -> dict[st
         "version": asset.variant or "",
         "description": lead.description or lead.name,
         "scanners": ["crypto_rule_analyzer"],
-        "details": {
-            "rule_id": lead.rule_id,
-            "rule_name": lead.name,
-            "policy_source": lead.source.value if hasattr(lead.source, "value") else lead.source,
-            "matched_rules": matched_rules_detail,
-            "bom_ref": asset.bom_ref,
-            "asset_name": asset.name,
-            "asset_type": (asset.asset_type.value if hasattr(asset.asset_type, "value") else asset.asset_type),
-            "key_size_bits": asset.key_size_bits,
-            "primitive": (
+        "details": CryptoRuleDetails(
+            rule_id=lead.rule_id,
+            rule_name=lead.name,
+            policy_source=lead.source.value if hasattr(lead.source, "value") else lead.source,
+            matched_rules=matched_rules_detail,
+            bom_ref=asset.bom_ref,
+            asset_name=asset.name,
+            asset_type=(asset.asset_type.value if hasattr(asset.asset_type, "value") else asset.asset_type),
+            key_size_bits=asset.key_size_bits,
+            primitive=(
                 asset.primitive.value
                 if asset.primitive is not None and hasattr(asset.primitive, "value")
                 else asset.primitive
             ),
-            "references": aggregated_references,
-        },
+            references=aggregated_references,
+        ).model_dump(exclude_none=True),
         "found_in": list(asset.occurrence_locations),
         "aliases": [],
     }

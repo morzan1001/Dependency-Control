@@ -25,6 +25,19 @@ def get_attr(obj: ModelOrDict, key: str, default: Any = None) -> Any:
     return default
 
 
+def scorecard_details(details: Any) -> dict[str, Any]:
+    """Per-issue scorecard fields (critical_issues, failed_checks, project_url) live
+    one level down in the aggregated shape: details.quality_issues[].details."""
+    if not isinstance(details, dict):
+        return {}
+    for issue in details.get("quality_issues") or []:
+        if isinstance(issue, dict) and issue.get("type") == "scorecard":
+            nested = issue.get("details")
+            if isinstance(nested, dict):
+                return nested
+    return {}
+
+
 def group_findings_by_field(
     findings: list[ModelOrDict],
     field: str = "component",

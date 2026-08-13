@@ -8,14 +8,14 @@ def _iac(
     severity="HIGH",
     component="Dockerfile",
     platform="docker",
-    query_name="Healthcheck Missing",
+    title="Healthcheck Missing",
     finding_id="iac1",
 ):
     return {
         "type": "iac",
         "severity": severity,
         "component": component,
-        "details": {"platform": platform, "query_name": query_name},
+        "details": {"platform": platform, "title": title, "rule_id": "rule-1"},
         "id": finding_id,
     }
 
@@ -148,14 +148,14 @@ class TestProcessIacPriority:
 
 class TestProcessIacCommonIssues:
     def test_common_issues_in_action(self):
-        rec = process_iac([_iac(query_name="Healthcheck Missing")])[0]
+        rec = process_iac([_iac(title="Healthcheck Missing")])[0]
         assert "Healthcheck Missing" in rec.action["common_issues"]
 
     def test_multiple_issues_sorted_by_frequency(self):
         findings = [
-            _iac(query_name="Healthcheck Missing", finding_id="i1"),
-            _iac(query_name="Healthcheck Missing", finding_id="i2"),
-            _iac(query_name="Run As Root", finding_id="i3"),
+            _iac(title="Healthcheck Missing", finding_id="i1"),
+            _iac(title="Healthcheck Missing", finding_id="i2"),
+            _iac(title="Run As Root", finding_id="i3"),
         ]
         rec = process_iac(findings)[0]
         issues = rec.action["common_issues"]
@@ -164,7 +164,7 @@ class TestProcessIacCommonIssues:
         assert "Run As Root" in issues
 
     def test_common_issues_limited_to_five(self):
-        findings = [_iac(query_name=f"Issue{i}", finding_id=f"i{i}", severity="HIGH") for i in range(8)]
+        findings = [_iac(title=f"Issue{i}", finding_id=f"i{i}", severity="HIGH") for i in range(8)]
         rec = process_iac(findings)[0]
         assert len(rec.action["common_issues"]) <= 5
 
@@ -218,20 +218,20 @@ class TestProcessIacEffort:
 
 
 class TestProcessIacPlatformFallback:
-    def test_platform_from_query_name_dot_prefix(self):
-        # With no platform, the query_name segment before the first dot is used.
+    def test_platform_from_title_dot_prefix(self):
+        # With no platform, the title segment before the first dot is used.
         finding = {
             "type": "iac",
             "severity": "HIGH",
             "component": "main.tf",
-            "details": {"query_name": "terraform.something"},
+            "details": {"title": "terraform.something"},
             "id": "iac1",
         }
         rec = process_iac([finding])[0]
         assert "Terraform" in rec.title
 
     def test_fallback_to_infrastructure(self):
-        # No platform and no query_name defaults to 'infrastructure'.
+        # No platform and no title defaults to 'infrastructure'.
         finding = {
             "type": "iac",
             "severity": "HIGH",

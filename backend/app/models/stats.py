@@ -70,25 +70,25 @@ class Stats(BaseModel):
     high: int = Field(0, description="Count of high severity findings")
     medium: int = Field(0, description="Count of medium severity findings")
     low: int = Field(0, description="Count of low severity findings")
+    negligible: int = Field(0, description="Count of negligible severity findings")
     info: int = Field(0, description="Count of informational findings")
-    unknown: int = Field(0, description="Count of findings with unknown severity")
+    unknown: int = Field(0, description="Count of findings with unknown or unmapped severity")
     risk_score: float = Field(
         0.0,
         description=(
-            "Base composite risk score on a 0-100 scale: the average of each "
-            "finding's details.risk_score (CVSS impact + EPSS likelihood + "
-            "KEV/ransomware), with a 0-100 per-severity fallback for findings "
-            "lacking enrichment. Does NOT include the reachability modifier."
+            "Saturating severity-weighted exposure score on a 0-100 scale: "
+            "100*E/(E+RISK_SCORE_HALF_SATURATION) with E the "
+            "RISK_SEVERITY_WEIGHTS-weighted sum of CRITICAL/HIGH/MEDIUM/LOW "
+            "finding counts. Monotone in the finding set; INFO/UNKNOWN/"
+            "NEGLIGIBLE findings do not contribute."
         ),
     )
     adjusted_risk_score: float = Field(
         0.0,
         description=(
-            "Reachability-adjusted risk score on the SAME 0-100 scale as "
-            "risk_score: the average of each finding's "
-            "details.adjusted_risk_score (base score scaled by the reachability "
-            "modifier — x0.4 unreachable, x1.1 confirmed-reachable), falling "
-            "back to the base risk_score then the 0-100 per-severity fallback."
+            "Reachability-adjusted score on the SAME saturating 0-100 scale as "
+            "risk_score: each finding's severity weight is scaled x0.4 if "
+            "unreachable and x1.1 if confirmed (symbol-level) reachable."
         ),
     )
 

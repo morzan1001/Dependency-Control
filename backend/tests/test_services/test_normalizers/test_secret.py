@@ -198,9 +198,10 @@ class TestNormalizeTrufflehog:
         }
         self.agg.aggregate("trufflehog", result)
         f = next(iter(self.agg.findings.values()))
-        assert f.details["commit"] is None
-        assert f.details["line"] is None
-        assert f.details["commit_timestamp"] is None
+        # exclude_none drops absent git metadata entirely; readers use .get().
+        assert f.details.get("commit") is None
+        assert f.details.get("line") is None
+        assert f.details.get("commit_timestamp") is None
 
     def test_in_current_tree_true_from_pipeline_flag(self):
         result = {
@@ -244,7 +245,7 @@ class TestNormalizeTrufflehog:
         }
         self.agg.aggregate("trufflehog", result)
         f = next(iter(self.agg.findings.values()))
-        assert f.details["in_current_tree"] is None
+        assert f.details.get("in_current_tree") is None
 
     def test_verified_secret_has_boosted_adjusted_risk_score(self):
         result = {

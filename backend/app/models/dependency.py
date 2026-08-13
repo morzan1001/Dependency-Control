@@ -29,7 +29,7 @@ class Dependency(MongoDocument):
     direct: bool = Field(False, description="True if direct dependency, False if transitive")
     direct_inferred: bool = Field(
         False,
-        description="True if 'direct' was inferred (SBOM had no dependency graph)",
+        description="True if 'direct' is a guess (no graph, ref absent from the graph, or fallback root resolution)",
     )
     parent_components: list[str] = Field(default_factory=list, description="List of parent component PURLs/names")
 

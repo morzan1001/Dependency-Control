@@ -9,16 +9,22 @@ def _sast(
     component="app.py",
     category="sql-injection",
     finding_id="sast1",
-    rule_id=None,
+    rule_id="rule-1",
 ):
-    details = {"category": category}
-    if rule_id is not None:
-        details["rule_id"] = rule_id
+    """Merged-SAST shape: category and rule ids live in details.sast_findings[]."""
+    entry = {
+        "id": rule_id,
+        "scanner": "opengrep",
+        "severity": severity,
+        "title": category,
+        "description": "",
+        "details": {"rule_id": rule_id, "category": category},
+    }
     return {
         "type": "sast",
         "severity": severity,
         "component": component,
-        "details": details,
+        "details": {"sast_findings": [entry], "file": component, "line": 1},
         "id": finding_id,
     }
 
@@ -248,29 +254,34 @@ class TestProcessSastImpactAndAction:
 
 
 class TestProcessSastCategoryFallback:
-    """Category fallback through rule_id, check_id, then default 'security'."""
+    """Category falls back to the entry rule id, then to 'security'."""
 
-    def test_rule_id_fallback_when_no_category(self):
+    def test_entry_id_fallback_when_no_category(self):
         finding = {
             "type": "sast",
             "severity": "HIGH",
             "component": "app.py",
-            "details": {"rule_id": "custom-rule"},
+            "details": {"sast_findings": [{"id": "custom-rule", "details": {}}]},
             "id": "s1",
         }
         rec = process_sast([finding])[0]
         assert "custom-rule" in rec.title
 
-    def test_check_id_fallback(self):
+    def test_category_from_later_entry(self):
         finding = {
             "type": "sast",
             "severity": "HIGH",
             "component": "app.py",
-            "details": {"check_id": "CKV_123"},
+            "details": {
+                "sast_findings": [
+                    {"id": "rule-a", "details": {}},
+                    {"id": "rule-b", "details": {"category": "sqli"}},
+                ]
+            },
             "id": "s1",
         }
         rec = process_sast([finding])[0]
-        assert "CKV_123" in rec.title
+        assert "Injection" in rec.title
 
     def test_default_security_category(self):
         finding = {

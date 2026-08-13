@@ -6,7 +6,7 @@ from app.schemas.enrichment import ExtractedSymbols
 
 
 def extract_symbols_from_vulnerability(vuln_data: dict[str, Any]) -> ExtractedSymbols:
-    """Extract symbols from a scanner vulnerability dict via OSV ecosystem_specific / affected_symbols."""
+    """Extract symbols from a vulnerability entry via its OSV ecosystem_specific payload."""
     cve = vuln_data.get("id", "") or vuln_data.get("cve", "")
     package = vuln_data.get("package", "") or vuln_data.get("component", "")
 
@@ -35,15 +35,6 @@ def extract_symbols_from_vulnerability(vuln_data: dict[str, Any]) -> ExtractedSy
                         confidence="high",
                         extraction_method="osv_go_imports",
                     )
-
-    if "affected_symbols" in vuln_data and isinstance(vuln_data["affected_symbols"], list):
-        return ExtractedSymbols(
-            cve=cve,
-            package=package,
-            symbols=vuln_data["affected_symbols"],
-            confidence="high",
-            extraction_method="scanner_provided",
-        )
 
     return ExtractedSymbols(cve=cve, package=package)
 

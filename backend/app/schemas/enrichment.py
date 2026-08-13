@@ -87,6 +87,8 @@ class DependencyEnrichment(BaseModel):
 
     licenses: list[dict[str, Any]] = Field(default_factory=list)  # [{spdx_id, source, category, ...}]
     primary_license: str | None = None
+    # Raw SBOM-declared SPDX expression when composite (e.g. "A AND (B WITH exception)").
+    license_expression: str | None = None
     license_category: str | None = None  # permissive, copyleft, etc.
     license_risks: list[str] = Field(default_factory=list)
     license_obligations: list[str] = Field(default_factory=list)
@@ -129,6 +131,8 @@ class DependencyEnrichment(BaseModel):
 
         if self.primary_license:
             result["license"] = self.primary_license
+        if self.license_expression:
+            result["license_expression"] = self.license_expression
         if self.license_category:
             result["license_category"] = self.license_category
         if self.licenses:

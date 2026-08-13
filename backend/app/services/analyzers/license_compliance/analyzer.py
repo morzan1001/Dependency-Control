@@ -130,6 +130,10 @@ class LicenseAnalyzer(Analyzer):
             stats["unknown"] += 1
             return
 
+        # AND/WITH/comma composites reach this path member-by-member; keep the raw
+        # expression on each issue so the declared license survives enrichment.
+        raw_expression = normalizer.composite_license_expression(component)
+
         for lic_id, lic_url in licenses:
             normalized = normalizer.normalize_license(lic_id)
             license_info = LICENSE_DATABASE.get(normalized)
@@ -151,6 +155,8 @@ class LicenseAnalyzer(Analyzer):
                 policy=policy,
             )
             if issue:
+                if raw_expression:
+                    issue["spdx_expression"] = raw_expression
                 evaluator.apply_transitive_adjustment(issue, is_transitive)
                 if evaluator.should_include_finding(issue, is_transitive):
                     issues.append(issue)

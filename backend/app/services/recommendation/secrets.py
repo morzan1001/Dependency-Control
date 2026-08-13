@@ -12,12 +12,10 @@ def process_secrets(findings: list[ModelOrDict]) -> list[Recommendation]:
     secrets_by_type = defaultdict(list)
     for f in findings:
         details = get_attr(f, "details", {})
-        detector = (
-            (details.get("detector_type") if isinstance(details, dict) else None)
-            or (details.get("rule_id") if isinstance(details, dict) else None)
-            or "generic"
-        )
-        secrets_by_type[detector].append(f)
+        # normalize_trufflehog stores the credential type as details.detector;
+        # older docs carry the numeric DetectorType ordinal, hence str().
+        raw_detector = details.get("detector") if isinstance(details, dict) else None
+        secrets_by_type[str(raw_detector) if raw_detector else "generic"].append(f)
 
     recommendations = []
 
