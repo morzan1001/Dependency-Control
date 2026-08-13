@@ -8,7 +8,7 @@ from typing import Any
 from app.core.constants import AGG_KEY_SAST, get_severity_value
 from app.models.finding import Finding, FindingType
 from app.schemas.finding import VulnerabilityEntry
-from app.services.aggregation.versions import resolve_fixed_versions
+from app.services.aggregation.versions import parse_version_key, resolve_fixed_versions
 
 
 def _extend_unique(target: list[Any], items: list[Any]) -> None:
@@ -110,10 +110,20 @@ def _merge_vuln_description(tv: dict[str, Any], source_entry: VulnerabilityEntry
         tv["description_source"] = source_entry.get("description_source", "unknown")
 
 
+def _merged_fixed_version(a: Any, b: Any) -> str | None:
+    """Union both comma-separated version lists in semantic order, so the result is arrival-order independent."""
+    versions = {v.strip() for value in (a, b) if value for v in str(value).split(",")}
+    versions.discard("")
+    if not versions:
+        return None
+    return ", ".join(sorted(versions, key=lambda v: (parse_version_key(v), v)))
+
+
 def _merge_vuln_fix_and_cvss(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
-    """Merge fixed_version (filling gaps) and CVSS (taking the higher score)."""
-    if not tv.get("fixed_version") and source_entry.get("fixed_version"):
-        tv["fixed_version"] = source_entry["fixed_version"]
+    """Merge fixed_version (union of candidates) and CVSS (taking the higher score)."""
+    merged_fix = _merged_fixed_version(tv.get("fixed_version"), source_entry.get("fixed_version"))
+    if merged_fix is not None:
+        tv["fixed_version"] = merged_fix
 
     if source_entry.get("cvss_score") and (not tv.get("cvss_score") or source_entry["cvss_score"] > tv["cvss_score"]):
         tv["cvss_score"] = source_entry["cvss_score"]

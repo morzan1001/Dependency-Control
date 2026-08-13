@@ -100,3 +100,5 @@ async def test_ghsa_resolution_collapses_cve_and_ghsa_entries(monkeypatch):
     assert set(merged["scanners"]) == {"trivy", "grype"}
     assert merged["fixed_version"] == "2.18.8, 2.21.4"
     assert merged["cvss_score"] == 7.7
+    # Recomputed from the merged entry: the duplicate pair no longer forces 2.21.4 as covers-all fix.
+    assert finding["details"]["fixed_version"] == "2.18.8"

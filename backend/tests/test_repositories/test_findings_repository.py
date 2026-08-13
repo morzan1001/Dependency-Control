@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 from app.repositories.findings import FindingRepository
+from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.mongodb import create_mock_collection
 
 
@@ -71,6 +72,70 @@ class TestGetVulnCountsByComponentsScanScope:
         pipeline = _capture_pipeline(collection)
         match_stage = pipeline[0]["$match"]
         assert match_stage.get("waived") == {"$ne": True}
+
+
+class TestApplyVulnerabilityWaiverAliasMatch:
+    """A waiver keyed to a GHSA id must reach the entry now surfaced under its CVE id."""
+
+    _GHSA = "GHSA-3pjw-73gf-8qr5"
+
+    def _capture_update(self):
+        collection = create_mock_collection()
+        db = _make_mock_db(collection)
+        repo = FindingRepository(db)
+        asyncio.run(repo.apply_vulnerability_waiver("scan-1", self._GHSA, waived=True, waiver_reason="accepted"))
+        return collection.update_many.call_args
+
+    def test_query_matches_id_aliases_and_resolved_cve(self):
+        args, _ = self._capture_update()
+        query = args[0]
+        assert query["scan_id"] == "scan-1"
+        assert query["type"] == "vulnerability"
+        assert query["$or"] == [
+            {"details.vulnerabilities.id": self._GHSA},
+            {"details.vulnerabilities.aliases": self._GHSA},
+            {"details.vulnerabilities.resolved_cve": self._GHSA},
+        ]
+
+    def test_array_filter_targets_entry_by_any_known_id(self):
+        # Verified against a real mongod: $or in an array filter is valid when all
+        # paths share the identifier, and it waives exactly the aliased entry.
+        _, kwargs = self._capture_update()
+        assert kwargs["array_filters"] == [
+            {
+                "$or": [
+                    {"vuln.id": self._GHSA},
+                    {"vuln.aliases": self._GHSA},
+                    {"vuln.resolved_cve": self._GHSA},
+                ]
+            }
+        ]
+
+    def test_ghsa_keyed_waiver_reaches_doc_with_cve_keyed_entry(self):
+        db = FakeDatabase()
+        asyncio.run(
+            db.findings.insert_one(
+                {
+                    "_id": "f1",
+                    "scan_id": "scan-1",
+                    "type": "vulnerability",
+                    "details": {
+                        "vulnerabilities": [
+                            {
+                                "id": "CVE-2026-59888",
+                                "aliases": [self._GHSA],
+                                "resolved_cve": "CVE-2026-59888",
+                            }
+                        ]
+                    },
+                }
+            )
+        )
+        repo = FindingRepository(db)
+
+        modified = asyncio.run(repo.apply_vulnerability_waiver("scan-1", self._GHSA, waived=True))
+
+        assert modified == 1
 
 
 class TestGetSeverityDistributionScanScope:

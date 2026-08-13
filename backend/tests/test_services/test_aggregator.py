@@ -318,7 +318,7 @@ class TestMergeVulnerabilityIntoList:
         assert target[0]["cvss_score"] == 9.8
         assert target[0]["cvss_vector"] == "new"
 
-    def test_fixed_version_not_overwritten_if_present(self):
+    def test_fixed_version_unions_both_entries(self):
         target = [
             {
                 "id": "CVE-1",
@@ -334,8 +334,13 @@ class TestMergeVulnerabilityIntoList:
             "fixed_version": "1.2.4",
         }
         merge_vulnerability_into_list(target, entry)
-        # Original fixed_version should be preserved (not overwritten)
-        assert target[0]["fixed_version"] == "1.2.3"
+        assert target[0]["fixed_version"] == "1.2.3, 1.2.4"
+
+    def test_fixed_version_union_deduplicates_and_orders_semantically(self):
+        target = [{"id": "CVE-1", "aliases": [], "scanners": [], "fixed_version": "2.21.4, 2.18.8"}]
+        entry = {"id": "CVE-1", "aliases": [], "scanners": [], "fixed_version": "2.21.4, 2.2.0"}
+        merge_vulnerability_into_list(target, entry)
+        assert target[0]["fixed_version"] == "2.2.0, 2.18.8, 2.21.4"
 
     def test_fixed_version_added_if_missing(self):
         target = [
@@ -424,7 +429,7 @@ class TestConvergentVulnerabilityMerge:
         assert set(merged["aliases"]) == {"GHSA-3pjw-73gf-8qr5"}
         assert set(merged["scanners"]) == {"grype", "trivy", "osv"}
         assert merged["cvss_score"] == 7.7
-        assert merged["fixed_version"]
+        assert merged["fixed_version"] == "2.18.8, 2.21.4"
 
     def test_all_analyzer_orders_converge_on_one_cve_keyed_entry(self):
         import itertools
@@ -438,7 +443,7 @@ class TestConvergentVulnerabilityMerge:
             assert len(target) == 1, names
             assert target[0]["id"] == "CVE-2026-59888", names
             assert set(target[0]["scanners"]) == {"grype", "trivy", "osv"}, names
-            assert target[0]["fixed_version"], names
+            assert target[0]["fixed_version"] == "2.18.8, 2.21.4", names
 
     def test_aggregator_collapses_entries_linked_by_late_alias(self):
         agg = ResultAggregator()
