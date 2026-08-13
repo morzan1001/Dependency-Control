@@ -1,10 +1,12 @@
 """ResultAggregator - aggregates findings from multiple analyzers."""
 
+import re
 from typing import Any
 
 from app.core.constants import (
     AGG_KEY_QUALITY,
     AGG_KEY_VULNERABILITY,
+    UNKNOWN_LICENSE_PATTERNS,
     get_severity_value,
 )
 from app.models.finding import Finding, FindingType, Severity
@@ -38,6 +40,9 @@ from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE
 from app.services.analyzers.license_compliance.normalizer import (
     normalize_license as normalize_spdx_id,
 )
+from app.services.analyzers.license_compliance.normalizer import (
+    tokenize_license_string,
+)
 from app.services.normalizers.crypto import normalize_crypto
 from app.services.normalizers.iac import normalize_kics
 from app.services.normalizers.license import normalize_license
@@ -59,6 +64,10 @@ from app.services.normalizers.vulnerability import (
     normalize_trivy,
 )
 
+_LICENSE_SENTINELS = UNKNOWN_LICENSE_PATTERNS | {"NON-STANDARD"}
+_SPDX_TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+-]*$")
+_SPDX_WITH_SPLIT = re.compile(r"\s+WITH\s+")
+
 
 class ResultAggregator:
     def __init__(self) -> None:
@@ -76,12 +85,28 @@ class ResultAggregator:
         return self._dependency_enrichments[key]
 
     @staticmethod
-    def _known_spdx_id(lic: Any) -> str | None:
-        """deps.dev emits sentinels like 'non-standard'; only trust ids resolving into LICENSE_DATABASE."""
+    def _plausible_spdx_token(token: str) -> bool:
+        if token.upper() in _LICENSE_SENTINELS:
+            return False
+        if token.startswith("LicenseRef-"):
+            return True
+        return all(_SPDX_TOKEN_SHAPE.match(part) for part in _SPDX_WITH_SPLIT.split(token))
+
+    @staticmethod
+    def _sanitize_deps_dev_license(lic: Any) -> str | None:
+        """deps.dev emits sentinels like 'non-standard'; drop those but keep any plausible SPDX id or expression."""
         if not isinstance(lic, str):
             return None
-        normalized = normalize_spdx_id(lic)
-        return normalized if normalized in LICENSE_DATABASE else None
+        value = lic.strip()
+        if not value or value.upper() in _LICENSE_SENTINELS:
+            return None
+        normalized = normalize_spdx_id(value)
+        if normalized in LICENSE_DATABASE:
+            return normalized
+        tokens = tokenize_license_string(value)
+        if tokens and all(ResultAggregator._plausible_spdx_token(t) for t in tokens):
+            return value
+        return None
 
     @staticmethod
     def _apply_deps_dev_project(enrichment: DependencyEnrichment, project: dict[str, Any]) -> None:
@@ -95,7 +120,7 @@ class ResultAggregator:
             enrichment.description = project.get("description")
         if project.get("url"):
             enrichment.repository_url = project.get("url")
-        project_license = ResultAggregator._known_spdx_id(project.get("license"))
+        project_license = ResultAggregator._sanitize_deps_dev_license(project.get("license"))
         if project_license and not enrichment.primary_license:
             enrichment.primary_license = project_license
             enrichment.licenses.append({"spdx_id": project_license, "source": "deps_dev_project"})
@@ -140,7 +165,7 @@ class ResultAggregator:
     def _apply_deps_dev_licenses(enrichment: DependencyEnrichment, licenses: list[Any]) -> None:
         """Apply deps.dev license list to enrichment."""
         for lic in licenses:
-            spdx_id = ResultAggregator._known_spdx_id(lic)
+            spdx_id = ResultAggregator._sanitize_deps_dev_license(lic)
             if spdx_id:
                 enrichment.licenses.append({"spdx_id": spdx_id, "source": "deps_dev"})
                 if not enrichment.primary_license:

@@ -43,6 +43,37 @@ class TestDepsDevSentinelRejection:
         self.agg.enrich_from_deps_dev("aopalliance", "1.0", {"project": {"license": "MIT"}})
         assert self._payload()["license"] == "MIT"
 
+    def test_or_expression_is_kept_verbatim(self):
+        self.agg.enrich_from_deps_dev("serde", "1.0.219", {"licenses": ["Apache-2.0 OR MIT"]})
+        payload = self._payload("serde", "1.0.219")
+        assert payload["license"] == "Apache-2.0 OR MIT"
+        assert payload["licenses_detailed"] == [{"spdx_id": "Apache-2.0 OR MIT", "source": "deps_dev"}]
+
+    def test_and_expression_is_kept_verbatim(self):
+        self.agg.enrich_from_deps_dev("miniz_oxide", "0.8.0", {"licenses": ["MIT AND Zlib"]})
+        assert self._payload("miniz_oxide", "0.8.0")["license"] == "MIT AND Zlib"
+
+    def test_with_exception_expression_is_kept_verbatim(self):
+        expr = "Apache-2.0 OR MIT OR Apache-2.0 WITH LLVM-exception"
+        self.agg.enrich_from_deps_dev("wasi", "0.11.0", {"licenses": [expr]})
+        assert self._payload("wasi", "0.11.0")["license"] == expr
+
+    def test_license_ref_id_is_kept(self):
+        self.agg.enrich_from_deps_dev("tzdata", "2026c", {"licenses": ["LicenseRef-Fedora-Public-Domain"]})
+        assert self._payload("tzdata", "2026c")["license"] == "LicenseRef-Fedora-Public-Domain"
+
+    def test_unlisted_but_plausible_spdx_id_is_kept(self):
+        self.agg.enrich_from_deps_dev("elasticsearch", "8.14.0", {"licenses": ["Elastic-2.0"]})
+        assert self._payload("elasticsearch", "8.14.0")["license"] == "Elastic-2.0"
+
+    def test_unlisted_mit_zero_is_kept(self):
+        self.agg.enrich_from_deps_dev("tslib", "2.6.0", {"licenses": ["MIT-0"]})
+        assert self._payload("tslib", "2.6.0")["license"] == "MIT-0"
+
+    def test_free_text_license_is_dropped(self):
+        self.agg.enrich_from_deps_dev("weird", "1.0", {"licenses": ["SEE LICENSE IN LICENSE.txt"]})
+        assert "license" not in self._payload("weird", "1.0")
+
 
 class TestCompositeExpressionOnIssues:
     def setup_method(self):
