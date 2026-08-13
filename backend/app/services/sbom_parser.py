@@ -656,7 +656,6 @@ class SBOMParser:
             comp.get("externalReferences", [])
         )
 
-        component_type = comp.get("type", "library")
         determined_source_type = self._determine_component_source(
             purl=purl,
             pkg_type=component_type,
@@ -664,11 +663,16 @@ class SBOMParser:
             global_source_type=global_source_type,
         )
 
+        # Inventory presents `type` as the ecosystem, so emit the purl vocabulary;
+        # a fabricated purl only says "generic", so real generator hints win there.
+        source_purl_type = get_purl_type(purl) if comp.get("purl") else None
+        dep_type = source_purl_type or properties.get("syft:package:type") or get_purl_type(purl) or component_type
+
         return ParsedDependency(
             name=name,
             version=version,
             purl=purl,
-            type=component_type,
+            type=dep_type,
             license=license_str,
             license_url=license_url,
             scope=comp.get("scope"),
@@ -998,7 +1002,6 @@ class SBOMParser:
         cpes = [(c.get("cpe") if isinstance(c, dict) else c) for c in artifact.get("cpes") or [] if c]
         cpes = [c for c in cpes if c]
         found_by = artifact.get("foundBy")
-        pkg_type = artifact.get("type", "unknown")
 
         metadata = artifact.get("metadata")
         if not isinstance(metadata, dict):
@@ -1024,11 +1027,15 @@ class SBOMParser:
             global_source_type=source_type,
         )
 
+        # Inventory presents `type` as the ecosystem: purl vocabulary when the
+        # SBOM carried a purl, the raw syft artifact type otherwise.
+        dep_type = (get_purl_type(purl) if artifact.get("purl") else None) or pkg_type
+
         return ParsedDependency(
             name=name,
             version=version,
             purl=purl,
-            type=pkg_type,
+            type=dep_type,
             license=license_str,
             license_url=license_url,
             scope=None,

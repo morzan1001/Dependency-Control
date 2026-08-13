@@ -1680,6 +1680,117 @@ class TestFabricatedIdentifiers:
         assert [d.name for d in result.dependencies] == ["real-pkg"]
 
 
+class TestTypeIsPurlEcosystem:
+    """`type` is surfaced as 'ecosystem' by Inventory; all three branches must emit the purl vocabulary, not the generator's."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def test_trivy_framework_component_gets_purl_type(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "framework",
+                        "name": "@angular-devkit/architect",
+                        "version": "0.1902.14",
+                        "purl": "pkg:npm/%40angular-devkit/architect@0.1902.14",
+                    }
+                ]
+            )
+        )
+        assert result.dependencies[0].type == "npm"
+
+    def test_cyclonedx_library_gets_purl_type(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "library",
+                        "name": "guava",
+                        "version": "33.0.0",
+                        "purl": "pkg:maven/com.google.guava/guava@33.0.0",
+                    }
+                ]
+            )
+        )
+        assert result.dependencies[0].type == "maven"
+
+    def test_operating_system_keeps_its_component_type(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "bom-ref": "os:debian@13",
+                        "type": "operating-system",
+                        "name": "debian",
+                        "version": "13",
+                        "cpe": "cpe:2.3:o:debian:debian_linux:13:*:*:*:*:*:*:*",
+                    }
+                ]
+            )
+        )
+        assert result.dependencies[0].type == "operating-system"
+
+    def test_purl_less_application_falls_back_to_syft_package_type_property(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "application",
+                        "name": "windows-kill",
+                        "version": "1.0",
+                        "cpe": "cpe:2.3:a:windows-kill:windows-kill:1.0:*:*:*:*:*:*:*",
+                        "properties": [{"name": "syft:package:type", "value": "binary"}],
+                    }
+                ]
+            )
+        )
+        assert result.dependencies[0].type == "binary"
+
+    def test_fabricated_purl_prefers_syft_package_type_property(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "library",
+                        "name": "some-lib",
+                        "version": "1.0",
+                        "properties": [{"name": "syft:package:type", "value": "java-archive"}],
+                    }
+                ]
+            )
+        )
+        assert result.dependencies[0].type == "java-archive"
+
+    def test_syft_artifact_type_replaced_by_purl_type(self):
+        sbom = {
+            "descriptor": {"name": "syft", "version": "1.42.3"},
+            "source": {"id": "src", "type": "directory", "target": "/build"},
+            "artifacts": [
+                {
+                    "id": "a1",
+                    "name": "slf4j-api",
+                    "version": "2.0.16",
+                    "type": "java-archive",
+                    "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.16",
+                },
+                {
+                    "id": "a2",
+                    "name": "actions/checkout",
+                    "version": "v4",
+                    "type": "github-action",
+                    "purl": "pkg:github/actions/checkout@v4",
+                },
+            ],
+            "artifactRelationships": [],
+        }
+        result = self.parser.parse(sbom)
+        deps = {d.name: d for d in result.dependencies}
+        assert deps["slf4j-api"].type == "maven"
+        assert deps["actions/checkout"].type == "github"
+
+
 class TestDetectFormatMalformed:
     """detect_format must not raise on structurally odd (but valid JSON) SBOMs; it falls through to UNKNOWN."""
 
