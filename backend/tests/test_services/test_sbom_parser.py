@@ -1791,6 +1791,108 @@ class TestTypeIsPurlEcosystem:
         assert deps["actions/checkout"].type == "github"
 
 
+class TestVcsUrlNormalization:
+    """Maven SCM strings copied verbatim (4.3% of prod repository_url values) are unusable as links."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def _repo_url(self, vcs_value: str) -> str | None:
+        sbom = _cyclonedx_with(
+            [
+                {
+                    "type": "library",
+                    "name": "pkg",
+                    "version": "1.0",
+                    "purl": "pkg:maven/g/pkg@1.0",
+                    "externalReferences": [{"type": "vcs", "url": vcs_value}],
+                }
+            ]
+        )
+        return self.parser.parse(sbom).dependencies[0].repository_url
+
+    def test_scm_git_git_protocol(self):
+        assert (
+            self._repo_url("scm:git:git://github.com/jayway/JsonPath.git") == "https://github.com/jayway/JsonPath.git"
+        )
+
+    def test_git_at_host_colon_path(self):
+        assert self._repo_url("git@github.com:prometheus/client_java.git") == (
+            "https://github.com/prometheus/client_java.git"
+        )
+
+    def test_scm_git_git_at_host(self):
+        assert self._repo_url("scm:git:git@github.com:lukas-krecan/ShedLock.git") == (
+            "https://github.com/lukas-krecan/ShedLock.git"
+        )
+
+    def test_plain_https_untouched(self):
+        assert self._repo_url("https://github.com/psf/requests") == "https://github.com/psf/requests"
+
+    def test_git_plus_https_prefix_stripped(self):
+        assert self._repo_url("git+https://github.com/acme/lib.git") == "https://github.com/acme/lib.git"
+
+    def test_garbage_is_dropped(self):
+        assert self._repo_url("not a url at all") is None
+
+
+class TestSyftArtifactMetadata:
+    """language lives on the artifact, not in metadata; deb 'source' is a package name, not a URL."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def _parse_artifact(self, artifact: dict):
+        sbom = {
+            "descriptor": {"name": "syft", "version": "1.42.3"},
+            "source": {"id": "src", "type": "directory", "target": "/build"},
+            "artifacts": [artifact],
+            "artifactRelationships": [],
+        }
+        return self.parser.parse(sbom).dependencies[0]
+
+    def test_top_level_language_is_captured(self):
+        dep = self._parse_artifact(
+            {
+                "id": "a1",
+                "name": "slf4j-api",
+                "version": "2.0.16",
+                "type": "java-archive",
+                "language": "java",
+                "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.16",
+                "metadata": {},
+            }
+        )
+        assert dep.properties.get("language") == "java"
+
+    def test_source_package_name_is_not_a_repository_url(self):
+        dep = self._parse_artifact(
+            {
+                "id": "a1",
+                "name": "libssl3",
+                "version": "3.0.11",
+                "type": "deb",
+                "purl": "pkg:deb/debian/libssl3@3.0.11",
+                "metadata": {"source": "openssl-src", "architecture": "amd64"},
+            }
+        )
+        assert dep.repository_url is None
+        assert dep.properties.get("architecture") == "amd64"
+
+    def test_real_source_url_is_kept(self):
+        dep = self._parse_artifact(
+            {
+                "id": "a1",
+                "name": "some-lib",
+                "version": "1.0",
+                "type": "npm",
+                "purl": "pkg:npm/some-lib@1.0",
+                "metadata": {"source": "https://github.com/acme/some-lib"},
+            }
+        )
+        assert dep.repository_url == "https://github.com/acme/some-lib"
+
+
 class TestDetectFormatMalformed:
     """detect_format must not raise on structurally odd (but valid JSON) SBOMs; it falls through to UNKNOWN."""
 

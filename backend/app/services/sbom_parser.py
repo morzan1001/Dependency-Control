@@ -558,7 +558,24 @@ class SBOMParser:
         return layer_digest, found_by, locations, properties, cpes
 
     @staticmethod
+    def _normalize_vcs_url(raw: str) -> str | None:
+        """Normalise Maven SCM / git-remote forms to an https URL, or None if unusable."""
+        value = raw.strip()
+        for prefix in ("scm:git:", "scm:svn:", "scm:hg:", "scm:", "git+"):
+            if value.lower().startswith(prefix):
+                value = value[len(prefix) :]
+        if value.startswith("git@") and ":" in value[4:]:
+            host, _, path = value[4:].partition(":")
+            value = f"https://{host}/{path}"
+        elif value.startswith(("git://", "ssh://")):
+            value = "https://" + value.split("://", 1)[1]
+        if value.startswith("https://git@"):
+            value = "https://" + value[len("https://git@") :]
+        return value if is_url(value) else None
+
+    @classmethod
     def _extract_cyclonedx_external_refs(
+        cls,
         external_refs: list[dict[str, Any]],
     ) -> tuple[str | None, str | None, str | None]:
         """Return (homepage, repository_url, download_url) from externalReferences."""
@@ -573,7 +590,7 @@ class SBOMParser:
             if ref_type == "website" and not homepage:
                 homepage = ref_url
             elif ref_type in ("vcs", "git") and not repository_url:
-                repository_url = ref_url
+                repository_url = cls._normalize_vcs_url(ref_url)
             elif ref_type in ("distribution", "download") and not download_url:
                 download_url = ref_url
         return homepage, repository_url, download_url
@@ -1010,14 +1027,19 @@ class SBOMParser:
         description = metadata.get("description") or metadata.get("summary")
         author = self._extract_syft_author(metadata)
         homepage = metadata.get("homepage") or metadata.get("url")
-        repository_url = metadata.get("source") or metadata.get("repository")
+        # deb/rpm metadata.source is the *source package name*, not a URL.
+        repository_url = next(
+            (v for v in (metadata.get("source"), metadata.get("repository")) if isinstance(v, str) and is_url(v)),
+            None,
+        )
         hashes = self._extract_syft_hashes(metadata)
 
-        properties = {
-            key: str(metadata[key])
-            for key in ("language", "origin", "architecture", "filesAnalyzed")
-            if metadata.get(key)
-        }
+        # Syft puts language on the artifact itself; metadata only backfills.
+        properties = {}
+        for key in ("language", "origin", "architecture", "filesAnalyzed"):
+            value = artifact.get(key) or metadata.get(key)
+            if value:
+                properties[key] = str(value)
 
         # Determine component-specific source type
         determined_source_type = self._determine_component_source(
