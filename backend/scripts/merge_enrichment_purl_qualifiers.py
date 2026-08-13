@@ -78,11 +78,13 @@ async def merge_groups(db: Any, batch_size: int, sleep_ms: int, execute: bool) -
         counters["deleted"] += len(siblings)
 
         if execute:
-            # Siblings go first so the unique purl index is free before the re-key.
-            if siblings:
-                await db.dependency_enrichments.delete_many({"_id": {"$in": [d["_id"] for d in siblings]}})
+            # Re-key before deleting: a crash then leaves only removable duplicates,
+            # never lost data. The canonical key is free because a sibling holding it
+            # would have been picked as survivor.
             if update:
                 await db.dependency_enrichments.update_one({"_id": survivor["_id"]}, {"$set": update})
+            if siblings:
+                await db.dependency_enrichments.delete_many({"_id": {"$in": [d["_id"] for d in siblings]}})
 
         processed_in_batch += 1
         if processed_in_batch >= batch_size:
