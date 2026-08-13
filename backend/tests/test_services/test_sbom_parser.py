@@ -1893,6 +1893,63 @@ class TestSyftArtifactMetadata:
         assert dep.repository_url == "https://github.com/acme/some-lib"
 
 
+class TestComponentAccounting:
+    """Every input element the parser sees must land in total_components with a labelled skip reason."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def test_crypto_assets_are_counted(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "cryptographic-asset",
+                        "name": "AES-256-GCM",
+                        "cryptoProperties": {"assetType": "algorithm"},
+                    },
+                    {"type": "library", "name": "lib", "version": "1.0", "purl": "pkg:npm/lib@1.0"},
+                ]
+            )
+        )
+        assert result.parsed_components == 1
+        assert result.skipped_reasons.get("cryptographic-asset") == 1
+        assert result.total_components == 2
+        assert len(result.crypto_assets) == 1
+
+    def test_syft_files_array_is_counted(self):
+        sbom = {
+            "descriptor": {"name": "syft", "version": "1.42.3"},
+            "source": {"id": "src", "type": "directory", "target": "/build"},
+            "artifacts": [{"id": "a1", "name": "lib", "version": "1.0", "type": "npm", "purl": "pkg:npm/lib@1.0"}],
+            "artifactRelationships": [],
+            "files": [{"id": "f1"}, {"id": "f2"}, {"id": "f3"}, {"id": "f4"}, {"id": "f5"}],
+        }
+        result = self.parser.parse(sbom)
+        assert result.parsed_components == 1
+        assert result.skipped_reasons.get("file") == 5
+        assert result.total_components == 6
+
+    def test_spdx_files_array_is_counted(self):
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "packages": [{"SPDXID": "SPDXRef-1", "name": "pkg", "versionInfo": "1.0"}],
+            "files": [{"SPDXID": "SPDXRef-File-1", "fileName": "./src/main.py"}],
+            "relationships": [],
+        }
+        result = self.parser.parse(sbom)
+        assert result.parsed_components == 1
+        assert result.skipped_reasons.get("file") == 1
+        assert result.total_components == 2
+
+    def test_total_still_balances_with_merges(self):
+        result = self.parser.parse(_syft_image_sbom_with_duplicate_package())
+        assert result.total_components == (
+            result.parsed_components + result.skipped_components + result.merged_components
+        )
+
+
 class TestDetectFormatMalformed:
     """detect_format must not raise on structurally odd (but valid JSON) SBOMs; it falls through to UNKNOWN."""
 

@@ -350,6 +350,8 @@ class SBOMParser:
         for comp in components:
             comp_type = comp.get("type")
             if comp_type == "cryptographic-asset":
+                # Parsed into crypto_assets, not dependencies; still counted.
+                self._count_skipped(result, "cryptographic-asset")
                 continue
             if comp_type == "file":
                 # File-catalog entries (e.g. syft filesystem scans) aren't dependencies.
@@ -881,6 +883,7 @@ class SBOMParser:
 
         artifacts = sbom.get("artifacts") or []
         relationships = sbom.get("artifactRelationships") or []
+        self._count_skipped(result, "file", len(sbom.get("files") or []))
 
         confirmed_direct, transitive_ids, forward_deps, parents_by_id = self._build_syft_dependency_graph(
             relationships, source_id
@@ -1215,6 +1218,7 @@ class SBOMParser:
 
         packages = sbom.get("packages") or []
         inferred = not bool(relationships)
+        self._count_skipped(result, "file", len(sbom.get("files") or []))
 
         root_pkg = next((p for p in packages if isinstance(p, dict) and p.get("SPDXID") in app_root_ids), None)
         if root_pkg is not None:

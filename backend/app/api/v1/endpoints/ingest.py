@@ -181,7 +181,8 @@ async def _parse_and_store_sbom_deps(
         f"total={parsed_sbom.total_components}, "
         f"parsed={parsed_sbom.parsed_components}, "
         f"skipped={parsed_sbom.skipped_components}, "
-        f"merged={parsed_sbom.merged_components}"
+        f"merged={parsed_sbom.merged_components}, "
+        f"skipped_reasons={parsed_sbom.skipped_reasons}"
     )
     return await store_sbom_dependencies(parsed_sbom, project_id, scan_id, dep_repo, old_deps_deleted)
 
