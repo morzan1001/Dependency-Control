@@ -1,5 +1,7 @@
 """Tests for SBOM parser - format detection, CycloneDX/SPDX/Syft parsing."""
 
+import re
+
 from app.schemas.sbom import SBOMFormat
 from app.services.sbom_parser import (
     SBOMParser,
@@ -1035,6 +1037,147 @@ class TestSPDXDirectDependencyDetection:
         deps = {d.name: d for d in result.dependencies}
         assert deps["dep1"].direct is True
         assert deps["dep2"].direct is False
+
+
+_SYFT_SOURCE_ID = "cdb4ee2aea69cc6a83331bbe96dc2caa9a299d21329efb0336fc02a82e1839a8"
+
+
+def _syft_json_project_sbom() -> dict:
+    """Mirrors the prod syft 1.42.3 directory scan: `dependency-of` edges point
+    library -> root project ('parent IS A DEPENDENCY OF child'), plus
+    contains/evident-by edges from the source for every artifact."""
+
+    def _artifact(aid: str, name: str, version: str, purl: str | None, atype: str = "java-archive") -> dict:
+        art: dict = {"id": aid, "name": name, "version": version, "type": atype}
+        if purl:
+            art["purl"] = purl
+        return art
+
+    return {
+        "descriptor": {"name": "syft", "version": "1.42.3"},
+        "source": {"id": _SYFT_SOURCE_ID, "type": "directory", "target": "/build", "name": "."},
+        "artifacts": [
+            _artifact("aaaa000000000001", "demo", "0.0.1-SNAPSHOT", "pkg:maven/com.example/demo@0.0.1-SNAPSHOT"),
+            _artifact("aaaa000000000002", "slf4j-api", "2.0.16", "pkg:maven/org.slf4j/slf4j-api@2.0.16"),
+            _artifact("aaaa000000000003", "logback-core", "1.5.6", "pkg:maven/ch.qos.logback/logback-core@1.5.6"),
+            _artifact("aaaa000000000004", "actions/checkout", "v4", "pkg:github/actions/checkout@v4", "github-action"),
+        ],
+        "artifactRelationships": [
+            {"parent": _SYFT_SOURCE_ID, "child": "aaaa000000000001", "type": "contains"},
+            {"parent": _SYFT_SOURCE_ID, "child": "aaaa000000000002", "type": "contains"},
+            {"parent": _SYFT_SOURCE_ID, "child": "aaaa000000000003", "type": "contains"},
+            {"parent": _SYFT_SOURCE_ID, "child": "aaaa000000000004", "type": "contains"},
+            # slf4j-api is a dependency of demo; logback-core is a dependency of slf4j-api.
+            {"parent": "aaaa000000000002", "child": "aaaa000000000001", "type": "dependency-of"},
+            {"parent": "aaaa000000000003", "child": "aaaa000000000002", "type": "dependency-of"},
+            {"parent": "aaaa000000000001", "child": "evidence-file-1", "type": "evident-by"},
+        ],
+        "files": [],
+    }
+
+
+class TestSyftRelationshipDirection:
+    """Syft `dependency-of` means 'parent IS A DEPENDENCY OF child'; the old code read it backwards."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+        self.result = self.parser.parse(_syft_json_project_sbom())
+        self.deps = {d.name: d for d in self.result.dependencies}
+
+    def test_single_root_children_are_direct(self):
+        assert self.deps["slf4j-api"].direct is True
+
+    def test_transitive_dependency_is_not_direct(self):
+        dep = self.deps["logback-core"]
+        assert dep.direct is False
+        assert dep.direct_inferred is False
+
+    def test_root_project_does_not_list_its_dependencies_as_parents(self):
+        assert self.deps["demo"].parent_components == []
+
+    def test_parents_point_at_dependents_not_dependencies(self):
+        assert self.deps["slf4j-api"].parent_components == ["pkg:maven/com.example/demo@0.0.1-SNAPSHOT"]
+        assert self.deps["logback-core"].parent_components == ["pkg:maven/org.slf4j/slf4j-api@2.0.16"]
+
+    def test_parent_refs_are_purls_not_syft_hex_ids(self):
+        for dep in self.result.dependencies:
+            for ref in dep.parent_components:
+                assert not re.fullmatch(r"[0-9a-f]{16}", ref)
+
+    def test_contains_only_artifact_is_direct_but_flagged_inferred(self):
+        action = self.deps["actions/checkout"]
+        assert action.direct is True
+        assert action.direct_inferred is True
+
+    def test_source_level_depends_on_is_graph_confirmed_direct(self):
+        sbom = _syft_json_project_sbom()
+        sbom["artifactRelationships"].append(
+            {"parent": _SYFT_SOURCE_ID, "child": "aaaa000000000002", "type": "depends-on"}
+        )
+        result = self.parser.parse(sbom)
+        dep = {d.name: d for d in result.dependencies}["slf4j-api"]
+        assert dep.direct is True
+        assert dep.direct_inferred is False
+
+    def test_source_level_dependency_of_is_graph_confirmed_direct(self):
+        sbom = _syft_json_project_sbom()
+        sbom["artifactRelationships"].append(
+            {"parent": "aaaa000000000003", "child": _SYFT_SOURCE_ID, "type": "dependency-of"}
+        )
+        result = self.parser.parse(sbom)
+        dep = {d.name: d for d in result.dependencies}["logback-core"]
+        assert dep.direct is True
+        assert dep.direct_inferred is False
+
+    def test_multiple_roots_do_not_promote_their_children(self):
+        # Two independent top-level packages: their children must stay transitive.
+        sbom = _syft_json_project_sbom()
+        sbom["artifactRelationships"] = [
+            {"parent": "aaaa000000000002", "child": "aaaa000000000001", "type": "dependency-of"},
+            {"parent": "aaaa000000000003", "child": "aaaa000000000004", "type": "dependency-of"},
+        ]
+        result = self.parser.parse(sbom)
+        deps = {d.name: d for d in result.dependencies}
+        assert deps["slf4j-api"].direct is False
+        assert deps["logback-core"].direct is False
+        assert deps["demo"].direct is True
+        assert deps["demo"].direct_inferred is True
+
+    def test_no_relationships_keeps_everything_direct_inferred(self):
+        sbom = _syft_json_project_sbom()
+        sbom["artifactRelationships"] = []
+        result = self.parser.parse(sbom)
+        assert all(d.direct is True and d.direct_inferred is True for d in result.dependencies)
+
+    def test_image_scan_with_contains_only_relationships_is_direct_inferred(self):
+        # K17: the old app-package-type fallback keyed on type names syft never
+        # emits; graph-silent artifacts are now uniformly direct-but-inferred.
+        sbom = {
+            "descriptor": {"name": "syft", "version": "1.42.3"},
+            "source": {"id": _SYFT_SOURCE_ID, "type": "image", "target": "registry.example.com/app:1"},
+            "artifacts": [
+                {
+                    "id": "bbbb000000000001",
+                    "name": "spring-core",
+                    "version": "6.2.1",
+                    "type": "java-archive",
+                    "purl": "pkg:maven/org.springframework/spring-core@6.2.1",
+                },
+                {
+                    "id": "bbbb000000000002",
+                    "name": "libssl3",
+                    "version": "3.0.11",
+                    "type": "deb",
+                    "purl": "pkg:deb/debian/libssl3@3.0.11",
+                },
+            ],
+            "artifactRelationships": [
+                {"parent": _SYFT_SOURCE_ID, "child": "bbbb000000000001", "type": "contains"},
+                {"parent": _SYFT_SOURCE_ID, "child": "bbbb000000000002", "type": "contains"},
+            ],
+        }
+        result = self.parser.parse(sbom)
+        assert all(d.direct is True and d.direct_inferred is True for d in result.dependencies)
 
 
 def _three_component_sbom(second_component: dict) -> dict:

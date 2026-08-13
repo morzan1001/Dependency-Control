@@ -712,18 +712,6 @@ class SBOMParser:
 
         return ", ".join(filter(None, license_names)), license_url
 
-    _SYFT_APP_PACKAGE_TYPES = (
-        "npm",
-        "python",
-        "go-module",
-        "gem",
-        "cargo",
-        "composer",
-        "maven",
-        "gradle",
-        "nuget",
-        "pub",
-    )
     _SYFT_KNOWN_SOURCE_TYPES = (
         SOURCE_TYPE_IMAGE,
         SOURCE_TYPE_DIRECTORY,
@@ -744,35 +732,71 @@ class SBOMParser:
         return source_type_raw, source.get("target", "")
 
     @staticmethod
-    def _build_syft_relationship_graph(
+    def _build_syft_dependency_graph(
         relationships: list[dict[str, Any]], source_id: str
-    ) -> tuple[set, set, dict[str, list]]:
-        """Build (direct_artifact_ids, all_child_ids, reverse_deps_graph) for syft."""
-        direct_artifact_ids: set = set()
-        all_child_ids: set = set()
-        reverse_deps_graph: dict[str, list] = {}
-        direct_rel_types = ("contains", "dependency-of", "depends-on")
+    ) -> tuple[set, set, dict[str, list], dict[str, list]]:
+        """Return (confirmed_direct_ids, transitive_ids, forward_deps, parents_by_id).
+
+        In syft's model `dependency-of` means 'parent IS A DEPENDENCY OF child',
+        so the dependent is the child. `contains` only conveys containment, never
+        directness; between artifacts it still yields a parent edge.
+        """
+        confirmed_direct: set = set()
+        forward_deps: dict[str, list] = {}
+        parents_by_id: dict[str, list] = {}
 
         for rel in relationships:
+            if not isinstance(rel, dict):
+                continue
             parent = rel.get("parent", "")
             child = rel.get("child", "")
             rel_type = rel.get("type", "")
+            if not parent or not child:
+                continue
 
-            if child:
-                all_child_ids.add(child)
-                reverse_deps_graph.setdefault(child, [])
-                if parent and parent != source_id:
-                    reverse_deps_graph[child].append(parent)
+            if rel_type == "depends-on":
+                dependent, dependency = parent, child
+            elif rel_type == "dependency-of":
+                dependent, dependency = child, parent
+            elif rel_type == "contains" and parent != source_id:
+                parents_by_id.setdefault(child, []).append(parent)
+                continue
+            else:
+                continue
 
-            if parent == source_id and rel_type in direct_rel_types:
-                direct_artifact_ids.add(child)
+            if dependent == source_id:
+                confirmed_direct.add(dependency)
+            else:
+                forward_deps.setdefault(dependent, []).append(dependency)
+                parents_by_id.setdefault(dependency, []).append(dependent)
 
-        return direct_artifact_ids, all_child_ids, reverse_deps_graph
+        transitive_ids = {dep_id for children in forward_deps.values() for dep_id in children}
+        return confirmed_direct, transitive_ids, forward_deps, parents_by_id
 
-    @classmethod
-    def _syft_image_fallback_direct_ids(cls, artifacts: list[dict[str, Any]]) -> set:
-        """Heuristic: treat application-level package artifacts as direct in images."""
-        return {artifact.get("id") for artifact in artifacts if artifact.get("type", "") in cls._SYFT_APP_PACKAGE_TYPES}
+    @staticmethod
+    def _syft_fallback_direct_ids(forward_deps: dict[str, list], transitive_ids: set) -> set:
+        """When the source declares no dependencies, a single graph root is the scanned project; its children are the direct set."""
+        roots = [dep_id for dep_id in forward_deps if dep_id not in transitive_ids]
+        if len(roots) == 1:
+            return set(forward_deps[roots[0]])
+        return set()
+
+    @staticmethod
+    def _resolve_syft_directness(
+        artifact_id: str,
+        confirmed_direct: set,
+        fallback_direct: set,
+        transitive_ids: set,
+    ) -> tuple[bool, bool]:
+        if artifact_id in confirmed_direct:
+            return True, False
+        if artifact_id in fallback_direct:
+            return True, True
+        if artifact_id in transitive_ids:
+            return False, False
+        # The graph says nothing about this artifact (e.g. contains-only image
+        # catalogs): keep it direct so inventory counts hold, but flag the guess.
+        return True, True
 
     def _parse_syft(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         """Parse Syft JSON format SBOM."""
@@ -791,27 +815,28 @@ class SBOMParser:
         artifacts = sbom.get("artifacts") or []
         relationships = sbom.get("artifactRelationships") or []
 
-        direct_artifact_ids, all_child_ids, reverse_deps_graph = self._build_syft_relationship_graph(
+        confirmed_direct, transitive_ids, forward_deps, parents_by_id = self._build_syft_dependency_graph(
             relationships, source_id
         )
-
-        if not direct_artifact_ids and result.source_type == SOURCE_TYPE_IMAGE:
-            direct_artifact_ids = self._syft_image_fallback_direct_ids(artifacts)
+        fallback_direct: set = set()
+        if not confirmed_direct:
+            fallback_direct = self._syft_fallback_direct_ids(forward_deps, transitive_ids)
 
         logger.debug(
-            f"Syft relationship analysis: {len(direct_artifact_ids)} direct, "
-            f"{len(all_child_ids)} total children from {len(relationships)} relationships"
+            f"Syft relationship analysis: {len(confirmed_direct)} confirmed direct, "
+            f"{len(fallback_direct)} fallback direct, {len(transitive_ids)} transitive "
+            f"from {len(relationships)} relationships"
         )
 
-        inferred = not bool(relationships)
-
+        parsed_by_id: dict[str, ParsedDependency] = {}
         for artifact in artifacts:
             if not isinstance(artifact, dict):
                 self._count_skipped(result, "malformed")
                 continue
             artifact_id = artifact.get("id", "")
-            is_direct = inferred or (artifact_id in direct_artifact_ids)
-            parent_components = reverse_deps_graph.get(artifact_id, [])
+            is_direct, direct_inferred = self._resolve_syft_directness(
+                artifact_id, confirmed_direct, fallback_direct, transitive_ids
+            )
 
             try:
                 parsed = self._parse_syft_artifact(
@@ -819,8 +844,7 @@ class SBOMParser:
                     result.source_type,
                     result.source_target,
                     is_direct,
-                    inferred,
-                    parent_components,
+                    direct_inferred,
                 )
             except Exception:
                 logger.warning("Skipping malformed Syft artifact %r", artifact.get("name"), exc_info=True)
@@ -828,8 +852,23 @@ class SBOMParser:
                 continue
             if parsed:
                 result.dependencies.append(parsed)
+                if artifact_id:
+                    parsed_by_id[artifact_id] = parsed
             else:
                 self._count_skipped(result, "unidentifiable")
+
+        # Second pass: parent ids only resolve once every artifact is parsed, and
+        # they must be stored as purl/name@version so tree nodes can match them.
+        for artifact_id, parsed in parsed_by_id.items():
+            refs: list[str] = []
+            for parent_id in parents_by_id.get(artifact_id, []):
+                parent = parsed_by_id.get(parent_id)
+                if parent is None:
+                    continue
+                ref = parent.purl or f"{parent.name}@{parent.version}"
+                if ref not in refs:
+                    refs.append(ref)
+            parsed.parent_components = refs
 
     @staticmethod
     def _extract_syft_locations(
@@ -887,7 +926,6 @@ class SBOMParser:
         source_target: str | None,
         is_direct: bool = False,
         direct_inferred: bool = False,
-        parent_components: list[str] | None = None,
     ) -> ParsedDependency | None:
         """Parse a single Syft artifact with all available fields."""
 
@@ -895,9 +933,6 @@ class SBOMParser:
         name = artifact.get("name")
         version = self._normalize_version(artifact.get("version"))
         pkg_type = artifact.get("type", "unknown")
-
-        if parent_components is None:
-            parent_components = []
 
         if not name:
             return None
@@ -950,7 +985,6 @@ class SBOMParser:
             scope=None,
             direct=direct,
             direct_inferred=direct_inferred,
-            parent_components=parent_components,
             source_type=determined_source_type,
             source_target=source_target,
             layer_digest=layer_digest,
