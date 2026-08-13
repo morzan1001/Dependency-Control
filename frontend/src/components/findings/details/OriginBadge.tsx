@@ -46,7 +46,7 @@ export function OriginBadge({ finding }: { finding: Finding }) {
               </div>
               {finding.direct_inferred && (
                 <p className="text-xs text-muted-foreground italic">
-                  Note: Classification inferred (SBOM had no dependency graph)
+                  Note: Classification inferred (the SBOM's dependency graph does not cover this component)
                 </p>
               )}
             </div>

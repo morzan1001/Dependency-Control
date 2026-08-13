@@ -614,6 +614,36 @@ class TestCycloneDXNestedComponents:
         result = self.parser.parse(sbom)
         assert "deep-pkg" in [d.name for d in result.dependencies]
 
+    def test_nesting_beyond_depth_cap_skips_subtree_and_counts_it(self):
+        chain: dict = {
+            "type": "library",
+            "name": "level-149",
+            "version": "1.0.0",
+            "purl": "pkg:npm/level-149@1.0.0",
+        }
+        for i in range(148, -1, -1):
+            chain = {
+                "type": "library",
+                "name": f"level-{i}",
+                "version": "1.0.0",
+                "purl": f"pkg:npm/level-{i}@1.0.0",
+                "components": [chain],
+            }
+        sbom = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "metadata": {"component": {"type": "application", "name": "app", "bom-ref": "root"}},
+            "components": [chain],
+            "dependencies": [],
+        }
+        result = self.parser.parse(sbom)
+        names = {d.name for d in result.dependencies}
+        assert result.parsed_components == 100
+        assert result.skipped_components == 50
+        assert result.total_components == 150
+        assert {"level-0", "level-99"} <= names
+        assert "level-100" not in names
+
     def test_nested_file_component_still_skipped(self):
         sbom = _nested_npm_sbom()
         sbom["components"][0]["components"].append({"type": "file", "name": "/app/index.js"})

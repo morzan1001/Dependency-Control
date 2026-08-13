@@ -94,7 +94,7 @@ function DependencyNode({ node, nodeById, ancestorIds, level, onSelect, hideChil
                 {node.direct_inferred && (
                   <TooltipContent side="top">
                     <p className="text-xs">
-                      Direct/transitive classification inferred (SBOM had no dependency graph)
+                      Direct/transitive classification inferred (the SBOM's dependency graph does not cover this component)
                     </p>
                   </TooltipContent>
                 )}

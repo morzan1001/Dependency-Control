@@ -409,7 +409,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
             "name": "generate_remediation_plan",
             "description": (
                 "Generate a step-by-step remediation plan for a project. Groups CRITICAL/HIGH "
-                "findings by component, picks the smallest upgrade that resolves the most CVEs, "
+                "findings by component, picks the highest known fixed version so one upgrade "
+                "covers all of a component's CVEs, "
                 "flags direct vs. transitive dependencies and breaking-change risk (major version "
                 "bumps). Use this when the user asks 'how do I fix everything', 'build me a plan', "
                 "'what's the upgrade path', or similar holistic remediation questions."

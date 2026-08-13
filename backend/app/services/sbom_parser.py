@@ -22,6 +22,10 @@ from app.services.cbom_parser import parse_crypto_components
 
 logger = logging.getLogger(__name__)
 
+# SBOMs are untrusted input; without a cap, hostile nesting raises RecursionError
+# and the format handler degrades the whole SBOM to zero components.
+MAX_COMPONENT_NESTING_DEPTH = 100
+
 
 def is_url(value: str) -> bool:
     """Check if a string is a URL."""
@@ -240,14 +244,33 @@ class SBOMParser:
         return direct or roots, True
 
     @classmethod
-    def _flatten_cyclonedx_components(cls, components: Any) -> list[dict[str, Any]]:
+    def _flatten_cyclonedx_components(cls, components: Any, depth: int = 0) -> tuple[list[dict[str, Any]], int]:
+        """Flatten nested components; returns (flat, skipped) where skipped counts subtrees below the depth cap."""
         flat: list[dict[str, Any]] = []
+        skipped = 0
         for comp in components if isinstance(components, list) else []:
             if not isinstance(comp, dict):
                 continue
+            if depth >= MAX_COMPONENT_NESTING_DEPTH:
+                skipped += cls._count_component_subtree(comp)
+                continue
             flat.append(comp)
-            flat.extend(cls._flatten_cyclonedx_components(comp.get("components")))
-        return flat
+            nested, nested_skipped = cls._flatten_cyclonedx_components(comp.get("components"), depth + 1)
+            flat.extend(nested)
+            skipped += nested_skipped
+        return flat, skipped
+
+    @staticmethod
+    def _count_component_subtree(comp: dict[str, Any]) -> int:
+        count = 0
+        stack = [comp]
+        while stack:
+            node = stack.pop()
+            count += 1
+            children = node.get("components")
+            if isinstance(children, list):
+                stack.extend(child for child in children if isinstance(child, dict))
+        return count
 
     def _parse_cyclonedx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         """Parse CycloneDX format SBOM."""
@@ -284,7 +307,14 @@ class SBOMParser:
         )
 
         # cyclonedx-npm/-maven nest sub-dependencies in components[].components[].
-        components = self._flatten_cyclonedx_components(sbom.get("components", []))
+        components, depth_skipped = self._flatten_cyclonedx_components(sbom.get("components", []))
+        result.skipped_components += depth_skipped
+        if depth_skipped:
+            logger.warning(
+                "CycloneDX components nested deeper than %d levels; skipped %d component(s)",
+                MAX_COMPONENT_NESTING_DEPTH,
+                depth_skipped,
+            )
         result.crypto_assets = parse_crypto_components(components)
 
         for comp in components:

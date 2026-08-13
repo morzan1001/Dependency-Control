@@ -135,7 +135,7 @@ function SourceCell({ finding, sourceInfo }: SourceCellProps) {
                             <p className="text-xs">{directLabel}{inferredSuffix}</p>
                             {finding.direct_inferred && (
                                 <p className="text-xs text-muted-foreground italic">
-                                    Classification inferred (SBOM had no dependency graph)
+                                    Classification inferred (the SBOM's dependency graph does not cover this component)
                                 </p>
                             )}
                         </div>
