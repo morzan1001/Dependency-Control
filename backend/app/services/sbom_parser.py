@@ -195,10 +195,10 @@ class SBOMParser:
     @staticmethod
     def _resolve_cyclonedx_direct_refs(
         deps_graph: dict[str, list], all_transitive_refs: set, main_bom_ref: str | None
-    ) -> set:
-        """Resolve the set of direct refs given the dep graph and main component."""
+    ) -> tuple[set, bool]:
+        """Resolve (direct_refs, inferred) given the dep graph and main component."""
         if main_bom_ref and main_bom_ref in deps_graph:
-            return set(deps_graph[main_bom_ref])
+            return set(deps_graph[main_bom_ref]), False
         # Fallback when the SBOM's metadata.component bom-ref does not match any graph node
         # (varies by SBOM tool). The root(s) are the refs nothing depends on; the DIRECT
         # dependencies are those roots' children — NOT the roots themselves (a root is the
@@ -210,7 +210,7 @@ class SBOMParser:
             direct.update(deps_graph.get(root, []))
         # Degenerate graph (roots have no recorded children): treat the roots as direct so
         # we don't mark everything transitive.
-        return direct or roots
+        return direct or roots, True
 
     def _parse_cyclonedx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         """Parse CycloneDX format SBOM."""
@@ -235,7 +235,9 @@ class SBOMParser:
         # Parse the dependencies array to build dependency graph
         dependencies_map = sbom.get("dependencies", [])
         deps_graph, reverse_deps_graph, all_transitive_refs = self._build_cyclonedx_deps_graph(dependencies_map)
-        direct_refs = self._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, main_bom_ref)
+        direct_refs, direct_refs_inferred = self._resolve_cyclonedx_direct_refs(
+            deps_graph, all_transitive_refs, main_bom_ref
+        )
 
         logger.debug(
             f"CycloneDX dependency analysis: has_graph={bool(dependencies_map)}, "
@@ -261,6 +263,7 @@ class SBOMParser:
                 direct_refs,
                 all_transitive_refs,
                 reverse_deps_graph,
+                direct_refs_inferred,
             )
             if parsed:
                 result.dependencies.append(parsed)
@@ -352,15 +355,16 @@ class SBOMParser:
         check_ref: str | None,
         direct_refs: set | None,
         all_transitive_refs: set | None,
+        direct_refs_inferred: bool,
     ) -> tuple[bool, bool]:
         """Return (direct, direct_inferred) for a cyclonedx component."""
-        has_dependency_graph = bool(direct_refs) or bool(all_transitive_refs)
-        if not (has_dependency_graph and direct_refs is not None and all_transitive_refs is not None):
-            # No dependency graph - assume top-level direct, mark as inferred
-            return True, True
-        if check_ref in direct_refs or (check_ref not in all_transitive_refs and direct_refs):
-            return True, False
-        return False, False
+        if direct_refs and check_ref in direct_refs:
+            return True, direct_refs_inferred
+        if all_transitive_refs and check_ref in all_transitive_refs:
+            return False, False
+        # The graph says nothing about this ref (or there is no graph): keep it
+        # direct so inventory counts hold, but flag the guess.
+        return True, True
 
     _LAYER_DIGEST_PROPS = ("trivy:LayerDigest", "aquasecurity:trivy:LayerDigest")
     _LAYER_DIFFID_PROP = "aquasecurity:trivy:LayerDiffID"
@@ -450,6 +454,7 @@ class SBOMParser:
         direct_refs: set | None = None,
         all_transitive_refs: set | None = None,
         reverse_deps_graph: dict | None = None,
+        direct_refs_inferred: bool = False,
     ) -> ParsedDependency | None:
         """Parse a single CycloneDX component with all available fields."""
 
@@ -468,7 +473,9 @@ class SBOMParser:
             logger.debug(f"Constructed PURL for {name}@{version}: {purl}")
 
         check_ref = bom_ref or purl
-        direct, direct_inferred = self._resolve_cyclonedx_directness(check_ref, direct_refs, all_transitive_refs)
+        direct, direct_inferred = self._resolve_cyclonedx_directness(
+            check_ref, direct_refs, all_transitive_refs, direct_refs_inferred
+        )
 
         parent_components = []
         if reverse_deps_graph and check_ref in reverse_deps_graph:

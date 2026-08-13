@@ -59,36 +59,140 @@ class TestExtractLicenseFromUrl:
 
 
 class TestResolveCyclonedxDirectRefs:
-    """The fallback (root bom-ref doesn't match a graph node) must return the root's children (direct deps), not the roots themselves."""
+    """The fallback (root bom-ref doesn't match a graph node) must return the root's children (direct deps), not the roots themselves — and flag them as inferred."""
 
     def test_fallback_returns_root_children_not_roots(self):
         # app -> [A, B]; A -> [C]. "app" is the root (nothing depends on it).
         deps_graph = {"app": ["A", "B"], "A": ["C"], "B": [], "C": []}
         all_transitive_refs = {"A", "B", "C"}
         # main_bom_ref does NOT match any graph node (e.g. a purl vs. plain refs).
-        result = SBOMParser._resolve_cyclonedx_direct_refs(
+        direct_refs, inferred = SBOMParser._resolve_cyclonedx_direct_refs(
             deps_graph, all_transitive_refs, "pkg:maven/com.acme/app@1.0"
         )
-        assert result == {"A", "B"}  # NOT {"app"}
+        assert direct_refs == {"A", "B"}  # NOT {"app"}
+        assert inferred is True
 
     def test_fallback_with_no_main_bom_ref(self):
         deps_graph = {"app": ["A", "B"], "A": [], "B": []}
         all_transitive_refs = {"A", "B"}
-        result = SBOMParser._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, None)
-        assert result == {"A", "B"}
+        direct_refs, inferred = SBOMParser._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, None)
+        assert direct_refs == {"A", "B"}
+        assert inferred is True
 
     def test_matched_main_bom_ref_returns_root_depends_on(self):
         deps_graph = {"app": ["A", "B"], "A": ["C"], "B": [], "C": []}
         all_transitive_refs = {"A", "B", "C"}
-        result = SBOMParser._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, "app")
-        assert result == {"A", "B"}
+        direct_refs, inferred = SBOMParser._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, "app")
+        assert direct_refs == {"A", "B"}
+        assert inferred is False
 
     def test_flat_graph_treats_roots_as_direct(self):
         # No real edges: every ref is a childless root -> treat all as direct (not empty).
         deps_graph = {"X": [], "Y": []}
         all_transitive_refs: set = set()
-        result = SBOMParser._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, None)
-        assert result == {"X", "Y"}
+        direct_refs, inferred = SBOMParser._resolve_cyclonedx_direct_refs(deps_graph, all_transitive_refs, None)
+        assert direct_refs == {"X", "Y"}
+        assert inferred is True
+
+
+def _cyclonedx_image_partial_graph() -> dict:
+    """Syft-style image SBOM: the dependencies graph covers only the app ecosystem while the components list also holds OS packages the graph never mentions."""
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "metadata": {
+            "tools": [{"name": "syft", "version": "1.19.0"}],
+            "component": {
+                "type": "container",
+                "name": "registry.example.com/team/service",
+                "version": "sha256:abc123",
+                "bom-ref": "root-image",
+            },
+        },
+        "components": [
+            {
+                "type": "library",
+                "name": "express",
+                "version": "4.19.2",
+                "purl": "pkg:npm/express@4.19.2",
+                "bom-ref": "pkg:npm/express@4.19.2",
+            },
+            {
+                "type": "library",
+                "name": "body-parser",
+                "version": "1.20.2",
+                "purl": "pkg:npm/body-parser@1.20.2",
+                "bom-ref": "pkg:npm/body-parser@1.20.2",
+            },
+            {
+                "type": "library",
+                "name": "libssl3",
+                "version": "3.0.11-1~deb12u2",
+                "purl": "pkg:deb/debian/libssl3@3.0.11-1~deb12u2",
+                "bom-ref": "pkg:deb/debian/libssl3@3.0.11-1~deb12u2",
+            },
+            {
+                "type": "library",
+                "name": "zlib1g",
+                "version": "1.2.13",
+                "purl": "pkg:deb/debian/zlib1g@1.2.13",
+                "bom-ref": "pkg:deb/debian/zlib1g@1.2.13",
+            },
+        ],
+        "dependencies": [
+            {"ref": "root-image", "dependsOn": ["pkg:npm/express@4.19.2"]},
+            {"ref": "pkg:npm/express@4.19.2", "dependsOn": ["pkg:npm/body-parser@1.20.2"]},
+        ],
+    }
+
+
+class TestCycloneDXDirectnessHonesty:
+    """(direct=True, direct_inferred=False) is reserved for refs explicitly listed under the main component; everything the graph never mentions stays direct but is flagged inferred."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def test_explicit_direct_ref_is_hard_fact(self):
+        result = self.parser.parse(_cyclonedx_image_partial_graph())
+        deps = {d.name: d for d in result.dependencies}
+        assert deps["express"].direct is True
+        assert deps["express"].direct_inferred is False
+
+    def test_transitive_ref_stays_transitive(self):
+        result = self.parser.parse(_cyclonedx_image_partial_graph())
+        deps = {d.name: d for d in result.dependencies}
+        assert deps["body-parser"].direct is False
+        assert deps["body-parser"].direct_inferred is False
+
+    def test_refs_absent_from_graph_are_direct_but_inferred(self):
+        result = self.parser.parse(_cyclonedx_image_partial_graph())
+        deps = {d.name: d for d in result.dependencies}
+        for name in ("libssl3", "zlib1g"):
+            assert deps[name].direct is True
+            assert deps[name].direct_inferred is True
+
+    def test_roots_children_fallback_marks_direct_refs_inferred(self):
+        sbom = _cyclonedx_image_partial_graph()
+        # Main bom-ref absent from the graph (13 of 43 re-parsed prod SBOMs): the
+        # roots-children fallback resolves express as direct, but only as a guess.
+        sbom["dependencies"] = [
+            {"ref": "app-node", "dependsOn": ["pkg:npm/express@4.19.2"]},
+            {"ref": "pkg:npm/express@4.19.2", "dependsOn": ["pkg:npm/body-parser@1.20.2"]},
+        ]
+        result = self.parser.parse(sbom)
+        deps = {d.name: d for d in result.dependencies}
+        assert deps["express"].direct is True
+        assert deps["express"].direct_inferred is True
+        assert deps["body-parser"].direct is False
+        assert deps["body-parser"].direct_inferred is False
+        assert deps["libssl3"].direct is True
+        assert deps["libssl3"].direct_inferred is True
+
+    def test_no_graph_at_all_stays_fully_inferred(self):
+        sbom = _cyclonedx_image_partial_graph()
+        sbom["dependencies"] = []
+        result = self.parser.parse(sbom)
+        assert all(d.direct is True and d.direct_inferred is True for d in result.dependencies)
 
 
 class TestSBOMFormatDetection:
