@@ -2,6 +2,8 @@
 
 import re
 
+import pytest
+
 from app.schemas.sbom import SBOMFormat
 from app.services.sbom_parser import (
     SBOMParser,
@@ -1285,6 +1287,36 @@ class TestMalformedComponentResilience:
         assert [d.name for d in result.dependencies] == ["ok-2"]
         assert result.skipped_reasons.get("parse-error") == 1
 
+    def test_document_level_malformed_known_format_raises(self):
+        # metadata with the wrong JSON type breaks the handler before the
+        # component loop; success here would let persistence replace the scan's
+        # previous dependencies with an empty set.
+        sbom = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "metadata": [],
+            "components": [{"type": "library", "name": "valid", "version": "1.0", "purl": "pkg:pypi/valid@1.0"}],
+        }
+        with pytest.raises(AttributeError):
+            self.parser.parse(sbom)
+
+    def test_unknown_format_raises_when_every_handler_fails(self):
+        sbom = {"metadata": "bogus", "relationships": "bogus", "source": "bogus"}
+        with pytest.raises(AttributeError):
+            self.parser.parse(sbom)
+
+    def test_unknown_format_junk_without_handler_crash_still_returns_empty(self):
+        result = self.parser.parse({"random": "data"})
+        assert result.dependencies == []
+
+    def test_dict_version_is_treated_as_missing(self):
+        sbom = _three_component_sbom(
+            {"type": "library", "name": "second", "version": {"raw": "2.0"}, "purl": "pkg:pypi/second@2.0"}
+        )
+        result = self.parser.parse(sbom)
+        deps = {d.name: d for d in result.dependencies}
+        assert deps["second"].version == "unknown"
+
     def test_unknown_format_attempts_do_not_leak_state_between_handlers(self):
         # CycloneDX-shaped components (undetectable: no purl on the first) yield zero
         # dependencies; the SPDX attempt must win with a clean slate, not inherit the
@@ -1503,6 +1535,19 @@ class TestSyftCycloneDXLocationProperties:
             _syft_cyclonedx_component_sbom([{"name": "cdx:npm:package:path", "value": "node_modules/parse5"}])
         )
         assert result.dependencies[0].locations == ["node_modules/parse5"]
+
+    def test_location_annotation_properties_are_not_locations(self):
+        # Newer syft emits syft:location:N:annotations:evidence; the extra colon
+        # must not fall through to the substring heuristic.
+        result = self.parser.parse(
+            _syft_cyclonedx_component_sbom(
+                [
+                    {"name": "syft:location:0:path", "value": "/app/libs/HdrHistogram-2.2.2.jar"},
+                    {"name": "syft:location:0:annotations:evidence", "value": "primary"},
+                ]
+            )
+        )
+        assert result.dependencies[0].locations == ["/app/libs/HdrHistogram-2.2.2.jar"]
 
 
 class TestSyftCpePropertiesLifted:

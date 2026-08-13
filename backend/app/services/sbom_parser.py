@@ -136,27 +136,37 @@ class SBOMParser:
 
         result = ParsedSBOM(format=format_type, format_version=version)
 
+        # A document-level failure must propagate: swallowing it would report an
+        # empty parse as success, and persistence would then replace the scan's
+        # previous dependency set with nothing.
         if format_type == SBOMFormat.UNKNOWN:
             logger.warning("Unknown SBOM format, attempting best-effort parsing")
             # Each attempt gets a fresh result so a failed handler cannot leave partial
             # dependencies or counters behind for the next one to build on.
+            last_error: Exception | None = None
+            handler_completed = False
             for handler in self.format_handlers.values():
                 candidate = ParsedSBOM(format=format_type, format_version=version)
                 try:
                     handler(sbom, candidate)
-                except Exception:
+                except Exception as e:
+                    last_error = e
                     logger.debug("Best-effort SBOM parse attempt failed, trying next handler", exc_info=True)
                     continue
+                handler_completed = True
                 if candidate.dependencies:
                     result = candidate
                     break
+            if not handler_completed and last_error is not None:
+                raise last_error
         else:
             format_handler = self.format_handlers.get(format_type)
             if format_handler is not None:
                 try:
                     format_handler(sbom, result)
-                except Exception as e:
-                    logger.exception("Error parsing %s SBOM: %s", format_type.value, e)
+                except Exception:
+                    logger.exception("Error parsing %s SBOM", format_type.value)
+                    raise
 
         self._merge_duplicate_dependencies(result)
 
@@ -177,7 +187,9 @@ class SBOMParser:
 
     @classmethod
     def _normalize_version(cls, raw: Any) -> str:
-        version = str(raw).strip() if raw is not None else ""
+        if raw is None or not isinstance(raw, (str, int, float)):
+            return "unknown"
+        version = str(raw).strip()
         return "unknown" if version.lower() in cls._PLACEHOLDER_VERSIONS else version
 
     @staticmethod
@@ -480,6 +492,7 @@ class SBOMParser:
     _FOUND_BY_PROP = "syft:package:foundBy"
     _CPE_PROPS = ("syft:cpe23", "syft:cpe22")
     # syft:location:<N>:<field> — the layerID field is a digest, not a file path.
+    _SYFT_LOCATION_PROP_PREFIX = "syft:location:"
     _SYFT_LOCATION_PROP_RE = re.compile(r"^syft:location:\d+:(\w+)$")
 
     @classmethod
@@ -500,13 +513,15 @@ class SBOMParser:
             return (prop_value if not current_layer else None), None, None
         if prop_name == cls._FOUND_BY_PROP:
             return None, prop_value, None
-        syft_location = cls._SYFT_LOCATION_PROP_RE.match(prop_name)
-        if syft_location:
-            field = syft_location.group(1)
+        if prop_name.startswith(cls._SYFT_LOCATION_PROP_PREFIX):
+            syft_location = cls._SYFT_LOCATION_PROP_RE.match(prop_name)
+            field = syft_location.group(1) if syft_location else None
             if field == "layerID":
                 return (prop_value if not current_layer else None), None, None
             if field in ("path", "accessPath") and prop_value:
                 return None, None, prop_value
+            # Anything else (annotations:evidence etc.) describes the location
+            # but is not a path.
             return None, None, None
         lower = prop_name.lower()
         if ("location" in lower or "path" in lower) and prop_value:
