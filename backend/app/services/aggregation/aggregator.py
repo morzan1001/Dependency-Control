@@ -37,7 +37,10 @@ from app.services.aggregation.versions import (
     normalize_version,
     resolve_fixed_versions,
 )
-from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE
+from app.services.analyzers.license_compliance.constants import (
+    CATEGORY_RESTRICTIVENESS,
+    LICENSE_DATABASE,
+)
 from app.services.analyzers.license_compliance.normalizer import (
     normalize_license as normalize_spdx_id,
 )
@@ -68,6 +71,7 @@ from app.services.normalizers.vulnerability import (
 _LICENSE_SENTINELS = UNKNOWN_LICENSE_PATTERNS | {"NON-STANDARD"}
 _SPDX_TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+-]*$")
 _SPDX_WITH_SPLIT = re.compile(r"\s+WITH\s+")
+_CATEGORY_RANK_BY_VALUE = {category.value: rank for category, rank in CATEGORY_RESTRICTIVENESS.items()}
 
 
 class ResultAggregator:
@@ -76,7 +80,6 @@ class ResultAggregator:
         self.alias_map: dict[str, str] = {}
         self._scorecard_cache: dict[str, dict[str, Any]] = {}
         self._dependency_enrichments: dict[str, DependencyEnrichment] = {}
-        self._license_data: dict[str, dict[str, Any]] = {}
 
     def _get_or_create_enrichment(self, name: str, version: str) -> DependencyEnrichment:
         """Get or create a DependencyEnrichment for the given package."""
@@ -199,33 +202,52 @@ class ResultAggregator:
         """Cache OpenSSF Scorecard data (keyed by ``name@version``) applied to findings during finalization."""
         self._scorecard_cache[component_key] = data
 
+    @staticmethod
+    def _scanner_license_takes_primary(enrichment: DependencyEnrichment, category: str | None) -> bool:
+        """Most-restrictive-wins keeps multi-license primaries order-independent; a scanner classification always beats a deps.dev guess (no category)."""
+        if enrichment.primary_license is None or enrichment.license_category is None:
+            return True
+        incoming_rank = _CATEGORY_RANK_BY_VALUE.get(category, 0)
+        current_rank = _CATEGORY_RANK_BY_VALUE.get(enrichment.license_category, 0)
+        return incoming_rank > current_rank
+
     def enrich_from_license_scanner(self, name: str, version: str, license_info: dict[str, Any]) -> None:
-        """Enrich dependency with data from license compliance scanner."""
+        """Enrich dependency with one classified license from the license compliance scanner."""
+        spdx_id = license_info.get("license")
+        if not spdx_id:
+            return
+
         enrichment = self._get_or_create_enrichment(name, version)
         if "license_compliance" not in enrichment.sources:
             enrichment.sources.append("license_compliance")
 
-        spdx_id = license_info.get("license")
-        if spdx_id:
+        category = license_info.get("category")
+        if self._scanner_license_takes_primary(enrichment, category):
             enrichment.primary_license = spdx_id
-            enrichment.license_category = license_info.get("category")
-            if license_info.get("spdx_expression"):
-                enrichment.license_expression = license_info["spdx_expression"]
+            enrichment.license_category = category
+        if license_info.get("spdx_expression"):
+            enrichment.license_expression = license_info["spdx_expression"]
+
+        already_recorded = any(
+            entry.get("spdx_id") == spdx_id and entry.get("source") == "license_compliance"
+            for entry in enrichment.licenses
+        )
+        if not already_recorded:
             enrichment.licenses.append(
                 {
                     "spdx_id": spdx_id,
                     "source": "license_compliance",
-                    "category": license_info.get("category"),
+                    "category": category,
                     "explanation": license_info.get("explanation"),
                 }
             )
 
-            if license_info.get("risks"):
-                enrichment.license_risks.extend(license_info.get("risks", []))
-            if license_info.get("obligations"):
-                enrichment.license_obligations.extend(license_info.get("obligations", []))
-
-            self._license_data[f"{name}@{version}"] = license_info
+        for risk in license_info.get("risks") or []:
+            if risk not in enrichment.license_risks:
+                enrichment.license_risks.append(risk)
+        for obligation in license_info.get("obligations") or []:
+            if obligation not in enrichment.license_obligations:
+                enrichment.license_obligations.append(obligation)
 
     def aggregate(self, analyzer_name: str, result: dict[str, Any], source: str | None = None) -> None:
         """
@@ -418,10 +440,6 @@ class ResultAggregator:
         for key, enrichment in self._dependency_enrichments.items():
             result[key] = enrichment.to_mongo_dict()
         return result
-
-    def get_license_data(self) -> dict[str, dict[str, Any]]:
-        """Return detailed license analysis data per package."""
-        return self._license_data
 
     def add_finding(self, finding: Finding, source: str | None = None) -> None:
         """Add a finding, merging if one already exists for the same key."""

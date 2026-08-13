@@ -149,7 +149,18 @@ class TestExpressionFlowsToEnrichment:
         assert finding.details["spdx_expression"] == TZDATA_EXPRESSION
 
     def test_enrichment_payload_carries_license_expression(self):
-        self.agg.aggregate("license_compliance", {"license_issues": [self.item]})
+        classification = {
+            "component": "tzdata",
+            "version": "2026c-1.el10_2",
+            "purl": "pkg:rpm/redhat/tzdata@2026c-1.el10_2",
+            "license": "GPL-2.0-only",
+            "category": "strong_copyleft",
+            "obligations": [],
+            "risks": [],
+            "explanation": "GPL",
+            "spdx_expression": TZDATA_EXPRESSION,
+        }
+        self.agg.aggregate("license_compliance", {"component_licenses": [classification]})
         payload = self.agg.get_dependency_enrichments()["tzdata@2026c-1.el10_2"]
         assert payload["license"] == "GPL-2.0-only"
         assert payload["license_expression"] == TZDATA_EXPRESSION

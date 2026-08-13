@@ -561,6 +561,16 @@ CATEGORY_STAT_KEY: dict[LicenseCategory, str] = {
 }
 
 
+CATEGORY_RESTRICTIVENESS: dict[LicenseCategory, int] = {
+    LicenseCategory.PERMISSIVE: 0,
+    LicenseCategory.PUBLIC_DOMAIN: 0,
+    LicenseCategory.WEAK_COPYLEFT: 1,
+    LicenseCategory.STRONG_COPYLEFT: 2,
+    LicenseCategory.NETWORK_COPYLEFT: 3,
+    LicenseCategory.PROPRIETARY: 4,
+}
+
+
 _license_db_lower: dict[str, str] | None = None
 _alias_lower: dict[str, str] | None = None
 

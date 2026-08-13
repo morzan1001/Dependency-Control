@@ -5,9 +5,12 @@ from __future__ import annotations
 from typing import Any
 
 from app.models.finding import Severity
-from app.models.license import LicenseCategory
 
-from .constants import LICENSE_DATABASE, LICENSE_INCOMPATIBILITIES
+from .constants import (
+    CATEGORY_RESTRICTIVENESS,
+    LICENSE_DATABASE,
+    LICENSE_INCOMPATIBILITIES,
+)
 from .normalizer import (
     extract_licenses,
     has_spdx_expression,
@@ -15,18 +18,8 @@ from .normalizer import (
     parse_spdx_expression,
 )
 
-# Restrictiveness ranking for choosing the least-restrictive OR alternative.
-_CATEGORY_RANK: dict[LicenseCategory, int] = {
-    LicenseCategory.PERMISSIVE: 0,
-    LicenseCategory.PUBLIC_DOMAIN: 0,
-    LicenseCategory.WEAK_COPYLEFT: 1,
-    LicenseCategory.STRONG_COPYLEFT: 2,
-    LicenseCategory.NETWORK_COPYLEFT: 3,
-    LicenseCategory.PROPRIETARY: 4,
-}
 
-
-def _least_restrictive_group(or_groups: list[list[str]]) -> list[str]:
+def least_restrictive_group(or_groups: list[list[str]]) -> list[str]:
     """Pick the OR-alternative with the lowest restrictiveness (ranked by its most-restrictive AND-member)."""
     best_rank: int | None = None
     best_group: list[str] = []
@@ -35,7 +28,7 @@ def _least_restrictive_group(or_groups: list[list[str]]) -> list[str]:
         for lic_id in group:
             info = LICENSE_DATABASE.get(normalize_license(lic_id))
             if info:
-                worst_rank = max(worst_rank, _CATEGORY_RANK.get(info.category, 5))
+                worst_rank = max(worst_rank, CATEGORY_RESTRICTIVENESS.get(info.category, 5))
         if best_rank is None or worst_rank < best_rank:
             best_rank = worst_rank
             best_group = group
@@ -47,7 +40,7 @@ def _resolve_component_license_ids(comp: dict[str, Any]) -> list[str]:
     spdx_expr = has_spdx_expression(comp)
     if spdx_expr:
         or_groups = parse_spdx_expression(spdx_expr)
-        return _least_restrictive_group(or_groups)
+        return least_restrictive_group(or_groups)
     return [lic_id for lic_id, _ in extract_licenses(comp)]
 
 
