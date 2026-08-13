@@ -15,7 +15,6 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.ingest import process_findings_ingest
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from app.core.constants import WEBHOOK_EVENT_SBOM_INGESTED
-from app.models.dependency import Dependency
 from app.models.project import Project
 from app.repositories import DependencyRepository
 from app.schemas.bearer import BearerIngest
@@ -29,6 +28,7 @@ from app.schemas.ingest import (
 from app.schemas.kics import KicsIngest
 from app.schemas.opengrep import OpenGrepIngest
 from app.schemas.trufflehog import TruffleHogIngest
+from app.services.dependency_store import store_sbom_dependencies
 from app.services.notifications.service import safe_notify_project_event
 from app.services.sbom_parser import parse_sbom
 from app.services.scan_manager import ScanManager
@@ -148,39 +148,6 @@ def _generate_scan_id(project_id: str, pipeline_id: int | str | None, commit_has
     return str(uuid.uuid4())
 
 
-def _parsed_dep_to_dependency(parsed_dep: Any, project_id: str, scan_id: str) -> Dependency:
-    """Convert a parsed dependency to a Dependency model."""
-    return Dependency(
-        project_id=project_id,
-        scan_id=scan_id,
-        name=parsed_dep.name,
-        version=parsed_dep.version,
-        purl=parsed_dep.purl,
-        type=parsed_dep.type,
-        license=parsed_dep.license,
-        license_url=parsed_dep.license_url,
-        scope=parsed_dep.scope,
-        direct=parsed_dep.direct,
-        direct_inferred=parsed_dep.direct_inferred,
-        parent_components=parsed_dep.parent_components,
-        source_type=parsed_dep.source_type,
-        source_target=parsed_dep.source_target,
-        layer_digest=parsed_dep.layer_digest,
-        found_by=parsed_dep.found_by,
-        locations=parsed_dep.locations,
-        cpes=parsed_dep.cpes,
-        description=parsed_dep.description,
-        author=parsed_dep.author,
-        publisher=parsed_dep.publisher,
-        group=parsed_dep.group,
-        homepage=parsed_dep.homepage,
-        repository_url=parsed_dep.repository_url,
-        download_url=parsed_dep.download_url,
-        hashes=parsed_dep.hashes,
-        properties=parsed_dep.properties,
-    )
-
-
 async def _upload_sbom_to_gridfs(fs: AsyncIOMotorGridFSBucket, sbom: Any, scan_id: str) -> dict[str, Any]:
     """Upload a single SBOM to GridFS and return the reference dict."""
     filename = f"sbom-{uuid.uuid4()}.json"
@@ -200,30 +167,6 @@ async def _upload_sbom_to_gridfs(fs: AsyncIOMotorGridFSBucket, sbom: Any, scan_i
     }
 
 
-_DEP_CHUNK_SIZE = 500
-
-
-async def _insert_dependencies_chunked(
-    parsed_sbom: Any,
-    project_id: str,
-    scan_id: str,
-    dep_repo: "DependencyRepository",
-) -> int:
-    """Insert parsed dependencies in chunks. Returns total inserted."""
-    total_inserted = 0
-    chunk: list[dict[str, Any]] = []
-    for parsed_dep in parsed_sbom.dependencies:
-        dep = _parsed_dep_to_dependency(parsed_dep, project_id, scan_id)
-        chunk.append(dep.model_dump(by_alias=True))
-        if len(chunk) >= _DEP_CHUNK_SIZE:
-            total_inserted += await dep_repo.create_many_raw(chunk)
-            chunk.clear()
-    if chunk:
-        total_inserted += await dep_repo.create_many_raw(chunk)
-        chunk.clear()
-    return total_inserted
-
-
 async def _parse_and_store_sbom_deps(
     sbom: Any,
     project_id: str,
@@ -239,15 +182,7 @@ async def _parse_and_store_sbom_deps(
         f"parsed={parsed_sbom.parsed_components}, "
         f"skipped={parsed_sbom.skipped_components}"
     )
-
-    if not old_deps_deleted:
-        deleted_count = await dep_repo.delete_by_scan(scan_id)
-        if deleted_count:
-            logger.debug(f"Deleted {deleted_count} old dependencies for scan {scan_id}")
-        old_deps_deleted = True
-
-    inserted = await _insert_dependencies_chunked(parsed_sbom, project_id, scan_id, dep_repo)
-    return inserted, old_deps_deleted
+    return await store_sbom_dependencies(parsed_sbom, project_id, scan_id, dep_repo, old_deps_deleted)
 
 
 async def _process_sboms(

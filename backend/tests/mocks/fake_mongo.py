@@ -699,8 +699,9 @@ class FakeCollection:
                 return doc
         return None
 
-    async def count_documents(self, query):
-        return sum(1 for doc in self._docs.values() if _match_doc(doc, query))
+    async def count_documents(self, query, limit: int = 0, **_kwargs):
+        count = sum(1 for doc in self._docs.values() if _match_doc(doc, query))
+        return min(count, limit) if limit else count
 
     async def distinct(self, field: str, filter: dict | None = None):
         seen: list = []
