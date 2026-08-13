@@ -138,15 +138,18 @@ class SBOMParser:
 
         if format_type == SBOMFormat.UNKNOWN:
             logger.warning("Unknown SBOM format, attempting best-effort parsing")
-            # Try all parsers
+            # Each attempt gets a fresh result so a failed handler cannot leave partial
+            # dependencies or counters behind for the next one to build on.
             for handler in self.format_handlers.values():
+                candidate = ParsedSBOM(format=format_type, format_version=version)
                 try:
-                    handler(sbom, result)
-                    if result.dependencies:
-                        break
+                    handler(sbom, candidate)
                 except Exception:
                     logger.debug("Best-effort SBOM parse attempt failed, trying next handler", exc_info=True)
                     continue
+                if candidate.dependencies:
+                    result = candidate
+                    break
         else:
             format_handler = self.format_handlers.get(format_type)
             if format_handler is not None:
@@ -161,6 +164,18 @@ class SBOMParser:
         result.parsed_components = len(result.dependencies)
 
         return result
+
+    @staticmethod
+    def _count_skipped(result: ParsedSBOM, reason: str, count: int = 1) -> None:
+        if count <= 0:
+            return
+        result.skipped_components += count
+        result.skipped_reasons[reason] = result.skipped_reasons.get(reason, 0) + count
+
+    @staticmethod
+    def _normalize_version(raw: Any) -> str:
+        version = str(raw).strip() if raw is not None else ""
+        return version or "unknown"
 
     @staticmethod
     def _merge_duplicate_dependencies(result: ParsedSBOM) -> None:
@@ -244,21 +259,26 @@ class SBOMParser:
         return direct or roots, True
 
     @classmethod
-    def _flatten_cyclonedx_components(cls, components: Any, depth: int = 0) -> tuple[list[dict[str, Any]], int]:
-        """Flatten nested components; returns (flat, skipped) where skipped counts subtrees below the depth cap."""
+    def _flatten_cyclonedx_components(cls, components: Any, depth: int = 0) -> tuple[list[dict[str, Any]], int, int]:
+        """Flatten nested components; returns (flat, depth_skipped, malformed) counting dropped entries."""
         flat: list[dict[str, Any]] = []
-        skipped = 0
+        depth_skipped = 0
+        malformed = 0
         for comp in components if isinstance(components, list) else []:
             if not isinstance(comp, dict):
+                malformed += 1
                 continue
             if depth >= MAX_COMPONENT_NESTING_DEPTH:
-                skipped += cls._count_component_subtree(comp)
+                depth_skipped += cls._count_component_subtree(comp)
                 continue
             flat.append(comp)
-            nested, nested_skipped = cls._flatten_cyclonedx_components(comp.get("components"), depth + 1)
+            nested, nested_skipped, nested_malformed = cls._flatten_cyclonedx_components(
+                comp.get("components"), depth + 1
+            )
             flat.extend(nested)
-            skipped += nested_skipped
-        return flat, skipped
+            depth_skipped += nested_skipped
+            malformed += nested_malformed
+        return flat, depth_skipped, malformed
 
     @staticmethod
     def _count_component_subtree(comp: dict[str, Any]) -> int:
@@ -307,8 +327,9 @@ class SBOMParser:
         )
 
         # cyclonedx-npm/-maven nest sub-dependencies in components[].components[].
-        components, depth_skipped = self._flatten_cyclonedx_components(sbom.get("components", []))
-        result.skipped_components += depth_skipped
+        components, depth_skipped, malformed = self._flatten_cyclonedx_components(sbom.get("components", []))
+        self._count_skipped(result, "nesting-depth", depth_skipped)
+        self._count_skipped(result, "malformed", malformed)
         if depth_skipped:
             logger.warning(
                 "CycloneDX components nested deeper than %d levels; skipped %d component(s)",
@@ -322,21 +343,26 @@ class SBOMParser:
                 continue
             if comp.get("type") == "file":
                 # File-catalog entries (e.g. syft filesystem scans) aren't dependencies.
-                result.skipped_components += 1
+                self._count_skipped(result, "file")
                 continue
-            parsed = self._parse_cyclonedx_component(
-                comp,
-                global_source_type,
-                source_target,
-                direct_refs,
-                all_transitive_refs,
-                reverse_deps_graph,
-                direct_refs_inferred,
-            )
+            try:
+                parsed = self._parse_cyclonedx_component(
+                    comp,
+                    global_source_type,
+                    source_target,
+                    direct_refs,
+                    all_transitive_refs,
+                    reverse_deps_graph,
+                    direct_refs_inferred,
+                )
+            except Exception:
+                logger.warning("Skipping malformed CycloneDX component %r", comp.get("name"), exc_info=True)
+                self._count_skipped(result, "parse-error")
+                continue
             if parsed:
                 result.dependencies.append(parsed)
             else:
-                result.skipped_components += 1
+                self._count_skipped(result, "unidentifiable")
 
     def _extract_cyclonedx_source(self, metadata: dict[str, Any]) -> tuple[str | None, str | None]:
         """Extract source information from CycloneDX metadata."""
@@ -472,7 +498,10 @@ class SBOMParser:
         locations: list[str] = []
         properties: dict[str, str] = {}
 
-        for prop in comp.get("properties", []):
+        raw_props = comp.get("properties")
+        for prop in raw_props if isinstance(raw_props, list) else []:
+            if not isinstance(prop, dict):
+                continue
             prop_name = prop.get("name", "")
             prop_value = prop.get("value", "")
             if prop_name and prop_value:
@@ -488,8 +517,10 @@ class SBOMParser:
             if new_location is not None:
                 locations.append(new_location)
 
-        for occ in comp.get("evidence", {}).get("occurrences", []):
-            loc = occ.get("location")
+        evidence = comp.get("evidence")
+        occurrences = evidence.get("occurrences") if isinstance(evidence, dict) else None
+        for occ in occurrences if isinstance(occurrences, list) else []:
+            loc = occ.get("location") if isinstance(occ, dict) else None
             if loc and loc not in locations:
                 locations.append(loc)
 
@@ -503,7 +534,9 @@ class SBOMParser:
         homepage: str | None = None
         repository_url: str | None = None
         download_url: str | None = None
-        for ref in external_refs:
+        for ref in external_refs if isinstance(external_refs, list) else []:
+            if not isinstance(ref, dict):
+                continue
             ref_type = ref.get("type", "").lower()
             ref_url = ref.get("url", "")
             if ref_type == "website" and not homepage:
@@ -528,7 +561,7 @@ class SBOMParser:
 
         purl = comp.get("purl")
         name = comp.get("name")
-        version = comp.get("version", "unknown")
+        version = self._normalize_version(comp.get("version"))
         bom_ref = comp.get("bom-ref")
         component_type = comp.get("type", "library")
         group = comp.get("group")
@@ -564,7 +597,10 @@ class SBOMParser:
                 cpes.append(val)
 
         hashes: dict[str, str] = {}
-        for h in comp.get("hashes", []):
+        raw_hashes = comp.get("hashes")
+        for h in raw_hashes if isinstance(raw_hashes, list) else []:
+            if not isinstance(h, dict):
+                continue
             alg = h.get("alg", "").lower()
             content = h.get("content", "")
             if alg and content:
@@ -752,8 +788,8 @@ class SBOMParser:
             result.source_type = source_type
             result.source_target = source_target
 
-        artifacts = sbom.get("artifacts", [])
-        relationships = sbom.get("artifactRelationships", [])
+        artifacts = sbom.get("artifacts") or []
+        relationships = sbom.get("artifactRelationships") or []
 
         direct_artifact_ids, all_child_ids, reverse_deps_graph = self._build_syft_relationship_graph(
             relationships, source_id
@@ -770,22 +806,30 @@ class SBOMParser:
         inferred = not bool(relationships)
 
         for artifact in artifacts:
+            if not isinstance(artifact, dict):
+                self._count_skipped(result, "malformed")
+                continue
             artifact_id = artifact.get("id", "")
             is_direct = inferred or (artifact_id in direct_artifact_ids)
             parent_components = reverse_deps_graph.get(artifact_id, [])
 
-            parsed = self._parse_syft_artifact(
-                artifact,
-                result.source_type,
-                result.source_target,
-                is_direct,
-                inferred,
-                parent_components,
-            )
+            try:
+                parsed = self._parse_syft_artifact(
+                    artifact,
+                    result.source_type,
+                    result.source_target,
+                    is_direct,
+                    inferred,
+                    parent_components,
+                )
+            except Exception:
+                logger.warning("Skipping malformed Syft artifact %r", artifact.get("name"), exc_info=True)
+                self._count_skipped(result, "parse-error")
+                continue
             if parsed:
                 result.dependencies.append(parsed)
             else:
-                result.skipped_components += 1
+                self._count_skipped(result, "unidentifiable")
 
     @staticmethod
     def _extract_syft_locations(
@@ -849,7 +893,7 @@ class SBOMParser:
 
         purl = artifact.get("purl")
         name = artifact.get("name")
-        version = artifact.get("version", "unknown")
+        version = self._normalize_version(artifact.get("version"))
         pkg_type = artifact.get("type", "unknown")
 
         if parent_components is None:
@@ -862,8 +906,8 @@ class SBOMParser:
             purl = self._construct_purl(pkg_type, name, version)
             logger.debug(f"Constructed PURL for Syft artifact {name}@{version}: {purl}")
 
-        license_str, license_url = self._extract_syft_licenses_full(artifact.get("licenses", []))
-        locations, layer_digest = self._extract_syft_locations(artifact.get("locations", []))
+        license_str, license_url = self._extract_syft_licenses_full(artifact.get("licenses") or [])
+        locations, layer_digest = self._extract_syft_locations(artifact.get("locations") or [])
         # Syft JSON schema < 16.0 emits `cpes` as a list of plain strings; newer
         # releases use a list of dicts ({"cpe": "..."}). Handle both so a legacy
         # SBOM does not crash the artifact loop and silently drop dependencies.
@@ -872,7 +916,9 @@ class SBOMParser:
         found_by = artifact.get("foundBy")
         pkg_type = artifact.get("type", "unknown")
 
-        metadata = artifact.get("metadata", {})
+        metadata = artifact.get("metadata")
+        if not isinstance(metadata, dict):
+            metadata = {}
         direct = self._resolve_syft_direct(is_direct, metadata)
         description = metadata.get("description") or metadata.get("summary")
         author = self._extract_syft_author(metadata)
@@ -1045,26 +1091,34 @@ class SBOMParser:
         result.format_version = sbom.get("spdxVersion")
         result.created_at = sbom.get("creationInfo", {}).get("created")
 
-        relationships = sbom.get("relationships", [])
+        relationships = sbom.get("relationships") or []
         doc_spdx_id = sbom.get("SPDXID", "SPDXRef-DOCUMENT")
 
         direct_package_ids, reverse_deps_graph = self._build_spdx_dependency_graph(relationships, doc_spdx_id)
 
-        packages = sbom.get("packages", [])
+        packages = sbom.get("packages") or []
         inferred = not bool(relationships)
 
         for pkg in packages:
+            if not isinstance(pkg, dict):
+                self._count_skipped(result, "malformed")
+                continue
             pkg_spdx_id = pkg.get("SPDXID", "")
 
             is_direct = inferred or pkg_spdx_id in direct_package_ids
 
             parent_components = reverse_deps_graph.get(pkg_spdx_id, [])
 
-            parsed = self._parse_spdx_package(pkg, is_direct, inferred, parent_components)
+            try:
+                parsed = self._parse_spdx_package(pkg, is_direct, inferred, parent_components)
+            except Exception:
+                logger.warning("Skipping malformed SPDX package %r", pkg.get("name"), exc_info=True)
+                self._count_skipped(result, "parse-error")
+                continue
             if parsed:
                 result.dependencies.append(parsed)
             else:
-                result.skipped_components += 1
+                self._count_skipped(result, "unidentifiable")
 
     _SPDX_DOWNLOAD_LOC_TYPE_MAP = (
         (("npmjs.org", "registry.npmjs"), "npm"),
@@ -1195,7 +1249,7 @@ class SBOMParser:
         """Parse a single SPDX package with all available fields."""
 
         name = pkg.get("name")
-        version = pkg.get("versionInfo", "unknown")
+        version = self._normalize_version(pkg.get("versionInfo"))
 
         if not name:
             return None

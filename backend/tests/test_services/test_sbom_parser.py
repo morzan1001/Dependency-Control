@@ -1037,6 +1037,126 @@ class TestSPDXDirectDependencyDetection:
         assert deps["dep2"].direct is False
 
 
+def _three_component_sbom(second_component: dict) -> dict:
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "metadata": {"component": {"type": "application", "name": "app", "bom-ref": "root"}},
+        "components": [
+            {"type": "library", "name": "first", "version": "1.0", "purl": "pkg:pypi/first@1.0"},
+            second_component,
+            {"type": "library", "name": "third", "version": "3.0", "purl": "pkg:pypi/third@3.0"},
+        ],
+        "dependencies": [],
+    }
+
+
+class TestMalformedComponentResilience:
+    """One bad component must not truncate the parse; the loss must be counted."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def test_null_version_component_is_coerced_not_fatal(self):
+        sbom = _three_component_sbom(
+            {"type": "library", "name": "second", "version": None, "purl": "pkg:pypi/second@2.0"}
+        )
+        result = self.parser.parse(sbom)
+        names = [d.name for d in result.dependencies]
+        assert names == ["first", "second", "third"]
+        assert result.dependencies[1].version == "unknown"
+
+    def test_properties_object_instead_of_list_is_not_fatal(self):
+        sbom = _three_component_sbom(
+            {
+                "type": "library",
+                "name": "second",
+                "version": "2.0",
+                "purl": "pkg:pypi/second@2.0",
+                "properties": {"name": "x", "value": "y"},
+            }
+        )
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["first", "second", "third"]
+
+    def test_crashing_component_is_skipped_and_counted_others_survive(self):
+        sbom = _three_component_sbom(
+            {"type": "library", "name": "second", "version": "2.0", "purl": "pkg:pypi/second@2.0", "licenses": 5}
+        )
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["first", "third"]
+        assert result.skipped_components == 1
+        assert result.skipped_reasons.get("parse-error") == 1
+        assert result.total_components == 3
+
+    def test_non_dict_component_is_counted(self):
+        sbom = _three_component_sbom({"type": "library", "name": "second", "version": "2.0"})
+        sbom["components"].append(123)
+        result = self.parser.parse(sbom)
+        assert len(result.dependencies) == 3
+        assert result.skipped_components == 1
+        assert result.total_components == 4
+
+    def test_null_licenses_and_hashes_are_not_fatal(self):
+        sbom = _three_component_sbom(
+            {
+                "type": "library",
+                "name": "second",
+                "version": "2.0",
+                "purl": "pkg:pypi/second@2.0",
+                "licenses": None,
+                "hashes": None,
+                "externalReferences": None,
+                "evidence": None,
+            }
+        )
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["first", "second", "third"]
+
+    def test_syft_artifact_crash_is_isolated(self):
+        sbom = {
+            "descriptor": {"name": "syft", "version": "1.0.0"},
+            "source": {"type": "directory", "target": "/app"},
+            "artifacts": [
+                {"id": "a1", "name": "ok-1", "version": "1.0", "type": "python", "purl": "pkg:pypi/ok-1@1.0"},
+                {"id": "a2", "name": "bad", "version": "1.0", "type": "python", "licenses": 5},
+                {"id": "a3", "name": "ok-2", "version": "2.0", "type": "python", "purl": "pkg:pypi/ok-2@2.0"},
+            ],
+            "artifactRelationships": [],
+        }
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["ok-1", "ok-2"]
+        assert result.skipped_reasons.get("parse-error") == 1
+
+    def test_spdx_package_crash_is_isolated(self):
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "packages": [
+                {"SPDXID": "SPDXRef-1", "name": "ok-1", "versionInfo": "1.0", "checksums": 5},
+                {"SPDXID": "SPDXRef-2", "name": "ok-2", "versionInfo": "2.0"},
+            ],
+            "relationships": [],
+        }
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["ok-2"]
+        assert result.skipped_reasons.get("parse-error") == 1
+
+    def test_unknown_format_attempts_do_not_leak_state_between_handlers(self):
+        # CycloneDX-shaped components (undetectable: no purl on the first) yield zero
+        # dependencies; the SPDX attempt must win with a clean slate, not inherit the
+        # CycloneDX attempt's skip counters.
+        sbom = {
+            "components": [{"type": "file", "name": "/etc/passwd"}],
+            "packages": [{"SPDXID": "SPDXRef-1", "name": "real-pkg", "versionInfo": "1.0"}],
+            "relationships": [],
+        }
+        result = parse_sbom(sbom)
+        assert [d.name for d in result.dependencies] == ["real-pkg"]
+        assert result.skipped_components == 0
+        assert result.total_components == 1
+
+
 class TestDetectFormatMalformed:
     """detect_format must not raise on structurally odd (but valid JSON) SBOMs; it falls through to UNKNOWN."""
 
