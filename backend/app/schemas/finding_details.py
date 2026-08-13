@@ -2,7 +2,7 @@
 
 Writers (normalizers/analyzers) construct these models and store
 ``model_dump(exclude_none=True)``; readers may only consume keys declared here.
-``tests/services/test_finding_details_contract.py`` walks the backend source and
+``tests/schemas/test_finding_details_contract.py`` walks the backend source and
 fails on any ``details`` key that no model declares, so writer/reader drift is a
 test failure instead of a silently-empty feature.
 
