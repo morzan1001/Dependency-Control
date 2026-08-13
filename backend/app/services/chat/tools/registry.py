@@ -15,6 +15,7 @@ from app.models.user import User
 from app.repositories.teams import TeamRepository
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import compute_findings_delta
+from app.services.analyzers.purl_utils import canonical_purl
 
 from ._helpers import (
     _SEVERITY_RANK,
@@ -437,7 +438,7 @@ class ChatToolRegistry:
             return {"hotspots": hotspots}
 
         if tool_name == "get_dependency_details":
-            dep = await db["dependency_enrichments"].find_one({"purl": args["dependency_name"]})
+            dep = await db["dependency_enrichments"].find_one({"purl": canonical_purl(args["dependency_name"])})
             if not dep:
                 dep = await db["dependency_enrichments"].find_one(
                     {"name": {"$regex": re.escape(args["dependency_name"]), "$options": "i"}}

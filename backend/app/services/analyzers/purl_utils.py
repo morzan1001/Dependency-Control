@@ -148,6 +148,15 @@ def parse_purl(purl: str) -> ParsedPURL | None:
         return None
 
 
+def canonical_purl(purl: str) -> str:
+    """Cross-scan join key: qualifiers/subpath only describe packaging variants of the same artifact."""
+    if not purl:
+        return purl
+    for separator in ("?", "#"):
+        purl = purl.split(separator, 1)[0]
+    return purl
+
+
 def get_purl_type(purl: str) -> str | None:
     """Extract just the type from a PURL string."""
     if not purl or not purl.startswith("pkg:"):

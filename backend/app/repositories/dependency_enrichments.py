@@ -4,6 +4,8 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 
+from app.services.analyzers.purl_utils import canonical_purl
+
 
 class DependencyEnrichmentRepository:
     collection_name = "dependency_enrichments"
@@ -13,13 +15,21 @@ class DependencyEnrichmentRepository:
         self.collection: AsyncIOMotorCollection = db[self.collection_name]
 
     async def get_by_purl(self, purl: str) -> dict[str, Any] | None:
-        return await self.collection.find_one({"purl": purl})
+        return await self.collection.find_one({"purl": canonical_purl(purl)})
 
     async def get_many_by_purls(self, purls: list[str]) -> dict[str, dict[str, Any]]:
+        """Docs are keyed by canonical purl; the result is keyed by the purls the caller asked for."""
         if not purls:
             return {}
 
-        cursor = self.collection.find({"purl": {"$in": purls}})
-        docs = await cursor.to_list(length=len(purls))
+        canonical_by_requested = {purl: canonical_purl(purl) for purl in purls}
+        canonical_purls = list(set(canonical_by_requested.values()))
+        cursor = self.collection.find({"purl": {"$in": canonical_purls}})
+        docs = await cursor.to_list(length=len(canonical_purls))
 
-        return {doc["purl"]: doc for doc in docs if doc.get("purl")}
+        by_canonical = {doc["purl"]: doc for doc in docs if doc.get("purl")}
+        return {
+            requested: by_canonical[canonical]
+            for requested, canonical in canonical_by_requested.items()
+            if canonical in by_canonical
+        }
