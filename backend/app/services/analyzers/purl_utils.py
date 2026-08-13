@@ -157,7 +157,7 @@ def canonical_purl(purl: str) -> str:
     return purl
 
 
-def get_purl_type(purl: str) -> str | None:
+def get_purl_type(purl: str | None) -> str | None:
     """Extract just the type from a PURL string."""
     if not purl or not purl.startswith("pkg:"):
         return None

@@ -215,7 +215,7 @@ class ResultAggregator:
         """Most-restrictive-wins keeps multi-license primaries order-independent; a scanner classification always beats a deps.dev guess (no category)."""
         if enrichment.primary_license is None or enrichment.license_category is None:
             return True
-        incoming_rank = _CATEGORY_RANK_BY_VALUE.get(category, 0)
+        incoming_rank = _CATEGORY_RANK_BY_VALUE.get(category or "", 0)
         current_rank = _CATEGORY_RANK_BY_VALUE.get(enrichment.license_category, 0)
         return incoming_rank > current_rank
 
