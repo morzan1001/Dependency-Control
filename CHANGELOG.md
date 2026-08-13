@@ -1,4 +1,12 @@
-# Release 1.8.4
+# Release 1.8.5
+
+## 📦 Build & CI
+
+- chore: bump version to 1.8.5 (#0)
+
+
+
+# Release 1.8.5
 
 ## 🐛 Fixes
 
