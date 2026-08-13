@@ -34,6 +34,10 @@ from app.services.aggregation.versions import (
     normalize_version,
     resolve_fixed_versions,
 )
+from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE
+from app.services.analyzers.license_compliance.normalizer import (
+    normalize_license as normalize_spdx_id,
+)
 from app.services.normalizers.crypto import normalize_crypto
 from app.services.normalizers.iac import normalize_kics
 from app.services.normalizers.license import normalize_license
@@ -72,6 +76,14 @@ class ResultAggregator:
         return self._dependency_enrichments[key]
 
     @staticmethod
+    def _known_spdx_id(lic: Any) -> str | None:
+        """deps.dev emits sentinels like 'non-standard'; only trust ids resolving into LICENSE_DATABASE."""
+        if not isinstance(lic, str):
+            return None
+        normalized = normalize_spdx_id(lic)
+        return normalized if normalized in LICENSE_DATABASE else None
+
+    @staticmethod
     def _apply_deps_dev_project(enrichment: DependencyEnrichment, project: dict[str, Any]) -> None:
         """Apply deps.dev project block to enrichment."""
         if not project:
@@ -83,9 +95,10 @@ class ResultAggregator:
             enrichment.description = project.get("description")
         if project.get("url"):
             enrichment.repository_url = project.get("url")
-        if project.get("license") and not enrichment.primary_license:
-            enrichment.primary_license = project.get("license")
-            enrichment.licenses.append({"spdx_id": project.get("license"), "source": "deps_dev_project"})
+        project_license = ResultAggregator._known_spdx_id(project.get("license"))
+        if project_license and not enrichment.primary_license:
+            enrichment.primary_license = project_license
+            enrichment.licenses.append({"spdx_id": project_license, "source": "deps_dev_project"})
 
     @staticmethod
     def _apply_deps_dev_links(enrichment: DependencyEnrichment, links: dict[str, Any]) -> None:
@@ -127,10 +140,11 @@ class ResultAggregator:
     def _apply_deps_dev_licenses(enrichment: DependencyEnrichment, licenses: list[Any]) -> None:
         """Apply deps.dev license list to enrichment."""
         for lic in licenses:
-            if isinstance(lic, str):
-                enrichment.licenses.append({"spdx_id": lic, "source": "deps_dev"})
+            spdx_id = ResultAggregator._known_spdx_id(lic)
+            if spdx_id:
+                enrichment.licenses.append({"spdx_id": spdx_id, "source": "deps_dev"})
                 if not enrichment.primary_license:
-                    enrichment.primary_license = lic
+                    enrichment.primary_license = spdx_id
 
     def enrich_from_deps_dev(self, name: str, version: str, metadata: dict[str, Any]) -> None:
         """Enrich dependency with data from deps.dev."""
@@ -169,6 +183,8 @@ class ResultAggregator:
         if spdx_id:
             enrichment.primary_license = spdx_id
             enrichment.license_category = license_info.get("category")
+            if license_info.get("spdx_expression"):
+                enrichment.license_expression = license_info["spdx_expression"]
             enrichment.licenses.append(
                 {
                     "spdx_id": spdx_id,

@@ -406,10 +406,14 @@ async def _enrich_dependencies(dependency_enrichments: dict[str, Any], scan_id: 
 
     # purl is the cross-scan join key for dependency_enrichments; name@version only identifies a dep within this scan.
     purl_by_key: dict[str, str] = {}
-    async for dep_doc in db.dependencies.find({"scan_id": scan_id}, {"name": 1, "version": 1, "purl": 1}):
+    keys_with_sbom_license: set[str] = set()
+    async for dep_doc in db.dependencies.find({"scan_id": scan_id}, {"name": 1, "version": 1, "purl": 1, "license": 1}):
+        dep_key = f"{dep_doc.get('name')}@{dep_doc.get('version')}"
         purl = dep_doc.get("purl")
         if purl:
-            purl_by_key[f"{dep_doc.get('name')}@{dep_doc.get('version')}"] = purl
+            purl_by_key[dep_key] = purl
+        if dep_doc.get("license"):
+            keys_with_sbom_license.add(dep_key)
 
     bulk_ops: list[UpdateOne] = []
     enrichment_ops: list[UpdateOne] = []
@@ -422,12 +426,17 @@ async def _enrich_dependencies(dependency_enrichments: dict[str, Any], scan_id: 
             continue
         name, version = parts
         if enrichment_data:
-            bulk_ops.append(
-                UpdateOne(
-                    {"scan_id": scan_id, "name": name, "version": version},
-                    {"$set": enrichment_data},
+            # The SBOM-declared license is authoritative; enrichment guesses must not replace it.
+            dep_update = enrichment_data
+            if "license" in dep_update and key in keys_with_sbom_license:
+                dep_update = {k: v for k, v in dep_update.items() if k != "license"}
+            if dep_update:
+                bulk_ops.append(
+                    UpdateOne(
+                        {"scan_id": scan_id, "name": name, "version": version},
+                        {"$set": dep_update},
+                    )
                 )
-            )
 
             purl = purl_by_key.get(key)
             if purl:
