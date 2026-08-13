@@ -632,7 +632,7 @@ class ChatToolRegistry:
 
             groups: dict[str, dict[str, Any]] = {}
             for f in findings:
-                comp = f.get("component") or f.get("component_name") or f.get("package") or f.get("package_name")
+                comp = f.get("component")
                 if not comp:
                     continue
                 key = comp.lower()
@@ -640,18 +640,18 @@ class ChatToolRegistry:
                     key,
                     {
                         "component": comp,
-                        "current_version": f.get("component_version") or f.get("package_version") or f.get("version"),
+                        "current_version": f.get("version"),
                         "findings": [],
                         "fix_candidates": [],
                     },
                 )
                 g["findings"].append(f)
-                for fv in f.get("fixed_versions") or []:
+                details = f.get("details") or {}
+                entries = details.get("vulnerabilities") or []
+                for fv in (details.get("fixed_version"), *(v.get("fixed_version") for v in entries)):
                     if isinstance(fv, str) and fv:
-                        g["fix_candidates"].append(fv)
-                single = f.get("fix_version")
-                if isinstance(single, str) and single:
-                    g["fix_candidates"].append(single)
+                        # Writers emit comma-joined fix lists ("1.2.6, 2.0.1"); compare single versions.
+                        g["fix_candidates"].extend(part for part in (c.strip() for c in fv.split(",")) if part)
 
             steps: list[dict[str, Any]] = []
             for key, g in groups.items():
@@ -665,14 +665,20 @@ class ChatToolRegistry:
                 is_direct = bool(dep_meta.get("direct")) and not dep_meta.get("direct_inferred")
                 current = g["current_version"] or dep_meta.get("version")
 
-                resolved = [
-                    {
-                        "finding_id": str(f.get("_id", f.get("id", ""))),
-                        "cve_id": f.get("cve_id"),
-                        "severity": f.get("severity"),
-                    }
-                    for f in g["findings"]
-                ]
+                resolved = []
+                for f in g["findings"]:
+                    entries = (f.get("details") or {}).get("vulnerabilities") or []
+                    if not entries:
+                        # Non-vulnerability findings carry no CVE list; label with the finding id.
+                        entries = [{}]
+                    for v in entries:
+                        resolved.append(
+                            {
+                                "finding_id": f.get("finding_id"),
+                                "cve_id": v.get("resolved_cve") or v.get("id") or f.get("finding_id"),
+                                "severity": v.get("severity") or f.get("severity"),
+                            }
+                        )
                 max_sev = max(
                     (_SEVERITY_RANK.get(f.get("severity") or "", 0) for f in g["findings"]),
                     default=0,
@@ -681,7 +687,7 @@ class ChatToolRegistry:
                     (k for k, v in _SEVERITY_RANK.items() if v == max_sev),
                     "UNKNOWN",
                 )
-                critical_count = sum(1 for f in g["findings"] if f.get("severity") == "CRITICAL")
+                critical_count = sum(1 for r in resolved if r["severity"] == "CRITICAL")
 
                 risk = _breaking_risk(current, target) if target else "unknown"
 
@@ -721,7 +727,7 @@ class ChatToolRegistry:
 
             summary = {
                 "total_steps": len(steps),
-                "findings_resolved": sum(s["resolves_count"] for s in steps),
+                "cves_resolved": sum(s["resolves_count"] for s in steps),
                 "critical_resolved": sum(s["critical_count"] for s in steps),
                 "steps_without_fix": sum(1 for s in steps if not s["has_fix"]),
                 "breaking_changes": sum(1 for s in steps if s["breaking_change_risk"] == "high"),
