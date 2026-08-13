@@ -70,11 +70,13 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
   const reachability = stats.reachability
   const prioritized = stats.prioritized
 
-  const totalVulns = stats.critical + stats.high + stats.medium + stats.low
+  // prioritized.total counts vulnerabilities only — the population the actionable/deprioritized
+  // tiles are computed over; the stats.* severity buckets span every finding type.
+  const totalVulns = prioritized?.total ?? (stats.critical + stats.high + stats.medium + stats.low)
   const actionableCount = prioritized?.actionable_total || 0
   const deprioritizedCount = prioritized?.deprioritized_count || 0
-  const reductionPercent = totalVulns > 0 
-    ? Math.round((deprioritizedCount / totalVulns) * 100) 
+  const reductionPercent = totalVulns > 0
+    ? Math.min(100, Math.round((deprioritizedCount / totalVulns) * 100))
     : 0
 
   if (!threatIntel && !reachability) {
@@ -230,10 +232,10 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
             <div className="mt-4 space-y-1">
               <div className="flex justify-between text-xs text-muted-foreground">
                 <span>Actionable vulnerabilities</span>
-                <span>{actionableCount} of {totalVulns} ({Math.round((actionableCount / totalVulns) * 100)}%)</span>
+                <span>{actionableCount} of {totalVulns} ({Math.min(100, Math.round((actionableCount / totalVulns) * 100))}%)</span>
               </div>
-              <Progress 
-                value={(actionableCount / totalVulns) * 100} 
+              <Progress
+                value={Math.min(100, (actionableCount / totalVulns) * 100)}
                 className="h-2"
               />
             </div>
@@ -383,11 +385,11 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
           <CardContent>
             <div className="grid grid-cols-2 gap-4">
               <div className="text-center p-3 bg-muted rounded-lg">
-                <div className="text-xs text-muted-foreground mb-1">Traditional (CVSS only)</div>
+                <div className="text-xs text-muted-foreground mb-1">Base (severity-weighted)</div>
                 <div className="text-2xl font-bold">{(stats.risk_score ?? 0).toFixed(1)}</div>
               </div>
               <div className="text-center p-3 bg-primary/10 rounded-lg border border-primary/20">
-                <div className="text-xs text-primary mb-1">Adjusted (EPSS/KEV/Reach)</div>
+                <div className="text-xs text-primary mb-1">Reachability-adjusted</div>
                 <div className="text-2xl font-bold text-primary">
                   {(stats.adjusted_risk_score ?? 0).toFixed(1)}
                 </div>

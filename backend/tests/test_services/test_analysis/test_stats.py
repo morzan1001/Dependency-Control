@@ -521,8 +521,9 @@ class TestBuildReachabilitySummaryLimits:
         assert result["analyzed"] == 42
 
 
-# calculate_comprehensive_stats: risk_score (base) and adjusted_risk_score must share one
-# 0-100 scale derived from calculate_risk_score's composite.
+# calculate_comprehensive_stats: risk_score is a saturating severity-weighted exposure
+# score (0-100, monotone in the finding set); adjusted_risk_score shares the same scale
+# with per-finding reachability modifiers applied to the weights.
 
 _W5_SCAN = "scan-w5"
 
@@ -566,106 +567,216 @@ async def _seed(findings):
     return db
 
 
-class TestComprehensiveStatsScale:
+async def _risk_score(findings):
+    db = await _seed(findings)
+    stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+    return stats.risk_score
+
+
+class TestRiskScoreSaturatingExposure:
     @pytest.mark.asyncio
-    async def test_all_critical_risk_score_in_0_100_band(self):
-        """All-CRITICAL project yields a base risk_score in the 0-100 band."""
-        findings = [_w5_finding(f"c{i}", "CRITICAL", risk_score=95.0) for i in range(3)]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.risk_score == 95.0
-        assert stats.risk_score > 50.0  # well above a 0-10 scale
+    async def test_single_critical_score(self):
+        # exposure 10 -> 100*10/(10+25) = 28.6
+        assert await _risk_score([_w5_finding("c1", "CRITICAL")]) == 28.6
 
     @pytest.mark.asyncio
-    async def test_all_critical_no_enrichment_uses_0_100_fallback(self):
-        """A CRITICAL finding without details.risk_score falls back to the 0-100 composite anchor (40)."""
-        findings = [_w5_finding("c1", "CRITICAL")]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.risk_score == 40.0
-        assert stats.adjusted_risk_score == 40.0
+    async def test_single_finding_scores_ordered_by_severity(self):
+        scores = [await _risk_score([_w5_finding("f", sev)]) for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW")]
+        assert scores == sorted(scores, reverse=True)
+        assert scores[-1] > 0.0
 
     @pytest.mark.asyncio
-    async def test_fallback_anchors_match_composite_per_severity(self):
-        # each severity's no-enrichment fallback equals (CVSS_SEVERITY_SCORES/10)*40
+    async def test_score_saturates_below_100(self):
+        findings = [_w5_finding(f"c{i}", "CRITICAL") for i in range(600)]
+        score = await _risk_score(findings)
+        assert 99.0 <= score < 100.0
+
+    @pytest.mark.asyncio
+    async def test_info_unknown_negligible_only_scan_scores_zero(self):
         findings = [
-            _w5_finding("c", "CRITICAL"),
-            _w5_finding("h", "HIGH"),
-            _w5_finding("m", "MEDIUM"),
-            _w5_finding("l", "LOW"),
+            _w5_finding("i1", "INFO"),
+            _w5_finding("u1", "UNKNOWN"),
+            _w5_finding("n1", "NEGLIGIBLE"),
         ]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        # avg of 40, 30, 16, 4 == 22.5
-        assert stats.risk_score == 22.5
+        assert await _risk_score(findings) == 0.0
 
     @pytest.mark.asyncio
-    async def test_low_medium_project_is_not_anomalously_low_or_high(self):
-        """A large low/medium set produces a modest, nonzero 0-100 score (avg of LOW=4 / MEDIUM=16 anchors)."""
-        findings = [_w5_finding(f"l{i}", "LOW") for i in range(400)]
-        findings += [_w5_finding(f"m{i}", "MEDIUM") for i in range(261)]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        expected = round((400 * 4 + 261 * 16) / 661, 1)
-        assert stats.risk_score == expected
-        assert stats.risk_score > 0.0
+    async def test_adding_a_low_finding_never_lowers_the_score(self):
+        base = [_w5_finding(f"c{i}", "CRITICAL") for i in range(5)]
+        before = await _risk_score(base)
+        after = await _risk_score([*base, _w5_finding("l1", "LOW")])
+        assert after >= before
 
     @pytest.mark.asyncio
-    async def test_base_and_adjusted_same_scale(self):
-        """risk_score and adjusted_risk_score share one 0-100 scale."""
-        findings = [_w5_finding("c1", "CRITICAL", risk_score=90.0, adjusted_risk_score=90.0)]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.risk_score == 90.0
-        assert stats.adjusted_risk_score == 90.0
+    async def test_informational_noise_does_not_move_the_score(self):
+        base = [_w5_finding(f"c{i}", "CRITICAL") for i in range(5)]
+        noise = [_w5_finding(f"i{i}", "INFO") for i in range(200)]
+        assert await _risk_score([*base, *noise]) == await _risk_score(base)
 
     @pytest.mark.asyncio
-    async def test_fully_unreachable_adjusted_below_base(self):
-        # fully unreachable: adjusted_risk_score (x0.4) < base risk_score
-        findings = [
-            _w5_finding(
-                "c1",
-                "CRITICAL",
-                risk_score=90.0,
-                adjusted_risk_score=36.0,  # 90 * 0.4
-                reachable=False,
-                reachability_level="unreachable",
-            )
+    async def test_monotonicity_property_over_random_finding_sets(self):
+        """Adding any single finding must never decrease risk_score."""
+        import random
+
+        rng = random.Random(20260813)
+        severities = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO", "UNKNOWN", "NEGLIGIBLE"]
+        for trial in range(20):
+            base = [_w5_finding(f"t{trial}-f{i}", rng.choice(severities)) for i in range(rng.randint(0, 25))]
+            added = _w5_finding(f"t{trial}-extra", rng.choice(severities))
+            before = await _risk_score(base) if base else 0.0
+            after = await _risk_score([*base, added])
+            assert after >= before, f"trial {trial}: {before} -> {after} after adding {added['severity']}"
+
+    @pytest.mark.asyncio
+    async def test_many_criticals_with_noise_outrank_few_clean_criticals(self):
+        """The prod inversion: 140 criticals + 225 INFO must outscore 4 criticals."""
+        noisy = [_w5_finding(f"c{i}", "CRITICAL") for i in range(140)]
+        noisy += [_w5_finding(f"h{i}", "HIGH") for i in range(36)]
+        noisy += [_w5_finding(f"i{i}", "INFO") for i in range(225)]
+        quiet = [_w5_finding(f"q{i}", "CRITICAL") for i in range(4)]
+        assert await _risk_score(noisy) > await _risk_score(quiet)
+
+    @pytest.mark.asyncio
+    async def test_per_finding_enrichment_scores_do_not_change_the_base_score(self):
+        """The base score depends on severity counts only, not details.risk_score."""
+        plain = [_w5_finding("c1", "CRITICAL"), _w5_finding("h1", "HIGH")]
+        enriched = [
+            _w5_finding("c1", "CRITICAL", risk_score=95.0),
+            _w5_finding("h1", "HIGH", risk_score=5.0),
         ]
+        assert await _risk_score(plain) == await _risk_score(enriched)
+
+
+class TestAdjustedRiskScoreReachability:
+    @pytest.mark.asyncio
+    async def test_no_reachability_info_adjusted_equals_base(self):
+        findings = [_w5_finding("c1", "CRITICAL"), _w5_finding("h1", "HIGH")]
         db = await _seed(findings)
         stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.adjusted_risk_score < stats.risk_score
-        assert stats.adjusted_risk_score == 36.0
+        assert stats.adjusted_risk_score == stats.risk_score
+
+    @pytest.mark.asyncio
+    async def test_all_unreachable_adjusted_below_base(self):
+        findings = [_w5_finding(f"c{i}", "CRITICAL", reachable=False, reachability_level="none") for i in range(3)]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert 0.0 < stats.adjusted_risk_score < stats.risk_score
 
     @pytest.mark.asyncio
     async def test_confirmed_reachable_adjusted_at_least_base(self):
-        # confirmed reachable: adjusted_risk_score (x1.1, capped) >= base
-        findings = [
-            _w5_finding(
-                "c1",
-                "CRITICAL",
-                risk_score=80.0,
-                adjusted_risk_score=88.0,  # 80 * 1.1
-                reachable=True,
-                reachability_level="confirmed",
-            )
-        ]
+        findings = [_w5_finding("c1", "CRITICAL", reachable=True, reachability_level="symbol")]
         db = await _seed(findings)
         stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.adjusted_risk_score >= stats.risk_score
-        assert stats.adjusted_risk_score == 88.0
+        assert stats.risk_score <= stats.adjusted_risk_score <= 100.0
+
+
+class TestPrioritizedVulnerabilityGate:
+    """prioritized.* counts vulnerabilities only; other finding types must not leak in."""
+
+    @staticmethod
+    def _typed(_id, finding_type, severity="MEDIUM", details=None):
+        return {
+            "_id": _id,
+            "finding_id": _id,
+            "scan_id": _W5_SCAN,
+            "type": finding_type,
+            "severity": severity,
+            "component": "pkg",
+            "version": "1.0.0",
+            "details": details or {},
+            "waived": False,
+        }
 
     @pytest.mark.asyncio
-    async def test_adjusted_falls_back_to_base_then_calculated(self):
-        """adjusted_risk_score falls back to details.risk_score, then to the 0-100 calculated anchor."""
+    async def test_zero_vulns_scan_has_zero_deprioritized(self):
+        """Secrets/SAST/outdated findings carry no EPSS data and must not count as deprioritized vulns."""
+        findings = [_secret_finding(f"s{i}", verified=False, in_current_tree=True) for i in range(3)]
+        findings = [{**f, "scan_id": _W5_SCAN} for f in findings]
+        findings += [self._typed(f"sast{i}", "sast", severity="HIGH") for i in range(4)]
+        findings += [self._typed(f"out{i}", "outdated", severity="INFO") for i in range(10)]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.prioritized.deprioritized_count == 0
+        assert stats.prioritized.actionable_total == 0
+        assert stats.prioritized.total == 0
+
+    @pytest.mark.asyncio
+    async def test_deprioritized_counts_only_vulnerabilities(self):
         findings = [
-            _w5_finding("a", "CRITICAL", risk_score=90.0),  # no adjusted -> uses risk_score
-            _w5_finding("b", "HIGH"),  # nothing -> calculated anchor 30
+            self._typed("v1", "vulnerability", severity="LOW", details={"epss_score": 0.001}),
+            self._typed("v2", "vulnerability", severity="MEDIUM"),  # no EPSS -> deprioritized
+        ]
+        findings += [self._typed(f"out{i}", "outdated", severity="INFO") for i in range(5)]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.prioritized.deprioritized_count == 2
+
+    @pytest.mark.asyncio
+    async def test_prioritized_totals_and_severity_buckets_are_vuln_only(self):
+        findings = [
+            self._typed("v1", "vulnerability", severity="CRITICAL"),
+            self._typed("q1", "quality", severity="CRITICAL"),
+            self._typed("q2", "quality", severity="HIGH"),
         ]
         db = await _seed(findings)
         stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        # adjusted avg = (90 + 30) / 2 == 60.0
-        assert stats.adjusted_risk_score == 60.0
+        assert stats.prioritized.total == 1
+        assert stats.prioritized.critical == 1
+        assert stats.prioritized.high == 0
+        # the all-findings severity buckets are untouched by the gate
+        assert stats.critical == 2
+        assert stats.high == 1
+
+    @pytest.mark.asyncio
+    async def test_actionable_counts_gated_to_vulnerabilities(self):
+        findings = [
+            self._typed("v1", "vulnerability", severity="CRITICAL", details={"epss_score": 0.5}),
+        ]
+        findings += [self._typed(f"out{i}", "outdated", severity="INFO") for i in range(3)]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.prioritized.actionable_critical == 1
+        assert stats.prioritized.actionable_total == 1
+
+
+class TestSeverityBucketsComplete:
+    """Every persisted severity lands in exactly one bucket, so buckets sum to the finding total."""
+
+    @pytest.mark.asyncio
+    async def test_negligible_bucket_counted(self):
+        findings = [
+            _w5_finding("c1", "CRITICAL"),
+            _w5_finding("n1", "NEGLIGIBLE"),
+            _w5_finding("n2", "NEGLIGIBLE"),
+        ]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.negligible == 2
+
+    @pytest.mark.asyncio
+    async def test_buckets_sum_to_total_finding_count(self):
+        findings = [
+            _w5_finding("c1", "CRITICAL"),
+            _w5_finding("h1", "HIGH"),
+            _w5_finding("m1", "MEDIUM"),
+            _w5_finding("l1", "LOW"),
+            _w5_finding("i1", "INFO"),
+            _w5_finding("u1", "UNKNOWN"),
+            _w5_finding("n1", "NEGLIGIBLE"),
+        ]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        bucket_sum = (
+            stats.critical + stats.high + stats.medium + stats.low + stats.info + stats.unknown + stats.negligible
+        )
+        assert bucket_sum == len(findings)
+
+    @pytest.mark.asyncio
+    async def test_unmapped_severity_lands_in_unknown(self):
+        findings = [_w5_finding("w1", "WEIRD"), _w5_finding("u1", "UNKNOWN")]
+        db = await _seed(findings)
+        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
+        assert stats.unknown == 2
 
 
 # calculate_comprehensive_stats must read KEV state from details.in_kev /

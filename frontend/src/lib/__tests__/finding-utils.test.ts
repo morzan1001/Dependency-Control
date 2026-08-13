@@ -57,6 +57,7 @@ describe('severity chart tokens', () => {
       'HIGH',
       'MEDIUM',
       'LOW',
+      'NEGLIGIBLE',
       'INFO',
       'UNKNOWN',
     ])

@@ -13,4 +13,7 @@ export interface SeverityBreakdown {
   high: number;
   medium: number;
   low: number;
+  negligible?: number;
+  info?: number;
+  unknown?: number;
 }

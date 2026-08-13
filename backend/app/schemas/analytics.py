@@ -27,6 +27,9 @@ class SeverityBreakdown(BaseModel):
     high: int = 0
     medium: int = 0
     low: int = 0
+    negligible: int = 0
+    info: int = 0
+    unknown: int = 0
 
 
 class DependencyUsage(BaseModel):

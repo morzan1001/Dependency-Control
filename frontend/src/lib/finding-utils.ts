@@ -1,6 +1,6 @@
 import { Container, FileCode, HardDrive, Layers, type LucideIcon } from 'lucide-react'
 
-export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'INFO' | 'UNKNOWN'
+export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'NEGLIGIBLE' | 'INFO' | 'UNKNOWN'
 
 // Maps a CVE/GHSA id to its public advisory URL, or null if unknown.
 export function advisoryUrl(id: string): string | null {
@@ -16,12 +16,13 @@ export const SEVERITY_CHART_COLORS: Record<Severity, string> = {
   HIGH: '#f97316', // orange-500 / --severity-high
   MEDIUM: '#eab308', // yellow-500 / --severity-medium
   LOW: '#3b82f6', // blue-500 / --severity-low
+  NEGLIGIBLE: '#d1d5db', // gray-300
   INFO: '#6b7280', // gray-500 / --severity-info
   UNKNOWN: '#9ca3af', // gray-400
 }
 
 // Canonical severity ordering, most severe first.
-export const SEVERITY_ORDER: Severity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'INFO', 'UNKNOWN']
+export const SEVERITY_ORDER: Severity[] = ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW', 'NEGLIGIBLE', 'INFO', 'UNKNOWN']
 
 export function getSeverityColor(severity: string): string {
   switch (severity?.toUpperCase()) {

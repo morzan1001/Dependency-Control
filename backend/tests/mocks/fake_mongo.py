@@ -193,8 +193,9 @@ def _eval_expr(doc: dict, expr):
     """Evaluate a MongoDB aggregation expression against a single document.
 
     Handles the operator subset used by the stats pipelines: $ifNull, $cond,
-    $switch, comparison ($eq/$ne/$gt/$gte/$lt/$lte), logical ($and/$or),
-    $toDouble, and the $$REMOVE / $field / dotted-path / literal cases.
+    $switch, comparison ($eq/$ne/$gt/$gte/$lt/$lte), logical ($and/$or/$in),
+    arithmetic ($add/$multiply/$divide), $toDouble, and the $$REMOVE / $field /
+    dotted-path / literal cases.
     """
     if isinstance(expr, str):
         if expr == "$$REMOVE":
@@ -233,8 +234,22 @@ def _eval_expr(doc: dict, expr):
             if _eval_bool(doc, branch["case"]):
                 return _eval_expr(doc, branch["then"])
         return _eval_expr(doc, switch.get("default"))
+    if "$add" in expr:
+        operands = [_to_number(_eval_expr(doc, e)) for e in expr["$add"]]
+        return None if any(v is None for v in operands) else sum(operands)
+    if "$multiply" in expr:
+        operands = [_to_number(_eval_expr(doc, e)) for e in expr["$multiply"]]
+        if any(v is None for v in operands):
+            return None
+        product = 1.0
+        for v in operands:
+            product *= v
+        return product
+    if "$divide" in expr:
+        dividend, divisor = (_to_number(_eval_expr(doc, e)) for e in expr["$divide"])
+        return None if dividend is None or divisor in (None, 0) else dividend / divisor
 
-    for op in ("$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$and", "$or"):
+    for op in ("$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$and", "$or", "$in"):
         if op in expr:
             return _eval_bool(doc, expr)
     return expr
@@ -250,6 +265,9 @@ def _eval_bool(doc: dict, expr) -> bool:
         return all(_eval_bool(doc, sub) for sub in expr["$and"])
     if "$or" in expr:
         return any(_eval_bool(doc, sub) for sub in expr["$or"])
+    if "$in" in expr:
+        needle, haystack = expr["$in"]
+        return _eval_expr(doc, needle) in (_eval_expr(doc, haystack) or [])
     for op, cmp_fn in (
         ("$eq", lambda a, b: a == b),
         ("$ne", lambda a, b: a != b),

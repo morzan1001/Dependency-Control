@@ -10,10 +10,16 @@ from app.core.constants import (
     REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
     REACHABILITY_LEVEL_IMPORT,
     REACHABILITY_LEVEL_SYMBOL,
-    SEVERITY_CALCULATED_RISK_SCORES,
     sort_by_severity,
 )
 from app.core.epss import bucket_epss
+from app.core.risk_scoring import (
+    CONFIRMED_REACHABLE_RISK_MODIFIER,
+    RISK_SEVERITY_WEIGHTS,
+    UNREACHABLE_RISK_MODIFIER,
+    saturating_risk_score,
+    severity_exposure,
+)
 from app.models.stats import (
     PrioritizedCounts,
     ReachabilityStats,
@@ -232,6 +238,12 @@ def build_reachability_summary(
     return summary
 
 
+_VULN_TYPE_GATE: dict[str, Any] = {"$eq": ["$type", "vulnerability"]}
+
+# Severities with a dedicated bucket; anything else is counted as unknown so buckets always sum to total.
+_BUCKETED_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO")
+
+
 async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
     """Calculate comprehensive statistics including EPSS/KEV and reachability data."""
     pipeline: list[dict[str, Any]] = [
@@ -240,7 +252,6 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
             "$project": {
                 "severity": 1,
                 "type": 1,
-                "cvss_score": {"$ifNull": ["$details.cvss_score", None]},
                 "epss_score": {"$ifNull": ["$details.epss_score", None]},
                 "is_kev": {"$ifNull": [f"$details.{DETAILS_KEY_IN_KEV}", False]},
                 "kev_ransomware": {"$ifNull": [f"$details.{DETAILS_KEY_KEV_RANSOMWARE}", False]},
@@ -248,21 +259,32 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                 "reachability_level": {"$ifNull": ["$reachability_level", "unknown"]},
                 # Pulled up from details.reachability so the group stage can gate counts on it.
                 "reachability_confidence": {"$ifNull": ["$details.reachability.confidence_score", None]},
-                "risk_score": {"$ifNull": ["$details.risk_score", None]},
-                "adjusted_risk_score": {"$ifNull": ["$details.adjusted_risk_score", None]},
                 "verified": {"$ifNull": ["$details.verified", None]},
                 "in_current_tree": {"$ifNull": ["$details.in_current_tree", None]},
-                # 0-100 fallback for unenriched findings, on the same scale as details.risk_score.
-                "calculated_score": {
+                "severity_weight": {
                     "$switch": {
                         "branches": [
-                            {
-                                "case": {"$eq": ["$severity", sev]},
-                                "then": SEVERITY_CALCULATED_RISK_SCORES[sev],
-                            }
-                            for sev in ("CRITICAL", "HIGH", "MEDIUM", "LOW")
+                            {"case": {"$eq": ["$severity", sev]}, "then": weight}
+                            for sev, weight in RISK_SEVERITY_WEIGHTS.items()
                         ],
                         "default": 0.0,
+                    }
+                },
+                "reach_modifier": {
+                    "$switch": {
+                        "branches": [
+                            {"case": {"$eq": ["$reachable", False]}, "then": UNREACHABLE_RISK_MODIFIER},
+                            {
+                                "case": {
+                                    "$and": [
+                                        {"$eq": ["$reachable", True]},
+                                        {"$eq": ["$reachability_level", REACHABILITY_LEVEL_SYMBOL]},
+                                    ]
+                                },
+                                "then": CONFIRMED_REACHABLE_RISK_MODIFIER,
+                            },
+                        ],
+                        "default": 1.0,
                     }
                 },
             }
@@ -275,21 +297,23 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                 "high": {"$sum": {"$cond": [{"$eq": ["$severity", "HIGH"]}, 1, 0]}},
                 "medium": {"$sum": {"$cond": [{"$eq": ["$severity", "MEDIUM"]}, 1, 0]}},
                 "low": {"$sum": {"$cond": [{"$eq": ["$severity", "LOW"]}, 1, 0]}},
+                "negligible": {"$sum": {"$cond": [{"$eq": ["$severity", "NEGLIGIBLE"]}, 1, 0]}},
                 "info": {"$sum": {"$cond": [{"$eq": ["$severity", "INFO"]}, 1, 0]}},
-                "unknown": {"$sum": {"$cond": [{"$eq": ["$severity", "UNKNOWN"]}, 1, 0]}},
-                "total": {"$sum": 1},
+                "unknown": {"$sum": {"$cond": [{"$in": ["$severity", list(_BUCKETED_SEVERITIES)]}, 0, 1]}},
                 # Reachability is vulnerability-only, so unknown_count is measured against vulns only.
-                "vuln_total": {"$sum": {"$cond": [{"$eq": ["$type", "vulnerability"]}, 1, 0]}},
-                # Base risk score (0-100): avg of details.risk_score with the 0-100 calculated fallback.
-                "avg_risk_score": {"$avg": {"$ifNull": ["$risk_score", "$calculated_score"]}},
-                "max_risk_score": {"$max": {"$ifNull": ["$risk_score", "$calculated_score"]}},
-                # Reachability-adjusted score, falling back to base risk_score then calculated_score.
-                "avg_adjusted_risk_score": {
-                    "$avg": {"$ifNull": ["$adjusted_risk_score", {"$ifNull": ["$risk_score", "$calculated_score"]}]}
+                "vuln_total": {"$sum": {"$cond": [_VULN_TYPE_GATE, 1, 0]}},
+                # Vulnerability-only severity counts backing PrioritizedCounts.
+                "vuln_critical": {
+                    "$sum": {"$cond": [{"$and": [_VULN_TYPE_GATE, {"$eq": ["$severity", "CRITICAL"]}]}, 1, 0]}
                 },
-                "max_adjusted_risk_score": {
-                    "$max": {"$ifNull": ["$adjusted_risk_score", {"$ifNull": ["$risk_score", "$calculated_score"]}]}
+                "vuln_high": {"$sum": {"$cond": [{"$and": [_VULN_TYPE_GATE, {"$eq": ["$severity", "HIGH"]}]}, 1, 0]}},
+                "vuln_medium": {
+                    "$sum": {"$cond": [{"$and": [_VULN_TYPE_GATE, {"$eq": ["$severity", "MEDIUM"]}]}, 1, 0]}
                 },
+                "vuln_low": {"$sum": {"$cond": [{"$and": [_VULN_TYPE_GATE, {"$eq": ["$severity", "LOW"]}]}, 1, 0]}},
+                # Weighted exposure with per-finding reachability modifiers; saturated into
+                # adjusted_risk_score below. Base exposure is derived from the severity counts.
+                "adjusted_exposure": {"$sum": {"$multiply": ["$severity_weight", "$reach_modifier"]}},
                 # KEV statistics
                 "kev_count": {"$sum": {"$cond": [{"$eq": ["$is_kev", True]}, 1, 0]}},
                 "kev_ransomware_count": {"$sum": {"$cond": [{"$eq": ["$kev_ransomware", True]}, 1, 0]}},
@@ -440,12 +464,13 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                         ]
                     }
                 },
-                # Actionable: KEV or high EPSS AND reachable (or reachability unknown)
+                # Actionable: vulnerability AND (KEV or high EPSS) AND reachable (or reachability unknown)
                 "actionable_critical": {
                     "$sum": {
                         "$cond": [
                             {
                                 "$and": [
+                                    _VULN_TYPE_GATE,
                                     {"$eq": ["$severity", "CRITICAL"]},
                                     {
                                         "$or": [
@@ -471,6 +496,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                         "$cond": [
                             {
                                 "$and": [
+                                    _VULN_TYPE_GATE,
                                     {"$eq": ["$severity", "HIGH"]},
                                     {
                                         "$or": [
@@ -496,6 +522,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                         "$cond": [
                             {
                                 "$and": [
+                                    _VULN_TYPE_GATE,
                                     {
                                         "$or": [
                                             {"$eq": ["$is_kev", True]},
@@ -515,20 +542,26 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                         ]
                     }
                 },
-                # Deprioritized: unreachable OR (low EPSS and not KEV)
+                # Deprioritized: vulnerability AND (unreachable OR (low EPSS and not KEV)).
+                # Without the type gate every non-vulnerability finding qualifies via its missing EPSS.
                 "deprioritized_count": {
                     "$sum": {
                         "$cond": [
                             {
-                                "$or": [
-                                    {"$eq": ["$reachable", False]},
+                                "$and": [
+                                    _VULN_TYPE_GATE,
                                     {
-                                        "$and": [
-                                            {"$ne": ["$is_kev", True]},
+                                        "$or": [
+                                            {"$eq": ["$reachable", False]},
                                             {
-                                                "$or": [
-                                                    {"$eq": ["$epss_score", None]},
-                                                    {"$lt": ["$epss_score", 0.01]},
+                                                "$and": [
+                                                    {"$ne": ["$is_kev", True]},
+                                                    {
+                                                        "$or": [
+                                                            {"$eq": ["$epss_score", None]},
+                                                            {"$lt": ["$epss_score", 0.01]},
+                                                        ]
+                                                    },
                                                 ]
                                             },
                                         ]
@@ -666,10 +699,11 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
         stats.high = res.get("high", 0)
         stats.medium = res.get("medium", 0)
         stats.low = res.get("low", 0)
+        stats.negligible = res.get("negligible", 0)
         stats.info = res.get("info", 0)
         stats.unknown = res.get("unknown", 0)
-        stats.risk_score = round(res.get("avg_risk_score", 0.0), 1)
-        stats.adjusted_risk_score = round(res.get("avg_adjusted_risk_score", 0.0), 1)
+        stats.risk_score = saturating_risk_score(severity_exposure(stats.critical, stats.high, stats.medium, stats.low))
+        stats.adjusted_risk_score = saturating_risk_score(res.get("adjusted_exposure", 0.0))
 
         epss_scores: list[float] = [s for s in res.get("epss_scores", []) if s is not None]
         avg_epss: float | None = sum(epss_scores) / len(epss_scores) if epss_scores else None
@@ -701,11 +735,11 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
         )
 
         stats.prioritized = PrioritizedCounts(
-            total=res.get("total", 0),
-            critical=res.get("critical", 0),
-            high=res.get("high", 0),
-            medium=res.get("medium", 0),
-            low=res.get("low", 0),
+            total=res.get("vuln_total", 0),
+            critical=res.get("vuln_critical", 0),
+            high=res.get("vuln_high", 0),
+            medium=res.get("vuln_medium", 0),
+            low=res.get("vuln_low", 0),
             actionable_critical=res.get("actionable_critical", 0),
             actionable_high=res.get("actionable_high", 0),
             actionable_total=res.get("actionable_total", 0),

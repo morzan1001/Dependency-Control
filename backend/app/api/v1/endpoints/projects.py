@@ -34,8 +34,8 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
     RESP_AUTH_404_500,
 )
-from app.core.constants import SEVERITY_CALCULATED_RISK_SCORES
 from app.core.permissions import Permissions, has_permission
+from app.core.risk_scoring import risk_score_expr
 from app.core.worker import worker_manager
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 from app.models.system import SystemSettings
@@ -98,60 +98,19 @@ async def get_dashboard_stats(
             "$project": {
                 "name": 1,
                 "stats": 1,
-                # Prefer persisted stats.risk_score; else the same severity-weighted
-                # average of per-severity anchors used by calculate_comprehensive_stats.
+                # Prefer persisted stats.risk_score; else the same saturating
+                # severity-weighted formula used by calculate_comprehensive_stats.
                 "calculated_risk": {
                     "$ifNull": [
                         "$stats.risk_score",
-                        {
-                            "$let": {
-                                "vars": {
-                                    "n": {
-                                        "$add": [
-                                            {"$ifNull": ["$stats.critical", 0]},
-                                            {"$ifNull": ["$stats.high", 0]},
-                                            {"$ifNull": ["$stats.medium", 0]},
-                                            {"$ifNull": ["$stats.low", 0]},
-                                        ]
-                                    },
-                                    "weighted": {
-                                        "$add": [
-                                            {
-                                                "$multiply": [
-                                                    {"$ifNull": ["$stats.critical", 0]},
-                                                    SEVERITY_CALCULATED_RISK_SCORES["CRITICAL"],
-                                                ]
-                                            },
-                                            {
-                                                "$multiply": [
-                                                    {"$ifNull": ["$stats.high", 0]},
-                                                    SEVERITY_CALCULATED_RISK_SCORES["HIGH"],
-                                                ]
-                                            },
-                                            {
-                                                "$multiply": [
-                                                    {"$ifNull": ["$stats.medium", 0]},
-                                                    SEVERITY_CALCULATED_RISK_SCORES["MEDIUM"],
-                                                ]
-                                            },
-                                            {
-                                                "$multiply": [
-                                                    {"$ifNull": ["$stats.low", 0]},
-                                                    SEVERITY_CALCULATED_RISK_SCORES["LOW"],
-                                                ]
-                                            },
-                                        ]
-                                    },
-                                },
-                                "in": {
-                                    "$cond": [
-                                        {"$gt": ["$$n", 0]},
-                                        {"$divide": ["$$weighted", "$$n"]},
-                                        0,
-                                    ]
-                                },
+                        risk_score_expr(
+                            {
+                                "critical": "$stats.critical",
+                                "high": "$stats.high",
+                                "medium": "$stats.medium",
+                                "low": "$stats.low",
                             }
-                        },
+                        ),
                     ]
                 },
             }
