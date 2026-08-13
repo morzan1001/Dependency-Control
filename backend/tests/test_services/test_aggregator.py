@@ -356,6 +356,119 @@ class TestMergeVulnerabilityIntoList:
         assert target[0]["fixed_version"] == "1.2.3"
 
 
+def _grype_ghsa_entry():
+    return {
+        "id": "GHSA-3pjw-73gf-8qr5",
+        "severity": "HIGH",
+        "description": "jackson-databind vulnerable to deep wrapper array nesting",
+        "description_source": "grype",
+        "fixed_version": "2.21.4",
+        "cvss_score": 7.7,
+        "cvss_vector": None,
+        "references": [],
+        "aliases": [],
+        "scanners": ["grype"],
+        "source": "sbom.json",
+        "details": {},
+    }
+
+
+def _trivy_cve_entry():
+    return {
+        "id": "CVE-2026-59888",
+        "severity": "HIGH",
+        "description": "jackson-databind: DoS via deeply nested wrapper arrays",
+        "description_source": "trivy",
+        "fixed_version": "2.18.8, 2.21.4",
+        "cvss_score": 7.5,
+        "cvss_vector": None,
+        "references": [],
+        "aliases": [],
+        "scanners": ["trivy"],
+        "source": "sbom.json",
+        "details": {},
+    }
+
+
+def _osv_ghsa_entry_with_cve_alias():
+    return {
+        "id": "GHSA-3pjw-73gf-8qr5",
+        "severity": "HIGH",
+        "description": "Deeply nested wrapper array nesting in jackson-databind",
+        "description_source": "osv",
+        "fixed_version": "2.21.4",
+        "cvss_score": None,
+        "cvss_vector": None,
+        "references": [],
+        "aliases": ["CVE-2026-59888"],
+        "scanners": ["osv"],
+        "source": "sbom.json",
+        "details": {},
+    }
+
+
+class TestConvergentVulnerabilityMerge:
+    """Entries linked by an alias contributed later must collapse into one (C10)."""
+
+    def test_late_alias_collapses_previously_split_entries(self):
+        target = []
+        merge_vulnerability_into_list(target, _grype_ghsa_entry())
+        merge_vulnerability_into_list(target, _trivy_cve_entry())
+        assert len(target) == 2
+
+        merge_vulnerability_into_list(target, _osv_ghsa_entry_with_cve_alias())
+
+        assert len(target) == 1
+        merged = target[0]
+        assert merged["id"] == "CVE-2026-59888"
+        assert set(merged["aliases"]) == {"GHSA-3pjw-73gf-8qr5"}
+        assert set(merged["scanners"]) == {"grype", "trivy", "osv"}
+        assert merged["cvss_score"] == 7.7
+        assert merged["fixed_version"]
+
+    def test_all_analyzer_orders_converge_on_one_cve_keyed_entry(self):
+        import itertools
+
+        builders = (_grype_ghsa_entry, _trivy_cve_entry, _osv_ghsa_entry_with_cve_alias)
+        for order in itertools.permutations(builders):
+            target = []
+            for build in order:
+                merge_vulnerability_into_list(target, build())
+            names = [b.__name__ for b in order]
+            assert len(target) == 1, names
+            assert target[0]["id"] == "CVE-2026-59888", names
+            assert set(target[0]["scanners"]) == {"grype", "trivy", "osv"}, names
+            assert target[0]["fixed_version"], names
+
+    def test_aggregator_collapses_entries_linked_by_late_alias(self):
+        agg = ResultAggregator()
+        for vuln_id, aliases, scanner, fixed in (
+            ("GHSA-3pjw-73gf-8qr5", [], "grype", "2.21.4"),
+            ("CVE-2026-59888", [], "trivy", "2.18.8, 2.21.4"),
+            ("GHSA-3pjw-73gf-8qr5", ["CVE-2026-59888"], "osv", "2.21.4"),
+        ):
+            agg.add_finding(
+                Finding(
+                    id=vuln_id,
+                    type=FindingType.VULNERABILITY,
+                    severity="HIGH",
+                    component="jackson-databind",
+                    version="2.15.0",
+                    description=f"Vuln {vuln_id}",
+                    scanners=[scanner],
+                    aliases=aliases,
+                    details={"fixed_version": fixed},
+                )
+            )
+
+        assert len(agg.findings) == 1
+        aggregate = next(iter(agg.findings.values()))
+        vulns = aggregate.details["vulnerabilities"]
+        assert len(vulns) == 1
+        assert vulns[0]["id"] == "CVE-2026-59888"
+        assert set(vulns[0]["scanners"]) == {"grype", "trivy", "osv"}
+
+
 class TestAddVulnerabilityFinding:
     """Tests for _add_vulnerability_finding - aggregation by component+version."""
 

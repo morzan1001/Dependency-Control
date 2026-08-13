@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from app.core.constants import AGG_KEY_SAST, get_severity_value
@@ -79,14 +80,24 @@ def merge_sast_findings(findings: list[Finding]) -> Finding | None:
     )
 
 
+def _entry_ids(entry: Mapping[str, Any]) -> set[str]:
+    """All ids under which this entry is known: id, aliases, and any resolved CVE."""
+    candidates = [entry.get("id"), entry.get("resolved_cve"), *(entry.get("aliases") or [])]
+    return {c for c in candidates if c}
+
+
+def _canonical_id(a: str, b: str) -> str:
+    """Prefer CVE ids over other schemes so the surviving id is analyzer-order independent."""
+    return min(a, b, key=lambda vuln_id: (not vuln_id.startswith("CVE-"), vuln_id))
+
+
 def _merge_vuln_ids_and_severity(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
     """Merge scanners, aliases, and severity (using the maximum)."""
     tv["scanners"] = list(set(tv.get("scanners", []) + source_entry.get("scanners", [])))
 
-    all_aliases = set(tv.get("aliases", []) + source_entry.get("aliases", []))
-    if source_entry["id"] != tv["id"]:
-        all_aliases.add(source_entry["id"])
-    tv["aliases"] = list(all_aliases)
+    all_ids = set(tv.get("aliases", [])) | set(source_entry.get("aliases", [])) | {tv["id"], source_entry["id"]}
+    tv["id"] = _canonical_id(tv["id"], source_entry["id"])
+    tv["aliases"] = list(all_ids - {tv["id"]})
 
     if get_severity_value(source_entry.get("severity")) > get_severity_value(tv.get("severity")):
         tv["severity"] = source_entry["severity"]
@@ -132,20 +143,73 @@ def _merge_vuln_detail_fields(tv: dict[str, Any], source_entry: VulnerabilityEnt
             tv["details"][key] = val
 
 
+# Keys with dedicated merge logic; everything else is gap-filled from the absorbed entry.
+_EXPLICITLY_MERGED_KEYS = frozenset(
+    {
+        "id",
+        "aliases",
+        "scanners",
+        "severity",
+        "description",
+        "description_source",
+        "fixed_version",
+        "cvss_score",
+        "cvss_vector",
+        "references",
+        "details",
+    }
+)
+
+
+def _fill_missing_fields(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
+    """Carry enrichment fields (resolved_cve, EPSS/KEV, advisory URL, ...) from an absorbed duplicate."""
+    for key, value in source_entry.items():
+        if key in _EXPLICITLY_MERGED_KEYS or value is None:
+            continue
+        if tv.get(key) is None:
+            tv[key] = value
+
+
+def _absorb_entry(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
+    """Fold source_entry into tv, which then represents both."""
+    _merge_vuln_ids_and_severity(tv, source_entry)
+    _merge_vuln_description(tv, source_entry)
+    _merge_vuln_fix_and_cvss(tv, source_entry)
+    _merge_vuln_references(tv, source_entry)
+    _merge_vuln_detail_fields(tv, source_entry)
+    _fill_missing_fields(tv, source_entry)
+
+
+def dedupe_vulnerability_entries(entries: list[Any]) -> None:
+    """Fold together entries whose id/alias sets intersect, re-running until no pair overlaps."""
+    changed = True
+    while changed:
+        changed = False
+        i = 0
+        while i < len(entries):
+            ids_i = _entry_ids(entries[i])
+            j = i + 1
+            while j < len(entries):
+                if ids_i.isdisjoint(_entry_ids(entries[j])):
+                    j += 1
+                    continue
+                _absorb_entry(entries[i], entries.pop(j))
+                ids_i = _entry_ids(entries[i])
+                changed = True
+            i += 1
+
+
 def merge_vulnerability_into_list(target_list: list[Any], source_entry: VulnerabilityEntry) -> None:
     """Merge a source vuln entry into target list, deduplicating by ID and aliases."""
-    s_ids = set([source_entry["id"]] + source_entry.get("aliases", []))
+    s_ids = _entry_ids(source_entry)
 
     for tv in target_list:
-        t_ids = set([tv["id"]] + tv.get("aliases", []))
-        if s_ids.isdisjoint(t_ids):
+        if s_ids.isdisjoint(_entry_ids(tv)):
             continue
 
-        _merge_vuln_ids_and_severity(tv, source_entry)
-        _merge_vuln_description(tv, source_entry)
-        _merge_vuln_fix_and_cvss(tv, source_entry)
-        _merge_vuln_references(tv, source_entry)
-        _merge_vuln_detail_fields(tv, source_entry)
+        _absorb_entry(tv, source_entry)
+        # Aliases gained from the source can newly link tv with other entries in the list.
+        dedupe_vulnerability_entries(target_list)
         return
 
     target_list.append(source_entry)
