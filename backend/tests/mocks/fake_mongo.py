@@ -194,8 +194,8 @@ def _eval_expr(doc: dict, expr):
 
     Handles the operator subset used by the stats pipelines: $ifNull, $cond,
     $switch, comparison ($eq/$ne/$gt/$gte/$lt/$lte), logical ($and/$or/$in),
-    arithmetic ($add/$multiply/$divide), $toDouble, and the $$REMOVE / $field /
-    dotted-path / literal cases.
+    arithmetic ($add/$multiply/$divide/$round), $toDouble, and the $$REMOVE /
+    $field / dotted-path / literal cases.
     """
     if isinstance(expr, str):
         if expr == "$$REMOVE":
@@ -248,6 +248,11 @@ def _eval_expr(doc: dict, expr):
     if "$divide" in expr:
         dividend, divisor = (_to_number(_eval_expr(doc, e)) for e in expr["$divide"])
         return None if dividend is None or divisor in (None, 0) else dividend / divisor
+    if "$round" in expr:
+        spec = expr["$round"]
+        value_expr, places = spec if isinstance(spec, list) else (spec, 0)
+        value = _to_number(_eval_expr(doc, value_expr))
+        return None if value is None else round(value, int(places))
 
     for op in ("$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$and", "$or", "$in"):
         if op in expr:
@@ -628,19 +633,39 @@ class FakeCollection:
     def _apply_update(target: dict, update: dict, skip_set_on_insert: bool = False) -> None:
         for op, payload in update.items():
             if op == "$set":
-                target.update(payload)
+                for k, v in payload.items():
+                    FakeCollection._set_dotted(target, k, v)
             elif op == "$setOnInsert" and not skip_set_on_insert:
                 # only applied when called outside upsert insert path
                 for k, v in payload.items():
                     target.setdefault(k, v)
             elif op == "$inc":
                 for field, delta in payload.items():
-                    target[field] = target.get(field, 0) + delta
+                    parent, leaf = FakeCollection._resolve_parent(target, field)
+                    parent[leaf] = parent.get(leaf, 0) + delta
             elif op == "$addToSet":
                 for field, value in payload.items():
                     bucket = target.setdefault(field, [])
                     if value not in bucket:
                         bucket.append(value)
+
+    @staticmethod
+    def _resolve_parent(target: dict, dotted_key: str) -> tuple[dict, str]:
+        """Walk (creating) nested dicts so dotted update paths behave like real Mongo."""
+        parts = dotted_key.split(".")
+        node = target
+        for part in parts[:-1]:
+            nxt = node.get(part)
+            if not isinstance(nxt, dict):
+                nxt = {}
+                node[part] = nxt
+            node = nxt
+        return node, parts[-1]
+
+    @staticmethod
+    def _set_dotted(target: dict, dotted_key: str, value) -> None:
+        parent, leaf = FakeCollection._resolve_parent(target, dotted_key)
+        parent[leaf] = value
 
     async def delete_one(self, query):
         await asyncio.sleep(0)

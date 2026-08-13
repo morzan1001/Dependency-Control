@@ -576,8 +576,8 @@ async def _risk_score(findings):
 class TestRiskScoreSaturatingExposure:
     @pytest.mark.asyncio
     async def test_single_critical_score(self):
-        # exposure 10 -> 100*10/(10+25) = 28.6
-        assert await _risk_score([_w5_finding("c1", "CRITICAL")]) == 28.6
+        # exposure 20 -> 100*20/(20+250) = 7.4
+        assert await _risk_score([_w5_finding("c1", "CRITICAL")]) == 7.4
 
     @pytest.mark.asyncio
     async def test_single_finding_scores_ordered_by_severity(self):
@@ -589,7 +589,7 @@ class TestRiskScoreSaturatingExposure:
     async def test_score_saturates_below_100(self):
         findings = [_w5_finding(f"c{i}", "CRITICAL") for i in range(600)]
         score = await _risk_score(findings)
-        assert 99.0 <= score < 100.0
+        assert 95.0 <= score < 100.0
 
     @pytest.mark.asyncio
     async def test_info_unknown_negligible_only_scan_scores_zero(self):
