@@ -328,10 +328,9 @@ def _build_settings_resolver(
 
 async def _process_sbom(
     index: int,
-    item: Any,
+    current_sbom: dict[str, Any],
     scan_id: str,
     db: Database,
-    fs: AsyncIOMotorGridFSBucket,
     aggregator: ResultAggregator,
     active_analyzers: list[str],
     system_settings: Any,
@@ -339,21 +338,18 @@ async def _process_sbom(
     project_analyzer_settings: dict[str, dict[str, Any]] | None = None,
     project_id: str | None = None,
     scan_type: str | None = None,
+    persist_deps: bool = True,
     old_deps_deleted: bool = False,
 ) -> tuple[list[str], bool]:
-    """Process a single SBOM: resolve, parse, persist deps, run analyzers; returns (results summary, old_deps_deleted)."""
-    current_sbom = await _resolve_sbom(item, fs, aggregator)
-    # CBOM-only scans synthesise an empty {}; only bail when resolution itself failed (None).
-    if current_sbom is None:
-        return [], old_deps_deleted
-
+    """Process a single resolved SBOM: parse, persist deps, run analyzers; returns (results summary, old_deps_deleted)."""
     fallback_source = f"SBOM #{index + 1}"
 
     parsed_sbom, parsed_components = _parse_and_track_sbom(current_sbom)
 
-    # Rescans run under a fresh scan_id that ingest never stored deps for; delete-once-then-insert
-    # keeps ingest-origin runs idempotent. Skip the CBOM-only {} placeholder so it cannot wipe deps.
-    if parsed_sbom is not None and project_id and current_sbom:
+    # Rescans run under a fresh scan_id with no stored deps; delete-once-then-insert keeps
+    # ingest-origin re-runs idempotent. persist_deps=False (an SBOM of this run failed to
+    # resolve) and the falsy CBOM-only {} placeholder skip it so stored deps are never wiped.
+    if persist_deps and parsed_sbom is not None and project_id and current_sbom:
         inserted, old_deps_deleted = await store_sbom_dependencies(
             parsed_sbom, project_id, scan_id, DependencyRepository(db), old_deps_deleted
         )
@@ -1051,14 +1047,29 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
     fs = primary_gridfs_bucket(db)
     sboms_to_process = _resolve_sboms_to_process(sboms, scan_type)
 
+    # Resolve every SBOM before the first dependency delete: a partial GridFS failure must
+    # not wipe the stored deps of the SBOMs that did not load.
+    resolved_sboms: list[dict[str, Any] | None] = [
+        await _resolve_sbom(item, fs, aggregator) for item in sboms_to_process
+    ]
+    persist_deps = all(resolved is not None for resolved in resolved_sboms)
+    if not persist_deps:
+        logger.warning(
+            "Scan %s: %d/%d SBOMs failed to resolve; skipping dependency persistence to keep stored dependencies",
+            scan_id,
+            sum(1 for resolved in resolved_sboms if resolved is None),
+            len(resolved_sboms),
+        )
+
     old_deps_deleted = False
-    for index, item in enumerate(sboms_to_process):
+    for index, current_sbom in enumerate(resolved_sboms):
+        if current_sbom is None:
+            continue
         sbom_results, old_deps_deleted = await _process_sbom(
             index,
-            item,
+            current_sbom,
             scan_id,
             db,
-            fs,
             aggregator,
             active_analyzers,
             system_settings,
@@ -1066,8 +1077,10 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
             project_analyzer_settings=project_analyzer_settings,
             project_id=project_id,
             scan_type=scan_type,
+            persist_deps=persist_deps,
             old_deps_deleted=old_deps_deleted,
         )
+        resolved_sboms[index] = None
         results_summary.extend(sbom_results)
 
     external_load_start = datetime.now(timezone.utc)

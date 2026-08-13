@@ -1,4 +1,4 @@
-"""Persists parsed SBOM dependencies per scan; shared by the ingest endpoint and the analysis engine."""
+"""Replaces a scan's dependency documents with the parsed SBOM's, in chunked batches."""
 
 import logging
 

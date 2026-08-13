@@ -144,6 +144,37 @@ async def test_multi_sbom_run_deletes_once_and_keeps_all_sboms_dependencies(db, 
 
 
 @pytest.mark.asyncio
+async def test_partial_gridfs_failure_keeps_all_stored_dependencies(db, _gridfs_patched, monkeypatch):
+    """If any SBOM of the run fails to resolve, the scan's stored deps must survive untouched."""
+
+    async def _fail_second_file(fs, file_id, **_kwargs):
+        if str(file_id) == _FILE_ID_B:
+            raise OSError("transient gridfs outage")
+        return await fs.open_download_stream(file_id)
+
+    monkeypatch.setattr("app.services.analysis.engine.open_gridfs_download_with_retry", _fail_second_file)
+
+    refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
+    scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=refs, status="processing")
+    await db.scans.insert_one(scan.model_dump(by_alias=True))
+    ingest_stored = [
+        ("requests", "2.31.0", "pkg:pypi/requests@2.31.0"),
+        ("urllib3", "2.1.0", "pkg:pypi/urllib3@2.1.0"),
+        ("certifi", "2024.2.2", "pkg:pypi/certifi@2024.2.2"),
+        ("flask", "3.0.0", "pkg:pypi/flask@3.0.0"),
+    ]
+    for name, version, purl in ingest_stored:
+        await _seed_stored_dependency(db, scan.id, name, version, purl)
+
+    assert await run_analysis(scan.id, refs, [], db) is True
+
+    docs = await _dependency_docs(db, scan.id)
+    assert {(d["name"], d["version"]) for d in docs} == {(n, v) for n, v, _ in ingest_stored}, (
+        "a partially resolved run must not wipe or halve the stored dependency set"
+    )
+
+
+@pytest.mark.asyncio
 async def test_ingest_prestored_dependencies_are_not_double_stored(db, _gridfs_patched):
     """On the normal ingest path the deps already exist for the scan_id; the run must stay at N docs."""
     scan = Scan(project_id=_PROJECT_ID, branch="main", sbom_refs=[_gridfs_ref(_FILE_ID_A)], status="processing")

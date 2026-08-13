@@ -37,18 +37,11 @@ async def test_cyclonedx_sbom_with_crypto_persists_crypto_assets(db):
     scan_id = "scan-embedded-cbom-001"
     aggregator = _MinimalAggregator()
 
-    # _process_sbom needs a minimal fs mock for GridFS (unused for inline dicts).
-    from unittest.mock import AsyncMock, MagicMock
-
-    fs = MagicMock()
-    fs.open_download_stream = AsyncMock()
-
     await _process_sbom(
         index=0,
-        item=sbom,
+        current_sbom=sbom,
         scan_id=scan_id,
         db=db,
-        fs=fs,
         aggregator=aggregator,
         active_analyzers=[],
         system_settings=None,
@@ -77,17 +70,11 @@ async def test_sbom_without_crypto_components_persists_no_crypto_assets(db):
     project_id = "test-project-id"
     scan_id = "scan-no-crypto-001"
 
-    from unittest.mock import AsyncMock, MagicMock
-
-    fs = MagicMock()
-    fs.open_download_stream = AsyncMock()
-
     await _process_sbom(
         index=0,
-        item=sbom,
+        current_sbom=sbom,
         scan_id=scan_id,
         db=db,
-        fs=fs,
         aggregator=_MinimalAggregator(),
         active_analyzers=[],
         system_settings=None,
