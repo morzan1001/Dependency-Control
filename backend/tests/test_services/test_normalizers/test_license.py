@@ -1,6 +1,7 @@
 """Tests for license normalizer."""
 
 from app.services.aggregation import ResultAggregator
+from tests.helpers.enrichment import enrichment_payload
 
 
 class TestNormalizeLicense:
@@ -81,14 +82,14 @@ class TestNormalizeLicense:
             ],
         }
         self.agg.aggregate("license_compliance", result)
-        payload = self.agg.get_dependency_enrichments()["pkg@1.0"]
+        payload = enrichment_payload(self.agg, "pkg", "1.0")
         assert payload["license"] == "MIT"
         assert payload["license_category"] == "permissive"
 
     def test_issues_alone_do_not_feed_enrichment(self):
         result = {"license_issues": [{"component": "pkg", "version": "1.0", "license": "GPL-3.0-only"}]}
         self.agg.aggregate("license_compliance", result)
-        assert self.agg.get_dependency_enrichments() == {}
+        assert self.agg.get_dependency_enrichments() == []
 
     def test_empty_issues(self):
         self.agg.aggregate("license_compliance", {"license_issues": []})

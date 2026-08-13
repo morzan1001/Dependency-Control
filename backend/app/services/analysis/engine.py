@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import Callable
@@ -9,7 +10,7 @@ from typing import Any, Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from pymongo import UpdateOne
+from pymongo import UpdateMany, UpdateOne
 
 from app.core.constants import DETAILS_KEY_IN_KEV
 from app.core.metrics import (
@@ -398,56 +399,61 @@ def _track_findings_metrics(aggregated_findings: list[Any]) -> None:
                 analysis_findings_total.labels(analyzer=scanner_name, severity=severity).inc()
 
 
-async def _enrich_dependencies(dependency_enrichments: dict[str, Any], scan_id: str, db: Database) -> None:
-    """Bulk-update dependencies with aggregated enrichment data."""
-    if not dependency_enrichments:
+_DEP_ENRICHMENT_COPY_KEYS = ("license", "license_expression", "license_category", "license_risks")
+_LICENSE_MISSING = {"$in": [None, ""]}
+_LICENSE_PRESENT = {"$nin": [None, ""]}
+
+
+def _dependency_update_ops(scan_id: str, entry: dict[str, Any]) -> list[UpdateMany]:
+    """Per-scan dependency updates for one enrichment entry, covering every duplicate doc."""
+    slim = {key: entry["data"][key] for key in _DEP_ENRICHMENT_COPY_KEYS if key in entry["data"]}
+    if not slim:
+        return []
+
+    dep_filter: dict[str, Any] = {"scan_id": scan_id, "name": entry["name"], "version": entry["version"]}
+    if entry["purl"]:
+        # Prefix match keeps qualifier variants together without touching a
+        # same-named package from another ecosystem.
+        dep_filter["purl"] = {"$regex": f"^{re.escape(entry['purl'])}([?#]|$)"}
+
+    if "license" not in slim:
+        return [UpdateMany(dep_filter, {"$set": slim})]
+
+    # The SBOM-declared license is authoritative; enrichment only fills docs that lack one.
+    ops = [UpdateMany({**dep_filter, "license": _LICENSE_MISSING}, {"$set": slim})]
+    without_license = {key: value for key, value in slim.items() if key != "license"}
+    if without_license:
+        ops.append(UpdateMany({**dep_filter, "license": _LICENSE_PRESENT}, {"$set": without_license}))
+    return ops
+
+
+async def _enrich_dependencies(enrichment_entries: list[dict[str, Any]], scan_id: str, db: Database) -> None:
+    """Persist aggregated enrichment: purl-keyed upserts plus a slim per-scan dependency copy."""
+    if not enrichment_entries:
         return
 
-    logger.info(f"Enriching {len(dependency_enrichments)} dependencies with aggregated metadata")
+    logger.info(f"Enriching {len(enrichment_entries)} dependencies with aggregated metadata")
 
-    # purl is the cross-scan join key for dependency_enrichments; name@version only identifies a dep within this scan.
-    purl_by_key: dict[str, str] = {}
-    keys_with_sbom_license: set[str] = set()
-    async for dep_doc in db.dependencies.find({"scan_id": scan_id}, {"name": 1, "version": 1, "purl": 1, "license": 1}):
-        dep_key = f"{dep_doc.get('name')}@{dep_doc.get('version')}"
-        purl = dep_doc.get("purl")
-        if purl:
-            purl_by_key[dep_key] = purl
-        if dep_doc.get("license"):
-            keys_with_sbom_license.add(dep_key)
-
-    bulk_ops: list[UpdateOne] = []
+    bulk_ops: list[UpdateMany] = []
     enrichment_ops: list[UpdateOne] = []
     total_updated = 0
     total_enrichments_persisted = 0
 
-    for key, enrichment_data in dependency_enrichments.items():
-        parts = key.rsplit("@", 1)
-        if len(parts) != 2:
+    for entry in enrichment_entries:
+        if not entry["data"]:
             continue
-        name, version = parts
-        if enrichment_data:
-            # The SBOM-declared license is authoritative; enrichment guesses must not replace it.
-            dep_update = enrichment_data
-            if "license" in dep_update and key in keys_with_sbom_license:
-                dep_update = {k: v for k, v in dep_update.items() if k != "license"}
-            if dep_update:
-                bulk_ops.append(
-                    UpdateOne(
-                        {"scan_id": scan_id, "name": name, "version": version},
-                        {"$set": dep_update},
-                    )
-                )
 
-            purl = purl_by_key.get(key)
-            if purl:
-                enrichment_ops.append(
-                    UpdateOne(
-                        {"purl": purl},
-                        {"$set": {**enrichment_data, "purl": purl, "name": name, "version": version}},
-                        upsert=True,
-                    )
+        bulk_ops.extend(_dependency_update_ops(scan_id, entry))
+
+        purl = entry["purl"]
+        if purl:
+            enrichment_ops.append(
+                UpdateOne(
+                    {"purl": purl},
+                    {"$set": {**entry["data"], "purl": purl, "name": entry["name"], "version": entry["version"]}},
+                    upsert=True,
                 )
+            )
 
         if len(bulk_ops) >= _BULK_CHUNK_SIZE:
             try:

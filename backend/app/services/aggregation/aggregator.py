@@ -47,6 +47,7 @@ from app.services.analyzers.license_compliance.normalizer import (
 from app.services.analyzers.license_compliance.normalizer import (
     tokenize_license_string,
 )
+from app.services.analyzers.purl_utils import canonical_purl
 from app.services.normalizers.crypto import normalize_crypto
 from app.services.normalizers.iac import normalize_kics
 from app.services.normalizers.license import normalize_license
@@ -81,11 +82,13 @@ class ResultAggregator:
         self._scorecard_cache: dict[str, dict[str, Any]] = {}
         self._dependency_enrichments: dict[str, DependencyEnrichment] = {}
 
-    def _get_or_create_enrichment(self, name: str, version: str) -> DependencyEnrichment:
-        """Get or create a DependencyEnrichment for the given package."""
-        key = f"{name}@{version}"
+    def _get_or_create_enrichment(self, name: str, version: str, purl: str | None = None) -> DependencyEnrichment:
+        """Get or create a DependencyEnrichment, keyed by canonical purl so qualifier variants merge and same-named packages from different ecosystems stay apart."""
+        key = canonical_purl(purl) if purl else f"{name}@{version}"
         if key not in self._dependency_enrichments:
-            self._dependency_enrichments[key] = DependencyEnrichment(name=name, version=version)
+            self._dependency_enrichments[key] = DependencyEnrichment(
+                name=name, version=version, purl=key if purl else None
+            )
         return self._dependency_enrichments[key]
 
     @staticmethod
@@ -177,7 +180,7 @@ class ResultAggregator:
 
     def enrich_from_deps_dev(self, name: str, version: str, metadata: dict[str, Any]) -> None:
         """Enrich dependency with data from deps.dev."""
-        enrichment = self._get_or_create_enrichment(name, version)
+        enrichment = self._get_or_create_enrichment(name, version, metadata.get("purl"))
         if "deps_dev" not in enrichment.sources:
             enrichment.sources.append("deps_dev")
 
@@ -217,7 +220,7 @@ class ResultAggregator:
         if not spdx_id:
             return
 
-        enrichment = self._get_or_create_enrichment(name, version)
+        enrichment = self._get_or_create_enrichment(name, version, license_info.get("purl"))
         if "license_compliance" not in enrichment.sources:
             enrichment.sources.append("license_compliance")
 
@@ -434,12 +437,17 @@ class ResultAggregator:
             if len(component_findings) > 1:
                 self._link_finding_group(component_findings)
 
-    def get_dependency_enrichments(self) -> dict[str, dict[str, Any]]:
-        """Return enrichment data keyed by ``package_name@version`` for MongoDB updates."""
-        result = {}
-        for key, enrichment in self._dependency_enrichments.items():
-            result[key] = enrichment.to_mongo_dict()
-        return result
+    def get_dependency_enrichments(self) -> list[dict[str, Any]]:
+        """Enrichment entries for persistence: canonical purl (cross-scan key), name/version (per-scan match), payload."""
+        return [
+            {
+                "name": enrichment.name,
+                "version": enrichment.version,
+                "purl": enrichment.purl,
+                "data": enrichment.to_mongo_dict(),
+            }
+            for enrichment in self._dependency_enrichments.values()
+        ]
 
     def add_finding(self, finding: Finding, source: str | None = None) -> None:
         """Add a finding, merging if one already exists for the same key."""

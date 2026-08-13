@@ -691,10 +691,14 @@ class FakeCollection:
             flt = op._filter
             upd = op._doc
             upsert = op._upsert
-            matched = _matched_key(self._docs, flt)
-            if matched is not None:
-                self._apply_update(self._docs[matched], upd)
-                modified += 1
+            matched_keys = [key for key, doc in self._docs.items() if _match_doc(doc, flt)]
+            if matched_keys:
+                # UpdateMany touches every match; UpdateOne only the first (Mongo semantics).
+                if type(op).__name__ != "UpdateMany":
+                    matched_keys = matched_keys[:1]
+                for key in matched_keys:
+                    self._apply_update(self._docs[key], upd)
+                    modified += 1
             elif upsert:
                 doc: dict = {}
                 doc.update(upd.get(_SET_ON_INSERT, {}))

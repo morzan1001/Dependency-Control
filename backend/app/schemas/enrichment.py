@@ -84,6 +84,8 @@ class DependencyEnrichment(BaseModel):
 
     name: str
     version: str
+    # Canonical purl (qualifiers/subpath stripped) — the cross-scan join key.
+    purl: str | None = None
 
     licenses: list[dict[str, Any]] = Field(default_factory=list)  # [{spdx_id, source, category, ...}]
     primary_license: str | None = None
