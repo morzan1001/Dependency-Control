@@ -1526,6 +1526,160 @@ class TestSyftCpePropertiesLifted:
         assert result.dependencies[0].cpes == [cpe]
 
 
+def _cyclonedx_with(components: list[dict], root: dict | None = None) -> dict:
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "metadata": {"component": root or {"type": "container", "name": "registry.example.com/app", "bom-ref": "root"}},
+        "components": components,
+        "dependencies": [],
+    }
+
+
+class TestFabricatedIdentifiers:
+    """OS descriptors and binary applications got fabricated pkg:generic purls no vulnerability or enrichment source can ever match (10.8k prod rows, 94 syntactically invalid)."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def test_operating_system_component_kept_without_fabricated_purl(self):
+        # Prod shape: bom-ref os:rhel@9.8, purl null, real OS CPE.
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "bom-ref": "os:rhel@9.8",
+                        "type": "operating-system",
+                        "name": "rhel",
+                        "version": "9.8",
+                        "cpe": "cpe:2.3:o:redhat:enterprise_linux:9:*:baseos:*:*:*:*:*",
+                    }
+                ]
+            )
+        )
+        assert len(result.dependencies) == 1
+        dep = result.dependencies[0]
+        assert dep.purl is None
+        assert dep.version == "9.8"
+        assert dep.cpes == ["cpe:2.3:o:redhat:enterprise_linux:9:*:baseos:*:*:*:*:*"]
+
+    def test_binary_application_without_purl_or_cpe_is_skipped(self):
+        result = self.parser.parse(_cyclonedx_with([{"type": "application", "name": "Notifu", "version": "1.7.6.0"}]))
+        assert result.dependencies == []
+        assert result.skipped_reasons.get("unidentifiable") == 1
+
+    def test_application_with_cpe_is_kept_without_fabricated_purl(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "application",
+                        "name": "chrome",
+                        "version": "126.0.6478.126",
+                        "cpe": "cpe:2.3:a:google:chrome:126.0.6478.126:*:*:*:*:*:*:*",
+                    }
+                ]
+            )
+        )
+        assert len(result.dependencies) == 1
+        assert result.dependencies[0].purl is None
+        assert result.dependencies[0].cpes
+
+    def test_device_data_firmware_components_are_skipped(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {"type": "device", "name": "sensor", "version": "1"},
+                    {"type": "data", "name": "training-set", "version": "1"},
+                    {"type": "firmware", "name": "bios", "version": "1"},
+                ]
+            )
+        )
+        assert result.dependencies == []
+        assert result.skipped_reasons.get("non-dependency") == 3
+
+    def test_root_component_repeated_in_component_list_is_skipped(self):
+        root = {
+            "type": "application",
+            "name": "app",
+            "version": "1.0.0",
+            "bom-ref": "app@1.0.0",
+            "purl": "pkg:npm/app@1.0.0",
+        }
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    dict(root),
+                    {"type": "library", "name": "dep", "version": "2.0", "purl": "pkg:npm/dep@2.0"},
+                ],
+                root=root,
+            )
+        )
+        assert [d.name for d in result.dependencies] == ["dep"]
+        assert result.skipped_reasons.get("root-component") == 1
+
+    def test_library_without_purl_and_placeholder_version_is_skipped(self):
+        result = self.parser.parse(
+            _cyclonedx_with([{"type": "library", "name": "mavenEcjBootstrapAgent", "version": "UNKNOWN"}])
+        )
+        assert result.dependencies == []
+        assert result.skipped_reasons.get("unidentifiable") == 1
+
+    def test_placeholder_version_with_real_purl_is_normalized_and_kept(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "library",
+                        "name": "slf4j-api",
+                        "version": "UNKNOWN",
+                        "purl": "pkg:maven/org.slf4j/slf4j-api",
+                    }
+                ]
+            )
+        )
+        assert len(result.dependencies) == 1
+        assert result.dependencies[0].version == "unknown"
+
+    def test_fabricated_purl_segments_are_percent_encoded(self):
+        result = self.parser.parse(_cyclonedx_with([{"type": "library", "name": "my lib", "version": "1.0, rev 2"}]))
+        assert result.dependencies[0].purl == "pkg:generic/my%20lib@1.0%2C%20rev%202"
+
+    def test_syft_artifact_with_placeholder_version_but_purl_is_kept(self):
+        sbom = {
+            "descriptor": {"name": "syft", "version": "1.42.3"},
+            "source": {"id": "src", "type": "directory", "target": "/build"},
+            "artifacts": [
+                {
+                    "id": "a1",
+                    "name": "spring-boot-starter-test",
+                    "version": "UNKNOWN",
+                    "type": "java-archive",
+                    "purl": "pkg:maven/org.springframework.boot/spring-boot-starter-test",
+                },
+                {"id": "a2", "name": "esc-cli.amd64.windows", "version": "UNKNOWN", "type": "binary"},
+            ],
+            "artifactRelationships": [],
+        }
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["spring-boot-starter-test"]
+        assert result.dependencies[0].version == "unknown"
+        assert result.skipped_reasons.get("unidentifiable") == 1
+
+    def test_spdx_package_without_purl_and_noassertion_version_is_skipped(self):
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "packages": [
+                {"SPDXID": "SPDXRef-1", "name": "ghost-pkg", "versionInfo": "NOASSERTION"},
+                {"SPDXID": "SPDXRef-2", "name": "real-pkg", "versionInfo": "1.0"},
+            ],
+            "relationships": [],
+        }
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["real-pkg"]
+
+
 class TestDetectFormatMalformed:
     """detect_format must not raise on structurally odd (but valid JSON) SBOMs; it falls through to UNKNOWN."""
 

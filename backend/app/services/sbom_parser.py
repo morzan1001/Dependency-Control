@@ -3,7 +3,7 @@
 import logging
 import re
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import quote, urlparse
 
 from app.core.constants import (
     APP_PACKAGE_TYPES,
@@ -295,6 +295,9 @@ class SBOMParser:
                 stack.extend(child for child in children if isinstance(child, dict))
         return count
 
+    # CycloneDX component types that are never software dependencies.
+    _NON_DEPENDENCY_COMPONENT_TYPES = frozenset({"device", "device-driver", "data", "firmware"})
+
     def _parse_cyclonedx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         """Parse CycloneDX format SBOM."""
 
@@ -341,12 +344,23 @@ class SBOMParser:
             )
         result.crypto_assets = parse_crypto_components(components)
 
+        main_component = metadata.get("component") if isinstance(metadata.get("component"), dict) else {}
+        main_refs = {ref for ref in (main_component.get("bom-ref"), main_component.get("purl")) if ref}
+
         for comp in components:
-            if comp.get("type") == "cryptographic-asset":
+            comp_type = comp.get("type")
+            if comp_type == "cryptographic-asset":
                 continue
-            if comp.get("type") == "file":
+            if comp_type == "file":
                 # File-catalog entries (e.g. syft filesystem scans) aren't dependencies.
                 self._count_skipped(result, "file")
+                continue
+            if comp_type in self._NON_DEPENDENCY_COMPONENT_TYPES:
+                self._count_skipped(result, "non-dependency")
+                continue
+            if main_refs and (comp.get("bom-ref") in main_refs or comp.get("purl") in main_refs):
+                # The SBOM's own subject repeated in the component list is not a dependency.
+                self._count_skipped(result, "root-component")
                 continue
             try:
                 parsed = self._parse_cyclonedx_component(
@@ -409,7 +423,7 @@ class SBOMParser:
 
     def _determine_component_source(
         self,
-        purl: str,
+        purl: str | None,
         pkg_type: str,
         layer_digest: str | None,
         global_source_type: str | None,
@@ -430,22 +444,18 @@ class SBOMParser:
         return global_source_type
 
     def _construct_purl(self, pkg_type: str, name: str, version: str, group: str | None = None) -> str:
-        """Construct a PURL from component metadata."""
+        """Construct a PURL from component metadata; segments are encoded so names with spaces stay legal PURLs."""
         type_mapping = {
             "library": "generic",
             "application": "generic",
             "container": "oci",
-            "operating-system": "generic",
-            "device": "generic",
-            "firmware": "generic",
+            "binary": "generic",
             "framework": "generic",
         }
         purl_type = type_mapping.get(pkg_type, pkg_type)
 
-        if group:
-            return f"pkg:{purl_type}/{group}/{name}@{version}"
-        else:
-            return f"pkg:{purl_type}/{name}@{version}"
+        namespace = f"{quote(str(group), safe='')}/" if group else ""
+        return f"pkg:{purl_type}/{namespace}{quote(str(name), safe='')}@{quote(str(version), safe='')}"
 
     @staticmethod
     def _resolve_cyclonedx_directness(
@@ -590,21 +600,6 @@ class SBOMParser:
         if not name:
             return None
 
-        if not purl:
-            purl = self._construct_purl(component_type, name, version, group)
-            logger.debug(f"Constructed PURL for {name}@{version}: {purl}")
-
-        check_ref = bom_ref or purl
-        direct, direct_inferred = self._resolve_cyclonedx_directness(
-            check_ref, direct_refs, all_transitive_refs, direct_refs_inferred
-        )
-
-        parent_components = []
-        if reverse_deps_graph and check_ref in reverse_deps_graph:
-            parent_components = reverse_deps_graph[check_ref]
-
-        license_str, license_url = self._extract_cyclonedx_licenses_full(comp.get("licenses", []))
-
         layer_digest, found_by, locations, properties, prop_cpes = self._extract_cyclonedx_properties(comp)
 
         # CycloneDX defines a single string field `cpe` (there is no `cpes` array in
@@ -617,6 +612,35 @@ class SBOMParser:
             val = c.get("cpe") if isinstance(c, dict) else c
             if val and val not in cpes:
                 cpes.append(val)
+
+        if not purl:
+            if component_type == "operating-system":
+                # OS descriptors stay (they feed base-image EOL detection) but a
+                # fabricated pkg:generic id matches no vulnerability source.
+                purl = None
+            elif component_type == "application":
+                # Binary-classifier hits: without a real purl or CPE nothing can
+                # ever match them across scans or feeds.
+                if not cpes:
+                    return None
+                purl = None
+            elif version == "unknown":
+                # Neither a real identifier nor a comparable version.
+                return None
+            else:
+                purl = self._construct_purl(component_type, name, version, group)
+                logger.debug(f"Constructed PURL for {name}@{version}: {purl}")
+
+        check_ref = bom_ref or purl
+        direct, direct_inferred = self._resolve_cyclonedx_directness(
+            check_ref, direct_refs, all_transitive_refs, direct_refs_inferred
+        )
+
+        parent_components = []
+        if reverse_deps_graph and check_ref in reverse_deps_graph:
+            parent_components = reverse_deps_graph[check_ref]
+
+        license_str, license_url = self._extract_cyclonedx_licenses_full(comp.get("licenses") or [])
 
         hashes: dict[str, str] = {}
         raw_hashes = comp.get("hashes")
@@ -960,6 +984,9 @@ class SBOMParser:
             return None
 
         if not purl:
+            if version == "unknown":
+                # Neither a real identifier nor a comparable version.
+                return None
             purl = self._construct_purl(pkg_type, name, version)
             logger.debug(f"Constructed PURL for Syft artifact {name}@{version}: {purl}")
 
@@ -1321,6 +1348,9 @@ class SBOMParser:
         purl, cpes = self._extract_spdx_external_refs(pkg.get("externalRefs") or [])
 
         if not purl:
+            if version == "unknown":
+                # Neither a real identifier nor a comparable version.
+                return None
             inferred_type = self._infer_spdx_pkg_type_from_download(pkg.get("downloadLocation") or "")
             purl = self._construct_purl(inferred_type, name, version)
             logger.debug(f"Constructed PURL for SPDX package {name}@{version}: {purl}")
