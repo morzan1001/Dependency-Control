@@ -120,6 +120,7 @@ class ResultAggregator:
         """Apply deps.dev project block to enrichment."""
         if not project:
             return
+        enrichment.project_url = project.get("url")
         enrichment.stars = project.get("stars")
         enrichment.forks = project.get("forks")
         enrichment.open_issues = project.get("open_issues")
@@ -159,8 +160,6 @@ class ResultAggregator:
             enrichment.published_at = metadata.get("published_at")
         if metadata.get("is_deprecated"):
             enrichment.is_deprecated = True
-        if metadata.get("is_default"):
-            enrichment.is_default_version = True
         if metadata.get("known_advisories"):
             enrichment.known_advisories = metadata.get("known_advisories", [])
         if metadata.get("has_attestations"):
@@ -190,6 +189,7 @@ class ResultAggregator:
         if dependents:
             enrichment.dependents_total = dependents.get("total")
             enrichment.dependents_direct = dependents.get("direct")
+            enrichment.dependents_indirect = dependents.get("indirect")
 
         scorecard = metadata.get("scorecard", {})
         if scorecard:
@@ -200,6 +200,11 @@ class ResultAggregator:
         self._apply_deps_dev_links(enrichment, metadata.get("links", {}))
         self._apply_deps_dev_flags(enrichment, metadata)
         self._apply_deps_dev_licenses(enrichment, metadata.get("licenses", []))
+
+        # The version-level links homepage is more specific than the project one.
+        project_homepage = (metadata.get("project") or {}).get("homepage")
+        if project_homepage and not enrichment.homepage:
+            enrichment.homepage = project_homepage
 
     def record_scorecard(self, component_key: str, data: dict[str, Any]) -> None:
         """Cache OpenSSF Scorecard data (keyed by ``name@version``) applied to findings during finalization."""
