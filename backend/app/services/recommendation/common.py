@@ -35,7 +35,7 @@ def scorecard_details(details: Any) -> dict[str, Any]:
             nested = issue.get("details")
             if isinstance(nested, dict):
                 return nested
-    return details
+    return {}
 
 
 def group_findings_by_field(

@@ -155,6 +155,6 @@ def _is_license_violation(f: dict[str, Any], categories: list[str]) -> bool:
     if ftype != license_type:
         return False
     details = f.get("details") or {}
-    # normalize_license stores the LICENSE_CATEGORY_LABELS value as details.category.
+    # The license normalizer passes the scanner's category through as details.category.
     observed_category = details.get("category")
     return observed_category in categories
