@@ -10,3 +10,4 @@ __pycache__
 htmlcov/
 values-cluster.yaml
 docs/
+.codegraph/
