@@ -466,6 +466,9 @@ class SBOMParser:
     _LAYER_DIGEST_PROPS = ("trivy:LayerDigest", "aquasecurity:trivy:LayerDigest")
     _LAYER_DIFFID_PROP = "aquasecurity:trivy:LayerDiffID"
     _FOUND_BY_PROP = "syft:package:foundBy"
+    _CPE_PROPS = ("syft:cpe23", "syft:cpe22")
+    # syft:location:<N>:<field> — the layerID field is a digest, not a file path.
+    _SYFT_LOCATION_PROP_RE = re.compile(r"^syft:location:\d+:(\w+)$")
 
     @classmethod
     def _classify_cyclonedx_property(
@@ -485,6 +488,14 @@ class SBOMParser:
             return (prop_value if not current_layer else None), None, None
         if prop_name == cls._FOUND_BY_PROP:
             return None, prop_value, None
+        syft_location = cls._SYFT_LOCATION_PROP_RE.match(prop_name)
+        if syft_location:
+            field = syft_location.group(1)
+            if field == "layerID":
+                return (prop_value if not current_layer else None), None, None
+            if field in ("path", "accessPath") and prop_value:
+                return None, None, prop_value
+            return None, None, None
         lower = prop_name.lower()
         if ("location" in lower or "path" in lower) and prop_value:
             return None, None, prop_value
@@ -494,12 +505,13 @@ class SBOMParser:
     def _extract_cyclonedx_properties(
         cls,
         comp: dict[str, Any],
-    ) -> tuple[str | None, str | None, list[str], dict[str, str]]:
-        """Extract (layer_digest, found_by, locations, properties) from comp."""
+    ) -> tuple[str | None, str | None, list[str], dict[str, str], list[str]]:
+        """Extract (layer_digest, found_by, locations, properties, cpes) from comp."""
         layer_digest: str | None = None
         found_by: str | None = None
         locations: list[str] = []
         properties: dict[str, str] = {}
+        cpes: list[str] = []
 
         raw_props = comp.get("properties")
         for prop in raw_props if isinstance(raw_props, list) else []:
@@ -510,6 +522,12 @@ class SBOMParser:
             if prop_name and prop_value:
                 properties[prop_name] = prop_value
 
+            # Repeated syft:cpe23 properties collapse in the dict above, so CPEs
+            # must be collected while iterating.
+            if prop_name in cls._CPE_PROPS and prop_value and prop_value not in cpes:
+                cpes.append(prop_value)
+                continue
+
             new_layer, new_found_by, new_location = cls._classify_cyclonedx_property(
                 prop_name, prop_value, layer_digest
             )
@@ -517,7 +535,7 @@ class SBOMParser:
                 layer_digest = new_layer
             if new_found_by is not None:
                 found_by = new_found_by
-            if new_location is not None:
+            if new_location is not None and new_location not in locations:
                 locations.append(new_location)
 
         evidence = comp.get("evidence")
@@ -527,7 +545,7 @@ class SBOMParser:
             if loc and loc not in locations:
                 locations.append(loc)
 
-        return layer_digest, found_by, locations, properties
+        return layer_digest, found_by, locations, properties, cpes
 
     @staticmethod
     def _extract_cyclonedx_external_refs(
@@ -587,14 +605,15 @@ class SBOMParser:
 
         license_str, license_url = self._extract_cyclonedx_licenses_full(comp.get("licenses", []))
 
-        layer_digest, found_by, locations, properties = self._extract_cyclonedx_properties(comp)
+        layer_digest, found_by, locations, properties, prop_cpes = self._extract_cyclonedx_properties(comp)
 
         # CycloneDX defines a single string field `cpe` (there is no `cpes` array in
         # the 1.4-1.6 spec). Read the spec field; also accept a non-standard `cpes`
-        # list (dict- or string-form) as a defensive fallback.
+        # list (dict- or string-form) as a defensive fallback, plus the syft:cpe23
+        # property form syft-generated SBOMs use for their full CPE list.
         cpe = comp.get("cpe")
         cpes = [cpe] if cpe else []
-        for c in comp.get("cpes") or []:
+        for c in list(comp.get("cpes") or []) + prop_cpes:
             val = c.get("cpe") if isinstance(c, dict) else c
             if val and val not in cpes:
                 cpes.append(val)
