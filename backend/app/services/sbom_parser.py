@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import Any, ClassVar
+from typing import Any
 from urllib.parse import urlparse
 
 from app.core.constants import (
@@ -17,7 +17,7 @@ from app.core.constants import (
     SPDX_ORGANIZATION_PREFIX,
 )
 from app.schemas.sbom import ParsedDependency, ParsedSBOM, SBOMFormat
-from app.services.analyzers.purl_utils import get_purl_type
+from app.services.analyzers.purl_utils import get_purl_type, parse_purl
 from app.services.cbom_parser import parse_crypto_components
 
 logger = logging.getLogger(__name__)
@@ -172,10 +172,13 @@ class SBOMParser:
         result.skipped_components += count
         result.skipped_reasons[reason] = result.skipped_reasons.get(reason, 0) + count
 
-    @staticmethod
-    def _normalize_version(raw: Any) -> str:
+    # Placeholder tokens generators emit when they could not determine a version.
+    _PLACEHOLDER_VERSIONS = frozenset({"", "unknown", "noassertion", "none"})
+
+    @classmethod
+    def _normalize_version(cls, raw: Any) -> str:
         version = str(raw).strip() if raw is not None else ""
-        return version or "unknown"
+        return "unknown" if version.lower() in cls._PLACEHOLDER_VERSIONS else version
 
     @staticmethod
     def _merge_duplicate_dependencies(result: ParsedSBOM) -> None:
@@ -1062,7 +1065,7 @@ class SBOMParser:
 
     def _build_spdx_dependency_graph(
         self, relationships: list[dict[str, Any]], doc_spdx_id: str
-    ) -> tuple[set, dict[str, list]]:
+    ) -> tuple[set, dict[str, list], set]:
         """
         Build SPDX dependency-graph data used to classify direct vs transitive deps.
 
@@ -1074,7 +1077,9 @@ class SBOMParser:
         points at directly via CONTAINS/DEPENDS_ON are treated as direct.
 
         Returns:
-            Tuple of (direct_package_ids, reverse_deps_graph)
+            Tuple of (direct_package_ids, reverse_deps_graph, app_root_ids) where
+            app_root_ids are DESCRIBES targets with DEPENDS_ON children — the scanned
+            application itself, which must not be ingested as a dependency.
         """
         described_roots: set = set()  # application roots (DOCUMENT DESCRIBES ...)
         doc_direct_targets: set = set()  # packages the DOCUMENT points at directly
@@ -1116,7 +1121,8 @@ class SBOMParser:
             for root in packages_with_deps - all_dependency_targets:
                 direct_package_ids.update(forward_deps.get(root, []))
 
-        return direct_package_ids, reverse_deps_graph
+        app_root_ids = {root for root in described_roots if forward_deps.get(root)}
+        return direct_package_ids, reverse_deps_graph, app_root_ids
 
     def _parse_spdx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         """Parse SPDX format SBOM."""
@@ -1128,31 +1134,56 @@ class SBOMParser:
         relationships = sbom.get("relationships") or []
         doc_spdx_id = sbom.get("SPDXID", "SPDXRef-DOCUMENT")
 
-        direct_package_ids, reverse_deps_graph = self._build_spdx_dependency_graph(relationships, doc_spdx_id)
+        direct_package_ids, reverse_deps_graph, app_root_ids = self._build_spdx_dependency_graph(
+            relationships, doc_spdx_id
+        )
 
         packages = sbom.get("packages") or []
         inferred = not bool(relationships)
 
+        root_pkg = next((p for p in packages if isinstance(p, dict) and p.get("SPDXID") in app_root_ids), None)
+        if root_pkg is not None:
+            result.source_type = SOURCE_TYPE_APPLICATION
+            result.source_target = root_pkg.get("name")
+
+        parsed_by_id: dict[str, ParsedDependency] = {}
         for pkg in packages:
             if not isinstance(pkg, dict):
                 self._count_skipped(result, "malformed")
                 continue
             pkg_spdx_id = pkg.get("SPDXID", "")
+            if pkg_spdx_id in app_root_ids:
+                self._count_skipped(result, "root-component")
+                continue
 
             is_direct = inferred or pkg_spdx_id in direct_package_ids
 
-            parent_components = reverse_deps_graph.get(pkg_spdx_id, [])
-
             try:
-                parsed = self._parse_spdx_package(pkg, is_direct, inferred, parent_components)
+                parsed = self._parse_spdx_package(pkg, is_direct, inferred, result.source_type, result.source_target)
             except Exception:
                 logger.warning("Skipping malformed SPDX package %r", pkg.get("name"), exc_info=True)
                 self._count_skipped(result, "parse-error")
                 continue
             if parsed:
                 result.dependencies.append(parsed)
+                if pkg_spdx_id:
+                    parsed_by_id[pkg_spdx_id] = parsed
             else:
                 self._count_skipped(result, "unidentifiable")
+
+        # SPDXRef parents only resolve after all packages parsed; store them as
+        # purl/name@version so tree nodes can match them. Refs to the skipped
+        # root drop out here, leaving direct dependencies parentless as expected.
+        for pkg_spdx_id, parsed in parsed_by_id.items():
+            refs: list[str] = []
+            for parent_id in reverse_deps_graph.get(pkg_spdx_id, []):
+                parent = parsed_by_id.get(parent_id)
+                if parent is None:
+                    continue
+                ref = parent.purl or f"{parent.name}@{parent.version}"
+                if ref not in refs:
+                    refs.append(ref)
+            parsed.parent_components = refs
 
     _SPDX_DOWNLOAD_LOC_TYPE_MAP = (
         (("npmjs.org", "registry.npmjs"), "npm"),
@@ -1161,19 +1192,6 @@ class SBOMParser:
         (("crates.io",), "cargo"),
         (("rubygems",), "gem"),
     )
-
-    _SPDX_PURL_PREFIX_TYPE_MAP: ClassVar[dict[str, str]] = {
-        "pkg:npm/": "npm",
-        "pkg:pypi/": "python",
-        "pkg:maven/": "java",
-        "pkg:golang/": "go-module",
-        "pkg:deb/": "deb",
-        "pkg:rpm/": "rpm",
-        "pkg:apk/": "apk",
-        "pkg:cargo/": "cargo",
-        "pkg:nuget/": "nuget",
-        "pkg:gem/": "gem",
-    }
 
     @staticmethod
     def _extract_spdx_external_refs(
@@ -1199,23 +1217,15 @@ class SBOMParser:
                 return pkg_type
         return "generic"
 
-    @classmethod
-    def _spdx_pkg_type_from_purl(cls, purl: str | None) -> str:
-        """Map an SPDX-derived PURL to a normalized pkg_type."""
-        if not purl:
-            return "unknown"
-        for prefix, pkg_type in cls._SPDX_PURL_PREFIX_TYPE_MAP.items():
-            if purl.startswith(prefix):
-                return pkg_type
-        return "unknown"
+    _SPDX_LICENSE_PLACEHOLDERS = ("NOASSERTION", "NONE", "")
 
-    @staticmethod
-    def _resolve_spdx_license(pkg: dict[str, Any]) -> tuple[str, str | None]:
+    @classmethod
+    def _resolve_spdx_license(cls, pkg: dict[str, Any]) -> tuple[str, str | None]:
         """Extract (license_str, license_url) from SPDX licenseConcluded/Declared."""
         license_concluded = pkg.get("licenseConcluded", "")
         license_declared = pkg.get("licenseDeclared", "")
-        license_str = license_concluded if license_concluded != "NOASSERTION" else license_declared
-        if license_str == "NOASSERTION":
+        license_str = license_concluded if license_concluded not in cls._SPDX_LICENSE_PLACEHOLDERS else license_declared
+        if not license_str or license_str in cls._SPDX_LICENSE_PLACEHOLDERS:
             license_str = ""
 
         license_url: str | None = None
@@ -1278,28 +1288,26 @@ class SBOMParser:
         pkg: dict[str, Any],
         is_direct: bool = False,
         direct_inferred: bool = False,
-        parent_components: list[str] | None = None,
+        global_source_type: str | None = None,
+        source_target: str | None = None,
     ) -> ParsedDependency | None:
         """Parse a single SPDX package with all available fields."""
 
         name = pkg.get("name")
         version = self._normalize_version(pkg.get("versionInfo"))
 
-        if not name:
+        if not name or name in ("NOASSERTION", "NONE"):
             return None
 
-        if parent_components is None:
-            parent_components = []
-
-        purl, cpes = self._extract_spdx_external_refs(pkg.get("externalRefs", []))
+        purl, cpes = self._extract_spdx_external_refs(pkg.get("externalRefs") or [])
 
         if not purl:
-            inferred_type = self._infer_spdx_pkg_type_from_download(pkg.get("downloadLocation", ""))
+            inferred_type = self._infer_spdx_pkg_type_from_download(pkg.get("downloadLocation") or "")
             purl = self._construct_purl(inferred_type, name, version)
             logger.debug(f"Constructed PURL for SPDX package {name}@{version}: {purl}")
 
         license_str, license_url = self._resolve_spdx_license(pkg)
-        pkg_type = self._spdx_pkg_type_from_purl(purl)
+        pkg_type = get_purl_type(purl) or "unknown"
         hashes = self._extract_spdx_hashes(pkg)
 
         homepage = pkg.get("homepage")
@@ -1313,12 +1321,14 @@ class SBOMParser:
         author, publisher = self._resolve_spdx_originator(pkg)
         properties = self._build_spdx_properties(pkg)
 
-        # Determine source type based on package type
+        parsed_purl = parse_purl(purl) if purl else None
+        package_file_name = pkg.get("packageFileName")
+
         determined_source_type = self._determine_component_source(
             purl=purl,
             pkg_type=pkg_type,
             layer_digest=None,  # SPDX doesn't have layer info
-            global_source_type=None,
+            global_source_type=global_source_type,
         )
 
         return ParsedDependency(
@@ -1331,17 +1341,16 @@ class SBOMParser:
             scope=None,
             direct=is_direct,
             direct_inferred=direct_inferred,
-            parent_components=parent_components,
             source_type=determined_source_type,
-            source_target=None,
+            source_target=source_target,
             layer_digest=None,
             found_by=None,
-            locations=[],
+            locations=[package_file_name] if package_file_name else [],
             cpes=cpes,
             description=pkg.get("description") or pkg.get("summary"),
             author=author,
             publisher=publisher,
-            group=None,
+            group=parsed_purl.namespace if parsed_purl else None,
             homepage=homepage,
             repository_url=None,  # Not directly in SPDX package
             download_url=download_url,

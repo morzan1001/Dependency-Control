@@ -441,7 +441,7 @@ class TestSPDXParsing:
 
     def test_type_inferred_from_purl(self, spdx_minimal):
         result = self.parser.parse(spdx_minimal)
-        assert result.dependencies[0].type == "python"
+        assert result.dependencies[0].type == "pypi"
 
 
 class TestSyftParsing:
@@ -974,7 +974,7 @@ class TestSPDXDirectDependencyDetection:
         deps = {d.name: d for d in result.dependencies}
         assert deps["dep1"].direct is True
         assert deps["dep2"].direct is True
-        assert deps["my-repo"].direct is False
+        assert "my-repo" not in deps
 
     def test_transitive_dep_of_direct_is_not_direct(self):
         parser = SBOMParser()
@@ -1008,7 +1008,7 @@ class TestSPDXDirectDependencyDetection:
         deps = {d.name: d for d in result.dependencies}
         assert deps["dep1"].direct is True
         assert deps["dep2"].direct is False
-        assert deps["my-repo"].direct is False
+        assert "my-repo" not in deps
 
     def test_document_depends_on_directly(self):
         # No intermediate root package: DOCUMENT DEPENDS_ON dep1 directly.
@@ -1298,6 +1298,134 @@ class TestMalformedComponentResilience:
         assert [d.name for d in result.dependencies] == ["real-pkg"]
         assert result.skipped_components == 0
         assert result.total_components == 1
+
+
+def _spdx_github_export() -> dict:
+    """Mirrors a GitHub dependency-graph SBOM export: DOCUMENT DESCRIBES the repo
+    package, which DEPENDS_ON the actual dependencies."""
+    return {
+        "spdxVersion": "SPDX-2.3",
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "name": "com.github.acme/my-service",
+        "creationInfo": {"created": "2026-08-01T00:00:00Z"},
+        "packages": [
+            {
+                "SPDXID": "SPDXRef-repo",
+                "name": "com.github.acme/my-service",
+                "versionInfo": "",
+                "downloadLocation": "git+https://github.com/acme/my-service",
+                "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:github/acme/my-service"}],
+            },
+            {
+                "SPDXID": "SPDXRef-npm-left-pad",
+                "name": "npm:left-pad",
+                "versionInfo": "1.3.0",
+                "downloadLocation": "NOASSERTION",
+                "licenseConcluded": "NOASSERTION",
+                "licenseDeclared": "NONE",
+                "packageFileName": "package-lock.json",
+                "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:npm/left-pad@1.3.0"}],
+            },
+            {
+                "SPDXID": "SPDXRef-maven-commons-text",
+                "name": "org.apache.commons:commons-text",
+                "versionInfo": "NOASSERTION",
+                "externalRefs": [
+                    {"referenceType": "purl", "referenceLocator": "pkg:maven/org.apache.commons/commons-text@1.14.0"}
+                ],
+            },
+            {
+                "SPDXID": "SPDXRef-composer-monolog",
+                "name": "monolog/monolog",
+                "versionInfo": "3.9.0",
+                "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:composer/monolog/monolog@3.9.0"}],
+            },
+            {"SPDXID": "SPDXRef-noassert", "name": "NOASSERTION", "versionInfo": "1.0"},
+        ],
+        "relationships": [
+            {
+                "spdxElementId": "SPDXRef-DOCUMENT",
+                "relatedSpdxElement": "SPDXRef-repo",
+                "relationshipType": "DESCRIBES",
+            },
+            {
+                "spdxElementId": "SPDXRef-repo",
+                "relatedSpdxElement": "SPDXRef-npm-left-pad",
+                "relationshipType": "DEPENDS_ON",
+            },
+            {
+                "spdxElementId": "SPDXRef-repo",
+                "relatedSpdxElement": "SPDXRef-maven-commons-text",
+                "relationshipType": "DEPENDS_ON",
+            },
+            {
+                "spdxElementId": "SPDXRef-maven-commons-text",
+                "relatedSpdxElement": "SPDXRef-composer-monolog",
+                "relationshipType": "DEPENDS_ON",
+            },
+        ],
+    }
+
+
+class TestSPDXRootSkipAndFields:
+    def setup_method(self):
+        self.parser = SBOMParser()
+        self.result = self.parser.parse(_spdx_github_export())
+        self.deps = {d.name: d for d in self.result.dependencies}
+
+    def test_described_root_is_not_ingested_as_dependency(self):
+        assert "com.github.acme/my-service" not in self.deps
+        assert self.result.skipped_reasons.get("root-component") == 1
+
+    def test_source_comes_from_described_root(self):
+        assert self.result.source_type == "application"
+        assert self.result.source_target == "com.github.acme/my-service"
+
+    def test_parents_resolve_to_purls_not_spdxrefs(self):
+        assert self.deps["monolog/monolog"].parent_components == ["pkg:maven/org.apache.commons/commons-text@1.14.0"]
+
+    def test_direct_dependency_has_no_unresolvable_root_parent(self):
+        assert self.deps["npm:left-pad"].parent_components == []
+
+    def test_noassertion_version_is_normalized(self):
+        assert self.deps["org.apache.commons:commons-text"].version == "unknown"
+
+    def test_none_license_is_dropped(self):
+        assert self.deps["npm:left-pad"].license == ""
+
+    def test_package_named_noassertion_is_dropped(self):
+        assert "NOASSERTION" not in self.deps
+
+    def test_package_file_name_becomes_location(self):
+        assert self.deps["npm:left-pad"].locations == ["package-lock.json"]
+
+    def test_type_falls_back_to_purl_type_for_unmapped_ecosystems(self):
+        assert self.deps["monolog/monolog"].type == "composer"
+
+    def test_group_derived_from_purl_namespace(self):
+        assert self.deps["org.apache.commons:commons-text"].group == "org.apache.commons"
+
+    def test_dependencies_inherit_source_target(self):
+        assert self.deps["npm:left-pad"].source_target == "com.github.acme/my-service"
+
+    def test_minimal_describes_only_document_keeps_package(self):
+        # A document that DESCRIBES a package with no DEPENDS_ON children is an
+        # SBOM *of* that package; it must stay ingested and direct.
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "packages": [{"SPDXID": "SPDXRef-only", "name": "lonely-lib", "versionInfo": "1.0"}],
+            "relationships": [
+                {
+                    "spdxElementId": "SPDXRef-DOCUMENT",
+                    "relatedSpdxElement": "SPDXRef-only",
+                    "relationshipType": "DESCRIBES",
+                }
+            ],
+        }
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["lonely-lib"]
+        assert result.dependencies[0].direct is True
 
 
 class TestDetectFormatMalformed:
