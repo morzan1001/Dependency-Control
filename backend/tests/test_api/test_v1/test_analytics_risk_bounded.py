@@ -1,6 +1,7 @@
 """Tests that /impact and /hotspots analytics aggregations stay bounded: details slimmed before $group, scalar severity counts, id/detail sets deduped via $addToSet (not $slice-capped), and allow_disk_use threaded through."""
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -493,3 +494,80 @@ class TestHotspotsPostSortPagination:
         _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="finding_count", skip=40, limit=20)
         assert any(stage.get("$skip") == 40 for stage in pipeline), "expected $skip in Mongo pipeline"
         assert any(stage.get("$limit") == 20 for stage in pipeline), "expected $limit in Mongo pipeline"
+
+
+# Finding documents carry scan_created_at (engine._prepare_finding_records); created_at never exists on them.
+
+
+def _projected_fields_before_group(pipeline: list[dict[str, Any]]) -> set[str]:
+    fields: set[str] = set()
+    for stage in pipeline:
+        if "$group" in stage:
+            break
+        project = stage.get("$project")
+        if project:
+            fields.update(project.keys())
+    return fields
+
+
+class TestFirstSeenUsesScanCreatedAt:
+    def test_impact_first_seen_min_over_scan_created_at(self):
+        _, pipeline, _ = _run_impact(agg_results=[])
+        group = _group_stage(pipeline)
+        assert group["first_seen"] == {"$min": "$scan_created_at"}
+        assert "scan_created_at" in _projected_fields_before_group(pipeline)
+
+    def test_impact_pipeline_never_references_created_at(self):
+        _, pipeline, _ = _run_impact(agg_results=[])
+        assert "created_at" not in _projected_fields_before_group(pipeline)
+        assert "$created_at" not in str(pipeline)
+
+    def test_hotspots_first_seen_min_over_scan_created_at(self):
+        _, pipeline, _ = _run_hotspots(agg_results=[])
+        group = _group_stage(pipeline)
+        assert group["first_seen"] == {"$min": "$scan_created_at"}
+        assert "scan_created_at" in _projected_fields_before_group(pipeline)
+
+    def test_hotspots_pipeline_never_references_created_at(self):
+        _, pipeline, _ = _run_hotspots(agg_results=[])
+        assert "created_at" not in _projected_fields_before_group(pipeline)
+        assert "$created_at" not in str(pipeline)
+
+    def test_impact_days_known_and_overdue_reason_from_first_seen(self):
+        row = {
+            "_id": {"component": "lodash", "version": "4.17.11"},
+            "component": "lodash",
+            "version": "4.17.11",
+            "project_ids": ["proj-1"],
+            "total_findings": 3,
+            "critical": 1,
+            "high": 2,
+            "medium": 0,
+            "low": 0,
+            "finding_ids": ["CVE-2021-1"],
+            "first_seen": datetime.now(timezone.utc) - timedelta(days=120),
+            "details_list": [{"fixed_version": "4.17.21", "vulnerabilities": []}],
+            "affected_projects": 1,
+        }
+        response, _, _ = _run_impact(agg_results=[row])
+        item = response[0]
+        assert item.days_known is not None and item.days_known >= 119
+        assert any(r.startswith("overdue:") for r in item.priority_reasons)
+
+    def test_hotspots_first_seen_rendered(self):
+        row = {
+            "_id": {"component": "lodash", "version": "4.17.11"},
+            "project_ids": ["proj-1"],
+            "finding_count": 3,
+            "critical": 1,
+            "high": 2,
+            "medium": 0,
+            "low": 0,
+            "first_seen": datetime.now(timezone.utc) - timedelta(days=120),
+            "finding_ids": ["CVE-2021-1"],
+            "details_list": [{"fixed_version": "4.17.21", "vulnerabilities": []}],
+        }
+        response, _, _ = _run_hotspots(agg_results=[row])
+        item = response[0]
+        assert item.first_seen != ""
+        assert item.days_known is not None and item.days_known >= 119

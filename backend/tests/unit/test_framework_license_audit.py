@@ -43,7 +43,7 @@ async def test_strong_copyleft_violation_fails():
         {
             "_id": "f1",
             "type": "license",
-            "details": {"license_category": "strong_copyleft"},
+            "details": {"license": "GPL-3.0-only", "category": "strong_copyleft"},
             "waived": False,
         }
     ]
@@ -60,13 +60,47 @@ async def test_allowed_category_is_not_applicable():
         {
             "_id": "f1",
             "type": "license",
-            "details": {"license_category": "strong_copyleft"},
+            "details": {"license": "GPL-3.0-only", "category": "strong_copyleft"},
             "waived": False,
         }
     ]
     result = await fw.evaluate_async(_eval_input(findings=findings, policy=policy))
     strong_ctrl = next(c for c in result.controls if c.control_id == "LICENSE-AUDIT-STRONG-COPYLEFT")
     assert strong_ctrl.status == "not_applicable"
+
+
+@pytest.mark.asyncio
+async def test_network_copyleft_violation_fails():
+    fw = LicenseAuditFramework()
+    policy = {"allow_strong_copyleft": False, "allow_network_copyleft": False}
+    findings = [
+        {
+            "_id": "f1",
+            "type": "license",
+            "details": {"license": "AGPL-3.0-only", "category": "network_copyleft"},
+            "waived": False,
+        }
+    ]
+    result = await fw.evaluate_async(_eval_input(findings=findings, policy=policy))
+    failed = [c for c in result.controls if c.status == "failed"]
+    assert any(c.control_id == "LICENSE-AUDIT-NETWORK-COPYLEFT" for c in failed)
+
+
+@pytest.mark.asyncio
+async def test_unknown_license_fails_identified_control():
+    fw = LicenseAuditFramework()
+    findings = [
+        {
+            "_id": "f1",
+            "type": "license",
+            "details": {"license": "UNKNOWN", "category": "unknown"},
+            "waived": False,
+        }
+    ]
+    result = await fw.evaluate_async(_eval_input(findings=findings, policy={}))
+    ctrl = next(c for c in result.controls if c.control_id == "LICENSE-AUDIT-LICENSE-IDENTIFIED")
+    assert ctrl.status == "failed"
+    assert ctrl.evidence_finding_ids == ["f1"]
 
 
 @pytest.mark.asyncio
@@ -77,7 +111,7 @@ async def test_waived_finding_produces_waived_control():
         {
             "_id": "f1",
             "type": "license",
-            "details": {"license_category": "strong_copyleft"},
+            "details": {"license": "GPL-3.0-only", "category": "strong_copyleft"},
             "waived": True,
             "waiver_reason": "accepted risk",
         }

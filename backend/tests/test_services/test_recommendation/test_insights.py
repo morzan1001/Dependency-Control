@@ -19,7 +19,7 @@ def _vuln_finding(
         "component": component,
         "version": version,
         "id": finding_id,
-        "details": {"cve_id": finding_id, "vulnerabilities": [{"id": finding_id}]},
+        "details": {"vulnerabilities": [{"id": finding_id}], "fixed_version": None},
     }
 
 
@@ -29,15 +29,30 @@ def _quality_finding(
     critical_issues=None,
     project_url=None,
 ):
+    critical = critical_issues or []
+    # Mirrors the stored aggregated shape: per-issue scorecard fields live one
+    # level down in quality_issues[].details, only the roll-ups sit at the top.
     return {
         "type": "quality",
         "severity": "HIGH",
         "component": component,
         "details": {
             "overall_score": overall_score,
-            "critical_issues": critical_issues or [],
-            "project_url": project_url,
-            "failed_checks": [],
+            "has_maintenance_issues": "Maintained" in critical,
+            "issue_count": 1,
+            "quality_issues": [
+                {
+                    "id": f"SCORECARD-{component}",
+                    "type": "scorecard",
+                    "severity": "HIGH",
+                    "details": {
+                        "overall_score": overall_score,
+                        "critical_issues": critical,
+                        "failed_checks": [],
+                        "project_url": project_url,
+                    },
+                }
+            ],
         },
     }
 

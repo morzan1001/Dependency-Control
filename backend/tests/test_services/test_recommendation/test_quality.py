@@ -15,6 +15,9 @@ def _quality(
     project_url="https://github.com/example/old-lib",
     finding_id="q1",
 ):
+    critical = critical_issues if critical_issues is not None else []
+    # Mirrors the stored aggregated shape: per-issue scorecard fields live one
+    # level down in quality_issues[].details, only the roll-ups sit at the top.
     return {
         "type": "quality",
         "severity": severity,
@@ -22,9 +25,21 @@ def _quality(
         "version": version,
         "details": {
             "overall_score": overall_score,
-            "critical_issues": critical_issues if critical_issues is not None else [],
-            "failed_checks": failed_checks if failed_checks is not None else [],
-            "project_url": project_url,
+            "has_maintenance_issues": "Maintained" in critical,
+            "issue_count": 1,
+            "quality_issues": [
+                {
+                    "id": f"SCORECARD-{component}",
+                    "type": "scorecard",
+                    "severity": severity,
+                    "details": {
+                        "overall_score": overall_score,
+                        "critical_issues": critical,
+                        "failed_checks": failed_checks if failed_checks is not None else [],
+                        "project_url": project_url,
+                    },
+                }
+            ],
         },
         "id": finding_id,
     }
@@ -450,3 +465,29 @@ class TestProcessQualityActionStructure:
         recs = process_quality([finding])
         cr_rec = next(r for r in recs if "Code Review" in r.title)
         assert cr_rec.action["type"] == "code_review_concern"
+
+
+class TestUnmaintainedFromMaintenanceRollup:
+    def test_has_maintenance_issues_alone_triggers_unmaintained(self):
+        """maintainer_risk aggregates carry no scorecard entry, only the has_maintenance_issues roll-up."""
+        finding = {
+            "type": "quality",
+            "severity": "MEDIUM",
+            "component": "stale-lib",
+            "version": "1.0",
+            "details": {
+                "overall_score": None,
+                "has_maintenance_issues": True,
+                "issue_count": 1,
+                "quality_issues": [
+                    {
+                        "id": "MAINT-stale-lib",
+                        "type": "maintainer_risk",
+                        "details": {"risks": [{"type": "stale_package"}]},
+                    }
+                ],
+            },
+            "id": "q-maint",
+        }
+        recs = process_quality([finding])
+        assert any(r.title == "Replace Unmaintained Dependencies" for r in recs)

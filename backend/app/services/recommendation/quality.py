@@ -3,7 +3,7 @@ from typing import Any
 
 from app.core.constants import SCORECARD_LOW_THRESHOLD
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import ModelOrDict, get_attr
+from app.services.recommendation.common import ModelOrDict, get_attr, scorecard_details
 
 
 def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
@@ -28,9 +28,11 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
         if overall_score is None:
             overall_score = 0.0
 
-        critical_issues = details.get("critical_issues", []) if isinstance(details, dict) else []
-        failed_checks = details.get("failed_checks", []) if isinstance(details, dict) else []
-        project_url = details.get("project_url", "") if isinstance(details, dict) else ""
+        sc_details = scorecard_details(details)
+        critical_issues = sc_details.get("critical_issues") or []
+        failed_checks = sc_details.get("failed_checks") or []
+        project_url = sc_details.get("project_url") or ""
+        has_maintenance = bool(details.get("has_maintenance_issues")) if isinstance(details, dict) else False
 
         if overall_score < SCORECARD_LOW_THRESHOLD:
             low_score_packages.append(
@@ -43,7 +45,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                 }
             )
 
-        if "Maintained" in critical_issues:
+        if "Maintained" in critical_issues or has_maintenance:
             unmaintained_packages.append(
                 {
                     "component": component,

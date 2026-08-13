@@ -32,6 +32,7 @@ class VulnerabilityEntry(TypedDict, total=False):
     scanners: list[str]
     source: str | None
     details: dict[str, Any]
+    ecosystem_specific: dict[str, Any]
     enrichment: VulnerabilityEnrichmentData
 
 

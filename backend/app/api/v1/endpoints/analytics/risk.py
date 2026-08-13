@@ -95,7 +95,7 @@ async def get_impact_analysis(
                 "project_id": 1,
                 "severity": 1,
                 "finding_id": 1,
-                "created_at": 1,
+                "scan_created_at": 1,
                 "details": _SLIM_DETAILS_EXPR,
             }
         },
@@ -107,7 +107,7 @@ async def get_impact_analysis(
                 **_severity_count_accumulators(),
                 # $addToSet dedupes to distinct CVEs per (component, version).
                 "finding_ids": {"$addToSet": "$finding_id"},
-                "first_seen": {"$min": "$created_at"},
+                "first_seen": {"$min": "$scan_created_at"},
                 "details_list": {"$addToSet": "$details"},
             }
         },
@@ -305,7 +305,7 @@ async def get_vulnerability_hotspots(
                 "project_id": 1,
                 "severity": 1,
                 "finding_id": 1,
-                "created_at": 1,
+                "scan_created_at": 1,
                 "details": _SLIM_DETAILS_EXPR,
             }
         },
@@ -315,7 +315,7 @@ async def get_vulnerability_hotspots(
                 "project_ids": {"$addToSet": "$project_id"},
                 "finding_count": {"$sum": 1},
                 **_severity_count_accumulators(),
-                "first_seen": {"$min": "$created_at"},
+                "first_seen": {"$min": "$scan_created_at"},
                 # $addToSet dedupes to distinct CVEs per (component, version).
                 "finding_ids": {"$addToSet": "$finding_id"},
                 "details_list": {"$addToSet": "$details"},

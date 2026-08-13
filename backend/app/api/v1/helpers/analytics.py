@@ -335,6 +335,25 @@ def build_hotspot_priority_reasons(
     return reasons
 
 
+def cross_project_cve_pipeline(scan_ids: list[str]) -> list[dict[str, Any]]:
+    """CVE ids per scan; they only exist nested in details.vulnerabilities[].id."""
+    return [
+        {
+            MONGO_MATCH: {
+                "scan_id": {"$in": scan_ids},
+                "type": "vulnerability",
+            }
+        },
+        {"$unwind": "$details.vulnerabilities"},
+        {
+            MONGO_GROUP: {
+                "_id": "$scan_id",
+                "cves": {"$addToSet": "$details.vulnerabilities.id"},
+            }
+        },
+    ]
+
+
 async def gather_cross_project_data(
     user_project_ids: list[str],
     current_project_id: str,
@@ -390,21 +409,7 @@ async def gather_cross_project_data(
     )
     scan_stats_map = {s.id: s.stats for s in other_scans if s.stats}
 
-    cve_pipeline: list[dict[str, Any]] = [
-        {
-            MONGO_MATCH: {
-                "scan_id": {"$in": other_scan_ids},
-                "type": "vulnerability",
-            }
-        },
-        {
-            MONGO_GROUP: {
-                "_id": "$scan_id",
-                "cves": {"$addToSet": "$details.cve_id"},
-            }
-        },
-    ]
-    cve_results = await finding_repo.aggregate(cve_pipeline)
+    cve_results = await finding_repo.aggregate(cross_project_cve_pipeline(other_scan_ids))
     scan_cves_map = {r["_id"]: [c for c in r["cves"] if c] for r in cve_results}
 
     pkg_pipeline: list[dict[str, Any]] = [

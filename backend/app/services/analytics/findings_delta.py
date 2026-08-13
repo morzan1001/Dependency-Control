@@ -42,9 +42,27 @@ def _first_id(details: dict[str, Any], *keys: str) -> str:
 
 
 def _sast_identifier(details: dict[str, Any]) -> str:
-    rule = _first_id(details, "rule_id")
+    """Merged SAST details keep the rule ids in ``sast_findings[].id``; key on the
+    sorted id set plus line so a rule swap on the same line reads as a change."""
+    entries = details.get("sast_findings") or []
+    ids = sorted({str(e.get("id")) for e in entries if isinstance(e, dict) and e.get("id")})
+    if not ids:
+        return ""
+    rule = ",".join(ids)
     line = details.get("line")
     return f"{rule}:{line}" if line is not None else rule
+
+
+def _malware_identifier(details: dict[str, Any]) -> str:
+    """Typosquat findings carry ``imitated_package``; os_malware findings carry
+    ``info``/``reference``."""
+    imitated = details.get("imitated_package")
+    if imitated:
+        return str(imitated)
+    info = details.get("info")
+    if isinstance(info, dict) and info.get("id"):
+        return str(info["id"])
+    return _first_id(details, "reference")
 
 
 def _vulnerability_identifier(finding: dict[str, Any]) -> str:
@@ -58,10 +76,6 @@ def _vulnerability_identifier(finding: dict[str, Any]) -> str:
     version = finding.get("version") or ""
     vulns = details.get("vulnerabilities") or []
     ids = sorted(str(v.get("id")) for v in vulns if isinstance(v, dict) and v.get("id"))
-    if not ids:
-        # Fall back to flat id fields for the non-aggregated shape.
-        legacy = _first_id(details, "cve_id", "vuln_id")
-        ids = [legacy] if legacy else []
     if not ids:
         return ""
     joined = ",".join(ids)
@@ -77,8 +91,8 @@ def _secret_identifier(finding: dict[str, Any]) -> str:
 _FINDING_TYPE_IDENTIFIER: dict[str, Callable[[dict[str, Any]], str]] = {
     "sast": _sast_identifier,
     "iac": lambda d: _first_id(d, "rule_id"),
-    "license": lambda d: _first_id(d, "license_id", "license"),
-    "malware": lambda d: _first_id(d, "signature", "rule_id"),
+    "license": lambda d: _first_id(d, "license"),
+    "malware": _malware_identifier,
     "eol": lambda d: _first_id(d, "eol_date", "version"),
     "outdated": lambda d: _first_id(d, "fixed_version"),
 }
@@ -125,15 +139,15 @@ _FETCH_PROJECTION: dict[str, int] = {
     "description": 1,
     "found_in": 1,
     "finding_id": 1,
-    "created_at": 1,
+    "scan_created_at": 1,
     "details.vulnerabilities.id": 1,
-    "details.cve_id": 1,
-    "details.vuln_id": 1,
+    "details.sast_findings.id": 1,
     "details.rule_id": 1,
     "details.line": 1,
-    "details.license_id": 1,
     "details.license": 1,
-    "details.signature": 1,
+    "details.imitated_package": 1,
+    "details.info.id": 1,
+    "details.reference": 1,
     "details.eol_date": 1,
     "details.fixed_version": 1,
 }
@@ -165,10 +179,7 @@ def _doc_type(doc: dict) -> str:
 
 
 def _item_cve_id(details: dict[str, Any]) -> str | None:
-    """Best display CVE id: flat ``details.cve_id`` else first ``details.vulnerabilities[].id``."""
-    cve = details.get("cve_id")
-    if cve:
-        return str(cve)
+    """Best display CVE id: the first ``details.vulnerabilities[].id``."""
     for entry in details.get("vulnerabilities") or []:
         if isinstance(entry, dict) and entry.get("id"):
             return str(entry["id"])
@@ -187,7 +198,7 @@ def _to_item(doc: dict, change: str) -> FindingDeltaItem:
         component=doc.get("component"),
         cve_id=_item_cve_id(details),
         file_path=(found_in[0] if found_in else None),
-        first_seen=doc.get("created_at"),
+        first_seen=doc.get("scan_created_at"),
     )
 
 

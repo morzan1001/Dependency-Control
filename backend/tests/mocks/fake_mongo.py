@@ -36,6 +36,7 @@ Supported aggregation expression operators (in ``$project`` / accumulator args)
 from __future__ import annotations
 
 import asyncio
+import copy as _copy
 import operator as _op
 import re as _re
 from datetime import datetime as _datetime
@@ -412,13 +413,20 @@ def _run_pipeline(docs: list, pipeline: list) -> list:
         elif "$unwind" in stage:
             field_expr = stage["$unwind"]
             field = field_expr.lstrip("$") if isinstance(field_expr, str) else field_expr
+            parts = field.split(".")
             unwound = []
             for d in results:
-                values = d.get(field, [])
+                parent: Any = d
+                for p in parts[:-1]:
+                    parent = parent.get(p) if isinstance(parent, dict) else None
+                values = parent.get(parts[-1]) if isinstance(parent, dict) else None
                 if isinstance(values, list):
                     for v in values:
-                        new_d = dict(d)
-                        new_d[field] = v
+                        new_d = _copy.deepcopy(d)
+                        target = new_d
+                        for p in parts[:-1]:
+                            target = target[p]
+                        target[parts[-1]] = v
                         unwound.append(new_d)
                 elif values is not None:
                     unwound.append(d)

@@ -394,7 +394,7 @@ class ResultAggregator:
         urls_from_details = finding.details.get("urls", []) or []
         combined_refs = list(set(refs_from_details) | set(urls_from_details))
 
-        return {
+        entry: VulnerabilityEntry = {
             "id": finding.id,
             "severity": finding.severity,
             "description": finding.description,
@@ -408,8 +408,14 @@ class ResultAggregator:
             "aliases": finding.aliases or [],
             "scanners": finding.scanners or [],
             "source": source,
-            "details": {k: v for k, v in (finding.details or {}).items() if k != "urls"},
+            # ecosystem_specific is lifted to the entry level below, not duplicated here.
+            "details": {k: v for k, v in (finding.details or {}).items() if k not in ("urls", "ecosystem_specific")},
         }
+        ecosystem_specific = finding.details.get("ecosystem_specific")
+        if ecosystem_specific:
+            # get_symbols_for_finding reads it at the entry level for symbol reachability.
+            entry["ecosystem_specific"] = ecosystem_specific
+        return entry
 
     def _merge_vuln_into_existing(
         self, existing: Finding, finding: Finding, vuln_entry: VulnerabilityEntry, source: str | None

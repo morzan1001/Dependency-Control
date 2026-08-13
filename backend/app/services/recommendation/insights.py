@@ -10,7 +10,7 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import ModelOrDict, get_attr, parse_version_tuple
+from app.services.recommendation.common import ModelOrDict, get_attr, parse_version_tuple, scorecard_details
 
 
 def correlate_scorecard_with_vulnerabilities(
@@ -29,11 +29,15 @@ def correlate_scorecard_with_vulnerabilities(
         if not component:
             continue
         details = get_attr(qf, "details", {})
+        sc_details = scorecard_details(details)
+        overall_score = details.get("overall_score") if isinstance(details, dict) else None
         scorecard_by_component[component] = {
-            "overall_score": details.get("overall_score", 10) if isinstance(details, dict) else 10,
-            "critical_issues": details.get("critical_issues", []) if isinstance(details, dict) else [],
-            "project_url": details.get("project_url") if isinstance(details, dict) else None,
-            "failed_checks": details.get("failed_checks", []) if isinstance(details, dict) else [],
+            "overall_score": overall_score if overall_score is not None else 10,
+            "critical_issues": sc_details.get("critical_issues") or [],
+            "project_url": sc_details.get("project_url"),
+            "has_maintenance_issues": bool(details.get("has_maintenance_issues"))
+            if isinstance(details, dict)
+            else False,
         }
 
     high_risk_vulns: list[dict[str, Any]] = []
@@ -48,7 +52,7 @@ def correlate_scorecard_with_vulnerabilities(
 
         score = scorecard.get("overall_score", 10)
         critical_issues = scorecard.get("critical_issues", [])
-        is_unmaintained = "Maintained" in critical_issues
+        is_unmaintained = "Maintained" in critical_issues or scorecard.get("has_maintenance_issues", False)
 
         if severity in ["CRITICAL", "HIGH"] and (is_unmaintained or score < SCORECARD_UNMAINTAINED_THRESHOLD):
             vf_details = get_attr(vf, "details", {})

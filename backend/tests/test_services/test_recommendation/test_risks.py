@@ -49,12 +49,24 @@ def _eol(component):
     return {"type": "eol", "severity": "HIGH", "component": component, "details": {}}
 
 
-def _quality(component, scorecard_score=3.0):
+def _quality(component, overall_score=3.0):
+    # Mirrors the stored aggregated quality shape: score is details.overall_score.
     return {
         "type": "quality",
         "severity": "MEDIUM",
         "component": component,
-        "details": {"scorecard_score": scorecard_score},
+        "details": {
+            "overall_score": overall_score,
+            "has_maintenance_issues": False,
+            "issue_count": 1,
+            "quality_issues": [
+                {
+                    "id": f"SCORECARD-{component}",
+                    "type": "scorecard",
+                    "details": {"overall_score": overall_score},
+                }
+            ],
+        },
     }
 
 
@@ -162,7 +174,7 @@ class TestDetectCriticalHotspotsLowScorecard:
     def test_low_scorecard_noted_in_reasons(self):
         findings = [
             _vuln("pkg", "CRITICAL", is_kev=True, finding_id="CVE-2024-001"),
-            _quality("pkg", scorecard_score=2.0),
+            _quality("pkg", overall_score=2.0),
         ]
         result = detect_critical_hotspots(findings, [])
         assert len(result) == 1
@@ -171,7 +183,7 @@ class TestDetectCriticalHotspotsLowScorecard:
     def test_high_scorecard_not_noted(self):
         findings = [
             _vuln("pkg", "CRITICAL", is_kev=True, finding_id="CVE-2024-001"),
-            _quality("pkg", scorecard_score=8.0),
+            _quality("pkg", overall_score=8.0),
         ]
         result = detect_critical_hotspots(findings, [])
         assert len(result) == 1
@@ -358,7 +370,7 @@ class TestDetectToxicDependenciesMultipleFactors:
     def test_vulns_plus_low_scorecard_is_toxic(self):
         findings = [
             _vuln("pkg", "HIGH", finding_id="CVE-2024-001"),
-            _quality("pkg", scorecard_score=2.0),
+            _quality("pkg", overall_score=2.0),
         ]
         result = detect_toxic_dependencies(findings, [])
         assert len(result) == 1
@@ -406,7 +418,7 @@ class TestDetectToxicDependenciesTop5Limit:
         for i in range(7):
             pkg = f"pkg-{i}"
             findings.append(_vuln(pkg, "HIGH", finding_id=f"CVE-2024-{i:03d}"))
-            findings.append(_quality(pkg, scorecard_score=1.0))
+            findings.append(_quality(pkg, overall_score=1.0))
         result = detect_toxic_dependencies(findings, [])
         assert len(result) == 5
 
@@ -451,7 +463,7 @@ class TestDetectToxicDependenciesVulnRiskSeverityLabel:
     def test_vuln_risk_factor_labels_critical_correctly(self):
         findings = [
             _vuln("pkg", "CRITICAL", finding_id="CVE-2024-001"),
-            _quality("pkg", scorecard_score=1.0),
+            _quality("pkg", overall_score=1.0),
         ]
         result = detect_toxic_dependencies(findings, [])
         vuln_factor = [rf for rf in result[0].action["risk_factors"] if rf["type"] == "vulnerabilities"]
@@ -460,7 +472,7 @@ class TestDetectToxicDependenciesVulnRiskSeverityLabel:
     def test_vuln_risk_factor_labels_high_correctly(self):
         findings = [
             _vuln("pkg", "HIGH", finding_id="CVE-2024-001"),
-            _quality("pkg", scorecard_score=1.0),
+            _quality("pkg", overall_score=1.0),
         ]
         result = detect_toxic_dependencies(findings, [])
         vuln_factor = [rf for rf in result[0].action["risk_factors"] if rf["type"] == "vulnerabilities"]
@@ -469,7 +481,7 @@ class TestDetectToxicDependenciesVulnRiskSeverityLabel:
     def test_vuln_risk_factor_labels_medium_when_no_critical_or_high(self):
         findings = [
             _vuln("pkg", "LOW", finding_id="CVE-2024-001"),
-            _quality("pkg", scorecard_score=1.0),
+            _quality("pkg", overall_score=1.0),
         ]
         result = detect_toxic_dependencies(findings, [])
         vuln_factor = [rf for rf in result[0].action["risk_factors"] if rf["type"] == "vulnerabilities"]
@@ -491,8 +503,8 @@ class TestDetectToxicDependenciesDeduplication:
     def test_duplicate_scorecard_counted_once(self):
         findings = [
             _vuln("pkg", "HIGH", finding_id="CVE-2024-001"),
-            _quality("pkg", scorecard_score=2.0),
-            _quality("pkg", scorecard_score=2.0),
+            _quality("pkg", overall_score=2.0),
+            _quality("pkg", overall_score=2.0),
         ]
         result = detect_toxic_dependencies(findings, [])
         assert len(result) == 1
