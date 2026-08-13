@@ -2,7 +2,7 @@ import hashlib
 from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType, Severity
-from app.schemas.finding import SecretDetails
+from app.schemas.finding_details import SecretDetails
 from app.services.enrichment.scoring import calculate_secret_risk_score
 from app.services.normalizers.utils import build_finding_id
 
@@ -40,7 +40,7 @@ def normalize_trufflehog(aggregator: "ResultAggregator", result: dict[str, Any],
     for finding in result.get("findings") or []:
         file_path = _extract_file_path(finding)
         # Prefer DetectorName; DetectorType is a numeric ordinal that loses the credential type.
-        detector = finding.get("DetectorName") or finding.get("DetectorType") or "Generic Secret"
+        detector = str(finding.get("DetectorName") or finding.get("DetectorType") or "Generic Secret")
 
         # Hash the secret so the raw value never lands in the finding key.
         raw_secret = finding.get("Raw") or ""
@@ -53,18 +53,18 @@ def normalize_trufflehog(aggregator: "ResultAggregator", result: dict[str, Any],
         verified = finding.get("Verified")
         risk_score, adjusted_risk_score = calculate_secret_risk_score(verified, in_current_tree)
 
-        secret_details: SecretDetails = {
-            "detector": detector,
-            "decoder": finding.get("DecoderName"),
-            "verified": verified,
-            "redacted": finding.get("Redacted"),
-            "commit": git_meta["commit"],
-            "commit_timestamp": git_meta["commit_timestamp"],
-            "line": git_meta["line"],
-            "in_current_tree": in_current_tree,
-            "risk_score": risk_score,
-            "adjusted_risk_score": adjusted_risk_score,
-        }
+        secret_details = SecretDetails(
+            detector=detector,
+            decoder=finding.get("DecoderName"),
+            verified=verified,
+            redacted=finding.get("Redacted"),
+            commit=git_meta["commit"],
+            commit_timestamp=git_meta["commit_timestamp"],
+            line=git_meta["line"],
+            in_current_tree=in_current_tree,
+            risk_score=risk_score,
+            adjusted_risk_score=adjusted_risk_score,
+        ).model_dump(exclude_none=True)
 
         aggregator.add_finding(
             Finding(

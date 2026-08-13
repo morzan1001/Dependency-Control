@@ -44,6 +44,7 @@ from app.repositories import (
     ScanRepository,
 )
 from app.repositories.system_settings import SystemSettingsRepository
+from app.schemas.finding_details import SystemWarningDetails, VulnerabilitySummaryDetails
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.integrations import decorate_gitlab_mr
 from app.services.analysis.notifications import send_scan_notifications
@@ -682,7 +683,7 @@ async def _aggregate_external_results(
                         version="",
                         description=f"External result for '{res.analyzer_name}' could not be aggregated: {exc}",
                         scanners=[res.analyzer_name],
-                        details={"error_details": str(exc)},
+                        details=SystemWarningDetails(error_details=str(exc)).model_dump(exclude_none=True),
                     )
                 )
     del external_results
@@ -724,6 +725,21 @@ def _prepare_finding_records(
 _FINDINGS_SUMMARY_LIMIT = 500
 
 
+def _summary_cve_id(record: dict[str, Any]) -> str:
+    """First CVE id found on the aggregated record; falls back to the component:version id."""
+    details = record.get("details") or {}
+    for entry in details.get("vulnerabilities") or []:
+        if not isinstance(entry, dict):
+            continue
+        for candidate in (entry.get("id"), entry.get("resolved_cve"), *(entry.get("aliases") or [])):
+            if isinstance(candidate, str) and candidate.startswith("CVE-"):
+                return candidate
+    for alias in record.get("aliases") or []:
+        if isinstance(alias, str) and alias.startswith("CVE-"):
+            return alias
+    return str(record.get("id") or "")
+
+
 def _build_findings_summary(
     vulnerability_findings: list[dict[str, Any]],
     limit: int = _FINDINGS_SUMMARY_LIMIT,
@@ -731,8 +747,7 @@ def _build_findings_summary(
     """Compact, bounded, vulnerability-only summary; details trimmed to the CVE id to bound size."""
     summary: list[dict[str, Any]] = []
     for record in vulnerability_findings[:limit]:
-        details = record.get("details") or {}
-        cve_id = details.get("cve_id") or record.get("id")
+        cve_id = _summary_cve_id(record)
         summary.append(
             {
                 "id": record.get("id"),
@@ -742,7 +757,7 @@ def _build_findings_summary(
                 "version": record.get("version"),
                 "description": (record.get("description") or "")[:200],
                 "scanners": record.get("scanners") or [],
-                "details": {"cve_id": cve_id},
+                "details": VulnerabilitySummaryDetails(cve_id=cve_id).model_dump(exclude_none=True),
             }
         )
     return summary

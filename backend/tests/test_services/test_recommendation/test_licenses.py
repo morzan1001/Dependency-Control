@@ -184,20 +184,7 @@ class TestProcessLicensesImpact:
         assert rec.impact["total"] == 5
 
 
-class TestProcessLicensesLicenseIdFallback:
-    """license_id is used when the license key is missing."""
-
-    def test_license_id_fallback(self):
-        finding = {
-            "type": "license",
-            "severity": "HIGH",
-            "component": "some-lib",
-            "details": {"license_id": "MIT-0"},
-            "id": "l1",
-        }
-        rec = process_licenses([finding])[0]
-        assert "MIT-0" in rec.description
-
+class TestProcessLicensesMissingLicense:
     def test_unknown_fallback(self):
         finding = {
             "type": "license",

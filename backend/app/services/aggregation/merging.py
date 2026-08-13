@@ -131,14 +131,10 @@ def _merge_vuln_fix_and_cvss(tv: dict[str, Any], source_entry: VulnerabilityEntr
 
 
 def _merge_vuln_references(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
-    """Union references from both entries, including any details.urls fields."""
+    """Union references from both entries."""
     tv_refs = set(tv.get("references", []) or [])
     sv_refs = set(source_entry.get("references", []) or [])
-    tv_urls = set(tv.get("details", {}).get("urls", []) or [])
-    sv_urls = set(source_entry.get("details", {}).get("urls", []) or [])
-    tv["references"] = list(tv_refs | sv_refs | tv_urls | sv_urls)
-    if "details" in tv and "urls" in tv["details"]:
-        del tv["details"]["urls"]
+    tv["references"] = list(tv_refs | sv_refs)
 
 
 def _merge_vuln_detail_fields(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:

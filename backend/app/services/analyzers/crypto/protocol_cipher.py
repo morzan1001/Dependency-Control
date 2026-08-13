@@ -12,6 +12,7 @@ from app.models.finding import FindingType, Severity
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType
 from app.schemas.crypto_policy import CryptoRule
+from app.schemas.finding_details import CryptoProtocolDetails
 from app.services.analyzers.base import Analyzer
 from app.services.analyzers.crypto.catalogs.loader import (
     CURRENT_IANA_CATALOG_VERSION,
@@ -139,20 +140,20 @@ def _build_finding(
         "version": proto.version or "",
         "description": description,
         "scanners": ["crypto_protocol_cipher"],
-        "details": {
-            "bom_ref": proto.bom_ref,
-            "protocol_type": proto.protocol_type,
-            "protocol_version": proto.version,
-            "cipher_suite": suite_name,
-            "cipher_suite_value": entry.value,
-            "key_exchange": entry.key_exchange,
-            "authentication": entry.authentication,
-            "cipher": entry.cipher,
-            "mac": entry.mac,
-            "weakness_tags": list(entry.weaknesses),
-            "catalog_version": CURRENT_IANA_CATALOG_VERSION,
-            "rule_id": rule.rule_id if rule else None,
-        },
+        "details": CryptoProtocolDetails(
+            bom_ref=proto.bom_ref,
+            protocol_type=proto.protocol_type,
+            protocol_version=proto.version,
+            cipher_suite=suite_name,
+            cipher_suite_value=entry.value,
+            key_exchange=entry.key_exchange,
+            authentication=entry.authentication,
+            cipher=entry.cipher,
+            mac=entry.mac,
+            weakness_tags=list(entry.weaknesses),
+            catalog_version=CURRENT_IANA_CATALOG_VERSION,
+            rule_id=rule.rule_id if rule else None,
+        ).model_dump(exclude_none=True),
         "found_in": list(proto.occurrence_locations),
         "aliases": [],
     }

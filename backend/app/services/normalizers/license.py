@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType, Severity
+from app.schemas.finding_details import LicenseDetails
 from app.services.normalizers.utils import build_finding_id, safe_get, safe_severity
 
 if TYPE_CHECKING:
@@ -27,19 +28,19 @@ def normalize_license(aggregator: "ResultAggregator", result: dict[str, Any], so
                 version=version,
                 description=item.get("message") or f"License issue: {license_name}",
                 scanners=["license_compliance"],
-                details={
-                    "license": license_name,
-                    "license_url": item.get("license_url"),
-                    "category": item.get("category"),
-                    "explanation": item.get("explanation"),
-                    "recommendation": item.get("recommendation"),
-                    "obligations": item.get("obligations") or [],
-                    "risks": item.get("risks") or [],
-                    "purl": item.get("purl"),
-                    **({"spdx_expression": item["spdx_expression"]} if item.get("spdx_expression") else {}),
-                    **({"context_reason": item["context_reason"]} if item.get("context_reason") else {}),
-                    **({"effective_severity": item["effective_severity"]} if item.get("effective_severity") else {}),
-                },
+                details=LicenseDetails(
+                    license=license_name,
+                    license_url=item.get("license_url"),
+                    category=item.get("category"),
+                    explanation=item.get("explanation"),
+                    recommendation=item.get("recommendation"),
+                    obligations=item.get("obligations") or [],
+                    risks=item.get("risks") or [],
+                    purl=item.get("purl"),
+                    spdx_expression=item.get("spdx_expression"),
+                    context_reason=item.get("context_reason"),
+                    effective_severity=item.get("effective_severity"),
+                ).model_dump(exclude_none=True),
             ),
             source=source,
         )

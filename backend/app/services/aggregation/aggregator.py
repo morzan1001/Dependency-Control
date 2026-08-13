@@ -17,6 +17,7 @@ from app.schemas.finding import (
     VulnerabilityAggregatedDetails,
     VulnerabilityEntry,
 )
+from app.schemas.finding_details import SystemWarningDetails
 from app.services.aggregation.components import (
     extract_artifact_name,
     normalize_component,
@@ -243,7 +244,9 @@ class ResultAggregator:
                     version="",
                     description=f"Scanner '{analyzer_name}' failed: {result.get('error')}",
                     scanners=[analyzer_name],
-                    details={"error_details": result.get("details", result.get("output", "No details provided"))},
+                    details=SystemWarningDetails(
+                        error_details=result.get("details", result.get("output", "No details provided"))
+                    ).model_dump(exclude_none=True),
                 ),
                 source=source,
             )
@@ -432,8 +435,6 @@ class ResultAggregator:
     def _build_vuln_entry(self, finding: Finding, source: str | None) -> VulnerabilityEntry:
         """Build a vulnerability entry dict from a finding."""
         refs_from_details = finding.details.get("references", []) or []
-        urls_from_details = finding.details.get("urls", []) or []
-        combined_refs = list(set(refs_from_details) | set(urls_from_details))
 
         entry: VulnerabilityEntry = {
             "id": finding.id,
@@ -445,12 +446,12 @@ class ResultAggregator:
             ),
             "cvss_score": (float(cvss) if (cvss := finding.details.get("cvss_score")) is not None else None),
             "cvss_vector": (str(finding.details.get("cvss_vector")) if finding.details.get("cvss_vector") else None),
-            "references": combined_refs,
+            "references": list(set(refs_from_details)),
             "aliases": finding.aliases or [],
             "scanners": finding.scanners or [],
             "source": source,
             # ecosystem_specific is lifted to the entry level below, not duplicated here.
-            "details": {k: v for k, v in (finding.details or {}).items() if k not in ("urls", "ecosystem_specific")},
+            "details": {k: v for k, v in (finding.details or {}).items() if k != "ecosystem_specific"},
         }
         ecosystem_specific = finding.details.get("ecosystem_specific")
         if ecosystem_specific:

@@ -1,6 +1,7 @@
 from typing import TYPE_CHECKING, Any
 
 from app.models.finding import Finding, FindingType, Severity
+from app.schemas.finding_details import MaintainerRiskDetails, ScorecardIssueDetails, TyposquattingDetails
 from app.services.normalizers.utils import build_finding_id, safe_get, safe_severity
 
 if TYPE_CHECKING:
@@ -82,21 +83,21 @@ def normalize_scorecard(aggregator: "ResultAggregator", result: dict[str, Any], 
                 version=version,
                 description=description,
                 scanners=["deps_dev"],
-                details={
-                    "scorecard": scorecard,
-                    "overall_score": overall,
-                    "failed_checks": failed_checks,
-                    "critical_issues": critical_issues,
-                    "project_url": project_url,
-                    "repository": scorecard.get("repository"),
-                    "scorecard_date": scorecard.get("date"),
-                    "recommendation": (" • ".join(recommendations) if recommendations else None),
-                    "checks_summary": {
+                details=ScorecardIssueDetails(
+                    scorecard=scorecard,
+                    overall_score=overall,
+                    failed_checks=failed_checks,
+                    critical_issues=critical_issues,
+                    project_url=project_url,
+                    repository=scorecard.get("repository"),
+                    scorecard_date=scorecard.get("date"),
+                    recommendation=(" • ".join(recommendations) if recommendations else None),
+                    checks_summary={
                         check.get("name"): check.get("score")
                         for check in (scorecard.get("checks") or [])
                         if check.get("score", -1) >= 0
                     },
-                },
+                ).model_dump(exclude_none=True),
             ),
             source=source,
         )
@@ -120,7 +121,9 @@ def normalize_typosquatting(aggregator: "ResultAggregator", result: dict[str, An
                     f"{similarity * 100:.1f}% similar to popular package '{imitated}'"
                 ),
                 scanners=["typosquatting"],
-                details={"imitated_package": imitated, "similarity": similarity},
+                details=TyposquattingDetails(imitated_package=imitated, similarity=similarity).model_dump(
+                    exclude_none=True
+                ),
             ),
             source=source,
         )
@@ -145,11 +148,11 @@ def normalize_maintainer_risk(
                 version=item.get("version"),
                 description=description,
                 scanners=["maintainer_risk"],
-                details={
-                    "risks": risks,
-                    "maintainer_info": item.get("maintainer_info") or {},
-                    "risk_count": len(risks),
-                },
+                details=MaintainerRiskDetails(
+                    risks=risks,
+                    maintainer_info=item.get("maintainer_info") or {},
+                    risk_count=len(risks),
+                ).model_dump(exclude_none=True),
             ),
             source=source,
         )
