@@ -151,10 +151,37 @@ class SBOMParser:
                 except Exception as e:
                     logger.exception("Error parsing %s SBOM: %s", format_type.value, e)
 
-        result.total_components = len(result.dependencies) + result.skipped_components
+        self._merge_duplicate_dependencies(result)
+
+        result.total_components = len(result.dependencies) + result.skipped_components + result.merged_components
         result.parsed_components = len(result.dependencies)
 
         return result
+
+    @staticmethod
+    def _merge_duplicate_dependencies(result: ParsedSBOM) -> None:
+        """Collapse (name, version, purl) duplicates so the unique DB index doesn't silently drop them."""
+        by_key: dict[tuple[str, str, str | None], ParsedDependency] = {}
+        for dep in result.dependencies:
+            key = (dep.name, dep.version, dep.purl)
+            kept = by_key.get(key)
+            if kept is None:
+                by_key[key] = dep
+                continue
+            for attr in ("locations", "parent_components", "cpes"):
+                kept_values = getattr(kept, attr)
+                kept_values.extend(v for v in getattr(dep, attr) if v not in kept_values)
+            for alg, digest in dep.hashes.items():
+                kept.hashes.setdefault(alg, digest)
+            kept.layer_digest = kept.layer_digest or dep.layer_digest
+            kept.found_by = kept.found_by or dep.found_by
+            # Graph-confirmed directness beats guesses; direct anywhere in the SBOM wins.
+            if kept.direct_inferred and not dep.direct_inferred:
+                kept.direct, kept.direct_inferred = dep.direct, False
+            elif kept.direct_inferred == dep.direct_inferred:
+                kept.direct = kept.direct or dep.direct
+            result.merged_components += 1
+        result.dependencies = list(by_key.values())
 
     @staticmethod
     def _extract_cyclonedx_tool(tools: Any) -> tuple[str | None, str | None]:
@@ -212,6 +239,16 @@ class SBOMParser:
         # we don't mark everything transitive.
         return direct or roots, True
 
+    @classmethod
+    def _flatten_cyclonedx_components(cls, components: Any) -> list[dict[str, Any]]:
+        flat: list[dict[str, Any]] = []
+        for comp in components if isinstance(components, list) else []:
+            if not isinstance(comp, dict):
+                continue
+            flat.append(comp)
+            flat.extend(cls._flatten_cyclonedx_components(comp.get("components")))
+        return flat
+
     def _parse_cyclonedx(self, sbom: dict[str, Any], result: ParsedSBOM) -> None:
         """Parse CycloneDX format SBOM."""
 
@@ -246,7 +283,8 @@ class SBOMParser:
             f"reverse_deps_entries={len(reverse_deps_graph)}"
         )
 
-        components = sbom.get("components", [])
+        # cyclonedx-npm/-maven nest sub-dependencies in components[].components[].
+        components = self._flatten_cyclonedx_components(sbom.get("components", []))
         result.crypto_assets = parse_crypto_components(components)
 
         for comp in components:

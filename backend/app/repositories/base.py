@@ -1,5 +1,6 @@
 """Generic, type-safe base class for repositories."""
 
+import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -7,6 +8,8 @@ from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pydantic import BaseModel
 
 from app.core.metrics import track_db_operation
+
+logger = logging.getLogger(__name__)
 
 
 class BaseRepository[T: BaseModel]:
@@ -124,7 +127,15 @@ class BaseRepository[T: BaseModel]:
             except Exception as e:
                 # BulkWriteError can still report partial success.
                 if hasattr(e, "details") and "writeErrors" in e.details:
+                    write_errors = e.details["writeErrors"]
                     inserted_count: int = e.details.get("nInserted", 0)
+                    logger.warning(
+                        "Bulk insert into %s dropped %d of %d docs (first error: %s)",
+                        self.collection_name,
+                        len(write_errors),
+                        len(docs),
+                        (write_errors[0].get("errmsg", "") or "")[:200] if write_errors else "",
+                    )
                     return inserted_count
                 raise
 

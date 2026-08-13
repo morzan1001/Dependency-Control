@@ -103,6 +103,7 @@ class ParsedSBOM(BaseModel):
     total_components: int = 0
     parsed_components: int = 0
     skipped_components: int = 0
+    merged_components: int = 0
 
     # CBOM extension — populated if SBOM contains cryptographic-asset components
     crypto_assets: list["ParsedCryptoAsset"] = Field(default_factory=list)

@@ -498,7 +498,308 @@ class TestParseSBOMConvenience:
 
     def test_total_components_count(self, cyclonedx_minimal):
         result = parse_sbom(cyclonedx_minimal)
-        assert result.total_components == result.parsed_components + result.skipped_components
+        assert result.total_components == (
+            result.parsed_components + result.skipped_components + result.merged_components
+        )
+
+
+def _nested_npm_sbom():
+    """Mirrors prod cyclonedx-npm 6.0.1 output: sub-dependencies nested in
+    components[].components[], pipe-joined bom-refs, nested refs present in
+    the dependencies graph."""
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "metadata": {
+            "timestamp": "2026-08-01T00:00:00Z",
+            "tools": {
+                "components": [
+                    {"type": "application", "name": "npm", "version": "11.17.0"},
+                    {"type": "application", "group": "@cyclonedx", "name": "cyclonedx-npm", "version": "6.0.1"},
+                ]
+            },
+            "component": {
+                "type": "application",
+                "name": "web-frontend",
+                "version": "0.0.0",
+                "bom-ref": "web-frontend@0.0.0",
+                "purl": "pkg:npm/web-frontend@0.0.0",
+            },
+        },
+        "components": [
+            {
+                "type": "library",
+                "name": "parse5",
+                "version": "8.0.1",
+                "bom-ref": "web-frontend@0.0.0|parse5@8.0.1",
+                "purl": "pkg:npm/parse5@8.0.1",
+                "licenses": [{"license": {"id": "MIT", "acknowledgement": "declared"}}],
+                "properties": [{"name": "cdx:npm:package:path", "value": "node_modules/parse5"}],
+                "components": [
+                    {
+                        "type": "library",
+                        "name": "entities",
+                        "version": "8.0.0",
+                        "bom-ref": "web-frontend@0.0.0|parse5@8.0.1|entities@8.0.0",
+                        "purl": "pkg:npm/entities@8.0.0",
+                        "licenses": [{"license": {"id": "BSD-2-Clause", "acknowledgement": "declared"}}],
+                        "properties": [
+                            {"name": "cdx:npm:package:path", "value": "node_modules/parse5/node_modules/entities"}
+                        ],
+                    }
+                ],
+            },
+            {
+                "type": "library",
+                "name": "ora",
+                "version": "5.4.1",
+                "bom-ref": "web-frontend@0.0.0|ora@5.4.1",
+                "purl": "pkg:npm/ora@5.4.1",
+            },
+        ],
+        "dependencies": [
+            {
+                "ref": "web-frontend@0.0.0",
+                "dependsOn": ["web-frontend@0.0.0|parse5@8.0.1", "web-frontend@0.0.0|ora@5.4.1"],
+            },
+            {
+                "ref": "web-frontend@0.0.0|parse5@8.0.1",
+                "dependsOn": ["web-frontend@0.0.0|parse5@8.0.1|entities@8.0.0"],
+            },
+            {"ref": "web-frontend@0.0.0|ora@5.4.1", "dependsOn": []},
+            {"ref": "web-frontend@0.0.0|parse5@8.0.1|entities@8.0.0"},
+        ],
+    }
+
+
+class TestCycloneDXNestedComponents:
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def test_nested_components_are_parsed(self):
+        result = self.parser.parse(_nested_npm_sbom())
+        names = [d.name for d in result.dependencies]
+        assert names == ["parse5", "entities", "ora"]
+
+    def test_nested_components_count_toward_total(self):
+        result = self.parser.parse(_nested_npm_sbom())
+        assert result.total_components == 3
+        assert result.parsed_components == 3
+        assert result.skipped_components == 0
+
+    def test_nested_component_directness_resolved_from_graph(self):
+        result = self.parser.parse(_nested_npm_sbom())
+        deps = {d.name: d for d in result.dependencies}
+        assert deps["parse5"].direct is True
+        assert deps["parse5"].direct_inferred is False
+        assert deps["entities"].direct is False
+        assert deps["entities"].direct_inferred is False
+
+    def test_nested_component_parents_resolved_from_graph(self):
+        result = self.parser.parse(_nested_npm_sbom())
+        deps = {d.name: d for d in result.dependencies}
+        assert deps["entities"].parent_components == ["web-frontend@0.0.0|parse5@8.0.1"]
+
+    def test_deeply_nested_components_are_parsed(self):
+        sbom = _nested_npm_sbom()
+        sbom["components"][0]["components"][0]["components"] = [
+            {
+                "type": "library",
+                "name": "deep-pkg",
+                "version": "1.0.0",
+                "bom-ref": "web-frontend@0.0.0|parse5@8.0.1|entities@8.0.0|deep-pkg@1.0.0",
+                "purl": "pkg:npm/deep-pkg@1.0.0",
+            }
+        ]
+        result = self.parser.parse(sbom)
+        assert "deep-pkg" in [d.name for d in result.dependencies]
+
+    def test_nested_file_component_still_skipped(self):
+        sbom = _nested_npm_sbom()
+        sbom["components"][0]["components"].append({"type": "file", "name": "/app/index.js"})
+        result = self.parser.parse(sbom)
+        assert "/app/index.js" not in [d.name for d in result.dependencies]
+        assert result.skipped_components == 1
+        assert result.total_components == 4
+
+
+def _syft_image_sbom_with_duplicate_package():
+    """Mirrors a prod syft 1.42.3 image SBOM: the same npm package catalogued
+    in two node_modules trees, with distinct package-id bom-refs, layers, and
+    location properties."""
+
+    def _copy(package_id: str, layer_id: str, path: str):
+        return {
+            "bom-ref": f"pkg:npm/%40isaacs/cliui@8.0.2?package-id={package_id}",
+            "type": "library",
+            "author": "Ben Coe <ben@npmjs.com>",
+            "name": "@isaacs/cliui",
+            "version": "8.0.2",
+            "licenses": [{"license": {"id": "ISC"}}],
+            "cpe": "cpe:2.3:a:\\@isaacs\\/cliui:\\@isaacs\\/cliui:8.0.2:*:*:*:*:*:*:*",
+            "purl": "pkg:npm/%40isaacs/cliui@8.0.2",
+            "properties": [
+                {"name": "syft:package:foundBy", "value": "javascript-package-cataloger"},
+                {"name": "syft:package:type", "value": "npm"},
+                {"name": "syft:location:0:layerID", "value": layer_id},
+                {"name": "syft:location:0:path", "value": path},
+            ],
+        }
+
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "metadata": {
+            "tools": {
+                "components": [{"type": "application", "author": "anchore", "name": "syft", "version": "1.42.3"}]
+            },
+            "component": {
+                "type": "container",
+                "name": "registry.example.com/app",
+                "version": "1.2.3",
+                "bom-ref": "root",
+            },
+        },
+        "components": [
+            _copy(
+                "a82d332383092fc4",
+                "sha256:f82f355dbd9bd7a91f6e61dde913a586ad11763ea58fe26280194bd3dbde67a2",
+                "/usr/local/lib/node_modules/npm/node_modules/@isaacs/cliui/package.json",
+            ),
+            _copy(
+                "0626882b793a9edd",
+                "sha256:d7a699b2505c57989a3b2b73465c56f82f10e742b4b7f39c7a2f22abf9854d19",
+                "/usr/src/app/node_modules/@isaacs/cliui/package.json",
+            ),
+        ],
+        "dependencies": [],
+    }
+
+
+class TestDuplicateComponentMerge:
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def test_duplicates_collapse_to_one_document(self):
+        result = self.parser.parse(_syft_image_sbom_with_duplicate_package())
+        assert len(result.dependencies) == 1
+        assert result.parsed_components == 1
+        assert result.merged_components == 1
+        assert result.skipped_components == 0
+        assert result.total_components == 2
+
+    def test_merged_locations_are_unioned(self):
+        result = self.parser.parse(_syft_image_sbom_with_duplicate_package())
+        locations = result.dependencies[0].locations
+        assert "/usr/local/lib/node_modules/npm/node_modules/@isaacs/cliui/package.json" in locations
+        assert "/usr/src/app/node_modules/@isaacs/cliui/package.json" in locations
+
+    def test_merge_keeps_first_non_null_layer_digest_and_found_by(self):
+        # Trivy image SBOM shape: only the second copy carries layer/foundBy data.
+        sbom = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "metadata": {"component": {"type": "container", "name": "app-image", "bom-ref": "root"}},
+            "components": [
+                {
+                    "type": "library",
+                    "name": "jcip-annotations",
+                    "version": "1.0-1",
+                    "bom-ref": "pkg:maven/net.jcip/jcip-annotations@1.0-1?uuid=1",
+                    "purl": "pkg:maven/net.jcip/jcip-annotations@1.0-1",
+                },
+                {
+                    "type": "library",
+                    "name": "jcip-annotations",
+                    "version": "1.0-1",
+                    "bom-ref": "pkg:maven/net.jcip/jcip-annotations@1.0-1?uuid=2",
+                    "purl": "pkg:maven/net.jcip/jcip-annotations@1.0-1",
+                    "properties": [
+                        {"name": "aquasecurity:trivy:LayerDigest", "value": "sha256:abc123"},
+                        {"name": "syft:package:foundBy", "value": "java-archive-cataloger"},
+                    ],
+                },
+            ],
+            "dependencies": [],
+        }
+        result = self.parser.parse(sbom)
+        assert len(result.dependencies) == 1
+        assert result.dependencies[0].layer_digest == "sha256:abc123"
+        assert result.dependencies[0].found_by == "java-archive-cataloger"
+
+    def test_merge_unions_cpes_hashes_and_parents(self):
+        sbom = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "metadata": {"component": {"type": "application", "name": "app", "bom-ref": "root"}},
+            "components": [
+                {
+                    "type": "library",
+                    "name": "lib-a",
+                    "version": "1.0",
+                    "bom-ref": "lib-a-1",
+                    "purl": "pkg:npm/lib-a@1.0",
+                    "cpe": "cpe:2.3:a:lib-a:lib-a:1.0:*:*:*:*:*:*:*",
+                    "hashes": [{"alg": "SHA-1", "content": "aaa"}],
+                },
+                {
+                    "type": "library",
+                    "name": "lib-a",
+                    "version": "1.0",
+                    "bom-ref": "lib-a-2",
+                    "purl": "pkg:npm/lib-a@1.0",
+                    "cpe": "cpe:2.3:a:liba:liba:1.0:*:*:*:*:*:*:*",
+                    "hashes": [{"alg": "SHA-256", "content": "bbb"}],
+                },
+            ],
+            "dependencies": [
+                {"ref": "root", "dependsOn": ["parent-x", "parent-y"]},
+                {"ref": "parent-x", "dependsOn": ["lib-a-1"]},
+                {"ref": "parent-y", "dependsOn": ["lib-a-2"]},
+            ],
+        }
+        result = self.parser.parse(sbom)
+        assert len(result.dependencies) == 1
+        dep = result.dependencies[0]
+        assert set(dep.cpes) == {
+            "cpe:2.3:a:lib-a:lib-a:1.0:*:*:*:*:*:*:*",
+            "cpe:2.3:a:liba:liba:1.0:*:*:*:*:*:*:*",
+        }
+        assert dep.hashes == {"sha-1": "aaa", "sha-256": "bbb"}
+        assert set(dep.parent_components) == {"parent-x", "parent-y"}
+
+    def test_merge_direct_anywhere_wins_over_transitive(self):
+        sbom = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "metadata": {"component": {"type": "application", "name": "app", "bom-ref": "root"}},
+            "components": [
+                {
+                    "type": "library",
+                    "name": "lib-b",
+                    "version": "2.0",
+                    "bom-ref": "lib-b-1",
+                    "purl": "pkg:npm/lib-b@2.0",
+                },
+                {
+                    "type": "library",
+                    "name": "lib-b",
+                    "version": "2.0",
+                    "bom-ref": "lib-b-2",
+                    "purl": "pkg:npm/lib-b@2.0",
+                },
+            ],
+            "dependencies": [
+                {"ref": "root", "dependsOn": ["lib-b-2", "other"]},
+                {"ref": "other", "dependsOn": ["lib-b-1"]},
+                {"ref": "lib-b-1", "dependsOn": []},
+                {"ref": "lib-b-2", "dependsOn": []},
+            ],
+        }
+        result = self.parser.parse(sbom)
+        assert len(result.dependencies) == 1
+        assert result.dependencies[0].direct is True
+        assert result.dependencies[0].direct_inferred is False
 
 
 class TestSyftLegacyStringCpes:
