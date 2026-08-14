@@ -150,6 +150,21 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"],
         logger.exception("Failed to bulk carry over external results: %s", e)
 
 
+# Analyzer result keys reporting incomplete coverage, with how to phrase each.
+_PARTIAL_RESULT_KEYS: tuple[tuple[str, str], ...] = (
+    ("partial_components_skipped", "{count} component(s) were not scanned"),
+    ("partial_vulnerabilities_unhydrated", "{count} vulnerability record(s) could not be fetched"),
+)
+
+
+def _partial_result_reason(result: Any) -> str | None:
+    """Why an analyzer's coverage is incomplete, or None when it is complete."""
+    if not isinstance(result, dict):
+        return None
+    reasons = [template.format(count=result[key]) for key, template in _PARTIAL_RESULT_KEYS if result.get(key)]
+    return "; ".join(reasons) if reasons else None
+
+
 async def process_analyzer(
     analyzer_name: str,
     analyzer: Analyzer,
@@ -211,16 +226,16 @@ async def process_analyzer(
             logger.warning(f"Analysis {analyzer_name} returned an error result for {scan_id}: {result.get('error')}")
             return f"{analyzer_name}: Failed"
 
-        skipped = result.get("partial_components_skipped") if isinstance(result, dict) else None
-        if skipped:
+        partial_reason = _partial_result_reason(result)
+        if partial_reason:
             # Surface the coverage gap as a finding and flag the analyzer as partial.
             aggregator.aggregate(
                 analyzer_name,
-                {"error": f"partial result: {skipped} component(s) were not scanned"},
+                {"error": f"partial result: {partial_reason}"},
                 source=f"System: {analyzer_name}",
             )
-            logger.warning(f"Analysis {analyzer_name} returned a partial result for {scan_id}: {skipped} skipped")
-            return f"{analyzer_name}: Partial ({skipped} components skipped)"
+            logger.warning(f"Analysis {analyzer_name} returned a partial result for {scan_id}: {partial_reason}")
+            return f"{analyzer_name}: Partial ({partial_reason})"
 
         logger.info(f"Analysis {analyzer_name} completed for {scan_id}")
         return f"{analyzer_name}: Success"

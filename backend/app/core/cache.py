@@ -63,6 +63,7 @@ class CacheTTL:
     EPSS_SCORE = 24 * 3600  # 24 hours (EPSS updates daily)
     GHSA_DATA = 7 * 24 * 3600  # 7 days (GHSA rarely changes)
     OSV_VULNERABILITY = 6 * 3600  # 6 hours (more volatile)
+    OSV_VULN_RECORD = 7 * 24 * 3600  # 7 days (keyed on the record's modified stamp)
 
     # Package metadata
     DEPS_DEV_METADATA = 12 * 3600  # 12 hours
@@ -111,7 +112,13 @@ class CacheKeys:
     def osv(purl: str) -> str:
         # MD5 used only as a fast non-cryptographic shortener for the cache key.
         purl_hash = hashlib.md5(purl.encode(), usedforsecurity=False).hexdigest()[:16]
-        return f"osv:{purl_hash}"
+        # v2: entries cached before OSV records were hydrated hold placeholder severities.
+        return f"osv2:{purl_hash}"
+
+    @staticmethod
+    def osv_vuln(vuln_id: str, modified: str) -> str:
+        # The modified stamp is part of the key, so a revised OSV record can never be served stale.
+        return f"osvrec:{vuln_id}:{modified}"
 
     @staticmethod
     def deps_dev(system: str, package: str, version: str) -> str:

@@ -441,8 +441,9 @@ KEV_CATALOG_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploite
 GHSA_API_URL = "https://api.github.com/advisories"
 
 # Vulnerability databases
-OSV_API_URL = "https://api.osv.dev/v1/query"
+# querybatch answers with {id, modified} only; the full record must be fetched per id.
 OSV_BATCH_API_URL = "https://api.osv.dev/v1/querybatch"
+OSV_VULN_API_URL = "https://api.osv.dev/v1/vulns"
 
 # Package metadata APIs
 DEPS_DEV_API_URL = "https://api.deps.dev/v3alpha"
