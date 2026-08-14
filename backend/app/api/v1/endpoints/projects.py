@@ -1,7 +1,9 @@
+import io
 import json
 import logging
 import re
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
@@ -34,6 +36,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
     RESP_AUTH_404_500,
 )
+from app.core.constants import SCAN_USABLE_STATUSES
 from app.core.permissions import Permissions, has_permission
 from app.core.risk_scoring import risk_score_expr
 from app.core.worker import worker_manager
@@ -1461,7 +1464,7 @@ async def export_project_sbom(
 
     scan_repo = ScanRepository(db)
 
-    scan = await scan_repo.get_latest_for_project(project_id, status="completed")
+    scan = await scan_repo.get_latest_for_project(project_id, statuses=SCAN_USABLE_STATUSES)
 
     if not scan:
         raise HTTPException(status_code=404, detail="No completed scans found for this project")
@@ -1469,19 +1472,31 @@ async def export_project_sbom(
     if not scan.sbom_refs or len(scan.sbom_refs) == 0:
         raise HTTPException(status_code=404, detail="No SBOM data found for this scan")
 
-    ref = scan.sbom_refs[0]
-    if ref.get("storage") != "gridfs" or not ref.get("file_id"):
-        raise HTTPException(status_code=500, detail="Invalid SBOM reference (not GridFS)")
+    sbom_contents: list[Any] = []
+    for ref in scan.sbom_refs:
+        if ref.get("storage") != "gridfs" or not ref.get("file_id"):
+            raise HTTPException(status_code=500, detail="Invalid SBOM reference (not GridFS)")
+        sbom_content = await load_from_gridfs(db, ref["file_id"])
+        if not sbom_content:
+            raise HTTPException(status_code=404, detail="SBOM file not found in GridFS")
+        sbom_contents.append(sbom_content)
 
-    sbom_content = await load_from_gridfs(db, ref["file_id"])
+    if len(sbom_contents) == 1:
+        return Response(
+            content=json.dumps(sbom_contents[0], indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename=project_{project_id}_sbom.json"},
+        )
 
-    if not sbom_content:
-        raise HTTPException(status_code=404, detail="SBOM file not found in GridFS")
-
+    # Multi-SBOM scans export every SBOM, not just the first upload.
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for index, sbom_content in enumerate(sbom_contents):
+            archive.writestr(f"sbom-{index + 1}.json", json.dumps(sbom_content, indent=2))
     return Response(
-        content=json.dumps(sbom_content, indent=2),
-        media_type="application/json",
-        headers={"Content-Disposition": f"attachment; filename=project_{project_id}_sbom.json"},
+        content=buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=project_{project_id}_sboms.zip"},
     )
 
 
