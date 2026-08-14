@@ -251,6 +251,7 @@ class TestRunHousekeepingArchive:
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
             patch(f"{MODULE}._get_referenced_scan_ids", new_callable=AsyncMock, return_value=[]),
             patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock),
+            patch(f"{MODULE}.reap_orphan_gridfs_files", new_callable=AsyncMock),
         ):
             asyncio.run(run_housekeeping())
 
@@ -614,7 +615,7 @@ async def test_delete_scans_purges_crypto_assets():
     db.scans.delete_many = AsyncMock(return_value=MagicMock(deleted_count=2))
 
     with patch(f"{MODULE}._collect_gridfs_ids", new=AsyncMock(return_value=[])):
-        with patch(f"{MODULE}._cleanup_gridfs_files", new=AsyncMock()):
+        with patch(f"{MODULE}.cleanup_gridfs_files", new=AsyncMock()):
             count = await _delete_scans_and_related_data(db, ["s1", "s2"], label="test")
 
     assert count == 2

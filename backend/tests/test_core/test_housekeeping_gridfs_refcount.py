@@ -40,7 +40,7 @@ async def test_cleanup_skips_gridfs_file_still_referenced_by_other_scan():
 
     mock_bucket = AsyncMock()
     with patch(
-        "app.core.housekeeping.AsyncIOMotorGridFSBucket",
+        "app.services.gridfs_maintenance.AsyncIOMotorGridFSBucket",
         return_value=mock_bucket,
     ):
         await _delete_scans_and_related_data(db, ["scan-B"], "test")
@@ -67,7 +67,7 @@ async def test_cleanup_deletes_gridfs_file_when_no_other_scan_refs_it():
 
     mock_bucket = AsyncMock()
     with patch(
-        "app.core.housekeeping.AsyncIOMotorGridFSBucket",
+        "app.services.gridfs_maintenance.AsyncIOMotorGridFSBucket",
         return_value=mock_bucket,
     ):
         await _delete_scans_and_related_data(db, ["scan-A"], "test")
@@ -105,7 +105,7 @@ async def test_cleanup_deletes_mixed_refs_correctly():
 
     mock_bucket = AsyncMock()
     with patch(
-        "app.core.housekeeping.AsyncIOMotorGridFSBucket",
+        "app.services.gridfs_maintenance.AsyncIOMotorGridFSBucket",
         return_value=mock_bucket,
     ):
         await _delete_scans_and_related_data(db, ["scan-B"], "test")

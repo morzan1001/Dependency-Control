@@ -3,8 +3,6 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
-from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo import ReadPreference
 
 from app.core import ensure_utc
@@ -21,6 +19,7 @@ from app.core.constants import (
     HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS,
     RETENTION_ACTION_ARCHIVE,
     RETENTION_ACTION_DELETE,
+    SCAN_USABLE_STATUSES,
 )
 from app.core.metrics import (
     archive_housekeeping_batch_total,
@@ -35,6 +34,7 @@ from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.audit.retention import prune_old_audit_entries
 from app.services.compliance.retention import sweep_expired_compliance_reports
+from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs, reap_orphan_gridfs_files
 
 if TYPE_CHECKING:
     from app.core.worker import WorkerManager
@@ -61,67 +61,12 @@ async def _get_referenced_scan_ids(db: Any) -> list[str]:
     return list(referenced_ids)
 
 
-def _extract_gridfs_ids_from_refs(sbom_refs: list[Any]) -> list[str]:
-    """Extract GridFS IDs from a list of SBOM references."""
-    ids: list[str] = []
-    for ref in sbom_refs:
-        if isinstance(ref, dict) and ref.get("type") == "gridfs_reference":
-            gid = ref.get("gridfs_id")
-            if gid:
-                ids.append(gid)
-    return ids
-
-
 async def _collect_gridfs_ids(db: Any, scan_ids: list[str]) -> list[str]:
     """Collect all GridFS IDs referenced by the given scans."""
     gridfs_ids: list[str] = []
     async for scan_doc in db.scans.find({"_id": {"$in": scan_ids}}, {"sbom_refs": 1}):
-        gridfs_ids.extend(_extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", [])))
+        gridfs_ids.extend(extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", [])))
     return gridfs_ids
-
-
-async def _cleanup_gridfs_files(db: Any, gridfs_ids: list[str], deleted_scan_ids: list[str] | None = None) -> None:
-    """Delete GridFS files that no surviving scan still references.
-
-    Rescans copy ``sbom_refs`` (and the ``gridfs_id``) from their source scan, so
-    multiple scans can share one GridFS file; deleting it while another scan still
-    references it would orphan that reference. ``deleted_scan_ids`` (the scans being
-    purged) is excluded from the surviving-reference check.
-    """
-    if not gridfs_ids:
-        return
-
-    surviving = await _surviving_gridfs_references(db, gridfs_ids, deleted_scan_ids or [])
-
-    fs = AsyncIOMotorGridFSBucket(db)
-    for gid in gridfs_ids:
-        if gid in surviving:
-            continue
-        try:
-            await fs.delete(ObjectId(gid))
-        except Exception as e:
-            logger.debug(f"GridFS file {gid} already deleted or delete failed: {e}")
-
-
-async def _surviving_gridfs_references(db: Any, gridfs_ids: list[str], excluded_scan_ids: list[str]) -> set[str]:
-    """Return the subset of ``gridfs_ids`` that is still referenced by at
-    least one scan outside ``excluded_scan_ids``.
-    """
-    if not gridfs_ids:
-        return set()
-    surviving: set[str] = set()
-    cursor = db.scans.find(
-        {
-            "_id": {"$nin": excluded_scan_ids},
-            "sbom_refs.gridfs_id": {"$in": gridfs_ids},
-        },
-        {"sbom_refs": 1},
-    )
-    async for doc in cursor:
-        for gid in _extract_gridfs_ids_from_refs(doc.get("sbom_refs", [])):
-            if gid in gridfs_ids:
-                surviving.add(gid)
-    return surviving
 
 
 async def _delete_scans_and_related_data(db: Any, scan_ids: list[str], label: str = "") -> int:
@@ -139,7 +84,7 @@ async def _delete_scans_and_related_data(db: Any, scan_ids: list[str], label: st
     await db.crypto_assets.delete_many({"scan_id": {"$in": scan_ids}})
     result = await db.scans.delete_many({"_id": {"$in": scan_ids}})
 
-    await _cleanup_gridfs_files(db, gridfs_ids, deleted_scan_ids=scan_ids)
+    await cleanup_gridfs_files(db, gridfs_ids, deleted_scan_ids=scan_ids)
 
     if label:
         logger.info(f"{label}: Deleted {result.deleted_count} scans ({len(gridfs_ids)} GridFS files).")
@@ -252,7 +197,7 @@ async def _process_project_rescan(
     latest_valid_scan = await db.scans.find_one(
         {
             "project_id": project.id,
-            "status": "completed",
+            "status": {"$in": SCAN_USABLE_STATUSES},
             "sbom_refs": {"$exists": True, "$ne": []},
         },
         sort=[("created_at", -1)],
@@ -558,6 +503,11 @@ async def run_housekeeping() -> None:
             await _reap_orphan_s3_objects(db)
         except Exception as e:
             logger.exception("Orphan reaper failed: %s", e)
+
+        try:
+            await reap_orphan_gridfs_files(db)
+        except Exception as e:
+            logger.exception("GridFS orphan reaper failed: %s", e)
 
     except Exception as e:
         logger.exception("Housekeeping task failed: %s", e)
