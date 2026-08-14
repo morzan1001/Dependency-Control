@@ -68,6 +68,26 @@ class TestWithdrawnVulnerabilities:
         assert len(normalized) == 1
 
 
+class TestNormalizedEntryShape:
+    """The shape normalize_osv consumes. Reading anything else there yields UNKNOWN severities."""
+
+    def setup_method(self):
+        self.analyzer = OSVAnalyzer()
+
+    def test_severity_is_a_resolved_top_level_string(self):
+        vulns = [
+            {
+                "id": "GHSA-x",
+                "summary": "s",
+                "database_specific": {"severity": "MODERATE"},
+                "severity": [{"type": "CVSS_V3", "score": "9.8"}],
+            }
+        ]
+        entry = self.analyzer._normalize_vulnerabilities(vulns)[0]
+        assert entry["severity"] == "MEDIUM"
+        assert "database_specific" not in entry
+
+
 class TestCvssVersionAwareSeverity:
     """CVSS v2 has no CRITICAL bucket (top tier is HIGH); the mapper must respect the source version."""
 
