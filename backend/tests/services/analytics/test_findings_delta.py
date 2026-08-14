@@ -100,8 +100,8 @@ def test_identity_key_license_uses_license():
 
 
 def test_identity_key_eol_uses_eol_date_only():
-    """EolDetails declares no `version` and the EOL writer never writes one: 0 of 5,664
-    production EOL findings carry details.version, all 5,664 carry eol_date. The extra
+    """EolDetails declares no `version` and the EOL writer never writes one: 0 of 5,669
+    production EOL findings carry details.version, all 5,669 carry eol_date. The extra
     fallback key was invisible to the drift guard because it travels through *keys."""
     f = {
         "type": "eol",

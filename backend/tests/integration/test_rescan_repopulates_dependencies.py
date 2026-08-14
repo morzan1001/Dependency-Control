@@ -193,7 +193,7 @@ async def test_ingest_prestored_dependencies_are_not_double_stored(db, _gridfs_p
 
 
 # Same package described by two SBOMs of one payload (app image + base image), each carrying
-# evidence the other lacks — the shape 3,694 of 45,040 production scans upload.
+# evidence the other lacks — the shape 3,698 of 45,084 production scans (8.2%) upload.
 _SHARED_PURL = "pkg:deb/debian/libssl3@3.0.11-1~deb12u2?arch=amd64"
 
 

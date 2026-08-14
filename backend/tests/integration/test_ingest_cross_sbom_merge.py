@@ -1,5 +1,5 @@
 """A scan's unique dependency index spans the whole scan, so duplicates across the payload's
-SBOMs must be merged before the first insert. 3,694 of 45,040 production scans (8.2%) carry
+SBOMs must be merged before the first insert. 3,698 of 45,084 production scans (8.2%) carry
 two or more SBOMs; a 60-scan sample of them index-dropped 2,772 of 21,730 parsed dependencies."""
 
 import pytest
