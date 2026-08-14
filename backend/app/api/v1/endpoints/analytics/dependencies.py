@@ -1,6 +1,5 @@
 """Analytics dependency endpoints: dependency-tree, component-findings, dependency-metadata."""
 
-import re
 from typing import Annotated, Any
 
 from fastapi import HTTPException, Query
@@ -29,7 +28,11 @@ from app.schemas.analytics import (
     DependencyTreeNode,
     SeverityBreakdown,
 )
-from app.services.aggregation.components import cluster_by_package_identity, extract_artifact_name
+from app.services.aggregation.components import (
+    cluster_by_package_identity,
+    component_match_query,
+    lookup_component,
+)
 from app.services.recommendation.common import get_attr
 
 from ._shared import _MSG_ACCESS_DENIED, _get_enrichment_info, _resolve_scan_id
@@ -42,14 +45,17 @@ def _dep_key(dep: Any) -> str:
     return get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
 
 
-def _component_name_query(component: str) -> dict[str, Any]:
-    """Match the component exactly, or as the bare artifact of a group-qualified finding name."""
-    return {
-        "$or": [
-            {"component": component},
-            {"component": {"$regex": f"[:/]{re.escape(component)}$"}},
-        ]
+async def _single_package_query(finding_repo: FindingRepository, scan_ids: list[str], component: str) -> dict[str, Any]:
+    """Finding filter for one component, narrowed to the exact spelling when the name is shared."""
+    base: dict[str, Any] = {
+        "scan_id": {"$in": scan_ids},
+        "waived": {"$ne": True},
+        **component_match_query(component),
     }
+    names = await finding_repo.collection.distinct("component", base)
+    if len(set(cluster_by_package_identity(names).values())) > 1:
+        return {"scan_id": {"$in": scan_ids}, "waived": {"$ne": True}, "component": component}
+    return base
 
 
 def _resolve_single_package(records: list[Any], component: str) -> list[Any]:
@@ -69,7 +75,7 @@ def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> Depen
     """Build one node without its children; the graph builder fills in child_ids."""
     name = get_attr(dep, "name", "")
     # The bare-artifact alias keys are lowercased, dependency names are not.
-    finding_info = findings_map.get(name) or findings_map.get(extract_artifact_name(name)) or {}
+    finding_info = lookup_component(findings_map, name) or {}
 
     return DependencyTreeNode(
         # The document id (uuid) is unique per dependency; PURL only backstops dict inputs in tests.
@@ -231,7 +237,7 @@ async def get_component_findings(
     query: dict[str, Any] = {
         "scan_id": {"$in": scan_ids},
         "waived": {"$ne": True},
-        **_component_name_query(component),
+        **component_match_query(component),
     }
     if version:
         query["version"] = version
@@ -318,11 +324,7 @@ async def get_dependency_metadata_endpoint(
     dep_purl = get_attr(first_dep, "purl")
     enrichment_info = await _get_enrichment_info(enrichment_repo, dep_purl)
 
-    finding_query: dict[str, Any] = {
-        "scan_id": {"$in": scan_ids},
-        "waived": {"$ne": True},
-        **_component_name_query(component),
-    }
+    finding_query = await _single_package_query(finding_repo, scan_ids, component)
     if version:
         finding_query["version"] = version
 

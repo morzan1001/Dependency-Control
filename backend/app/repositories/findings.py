@@ -7,7 +7,7 @@ from pymongo import UpdateOne
 from app.core.constants import get_severity_value
 from app.models.finding_record import FindingRecord
 from app.repositories.base import BaseRepository
-from app.services.aggregation.components import add_artifact_name_aliases
+from app.services.aggregation.components import build_component_index
 
 
 class FindingRepository(BaseRepository[FindingRecord]):
@@ -214,4 +214,4 @@ class FindingRepository(BaseRepository[FindingRecord]):
             {"$group": {"_id": "$component", "count": {"$sum": 1}}},
         ]
         results = await self.aggregate(pipeline)
-        return add_artifact_name_aliases({r["_id"]: r["count"] for r in results if r["_id"]})
+        return build_component_index({r["_id"]: r["count"] for r in results if r["_id"]})

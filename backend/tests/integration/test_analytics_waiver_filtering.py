@@ -152,3 +152,27 @@ async def test_component_findings_still_resolve_an_unambiguous_bare_name(client,
     )
     assert resp.status_code == 200, resp.text
     assert [f["component"] for f in resp.json()] == ["com.fasterxml.jackson.core:jackson-databind"]
+
+
+@pytest.mark.asyncio
+async def test_dependency_metadata_blanks_on_an_ambiguous_bare_name(client, db, seeded):
+    """Same policy as the findings list rendered beside it in the modal."""
+    await db.dependencies.insert_one(
+        {
+            "_id": "d3",
+            "scan_id": SCAN_ID,
+            "project_id": "p",
+            "name": "core",
+            "version": "1.0.0",
+            "purl": "pkg:npm/%40angular/core@1.0.0",
+            "type": "npm",
+            "direct": True,
+            "parent_components": [],
+        }
+    )
+    for idx, component in enumerate(["@angular/core", "@messageformat/core"]):
+        await db.findings.insert_one(_vuln(f"dm{idx}", component, "HIGH", waived=False))
+
+    resp = await client.get("/api/v1/analytics/dependency-metadata", params={"component": "core"}, headers=seeded)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["total_vulnerability_count"] == 0

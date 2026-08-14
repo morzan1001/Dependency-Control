@@ -8,8 +8,9 @@ bare dependency name onto a qualified finding component.
 
 import asyncio
 
-from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph, _component_name_query
+from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph
 from app.api.v1.helpers.analytics import build_findings_severity_map
+from app.services.aggregation.components import component_match_query
 from tests.mocks.fake_mongo import FakeDatabase
 
 
@@ -86,13 +87,13 @@ class TestComponentFindingsLookup:
         return sorted(d["component"] for d in docs)
 
     def test_bare_name_reaches_the_qualified_component(self):
-        assert self._components(_component_name_query("jackson-databind")) == [
+        assert self._components(component_match_query("jackson-databind")) == [
             "com.fasterxml.jackson.core:jackson-databind",
             "jackson-databind",
         ]
 
     def test_qualified_name_matches_itself(self):
-        assert self._components(_component_name_query("com.fasterxml.jackson.core:jackson-databind")) == [
+        assert self._components(component_match_query("com.fasterxml.jackson.core:jackson-databind")) == [
             "com.fasterxml.jackson.core:jackson-databind"
         ]
 
@@ -114,8 +115,8 @@ class TestAliasLookupIsCaseInsensitive:
         assert graph.nodes[0].findings_count == 1
 
     def test_vuln_count_map_resolves_a_mixed_case_dependency_name(self):
-        from app.services.aggregation.components import add_artifact_name_aliases
+        from app.services.aggregation.components import build_component_index, lookup_component
 
-        counts = add_artifact_name_aliases({"com.zaxxer:HikariCP": 4})
+        counts = build_component_index({"com.zaxxer:HikariCP": 4})
 
-        assert counts.get("hikaricp") == 4
+        assert lookup_component(counts, "HikariCP") == 4

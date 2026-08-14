@@ -24,7 +24,7 @@ from app.schemas.analytics import (
     DependencyUsage,
     SeverityBreakdown,
 )
-from app.services.aggregation.components import extract_artifact_name
+from app.services.aggregation.components import lookup_component
 
 router = CustomAPIRouter()
 
@@ -160,8 +160,7 @@ async def get_top_dependencies(
 
     enriched = []
     for dep in results:
-        # The bare-artifact alias keys are lowercased, dependency names are not.
-        vuln_count = vuln_count_map.get(dep["name"]) or vuln_count_map.get(extract_artifact_name(dep["name"]), 0)
+        vuln_count = lookup_component(vuln_count_map, dep["name"]) or 0
         enriched.append(
             DependencyUsage(
                 name=dep["name"],

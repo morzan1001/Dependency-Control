@@ -55,7 +55,8 @@ def _reject_unscoped_broad_waiver(waiver_in: WaiverCreate) -> None:
     """Refuse a finding_id-only waiver on a type whose finding_id is not unique per scan."""
     if waiver_in.finding_type not in _BROAD_FINDING_ID_TYPES:
         return
-    if waiver_in.package_name or not waiver_in.finding_id:
+    # "Unknown" is the UI's placeholder and _build_waiver_query discards it, so it is not a scope.
+    if (waiver_in.package_name and waiver_in.package_name != "Unknown") or not waiver_in.finding_id:
         return
     raise HTTPException(
         status_code=422,

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.models.finding import Finding, FindingType
-from app.services.aggregation.components import extract_artifact_name
+from app.services.aggregation.components import build_component_index, lookup_component
 
 
 def _index_by_artifact(scorecard_cache: dict[str, dict[str, Any]]) -> dict[str, dict[str, Any]]:
@@ -14,11 +14,10 @@ def _index_by_artifact(scorecard_cache: dict[str, dict[str, Any]]) -> dict[str, 
     deps_dev keys on the inventory name while a vulnerability finding carries the qualified
     coordinate; this resolves the two without attributing one package's score to another.
     """
-    by_artifact: dict[str, list[dict[str, Any]]] = {}
+    by_name: dict[str, dict[str, Any]] = {}
     for key, data in scorecard_cache.items():
-        name = key.rsplit("@", 1)[0] if "@" in key else key
-        by_artifact.setdefault(extract_artifact_name(name), []).append(data)
-    return {artifact: found[0] for artifact, found in by_artifact.items() if len(found) == 1}
+        by_name[key.rsplit("@", 1)[0] if "@" in key else key] = data
+    return build_component_index(by_name)
 
 
 def enrich_with_scorecard(findings: list[Finding], scorecard_cache: dict[str, dict[str, Any]]) -> None:
@@ -42,7 +41,7 @@ def enrich_with_scorecard(findings: list[Finding], scorecard_cache: dict[str, di
                     break
 
         if not scorecard_data and finding.component:
-            scorecard_data = by_artifact.get(extract_artifact_name(finding.component))
+            scorecard_data = lookup_component(by_artifact, finding.component)
 
         if scorecard_data:
             finding.details["scorecard_context"] = {

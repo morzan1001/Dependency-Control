@@ -292,6 +292,36 @@ class TestCreateWaiverValidatesFindingMatch:
         assert "package_name" in exc.value.detail
         mock_repo.create.assert_not_called()
 
+    def test_unknown_placeholder_does_not_count_as_a_package_scope(self, admin_user):
+        """The waiver form sends 'Unknown' when it cannot resolve a package; _build_waiver_query
+        drops it, so it must not satisfy the scope requirement either."""
+        from app.api.v1.endpoints.waivers import create_waiver
+        from app.schemas.waiver import WaiverCreate
+
+        mock_repo = MagicMock()
+        mock_repo.create = AsyncMock()
+
+        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+            with pytest.raises(HTTPException) as exc:
+                asyncio.run(
+                    create_waiver(
+                        waiver_in=WaiverCreate(
+                            project_id=None,
+                            finding_id="LIC-GPL-2.0-only",
+                            finding_type="license",
+                            package_name="Unknown",
+                            scope="finding",
+                            reason="approved",
+                        ),
+                        background_tasks=BackgroundTasks(),
+                        current_user=admin_user,
+                        db=MagicMock(),
+                    )
+                )
+
+        assert exc.value.status_code == 422
+        mock_repo.create.assert_not_called()
+
     def test_scoped_license_waiver_is_accepted(self, admin_user):
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
