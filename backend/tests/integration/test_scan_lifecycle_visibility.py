@@ -97,6 +97,13 @@ class _ErrorResultAnalyzer:
         return {"error": "controlled scanner error"}
 
 
+class _CliTimeoutAnalyzer:
+    """Real CLI failure shape: cli_base returns error dicts instead of raising (dominant prod case)."""
+
+    async def analyze(self, sbom, settings=None, parsed_components=None):
+        return {"error": "grype analysis failed", "details": "grype timed out after 300 seconds"}
+
+
 class _PartialResultAnalyzer:
     """Mimics W15: reports success but flags skipped coverage."""
 
@@ -120,6 +127,47 @@ async def test_w12_failed_analyzer_marks_scan_completed_with_errors(db, _gridfs_
     # The failure is also visible as a persisted finding.
     error_findings = [d async for d in db.findings.find({"scan_id": scan_id, "finding_id": "SCAN-ERROR-boom"})]
     assert len(error_findings) == 1
+
+
+@pytest.mark.asyncio
+async def test_w12_cli_error_result_marks_scan_completed_with_errors(db, _gridfs_patched, monkeypatch):
+    """CLI analyzers (grype/trivy) report timeouts as error dicts, not exceptions — 95% of prod failures."""
+    monkeypatch.setitem(engine.analyzers, "grype", _CliTimeoutAnalyzer())
+    await _seed_project(db)
+    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
+
+    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["grype"], db) is True
+
+    scan = await db.scans.find_one({"_id": scan_id})
+    assert scan["status"] == "completed_with_errors"
+    assert scan["failed_analyzers"] == ["grype"]
+    error_findings = [d async for d in db.findings.find({"scan_id": scan_id, "finding_id": "SCAN-ERROR-grype"})]
+    assert len(error_findings) == 1
+
+
+@pytest.mark.asyncio
+async def test_w12_error_shaped_external_result_marks_scan_completed_with_errors(db, _gridfs_patched):
+    await _seed_project(db)
+    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
+    await db.analysis_results.insert_one(
+        {
+            "_id": "res-1",
+            "scan_id": scan_id,
+            "analyzer_name": "trufflehog",
+            "result": {"error": "scanner container OOM-killed"},
+        }
+    )
+
+    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], [], db) is True
+
+    scan = await db.scans.find_one({"_id": scan_id})
+    assert scan["status"] == "completed_with_errors"
+    assert scan["failed_analyzers"] == ["trufflehog"]
+
+
+def test_enrichment_post_processor_failures_do_not_flip_the_status():
+    summary = ["grype: Failed", "epss_kev: Failed", "reachability: Failed", "osv: Partial (7 components skipped)"]
+    assert engine._failed_analyzer_names(summary) == ["grype", "osv"]
 
 
 @pytest.mark.asyncio

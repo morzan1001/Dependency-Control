@@ -203,6 +203,13 @@ async def process_analyzer(
 
         aggregator.aggregate(analyzer_name, result, source=source)
 
+        # CLI analyzers report timeouts/exit-codes/bad JSON as error dicts instead of raising.
+        if isinstance(result, dict) and result.get("error"):
+            if analysis_errors_total:
+                analysis_errors_total.labels(analyzer=analyzer_name).inc()
+            logger.warning(f"Analysis {analyzer_name} returned an error result for {scan_id}: {result.get('error')}")
+            return f"{analyzer_name}: Failed"
+
         skipped = result.get("partial_components_skipped") if isinstance(result, dict) else None
         if skipped:
             # Surface the coverage gap as a finding and flag the analyzer as partial.
@@ -235,11 +242,16 @@ def _count_gridfs_refs(sboms_to_process: list[Any]) -> int:
 
 
 def _failed_analyzer_names(results_summary: list[str]) -> list[str]:
-    """Analyzer names whose summary entry reports a failure or partial coverage."""
+    """Analyzer names whose summary entry reports a failure or partial coverage.
+
+    Post-processor enrichments (EPSS/KEV, reachability) are excluded: their failure loses
+    metadata, not findings, and produces no traceable SCAN-ERROR finding — a transient
+    external-API outage must not downgrade the scan status.
+    """
     names = set()
     for entry in results_summary:
         name, sep, rest = entry.partition(": ")
-        if sep and rest.startswith(("Failed", "Partial")):
+        if sep and rest.startswith(("Failed", "Partial")) and name not in _POST_PROCESSOR_ANALYZERS:
             names.add(name)
     return sorted(names)
 
@@ -694,7 +706,11 @@ async def _aggregate_external_results(
         if res.analyzer_name not in analyzers and res.analyzer_name not in _POST_PROCESSOR_ANALYZERS:
             try:
                 aggregator.aggregate(res.analyzer_name, res.result)
-                results_summary.append(f"{res.analyzer_name}: Success")
+                if isinstance(res.result, dict) and res.result.get("error"):
+                    # Error-shaped rows aggregate into a SCAN-ERROR finding without raising.
+                    results_summary.append(f"{res.analyzer_name}: Failed")
+                else:
+                    results_summary.append(f"{res.analyzer_name}: Success")
             except Exception as exc:
                 logger.warning(
                     "_aggregate_external_results: skipping malformed result for analyzer=%s scan=%s: %s",
