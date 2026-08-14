@@ -65,6 +65,21 @@ async def test_old_orphans_are_deleted_referenced_and_fresh_files_survive(db):
 
 
 @pytest.mark.asyncio
+async def test_compliance_report_artifacts_survive_the_sweep(db):
+    """Compliance artifacts share the default fs bucket but are referenced only by compliance_reports."""
+    artifact_id = "69d5332557c8763c8d8c82f0"
+    await db.compliance_reports.insert_one({"_id": "report-1", "artifact_gridfs_id": artifact_id})
+    await db["fs.files"].insert_one({"_id": artifact_id, "length": 400, "uploadDate": _OLD})
+    await db["fs.files"].insert_one({"_id": _ORPHAN_OLD_ID, "length": 200, "uploadDate": _OLD})
+
+    deleted = await reap_orphan_gridfs_files(db)
+
+    assert deleted == 1
+    remaining = {d["_id"] async for d in db["fs.files"].find({})}
+    assert remaining == {artifact_id}, "a live report's artifact must never be reaped"
+
+
+@pytest.mark.asyncio
 async def test_reaper_is_a_noop_without_orphans(db):
     await db.scans.insert_one(
         {"_id": "scan-1", "project_id": "p1", "sbom_refs": [{"type": "gridfs_reference", "gridfs_id": _REFERENCED_ID}]}

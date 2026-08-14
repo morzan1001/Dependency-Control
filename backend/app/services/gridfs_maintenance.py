@@ -79,6 +79,12 @@ async def _referenced_gridfs_ids(db: Any) -> set[str]:
                 gid = ref.get(key)
                 if gid:
                     referenced.add(str(gid))
+    # Compliance report artifacts share the default fs bucket and live for their retention window.
+    cursor = db.compliance_reports.find({"artifact_gridfs_id": {"$ne": None}}, {"artifact_gridfs_id": 1})
+    async for doc in cursor:
+        gid = doc.get("artifact_gridfs_id")
+        if gid:
+            referenced.add(str(gid))
     return referenced
 
 
