@@ -17,14 +17,19 @@ def normalize_component(component: str) -> str:
     return component.strip().lower()
 
 
-def extract_artifact_name(component: str) -> str:
-    """Extract the bare artifact name from Maven-style or scoped component names for grouping."""
-    name = component.lower().strip() if component else "unknown"
+def artifact_segment(component: str) -> str:
+    """Bare artifact segment with its original case, for matching case-sensitive stored names."""
+    name = component.strip() if component else ""
     if ":" in name:
         name = name.rsplit(":", 1)[-1]
     elif "/" in name:
         name = name.rsplit("/", 1)[-1]
-    return name or "unknown"
+    return name
+
+
+def extract_artifact_name(component: str) -> str:
+    """Bare artifact name, lowercased, for grouping and index keys."""
+    return artifact_segment(component).lower() or "unknown"
 
 
 def _boundary_suffixes(name: str) -> list[str]:
@@ -135,7 +140,13 @@ def artifact_name_expr(value: Any) -> dict[str, Any]:
 
 
 def component_match_expr(name_field: Any, component_expr: Any) -> dict[str, Any]:
-    """Aggregation ``$expr`` matching a dependency name against either spelling of a component."""
+    """Aggregation ``$expr`` matching a dependency name against either spelling of a component.
+
+    Unlike :func:`build_component_index` this does NOT implement the ambiguity rule: a
+    bare-named dependency matches ANY same-artifact qualified component. Its only caller
+    narrows the join with ``scan_id`` + ``version`` first, where prod measures no
+    same-artifact/same-version collisions; a caller without that gate needs its own guard.
+    """
     return {
         "$or": [
             {"$eq": [name_field, component_expr]},

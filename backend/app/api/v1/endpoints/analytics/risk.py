@@ -32,8 +32,8 @@ from app.schemas.analytics import (
     VulnerabilityHotspot,
 )
 from app.services.aggregation.components import (
+    artifact_segment,
     build_component_index,
-    extract_artifact_name,
     lookup_component,
 )
 from app.services.enrichment import get_cve_enrichment
@@ -351,7 +351,8 @@ async def get_vulnerability_hotspots(
     # A component can be group-qualified while the inventory keeps the bare artifact name,
     # so both spellings go into the filter and the index resolves either way.
     components = {r["_id"]["component"] for r in results}
-    candidates = list(components | {extract_artifact_name(c) for c in components})
+    # Stored names are case-sensitive, so the candidate must keep the component's own case.
+    candidates = list(components | {artifact_segment(c) for c in components})
     type_pipeline: list[dict[str, Any]] = [
         {"$match": {"name": {"$in": candidates}}},
         {"$group": {"_id": "$name", "type": {"$first": "$type"}}},

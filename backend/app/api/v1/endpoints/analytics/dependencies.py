@@ -29,6 +29,7 @@ from app.schemas.analytics import (
     SeverityBreakdown,
 )
 from app.services.aggregation.components import (
+    artifact_segment,
     cluster_by_package_identity,
     component_match_query,
     lookup_component,
@@ -254,12 +255,29 @@ async def get_component_findings(
 
 
 def _build_dep_query(scan_ids: list[str], component: str, version: str | None, type: str | None) -> dict[str, Any]:
-    dep_query: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "name": component}
+    """Dependency filter for a component name that may arrive group-qualified.
+
+    The Hotspots and Impact tabs hand this endpoint a finding component, which the inventory
+    stores under its bare artifact name, so both spellings are candidates.
+    """
+    artifact = artifact_segment(component)
+    names = [component] if artifact == component else [component, artifact]
+    dep_query: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "name": {"$in": names}}
     if version:
         dep_query["version"] = version
     if type:
         dep_query["type"] = type
     return dep_query
+
+
+def _resolve_single_dependency_package(dependencies: list[Any], component: str) -> list[Any]:
+    """Keep one package's rows: the exact spelling if the inventory has it, else the artifact
+    match when it belongs to a single package."""
+    exact = [d for d in dependencies if get_attr(d, "name", "") == component]
+    if exact:
+        return exact
+    packages = set(cluster_by_package_identity({get_attr(d, "name", "") for d in dependencies}).values())
+    return dependencies if len(packages) <= 1 else []
 
 
 def _collect_affected_projects(dependencies: list[Any], project_name_map: dict[str, str]) -> dict[str, dict[str, Any]]:
@@ -308,7 +326,7 @@ async def get_dependency_metadata_endpoint(
     enrichment_repo = DependencyEnrichmentRepository(db)
 
     dep_query = _build_dep_query(scan_ids, component, version, type)
-    dependencies = await dep_repo.find_many(dep_query, limit=100)
+    dependencies = _resolve_single_dependency_package(await dep_repo.find_many(dep_query, limit=100), component)
     if not dependencies:
         return None
 

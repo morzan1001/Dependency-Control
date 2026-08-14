@@ -13,7 +13,7 @@ from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories.teams import TeamRepository
-from app.services.aggregation.components import build_component_index, lookup_component
+from app.services.aggregation.components import artifact_segment, build_component_index, lookup_component
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import compute_findings_delta
 from app.services.analyzers.purl_utils import canonical_purl
@@ -907,8 +907,12 @@ class ChatToolRegistry:
                 return {"matches": [], "message": "No accessible projects"}
             latest = await self._latest_scan_ids_for_user(user_project_query, None, db)
             latest_scan_ids = list(latest.values())
+            # The caller may quote a finding's group-qualified component; the inventory
+            # stores the bare artifact name, so search on that too.
+            wanted = args["component_name"]
+            patterns = {wanted, artifact_segment(wanted)}
             dep_query: dict[str, Any] = {
-                "name": {"$regex": re.escape(args["component_name"]), "$options": "i"},
+                "name": {"$in": [re.compile(re.escape(p), re.IGNORECASE) for p in patterns if p]},
                 "scan_id": {"$in": latest_scan_ids},
             }
             if args.get("version"):
