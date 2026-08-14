@@ -5,6 +5,7 @@ import re
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
@@ -52,6 +53,7 @@ from app.repositories import (
 )
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.finding_details import SystemWarningDetails, VulnerabilitySummaryDetails
+from app.schemas.sbom import ParsedDependency
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.integrations import decorate_gitlab_mr
 from app.services.analysis.notifications import send_scan_notifications
@@ -64,10 +66,10 @@ from app.services.analysis.stats import (
 )
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
-from app.services.dependency_store import store_sbom_dependencies
+from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment import enrich_vulnerability_findings
 from app.services.reachability_enrichment import enrich_findings_with_reachability
-from app.services.sbom_parser import parse_sbom
+from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 
 logger = logging.getLogger(__name__)
 
@@ -378,6 +380,15 @@ def _build_settings_resolver(
     return _settings_for
 
 
+@dataclass
+class _ScanDependencies:
+    """Dependencies collected across a scan's SBOMs. ``parsed`` stays False when no SBOM
+    reached the parser, so an inventory is never replaced by nothing."""
+
+    parsed: bool = False
+    items: list[ParsedDependency] = field(default_factory=list)
+
+
 async def _process_sbom(
     index: int,
     current_sbom: dict[str, Any],
@@ -390,22 +401,18 @@ async def _process_sbom(
     project_analyzer_settings: dict[str, dict[str, Any]] | None = None,
     project_id: str | None = None,
     scan_type: str | None = None,
-    persist_deps: bool = True,
-    old_deps_deleted: bool = False,
-) -> tuple[list[str], bool]:
-    """Process a single resolved SBOM: parse, persist deps, run analyzers; returns (results summary, old_deps_deleted)."""
+    deps_to_store: "_ScanDependencies | None" = None,
+) -> list[str]:
+    """Process a single resolved SBOM: parse, collect deps, run analyzers; returns the results summary."""
     fallback_source = f"SBOM #{index + 1}"
 
     parsed_sbom, parsed_components = _parse_and_track_sbom(current_sbom)
 
-    # Rescans run under a fresh scan_id with no stored deps; delete-once-then-insert keeps
-    # ingest-origin re-runs idempotent. persist_deps=False (an SBOM of this run failed to
-    # resolve) and the falsy CBOM-only {} placeholder skip it so stored deps are never wiped.
-    if persist_deps and parsed_sbom is not None and project_id and current_sbom:
-        inserted, old_deps_deleted = await store_sbom_dependencies(
-            parsed_sbom, project_id, scan_id, DependencyRepository(db), old_deps_deleted
-        )
-        logger.info(f"Stored {inserted} dependencies for scan {scan_id} (SBOM #{index + 1})")
+    # Collected rather than stored here: the unique index spans the scan, so every SBOM's
+    # dependencies must be merged before the first write (see store_scan_dependencies).
+    if deps_to_store is not None and parsed_sbom is not None and project_id and current_sbom:
+        deps_to_store.parsed = True
+        deps_to_store.items.extend(parsed_sbom.dependencies)
 
     if parsed_sbom is not None and parsed_sbom.crypto_assets and project_id:
         await _persist_embedded_crypto_assets(parsed_sbom, project_id, scan_id, db)
@@ -433,7 +440,7 @@ async def _process_sbom(
 
     batch_results = await asyncio.gather(*tasks)
     del current_sbom, parsed_components
-    return list(batch_results), old_deps_deleted
+    return list(batch_results)
 
 
 def _track_findings_metrics(aggregated_findings: list[Any]) -> None:
@@ -1155,11 +1162,14 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
             sboms_expected,
         )
 
-    old_deps_deleted = False
+    # Rescans run under a fresh scan_id with no stored deps; delete-then-insert keeps
+    # ingest-origin re-runs idempotent. persist_deps=False (an SBOM of this run failed to
+    # resolve) skips the write entirely so stored deps are never wiped.
+    deps_to_store = _ScanDependencies() if persist_deps else None
     for index, current_sbom in enumerate(resolved_sboms):
         if current_sbom is None:
             continue
-        sbom_results, old_deps_deleted = await _process_sbom(
+        sbom_results = await _process_sbom(
             index,
             current_sbom,
             scan_id,
@@ -1171,11 +1181,17 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
             project_analyzer_settings=project_analyzer_settings,
             project_id=project_id,
             scan_type=scan_type,
-            persist_deps=persist_deps,
-            old_deps_deleted=old_deps_deleted,
+            deps_to_store=deps_to_store,
         )
         resolved_sboms[index] = None
         results_summary.extend(sbom_results)
+
+    if deps_to_store is not None and deps_to_store.parsed and project_id:
+        dependencies, _ = merge_duplicate_dependencies(deps_to_store.items)
+        del deps_to_store
+        inserted = await store_scan_dependencies(dependencies, project_id, scan_id, DependencyRepository(db))
+        logger.info(f"Stored {inserted} of {len(dependencies)} dependencies for scan {scan_id}")
+        del dependencies
 
     external_load_start = datetime.now(timezone.utc)
     await _aggregate_external_results(aggregator, result_repo, scan_id, results_summary)

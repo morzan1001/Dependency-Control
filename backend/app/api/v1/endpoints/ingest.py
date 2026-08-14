@@ -31,10 +31,10 @@ from app.schemas.ingest import (
 from app.schemas.kics import KicsIngest
 from app.schemas.opengrep import OpenGrepIngest
 from app.schemas.trufflehog import TruffleHogIngest
-from app.services.dependency_store import store_sbom_dependencies
+from app.services.dependency_store import store_scan_dependencies
 from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs
 from app.services.notifications.service import safe_notify_project_event
-from app.services.sbom_parser import parse_sbom
+from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.scan_manager import ScanManager
 from app.services.webhooks import webhook_service
 
@@ -231,15 +231,14 @@ async def _process_sboms(
         if parsed_sboms:
             warnings.append("Dependency inventory left unchanged: at least one SBOM of this payload failed to process")
     else:
-        old_deps_deleted = False
-        for parsed_sbom in parsed_sboms:
-            inserted, old_deps_deleted = await store_sbom_dependencies(
-                parsed_sbom, project_id, scan_id, dep_repo, old_deps_deleted
-            )
-            total_deps_inserted += inserted
-        intended = sum(len(parsed_sbom.dependencies) for parsed_sbom in parsed_sboms)
-        if total_deps_inserted < intended:
-            warnings.append(f"Only {total_deps_inserted} of {intended} parsed dependencies were stored")
+        # The unique index spans the scan, so duplicates across the payload's SBOMs must be
+        # merged before the first insert or the later ones lose their locations/CPEs/parents.
+        dependencies, _ = merge_duplicate_dependencies(
+            [dep for parsed_sbom in parsed_sboms for dep in parsed_sbom.dependencies]
+        )
+        total_deps_inserted = await store_scan_dependencies(dependencies, project_id, scan_id, dep_repo)
+        if total_deps_inserted < len(dependencies):
+            warnings.append(f"Only {total_deps_inserted} of {len(dependencies)} parsed dependencies were stored")
 
     return sbom_refs, warnings, len(parsed_sboms), sboms_failed, total_deps_inserted
 

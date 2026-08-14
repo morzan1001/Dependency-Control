@@ -190,3 +190,60 @@ async def test_ingest_prestored_dependencies_are_not_double_stored(db, _gridfs_p
 
     docs = await _dependency_docs(db, scan.id)
     assert len(docs) == 3, f"ingest-stored deps must not be stored a second time, got {len(docs)}"
+
+
+# Same package described by two SBOMs of one payload (app image + base image), each carrying
+# evidence the other lacks — the shape 3,694 of 45,040 production scans upload.
+_SHARED_PURL = "pkg:deb/debian/libssl3@3.0.11-1~deb12u2?arch=amd64"
+
+
+def _shared_component(bom_ref: str, location: str, cpe: str, layer: str | None) -> dict:
+    properties = [
+        {"name": "syft:location:0:path", "value": location},
+        {"name": "syft:cpe23", "value": cpe},
+    ]
+    if layer:
+        properties.append({"name": "syft:location:0:layerID", "value": layer})
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "components": [
+            {
+                "type": "library",
+                "bom-ref": bom_ref,
+                "name": "libssl3",
+                "version": "3.0.11-1~deb12u2",
+                "purl": _SHARED_PURL,
+                "properties": properties,
+            }
+        ],
+    }
+
+
+@pytest.mark.asyncio
+async def test_cross_sbom_duplicate_is_merged_by_the_analysis_run(db, monkeypatch):
+    """The analysis run rewrites the inventory after ingest, so it must merge across SBOMs too."""
+    from app.core.init_db import create_indexes
+
+    await create_indexes(db)
+    sbom_app = _shared_component(
+        "ref-app", "/usr/lib/libssl.so.3", "cpe:2.3:a:openssl:openssl:3.0.11:*:*:*:*:*:*:*", "sha256:" + "a" * 64
+    )
+    sbom_base = _shared_component(
+        "ref-base", "/usr/share/doc/libssl3/copyright", "cpe:2.3:a:openssl:libssl3:3.0.11:*:*:*:*:*:*:*", None
+    )
+    fs = _fake_gridfs({_FILE_ID_A: sbom_app, _FILE_ID_B: sbom_base})
+    monkeypatch.setattr("app.services.analysis.engine.primary_gridfs_bucket", lambda _db: fs)
+
+    refs = [_gridfs_ref(_FILE_ID_A), _gridfs_ref(_FILE_ID_B)]
+    scan_id = await _seed_rescan(db, refs)
+
+    assert await run_analysis(scan_id, refs, [], db) is True
+
+    docs = await _dependency_docs(db, scan_id)
+    assert len(docs) == 1
+    assert docs[0]["locations"] == ["/usr/lib/libssl.so.3", "/usr/share/doc/libssl3/copyright"]
+    assert docs[0]["cpes"] == [
+        "cpe:2.3:a:openssl:openssl:3.0.11:*:*:*:*:*:*:*",
+        "cpe:2.3:a:openssl:libssl3:3.0.11:*:*:*:*:*:*:*",
+    ]

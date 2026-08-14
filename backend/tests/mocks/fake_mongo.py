@@ -689,10 +689,31 @@ class FakeCollection:
         self._docs: dict = {}
         # $lookup needs to reach sibling collections.
         self._db = db
+        # Unique-index field tuples declared via create_index(..., unique=True).
+        self._unique_keys: list[tuple[str, ...]] = []
 
     # -- writes -----------------------------------------------------------
 
+    def _duplicate_key(self, doc: dict) -> str | None:
+        """The unique index a document collides on, or None. Mirrors sparse semantics:
+        a null value on an indexed field takes the entry out of the index."""
+        if doc.get("_id") in self._docs:
+            return "_id"
+        for fields in self._unique_keys:
+            values = tuple(doc.get(field) for field in fields)
+            if any(value is None for value in values):
+                continue
+            for existing in self._docs.values():
+                if tuple(existing.get(field) for field in fields) == values:
+                    return ", ".join(fields)
+        return None
+
     async def insert_one(self, doc: dict):
+        from pymongo.errors import DuplicateKeyError
+
+        collision = self._duplicate_key(doc)
+        if collision is not None:
+            raise DuplicateKeyError(f"E11000 duplicate key error: {collision}")
         key = doc.get("_id") or str(len(self._docs))
         self._docs[key] = dict(doc)
         result = MagicMock()
@@ -705,13 +726,16 @@ class FakeCollection:
         inserted = []
         write_errors = []
         for index, doc in enumerate(docs):
-            key = doc.get("_id") or str(len(self._docs))
-            if key in self._docs:
+            collision = self._duplicate_key(doc)
+            if collision is not None:
                 # Mirror Mongo's duplicate-key semantics so idempotent-insert paths are testable.
-                write_errors.append({"index": index, "code": 11000, "errmsg": f"E11000 duplicate key error: {key}"})
+                write_errors.append(
+                    {"index": index, "code": 11000, "errmsg": f"E11000 duplicate key error: {collision}"}
+                )
                 if ordered:
                     break
                 continue
+            key = doc.get("_id") or str(len(self._docs))
             self._docs[key] = dict(doc)
             inserted.append(key)
         if write_errors:
@@ -896,8 +920,10 @@ class FakeCollection:
         result.modified_count = modified
         return result
 
-    async def create_index(self, *args, **kwargs):
-        return None
+    async def create_index(self, keys, **kwargs):
+        if kwargs.get("unique"):
+            fields = [keys] if isinstance(keys, str) else [key for key, _direction in keys]
+            self._unique_keys.append(tuple(fields))
 
     async def index_information(self):
         # No pre-existing indexes in the in-process fake.

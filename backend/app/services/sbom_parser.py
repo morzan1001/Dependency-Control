@@ -27,6 +27,35 @@ logger = logging.getLogger(__name__)
 MAX_COMPONENT_NESTING_DEPTH = 100
 
 
+def merge_duplicate_dependencies(dependencies: list[ParsedDependency]) -> tuple[list[ParsedDependency], int]:
+    """Collapse (name, version, purl) duplicates so the unique DB index doesn't silently drop them.
+
+    Applied across every SBOM of a payload, not just within one: the index is per scan.
+    """
+    by_key: dict[tuple[str, str, str | None], ParsedDependency] = {}
+    merged = 0
+    for dep in dependencies:
+        key = (dep.name, dep.version, dep.purl)
+        kept = by_key.get(key)
+        if kept is None:
+            by_key[key] = dep
+            continue
+        for attr in ("locations", "parent_components", "cpes"):
+            kept_values = getattr(kept, attr)
+            kept_values.extend(v for v in getattr(dep, attr) if v not in kept_values)
+        for alg, digest in dep.hashes.items():
+            kept.hashes.setdefault(alg, digest)
+        kept.layer_digest = kept.layer_digest or dep.layer_digest
+        kept.found_by = kept.found_by or dep.found_by
+        # Graph-confirmed directness beats guesses; direct anywhere in the SBOM wins.
+        if kept.direct_inferred and not dep.direct_inferred:
+            kept.direct, kept.direct_inferred = dep.direct, False
+        elif kept.direct_inferred == dep.direct_inferred:
+            kept.direct = kept.direct or dep.direct
+        merged += 1
+    return list(by_key.values()), merged
+
+
 def is_url(value: str) -> bool:
     """Check if a string is a URL."""
     if not value:
@@ -168,7 +197,8 @@ class SBOMParser:
                     logger.exception("Error parsing %s SBOM", format_type.value)
                     raise
 
-        self._merge_duplicate_dependencies(result)
+        result.dependencies, merged = merge_duplicate_dependencies(result.dependencies)
+        result.merged_components += merged
 
         result.total_components = len(result.dependencies) + result.skipped_components + result.merged_components
         result.parsed_components = len(result.dependencies)
@@ -191,31 +221,6 @@ class SBOMParser:
             return "unknown"
         version = str(raw).strip()
         return "unknown" if version.lower() in cls._PLACEHOLDER_VERSIONS else version
-
-    @staticmethod
-    def _merge_duplicate_dependencies(result: ParsedSBOM) -> None:
-        """Collapse (name, version, purl) duplicates so the unique DB index doesn't silently drop them."""
-        by_key: dict[tuple[str, str, str | None], ParsedDependency] = {}
-        for dep in result.dependencies:
-            key = (dep.name, dep.version, dep.purl)
-            kept = by_key.get(key)
-            if kept is None:
-                by_key[key] = dep
-                continue
-            for attr in ("locations", "parent_components", "cpes"):
-                kept_values = getattr(kept, attr)
-                kept_values.extend(v for v in getattr(dep, attr) if v not in kept_values)
-            for alg, digest in dep.hashes.items():
-                kept.hashes.setdefault(alg, digest)
-            kept.layer_digest = kept.layer_digest or dep.layer_digest
-            kept.found_by = kept.found_by or dep.found_by
-            # Graph-confirmed directness beats guesses; direct anywhere in the SBOM wins.
-            if kept.direct_inferred and not dep.direct_inferred:
-                kept.direct, kept.direct_inferred = dep.direct, False
-            elif kept.direct_inferred == dep.direct_inferred:
-                kept.direct = kept.direct or dep.direct
-            result.merged_components += 1
-        result.dependencies = list(by_key.values())
 
     @staticmethod
     def _extract_cyclonedx_tool(tools: Any) -> tuple[str | None, str | None]:
