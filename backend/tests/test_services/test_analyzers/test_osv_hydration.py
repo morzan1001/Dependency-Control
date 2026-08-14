@@ -351,3 +351,73 @@ async def test_entries_holding_unresolved_stubs_are_not_cached(_cache_spy, monke
 
     component_keys = [k for k in _cache_spy if k.startswith("osv2:")]
     assert len(component_keys) == 1, "only the fully hydrated component may be cached"
+
+
+@pytest.mark.asyncio
+async def test_budget_deadline_trips_without_any_failure():
+    """The wall-clock branch of _HydrationBudget: only the consecutive-failure branch was
+    covered, so a broken deadline check would not have shown up."""
+    import asyncio
+
+    from app.services.analyzers.osv import _HydrationBudget
+
+    past = _HydrationBudget(deadline=asyncio.get_running_loop().time() - 1)
+    assert past.exhausted()
+    past.record(success=True)
+    assert past.exhausted(), "the deadline cannot be reset by a later success"
+
+    ahead = _HydrationBudget(deadline=asyncio.get_running_loop().time() + 60)
+    assert not ahead.exhausted()
+    for _ in range(9):
+        ahead.record(success=False)
+    assert not ahead.exhausted(), "nine failures are below the streak threshold"
+
+
+@pytest.mark.asyncio
+async def test_an_expired_deadline_reports_every_id_as_unhydrated(_cache_spy, monkeypatch):
+    """A healthy OSV that is merely slow must leave the ids visible as partial, not silently
+    unrated, and must not spend a single request once the budget is gone."""
+    calls: list[str] = []
+
+    async def _count(vuln_id: str):
+        calls.append(vuln_id)
+        return _record_response(vuln_id)
+
+    monkeypatch.setattr("app.services.analyzers.osv._HYDRATION_BUDGET_SECONDS", -1.0)
+    _install(monkeypatch, _client_stub(_count))
+
+    result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    assert calls == [], "no record may be fetched after the budget is exhausted"
+    assert result["partial_vulnerabilities_unhydrated"] == 2
+    assert {e["severity"] for e in _entries(result).values()} == {"UNKNOWN"}
+
+
+@pytest.mark.asyncio
+async def test_the_429_ladder_rechecks_the_deadline_between_attempts():
+    """The deadline cannot cancel a request in flight, so the ladder must recheck it: without
+    that the tail past the budget is 4 x 60s of timeouts plus 35s of backoff, not one request."""
+    import asyncio
+
+    from app.services.analyzers.osv import _HydrationBudget
+
+    attempts: list[str] = []
+
+    async def _throttled(vuln_id: str):
+        attempts.append(vuln_id)
+        resp = MagicMock()
+        resp.status_code = 429
+        return resp
+
+    analyzer = OSVAnalyzer()
+    analyzer.retry_base_delay = 0.0
+    client = _client_stub(_throttled)
+    expired = _HydrationBudget(deadline=asyncio.get_running_loop().time() - 1)
+
+    assert await analyzer._get_vuln_record(client, "GHSA-lodash", expired) is None
+    assert attempts == ["GHSA-lodash"], "the in-flight attempt completes, the ladder does not continue"
+
+    attempts.clear()
+    ahead = _HydrationBudget(deadline=asyncio.get_running_loop().time() + 60)
+    assert await analyzer._get_vuln_record(client, "GHSA-lodash", ahead) is None
+    assert len(attempts) == 1 + analyzer.max_retries, "with budget left the full ladder still runs"

@@ -18,8 +18,10 @@ _PRIVILEGES_REQUIRED_CHANGED = {"N": 0.85, "L": 0.68, "H": 0.5}
 _USER_INTERACTION = {"N": 0.85, "R": 0.62}
 _IMPACT = {"H": 0.56, "L": 0.22, "N": 0.0}
 
-# v4.0 needs a 270-entry MacroVector lookup table; production carries 2 such entries in 217,
-# and _severity_from_cvss_array falls through to the record's v3 entry when one exists.
+# v4.0 needs a 270-entry MacroVector lookup table and is NOT implemented. A live census of
+# 369 OSV records fetched for production findings found 28 that carry only a CVSS:4.0 vector
+# and no database_specific.severity, so they derive UNKNOWN: 28 of the 44 UNKNOWN records in
+# that sample. See the task-6 report — the recommendation is to vendor the `cvss` package.
 SUPPORTED_PREFIXES = ("CVSS:3.0", "CVSS:3.1")
 
 
@@ -31,12 +33,17 @@ def _roundup(value: float) -> float:
     return (math.floor(scaled / 10_000) + 1) / 10.0
 
 
-def _parse_metrics(vector: str) -> dict[str, str]:
+def _parse_metrics(vector: str) -> dict[str, str] | None:
+    """None when a metric is repeated: which occurrence wins would change the score, and the
+    reference implementation rejects such a vector rather than picking one."""
     metrics: dict[str, str] = {}
     for part in vector.split("/")[1:]:
         key, separator, value = part.partition(":")
-        if separator:
-            metrics[key] = value
+        if not separator:
+            continue
+        if key in metrics:
+            return None
+        metrics[key] = value
     return metrics
 
 
@@ -47,6 +54,8 @@ def cvss3_base_score(vector: str) -> float | None:
         return None
 
     metrics = _parse_metrics(text)
+    if metrics is None:
+        return None
     try:
         scope_changed = metrics["S"] == "C"
         privileges = _PRIVILEGES_REQUIRED_CHANGED if scope_changed else _PRIVILEGES_REQUIRED_UNCHANGED

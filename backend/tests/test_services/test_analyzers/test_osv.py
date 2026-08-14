@@ -249,3 +249,20 @@ class TestRateLimitRetry:
 async def _noop_sleep(_seconds: float) -> None:
     """Skip real backoff delays in tests."""
     return
+
+
+class TestParseCvssScoreNonFinite:
+    """float() accepts "nan"/"inf"; NaN survives _cvss_to_severity's clamp as 10.0 because no
+    comparison against it is true, so it would land in CRITICAL despite the clamp."""
+
+    @pytest.mark.parametrize("score", ["nan", "NaN", "inf", "-inf", "infinity"])
+    def test_non_finite_scores_do_not_produce_a_severity(self, score):
+        assert OSVAnalyzer()._parse_cvss_score(score) is None
+
+    def test_a_nan_severity_entry_leaves_the_record_unrated(self):
+        record = {"id": "CVE-2026-1", "severity": [{"type": "CVSS_V3", "score": "nan"}]}
+        assert OSVAnalyzer()._extract_severity(record) == "UNKNOWN"
+
+    def test_a_finite_out_of_range_score_is_still_clamped(self):
+        assert OSVAnalyzer()._cvss_to_severity(42.0) == "CRITICAL"
+        assert OSVAnalyzer()._cvss_to_severity(-5.0) == "LOW"

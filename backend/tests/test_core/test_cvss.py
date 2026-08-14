@@ -51,3 +51,13 @@ def test_unscoreable_vectors_return_none(vector):
 
 def test_surrounding_whitespace_is_tolerated():
     assert cvss3_base_score("  CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:N/I:L/A:H  ") == pytest.approx(8.2)
+
+
+def test_a_repeated_metric_is_rejected_rather_than_silently_last_wins():
+    """The two occurrences score 9.8 and 6.5; picking either would be a guess, and the
+    reference implementation rejects the vector."""
+    duplicated = "CVSS:3.1/AV:N/AV:A/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
+
+    assert cvss3_base_score(duplicated) is None
+    assert cvss3_base_score("CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H") == pytest.approx(9.8)
+    assert cvss3_base_score("CVSS:3.1/AV:A/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H") == pytest.approx(8.8)

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import math
 from typing import Any
 
 import httpx
@@ -239,7 +240,7 @@ class OSVAnalyzer(Analyzer):
             async with semaphore:
                 if budget.exhausted():
                     return vuln_id, None
-                record = await self._get_vuln_record(client, vuln_id)
+                record = await self._get_vuln_record(client, vuln_id, budget)
                 budget.record(success=record is not None)
                 return vuln_id, record
 
@@ -264,9 +265,17 @@ class OSVAnalyzer(Analyzer):
         self,
         client: InstrumentedAsyncClient,
         vuln_id: str,
+        budget: "_HydrationBudget | None" = None,
     ) -> dict[str, Any] | None:
-        """One full OSV record, retrying only on 429. None when it stays unresolved."""
+        """One full OSV record, retrying only on 429. None when it stays unresolved.
+
+        The deadline is rechecked between attempts: it cannot cancel a request already in
+        flight, so without this the tail past the budget would be the whole retry ladder
+        (4 x 60s timeout + 35s of backoff) rather than one socket timeout.
+        """
         for attempt in range(1 + self.max_retries):
+            if budget is not None and attempt and budget.exhausted():
+                return None
             try:
                 response = await client.get(f"{OSV_VULN_API_URL}/{vuln_id}")
             except Exception as exc:
@@ -429,8 +438,12 @@ class OSVAnalyzer(Analyzer):
     def _cvss_to_severity(cvss_score: float, cvss_type: str = "CVSS_V3") -> str:
         """Map a CVSS score to a severity using version-specific cutoffs.
 
-        v2 has no CRITICAL tier; v3/v4 use 9 / 7 / 4 / 0. Scores outside
-        ``[0, 10]`` are clamped so malformed input can't land in CRITICAL.
+        v2 has no CRITICAL tier; v3/v4 use 9 / 7 / 4 / 0. Scores outside ``[0, 10]`` are
+        clamped so malformed input can't land in CRITICAL; non-finite input never reaches
+        here (see _parse_cvss_score), because NaN would survive the clamp as 10.0.
+
+        A computed 0.0 maps to LOW: Severity has no NONE band, and a rating of 0.0 does not
+        occur in practice (0 of 3,920 NVD CVEs, and OSV only rates actual vulnerabilities).
         """
         score = max(0.0, min(10.0, cvss_score))
         if cvss_type == "CVSS_V2":
@@ -501,9 +514,12 @@ class OSVAnalyzer(Analyzer):
     def _parse_cvss_score(self, score: str) -> float | None:
         """A numeric score, else the base score computed from a CVSS v3.x vector."""
         try:
-            return float(score)
+            value = float(score)
         except ValueError:
             return cvss3_base_score(score)
+        # float() accepts "nan"/"inf"; NaN survives the clamp in _cvss_to_severity as 10.0
+        # (no comparison against it is true) and would land in CRITICAL.
+        return value if math.isfinite(value) else None
 
     def _get_highest_severity(self, vulns: list[dict[str, Any]]) -> str:
         """Get the highest severity from a list of vulnerabilities."""
