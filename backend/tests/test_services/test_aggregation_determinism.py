@@ -166,3 +166,33 @@ class TestAggregationIsOrderIndependent:
         assert [e["id"] for e in entries] == ["CVE-2026-13149"]
         assert entries[0]["fixed_version"] == "1.1.12, 2.0.3"
         assert entries[0]["scanners"] == ["grype", "osv", "trivy"]
+
+
+class TestDetailConflictTieBreak:
+    """Two alias-linked entries can share their lowest scanner name; arrival must still not decide."""
+
+    @staticmethod
+    def _entry(vuln_id: str, aliases: list[str], scanners: list[str], fixed: str, published: str) -> dict:
+        return {
+            "id": vuln_id,
+            "severity": "HIGH",
+            "description": "same length ....",
+            "aliases": aliases,
+            "scanners": scanners,
+            "references": [],
+            "details": {"fixed_version": fixed, "published_date": published},
+        }
+
+    def test_same_lowest_scanner_resolves_identically_in_both_directions(self):
+        from app.services.aggregation.merging import merge_vulnerability_into_list
+
+        def _merge(first: dict, second: dict) -> dict:
+            entries: list = [json.loads(json.dumps(first))]
+            merge_vulnerability_into_list(entries, json.loads(json.dumps(second)))
+            assert len(entries) == 1
+            return entries[0]
+
+        a = self._entry("CVE-2026-1", ["CVE-2026-2"], ["grype", "trivy"], "1.0", "2026-01-01")
+        b = self._entry("CVE-2026-2", ["CVE-2026-1"], ["grype", "osv"], "1.0", "2026-02-02")
+
+        assert _merge(a, b) == _merge(b, a)

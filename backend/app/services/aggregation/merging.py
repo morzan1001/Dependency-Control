@@ -186,14 +186,17 @@ def _fill_missing_fields(tv: dict[str, Any], source_entry: VulnerabilityEntry) -
             tv[key] = value
 
 
-def _reporting_scanner(entry: Any) -> str:
-    """Lowest scanner name of an entry; the total order settles detail conflicts commutatively."""
-    return min(str(s) for s in (entry.get("scanners") or ["~"]))
+def _detail_precedence(entry: Any) -> tuple[str, str]:
+    """Total order over entries settling detail conflicts commutatively.
+
+    Lowest scanner name first; alias-linked entries can share it, so the entry id decides.
+    """
+    return min(str(s) for s in (entry.get("scanners") or ["~"])), str(entry.get("id"))
 
 
 def _absorb_entry(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
     """Fold source_entry into tv, which then represents both."""
-    source_first = _reporting_scanner(source_entry) < _reporting_scanner(tv)
+    source_first = _detail_precedence(source_entry) < _detail_precedence(tv)
     _merge_vuln_ids_and_severity(tv, source_entry)
     _merge_vuln_description(tv, source_entry)
     _merge_vuln_fix_and_cvss(tv, source_entry)
