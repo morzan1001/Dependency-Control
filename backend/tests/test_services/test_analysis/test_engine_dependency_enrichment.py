@@ -76,6 +76,20 @@ def test_all_qualifier_variant_twins_receive_enrichment():
     assert asyncio.run(db.dependency_enrichments.count_documents({})) == 1
 
 
+def test_purl_less_entry_does_not_stamp_a_purl_bearing_twin():
+    """A purl-less enrichment describes an unidentified package, so its bare
+    {scan_id, name, version} filter also matched an identified same-named package of
+    another ecosystem. Latent today (0 of 200 sampled prod deps lack a purl)."""
+    db = FakeDatabase()
+    _insert_dep(db, name="crypto", version="1.0.0")
+    _insert_dep(db, name="crypto", version="1.0.0", purl="pkg:golang/crypto@1.0.0")
+
+    _run(db, [_entry("crypto", "1.0.0", None, {"license": "MIT", "license_category": "permissive"})])
+
+    assert _find_dep(db, purl=None)["license_category"] == "permissive"
+    assert "license_category" not in _find_dep(db, purl="pkg:golang/crypto@1.0.0")
+
+
 def test_cross_ecosystem_twin_is_not_touched():
     # Same name@version from different ecosystems must not share enrichment.
     db = FakeDatabase()

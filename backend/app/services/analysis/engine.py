@@ -472,6 +472,11 @@ def _dependency_update_ops(scan_id: str, entry: dict[str, Any]) -> list[UpdateMa
         # Prefix match keeps qualifier variants together without touching a
         # same-named package from another ecosystem.
         dep_filter["purl"] = {"$regex": f"^{re.escape(entry['purl'])}([?#]|$)"}
+    else:
+        # Without a purl the enrichment describes an unidentified package; restrict it to
+        # the equally purl-less docs so it cannot stamp a same-named package of another
+        # ecosystem with its licence.
+        dep_filter["purl"] = {"$in": [None, ""]}
 
     if "license" not in slim:
         return [UpdateMany(dep_filter, {"$set": slim})]
