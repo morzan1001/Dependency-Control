@@ -23,10 +23,7 @@ from app.services.aggregation.components import (
     extract_artifact_name,
     normalize_component,
 )
-from app.services.aggregation.cross_link import (
-    add_context_to_vulnerability,
-    cross_link_pair,
-)
+from app.services.aggregation.cross_link import cross_link_pair
 from app.services.aggregation.merging import (
     merge_findings_data,
     merge_sast_findings,
@@ -428,8 +425,6 @@ class ResultAggregator:
                 if f1.id == f2.id:
                     continue
                 cross_link_pair(f1, f2)
-                add_context_to_vulnerability(f1, f2)
-                add_context_to_vulnerability(f2, f1)
 
     def _link_related_findings_by_component(self, findings: list[Finding]) -> None:
         """Link all findings for the same package to each other (vuln, outdated, quality, license, eol)."""
