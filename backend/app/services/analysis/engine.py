@@ -331,9 +331,9 @@ def _resolve_effective_analyzers(
     """Select analyzers based on whether crypto data and SBOM content are present."""
     has_crypto = scan_type == "cbom" or (parsed_sbom is not None and bool(getattr(parsed_sbom, "crypto_assets", None)))
     if has_crypto:
-        effective_analyzers = list(set(active_analyzers) | CRYPTO_ANALYZERS)
+        effective_analyzers = sorted(set(active_analyzers) | CRYPTO_ANALYZERS)
     else:
-        effective_analyzers = [n for n in active_analyzers if n not in CRYPTO_ANALYZERS]
+        effective_analyzers = sorted(n for n in active_analyzers if n not in CRYPTO_ANALYZERS)
 
     # CBOM-only scans with no real SBOM content: drop SBOM-format scanners
     if not parsed_components and scan_type == "cbom":
@@ -741,7 +741,7 @@ def _cleanup_analyzer_names(active_analyzers: list[str]) -> list[str]:
     active_analyzers (crypto auto-added by an embedded CBOM), so they must be purged explicitly.
     """
     internal_analyzers = [name for name in active_analyzers if name in analyzers]
-    return list(set(internal_analyzers) | set(_POST_PROCESSOR_ANALYZERS) | set(CRYPTO_ANALYZERS))
+    return sorted(set(internal_analyzers) | set(_POST_PROCESSOR_ANALYZERS) | set(CRYPTO_ANALYZERS))
 
 
 def _prepare_finding_records(
@@ -1118,7 +1118,7 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
 
     # For CBOM scans, always include crypto analyzers regardless of project config.
     if scan_type == "cbom":
-        active_analyzers = list(set(active_analyzers) | CRYPTO_ANALYZERS)
+        active_analyzers = sorted(set(active_analyzers) | CRYPTO_ANALYZERS)
 
     cleanup_names = _cleanup_analyzer_names(active_analyzers)
     if cleanup_names:

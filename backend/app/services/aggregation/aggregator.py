@@ -374,8 +374,16 @@ class ResultAggregator:
 
         return [self._merge_cluster(cluster, key) for key, cluster in clusters.items()]
 
+    @staticmethod
+    def _finding_sort_key(f: Finding) -> tuple[str, str, str, str]:
+        return (str(f.type), normalize_component(f.component or ""), f.version or "", f.id)
+
     def get_findings(self) -> list[Finding]:
-        """Return deduplicated findings with merge/link post-processing applied."""
+        """Return deduplicated findings with merge/link post-processing applied.
+
+        Analyzers aggregate in completion order, so every step here is kept order-independent:
+        identical scanner output must yield an identical finding set between runs.
+        """
         current_findings = list(self.findings.values())
         groups, sast_groups = self._partition_findings(current_findings)
 
@@ -387,7 +395,7 @@ class ResultAggregator:
             if not group:
                 continue
             # Single-item groups still pass through so every SAST finding gets a consistent sast_findings list.
-            merged_f = merge_sast_findings(group)
+            merged_f = merge_sast_findings(sorted(group, key=self._finding_sort_key))
             if merged_f:
                 final_findings.append(merged_f)
 
@@ -397,6 +405,12 @@ class ResultAggregator:
                 if p.id not in merged_ids:
                     final_findings.append(p)
                     merged_ids.add(p.id)
+
+        final_findings.sort(key=self._finding_sort_key)
+        for f in final_findings:
+            entries = f.details.get("vulnerabilities") if isinstance(f.details, dict) else None
+            if entries:
+                entries.sort(key=lambda entry: str(entry.get("id")))
 
         self._link_related_findings_by_component(final_findings)
         enrich_with_scorecard(final_findings, self._scorecard_cache)
@@ -467,7 +481,7 @@ class ResultAggregator:
             ),
             "cvss_score": (float(cvss) if (cvss := finding.details.get("cvss_score")) is not None else None),
             "cvss_vector": (str(finding.details.get("cvss_vector")) if finding.details.get("cvss_vector") else None),
-            "references": list(set(refs_from_details)),
+            "references": sorted(set(refs_from_details)),
             "aliases": finding.aliases or [],
             "scanners": finding.scanners or [],
             "source": source,
@@ -484,7 +498,7 @@ class ResultAggregator:
         self, existing: Finding, finding: Finding, vuln_entry: VulnerabilityEntry, source: str | None
     ) -> None:
         """Merge a vulnerability finding into an existing aggregate."""
-        existing.scanners = list(set(existing.scanners + finding.scanners))
+        existing.scanners = sorted(set(existing.scanners + finding.scanners))
 
         if get_severity_value(finding.severity) > get_severity_value(existing.severity):
             existing.severity = finding.severity
@@ -559,7 +573,7 @@ class ResultAggregator:
         source: str | None,
     ) -> None:
         """Merge a quality finding into an existing aggregated finding."""
-        existing.scanners = list(set(existing.scanners + finding.scanners))
+        existing.scanners = sorted(set(existing.scanners + finding.scanners))
 
         if get_severity_value(finding.severity) > get_severity_value(existing.severity):
             existing.severity = finding.severity
@@ -641,7 +655,7 @@ class ResultAggregator:
     @staticmethod
     def _merge_generic_into_existing(existing: Finding, finding: Finding, source: str | None) -> None:
         """Merge a generic finding's fields into an existing aggregate."""
-        existing.scanners = list(set(existing.scanners + finding.scanners))
+        existing.scanners = sorted(set(existing.scanners + finding.scanners))
 
         if get_severity_value(finding.severity) > get_severity_value(existing.severity):
             existing.severity = finding.severity
@@ -652,7 +666,7 @@ class ResultAggregator:
         new_aliases.update(finding.aliases)
         if finding.id != existing.id:
             new_aliases.add(finding.id)
-        existing.aliases = list(new_aliases)
+        existing.aliases = sorted(new_aliases)
 
         if source and source not in existing.found_in:
             existing.found_in.append(source)
