@@ -29,6 +29,7 @@ class GitLabProjectDetails(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     namespace: GitLabNamespace | None = None
+    default_branch: str | None = None
 
 
 class GitLabMergeRequest(BaseModel):

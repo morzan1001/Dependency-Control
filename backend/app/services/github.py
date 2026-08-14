@@ -126,6 +126,14 @@ class GitHubService:
             return None
         return [b["name"] for b in branches]
 
+    async def get_default_branch(self, owner: str, repo: str) -> str | None:
+        """The repository's default branch. Returns None on API failure."""
+        response = await self._api_get(f"/repos/{owner}/{repo}")
+        if response and response.status_code == 200:
+            branch = response.json().get("default_branch")
+            return str(branch) if branch else None
+        return None
+
     async def _get_jwks_uri(self) -> str | None:
         """Resolve the JWKS URI: well-known endpoint for github.com, OIDC discovery for GHES."""
         cache_key = self._get_cache_key("jwks_uri")

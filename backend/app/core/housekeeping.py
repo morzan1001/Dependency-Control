@@ -668,6 +668,40 @@ async def _fetch_vcs_branches(project_data: dict, db: Any) -> list | None:
     return None
 
 
+async def _fetch_vcs_default_branch(project_data: dict, db: Any) -> str | None:
+    """The provider's default branch, so project views need not guess one from scan recency."""
+    from app.repositories.github_instances import GitHubInstanceRepository
+    from app.repositories.gitlab_instances import GitLabInstanceRepository
+    from app.services.github import GitHubService
+    from app.services.gitlab import GitLabService
+
+    gitlab_instance_id = project_data.get("gitlab_instance_id")
+    gitlab_project_id = project_data.get("gitlab_project_id")
+    if gitlab_instance_id and gitlab_project_id:
+        instance = await GitLabInstanceRepository(db).get_by_id(gitlab_instance_id)
+        if not instance or not instance.access_token:
+            return None
+        try:
+            numeric_project_id = int(gitlab_project_id)
+        except (TypeError, ValueError):
+            return None
+        details = await GitLabService(instance).get_project_details(numeric_project_id)
+        return details.default_branch if details else None
+
+    github_instance_id = project_data.get("github_instance_id")
+    github_repo_path = project_data.get("github_repository_path")
+    if github_instance_id and github_repo_path:
+        gh_instance = await GitHubInstanceRepository(db).get_by_id(github_instance_id)
+        if not gh_instance or not gh_instance.access_token:
+            return None
+        parts = github_repo_path.split("/", 1)
+        if len(parts) != 2:
+            return None
+        return await GitHubService(gh_instance).get_default_branch(parts[0], parts[1])
+
+    return None
+
+
 async def _resolve_latest_scan_after_branch_deletion(
     project_data: dict, deleted: list, db: Any, project_name: str
 ) -> dict:
@@ -719,6 +753,11 @@ async def sync_project_branches(project_data: dict, db: Any) -> None:
             "branches_checked_at": datetime.now(timezone.utc),
         }
 
+        if not project_data.get("default_branch"):
+            vcs_default = await _fetch_vcs_default_branch(project_data, db)
+            if vcs_default:
+                update_fields["default_branch"] = vcs_default
+
         if deleted:
             update_fields.update(
                 await _resolve_latest_scan_after_branch_deletion(project_data, deleted, db, project_name)
@@ -743,6 +782,7 @@ async def sync_branch_status() -> None:
             "_id": 1,
             "name": 1,
             "latest_scan_id": 1,
+            "default_branch": 1,
             "gitlab_instance_id": 1,
             "gitlab_project_id": 1,
             "github_instance_id": 1,
