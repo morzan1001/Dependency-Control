@@ -196,7 +196,7 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
                 <Target className="h-6 w-6 text-purple-600 dark:text-purple-400" />
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">Avg Risk Score</p>
+                <p className="text-sm text-muted-foreground">Avg Threat Score</p>
                 <p className="text-2xl font-bold">
                   {data.avg_risk_score !== null 
                     ? data.avg_risk_score.toFixed(1) 

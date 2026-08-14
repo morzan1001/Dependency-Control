@@ -39,3 +39,15 @@ describe("EPSSKEVResults exploit maturity bars", () => {
     expect(cls).not.toMatch(/(^|\s)bg-red-600(\s|$)/);
   });
 });
+
+describe("EPSSKEVResults risk-score tile label", () => {
+  it("does not reuse the dashboard's 'Avg Risk Score' wording", () => {
+    // Both tiles read from a field literally named avg_risk_score, but this one averages
+    // per-CVE EPSS/KEV threat scores (prod: ~31) while the dashboard averages projects'
+    // saturating exposure scores (prod: 42.8). Identical labels invite a false comparison.
+    render(<EPSSKEVResults data={{ ...baseData, avg_risk_score: 30.9, max_risk_score: 88.0 }} />);
+
+    expect(screen.getByText("Avg Threat Score")).toBeInTheDocument();
+    expect(screen.queryByText("Avg Risk Score")).toBeNull();
+  });
+});

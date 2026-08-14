@@ -108,11 +108,11 @@ export default function Dashboard() {
       onClick: () => navigate("/analytics?tab=vulnerabilities&severity=HIGH"),
     },
     {
-      title: "Avg Risk Score",
+      title: "Avg Project Risk Score",
       value: String(dashboardStats?.avg_risk_score ?? "0.0"),
       icon: ShieldCheck,
-      description: "Average risk per project",
-      tooltip: "Calculated as the average sum of CVSS scores per project. If CVSS is missing, weighted severity is used: Critical=10, High=7.5, Medium=4, Low=1.",
+      description: "Average across projects",
+      tooltip: "The mean of every project's 0-100 exposure score, which saturates a severity-weighted finding count (Critical=20, High=4, Medium=1, Low=0.25). Not comparable to the Avg Threat Score on a scan's threat-intelligence panel, which averages per-CVE EPSS/KEV threat scores.",
     }
   ]
 
