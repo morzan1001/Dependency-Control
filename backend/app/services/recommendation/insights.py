@@ -10,6 +10,7 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
+from app.services.aggregation.components import extract_artifact_name
 from app.services.recommendation.common import ModelOrDict, get_attr, parse_version_tuple, scorecard_details
 
 
@@ -40,13 +41,20 @@ def correlate_scorecard_with_vulnerabilities(
             else False,
         }
 
+    # Quality findings keep the inventory name while a vulnerability component is
+    # group-qualified; bridge the two, but never across packages sharing an artifact name.
+    by_artifact: dict[str, list[dict[str, Any]]] = {}
+    for name, entry in scorecard_by_component.items():
+        by_artifact.setdefault(extract_artifact_name(name), []).append(entry)
+    scorecard_by_artifact = {a: found[0] for a, found in by_artifact.items() if len(found) == 1}
+
     high_risk_vulns: list[dict[str, Any]] = []
 
     for vf in vulnerability_findings:
         component = get_attr(vf, "component", "")
         severity = str(get_attr(vf, "severity", "")).upper()
 
-        scorecard = scorecard_by_component.get(component)
+        scorecard = scorecard_by_component.get(component) or scorecard_by_artifact.get(extract_artifact_name(component))
         if not scorecard:
             continue
 

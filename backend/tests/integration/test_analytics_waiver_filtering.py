@@ -94,3 +94,39 @@ async def test_component_findings_skip_waived_findings(client, seeded):
     resp = await client.get("/api/v1/analytics/component-findings", params={"component": "waived-pkg"}, headers=seeded)
     assert resp.status_code == 200, resp.text
     assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_dependency_metadata_skips_waived_findings(client, seeded):
+    resp = await client.get("/api/v1/analytics/dependency-metadata", params={"component": "waived-pkg"}, headers=seeded)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["total_finding_count"] == 0
+    assert resp.json()["total_vulnerability_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_dependency_metadata_counts_a_requalified_finding(client, db, seeded):
+    """The dependency is inventoried bare; its vulnerability carries the Maven coordinate."""
+    await db.dependencies.insert_one(
+        {
+            "_id": "d2",
+            "scan_id": SCAN_ID,
+            "project_id": "p",
+            "name": "jackson-databind",
+            "version": "2.20.2",
+            "group": "com.fasterxml.jackson.core",
+            "purl": "pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.20.2",
+            "type": "library",
+            "direct": True,
+            "parent_components": [],
+        }
+    )
+    await db.findings.insert_one(
+        _vuln("qualified", "com.fasterxml.jackson.core:jackson-databind", "HIGH", waived=False)
+    )
+
+    resp = await client.get(
+        "/api/v1/analytics/dependency-metadata", params={"component": "jackson-databind"}, headers=seeded
+    )
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["total_vulnerability_count"] == 1

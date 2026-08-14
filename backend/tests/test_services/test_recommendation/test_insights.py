@@ -358,3 +358,26 @@ class TestAnalyzeCrossProjectPatternsMultipleRecommendations:
         types = {r.type for r in result}
         assert RecommendationType.SHARED_VULNERABILITY in types
         assert RecommendationType.CROSS_PROJECT_PATTERN in types
+
+
+def test_scorecard_correlation_bridges_a_requalified_vulnerability_component():
+    """Quality findings keep the inventory name; vulnerability components are group-qualified."""
+    recs = correlate_scorecard_with_vulnerabilities(
+        [_vuln_finding(component="com.fasterxml.jackson.core:jackson-databind")],
+        [_quality_finding(component="jackson-databind", overall_score=2.0, critical_issues=["Maintained"])],
+    )
+
+    assert len(recs) == 1
+    assert recs[0].affected_components[0].startswith("com.fasterxml.jackson.core:jackson-databind@")
+
+
+def test_scorecard_correlation_does_not_guess_an_ambiguous_artifact_name():
+    recs = correlate_scorecard_with_vulnerabilities(
+        [_vuln_finding(component="@angular/core")],
+        [
+            _quality_finding(component="@angular-devkit/core", overall_score=2.0, critical_issues=["Maintained"]),
+            _quality_finding(component="@messageformat/core", overall_score=2.0, critical_issues=["Maintained"]),
+        ],
+    )
+
+    assert recs == []

@@ -303,7 +303,11 @@ async def get_dependency_metadata_endpoint(
     dep_purl = get_attr(first_dep, "purl")
     enrichment_info = await _get_enrichment_info(enrichment_repo, dep_purl)
 
-    finding_query: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "component": component}
+    finding_query: dict[str, Any] = {
+        "scan_id": {"$in": scan_ids},
+        "waived": {"$ne": True},
+        **_component_name_query(component),
+    }
     if version:
         finding_query["version"] = version
 
