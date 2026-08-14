@@ -1,6 +1,8 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Scan } from '@/types/scan'
+import { isScanUsable } from '@/lib/scan-status'
+import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 import { useProjectBranches } from '@/hooks/queries/use-projects'
 import { useProjectScans } from '@/hooks/queries/use-scans'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -9,7 +11,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink, ArrowUp, ArrowDown, RefreshCw, Loader2, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink, ArrowUp, ArrowDown, RefreshCw, Trash2 } from 'lucide-react'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
@@ -79,7 +81,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
       let prevCompleted: Scan | undefined
       for (const scan of chronological) {
         if (prevCompleted) partners.set(scan.id, prevCompleted)
-        if (getEffectiveScanData(scan).status === 'completed') prevCompleted = scan
+        if (isScanUsable(getEffectiveScanData(scan).status)) prevCompleted = scan
       }
     }
     return partners
@@ -330,15 +332,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                     </div>
                   </TableCell>
                   <TableCell>
-                    {(() => {
-                        const { status } = getEffectiveScanData(scan);
-                        return (
-                            <Badge variant={status === 'completed' ? 'default' : 'secondary'} className="flex w-fit items-center gap-1">
-                            {['pending', 'processing'].includes(status) && <Loader2 className="h-3 w-3 animate-spin" />}
-                            {status}
-                            </Badge>
-                        );
-                    })()}
+                    <ScanStatusBadge status={getEffectiveScanData(scan).status} />
                   </TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     {prevScan && (

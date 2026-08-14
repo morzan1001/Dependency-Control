@@ -8,6 +8,7 @@ import {
 import { scanApi } from '@/api/scans'
 import { useProjectScans } from '@/hooks/queries/use-scans'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
+import { isScanUsable } from '@/lib/scan-status'
 import { Scan } from '@/types/scan'
 
 interface DeltaHeaderProps {
@@ -62,7 +63,7 @@ function ScanSide({ label, scanId, options, onSelect }: {
 
 export function DeltaHeader({ projectId, fromScanId, toScanId, onChange }: DeltaHeaderProps) {
   const { data: scans } = useProjectScans(projectId, { page: 1, limit: 50, excludeRescans: true })
-  const options = (scans || []).filter((s) => s.status === 'completed')
+  const options = (scans || []).filter((s) => isScanUsable(s.status))
 
   return (
     <Card>

@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useProjectScans, useScanResults } from '@/hooks/queries/use-scans'
 import { useProjectWaivers } from '@/hooks/queries/use-waivers'
 import { Scan, ThreatIntelligenceStats, ReachabilityStats, PrioritizedCounts, SecretPrioritizedCounts } from '@/types/scan'
+import { isScanUsable } from '@/lib/scan-status'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Activity, ShieldAlert, ShieldCheck, AlertTriangle, GitBranch } from 'lucide-react'
@@ -83,7 +84,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       const latestScansByBranch: Record<string, Scan> = {};
 
       filteredScans.forEach((scan: Scan) => {
-          if (scan.status !== 'completed') return;
+          if (!isScanUsable(scan.status)) return;
 
           const currentLatest = latestScansByBranch[scan.branch];
           if (!currentLatest || new Date(scan.created_at) > new Date(currentLatest.created_at)) {

@@ -17,6 +17,8 @@ import { CodeBlock } from '@/components/ui/code-block'
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts'
 import { toast } from "sonner"
 import { isPostProcessorResult } from '@/lib/post-processors'
+import { SCAN_STATUS_COMPLETED_WITH_ERRORS } from '@/lib/scan-status'
+import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 import { logger } from '@/lib/logger'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
 import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
@@ -265,11 +267,11 @@ export default function ScanDetails() {
                         <div className="flex flex-col space-y-1">
                             <span className="text-sm text-muted-foreground">Status</span>
                             <div>
-                                <Badge variant={scan.status === 'completed' ? 'default' : 'secondary'} className="flex w-fit items-center gap-1">
-                                    {['pending', 'processing'].includes(scan.status) && <Loader2 className="h-3 w-3 animate-spin" />}
-                                    {scan.status}
-                                </Badge>
+                                <ScanStatusBadge status={scan.status} />
                             </div>
+                            {scan.status === SCAN_STATUS_COMPLETED_WITH_ERRORS && scan.error && (
+                                <p className="text-xs text-amber-600">{scan.error}</p>
+                            )}
                         </div>
                         <div className="flex flex-col space-y-1">
                             <span className="text-sm text-muted-foreground">Branch</span>
