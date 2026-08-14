@@ -57,7 +57,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
         return result.modified_count
 
     async def reset_nested_vulnerability_waivers(self, scan_id: str) -> int:
-        """Clear per-entry waiver flags so a deleted waiver stops suppressing on the next recalc."""
+        """Clear per-entry waiver flags so a deleted or expired waiver stops suppressing."""
         result = await self.collection.update_many(
             {"scan_id": scan_id, "type": "vulnerability", "details.vulnerabilities.waived": True},
             {
@@ -67,6 +67,9 @@ class FindingRepository(BaseRepository[FindingRecord]):
                 }
             },
         )
+        # The rollup demotes severity to the highest live entry; without this the demotion
+        # outlives the waiver and the buckets under-report until the next rescan.
+        await self._rollup_vulnerability_waivers({"scan_id": scan_id, "type": "vulnerability"}, None)
         return result.modified_count
 
     async def _rollup_vulnerability_waivers(self, query: dict[str, Any], waiver_reason: str | None) -> None:
@@ -82,16 +85,17 @@ class FindingRepository(BaseRepository[FindingRecord]):
             entries = (doc.get("details") or {}).get("vulnerabilities") or []
             if not entries:
                 continue
-            live = [e for e in entries if not e.get("waived")]
+            live = [e for e in entries if not e.get("waived")] or entries
             changes: dict[str, Any] = {}
-            all_waived = not live
+            all_waived = all(e.get("waived") for e in entries)
             if bool(doc.get("waived")) != all_waived:
                 changes["waived"] = all_waived
                 changes["waiver_reason"] = waiver_reason if all_waived else None
-            if live:
-                severity = max((e.get("severity") for e in live), key=get_severity_value)
-                if severity and severity != doc.get("severity"):
-                    changes["severity"] = severity
+            # A fully waived document keeps the severity of its entries, so dropping the
+            # waiver restores it without a rescan.
+            severity = max((e.get("severity") for e in live), key=get_severity_value)
+            if severity and severity != doc.get("severity"):
+                changes["severity"] = severity
             if changes:
                 updates.append(UpdateOne({"_id": doc["_id"]}, {"$set": changes}))
         if updates:
