@@ -1,10 +1,18 @@
 """TruffleHog ``DetectorType`` ordinal -> enum name.
 
-Generated from trufflesecurity/trufflehog v3.96.0 ``proto/detector_type.proto``
-(the ``latest`` image the secret-scan pipeline template pulls). Ordinals are the
-stored identity of a secret finding — they are baked into ``finding_id`` and into
-every secret waiver's ``match.rule_key`` — so they are resolved to a name only for
+Ordinals are the stored identity of a secret finding — they are baked into ``finding_id``
+and into every secret waiver's ``match.rule_key`` — so they are resolved to a name only for
 display, never rewritten in place.
+
+GENERATED from trufflesecurity/trufflehog v3.96.0 ``proto/detector_type.proto``. The pipeline
+template pulls ``trufflesecurity/trufflehog:latest``, so detectors added upstream after that
+tag render as their raw ordinal until this table is regenerated (graceful, and covered by a
+test). Regenerate on any trufflehog bump::
+
+    curl -sSL https://raw.githubusercontent.com/trufflesecurity/trufflehog/<tag>/proto/detector_type.proto
+
+then rewrite DETECTOR_TYPE_NAMES from its ``NAME = <ordinal>;`` members, keeping the existing
+entries — an ordinal is never reused upstream, so regeneration only ever adds.
 """
 
 SECRET_DESCRIPTION_PREFIX = "Secret detected: "

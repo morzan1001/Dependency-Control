@@ -214,6 +214,10 @@ bash scanner.sh all
 
 Without `?v` the response is the latest pointer and may change on any backend deploy — fine for ad-hoc use, never pin a hash against it.
 
+### Upgrading TruffleHog
+
+The secret-scan template pulls `trufflesecurity/trufflehog:latest`, so new detectors can appear without any change here. TruffleHog reports the credential type as a numeric `DetectorType` ordinal, which the backend resolves to a name for display from a table generated out of TruffleHog's own `proto/detector_type.proto` (`backend/app/core/trufflehog.py`). Detectors introduced after the tag that table was generated from render as their raw ordinal until it is regenerated — the regeneration command is in that module's docstring. Ordinals are never reused upstream, so regenerating only adds entries and never changes an existing finding's identity.
+
 👉 **See [ci-cd/](ci-cd/) for complete pipeline examples.**
 
 ## 🤖 MCP Integration
