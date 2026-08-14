@@ -104,6 +104,29 @@ class _CliTimeoutAnalyzer:
         return {"error": "grype analysis failed", "details": "grype timed out after 300 seconds"}
 
 
+class _GrypeVulnAnalyzer:
+    """Grype's native result shape, so the run produces a vulnerability finding to enrich."""
+
+    async def analyze(self, sbom, settings=None, parsed_components=None):
+        return {
+            "matches": [
+                {
+                    "vulnerability": {
+                        "id": "CVE-2023-32681",
+                        "severity": "Medium",
+                        "description": "Proxy-Authorization header leak in requests",
+                        "fix": {"versions": ["2.31.0"], "state": "fixed"},
+                    },
+                    "artifact": {
+                        "name": "requests",
+                        "version": "2.30.0",
+                        "purl": "pkg:pypi/requests@2.30.0",
+                    },
+                }
+            ]
+        }
+
+
 class _PartialResultAnalyzer:
     """Mimics W15: reports success but flags skipped coverage."""
 
@@ -168,6 +191,41 @@ async def test_w12_error_shaped_external_result_marks_scan_completed_with_errors
 def test_enrichment_post_processor_failures_do_not_flip_the_status():
     summary = ["grype: Failed", "epss_kev: Failed", "reachability: Failed", "osv: Partial (7 components skipped)"]
     assert engine._failed_analyzer_names(summary) == ["grype", "osv"]
+    assert engine._enrichment_failure_names(summary) == ["epss_kev", "reachability"]
+
+
+@pytest.mark.asyncio
+async def test_enrichment_failure_is_recorded_on_the_scan(db, _gridfs_patched, monkeypatch):
+    """An EPSS/KEV outage writes no analysis_results document (create_raw sits inside the
+    try) and must not change the status, so the scan field is its only queryable trace."""
+
+    async def _enrichment_outage(*_args, **_kwargs):
+        raise RuntimeError("EPSS feed unreachable")
+
+    monkeypatch.setattr("app.services.analysis.engine.enrich_vulnerability_findings", _enrichment_outage)
+    monkeypatch.setitem(engine.analyzers, "grype", _GrypeVulnAnalyzer())
+    await _seed_project(db)
+    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
+
+    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["grype", "epss_kev"], db) is True
+
+    scan = await db.scans.find_one({"_id": scan_id})
+    assert scan["enrichment_failures"] == ["epss_kev"]
+    assert scan["status"] == "completed", "a post-processor outage loses metadata, not findings"
+    assert scan["failed_analyzers"] is None
+    assert await db.analysis_results.count_documents({"scan_id": scan_id, "analyzer_name": "epss_kev"}) == 0
+
+
+@pytest.mark.asyncio
+async def test_a_clean_scan_records_no_enrichment_failures(db, _gridfs_patched, monkeypatch):
+    monkeypatch.setitem(engine.analyzers, "grype", _GrypeVulnAnalyzer())
+    await _seed_project(db)
+    scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
+
+    assert await run_analysis(scan_id, [_gridfs_ref(_FILE_ID_A)], ["grype", "epss_kev"], db) is True
+
+    scan = await db.scans.find_one({"_id": scan_id})
+    assert scan["enrichment_failures"] is None
 
 
 @pytest.mark.asyncio

@@ -274,6 +274,21 @@ def _failed_analyzer_names(results_summary: list[str]) -> list[str]:
     return sorted(names)
 
 
+def _enrichment_failure_names(results_summary: list[str]) -> list[str]:
+    """Post-processor enrichments that failed or ran partially.
+
+    Recorded on the scan without touching its status (see ``_failed_analyzer_names``): an
+    org-wide EPSS/KEV or reachability outage otherwise leaves no trace outside pod logs,
+    because their result documents are only written on the success path.
+    """
+    names = set()
+    for entry in results_summary:
+        name, sep, rest = entry.partition(": ")
+        if sep and rest.startswith(("Failed", "Partial")) and name in _POST_PROCESSOR_ANALYZERS:
+            names.add(name)
+    return sorted(names)
+
+
 async def _resolve_sbom(item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: ResultAggregator) -> dict[str, Any] | None:
     """Resolve a single SBOM item from inline dict or GridFS reference."""
     if isinstance(item, dict) and item.get("type") == "gridfs_reference":
@@ -945,6 +960,7 @@ async def _finalize_scan_and_project(
     external_load_start: datetime | None = None,
     findings_summary: list[dict[str, Any]] | None = None,
     failed_analyzers: list[str] | None = None,
+    enrichment_failures: list[str] | None = None,
     authoritative: bool = True,
 ) -> bool:
     """Persist the final scan status, ignored count, and (on success) project stats.
@@ -961,6 +977,7 @@ async def _finalize_scan_and_project(
         "latest_run": latest_run_summary,
         "findings_summary": findings_summary or [],
         "failed_analyzers": failed_analyzers or None,
+        "enrichment_failures": enrichment_failures or None,
     }
     if error:
         set_fields["error"] = error
@@ -1297,6 +1314,7 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         external_load_start=external_load_start,
         findings_summary=_build_findings_summary(vulnerability_findings),
         failed_analyzers=failed_analyzers,
+        enrichment_failures=_enrichment_failure_names(results_summary),
         authoritative=bool(sboms_to_process),
     )
     if not finalized:
