@@ -54,7 +54,7 @@ class FindingRepository(BaseRepository[FindingRecord]):
             ],
         )
         await self._rollup_vulnerability_waivers(query, waiver_reason)
-        return result.modified_count
+        return result.matched_count
 
     async def reset_nested_vulnerability_waivers(self, scan_id: str) -> int:
         """Clear per-entry waiver flags so a deleted or expired waiver stops suppressing."""
@@ -115,7 +115,9 @@ class FindingRepository(BaseRepository[FindingRecord]):
             update_data["waiver_reason"] = waiver_reason
 
         result = await self.collection.update_many(full_query, {"$set": update_data})
-        return result.modified_count
+        # Coverage, not writes: a finding already waived by an overlapping waiver reports no
+        # modification, and counting that as 0 badges a working waiver as matching nothing.
+        return result.matched_count
 
     async def find_by_scan(
         self,

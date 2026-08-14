@@ -125,3 +125,32 @@ class TestLegacyWaiverRecordsItsOutcome:
 
         assert stored["last_match_count"] == 1
         assert stored["last_eval_scan_id"] == SCAN_ID
+
+
+class TestOverlappingWaiversBothReportTheirCoverage:
+    """A no-op $set does not count as modified in real Mongo.
+
+    Two waivers covering the same finding with the same reason would otherwise leave the
+    second at last_match_count 0, which the UI badges as "Matches nothing".
+    """
+
+    def test_second_overlapping_waiver_is_not_reported_as_matching_nothing(self, db):
+        first = Waiver(
+            reason="approved",
+            created_by="u",
+            finding_type="license",
+            finding_id="LIC-GPL-2.0-only",
+            package_name="spring-core",
+        )
+        second = Waiver(
+            reason="approved",
+            created_by="u",
+            finding_type="license",
+            package_name="spring-core",
+            package_version="6.1.0",
+        )
+
+        stored = _apply(db, [first, second])
+
+        assert stored[first.id]["last_match_count"] == 1
+        assert stored[second.id]["last_match_count"] == 1

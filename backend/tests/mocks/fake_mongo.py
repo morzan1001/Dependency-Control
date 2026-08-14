@@ -652,8 +652,9 @@ class FakeCollection:
         matched = _matched_key(self._docs, query)
         modified = 0
         if matched is not None:
+            before = _copy.deepcopy(self._docs[matched])
             self._apply_update(self._docs[matched], update)
-            modified = 1
+            modified = int(self._docs[matched] != before)
         elif upsert:
             doc: dict = {}
             for k, v in query.items():
@@ -671,8 +672,12 @@ class FakeCollection:
 
     async def update_many(self, query, update, array_filters=None, upsert: bool = False):
         matched = [k for k, doc in self._docs.items() if _match_doc(doc, query)]
+        modified = 0
         for k in matched:
+            before = _copy.deepcopy(self._docs[k])
             self._apply_update(self._docs[k], update, array_filters=array_filters)
+            # Real Mongo does not count a $set that changes nothing.
+            modified += self._docs[k] != before
         if not matched and upsert:
             doc = {k: v for k, v in query.items() if not isinstance(v, dict) and not k.startswith("$")}
             self._apply_update(doc, update, skip_set_on_insert=True)
@@ -680,7 +685,7 @@ class FakeCollection:
             doc["_id"] = key
             self._docs[key] = doc
         result = MagicMock()
-        result.modified_count = len(matched)
+        result.modified_count = modified
         result.matched_count = len(matched)
         return result
 
