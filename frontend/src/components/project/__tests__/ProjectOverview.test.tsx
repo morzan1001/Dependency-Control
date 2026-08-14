@@ -58,11 +58,11 @@ function makeScan(overrides: Partial<Scan>, stats: Record<string, unknown>): Sca
   } as unknown as Scan
 }
 
-function renderOverview(scans: Scan[]) {
+function renderOverview(scans: Scan[], selectedBranches: string[] = ['main']) {
   mockUseProjectScans.mockReturnValue({ data: scans, isLoading: false })
   mockUseScanResults.mockReturnValue({ data: [] })
   mockUseProjectWaivers.mockReturnValue({ data: undefined })
-  return render(<ProjectOverview projectId="p1" selectedBranches={['main']} />)
+  return render(<ProjectOverview projectId="p1" selectedBranches={selectedBranches} />)
 }
 
 describe('ProjectOverview - ThreatIntelligenceDashboard gating', () => {
@@ -125,5 +125,29 @@ describe('ProjectOverview - ThreatIntelligenceDashboard gating', () => {
     )
     renderOverview([scan])
     expect(screen.queryByTestId('threat-intel-dashboard')).not.toBeInTheDocument()
+  })
+})
+
+describe('ProjectOverview - multi-branch headline counts (W8)', () => {
+  const branchScans = [
+    makeScan({ id: 's-main', branch: 'main' }, { critical: 6, high: 11, risk_score: 40 }),
+    makeScan({ id: 's-a', branch: 'feature-a' }, { critical: 5, high: 7, risk_score: 12 }),
+    makeScan({ id: 's-b', branch: 'feature-b' }, { critical: 4, high: 6, risk_score: 12 }),
+  ]
+
+  it('shows the worst branch, not the sum, when several branches are selected', () => {
+    renderOverview(branchScans, ['main', 'feature-a', 'feature-b'])
+
+    expect(screen.getByText('6')).toBeInTheDocument()
+    expect(screen.getByText('11')).toBeInTheDocument()
+    // Summing across branches counts every shared CVE once per branch: 15 critical / 24 high.
+    expect(screen.queryByText('15')).not.toBeInTheDocument()
+    expect(screen.queryByText('24')).not.toBeInTheDocument()
+  })
+
+  it('names the branch the headline numbers come from', () => {
+    renderOverview(branchScans, ['main', 'feature-a', 'feature-b'])
+
+    expect(screen.getAllByText(/Branch main —/).length).toBeGreaterThan(0)
   })
 })

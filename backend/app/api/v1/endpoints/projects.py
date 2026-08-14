@@ -71,6 +71,7 @@ from app.schemas.project import (
     ScanFindingsResponse,
 )
 from app.services.aggregation.components import component_match_expr
+from app.services.branches import resolve_default_branch
 from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.findings_export import FINDINGS_COLUMNS, iter_findings_rows
 from app.services.inventory.scan_resolution import latest_completed_scans_by_branch
@@ -644,11 +645,18 @@ async def read_project_branches(
     async for doc in db.scans.aggregate(pipeline):
         last_scans[doc["_id"]] = doc["last_scan_at"]
 
+    default_branch = resolve_default_branch(
+        project.default_branch if project else None,
+        [b for b in branches if b not in deleted_set],
+        last_scans,
+    )
+
     result = [
         BranchInfo(
             name=b,
             is_active=b not in deleted_set,
             last_scan_at=last_scans.get(b),
+            is_default=b == default_branch,
         )
         for b in sorted(branches)
     ]

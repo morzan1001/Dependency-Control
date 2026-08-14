@@ -2,8 +2,9 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProjectScans, useScanResults } from '@/hooks/queries/use-scans'
 import { useProjectWaivers } from '@/hooks/queries/use-waivers'
-import { Scan, ThreatIntelligenceStats, ReachabilityStats, PrioritizedCounts, SecretPrioritizedCounts } from '@/types/scan'
+import { Scan } from '@/types/scan'
 import { isScanUsable } from '@/lib/scan-status'
+import { highestRiskBranch } from '@/lib/branches'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Activity, ShieldAlert, ShieldCheck, AlertTriangle, GitBranch } from 'lucide-react'
@@ -16,50 +17,6 @@ import { isPostProcessorResult } from '@/lib/post-processors'
 import { MAX_SCANS_FOR_CHARTS } from '@/lib/constants'
 import { formatDate } from '@/lib/utils'
 import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
-
-function accumulateThreatIntel(acc: ThreatIntelligenceStats, ti: ThreatIntelligenceStats) {
-  acc.kev_count += ti.kev_count || 0
-  acc.kev_ransomware_count += ti.kev_ransomware_count || 0
-  acc.high_epss_count += ti.high_epss_count || 0
-  acc.medium_epss_count += ti.medium_epss_count || 0
-  acc.weaponized_count += ti.weaponized_count || 0
-  acc.active_exploitation_count += ti.active_exploitation_count || 0
-  if (ti.max_epss_score != null) {
-    acc.max_epss_score = Math.max(acc.max_epss_score ?? 0, ti.max_epss_score)
-  }
-}
-
-function accumulateReachability(acc: ReachabilityStats, r: ReachabilityStats) {
-  acc.analyzed_count += r.analyzed_count || 0
-  acc.reachable_count += r.reachable_count || 0
-  acc.likely_reachable_count += r.likely_reachable_count || 0
-  acc.unreachable_count += r.unreachable_count || 0
-  acc.unknown_count += r.unknown_count || 0
-  acc.reachable_critical += r.reachable_critical || 0
-  acc.reachable_high += r.reachable_high || 0
-}
-
-function accumulatePrioritized(acc: PrioritizedCounts, p: PrioritizedCounts) {
-  acc.total += p.total || 0
-  acc.critical += p.critical || 0
-  acc.high += p.high || 0
-  acc.medium += p.medium || 0
-  acc.low += p.low || 0
-  acc.actionable_critical += p.actionable_critical || 0
-  acc.actionable_high += p.actionable_high || 0
-  acc.actionable_total += p.actionable_total || 0
-  acc.deprioritized_count += p.deprioritized_count || 0
-}
-
-function accumulateSecretPriority(acc: SecretPrioritizedCounts, s: SecretPrioritizedCounts) {
-  acc.total += s.total || 0
-  acc.verified_count += s.verified_count || 0
-  acc.in_current_tree_count += s.in_current_tree_count || 0
-  acc.historical_only_count += s.historical_only_count || 0
-  acc.unknown_tree_count += s.unknown_tree_count || 0
-  acc.actionable_count += s.actionable_count || 0
-  acc.deprioritized_count += s.deprioritized_count || 0
-}
 
 interface ProjectOverviewProps {
   projectId: string
@@ -102,108 +59,19 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           unknown: scan.stats?.unknown || 0
       }));
 
-      const allBranchScans = Object.values(latestScansByBranch);
-
-      const aggregatedStats: {
-          critical: number; high: number; medium: number; low: number; info: number; unknown: number;
-          risk_score: number; adjusted_risk_score: number;
-          threat_intel: ThreatIntelligenceStats | null; reachability: ReachabilityStats | null; prioritized: PrioritizedCounts | null;
-          secret_priority: SecretPrioritizedCounts | null;
-      } = {
-          critical: 0, high: 0, medium: 0, low: 0, info: 0, unknown: 0,
-          risk_score: 0, adjusted_risk_score: 0,
-          threat_intel: null, reachability: null, prioritized: null, secret_priority: null
-      };
-
-      let maxRisk = 0;
-      let maxAdjustedRisk = 0;
-      const threatIntelAcc: ThreatIntelligenceStats = {
-          kev_count: 0, kev_ransomware_count: 0,
-          high_epss_count: 0, medium_epss_count: 0,
-          avg_epss_score: null, max_epss_score: null,
-          weaponized_count: 0, active_exploitation_count: 0,
-      };
-      const reachabilityAcc: ReachabilityStats = {
-          analyzed_count: 0, reachable_count: 0, likely_reachable_count: 0,
-          unreachable_count: 0, unknown_count: 0,
-          reachable_critical: 0, reachable_high: 0,
-      };
-      const prioritizedAcc: PrioritizedCounts = {
-          total: 0, critical: 0, high: 0, medium: 0, low: 0,
-          actionable_critical: 0, actionable_high: 0,
-          actionable_total: 0, deprioritized_count: 0,
-      };
-      const secretPriorityAcc: SecretPrioritizedCounts = {
-          total: 0, verified_count: 0, in_current_tree_count: 0,
-          historical_only_count: 0, unknown_tree_count: 0,
-          actionable_count: 0, deprioritized_count: 0,
-      };
-      let hasThreatIntel = false;
-      let hasReachability = false;
-      let hasPrioritized = false;
-      let hasSecretPriority = false;
-      let epssScoreSum = 0;
-      let epssScoreCount = 0;
-
-      for (const scan of allBranchScans) {
-          const s = scan.stats;
-          if (!s) continue;
-
-          aggregatedStats.critical += s.critical || 0;
-          aggregatedStats.high += s.high || 0;
-          aggregatedStats.medium += s.medium || 0;
-          aggregatedStats.low += s.low || 0;
-          aggregatedStats.info += s.info || 0;
-          aggregatedStats.unknown += s.unknown || 0;
-          maxRisk = Math.max(maxRisk, s.risk_score || 0);
-          maxAdjustedRisk = Math.max(maxAdjustedRisk, s.adjusted_risk_score || 0);
-
-          if (s.threat_intel) {
-              hasThreatIntel = true;
-              accumulateThreatIntel(threatIntelAcc, s.threat_intel);
-              if (s.threat_intel.avg_epss_score != null) {
-                  epssScoreSum += s.threat_intel.avg_epss_score;
-                  epssScoreCount++;
-              }
-          }
-
-          if (s.reachability) {
-              hasReachability = true;
-              accumulateReachability(reachabilityAcc, s.reachability);
-          }
-
-          if (s.prioritized) {
-              hasPrioritized = true;
-              accumulatePrioritized(prioritizedAcc, s.prioritized);
-          }
-
-          if (s.secret_priority) {
-              hasSecretPriority = true;
-              accumulateSecretPriority(secretPriorityAcc, s.secret_priority);
-          }
-      }
-
-      aggregatedStats.risk_score = maxRisk;
-      aggregatedStats.adjusted_risk_score = maxAdjustedRisk;
-      if (hasThreatIntel) {
-          threatIntelAcc.avg_epss_score = epssScoreCount > 0 ? epssScoreSum / epssScoreCount : null;
-          aggregatedStats.threat_intel = threatIntelAcc;
-      }
-      if (hasReachability) aggregatedStats.reachability = reachabilityAcc;
-      if (hasPrioritized) aggregatedStats.prioritized = prioritizedAcc;
-      if (hasSecretPriority) aggregatedStats.secret_priority = secretPriorityAcc;
-
-      return { stats: aggregatedStats, branchStats: branchStatsData, latestScansByBranch, branchCount: allBranchScans.length };
+      return { branchStats: branchStatsData, latestScansByBranch };
   }, [filteredScans]);
 
-  const latestScansByBranch = projectStats?.latestScansByBranch || {};
+  const latestScansByBranch = useMemo(() => projectStats?.latestScansByBranch || {}, [projectStats]);
   const branchNames = Object.keys(latestScansByBranch);
-  const [enrichmentBranch, setEnrichmentBranch] = useState<string | null>(null);
-  const activeBranch = enrichmentBranch && branchNames.includes(enrichmentBranch)
-    ? enrichmentBranch
-    : branchNames[0] || null;
-  const enrichmentScanId = activeBranch ? latestScansByBranch[activeBranch]?.id : '';
-  const { data: scanResults } = useScanResults(enrichmentScanId || '');
+  const [pickedBranch, setPickedBranch] = useState<string | null>(null);
+  // Every headline number below comes from this one scan. Summing across branches would
+  // count the same CVE once per branch; the per-branch breakdown covers the rest.
+  const activeBranch = pickedBranch && branchNames.includes(pickedBranch)
+    ? pickedBranch
+    : highestRiskBranch(latestScansByBranch);
+  const activeScan = activeBranch ? latestScansByBranch[activeBranch] : undefined;
+  const { data: scanResults } = useScanResults(activeScan?.id || '');
 
   if (isLoading) {
     return (
@@ -216,10 +84,10 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
     )
   }
 
-  const stats = projectStats?.stats || { critical: 0, high: 0, medium: 0, low: 0, risk_score: 0 }
+  const stats = activeScan?.stats || {}
   const branchStats = projectStats?.branchStats || []
 
-  const threatIntel = 'threat_intel' in stats ? stats.threat_intel : null
+  const threatIntel = stats.threat_intel
   const hasThreatIntelData = threatIntel && (
     (threatIntel.kev_count ?? 0) > 0 ||
     (threatIntel.high_epss_count ?? 0) > 0 ||
@@ -227,7 +95,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
     (threatIntel.weaponized_count ?? 0) > 0 ||
     (threatIntel.active_exploitation_count ?? 0) > 0
   )
-  const reachability = 'reachability' in stats ? stats.reachability : null
+  const reachability = stats.reachability
   const hasReachabilityData = reachability && (
     (reachability.analyzed_count ?? 0) > 0 ||
     (reachability.reachable_count ?? 0) > 0 ||
@@ -270,6 +138,23 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
 
   return (
     <div className="space-y-6">
+      {branchNames.length > 1 && activeBranch && (
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <p className="text-sm text-muted-foreground">
+            Findings exist on every branch, so the blocks below show one branch at a time.
+          </p>
+          <Tabs value={activeBranch} onValueChange={setPickedBranch}>
+            <TabsList>
+              {branchNames.map(branch => (
+                <TabsTrigger key={branch} value={branch} className="gap-1.5">
+                  <GitBranch className="h-3 w-3" />
+                  {branch}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </Tabs>
+        </div>
+      )}
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -286,8 +171,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
         <Card
           className="cursor-pointer transition-colors hover:bg-muted/50"
           onClick={() => {
-            const scan = activeBranch ? latestScansByBranch[activeBranch] : Object.values(latestScansByBranch)[0]
-            if (scan) navigate(`/projects/${projectId}/scans/${scan.id}?severity=CRITICAL`)
+            if (activeScan) navigate(`/projects/${projectId}/scans/${activeScan.id}?severity=CRITICAL`)
           }}
         >
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -295,17 +179,16 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
             <ShieldAlert className="h-4 w-4 text-destructive" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-destructive">{stats.critical}</div>
+            <div className="text-2xl font-bold text-destructive">{stats.critical ?? 0}</div>
             <p className="text-xs text-muted-foreground">
-              Click to view findings
+              {activeBranch ? `Branch ${activeBranch} — click to view findings` : 'Click to view findings'}
             </p>
           </CardContent>
         </Card>
         <Card
           className="cursor-pointer transition-colors hover:bg-muted/50"
           onClick={() => {
-            const scan = activeBranch ? latestScansByBranch[activeBranch] : Object.values(latestScansByBranch)[0]
-            if (scan) navigate(`/projects/${projectId}/scans/${scan.id}?severity=HIGH`)
+            if (activeScan) navigate(`/projects/${projectId}/scans/${activeScan.id}?severity=HIGH`)
           }}
         >
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -313,9 +196,9 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
             <AlertTriangle className="h-4 w-4 text-orange-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-orange-500">{stats.high}</div>
+            <div className="text-2xl font-bold text-orange-500">{stats.high ?? 0}</div>
             <p className="text-xs text-muted-foreground">
-              Click to view findings
+              {activeBranch ? `Branch ${activeBranch} — click to view findings` : 'Click to view findings'}
             </p>
           </CardContent>
         </Card>
@@ -330,13 +213,9 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
         </Card>
       </div>
 
-      {hasEnhancedStats && (
-        <ThreatIntelligenceDashboard stats={stats} branchCount={projectStats?.branchCount} />
-      )}
+      {hasEnhancedStats && <ThreatIntelligenceDashboard stats={stats} />}
 
-      {projectStats?.stats.secret_priority && (
-          <SecretPriorityCard counts={projectStats.stats.secret_priority} />
-      )}
+      {stats.secret_priority && <SecretPriorityCard counts={stats.secret_priority} />}
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-7">
         <Card className="col-span-4">
@@ -461,21 +340,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
 
       {activeBranch && scanResults?.some(r => isPostProcessorResult(r.analyzer_name)) && (
         <div className="space-y-4">
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <h3 className="text-xl font-semibold">Enrichment & Intelligence</h3>
-            {branchNames.length > 1 && (
-              <Tabs value={activeBranch} onValueChange={setEnrichmentBranch}>
-                <TabsList>
-                  {branchNames.map(branch => (
-                    <TabsTrigger key={branch} value={branch} className="gap-1.5">
-                      <GitBranch className="h-3 w-3" />
-                      {branch}
-                    </TabsTrigger>
-                  ))}
-                </TabsList>
-              </Tabs>
-            )}
-          </div>
+          <h3 className="text-xl font-semibold">Enrichment & Intelligence</h3>
           <div className="space-y-6">
             {scanResults
               .filter(r => isPostProcessorResult(r.analyzer_name))

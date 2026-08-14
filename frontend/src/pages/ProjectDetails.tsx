@@ -14,6 +14,7 @@ import { ProjectMembers } from '@/components/project/ProjectMembers'
 import { ProjectSettings } from '@/components/project/ProjectSettings'
 import { ProjectArchives } from '@/components/project/ProjectArchives'
 import { ProjectInventory } from '@/components/project/inventory/ProjectInventory'
+import { initialBranchSelection } from '@/lib/branches'
 
 
 import { useState, useMemo } from 'react'
@@ -48,16 +49,11 @@ export default function ProjectDetails() {
   const activeBranchNames = useMemo(() => branches?.filter(b => b.is_active).map(b => b.name) || [], [branches])
   const deletedBranchNames = useMemo(() => branches?.filter(b => !b.is_active).map(b => b.name) || [], [branches])
 
-  // Initialize selected branches once, after both queries settle — else a branches-before-project
-  // race would select all active branches. The flag (not length===0) preserves an intentionally
-  // empty selection and short-circuits next render, so this render-phase set doesn't loop.
-  if (branchesSuccess && !isLoadingProject && !hasInitializedBranches) {
+  // Initialize once; the flag (not length===0) preserves an intentionally empty selection and
+  // short-circuits next render, so this render-phase set doesn't loop.
+  if (branchesSuccess && !hasInitializedBranches) {
     setHasInitializedBranches(true)
-    if (project?.default_branch && activeBranchNames.includes(project.default_branch)) {
-      setSelectedBranches([project.default_branch])
-    } else {
-      setSelectedBranches(activeBranchNames)
-    }
+    setSelectedBranches(initialBranchSelection(branches ?? []))
   }
 
   const toggleBranch = (branch: string) => {

@@ -43,6 +43,7 @@ class BranchInfo(BaseModel):
     name: str
     is_active: bool
     last_scan_at: datetime | None = None
+    is_default: bool = False
 
 
 class ProjectWithTeam(Project):
