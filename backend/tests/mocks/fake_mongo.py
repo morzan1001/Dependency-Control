@@ -153,6 +153,11 @@ def _match_doc(doc: dict, query: dict) -> bool:
             if not all(_match_doc(doc, sub) for sub in condition):
                 return False
             continue
+        if key == "$expr":
+            # Unsupported before: an unrecognised operator fell through as "matches".
+            if not _eval_bool(doc, condition):
+                return False
+            continue
 
         value = _resolve_dotted(doc, key)
         # Dotted path landed on a list (e.g. members.user_id): any element matching
@@ -274,6 +279,20 @@ def _eval_expr(doc: dict, expr):
         return val if val is not None else _eval_expr(doc, fallback)
     if "$toDouble" in expr:
         return _to_number(_eval_expr(doc, expr["$toDouble"]))
+    if "$split" in expr:
+        value, sep = (_eval_expr(doc, e) for e in expr["$split"])
+        return str(value).split(str(sep)) if value is not None else None
+    if "$arrayElemAt" in expr:
+        array, idx = (_eval_expr(doc, e) for e in expr["$arrayElemAt"])
+        if not isinstance(array, list):
+            return None
+        try:
+            return array[int(idx)]
+        except IndexError:
+            return None
+    if "$indexOfCP" in expr:
+        haystack, needle = (_eval_expr(doc, e) for e in expr["$indexOfCP"])
+        return str(haystack).find(str(needle)) if haystack is not None else -1
     if "$size" in expr:
         val = _eval_expr(doc, expr["$size"])
         return len(val) if isinstance(val, list) else 0
@@ -357,6 +376,9 @@ def _eval_bool(doc: dict, expr) -> bool:
 
 def _run_project(docs: list, project_spec: dict) -> list:
     """Apply a $project stage, evaluating each field expression per document."""
+    # An exclusion-only projection keeps every other field, unlike an inclusion one.
+    if project_spec and all(spec in (0, False) for spec in project_spec.values()):
+        return [{k: v for k, v in doc.items() if k not in project_spec} for doc in docs]
     out = []
     for doc in docs:
         projected: dict = {}
@@ -478,7 +500,28 @@ def _run_group(docs: list, group_spec: dict) -> list:
     return result
 
 
-def _run_pipeline(docs: list, pipeline: list) -> list:
+def _run_lookup(docs: list, spec: dict, database: Any) -> list:
+    """$lookup, both the localField/foreignField and the let/pipeline forms."""
+    if database is None:
+        return docs
+    foreign_docs = list(database[spec["from"]]._docs.values())
+    as_field = spec["as"]
+    for doc in docs:
+        if "pipeline" in spec:
+            # let-vars are visible to the sub-pipeline as "$$name" -> stored under "$name".
+            bound = {f"${var}": _eval_expr(doc, expr) for var, expr in (spec.get("let") or {}).items()}
+            candidates = [{**bound, **fd} for fd in _copy.deepcopy(foreign_docs)]
+            matched = _run_pipeline(candidates, spec["pipeline"], database)
+            doc[as_field] = [{k: v for k, v in m.items() if not k.startswith("$")} for m in matched]
+        else:
+            local = _resolve_dotted(doc, spec["localField"])
+            doc[as_field] = [
+                _copy.deepcopy(fd) for fd in foreign_docs if _resolve_dotted(fd, spec["foreignField"]) == local
+            ]
+    return docs
+
+
+def _run_pipeline(docs: list, pipeline: list, database: Any = None) -> list:
     results = list(docs)
     for stage in pipeline:
         if "$match" in stage:
@@ -496,6 +539,8 @@ def _run_pipeline(docs: list, pipeline: list) -> list:
             results = _run_project(results, stage["$project"])
         elif "$limit" in stage:
             results = results[: stage["$limit"]]
+        elif "$skip" in stage:
+            results = results[stage["$skip"] :]
         elif "$unwind" in stage:
             field_expr = stage["$unwind"]
             field = field_expr.lstrip("$") if isinstance(field_expr, str) else field_expr
@@ -517,7 +562,21 @@ def _run_pipeline(docs: list, pipeline: list) -> list:
                 elif values is not None:
                     unwound.append(d)
             results = unwound
-        # $addFields, $facet, $lookup intentionally skipped.
+        elif "$addFields" in stage or "$set" in stage:
+            spec = stage.get("$addFields") or stage["$set"]
+            for d in results:
+                for field, expr in spec.items():
+                    value = _eval_expr(d, expr)
+                    if value is not _REMOVE:
+                        FakeCollection._set_dotted(d, field, value)
+        elif "$lookup" in stage:
+            results = _run_lookup(results, stage["$lookup"], database)
+        elif "$facet" in stage:
+            results = [
+                {name: _run_pipeline(_copy.deepcopy(results), sub, database) for name, sub in stage["$facet"].items()}
+            ]
+        elif "$count" in stage:
+            results = [{stage["$count"]: len(results)}] if results else []
     return results
 
 
@@ -615,8 +674,10 @@ def _matched_key(docs: dict, query: dict) -> Any:
 class FakeCollection:
     """In-process collection covering the Motor API surface that the app uses."""
 
-    def __init__(self):
+    def __init__(self, db: Any = None):
         self._docs: dict = {}
+        # $lookup needs to reach sibling collections.
+        self._db = db
 
     # -- writes -----------------------------------------------------------
 
@@ -880,7 +941,7 @@ class FakeCollection:
 
     def aggregate(self, pipeline: list, **_kwargs) -> _AsyncIter:
         # ``allowDiskUse`` (and any other server-side option) is a no-op in-process.
-        return _AsyncIter(_run_pipeline(list(self._docs.values()), pipeline))
+        return _AsyncIter(_run_pipeline(_copy.deepcopy(list(self._docs.values())), pipeline, self._db))
 
 
 # ---------------------------------------------------------------------------
@@ -907,12 +968,12 @@ class FakeDatabase:
             "teams",
             "users",
         ):
-            object.__setattr__(self, name, FakeCollection())
+            object.__setattr__(self, name, FakeCollection(self))
 
     def __getattr__(self, name: str) -> FakeCollection:
         # Auto-vivify collections so repositories that touch unexpected ones
         # don't AttributeError before the test even runs.
-        col = FakeCollection()
+        col = FakeCollection(self)
         object.__setattr__(self, name, col)
         return col
 
