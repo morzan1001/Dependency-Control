@@ -148,6 +148,7 @@ async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: list[Waiver])
                 vulnerability_id=waiver.vulnerability_id,
                 waived=True,
                 waiver_reason=waiver.reason,
+                scope=_build_waiver_query(waiver),
             )
             continue
 
@@ -377,11 +378,12 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
     try:
         logger.info(f"Recalculating stats for project {project_id} (scan {scan_id}) with lock {lock_name}")
 
-        # 1. Reset waivers AND lapsed flags for this scan
+        # 1. Reset waivers AND lapsed flags for this scan, nested vulnerability entries included
         await finding_repo.update_many(
             {"scan_id": scan_id},
             {"waived": False, "waiver_reason": None, "waiver_lapsed": False, "lapsed_waiver_id": None},
         )
+        await finding_repo.reset_nested_vulnerability_waivers(scan_id)
 
         # 2. Fetch active waivers, apply vulnerability-id ones, then signature-match the rest
         waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
@@ -392,6 +394,7 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
                     vulnerability_id=waiver.vulnerability_id,
                     waived=True,
                     waiver_reason=waiver.reason,
+                    scope=_build_waiver_query(waiver),
                 )
         non_vuln = [w for w in waivers if not w.vulnerability_id]
         legacy = [w for w in non_vuln if not _is_signature_waiver(w)]

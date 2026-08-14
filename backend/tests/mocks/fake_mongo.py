@@ -107,6 +107,41 @@ def _match_range_ops(value, ops_dict: dict) -> bool:
     return True
 
 
+def _array_filter_identifier(condition: dict) -> str | None:
+    """Identifier an array filter binds, e.g. ``{"vuln.id": x}`` -> ``vuln``."""
+    for key, value in condition.items():
+        if key.startswith("$") and isinstance(value, list):
+            for sub in value:
+                if isinstance(sub, dict) and (found := _array_filter_identifier(sub)):
+                    return found
+        elif "." in key:
+            return key.split(".", 1)[0]
+    return None
+
+
+def _strip_identifier(condition: dict, identifier: str) -> dict:
+    prefix = f"{identifier}."
+    stripped: dict = {}
+    for key, value in condition.items():
+        if key.startswith("$") and isinstance(value, list):
+            stripped[key] = [_strip_identifier(sub, identifier) for sub in value]
+        elif key.startswith(prefix):
+            stripped[key[len(prefix) :]] = value
+        else:
+            stripped[key] = value
+    return stripped
+
+
+def _array_filter_predicates(array_filters: list | None) -> dict:
+    """{identifier: predicate} for ``$[identifier]`` update paths."""
+    predicates: dict = {}
+    for condition in array_filters or []:
+        identifier = _array_filter_identifier(condition)
+        if identifier:
+            predicates[identifier] = _strip_identifier(condition, identifier)
+    return predicates
+
+
 def _match_doc(doc: dict, query: dict) -> bool:
     """Return True if doc matches a MongoDB query."""
     for key, condition in query.items():
@@ -609,7 +644,7 @@ class FakeCollection:
     async def update_many(self, query, update, array_filters=None, upsert: bool = False):
         matched = [k for k, doc in self._docs.items() if _match_doc(doc, query)]
         for k in matched:
-            self._apply_update(self._docs[k], update)
+            self._apply_update(self._docs[k], update, array_filters=array_filters)
         if not matched and upsert:
             doc = {k: v for k, v in query.items() if not isinstance(v, dict) and not k.startswith("$")}
             self._apply_update(doc, update, skip_set_on_insert=True)
@@ -643,11 +678,14 @@ class FakeCollection:
         return self._docs[matched] if return_document else before
 
     @staticmethod
-    def _apply_update(target: dict, update: dict, skip_set_on_insert: bool = False) -> None:
+    def _apply_update(
+        target: dict, update: dict, skip_set_on_insert: bool = False, array_filters: list | None = None
+    ) -> None:
+        filters = _array_filter_predicates(array_filters)
         for op, payload in update.items():
             if op == "$set":
                 for k, v in payload.items():
-                    FakeCollection._set_dotted(target, k, v)
+                    FakeCollection._set_dotted(target, k, v, filters)
             elif op == "$setOnInsert" and not skip_set_on_insert:
                 # only applied when called outside upsert insert path
                 for k, v in payload.items():
@@ -676,9 +714,33 @@ class FakeCollection:
         return node, parts[-1]
 
     @staticmethod
-    def _set_dotted(target: dict, dotted_key: str, value) -> None:
-        parent, leaf = FakeCollection._resolve_parent(target, dotted_key)
-        parent[leaf] = value
+    def _set_dotted(target: dict, dotted_key: str, value, filters: dict | None = None) -> None:
+        if "$[" not in dotted_key:
+            parent, leaf = FakeCollection._resolve_parent(target, dotted_key)
+            parent[leaf] = value
+            return
+        FakeCollection._set_through_arrays(target, dotted_key.split("."), value, filters or {})
+
+    @staticmethod
+    def _set_through_arrays(node, parts: list[str], value, filters: dict) -> None:
+        """Apply a positional array update path (``a.$[ident].b`` / ``a.$[].b``)."""
+        part = parts[0]
+        if part.startswith("$["):
+            if not isinstance(node, list):
+                return
+            predicate = filters.get(part[2:-1])
+            for item in node:
+                if predicate is None or _match_doc(item, predicate):
+                    FakeCollection._set_through_arrays(item, parts[1:], value, filters)
+            return
+        if len(parts) == 1:
+            node[part] = value
+            return
+        child = node.get(part)
+        if child is None:
+            child = {}
+            node[part] = child
+        FakeCollection._set_through_arrays(child, parts[1:], value, filters)
 
     async def delete_one(self, query):
         await asyncio.sleep(0)

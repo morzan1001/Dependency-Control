@@ -4,6 +4,7 @@ from typing import Any
 
 from pymongo import UpdateOne
 
+from app.core.constants import get_severity_value
 from app.models.finding_record import FindingRecord
 from app.repositories.base import BaseRepository
 from app.services.aggregation.components import add_artifact_name_aliases
@@ -19,22 +20,28 @@ class FindingRepository(BaseRepository[FindingRecord]):
         vulnerability_id: str,
         waived: bool,
         waiver_reason: str | None = None,
+        scope: dict[str, Any] | None = None,
     ) -> int:
-        """Waive the nested entry known under vulnerability_id, its aliases, or its resolved CVE."""
+        """Waive the nested entry known under vulnerability_id, its aliases, or its resolved CVE.
+
+        ``scope`` narrows the documents (component/version/finding_id) the waiver applies to.
+        """
         update_data: dict[str, Any] = {"details.vulnerabilities.$[vuln].waived": waived}
         if waiver_reason:
             update_data["details.vulnerabilities.$[vuln].waiver_reason"] = waiver_reason
 
+        query: dict[str, Any] = {
+            "scan_id": scan_id,
+            **{k: v for k, v in (scope or {}).items() if k != "type"},
+            "type": "vulnerability",
+            "$or": [
+                {"details.vulnerabilities.id": vulnerability_id},
+                {"details.vulnerabilities.aliases": vulnerability_id},
+                {"details.vulnerabilities.resolved_cve": vulnerability_id},
+            ],
+        }
         result = await self.collection.update_many(
-            {
-                "scan_id": scan_id,
-                "type": "vulnerability",
-                "$or": [
-                    {"details.vulnerabilities.id": vulnerability_id},
-                    {"details.vulnerabilities.aliases": vulnerability_id},
-                    {"details.vulnerabilities.resolved_cve": vulnerability_id},
-                ],
-            },
+            query,
             {"$set": update_data},
             array_filters=[
                 {
@@ -46,7 +53,49 @@ class FindingRepository(BaseRepository[FindingRecord]):
                 }
             ],
         )
+        await self._rollup_vulnerability_waivers(query, waiver_reason)
         return result.modified_count
+
+    async def reset_nested_vulnerability_waivers(self, scan_id: str) -> int:
+        """Clear per-entry waiver flags so a deleted waiver stops suppressing on the next recalc."""
+        result = await self.collection.update_many(
+            {"scan_id": scan_id, "type": "vulnerability", "details.vulnerabilities.waived": True},
+            {
+                "$set": {
+                    "details.vulnerabilities.$[].waived": False,
+                    "details.vulnerabilities.$[].waiver_reason": None,
+                }
+            },
+        )
+        return result.modified_count
+
+    async def _rollup_vulnerability_waivers(self, query: dict[str, Any], waiver_reason: str | None) -> None:
+        """Sync the document-level waived flag and severity with the nested entries.
+
+        Every waiver consumer (severity buckets, ignored_count) reads the document level, so a
+        document counts as waived only once all its entries are, and its severity must reflect
+        what is still live.
+        """
+        cursor = self.collection.find(query, {"_id": 1, "severity": 1, "waived": 1, "details.vulnerabilities": 1})
+        updates: list[UpdateOne] = []
+        for doc in await cursor.to_list(None):
+            entries = (doc.get("details") or {}).get("vulnerabilities") or []
+            if not entries:
+                continue
+            live = [e for e in entries if not e.get("waived")]
+            changes: dict[str, Any] = {}
+            all_waived = not live
+            if bool(doc.get("waived")) != all_waived:
+                changes["waived"] = all_waived
+                changes["waiver_reason"] = waiver_reason if all_waived else None
+            if live:
+                severity = max((e.get("severity") for e in live), key=get_severity_value)
+                if severity and severity != doc.get("severity"):
+                    changes["severity"] = severity
+            if changes:
+                updates.append(UpdateOne({"_id": doc["_id"]}, {"$set": changes}))
+        if updates:
+            await self.collection.bulk_write(updates)
 
     async def apply_finding_waiver(
         self,
