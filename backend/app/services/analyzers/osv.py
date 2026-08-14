@@ -72,17 +72,26 @@ class OSVAnalyzer(Analyzer):
         if not uncached_components:
             return {"osv_vulnerabilities": results}
 
-        await self._fetch_uncached(uncached_components, results)
-        return {"osv_vulnerabilities": results}
+        skipped = await self._fetch_uncached(uncached_components, results)
+        result: dict[str, Any] = {"osv_vulnerabilities": results}
+        if skipped:
+            # Surfaced by the engine as a partial scan; never silently report full coverage.
+            result["partial_components_skipped"] = skipped
+        return result
 
     async def _fetch_uncached(
         self,
         uncached_components: list[dict[str, Any]],
         results: list[dict[str, Any]],
-    ) -> None:
-        """Drive the chunked batch loop, populating ``results`` in-place."""
+    ) -> int:
+        """Drive the chunked batch loop, populating ``results`` in-place.
+
+        Returns the number of components that were never scanned (dropped
+        batches, persistent rate limiting, truncated responses).
+        """
         timeout = ANALYZER_TIMEOUTS.get("osv", ANALYZER_TIMEOUTS["default"])
         batch_size = ANALYZER_BATCH_SIZES.get("osv", 500)
+        total_skipped = 0
 
         async with InstrumentedAsyncClient("OSV API", timeout=timeout) as client:
             for chunk_start in range(0, len(uncached_components), batch_size):
@@ -91,8 +100,11 @@ class OSVAnalyzer(Analyzer):
                 if not payload["queries"]:
                     continue
                 for attempt in range(1 + self.max_retries):
-                    rate_limited = await self._post_and_handle(client, payload, valid_components, results, chunk_start)
+                    rate_limited, skipped = await self._post_and_handle(
+                        client, payload, valid_components, results, chunk_start
+                    )
                     if not rate_limited:
+                        total_skipped += skipped
                         break
                     if attempt < self.max_retries:
                         delay = self.retry_base_delay * (2**attempt)
@@ -106,8 +118,10 @@ class OSVAnalyzer(Analyzer):
                             f"OSV API rate limit persisted after {1 + self.max_retries} attempts; "
                             f"dropping batch starting at {chunk_start} ({len(valid_components)} components)"
                         )
+                        total_skipped += len(valid_components)
                 if chunk_start + batch_size < len(uncached_components):
                     await asyncio.sleep(0.2)
+        return total_skipped
 
     async def _post_and_handle(
         self,
@@ -116,46 +130,51 @@ class OSVAnalyzer(Analyzer):
         valid_components: list[dict[str, Any]],
         results: list[dict[str, Any]],
         chunk_start: int,
-    ) -> bool:
+    ) -> tuple[bool, int]:
         """POST one batch and dispatch on response status.
 
-        Returns ``True`` if the request was rate-limited (HTTP 429) and the
-        caller should retry the same chunk; ``False`` otherwise.
+        Returns ``(rate_limited, skipped)``: ``rate_limited`` asks the caller to
+        retry the same chunk, ``skipped`` counts components this batch lost.
         """
         try:
             response = await client.post(self.api_url, json=payload)
         except httpx.TimeoutException:
             logger.warning(f"OSV API timeout for batch starting at {chunk_start}")
-            return False
+            return False, len(valid_components)
         except httpx.ConnectError:
             logger.warning("OSV API connection error")
-            return False
+            return False, len(valid_components)
         except Exception as e:
             logger.warning(f"OSV Analysis Exception: {type(e).__name__}: {e}")
-            return False
+            return False, len(valid_components)
 
         if response.status_code == 200:
-            await self._handle_success(response, valid_components, results)
-        elif response.status_code == 429:
+            skipped = await self._handle_success(response, valid_components, results)
+            return False, skipped
+        if response.status_code == 429:
             external_api_rate_limit_hits_total.labels(service="OSV API").inc()
-            return True
-        else:
-            logger.warning(f"OSV Batch API error: {response.status_code}")
-        return False
+            return True, 0
+        logger.warning(f"OSV Batch API error: {response.status_code}")
+        return False, len(valid_components)
 
     async def _handle_success(
         self,
         response: Any,
         valid_components: list[dict[str, Any]],
         results: list[dict[str, Any]],
-    ) -> None:
-        """Parse a 200 response: align entries with components, cache, append."""
+    ) -> int:
+        """Parse a 200 response: align entries with components, cache, append.
+
+        Returns the number of components whose result was missing from the response.
+        """
         data = response.json()
         batch_results = data.get("results", [])
+        skipped = 0
         if len(batch_results) != len(valid_components):
             logger.warning(
                 f"OSV API response count mismatch: sent {len(valid_components)}, received {len(batch_results)}"
             )
+            skipped = max(0, len(valid_components) - len(batch_results))
             batch_results = batch_results[: len(valid_components)]
 
         cache_mapping: dict[str, dict[str, Any]] = {}
@@ -167,6 +186,7 @@ class OSVAnalyzer(Analyzer):
 
         if cache_mapping:
             await cache_service.mset(cache_mapping, CacheTTL.OSV_VULNERABILITY)
+        return skipped
 
     def _build_cache_entry(self, component: dict[str, Any], vulns: list[dict[str, Any]]) -> dict[str, Any]:
         """Build the per-component dict that gets written to cache and to results."""
