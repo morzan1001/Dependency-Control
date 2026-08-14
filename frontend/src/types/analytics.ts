@@ -214,8 +214,6 @@ export interface VulnerabilitySearchResult {
   kev_due_date?: string;
   component: string;
   version: string;
-  component_type?: string;
-  purl?: string;
   project_id: string;
   project_name: string;
   scan_id?: string;

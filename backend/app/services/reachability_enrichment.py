@@ -95,16 +95,12 @@ def _callgraphs_cover_finding_ecosystem(
     Gates the x0.4 ``unreachable`` down-weight: absence from a wrong-language or
     unsupported callgraph (or when the ecosystem is unknown) is not evidence of
     unreachability and must be treated as unknown, not a definitive verdict. The
-    ecosystem comes from the scan's dependency inventory (``component_languages``);
-    a purl on the finding itself is only a rare fallback.
+    ecosystem comes from the scan's dependency inventory (``component_languages``).
     """
     component = finding.get("component", "")
     langs: frozenset = frozenset()
     if component_languages:
         langs = lookup_component(component_languages, component) or frozenset()
-    if not langs:
-        purl = (finding.get("details") or {}).get("purl")
-        langs = _ecosystem_languages(None, purl)
     if not langs:
         return False
     return any(lang in langs for lang in callgraph_languages)

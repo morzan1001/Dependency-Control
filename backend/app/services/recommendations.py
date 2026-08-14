@@ -164,7 +164,6 @@ class RecommendationEngine:
             findings_by_type[finding_type].append(f)
 
         # Build lookup maps for dependencies
-        dep_by_purl = {get_attr(d, "purl"): d for d in dependencies_list if get_attr(d, "purl")}
         dep_by_name_version = {f"{get_attr(d, 'name')}@{get_attr(d, 'version')}": d for d in dependencies_list}
 
         # 1. Process VULNERABILITIES
@@ -172,7 +171,6 @@ class RecommendationEngine:
             recommendations,
             lambda: vulnerabilities.process_vulnerabilities(
                 findings_by_type.get("vulnerability", []),
-                dep_by_purl,
                 dep_by_name_version,
                 dependencies_list,
                 source_target,
