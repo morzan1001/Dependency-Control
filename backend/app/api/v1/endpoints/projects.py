@@ -639,16 +639,27 @@ async def read_project_branches(
 
     pipeline: list[dict[str, Any]] = [
         {"$match": {"project_id": project_id}},
-        {MONGO_GROUP: {"_id": "$branch", "last_scan_at": {"$max": "$created_at"}}},
+        {
+            MONGO_GROUP: {
+                "_id": "$branch",
+                "last_scan_at": {"$max": "$created_at"},
+                # Ranked on separately: a branch whose newest scans all failed renders nothing.
+                "last_usable_at": {
+                    "$max": {"$cond": [{"$in": ["$status", list(SCAN_USABLE_STATUSES)]}, "$created_at", None]}
+                },
+            }
+        },
     ]
-    last_scans = {}
+    last_scans: dict[str, Any] = {}
+    last_usable: dict[str, Any] = {}
     async for doc in db.scans.aggregate(pipeline):
         last_scans[doc["_id"]] = doc["last_scan_at"]
+        last_usable[doc["_id"]] = doc.get("last_usable_at")
 
     default_branch = resolve_default_branch(
         project.default_branch if project else None,
         [b for b in branches if b not in deleted_set],
-        last_scans,
+        last_usable,
     )
 
     result = [

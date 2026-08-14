@@ -11,13 +11,13 @@ _NOW = datetime(2026, 8, 14, 12, 0, tzinfo=timezone.utc)
 _PROJECT_ID = "test-project-id"
 
 
-async def _seed_branch(db, branch: str, *, age_hours: int) -> None:
+async def _seed_branch(db, branch: str, *, age_hours: int, status: str = "completed", suffix: str = "") -> None:
     await db.scans.insert_one(
         {
-            "_id": f"scan-{branch}",
+            "_id": f"scan-{branch}{suffix}",
             "project_id": _PROJECT_ID,
             "branch": branch,
-            "status": "completed",
+            "status": status,
             "created_at": _NOW - timedelta(hours=age_hours),
         }
     )
@@ -66,6 +66,20 @@ async def test_deleted_default_branch_falls_back_to_an_active_one(client, db, me
     branches = await _get_branches(client, member_auth_headers)
 
     assert [b["name"] for b in branches if b["is_default"]] == ["feature-a"]
+
+
+@pytest.mark.asyncio
+async def test_a_branch_whose_scans_all_failed_never_becomes_the_default(client, db, member_auth_headers):
+    """Ranking on raw activity would open the project on a branch that renders nothing."""
+    await _seed_branch(db, "main", age_hours=50)
+    await _seed_branch(db, "broken", age_hours=1, status="failed")
+    await _seed_branch(db, "broken", age_hours=2, status="processing", suffix="-b")
+
+    branches = await _get_branches(client, member_auth_headers)
+
+    assert [b["name"] for b in branches if b["is_default"]] == ["main"]
+    # last_scan_at keeps meaning "last activity", so the failed run is still visible.
+    assert next(b for b in branches if b["name"] == "broken")["last_scan_at"] is not None
 
 
 def test_resolve_default_branch_is_deterministic_without_scan_dates():

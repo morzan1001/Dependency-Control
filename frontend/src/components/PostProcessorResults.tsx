@@ -294,8 +294,9 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
           </CardHeader>
           <CardContent className="pt-4">
             <div className="space-y-2">
-              {data.kev_details.map((kev) => (
-                <div key={`${kev.component}-${kev.cve}`} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
+              {/* Two versions of one component can share a KEV CVE, so the index disambiguates. */}
+              {data.kev_details.map((kev, index) => (
+                <div key={`${kev.component}-${kev.cve}-${index}`} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
                   <div className="flex items-center gap-3">
                     {kev.ransomware ? (
                       <Skull className="h-5 w-5 text-red-600" />
