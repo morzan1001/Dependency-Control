@@ -3,7 +3,7 @@
 import logging
 from typing import Any
 
-from fastapi import BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import Depends, HTTPException, Request, status
 from motor.motor_asyncio import AsyncIOMotorDatabase
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -93,6 +93,8 @@ class CBOMIngest(BaseIngest):
 class CBOMIngestResponse(BaseModel):
     scan_id: str
     status: str
+    assets_received: int
+    assets_stored: int
 
 
 @router.post(
@@ -105,17 +107,25 @@ class CBOMIngestResponse(BaseModel):
 )
 async def ingest_cbom(
     payload: CBOMIngest,
-    background_tasks: BackgroundTasks,
     db: DatabaseDep,
     project: Project = Depends(ProjectIngestDep),
 ) -> CBOMIngestResponse:
-    """Upload a CBOM for a project; parsed synchronously, assets persisted in a background task."""
+    """Upload a CBOM for a project; parsed and persisted synchronously so nothing is lost after the response."""
     parsed = parse_cbom(payload.cbom)
 
     if parsed.parsed_components == 0:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="No cryptographic-asset components found in CBOM payload",
+        )
+
+    if len(parsed.assets) > MAX_CRYPTO_ASSETS_PER_SCAN:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
+            detail=(
+                f"CBOM contains {len(parsed.assets)} crypto assets, exceeding the limit of "
+                f"{MAX_CRYPTO_ASSETS_PER_SCAN}. Split the upload."
+            ),
         )
 
     # Route through ScanManager so the scan lifecycle matches other ingest paths.
@@ -128,15 +138,23 @@ async def ingest_cbom(
 
     await ScanRepository(db).update_raw(scan_id, {"$set": {"scan_type": "cbom"}})
 
-    background_tasks.add_task(
-        _persist_crypto_assets,
-        db,
-        project,
-        scan_id,
-        parsed,
-    )
+    try:
+        stored = await _persist_crypto_assets(db, project, scan_id, parsed)
+    except Exception as exc:
+        logger.exception("cbom_ingest failed for scan %s: %s", scan_id, exc)
+        cbom_ingests_total.labels(status="error").inc()
+        await ScanRepository(db).update_raw(scan_id, {"$set": {"status": "failed"}})
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to persist crypto assets. Please retry the upload.",
+        )
 
-    return CBOMIngestResponse(scan_id=scan_id, status="accepted")
+    return CBOMIngestResponse(
+        scan_id=scan_id,
+        status="accepted",
+        assets_received=len(parsed.assets),
+        assets_stored=stored,
+    )
 
 
 async def _persist_crypto_assets(
@@ -144,71 +162,48 @@ async def _persist_crypto_assets(
     project: Project,
     scan_id: str,
     parsed: ParsedCBOM,
-) -> None:
+) -> int:
     """Bulk-upsert CryptoAsset records then register the scan result via ScanManager."""
     manager = ScanManager(db, project)
     project_id = str(project.id)
-    try:
-        assets = parsed.assets
-        partial = False
-        if len(assets) > MAX_CRYPTO_ASSETS_PER_SCAN:
-            assets = assets[:MAX_CRYPTO_ASSETS_PER_SCAN]
-            partial = True
-            logger.warning(
-                "cbom_ingest: truncated to %d assets for scan %s",
-                MAX_CRYPTO_ASSETS_PER_SCAN,
-                scan_id,
-            )
 
-        crypto_assets = [
-            CryptoAsset(
-                project_id=project_id,
-                scan_id=scan_id,
-                **a.model_dump(),
-            )
-            for a in assets
-        ]
-
-        await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
-
-        logger.info(
-            "cbom_ingest: persisted %d assets for scan %s%s; registering result",
-            len(crypto_assets),
-            scan_id,
-            " (partial)" if partial else "",
-        )
-
-        # Fire ingest webhook (best-effort).
-        summary = await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
-        await webhook_service.safe_trigger_webhooks(
-            db,
-            WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
-            {
-                "scan_id": scan_id,
-                "project_id": project_id,
-                "total": summary["total"],
-                "by_type": summary["by_type"],
-            },
-            project_id,
-            context="cbom_ingest",
-        )
-
-        await safe_notify_project_event(
-            db,
+    crypto_assets = [
+        CryptoAsset(
             project_id=project_id,
-            event_type="crypto_asset_ingested",
-            subject=f"Crypto assets ingested: {summary['total']} entries",
-            message=f"{summary['total']} crypto asset(s) ingested for scan {scan_id}.",
-            context="cbom_ingest",
+            scan_id=scan_id,
+            **a.model_dump(),
         )
+        for a in parsed.assets
+    ]
 
-        await manager.register_result(scan_id, "cbom", trigger_analysis=True)
-        cbom_ingests_total.labels(status="success").inc()
+    await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
 
-    except Exception as exc:
-        logger.exception("cbom_ingest background task failed for scan %s: %s", scan_id, exc)
-        cbom_ingests_total.labels(status="error").inc()
-        from app.repositories.scans import ScanRepository
+    logger.info("cbom_ingest: persisted %d assets for scan %s; registering result", len(crypto_assets), scan_id)
 
-        scan_repo = ScanRepository(db)
-        await scan_repo.update_raw(scan_id, {"$set": {"status": "failed"}})
+    # Fire ingest webhook (best-effort).
+    summary = await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
+    await webhook_service.safe_trigger_webhooks(
+        db,
+        WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
+        {
+            "scan_id": scan_id,
+            "project_id": project_id,
+            "total": summary["total"],
+            "by_type": summary["by_type"],
+        },
+        project_id,
+        context="cbom_ingest",
+    )
+
+    await safe_notify_project_event(
+        db,
+        project_id=project_id,
+        event_type="crypto_asset_ingested",
+        subject=f"Crypto assets ingested: {summary['total']} entries",
+        message=f"{summary['total']} crypto asset(s) ingested for scan {scan_id}.",
+        context="cbom_ingest",
+    )
+
+    await manager.register_result(scan_id, "cbom", trigger_analysis=True)
+    cbom_ingests_total.labels(status="success").inc()
+    return len(crypto_assets)
