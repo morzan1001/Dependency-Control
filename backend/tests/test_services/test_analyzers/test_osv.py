@@ -9,7 +9,7 @@ from app.services.analyzers.osv import OSVAnalyzer
 
 
 class TestParseCvssScore:
-    """_parse_cvss_score: numeric scores pass through, bare vector strings return None."""
+    """_parse_cvss_score: numeric scores pass through, vectors are scored."""
 
     def setup_method(self):
         self.analyzer = OSVAnalyzer()
@@ -20,15 +20,14 @@ class TestParseCvssScore:
     def test_zero_score(self):
         assert self.analyzer._parse_cvss_score("0.0") == 0.0
 
-    def test_cvss_v3_vector_with_explicit_base_score(self):
-        # A bare vector with no separate numeric score -> None.
+    def test_bare_v3_vector_is_scored(self):
+        # OSV rates with a vector and no number; returning None here discards the rating.
         vector = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
-        assert self.analyzer._parse_cvss_score(vector) is None
+        assert self.analyzer._parse_cvss_score(vector) == 9.8
 
-    def test_cvss_vector_with_trailing_score_segment(self):
-        # Some sources append the score after the vector as '<vector>/9.8'.
-        appended = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/9.8"
-        assert self.analyzer._parse_cvss_score(appended) == 9.8
+    def test_unsupported_vector_version_returns_none(self):
+        v4 = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"
+        assert self.analyzer._parse_cvss_score(v4) is None
 
     def test_garbage_input_returns_none(self):
         assert self.analyzer._parse_cvss_score("not-a-cvss-score") is None

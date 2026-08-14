@@ -37,7 +37,8 @@ _RECORDS = {
         "id": "GHSA-flask",
         "modified": "2026-02-02T00:00:00Z",
         "summary": "Flask cookie parsing flaw",
-        "severity": [{"type": "CVSS_V3", "score": "9.8"}],
+        # Real OSV shape: a vector string, never a number.
+        "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"}],
         "references": [],
         "affected": [],
     },
@@ -210,3 +211,143 @@ async def test_hydrated_severity_survives_into_the_finding(_cache_spy, monkeypat
     severities = {f.component: f.severity for f in agg.get_findings()}
     assert severities["lodash"] == "LOW"
     assert severities["flask"] == "CRITICAL"
+
+
+# Real RHSA records: a vector string and nothing else. Production census over 242 records
+# fetched for real purls: 217 of 217 severity entries are vectors, 232 of them RHSA.
+_VECTOR_ONLY_RECORDS = {
+    "RHSA-low": {
+        "id": "RHSA-low",
+        "summary": "libtasn1 flaw",
+        "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:L/AC:H/PR:H/UI:R/S:U/C:L/I:N/A:N"}],
+    },
+    "RHSA-critical": {
+        "id": "RHSA-critical",
+        "summary": "glibc flaw",
+        "severity": [{"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:C/C:H/I:H/A:H"}],
+    },
+}
+
+
+@pytest.mark.parametrize(
+    "record_id,expected",
+    [("RHSA-low", "LOW"), ("RHSA-critical", "CRITICAL")],
+)
+def test_vector_only_records_reach_the_policy_ends(record_id, expected):
+    """RHSA and vendor advisories carry only vectors; discarding them lands findings on UNKNOWN."""
+    assert OSVAnalyzer()._extract_severity(_VECTOR_ONLY_RECORDS[record_id]) == expected
+
+
+@pytest.mark.asyncio
+async def test_malformed_record_body_costs_one_id_not_the_analyzer(_cache_spy, monkeypatch):
+    """A proxy error page answering 200 must not abort hydration for the whole scan."""
+
+    async def _bad_json(vuln_id: str):
+        resp = MagicMock()
+        resp.status_code = 200
+        resp.json.side_effect = ValueError("Expecting value: line 1 column 1 (char 0)")
+        return resp if vuln_id == "GHSA-flask" else _record_response(vuln_id)
+
+    _install(monkeypatch, _client_stub(_bad_json))
+
+    result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    assert result["partial_vulnerabilities_unhydrated"] == 1
+    assert _entries(result)["lodash"]["severity"] == "LOW"
+
+
+@pytest.mark.asyncio
+async def test_malformed_batch_body_reports_skipped_components(_cache_spy, monkeypatch):
+    client = _client_stub()
+    bad = MagicMock()
+    bad.status_code = 200
+    bad.json.side_effect = ValueError("not json")
+    client.post = AsyncMock(return_value=bad)
+    _install(monkeypatch, client)
+
+    result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    assert result["partial_components_skipped"] == 2
+    assert result["osv_vulnerabilities"] == []
+
+
+@pytest.mark.asyncio
+async def test_404_leaves_the_record_unresolved(_cache_spy, monkeypatch):
+    async def _missing(vuln_id: str):
+        resp = MagicMock()
+        resp.status_code = 404
+        return resp if vuln_id == "GHSA-flask" else _record_response(vuln_id)
+
+    _install(monkeypatch, _client_stub(_missing))
+
+    result = await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    assert result["partial_vulnerabilities_unhydrated"] == 1
+    assert _entries(result)["flask"]["severity"] == "UNKNOWN"
+
+
+@pytest.mark.asyncio
+async def test_persistent_429_gives_up_within_the_bounded_retries(_cache_spy, monkeypatch):
+    attempts: list[str] = []
+
+    async def _throttled(vuln_id: str):
+        attempts.append(vuln_id)
+        resp = MagicMock()
+        resp.status_code = 429
+        return resp
+
+    monkeypatch.setattr("app.services.analyzers.osv.asyncio.sleep", AsyncMock())
+    analyzer = OSVAnalyzer()
+    _install(monkeypatch, _client_stub(_throttled))
+
+    result = await analyzer.analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    assert result["partial_vulnerabilities_unhydrated"] == 2
+    assert len(attempts) == 2 * (1 + analyzer.max_retries)
+    assert {e["severity"] for e in _entries(result).values()} == {"UNKNOWN"}
+
+
+@pytest.mark.asyncio
+async def test_a_failure_run_trips_the_circuit_breaker(_cache_spy, monkeypatch):
+    """A dead OSV must not be hammered once per id for the whole scan."""
+    many = [{"name": f"p{i}", "version": "1", "purl": f"pkg:npm/p{i}@1"} for i in range(40)]
+    calls: list[str] = []
+
+    async def _dead(vuln_id: str):
+        calls.append(vuln_id)
+        resp = MagicMock()
+        resp.status_code = 500
+        return resp
+
+    client = _client_stub(_dead)
+    client.post = AsyncMock(
+        return_value=MagicMock(
+            status_code=200,
+            json=MagicMock(
+                return_value={"results": [{"vulns": [{"id": f"V-{i}", "modified": "m"}]} for i in range(40)]}
+            ),
+        )
+    )
+    _install(monkeypatch, client)
+
+    result = await OSVAnalyzer().analyze(_SBOM, parsed_components=many)
+
+    assert len(calls) < 40, "the breaker must stop the run before every id has been tried"
+    assert result["partial_vulnerabilities_unhydrated"] == 40
+
+
+@pytest.mark.asyncio
+async def test_entries_holding_unresolved_stubs_are_not_cached(_cache_spy, monkeypatch):
+    """Caching them would serve UNKNOWN for six hours with no partial flag on the next scan."""
+
+    async def _one_missing(vuln_id: str):
+        resp = MagicMock()
+        resp.status_code = 404
+        return resp if vuln_id == "GHSA-flask" else _record_response(vuln_id)
+
+    _install(monkeypatch, _client_stub(_one_missing))
+
+    await OSVAnalyzer().analyze(_SBOM, parsed_components=_COMPONENTS)
+
+    component_keys = [k for k in _cache_spy if k.startswith("osv2:")]
+    assert len(component_keys) == 1, "only the fully hydrated component may be cached"
