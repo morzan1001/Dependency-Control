@@ -71,6 +71,18 @@ def _finding_detail_number(finding: dict[str, Any], field: str) -> float:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else -1.0
 
 
+# How a dependency's directness was established. Reported alongside `direct`, which two
+# tools used to collapse differently: one counted an inferred-direct package as transitive,
+# the other as direct.
+_DIRECT_CONFIDENCE_RANK = {"declared": 0, "inferred": 1, "transitive": 2}
+
+
+def _direct_confidence(dep: dict[str, Any]) -> str:
+    if not dep.get("direct"):
+        return "transitive"
+    return "inferred" if dep.get("direct_inferred") else "declared"
+
+
 def _rank_findings(findings: list[dict[str, Any]]) -> None:
     """Sort findings in place by severity rank desc, then details.epss_score and details.cvss_score desc."""
     findings.sort(
@@ -666,7 +678,7 @@ class ChatToolRegistry:
                         target = cand
 
                 dep_meta = lookup_component(dep_index, key) or {}
-                is_direct = bool(dep_meta.get("direct")) and not dep_meta.get("direct_inferred")
+                confidence = _direct_confidence(dep_meta)
                 current = g["current_version"] or dep_meta.get("version")
 
                 resolved = []
@@ -701,7 +713,8 @@ class ChatToolRegistry:
                         "ecosystem": dep_meta.get("type"),
                         "current_version": current,
                         "target_version": target,
-                        "is_direct": is_direct,
+                        "is_direct": confidence != "transitive",
+                        "direct_confidence": confidence,
                         "resolves_findings": resolved[:10],
                         "resolves_count": len(resolved),
                         "critical_count": critical_count,
@@ -718,7 +731,8 @@ class ChatToolRegistry:
             def sort_key(s: dict[str, Any]) -> tuple:
                 return (
                     0 if s["has_fix"] else 1,
-                    0 if s["is_direct"] else 1,
+                    # A graph-declared direct dependency still outranks an inferred one.
+                    _DIRECT_CONFIDENCE_RANK[s["direct_confidence"]],
                     risk_order.get(s["breaking_change_risk"], 3),
                     -s["critical_count"],
                     -s["resolves_count"],
@@ -919,7 +933,15 @@ class ChatToolRegistry:
                 dep_query["version"] = args["version"]
             cursor = db["dependencies"].find(
                 dep_query,
-                {"name": 1, "version": 1, "project_id": 1, "direct": 1, "purl": 1, "license": 1},
+                {
+                    "name": 1,
+                    "version": 1,
+                    "project_id": 1,
+                    "direct": 1,
+                    "direct_inferred": 1,
+                    "purl": 1,
+                    "license": 1,
+                },
                 limit=100,
             )
             rows = await cursor.to_list(length=100)
@@ -933,6 +955,7 @@ class ChatToolRegistry:
                         "component": r.get("name"),
                         "version": r.get("version"),
                         "direct_dependency": bool(r.get("direct")),
+                        "direct_confidence": _direct_confidence(r),
                         "purl": r.get("purl"),
                         "license": r.get("license"),
                     }
