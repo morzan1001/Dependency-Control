@@ -59,10 +59,10 @@ async def dedupe(db: Any, min_retry_count: int, batch_size: int, sleep_ms: int, 
     scan_filter: dict[str, Any] = {"findings_count": {"$gt": 0}}
     if min_retry_count > 0:
         scan_filter["retry_count"] = {"$gte": min_retry_count}
-    cursor = db.scans.find(scan_filter, {"scan_id": 1, "findings_count": 1})
+    cursor = db.scans.find(scan_filter, {"_id": 1, "findings_count": 1})
     candidates: list[tuple[str, int]] = []
     async for scan in cursor:
-        scan_id = scan.get("scan_id")
+        scan_id = scan.get("_id")
         declared = scan.get("findings_count") or 0
         if not scan_id or declared <= 0:
             continue

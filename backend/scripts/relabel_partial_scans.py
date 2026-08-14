@@ -74,7 +74,7 @@ async def relabel(db: Any, batch_size: int, sleep_ms: int, execute: bool) -> dic
     relabelled_ids: list[str] = []
     processed_in_batch = 0
     for scan_id, analyzers in sorted(by_scan.items()):
-        scan = await db.scans.find_one({"scan_id": scan_id}, {"status": 1, "failed_analyzers": 1, "latest_run": 1})
+        scan = await db.scans.find_one({"_id": scan_id}, {"status": 1, "failed_analyzers": 1, "latest_run": 1})
         if not scan or scan.get("status") != SCAN_STATUS_COMPLETED:
             continue
         counters["candidates"] += 1
@@ -98,7 +98,7 @@ async def relabel(db: Any, batch_size: int, sleep_ms: int, execute: bool) -> dic
         counters["relabelled"] += 1
         relabelled_ids.append(scan_id)
         if execute:
-            await db.scans.update_one({"scan_id": scan_id}, {"$set": update})
+            await db.scans.update_one({"_id": scan_id}, {"$set": update})
 
         processed_in_batch += 1
         if processed_in_batch >= batch_size:
