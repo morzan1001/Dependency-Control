@@ -12,7 +12,7 @@ from app.core.constants import (
     OSV_BATCH_API_URL,
     OSV_VULN_API_URL,
 )
-from app.core.cvss import cvss3_base_score
+from app.core.cvss import cvss_base_score
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.metrics import external_api_rate_limit_hits_total
 from app.models.finding import Severity
@@ -271,7 +271,8 @@ class OSVAnalyzer(Analyzer):
 
         The deadline is rechecked between attempts: it cannot cancel a request already in
         flight, so without this the tail past the budget would be the whole retry ladder
-        (4 x 60s timeout + 35s of backoff) rather than one socket timeout.
+        (4 x 60s timeout + 35s of backoff). The residual tail is one request timeout plus one
+        backoff sleep, because the sleep below runs before the next iteration rechecks.
         """
         for attempt in range(1 + self.max_retries):
             if budget is not None and attempt and budget.exhausted():
@@ -516,7 +517,7 @@ class OSVAnalyzer(Analyzer):
         try:
             value = float(score)
         except ValueError:
-            return cvss3_base_score(score)
+            return cvss_base_score(score)
         # float() accepts "nan"/"inf"; NaN survives the clamp in _cvss_to_severity as 10.0
         # (no comparison against it is true) and would land in CRITICAL.
         return value if math.isfinite(value) else None

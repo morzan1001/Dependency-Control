@@ -1,15 +1,24 @@
-"""CVSS v3.x base-score computation from a vector string.
+"""CVSS base-score computation from a vector string.
 
 OSV rates a vulnerability with a vector and no numeric score — a census of 242 records
 fetched for real production purls found 217 of 217 severity entries to be vector strings —
 so a vector we cannot score is a rating thrown away.
 
-Implemented in-house rather than by adding a dependency: the v3.x base formula is short,
-exactly specified and fully testable against published scores, and this runs inside the
-ingest path of a security platform where a new transitive dependency needs its own decision.
+v3.x is computed here: the base formula is short, exactly specified, and verified identical
+to the `cvss` package across all 5,184 possible v3 vectors, so delegating it would swap a
+proven implementation for no measurable gain. v4.0 is delegated to `cvss` instead of being
+hand-written: it needs a 270-entry MacroVector table plus max-vector interpolation, which is
+neither short nor checkable by inspection.
+
+`cvss` raises on anything it cannot parse and rejects surrounding whitespace, so every call
+goes through an adapter that preserves this module's `float | None` contract and its input
+tolerance. One implementation per version, and neither shadows the other.
 """
 
 import math
+
+from cvss import CVSS4
+from cvss.exceptions import CVSSError
 
 _ATTACK_VECTOR = {"N": 0.85, "A": 0.62, "L": 0.55, "P": 0.2}
 _ATTACK_COMPLEXITY = {"L": 0.77, "H": 0.44}
@@ -18,11 +27,9 @@ _PRIVILEGES_REQUIRED_CHANGED = {"N": 0.85, "L": 0.68, "H": 0.5}
 _USER_INTERACTION = {"N": 0.85, "R": 0.62}
 _IMPACT = {"H": 0.56, "L": 0.22, "N": 0.0}
 
-# v4.0 needs a 270-entry MacroVector lookup table and is NOT implemented. A live census of
-# 369 OSV records fetched for production findings found 28 that carry only a CVSS:4.0 vector
-# and no database_specific.severity, so they derive UNKNOWN: 28 of the 44 UNKNOWN records in
-# that sample. See the task-6 report — the recommendation is to vendor the `cvss` package.
-SUPPORTED_PREFIXES = ("CVSS:3.0", "CVSS:3.1")
+_V3_PREFIXES = ("CVSS:3.0", "CVSS:3.1")
+_V4_PREFIX = "CVSS:4.0"
+SUPPORTED_PREFIXES = (*_V3_PREFIXES, _V4_PREFIX)
 
 
 def _roundup(value: float) -> float:
@@ -50,7 +57,7 @@ def _parse_metrics(vector: str) -> dict[str, str] | None:
 def cvss3_base_score(vector: str) -> float | None:
     """Base score of a CVSS v3.0/v3.1 vector; None when it is not a vector we can score."""
     text = vector.strip()
-    if not text.startswith(SUPPORTED_PREFIXES):
+    if not text.startswith(_V3_PREFIXES):
         return None
 
     metrics = _parse_metrics(text)
@@ -82,3 +89,22 @@ def cvss3_base_score(vector: str) -> float | None:
     if scope_changed:
         combined *= 1.08
     return _roundup(min(combined, 10.0))
+
+
+def cvss4_base_score(vector: str) -> float | None:
+    """Base score of a CVSS v4.0 vector via the `cvss` package; None when it cannot be scored."""
+    text = vector.strip()
+    if not text.startswith(_V4_PREFIX):
+        return None
+    try:
+        return float(CVSS4(text).base_score)
+    except (CVSSError, ValueError, TypeError, KeyError):
+        return None
+
+
+def cvss_base_score(vector: str) -> float | None:
+    """Base score of a v3.0/v3.1/v4.0 vector, dispatched on its prefix."""
+    text = vector.strip()
+    if text.startswith(_V4_PREFIX):
+        return cvss4_base_score(text)
+    return cvss3_base_score(text)

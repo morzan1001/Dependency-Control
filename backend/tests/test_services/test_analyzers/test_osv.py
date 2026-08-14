@@ -25,9 +25,14 @@ class TestParseCvssScore:
         vector = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
         assert self.analyzer._parse_cvss_score(vector) == 9.8
 
-    def test_unsupported_vector_version_returns_none(self):
+    def test_bare_v4_vector_is_scored(self):
+        # 9.3 as published by FIRST's own calculator for this vector.
         v4 = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"
-        assert self.analyzer._parse_cvss_score(v4) is None
+        assert self.analyzer._parse_cvss_score(v4) == 9.3
+
+    def test_v2_vector_returns_none(self):
+        # No source in the corpus carries v2; it stays unscored rather than mis-scored as v3.
+        assert self.analyzer._parse_cvss_score("AV:N/AC:L/Au:N/C:P/I:P/A:P") is None
 
     def test_garbage_input_returns_none(self):
         assert self.analyzer._parse_cvss_score("not-a-cvss-score") is None
@@ -266,3 +271,43 @@ class TestParseCvssScoreNonFinite:
     def test_a_finite_out_of_range_score_is_still_clamped(self):
         assert OSVAnalyzer()._cvss_to_severity(42.0) == "CRITICAL"
         assert OSVAnalyzer()._cvss_to_severity(-5.0) == "LOW"
+
+
+class TestV4OnlyRecords:
+    """A live census of 369 OSV records fetched for production findings found 28 rated only by
+    a CVSS:4.0 vector with no database_specific.severity — 28 of the 44 that derived UNKNOWN."""
+
+    def test_a_v4_only_record_is_rated(self):
+        # CVE-2025-55163, exactly as OSV serves it.
+        record = {
+            "id": "CVE-2025-55163",
+            "severity": [
+                {"type": "CVSS_V4", "score": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N"}
+            ],
+        }
+        assert OSVAnalyzer()._extract_severity(record) == "HIGH"
+
+    def test_a_v4_record_alongside_v3_still_prefers_v4(self):
+        """_CVSS_TYPE_PREFERENCE puts v4 first; before the delegation it fell through to v3."""
+        record = {
+            "id": "CVE-2024-56326",
+            "severity": [
+                {"type": "CVSS_V3", "score": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"},
+                {"type": "CVSS_V4", "score": "CVSS:4.0/AV:L/AC:L/AT:P/PR:L/UI:P/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"},
+            ],
+        }
+        # v4 scores 5.4 (MEDIUM), the v3 vector 7.8 (HIGH).
+        assert OSVAnalyzer()._extract_severity(record) == "MEDIUM"
+
+    def test_an_unparseable_v4_vector_still_falls_through_to_v3(self):
+        record = {
+            "id": "CVE-2026-2",
+            "severity": [
+                {"type": "CVSS_V4", "score": "CVSS:4.0/AV:N/AC:L"},
+                {"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
+            ],
+        }
+        assert OSVAnalyzer()._extract_severity(record) == "CRITICAL"
+
+    def test_an_unrated_record_still_stays_unknown(self):
+        assert OSVAnalyzer()._extract_severity({"id": "CVE-2026-3", "severity": []}) == "UNKNOWN"
