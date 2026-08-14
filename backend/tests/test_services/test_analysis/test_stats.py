@@ -260,6 +260,85 @@ class TestBuildEpssKevSummaryExploitMaturity:
         assert total == 0
 
 
+def _aggregated_vuln_finding(entries, *, in_kev=True, risk_score=None, aliases=None):
+    """Shape the engine actually persists: finding_id is ``component:version``, the CVE ids
+    live on the nested ``details.vulnerabilities`` entries."""
+    details = {
+        "exploit_maturity": "unknown",
+        "vulnerabilities": entries,
+    }
+    if in_kev:
+        details["in_kev"] = True
+        details["kev_due_date"] = "2026-08-07"
+    if risk_score is not None:
+        details["risk_score"] = risk_score
+    return {
+        "_id": "5b7d0e1f-0000-5000-8000-000000000001",
+        "id": "tomcat-embed-core:10.1.41",
+        "finding_id": "tomcat-embed-core:10.1.41",
+        "component": "tomcat-embed-core",
+        "version": "10.1.41",
+        "aliases": aliases or [],
+        "details": details,
+    }
+
+
+class TestKevRowsCarryRealCveIds:
+    """K23: KEV and high-risk rows must never show the component:version finding_id."""
+
+    def test_kev_row_uses_the_nested_entry_cve(self):
+        finding = _aggregated_vuln_finding(
+            [
+                {
+                    "id": "CVE-2025-66614",
+                    "resolved_cve": "CVE-2026-24880",
+                    "severity": "HIGH",
+                    "in_kev": True,
+                    "kev_due_date": "2026-08-07",
+                    "kev_ransomware_use": False,
+                }
+            ]
+        )
+        result = build_epss_kev_summary([finding])
+        assert [d["cve"] for d in result["kev_details"]] == ["CVE-2025-66614"]
+        assert result["kev_details"][0]["due_date"] == "2026-08-07"
+
+    def test_one_row_per_known_exploited_cve(self):
+        finding = _aggregated_vuln_finding(
+            [
+                {"id": "CVE-2025-66614", "in_kev": True, "kev_due_date": "2026-08-07"},
+                {"id": "CVE-2025-11111", "in_kev": True, "kev_ransomware_use": True},
+                {"id": "CVE-2025-22222"},
+            ]
+        )
+        result = build_epss_kev_summary([finding])
+        assert [d["cve"] for d in result["kev_details"]] == ["CVE-2025-66614", "CVE-2025-11111"]
+        assert result["kev_matches"] == 2
+        assert result["kev_ransomware"] == 1
+
+    def test_ghsa_entry_without_a_cve_keeps_the_advisory_id(self):
+        finding = _aggregated_vuln_finding([{"id": "GHSA-9f52-rjqv-25qv", "in_kev": True}])
+        result = build_epss_kev_summary([finding])
+        assert result["kev_details"][0]["cve"] == "GHSA-9f52-rjqv-25qv"
+
+    def test_kev_flag_only_on_the_document_falls_back_to_its_alias(self):
+        finding = _aggregated_vuln_finding(
+            [{"id": "GHSA-other", "severity": "HIGH"}],
+            aliases=["CVE-2025-77777"],
+        )
+        result = build_epss_kev_summary([finding])
+        assert result["kev_details"][0]["cve"] == "CVE-2025-77777"
+
+    def test_high_risk_row_uses_the_cve_too(self):
+        finding = _aggregated_vuln_finding(
+            [{"id": "CVE-2025-66614", "severity": "CRITICAL"}],
+            in_kev=False,
+            risk_score=91.0,
+        )
+        result = build_epss_kev_summary([finding])
+        assert result["high_risk_cves"][0]["cve"] == "CVE-2025-66614"
+
+
 class TestBuildEpssKevSummaryFindingId:
     def test_finding_id_preferred_over_id(self):
         finding = _make_finding(finding_id="CVE-PREFERRED", risk_score=80.0)

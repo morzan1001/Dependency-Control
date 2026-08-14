@@ -60,6 +60,7 @@ from app.services.analysis.stats import (
     build_epss_kev_summary,
     build_reachability_summary,
     calculate_comprehensive_stats,
+    finding_vulnerability_id,
 )
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
@@ -780,21 +781,6 @@ def _prepare_finding_records(
 _FINDINGS_SUMMARY_LIMIT = 500
 
 
-def _summary_cve_id(record: dict[str, Any]) -> str:
-    """First CVE id found on the aggregated record; falls back to the component:version id."""
-    details = record.get("details") or {}
-    for entry in details.get("vulnerabilities") or []:
-        if not isinstance(entry, dict):
-            continue
-        for candidate in (entry.get("id"), entry.get("resolved_cve"), *(entry.get("aliases") or [])):
-            if isinstance(candidate, str) and candidate.startswith("CVE-"):
-                return candidate
-    for alias in record.get("aliases") or []:
-        if isinstance(alias, str) and alias.startswith("CVE-"):
-            return alias
-    return str(record.get("id") or "")
-
-
 def _build_findings_summary(
     vulnerability_findings: list[dict[str, Any]],
     limit: int = _FINDINGS_SUMMARY_LIMIT,
@@ -802,7 +788,7 @@ def _build_findings_summary(
     """Compact, bounded, vulnerability-only summary; details trimmed to the CVE id to bound size."""
     summary: list[dict[str, Any]] = []
     for record in vulnerability_findings[:limit]:
-        cve_id = _summary_cve_id(record)
+        cve_id = finding_vulnerability_id(record)
         summary.append(
             {
                 "id": record.get("id"),
