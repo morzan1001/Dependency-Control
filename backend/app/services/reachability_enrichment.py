@@ -208,6 +208,20 @@ async def _fetch_callgraphs(
     return []
 
 
+def store_reachability(finding: dict[str, Any], reachability: Mapping[str, Any]) -> None:
+    """Persist a verdict under ``details.reachability`` and mirror it to the top level.
+
+    The stats pipeline and the recommendation readers query the top-level fields; writing
+    only the nested block leaves every reachability counter at zero.
+    """
+    details = finding.setdefault("details", {})
+    details["reachability"] = reachability
+    finding["reachable"] = reachability.get("is_reachable")
+    finding["reachability_level"] = reachability.get("analysis_level")
+    finding["reachable_functions"] = reachability.get("matched_symbols", [])
+    _apply_adjusted_risk_score(finding, reachability)
+
+
 def _enrich_single_finding(
     finding: dict[str, Any],
     module_usage: dict[str, Any],
@@ -232,10 +246,7 @@ def _enrich_single_finding(
         language=language,
     )
 
-    if "details" not in finding:
-        finding["details"] = {}
-    finding["details"]["reachability"] = reachability
-    _apply_adjusted_risk_score(finding, reachability)
+    store_reachability(finding, reachability)
     return True
 
 
@@ -277,8 +288,6 @@ def _enrich_finding_from_callgraphs(
 
     # Package not found in any callgraph
     languages = [cg.language or "unknown" for cg in callgraphs]
-    if "details" not in finding:
-        finding["details"] = {}
     if _callgraphs_cover_finding_ecosystem(finding, languages, component_languages):
         # A callgraph of the finding's own ecosystem analyzed the code and the
         # package isn't imported there -> genuinely unreachable (fail-closed x0.4).
@@ -305,8 +314,7 @@ def _enrich_finding_from_callgraphs(
                 "reachability unknown (its ecosystem was not analyzed)."
             ),
         }
-    finding["details"]["reachability"] = reachability
-    _apply_adjusted_risk_score(finding, reachability)
+    store_reachability(finding, reachability)
     return True
 
 
@@ -557,6 +565,21 @@ def _calculate_confidence(extraction_confidence: str, match_type: str) -> float:
         return extraction_score * 0.5
 
 
+async def _sync_project_stats_if_latest(
+    db: AsyncIOMotorDatabase,
+    project_id: str,
+    scan_id: str,
+    stats: Any,
+) -> None:
+    """Mirror recomputed scan stats onto the project when this scan is still its latest."""
+    from app.repositories import ProjectRepository
+
+    project_repo = ProjectRepository(db)
+    project = await project_repo.get_raw_by_id(project_id)
+    if project and project.get("latest_scan_id") == scan_id:
+        await project_repo.update_raw(project_id, {"$set": {"stats": stats.model_dump()}})
+
+
 async def run_pending_reachability_for_scan(
     scan_id: str,
     project_id: str,
@@ -625,10 +648,11 @@ async def run_pending_reachability_for_scan(
             reachability_data = details.get("reachability")
             if reachability_data is None:
                 continue
+            # store_reachability already put every field on the dict; persist exactly those.
             update_fields: dict[str, Any] = {
-                "reachable": reachability_data.get("is_reachable"),
-                "reachability_level": reachability_data.get("analysis_level"),
-                "reachable_functions": reachability_data.get("matched_symbols", []),
+                "reachable": finding_dict["reachable"],
+                "reachability_level": finding_dict["reachability_level"],
+                "reachable_functions": finding_dict["reachable_functions"],
                 "details.reachability": reachability_data,
             }
             # Persist the reachability-adjusted risk score when enrichment computed one.
@@ -639,12 +663,12 @@ async def run_pending_reachability_for_scan(
         for i in range(0, len(bulk_ops), _BULK_CHUNK_SIZE):
             await finding_repo.collection.bulk_write(bulk_ops[i : i + _BULK_CHUNK_SIZE], ordered=False)
 
-        # Reuse the canonical builder so the pending and inline paths cannot drift.
+        # Reuse the canonical builders so the pending and inline paths cannot drift.
         # Lazy import to avoid the stats -> reachability_enrichment import cycle.
+        from app.services.analysis.stats import build_reachability_summary, calculate_comprehensive_stats
+
         callgraphs = await callgraph_repo.find_all_minimal_by_scan(project_id, scan_id)
         if callgraphs:
-            from app.services.analysis.stats import build_reachability_summary
-
             reachability_summary = build_reachability_summary(
                 findings_dicts,
                 [cg.model_dump(by_alias=True) for cg in callgraphs],
@@ -660,6 +684,8 @@ async def run_pending_reachability_for_scan(
                 }
             )
 
+        # The scan's stats were frozen at completion, before any reachability verdict existed.
+        stats = await calculate_comprehensive_stats(db, scan_id)
         await scan_repo.update_raw(
             scan_id,
             {
@@ -667,9 +693,13 @@ async def run_pending_reachability_for_scan(
                     "reachability_pending": "",
                     "reachability_pending_since": "",
                 },
-                "$set": {"reachability_completed_at": datetime.now(timezone.utc)},
+                "$set": {
+                    "reachability_completed_at": datetime.now(timezone.utc),
+                    "stats": stats.model_dump(),
+                },
             },
         )
+        await _sync_project_stats_if_latest(db, project_id, scan_id, stats)
 
         result["findings_enriched"] = enriched_count
         logger.info(f"[reachability] Processed scan {scan_id}: enriched {enriched_count} findings")
