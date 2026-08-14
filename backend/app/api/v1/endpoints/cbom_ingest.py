@@ -176,9 +176,9 @@ async def _persist_crypto_assets(
         for a in parsed.assets
     ]
 
-    await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
+    stored = await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
 
-    logger.info("cbom_ingest: persisted %d assets for scan %s; registering result", len(crypto_assets), scan_id)
+    logger.info("cbom_ingest: persisted %d assets for scan %s; registering result", stored, scan_id)
 
     # Fire ingest webhook (best-effort).
     summary = await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
@@ -206,4 +206,4 @@ async def _persist_crypto_assets(
 
     await manager.register_result(scan_id, "cbom", trigger_analysis=True)
     cbom_ingests_total.labels(status="success").inc()
-    return len(crypto_assets)
+    return stored
