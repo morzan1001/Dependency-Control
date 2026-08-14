@@ -12,6 +12,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-container'
 import { formatDate } from '@/lib/utils'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
+import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 
 const DASHBOARD_STATS_SKELETON_IDS = ['ds1', 'ds2', 'ds3', 'ds4']
 const DASHBOARD_ACTIVITY_SKELETON_IDS = ['da1', 'da2', 'da3', 'da4', 'da5']
@@ -238,9 +239,10 @@ export default function Dashboard() {
                                 <div key={scan.id} className="flex items-center">
                                     <div className="space-y-1">
                                         <p className="text-sm font-medium leading-none">{scan.project_name}</p>
-                                        <p className="text-sm text-muted-foreground">
-                                            {scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan'} on {scan.branch} - {scan.status}
-                                        </p>
+                                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                            <span>{scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan'} on {scan.branch}</span>
+                                            <ScanStatusBadge status={scan.status} />
+                                        </div>
                                     </div>
                                     <div className="ml-auto font-medium text-sm text-muted-foreground">
                                         {formatDate(scan.created_at)}

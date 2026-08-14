@@ -1,4 +1,5 @@
 import { api, buildQueryParams } from '@/api/client';
+import { filenameFromContentDisposition } from '@/lib/download';
 import { Project, ProjectCreate, ProjectUpdate, ProjectApiKeyResponse, ProjectsResponse, ProjectNotificationSettings, ProjectMember, BranchInfo } from '@/types/project';
 import { ArchiveListResponse, ArchiveRestoreResponse, ArchiveFilters } from '@/types/archive';
 
@@ -46,9 +47,10 @@ export const projectApi = {
     return response.data;
   },
 
-  exportSbom: async (projectId: string): Promise<Blob> => {
+  exportSbom: async (projectId: string): Promise<{ blob: Blob; filename: string | null }> => {
     const response = await api.get(`/projects/${projectId}/export/sbom`, { responseType: 'blob' });
-    return response.data;
+    // Multi-SBOM scans come back as a zip; the server names the file accordingly.
+    return { blob: response.data, filename: filenameFromContentDisposition(response.headers['content-disposition']) };
   },
 
   rotateApiKey: async (projectId: string): Promise<ProjectApiKeyResponse> => {

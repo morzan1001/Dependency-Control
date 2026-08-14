@@ -6,7 +6,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
 import { ArrowLeft, Download, Filter, Trash2 } from 'lucide-react'
 import { Skeleton } from '@/components/ui/skeleton'
-import { downloadFile } from '@/lib/download'
+import { downloadFile, downloadServerFile } from '@/lib/download'
 import { ProjectOverview } from '@/components/project/ProjectOverview'
 import { ProjectScans } from '@/components/project/ProjectScans'
 import { ProjectWaivers } from '@/components/project/ProjectWaivers'
@@ -82,7 +82,7 @@ export default function ProjectDetails() {
     "Failed to export CSV"
   )
 
-  const handleExportSbom = () => downloadFile(
+  const handleExportSbom = () => downloadServerFile(
     () => projectApi.exportSbom(id!),
     `project-${project?.name}-sbom.json`,
     "Failed to export SBOM"
