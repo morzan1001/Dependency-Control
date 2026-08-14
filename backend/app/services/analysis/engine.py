@@ -12,7 +12,13 @@ from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
 from pymongo import UpdateMany, UpdateOne
 
-from app.core.constants import DETAILS_KEY_IN_KEV
+from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
+    SCAN_STATUS_COMPLETED,
+    SCAN_STATUS_COMPLETED_WITH_ERRORS,
+    SCAN_STATUS_FAILED,
+    SCAN_USABLE_STATUSES,
+)
 from app.core.metrics import (
     analysis_aggregation_duration_seconds,
     analysis_components_parsed_total,
@@ -197,6 +203,17 @@ async def process_analyzer(
 
         aggregator.aggregate(analyzer_name, result, source=source)
 
+        skipped = result.get("partial_components_skipped") if isinstance(result, dict) else None
+        if skipped:
+            # Surface the coverage gap as a finding and flag the analyzer as partial.
+            aggregator.aggregate(
+                analyzer_name,
+                {"error": f"partial result: {skipped} component(s) were not scanned"},
+                source=f"System: {analyzer_name}",
+            )
+            logger.warning(f"Analysis {analyzer_name} returned a partial result for {scan_id}: {skipped} skipped")
+            return f"{analyzer_name}: Partial ({skipped} components skipped)"
+
         logger.info(f"Analysis {analyzer_name} completed for {scan_id}")
         return f"{analyzer_name}: Success"
     except Exception as e:
@@ -209,17 +226,22 @@ async def process_analyzer(
         return f"{analyzer_name}: Failed"
 
 
-# Marker substring of the system-error raised (and matched) when a GridFS SBOM cannot be read.
+# Marker substring of the system-error raised when a GridFS SBOM cannot be read.
 _SBOM_GRIDFS_LOAD_ERROR = "Failed to load SBOM from GridFS"
 
 
-def _all_sbom_loads_failed(sboms_to_process: list[Any], aggregated_findings: list[Any]) -> bool:
-    """True when every GridFS SBOM failed to load, so the scan must not be reported as completed."""
-    gridfs_expected = sum(1 for it in sboms_to_process if isinstance(it, dict) and it.get("type") == "gridfs_reference")
-    if gridfs_expected == 0:
-        return False
-    failures = sum(1 for f in aggregated_findings if _SBOM_GRIDFS_LOAD_ERROR in (getattr(f, "description", "") or ""))
-    return failures >= gridfs_expected
+def _count_gridfs_refs(sboms_to_process: list[Any]) -> int:
+    return sum(1 for it in sboms_to_process if isinstance(it, dict) and it.get("type") == "gridfs_reference")
+
+
+def _failed_analyzer_names(results_summary: list[str]) -> list[str]:
+    """Analyzer names whose summary entry reports a failure or partial coverage."""
+    names = set()
+    for entry in results_summary:
+        name, sep, rest = entry.partition(": ")
+        if sep and rest.startswith(("Failed", "Partial")):
+            names.add(name)
+    return sorted(names)
 
 
 async def _resolve_sbom(item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: ResultAggregator) -> dict[str, Any] | None:
@@ -665,7 +687,7 @@ async def _aggregate_external_results(
     scan_id: str,
     results_summary: list[str],
 ) -> None:
-    """Fetch external analyzer results and aggregate them."""
+    """Fetch external analyzer results and aggregate them; failures land in results_summary."""
     external_results = await result_repo.find_by_scan(scan_id, limit=10000)
     for res in external_results:
         # Skip post-processor rows: they are engine outputs, not external scanner results.
@@ -692,6 +714,7 @@ async def _aggregate_external_results(
                         details=SystemWarningDetails(error_details=str(exc)).model_dump(exclude_none=True),
                     )
                 )
+                results_summary.append(f"{res.analyzer_name}: Failed")
     del external_results
 
 
@@ -711,15 +734,25 @@ def _prepare_finding_records(
     project_id: str | None,
     scan_created_at: datetime | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Convert aggregated findings to insertion records, splitting out vulnerabilities."""
+    """Convert aggregated findings to insertion records, splitting out vulnerabilities.
+
+    ``_id`` is deterministic per (scan, finding identity) so a raced double-persist collides
+    on insert instead of storing the whole finding set twice.
+    """
     findings_to_insert: list[dict[str, Any]] = []
     vulnerability_findings: list[dict[str, Any]] = []
+    seen_identities: dict[str, int] = {}
     for f in aggregated_findings:
         record: dict[str, Any] = f.model_dump()
         record["scan_id"] = scan_id
         record["project_id"] = project_id
         record["finding_id"] = f.id
-        record["_id"] = str(uuid.uuid4())
+        identity = f"{scan_id}:{record.get('type')}:{record.get('component')}:{record.get('version')}:{f.id}"
+        occurrence = seen_identities.get(identity, 0)
+        seen_identities[identity] = occurrence + 1
+        if occurrence:
+            identity = f"{identity}:{occurrence}"
+        record["_id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
         record.setdefault("scan_created_at", scan_created_at)
         findings_to_insert.append(record)
         if record.get("type") == "vulnerability":
@@ -805,11 +838,12 @@ async def _persist_findings_and_waivers(
     project_id: str | None,
     finding_repo: FindingRepository,
     db: Database,
-) -> tuple[int, list[Waiver]]:
-    """Insert findings, apply waivers, return (ignored_count, active_waivers)."""
+) -> tuple[int, int, list[Waiver]]:
+    """Insert findings, apply waivers, return (persisted_count, ignored_count, active_waivers)."""
     await finding_repo.delete_many({"scan_id": scan_id})
+    persisted_count = 0
     for i in range(0, len(findings_to_insert), _BULK_CHUNK_SIZE):
-        await finding_repo.create_many_raw(findings_to_insert[i : i + _BULK_CHUNK_SIZE])
+        persisted_count += await finding_repo.create_many_raw(findings_to_insert[i : i + _BULK_CHUNK_SIZE])
 
     from app.repositories import WaiverRepository
 
@@ -825,7 +859,7 @@ async def _persist_findings_and_waivers(
 
     findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
     ignored_count = await findings_primary.count_documents({"scan_id": scan_id, "waived": True})
-    return ignored_count, active_waivers
+    return persisted_count, ignored_count, active_waivers
 
 
 def _as_utc(dt: datetime | None) -> datetime | None:
@@ -841,13 +875,18 @@ async def _should_update_project_latest_scan(
     project_id: str,
     scan_repo: ScanRepository,
     project_repo: ProjectRepository,
+    authoritative: bool = True,
 ) -> bool:
     """True unless a strictly-newer scan (by created_at) is already the project's latest.
 
     Guards against a late/out-of-order scan clobbering latest_scan_id/stats with stale data.
+    A non-authoritative scan (no SBOM ever received) may only become latest when the project
+    has none yet, so a SAST-only pipeline run cannot wipe the SBOM-derived picture.
     """
     project_doc = await project_repo.get_by_id_strong(project_id)
     current_latest_id = getattr(project_doc, "latest_scan_id", None) if project_doc else None
+    if not authoritative and current_latest_id and current_latest_id != scan_id:
+        return False
     if not current_latest_id or current_latest_id == scan_id:
         return True
 
@@ -872,10 +911,12 @@ async def _finalize_scan_and_project(
     latest_run_summary: dict,
     scan_repo: ScanRepository,
     project_repo: ProjectRepository,
-    status: str = "completed",
+    status: str = SCAN_STATUS_COMPLETED,
     error: str | None = None,
     external_load_start: datetime | None = None,
     findings_summary: list[dict[str, Any]] | None = None,
+    failed_analyzers: list[str] | None = None,
+    authoritative: bool = True,
 ) -> bool:
     """Persist the final scan status, ignored count, and (on success) project stats.
 
@@ -890,6 +931,7 @@ async def _finalize_scan_and_project(
         "completed_at": datetime.now(timezone.utc),
         "latest_run": latest_run_summary,
         "findings_summary": findings_summary or [],
+        "failed_analyzers": failed_analyzers or None,
     }
     if error:
         set_fields["error"] = error
@@ -898,7 +940,7 @@ async def _finalize_scan_and_project(
         "last_result_at": "",
     }
 
-    if status == "completed" and external_load_start is not None:
+    if status in SCAN_USABLE_STATUSES and external_load_start is not None:
         # Atomic completion guard: only complete if no scanner result arrived after loading
         # began, closing the TOCTOU window where a late result would be $unset and lost.
         updated = await scan_repo.collection.find_one_and_update(
@@ -937,8 +979,10 @@ async def _finalize_scan_and_project(
     # A failed or out-of-order scan must not become the project's latest or overwrite its stats.
     if (
         project_id
-        and status != "failed"
-        and await _should_update_project_latest_scan(scan_id, scan_doc, project_id, scan_repo, project_repo)
+        and status != SCAN_STATUS_FAILED
+        and await _should_update_project_latest_scan(
+            scan_id, scan_doc, project_id, scan_repo, project_repo, authoritative=authoritative
+        )
     ):
         await project_repo.update_raw(
             project_id,
@@ -1082,13 +1126,16 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
     resolved_sboms: list[dict[str, Any] | None] = [
         await _resolve_sbom(item, fs, aggregator) for item in sboms_to_process
     ]
-    persist_deps = all(resolved is not None for resolved in resolved_sboms)
+    sbom_load_failures = sum(1 for resolved in resolved_sboms if resolved is None)
+    sboms_expected = len(resolved_sboms)
+    gridfs_expected = _count_gridfs_refs(sboms_to_process)
+    persist_deps = sbom_load_failures == 0
     if not persist_deps:
         logger.warning(
             "Scan %s: %d/%d SBOMs failed to resolve; skipping dependency persistence to keep stored dependencies",
             scan_id,
-            sum(1 for resolved in resolved_sboms if resolved is None),
-            len(resolved_sboms),
+            sbom_load_failures,
+            sboms_expected,
         )
 
     old_deps_deleted = False
@@ -1148,20 +1195,40 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         results_summary,
     )
 
-    ignored_count, active_waivers = await _persist_findings_and_waivers(
+    persisted_findings_count, ignored_count, active_waivers = await _persist_findings_and_waivers(
         findings_to_insert, scan_id, project_id, finding_repo, db
     )
     _track_waiver_metrics(active_waivers)
 
     stats = await calculate_comprehensive_stats(db, scan_id)
 
-    sbom_load_failed = _all_sbom_loads_failed(sboms_to_process, aggregated_findings)
-    final_status = "failed" if sbom_load_failed else "completed"
+    sbom_load_failed = gridfs_expected > 0 and sbom_load_failures >= gridfs_expected
     if sbom_load_failed:
         logger.error(
             "Scan %s: all SBOMs failed to load from GridFS — marking failed (was silently completing)",
             scan_id,
         )
+
+    failed_analyzers = _failed_analyzer_names(results_summary)
+    partial_reasons: list[str] = []
+    if failed_analyzers:
+        partial_reasons.append(f"analyzers failed or returned partial results: {', '.join(failed_analyzers)}")
+    if not sbom_load_failed and sbom_load_failures:
+        partial_reasons.append(f"{sbom_load_failures} of {sboms_expected} SBOMs failed to load")
+    if persisted_findings_count < total_findings_count:
+        partial_reasons.append(f"only {persisted_findings_count} of {total_findings_count} findings were persisted")
+    total_findings_count = persisted_findings_count
+
+    if sbom_load_failed:
+        final_status = SCAN_STATUS_FAILED
+        final_error: str | None = "SBOM could not be loaded for analysis"
+    elif partial_reasons:
+        final_status = SCAN_STATUS_COMPLETED_WITH_ERRORS
+        final_error = "; ".join(partial_reasons)
+        logger.warning("Scan %s completed with errors: %s", scan_id, final_error)
+    else:
+        final_status = SCAN_STATUS_COMPLETED
+        final_error = None
 
     latest_run_summary = {
         "scan_id": scan_id,
@@ -1188,9 +1255,11 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         scan_repo,
         project_repo,
         status=final_status,
-        error="SBOM could not be loaded for analysis" if sbom_load_failed else None,
+        error=final_error,
         external_load_start=external_load_start,
         findings_summary=_build_findings_summary(vulnerability_findings),
+        failed_analyzers=failed_analyzers,
+        authoritative=bool(sboms_to_process),
     )
     if not finalized:
         # Rescheduled after a late scanner result raced completion; skip notifying on stale results.

@@ -2,6 +2,7 @@
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import SCAN_USABLE_STATUSES
 from app.models.project import Project, Scan
 from app.repositories.scans import ScanRepository
 
@@ -14,7 +15,7 @@ async def active_branches(db: AsyncIOMotorDatabase, project: Project) -> list[st
 
 async def latest_completed_scan(db: AsyncIOMotorDatabase, project_id: str, branch: str) -> Scan | None:
     data = await ScanRepository(db).find_one(
-        {"project_id": project_id, "branch": branch, "status": "completed"},
+        {"project_id": project_id, "branch": branch, "status": {"$in": SCAN_USABLE_STATUSES}},
         sort=[("created_at", -1)],
     )
     return Scan(**data) if data else None

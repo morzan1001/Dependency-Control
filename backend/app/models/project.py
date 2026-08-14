@@ -126,6 +126,8 @@ class Scan(MongoDocument, CreatedAtModel):
     worker_id: str | None = None
     analysis_started_at: datetime | None = None
     error: str | None = None
+    # Analyzers that crashed or returned partial coverage in the last run.
+    failed_analyzers: list[str] | None = None
     findings_summary: list[Finding] | None = None
     findings_count: int | None = None
     stats: Stats | None = None

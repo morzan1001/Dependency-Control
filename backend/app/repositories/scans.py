@@ -6,6 +6,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pymongo import ReadPreference
 
+from app.core.constants import SCAN_USABLE_STATUSES
 from app.core.metrics import track_db_operation
 from app.models.project import Scan
 from app.schemas.projections import ScanMinimal, ScanWithStats
@@ -143,10 +144,10 @@ class ScanRepository:
         with track_db_operation(_COL, "count"):
             return await self.collection.count_documents(query or {})
 
-    async def get_latest_for_project(self, project_id: str, status: str | None = None) -> Scan | None:
+    async def get_latest_for_project(self, project_id: str, statuses: list[str] | None = None) -> Scan | None:
         query: dict[str, Any] = {"project_id": project_id}
-        if status:
-            query["status"] = status
+        if statuses:
+            query["status"] = {"$in": statuses}
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one(query, sort=[("created_at", -1)])
         return Scan(**data) if data else None
@@ -155,7 +156,7 @@ class ScanRepository:
         """Most recent completed scan for project on a non-deleted branch. project may be a model or raw dict; deleted_branches overrides the project's value (housekeeping passes the freshly-computed set before it is persisted)."""
         project_id, project_deleted = _project_id_and_deleted(project)
         deleted = deleted_branches if deleted_branches is not None else project_deleted
-        query: dict[str, Any] = {"project_id": project_id, "status": "completed"}
+        query: dict[str, Any] = {"project_id": project_id, "status": {"$in": SCAN_USABLE_STATUSES}}
         if deleted:
             query["branch"] = {"$nin": deleted}
         with track_db_operation(_COL, "find_one"):
@@ -180,7 +181,8 @@ class ScanRepository:
             return result
 
         or_conditions = [
-            {"project_id": pid, "branch": {"$nin": deleted}, "status": "completed"} for pid, deleted in needing
+            {"project_id": pid, "branch": {"$nin": deleted}, "status": {"$in": SCAN_USABLE_STATUSES}}
+            for pid, deleted in needing
         ]
         pipeline: list[dict[str, Any]] = [
             {"$match": {"$or": or_conditions}},

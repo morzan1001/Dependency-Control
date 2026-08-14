@@ -27,6 +27,8 @@ class FindingsStats(TypedDict):
 
 class ScanCompletedPayload(BaseWebhookPayload):
     findings: FindingsStats
+    scan_status: str
+    failed_analyzers: list[str]
 
 
 class VulnerabilityInfo(TypedDict):

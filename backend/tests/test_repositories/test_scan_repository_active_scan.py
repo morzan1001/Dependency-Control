@@ -35,7 +35,7 @@ class TestGetLatestActiveScan:
 
         query = coll.find_one.call_args.args[0]
         assert query["project_id"] == "p1"
-        assert query["status"] == "completed"
+        assert query["status"] == {"$in": ["completed", "completed_with_errors"]}
         assert query["branch"] == {"$nin": ["feature-x", "old"]}
         assert coll.find_one.call_args.kwargs["sort"] == [("created_at", -1)]
         assert result is not None and result.id == "scan-9"
@@ -48,7 +48,7 @@ class TestGetLatestActiveScan:
 
         query = coll.find_one.call_args.args[0]
         assert "branch" not in query
-        assert query == {"project_id": "p1", "status": "completed"}
+        assert query == {"project_id": "p1", "status": {"$in": ["completed", "completed_with_errors"]}}
 
     def test_deleted_branches_override(self):
         """An explicit deleted_branches arg takes precedence over the project's stored value."""
@@ -116,7 +116,11 @@ class TestGetLatestActiveScanIds:
         assert result == {"p2": "scan-active"}
         pipeline = coll.aggregate.call_args.args[0]
         match = pipeline[0]["$match"]["$or"][0]
-        assert match == {"project_id": "p2", "branch": {"$nin": ["dead"]}, "status": "completed"}
+        assert match == {
+            "project_id": "p2",
+            "branch": {"$nin": ["dead"]},
+            "status": {"$in": ["completed", "completed_with_errors"]},
+        }
         assert pipeline[1]["$sort"] == {"created_at": -1}
         assert pipeline[2]["$group"] == {"_id": "$project_id", "scan_id": {"$first": "$_id"}}
 
@@ -200,7 +204,7 @@ class TestStatsDelegation:
         # The fallback query must exclude the deleted branch.
         fallback_query = coll.find_one.call_args_list[1].args[0]
         assert fallback_query["branch"] == {"$nin": ["feature"]}
-        assert fallback_query["status"] == "completed"
+        assert fallback_query["status"] == {"$in": ["completed", "completed_with_errors"]}
 
     def test_returns_none_when_no_active_scan(self):
         from unittest.mock import AsyncMock

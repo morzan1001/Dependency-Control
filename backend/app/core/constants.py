@@ -792,13 +792,13 @@ WEBHOOK_BLOCKED_HOSTNAMES = frozenset({"metadata.google.internal", "metadata.goo
 SCAN_STATUS_PENDING = "pending"
 SCAN_STATUS_PROCESSING = "processing"
 SCAN_STATUS_COMPLETED = "completed"
+SCAN_STATUS_COMPLETED_WITH_ERRORS = "completed_with_errors"
 SCAN_STATUS_FAILED = "failed"
 
-SCAN_VALID_STATUSES = [
-    SCAN_STATUS_PENDING,
-    SCAN_STATUS_PROCESSING,
+# Scans whose analysis results are usable for rollups, exports and analytics.
+SCAN_USABLE_STATUSES = [
     SCAN_STATUS_COMPLETED,
-    SCAN_STATUS_FAILED,
+    SCAN_STATUS_COMPLETED_WITH_ERRORS,
 ]
 
 # SPDX originator/supplier prefix for organization entities

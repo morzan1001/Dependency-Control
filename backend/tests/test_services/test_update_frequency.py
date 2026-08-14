@@ -299,6 +299,8 @@ def _matches_scan_query(scan: dict[str, Any], query: dict[str, Any]) -> bool:
                 return False
             if "$nin" in cond and value in cond["$nin"]:
                 return False
+            if "$in" in cond and value not in cond["$in"]:
+                return False
         elif value != cond:
             return False
     return True

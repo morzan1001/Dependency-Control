@@ -193,6 +193,8 @@ async def send_scan_notifications(
                 project_name=project.name,
                 findings_count=len(aggregated_findings),
                 stats=stats,
+                scan_status=scan.get("status", "completed"),
+                failed_analyzers=scan.get("failed_analyzers") or [],
             )
     except Exception as e:
         logger.exception("Failed to trigger scan_completed webhook: %s", e)

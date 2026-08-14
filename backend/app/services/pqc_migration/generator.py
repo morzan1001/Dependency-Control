@@ -5,6 +5,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import SCAN_USABLE_STATUSES
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoPrimitive
@@ -161,19 +162,19 @@ class PQCMigrationPlanGenerator:
         return filtered
 
     async def _all_project_ids(self) -> list[str]:
-        """Distinct project ids that have at least one completed/partial scan."""
+        """Distinct project ids that have at least one usable scan."""
         return await self.db.scans.distinct(
             "project_id",
-            {"status": {"$in": ["completed", "partial"]}},
+            {"status": {"$in": SCAN_USABLE_STATUSES}},
         )
 
     async def _latest_scan_for_project(self, project_id: str) -> dict | None:
-        """Most recent completed/partial scan for a project, or None."""
+        """Most recent usable scan for a project, or None."""
         cursor = (
             self.db.scans.find(
                 {
                     "project_id": project_id,
-                    "status": {"$in": ["completed", "partial"]},
+                    "status": {"$in": SCAN_USABLE_STATUSES},
                 }
             )
             .sort("created_at", -1)

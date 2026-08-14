@@ -547,6 +547,8 @@ class WebhookService:
         findings_count: int,
         stats: dict[str, Any],
         scan_url: str | None = None,
+        scan_status: str = "completed",
+        failed_analyzers: list[str] | None = None,
     ) -> None:
         base_payload = self._build_base_payload(
             event_type=WEBHOOK_EVENT_SCAN_COMPLETED,
@@ -561,6 +563,8 @@ class WebhookService:
                 "total": findings_count,
                 "stats": stats,
             },
+            "scan_status": scan_status,
+            "failed_analyzers": failed_analyzers or [],
         }
 
         await self.trigger_webhooks(db, WEBHOOK_EVENT_SCAN_COMPLETED, payload, project_id)
