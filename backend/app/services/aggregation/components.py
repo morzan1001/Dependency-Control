@@ -26,10 +26,9 @@ def extract_artifact_name(component: str) -> str:
     return name or "unknown"
 
 
-def is_qualified_form(qualified: str, bare: str) -> bool:
-    """True if ``qualified`` is ``bare`` prefixed by a group/scope on a ':' or '/' boundary."""
-    q, b = normalize_component(qualified), normalize_component(bare)
-    return q != b and any(q.endswith(sep + b) for sep in _QUALIFIER_SEPARATORS)
+def _boundary_suffixes(name: str) -> list[str]:
+    """Every suffix of ``name`` that starts after a ':' or '/' boundary."""
+    return [name[i + 1 :] for i, char in enumerate(name) if char in _QUALIFIER_SEPARATORS]
 
 
 def _resolve_bucket(names: list[str]) -> dict[str, str]:
@@ -38,11 +37,16 @@ def _resolve_bucket(names: list[str]) -> dict[str, str]:
     A name attaches to a more qualified spelling of itself only when exactly one such
     candidate exists, so ``core`` is never guessed onto one of several ``*/core`` packages.
     """
-    parent: dict[str, str] = {}
+    # Walking each name's own boundary suffixes keeps this linear; a bucket can hold every
+    # file sharing a basename in a large SAST scan, where pairwise matching would not scale.
+    members = set(names)
+    qualifiers: dict[str, list[str]] = {}
     for name in names:
-        qualifiers = [other for other in names if is_qualified_form(other, name)]
-        if len(qualifiers) == 1:
-            parent[name] = qualifiers[0]
+        for suffix in _boundary_suffixes(name):
+            if suffix != name and suffix in members:
+                qualifiers.setdefault(suffix, []).append(name)
+
+    parent: dict[str, str] = {name: found[0] for name, found in qualifiers.items() if len(found) == 1}
 
     resolved: dict[str, str] = {}
     for name in names:
