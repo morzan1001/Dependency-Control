@@ -95,3 +95,27 @@ class TestComponentFindingsLookup:
         assert self._components(_component_name_query("com.fasterxml.jackson.core:jackson-databind")) == [
             "com.fasterxml.jackson.core:jackson-databind"
         ]
+
+
+class TestAliasLookupIsCaseInsensitive:
+    """The bare-artifact alias is lowercased; dependency names preserve their case.
+
+    Prod has 3 demoted documents for `xercesImpl` today, and `HikariCP`-style artifact
+    names generalise the problem.
+    """
+
+    def test_mixed_case_maven_artifact_resolves_its_qualified_finding(self):
+        findings_map = build_findings_severity_map([_finding("xerces:xercesImpl", "HIGH")])
+
+        graph = _build_dependency_graph(
+            [_dep("xercesImpl", "2.12.2", purl="pkg:maven/xerces/xercesImpl@2.12.2")], findings_map
+        )
+
+        assert graph.nodes[0].findings_count == 1
+
+    def test_vuln_count_map_resolves_a_mixed_case_dependency_name(self):
+        from app.services.aggregation.components import add_artifact_name_aliases
+
+        counts = add_artifact_name_aliases({"com.zaxxer:HikariCP": 4})
+
+        assert counts.get("hikaricp") == 4

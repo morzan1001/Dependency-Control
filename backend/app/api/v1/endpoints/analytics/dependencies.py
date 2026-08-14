@@ -29,6 +29,7 @@ from app.schemas.analytics import (
     DependencyTreeNode,
     SeverityBreakdown,
 )
+from app.services.aggregation.components import extract_artifact_name
 from app.services.recommendation.common import get_attr
 
 from ._shared import _MSG_ACCESS_DENIED, _get_enrichment_info, _resolve_scan_id
@@ -54,7 +55,8 @@ def _component_name_query(component: str) -> dict[str, Any]:
 def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> DependencyTreeNode:
     """Build one node without its children; the graph builder fills in child_ids."""
     name = get_attr(dep, "name", "")
-    finding_info = findings_map.get(name, {})
+    # The bare-artifact alias keys are lowercased, dependency names are not.
+    finding_info = findings_map.get(name) or findings_map.get(extract_artifact_name(name)) or {}
 
     return DependencyTreeNode(
         # The document id (uuid) is unique per dependency; PURL only backstops dict inputs in tests.
