@@ -26,7 +26,7 @@ class _MinimalAggregator:
         return []
 
     def get_dependency_enrichments(self):
-        return {}
+        return []
 
 
 @pytest.mark.asyncio

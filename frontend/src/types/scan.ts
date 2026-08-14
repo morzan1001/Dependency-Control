@@ -489,6 +489,8 @@ export interface Scan {
   pipeline_user?: string;
   created_at: string;
   status: string;
+  error?: string;
+  failed_analyzers?: string[];
   findings_summary?: Finding[];
   findings_count?: number;
   ignored_count?: number;

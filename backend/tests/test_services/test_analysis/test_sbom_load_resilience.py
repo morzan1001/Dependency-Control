@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from app.db.mongodb import open_gridfs_download_with_retry
-from app.services.analysis.engine import _all_sbom_loads_failed, _finalize_scan_and_project
+from app.services.analysis.engine import _finalize_scan_and_project
 
 
 class TestOpenGridfsDownloadWithRetry:
@@ -25,33 +25,6 @@ class TestOpenGridfsDownloadWithRetry:
         with pytest.raises(RuntimeError, match="still no file"):
             asyncio.run(open_gridfs_download_with_retry(fs, "oid", attempts=3, base_delay=0))
         assert fs.open_download_stream.await_count == 3
-
-
-def _finding(desc: str) -> SimpleNamespace:
-    return SimpleNamespace(description=desc)
-
-
-class TestAllSbomLoadsFailed:
-    def test_all_gridfs_failed_returns_true(self):
-        sboms = [{"type": "gridfs_reference", "gridfs_id": "a"}]
-        findings = [_finding("Scanner 'system' failed: Failed to load SBOM from GridFS: no file")]
-        assert _all_sbom_loads_failed(sboms, findings) is True
-
-    def test_partial_failure_returns_false(self):
-        # 2 GridFS SBOMs expected, only 1 failed -> the scan still analysed something
-        sboms = [
-            {"type": "gridfs_reference", "gridfs_id": "a"},
-            {"type": "gridfs_reference", "gridfs_id": "b"},
-        ]
-        findings = [_finding("Failed to load SBOM from GridFS: no file")]
-        assert _all_sbom_loads_failed(sboms, findings) is False
-
-    def test_no_gridfs_refs_returns_false(self):
-        assert _all_sbom_loads_failed([{"bomFormat": "CycloneDX"}], []) is False
-
-    def test_gridfs_but_no_load_failure_returns_false(self):
-        sboms = [{"type": "gridfs_reference", "gridfs_id": "a"}]
-        assert _all_sbom_loads_failed(sboms, [_finding("some unrelated finding")]) is False
 
 
 class TestFinalizeMarksFailed:

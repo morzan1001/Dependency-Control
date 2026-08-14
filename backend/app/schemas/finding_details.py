@@ -77,6 +77,22 @@ class EolInfo(_DetailsModel):
     eol_finding_id: str | None = None
 
 
+class VulnerabilityContextInfo(_DetailsModel):
+    """Cross-link block on non-vulnerability findings (``aggregation.cross_link``)."""
+
+    has_vulnerabilities: bool = True
+    vuln_count: int = 0
+    critical_count: int = 0
+    high_count: int = 0
+
+
+class AdditionalFindingType(_DetailsModel):
+    """One entry of ``details.additional_finding_types``: another type on the same package."""
+
+    type: str
+    severity: str
+
+
 class VulnerabilityScannerDetails(_DetailsModel):
     """Per-scanner details of a single vulnerability (trivy/grype/osv), nested in
     ``details.vulnerabilities[].details``."""
@@ -154,6 +170,7 @@ class VulnerabilityDetails(_DetailsModel):
     quality_info: QualityInfo | None = None
     license_info: LicenseInfo | None = None
     eol_info: EolInfo | None = None
+    additional_finding_types: list[AdditionalFindingType] = []
     # scorecard (aggregation.scorecard)
     scorecard_context: ScorecardContext | None = None
     maintenance_warning: bool | None = None
@@ -178,6 +195,8 @@ class LicenseDetails(_DetailsModel):
     spdx_expression: str | None = None
     context_reason: str | None = None
     effective_severity: str | None = None
+    additional_finding_types: list[AdditionalFindingType] = []
+    vulnerability_info: VulnerabilityContextInfo | None = None
     scorecard_context: ScorecardContext | None = None
 
 
@@ -202,6 +221,8 @@ class EolDetails(_DetailsModel):
     recommended_cycle: Any = None
     link: str | None = None
     lts: Any = None
+    additional_finding_types: list[AdditionalFindingType] = []
+    vulnerability_info: VulnerabilityContextInfo | None = None
     scorecard_context: ScorecardContext | None = None
 
 
@@ -209,6 +230,8 @@ class OutdatedDetails(_DetailsModel):
     fixed_version: str | None = None
     default_version: str | None = None
     ahead_of_default: bool | None = None
+    additional_finding_types: list[AdditionalFindingType] = []
+    vulnerability_info: VulnerabilityContextInfo | None = None
     scorecard_context: ScorecardContext | None = None
 
 
@@ -252,6 +275,8 @@ class QualityDetails(_DetailsModel):
     has_maintenance_issues: bool = False
     issue_count: int | None = None
     scanners: list[str] = []
+    additional_finding_types: list[AdditionalFindingType] = []
+    vulnerability_info: VulnerabilityContextInfo | None = None
     scorecard_context: ScorecardContext | None = None
 
 
@@ -329,6 +354,8 @@ class IacDetails(_DetailsModel):
 class TyposquattingDetails(_DetailsModel):
     imitated_package: str | None = None
     similarity: float | None = None
+    additional_finding_types: list[AdditionalFindingType] = []
+    vulnerability_info: VulnerabilityContextInfo | None = None
     scorecard_context: ScorecardContext | None = None
 
 

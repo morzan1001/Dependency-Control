@@ -162,7 +162,7 @@ class TestNormalizeScorecard:
         }
         self.agg.aggregate("deps_dev", result)
         enrichments = self.agg.get_dependency_enrichments()
-        assert "lodash@4.17.21" in enrichments
+        assert [(e["name"], e["version"]) for e in enrichments] == [("lodash", "4.17.21")]
 
 
 class TestNormalizeTyposquatting:

@@ -73,10 +73,10 @@ def merge_sast_findings(findings: list[Finding]) -> Finding | None:
         component=base.component,
         version=base.version,
         description=description,
-        scanners=list(merged_scanners),
+        scanners=sorted(merged_scanners),
         details=merged_details,
         found_in=base.found_in,
-        aliases=([f.id for f in findings if f.id != base.id] if len(findings) > 1 else base.aliases),
+        aliases=(sorted({f.id for f in findings if f.id != base.id}) if len(findings) > 1 else base.aliases),
     )
 
 
@@ -93,20 +93,21 @@ def _canonical_id(a: str, b: str) -> str:
 
 def _merge_vuln_ids_and_severity(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
     """Merge scanners, aliases, and severity (using the maximum)."""
-    tv["scanners"] = list(set(tv.get("scanners", []) + source_entry.get("scanners", [])))
+    tv["scanners"] = sorted(set(tv.get("scanners", []) + source_entry.get("scanners", [])))
 
     all_ids = set(tv.get("aliases", [])) | set(source_entry.get("aliases", [])) | {tv["id"], source_entry["id"]}
     tv["id"] = _canonical_id(tv["id"], source_entry["id"])
-    tv["aliases"] = list(all_ids - {tv["id"]})
+    tv["aliases"] = sorted(all_ids - {tv["id"]})
 
     if get_severity_value(source_entry.get("severity")) > get_severity_value(tv.get("severity")):
         tv["severity"] = source_entry["severity"]
 
 
 def _merge_vuln_description(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
-    """Prefer the longer description."""
-    if len(source_entry.get("description", "")) > len(tv.get("description", "")):
-        tv["description"] = source_entry["description"]
+    """Prefer the longer description; equal lengths fall back to sort order to stay commutative."""
+    theirs, ours = source_entry.get("description", ""), tv.get("description", "")
+    if (len(theirs), ours) > (len(ours), theirs):
+        tv["description"] = theirs
         tv["description_source"] = source_entry.get("description_source", "unknown")
 
 
@@ -125,8 +126,9 @@ def _merge_vuln_fix_and_cvss(tv: dict[str, Any], source_entry: VulnerabilityEntr
     if merged_fix is not None:
         tv["fixed_version"] = merged_fix
 
-    if source_entry.get("cvss_score") and (not tv.get("cvss_score") or source_entry["cvss_score"] > tv["cvss_score"]):
-        tv["cvss_score"] = source_entry["cvss_score"]
+    theirs, ours = source_entry.get("cvss_score"), tv.get("cvss_score")
+    if theirs and (not ours or (theirs, str(source_entry.get("cvss_vector"))) > (ours, str(tv.get("cvss_vector")))):
+        tv["cvss_score"] = theirs
         tv["cvss_vector"] = source_entry.get("cvss_vector")
 
 
@@ -134,19 +136,27 @@ def _merge_vuln_references(tv: dict[str, Any], source_entry: VulnerabilityEntry)
     """Union references from both entries."""
     tv_refs = set(tv.get("references", []) or [])
     sv_refs = set(source_entry.get("references", []) or [])
-    tv["references"] = list(tv_refs | sv_refs)
+    tv["references"] = sorted(tv_refs | sv_refs)
 
 
-def _merge_vuln_detail_fields(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
-    """Fill in missing detail fields from the source entry."""
-    for key in ("cwe_ids", "published_date", "last_modified_date"):
-        val = source_entry.get("details", {}).get(key)
-        if not val:
+def _merge_vuln_detail_fields(tv: dict[str, Any], source_entry: VulnerabilityEntry, source_first: bool) -> None:
+    """Union the per-scanner detail blobs; a value conflict is settled by scanner name."""
+    source_details = source_entry.get("details") or {}
+    if not source_details:
+        return
+    target_details = tv.setdefault("details", {})
+    for key, value in source_details.items():
+        if not value:
             continue
-        if "details" not in tv:
-            tv["details"] = {}
-        if key not in tv["details"] or not tv["details"][key]:
-            tv["details"][key] = val
+        current = target_details.get(key)
+        if not current:
+            target_details[key] = value
+        elif key == "fixed_version":
+            target_details[key] = _merged_fixed_version(current, value)
+        elif isinstance(current, list) and isinstance(value, list):
+            target_details[key] = sorted({*current, *value}, key=str)
+        elif source_first and current != value:
+            target_details[key] = value
 
 
 # Keys with dedicated merge logic; everything else is gap-filled from the absorbed entry.
@@ -176,13 +186,22 @@ def _fill_missing_fields(tv: dict[str, Any], source_entry: VulnerabilityEntry) -
             tv[key] = value
 
 
+def _detail_precedence(entry: Any) -> tuple[str, str]:
+    """Total order over entries settling detail conflicts commutatively.
+
+    Lowest scanner name first; alias-linked entries can share it, so the entry id decides.
+    """
+    return min(str(s) for s in (entry.get("scanners") or ["~"])), str(entry.get("id"))
+
+
 def _absorb_entry(tv: dict[str, Any], source_entry: VulnerabilityEntry) -> None:
     """Fold source_entry into tv, which then represents both."""
+    source_first = _detail_precedence(source_entry) < _detail_precedence(tv)
     _merge_vuln_ids_and_severity(tv, source_entry)
     _merge_vuln_description(tv, source_entry)
     _merge_vuln_fix_and_cvss(tv, source_entry)
     _merge_vuln_references(tv, source_entry)
-    _merge_vuln_detail_fields(tv, source_entry)
+    _merge_vuln_detail_fields(tv, source_entry, source_first)
     _fill_missing_fields(tv, source_entry)
 
 
@@ -223,18 +242,16 @@ def merge_vulnerability_into_list(target_list: list[Any], source_entry: Vulnerab
 
 def merge_findings_data(target: Finding, source: Finding) -> None:
     """Merge data from source finding into target finding."""
-    target.scanners = list(set(target.scanners + source.scanners))
+    target.scanners = sorted(set(target.scanners + source.scanners))
 
     t_sev = get_severity_value(target.severity) or 0
     s_sev = get_severity_value(source.severity) or 0
     if s_sev > t_sev:
         target.severity = source.severity
 
-    target.found_in = list(set(target.found_in + source.found_in))
+    target.found_in = sorted(set(target.found_in + source.found_in))
 
-    target.aliases = list(set(target.aliases + source.aliases))
-    if source.id != target.id and source.id not in target.aliases:
-        target.aliases.append(source.id)
+    target.aliases = sorted(set(target.aliases + source.aliases) | ({source.id} if source.id != target.id else set()))
 
     t_vulns_list = target.details.get("vulnerabilities", [])
     s_vulns_list = source.details.get("vulnerabilities", [])

@@ -7,6 +7,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
 from app.core.config import settings
+from app.core.constants import SCAN_USABLE_STATUSES
 from app.core.metrics import compliance_reports_total
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
@@ -127,7 +128,7 @@ class ComplianceReportEngine:
         )
 
     async def _pick_scan_ids(self, db: AsyncIOMotorDatabase, resolved: ResolvedScope) -> list[tuple[str, str]]:
-        match: dict[str, Any] = {"status": {"$in": ["completed", "partial"]}}
+        match: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}}
         if resolved.project_ids is not None:
             match["project_id"] = {"$in": resolved.project_ids}
         pipeline: list[dict[str, Any]] = [

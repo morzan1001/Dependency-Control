@@ -84,6 +84,8 @@ class DependencyEnrichment(BaseModel):
 
     name: str
     version: str
+    # Canonical purl (qualifiers/subpath stripped) — the cross-scan join key.
+    purl: str | None = None
 
     licenses: list[dict[str, Any]] = Field(default_factory=list)  # [{spdx_id, source, category, ...}]
     primary_license: str | None = None
@@ -98,24 +100,22 @@ class DependencyEnrichment(BaseModel):
     documentation_url: str | None = None
     issues_url: str | None = None
     changelog_url: str | None = None
-    download_url: str | None = None
     additional_links: dict[str, str] = Field(default_factory=dict)
 
+    project_url: str | None = None
     stars: int | None = None
     forks: int | None = None
     open_issues: int | None = None
     dependents_total: int | None = None
     dependents_direct: int | None = None
+    dependents_indirect: int | None = None
 
     scorecard_score: float | None = None
     scorecard_date: str | None = None
     scorecard_checks_count: int | None = None
-    scorecard_checks: list[dict[str, Any]] = Field(default_factory=list)
-    scorecard_critical_issues: list[str] = Field(default_factory=list)
 
     published_at: str | None = None
     is_deprecated: bool = False
-    is_default_version: bool = False
 
     known_advisories: list[str] = Field(default_factory=list)
     has_attestations: bool = False
@@ -146,10 +146,10 @@ class DependencyEnrichment(BaseModel):
             result["homepage"] = self.homepage
         if self.repository_url:
             result["repository_url"] = self.repository_url
-        if self.download_url:
-            result["download_url"] = self.download_url
 
         deps_dev: dict[str, Any] = {}
+        if self.project_url:
+            deps_dev["project_url"] = self.project_url
         if self.stars is not None:
             deps_dev["stars"] = self.stars
         if self.forks is not None:
@@ -160,6 +160,7 @@ class DependencyEnrichment(BaseModel):
             deps_dev["dependents"] = {
                 "total": self.dependents_total,
                 "direct": self.dependents_direct,
+                "indirect": self.dependents_indirect,
             }
 
         if self.scorecard_score is not None:

@@ -18,6 +18,9 @@ def test_returns_defaults_when_purl_missing():
         "license_category": None,
         "license_risks": [],
         "license_obligations": [],
+        "description": None,
+        "homepage": None,
+        "repository_url": None,
     }
     repo.get_by_purl.assert_not_awaited()
 
@@ -40,6 +43,9 @@ def test_extracts_top_level_license_fields_and_deps_dev_subdoc():
         "license_risks": ["some risk"],
         "license_obligations": ["attribution"],
         "deps_dev": {"stars": 100, "forks": 10},
+        "description": "Lodash modular utilities.",
+        "homepage": "https://lodash.com/",
+        "repository_url": "https://github.com/lodash/lodash",
     }
 
     result = asyncio.run(_get_enrichment_info(repo, "pkg:npm/lodash@4.17.21"))
@@ -49,3 +55,6 @@ def test_extracts_top_level_license_fields_and_deps_dev_subdoc():
     assert result["license_obligations"] == ["attribution"]
     assert result["deps_dev_data"] == {"stars": 100, "forks": 10}
     assert sorted(result["enrichment_sources"]) == ["deps_dev", "license_compliance"]
+    assert result["description"] == "Lodash modular utilities."
+    assert result["homepage"] == "https://lodash.com/"
+    assert result["repository_url"] == "https://github.com/lodash/lodash"

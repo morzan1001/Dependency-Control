@@ -4,6 +4,7 @@ import pytest
 
 from app.services.aggregation import ResultAggregator
 from app.services.analyzers.license_compliance import LicenseAnalyzer
+from tests.helpers.enrichment import enrichment_payload
 
 TZDATA_EXPRESSION = "LicenseRef-Fedora-Public-Domain AND (GPL-2.0-only WITH ClassPath-exception-2.0)"
 
@@ -13,7 +14,7 @@ class TestDepsDevSentinelRejection:
         self.agg = ResultAggregator()
 
     def _payload(self, name="aopalliance", version="1.0"):
-        return self.agg.get_dependency_enrichments()[f"{name}@{version}"]
+        return enrichment_payload(self.agg, name, version)
 
     def test_non_standard_sentinel_is_dropped(self):
         self.agg.enrich_from_deps_dev("aopalliance", "1.0", {"licenses": ["non-standard"]})
@@ -149,7 +150,18 @@ class TestExpressionFlowsToEnrichment:
         assert finding.details["spdx_expression"] == TZDATA_EXPRESSION
 
     def test_enrichment_payload_carries_license_expression(self):
-        self.agg.aggregate("license_compliance", {"license_issues": [self.item]})
-        payload = self.agg.get_dependency_enrichments()["tzdata@2026c-1.el10_2"]
+        classification = {
+            "component": "tzdata",
+            "version": "2026c-1.el10_2",
+            "purl": "pkg:rpm/redhat/tzdata@2026c-1.el10_2",
+            "license": "GPL-2.0-only",
+            "category": "strong_copyleft",
+            "obligations": [],
+            "risks": [],
+            "explanation": "GPL",
+            "spdx_expression": TZDATA_EXPRESSION,
+        }
+        self.agg.aggregate("license_compliance", {"component_licenses": [classification]})
+        payload = enrichment_payload(self.agg, "tzdata", "2026c-1.el10_2")
         assert payload["license"] == "GPL-2.0-only"
         assert payload["license_expression"] == TZDATA_EXPRESSION

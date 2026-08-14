@@ -12,6 +12,7 @@ import { useVirtualizer } from '@tanstack/react-virtual'
 import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-container'
 import { formatDate } from '@/lib/utils'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
+import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 
 const DASHBOARD_STATS_SKELETON_IDS = ['ds1', 'ds2', 'ds3', 'ds4']
 const DASHBOARD_ACTIVITY_SKELETON_IDS = ['da1', 'da2', 'da3', 'da4', 'da5']
@@ -107,11 +108,11 @@ export default function Dashboard() {
       onClick: () => navigate("/analytics?tab=vulnerabilities&severity=HIGH"),
     },
     {
-      title: "Avg Risk Score",
+      title: "Avg Project Risk Score",
       value: String(dashboardStats?.avg_risk_score ?? "0.0"),
       icon: ShieldCheck,
-      description: "Average risk per project",
-      tooltip: "Calculated as the average sum of CVSS scores per project. If CVSS is missing, weighted severity is used: Critical=10, High=7.5, Medium=4, Low=1.",
+      description: "Average across projects",
+      tooltip: "The mean of every project's 0-100 exposure score, which saturates a severity-weighted finding count (Critical=20, High=4, Medium=1, Low=0.25). Not comparable to the Avg Threat Score on a scan's threat-intelligence panel, which averages per-CVE EPSS/KEV threat scores.",
     }
   ]
 
@@ -238,9 +239,10 @@ export default function Dashboard() {
                                 <div key={scan.id} className="flex items-center">
                                     <div className="space-y-1">
                                         <p className="text-sm font-medium leading-none">{scan.project_name}</p>
-                                        <p className="text-sm text-muted-foreground">
-                                            {scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan'} on {scan.branch} - {scan.status}
-                                        </p>
+                                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                                            <span>{scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan'} on {scan.branch}</span>
+                                            <ScanStatusBadge status={scan.status} />
+                                        </div>
                                     </div>
                                     <div className="ml-auto font-medium text-sm text-muted-foreground">
                                         {formatDate(scan.created_at)}

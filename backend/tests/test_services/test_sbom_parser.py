@@ -1,5 +1,9 @@
 """Tests for SBOM parser - format detection, CycloneDX/SPDX/Syft parsing."""
 
+import re
+
+import pytest
+
 from app.schemas.sbom import SBOMFormat
 from app.services.sbom_parser import (
     SBOMParser,
@@ -439,7 +443,7 @@ class TestSPDXParsing:
 
     def test_type_inferred_from_purl(self, spdx_minimal):
         result = self.parser.parse(spdx_minimal)
-        assert result.dependencies[0].type == "python"
+        assert result.dependencies[0].type == "pypi"
 
 
 class TestSyftParsing:
@@ -972,7 +976,7 @@ class TestSPDXDirectDependencyDetection:
         deps = {d.name: d for d in result.dependencies}
         assert deps["dep1"].direct is True
         assert deps["dep2"].direct is True
-        assert deps["my-repo"].direct is False
+        assert "my-repo" not in deps
 
     def test_transitive_dep_of_direct_is_not_direct(self):
         parser = SBOMParser()
@@ -1006,7 +1010,7 @@ class TestSPDXDirectDependencyDetection:
         deps = {d.name: d for d in result.dependencies}
         assert deps["dep1"].direct is True
         assert deps["dep2"].direct is False
-        assert deps["my-repo"].direct is False
+        assert "my-repo" not in deps
 
     def test_document_depends_on_directly(self):
         # No intermediate root package: DOCUMENT DEPENDS_ON dep1 directly.
@@ -1035,6 +1039,960 @@ class TestSPDXDirectDependencyDetection:
         deps = {d.name: d for d in result.dependencies}
         assert deps["dep1"].direct is True
         assert deps["dep2"].direct is False
+
+
+_SYFT_SOURCE_ID = "cdb4ee2aea69cc6a83331bbe96dc2caa9a299d21329efb0336fc02a82e1839a8"
+
+
+def _syft_json_project_sbom() -> dict:
+    """Mirrors the prod syft 1.42.3 directory scan: `dependency-of` edges point
+    library -> root project ('parent IS A DEPENDENCY OF child'), plus
+    contains/evident-by edges from the source for every artifact."""
+
+    def _artifact(aid: str, name: str, version: str, purl: str | None, atype: str = "java-archive") -> dict:
+        art: dict = {"id": aid, "name": name, "version": version, "type": atype}
+        if purl:
+            art["purl"] = purl
+        return art
+
+    return {
+        "descriptor": {"name": "syft", "version": "1.42.3"},
+        "source": {"id": _SYFT_SOURCE_ID, "type": "directory", "target": "/build", "name": "."},
+        "artifacts": [
+            _artifact("aaaa000000000001", "demo", "0.0.1-SNAPSHOT", "pkg:maven/com.example/demo@0.0.1-SNAPSHOT"),
+            _artifact("aaaa000000000002", "slf4j-api", "2.0.16", "pkg:maven/org.slf4j/slf4j-api@2.0.16"),
+            _artifact("aaaa000000000003", "logback-core", "1.5.6", "pkg:maven/ch.qos.logback/logback-core@1.5.6"),
+            _artifact("aaaa000000000004", "actions/checkout", "v4", "pkg:github/actions/checkout@v4", "github-action"),
+        ],
+        "artifactRelationships": [
+            {"parent": _SYFT_SOURCE_ID, "child": "aaaa000000000001", "type": "contains"},
+            {"parent": _SYFT_SOURCE_ID, "child": "aaaa000000000002", "type": "contains"},
+            {"parent": _SYFT_SOURCE_ID, "child": "aaaa000000000003", "type": "contains"},
+            {"parent": _SYFT_SOURCE_ID, "child": "aaaa000000000004", "type": "contains"},
+            # slf4j-api is a dependency of demo; logback-core is a dependency of slf4j-api.
+            {"parent": "aaaa000000000002", "child": "aaaa000000000001", "type": "dependency-of"},
+            {"parent": "aaaa000000000003", "child": "aaaa000000000002", "type": "dependency-of"},
+            {"parent": "aaaa000000000001", "child": "evidence-file-1", "type": "evident-by"},
+        ],
+        "files": [],
+    }
+
+
+class TestSyftRelationshipDirection:
+    """Syft `dependency-of` means 'parent IS A DEPENDENCY OF child'; the old code read it backwards."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+        self.result = self.parser.parse(_syft_json_project_sbom())
+        self.deps = {d.name: d for d in self.result.dependencies}
+
+    def test_single_root_children_are_direct(self):
+        assert self.deps["slf4j-api"].direct is True
+
+    def test_transitive_dependency_is_not_direct(self):
+        dep = self.deps["logback-core"]
+        assert dep.direct is False
+        assert dep.direct_inferred is False
+
+    def test_root_project_does_not_list_its_dependencies_as_parents(self):
+        assert self.deps["demo"].parent_components == []
+
+    def test_parents_point_at_dependents_not_dependencies(self):
+        assert self.deps["slf4j-api"].parent_components == ["pkg:maven/com.example/demo@0.0.1-SNAPSHOT"]
+        assert self.deps["logback-core"].parent_components == ["pkg:maven/org.slf4j/slf4j-api@2.0.16"]
+
+    def test_parent_refs_are_purls_not_syft_hex_ids(self):
+        for dep in self.result.dependencies:
+            for ref in dep.parent_components:
+                assert not re.fullmatch(r"[0-9a-f]{16}", ref)
+
+    def test_contains_only_artifact_is_direct_but_flagged_inferred(self):
+        action = self.deps["actions/checkout"]
+        assert action.direct is True
+        assert action.direct_inferred is True
+
+    def test_source_level_depends_on_is_graph_confirmed_direct(self):
+        sbom = _syft_json_project_sbom()
+        sbom["artifactRelationships"].append(
+            {"parent": _SYFT_SOURCE_ID, "child": "aaaa000000000002", "type": "depends-on"}
+        )
+        result = self.parser.parse(sbom)
+        dep = {d.name: d for d in result.dependencies}["slf4j-api"]
+        assert dep.direct is True
+        assert dep.direct_inferred is False
+
+    def test_source_level_dependency_of_is_graph_confirmed_direct(self):
+        sbom = _syft_json_project_sbom()
+        sbom["artifactRelationships"].append(
+            {"parent": "aaaa000000000003", "child": _SYFT_SOURCE_ID, "type": "dependency-of"}
+        )
+        result = self.parser.parse(sbom)
+        dep = {d.name: d for d in result.dependencies}["logback-core"]
+        assert dep.direct is True
+        assert dep.direct_inferred is False
+
+    def test_multiple_roots_do_not_promote_their_children(self):
+        # Two independent top-level packages: their children must stay transitive.
+        sbom = _syft_json_project_sbom()
+        sbom["artifactRelationships"] = [
+            {"parent": "aaaa000000000002", "child": "aaaa000000000001", "type": "dependency-of"},
+            {"parent": "aaaa000000000003", "child": "aaaa000000000004", "type": "dependency-of"},
+        ]
+        result = self.parser.parse(sbom)
+        deps = {d.name: d for d in result.dependencies}
+        assert deps["slf4j-api"].direct is False
+        assert deps["logback-core"].direct is False
+        assert deps["demo"].direct is True
+        assert deps["demo"].direct_inferred is True
+
+    def test_no_relationships_keeps_everything_direct_inferred(self):
+        sbom = _syft_json_project_sbom()
+        sbom["artifactRelationships"] = []
+        result = self.parser.parse(sbom)
+        assert all(d.direct is True and d.direct_inferred is True for d in result.dependencies)
+
+    def test_image_scan_with_contains_only_relationships_is_direct_inferred(self):
+        # K17: the old app-package-type fallback keyed on type names syft never
+        # emits; graph-silent artifacts are now uniformly direct-but-inferred.
+        sbom = {
+            "descriptor": {"name": "syft", "version": "1.42.3"},
+            "source": {"id": _SYFT_SOURCE_ID, "type": "image", "target": "registry.example.com/app:1"},
+            "artifacts": [
+                {
+                    "id": "bbbb000000000001",
+                    "name": "spring-core",
+                    "version": "6.2.1",
+                    "type": "java-archive",
+                    "purl": "pkg:maven/org.springframework/spring-core@6.2.1",
+                },
+                {
+                    "id": "bbbb000000000002",
+                    "name": "libssl3",
+                    "version": "3.0.11",
+                    "type": "deb",
+                    "purl": "pkg:deb/debian/libssl3@3.0.11",
+                },
+            ],
+            "artifactRelationships": [
+                {"parent": _SYFT_SOURCE_ID, "child": "bbbb000000000001", "type": "contains"},
+                {"parent": _SYFT_SOURCE_ID, "child": "bbbb000000000002", "type": "contains"},
+            ],
+        }
+        result = self.parser.parse(sbom)
+        assert all(d.direct is True and d.direct_inferred is True for d in result.dependencies)
+
+
+def _three_component_sbom(second_component: dict) -> dict:
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "metadata": {"component": {"type": "application", "name": "app", "bom-ref": "root"}},
+        "components": [
+            {"type": "library", "name": "first", "version": "1.0", "purl": "pkg:pypi/first@1.0"},
+            second_component,
+            {"type": "library", "name": "third", "version": "3.0", "purl": "pkg:pypi/third@3.0"},
+        ],
+        "dependencies": [],
+    }
+
+
+class TestMalformedComponentResilience:
+    """One bad component must not truncate the parse; the loss must be counted."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def test_null_version_component_is_coerced_not_fatal(self):
+        sbom = _three_component_sbom(
+            {"type": "library", "name": "second", "version": None, "purl": "pkg:pypi/second@2.0"}
+        )
+        result = self.parser.parse(sbom)
+        names = [d.name for d in result.dependencies]
+        assert names == ["first", "second", "third"]
+        assert result.dependencies[1].version == "unknown"
+
+    def test_properties_object_instead_of_list_is_not_fatal(self):
+        sbom = _three_component_sbom(
+            {
+                "type": "library",
+                "name": "second",
+                "version": "2.0",
+                "purl": "pkg:pypi/second@2.0",
+                "properties": {"name": "x", "value": "y"},
+            }
+        )
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["first", "second", "third"]
+
+    def test_crashing_component_is_skipped_and_counted_others_survive(self):
+        sbom = _three_component_sbom(
+            {"type": "library", "name": "second", "version": "2.0", "purl": "pkg:pypi/second@2.0", "licenses": 5}
+        )
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["first", "third"]
+        assert result.skipped_components == 1
+        assert result.skipped_reasons.get("parse-error") == 1
+        assert result.total_components == 3
+
+    def test_non_dict_component_is_counted(self):
+        sbom = _three_component_sbom({"type": "library", "name": "second", "version": "2.0"})
+        sbom["components"].append(123)
+        result = self.parser.parse(sbom)
+        assert len(result.dependencies) == 3
+        assert result.skipped_components == 1
+        assert result.total_components == 4
+
+    def test_null_licenses_and_hashes_are_not_fatal(self):
+        sbom = _three_component_sbom(
+            {
+                "type": "library",
+                "name": "second",
+                "version": "2.0",
+                "purl": "pkg:pypi/second@2.0",
+                "licenses": None,
+                "hashes": None,
+                "externalReferences": None,
+                "evidence": None,
+            }
+        )
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["first", "second", "third"]
+
+    def test_syft_artifact_crash_is_isolated(self):
+        sbom = {
+            "descriptor": {"name": "syft", "version": "1.0.0"},
+            "source": {"type": "directory", "target": "/app"},
+            "artifacts": [
+                {"id": "a1", "name": "ok-1", "version": "1.0", "type": "python", "purl": "pkg:pypi/ok-1@1.0"},
+                {"id": "a2", "name": "bad", "version": "1.0", "type": "python", "licenses": 5},
+                {"id": "a3", "name": "ok-2", "version": "2.0", "type": "python", "purl": "pkg:pypi/ok-2@2.0"},
+            ],
+            "artifactRelationships": [],
+        }
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["ok-1", "ok-2"]
+        assert result.skipped_reasons.get("parse-error") == 1
+
+    def test_spdx_package_crash_is_isolated(self):
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "packages": [
+                {"SPDXID": "SPDXRef-1", "name": "ok-1", "versionInfo": "1.0", "checksums": 5},
+                {"SPDXID": "SPDXRef-2", "name": "ok-2", "versionInfo": "2.0"},
+            ],
+            "relationships": [],
+        }
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["ok-2"]
+        assert result.skipped_reasons.get("parse-error") == 1
+
+    def test_document_level_malformed_known_format_raises(self):
+        # metadata with the wrong JSON type breaks the handler before the
+        # component loop; success here would let persistence replace the scan's
+        # previous dependencies with an empty set.
+        sbom = {
+            "bomFormat": "CycloneDX",
+            "specVersion": "1.5",
+            "metadata": [],
+            "components": [{"type": "library", "name": "valid", "version": "1.0", "purl": "pkg:pypi/valid@1.0"}],
+        }
+        with pytest.raises(AttributeError):
+            self.parser.parse(sbom)
+
+    def test_unknown_format_raises_when_every_handler_fails(self):
+        sbom = {"metadata": "bogus", "relationships": "bogus", "source": "bogus"}
+        with pytest.raises(AttributeError):
+            self.parser.parse(sbom)
+
+    def test_unknown_format_junk_without_handler_crash_still_returns_empty(self):
+        result = self.parser.parse({"random": "data"})
+        assert result.dependencies == []
+
+    def test_dict_version_is_treated_as_missing(self):
+        sbom = _three_component_sbom(
+            {"type": "library", "name": "second", "version": {"raw": "2.0"}, "purl": "pkg:pypi/second@2.0"}
+        )
+        result = self.parser.parse(sbom)
+        deps = {d.name: d for d in result.dependencies}
+        assert deps["second"].version == "unknown"
+
+    def test_unknown_format_attempts_do_not_leak_state_between_handlers(self):
+        # CycloneDX-shaped components (undetectable: no purl on the first) yield zero
+        # dependencies; the SPDX attempt must win with a clean slate, not inherit the
+        # CycloneDX attempt's skip counters.
+        sbom = {
+            "components": [{"type": "file", "name": "/etc/passwd"}],
+            "packages": [{"SPDXID": "SPDXRef-1", "name": "real-pkg", "versionInfo": "1.0"}],
+            "relationships": [],
+        }
+        result = parse_sbom(sbom)
+        assert [d.name for d in result.dependencies] == ["real-pkg"]
+        assert result.skipped_components == 0
+        assert result.total_components == 1
+
+
+def _spdx_github_export() -> dict:
+    """Mirrors a GitHub dependency-graph SBOM export: DOCUMENT DESCRIBES the repo
+    package, which DEPENDS_ON the actual dependencies."""
+    return {
+        "spdxVersion": "SPDX-2.3",
+        "SPDXID": "SPDXRef-DOCUMENT",
+        "name": "com.github.acme/my-service",
+        "creationInfo": {"created": "2026-08-01T00:00:00Z"},
+        "packages": [
+            {
+                "SPDXID": "SPDXRef-repo",
+                "name": "com.github.acme/my-service",
+                "versionInfo": "",
+                "downloadLocation": "git+https://github.com/acme/my-service",
+                "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:github/acme/my-service"}],
+            },
+            {
+                "SPDXID": "SPDXRef-npm-left-pad",
+                "name": "npm:left-pad",
+                "versionInfo": "1.3.0",
+                "downloadLocation": "NOASSERTION",
+                "licenseConcluded": "NOASSERTION",
+                "licenseDeclared": "NONE",
+                "packageFileName": "package-lock.json",
+                "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:npm/left-pad@1.3.0"}],
+            },
+            {
+                "SPDXID": "SPDXRef-maven-commons-text",
+                "name": "org.apache.commons:commons-text",
+                "versionInfo": "NOASSERTION",
+                "externalRefs": [
+                    {"referenceType": "purl", "referenceLocator": "pkg:maven/org.apache.commons/commons-text@1.14.0"}
+                ],
+            },
+            {
+                "SPDXID": "SPDXRef-composer-monolog",
+                "name": "monolog/monolog",
+                "versionInfo": "3.9.0",
+                "externalRefs": [{"referenceType": "purl", "referenceLocator": "pkg:composer/monolog/monolog@3.9.0"}],
+            },
+            {"SPDXID": "SPDXRef-noassert", "name": "NOASSERTION", "versionInfo": "1.0"},
+        ],
+        "relationships": [
+            {
+                "spdxElementId": "SPDXRef-DOCUMENT",
+                "relatedSpdxElement": "SPDXRef-repo",
+                "relationshipType": "DESCRIBES",
+            },
+            {
+                "spdxElementId": "SPDXRef-repo",
+                "relatedSpdxElement": "SPDXRef-npm-left-pad",
+                "relationshipType": "DEPENDS_ON",
+            },
+            {
+                "spdxElementId": "SPDXRef-repo",
+                "relatedSpdxElement": "SPDXRef-maven-commons-text",
+                "relationshipType": "DEPENDS_ON",
+            },
+            {
+                "spdxElementId": "SPDXRef-maven-commons-text",
+                "relatedSpdxElement": "SPDXRef-composer-monolog",
+                "relationshipType": "DEPENDS_ON",
+            },
+        ],
+    }
+
+
+class TestSPDXRootSkipAndFields:
+    def setup_method(self):
+        self.parser = SBOMParser()
+        self.result = self.parser.parse(_spdx_github_export())
+        self.deps = {d.name: d for d in self.result.dependencies}
+
+    def test_described_root_is_not_ingested_as_dependency(self):
+        assert "com.github.acme/my-service" not in self.deps
+        assert self.result.skipped_reasons.get("root-component") == 1
+
+    def test_source_comes_from_described_root(self):
+        assert self.result.source_type == "application"
+        assert self.result.source_target == "com.github.acme/my-service"
+
+    def test_parents_resolve_to_purls_not_spdxrefs(self):
+        assert self.deps["monolog/monolog"].parent_components == ["pkg:maven/org.apache.commons/commons-text@1.14.0"]
+
+    def test_direct_dependency_has_no_unresolvable_root_parent(self):
+        assert self.deps["npm:left-pad"].parent_components == []
+
+    def test_noassertion_version_is_normalized(self):
+        assert self.deps["org.apache.commons:commons-text"].version == "unknown"
+
+    def test_none_license_is_dropped(self):
+        assert self.deps["npm:left-pad"].license == ""
+
+    def test_package_named_noassertion_is_dropped(self):
+        assert "NOASSERTION" not in self.deps
+
+    def test_package_file_name_becomes_location(self):
+        assert self.deps["npm:left-pad"].locations == ["package-lock.json"]
+
+    def test_type_falls_back_to_purl_type_for_unmapped_ecosystems(self):
+        assert self.deps["monolog/monolog"].type == "composer"
+
+    def test_group_derived_from_purl_namespace(self):
+        assert self.deps["org.apache.commons:commons-text"].group == "org.apache.commons"
+
+    def test_dependencies_inherit_source_target(self):
+        assert self.deps["npm:left-pad"].source_target == "com.github.acme/my-service"
+
+    def test_minimal_describes_only_document_keeps_package(self):
+        # A document that DESCRIBES a package with no DEPENDS_ON children is an
+        # SBOM *of* that package; it must stay ingested and direct.
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "packages": [{"SPDXID": "SPDXRef-only", "name": "lonely-lib", "versionInfo": "1.0"}],
+            "relationships": [
+                {
+                    "spdxElementId": "SPDXRef-DOCUMENT",
+                    "relatedSpdxElement": "SPDXRef-only",
+                    "relationshipType": "DESCRIBES",
+                }
+            ],
+        }
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["lonely-lib"]
+        assert result.dependencies[0].direct is True
+
+
+def _syft_cyclonedx_component_sbom(properties: list[dict], **extra) -> dict:
+    comp = {
+        "bom-ref": "pkg:maven/org.hdrhistogram/HdrHistogram@2.2.2?package-id=abc",
+        "type": "library",
+        "name": "HdrHistogram",
+        "version": "2.2.2",
+        "purl": "pkg:maven/org.hdrhistogram/HdrHistogram@2.2.2",
+        "properties": properties,
+        **extra,
+    }
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "metadata": {
+            "tools": {"components": [{"type": "application", "name": "syft", "version": "1.42.2"}]},
+            "component": {"type": "container", "name": "registry.example.com/app", "version": "1", "bom-ref": "root"},
+        },
+        "components": [comp],
+        "dependencies": [],
+    }
+
+
+class TestSyftCycloneDXLocationProperties:
+    """syft:location:N:layerID feeds layer_digest, path/accessPath feed locations deduplicated (prod shape: 97% of location-bearing docs held a sha256 pseudo-path and layer_digest stayed null)."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def test_layer_id_goes_to_layer_digest_not_locations(self):
+        layer = "sha256:16b50a465761e86ece11e7312e0dccecb2a17c18e0b4a34c9d40baba6f8e77f3"
+        result = self.parser.parse(
+            _syft_cyclonedx_component_sbom(
+                [
+                    {"name": "syft:location:0:layerID", "value": layer},
+                    {"name": "syft:location:0:path", "value": "/app/libs/HdrHistogram-2.2.2.jar"},
+                ]
+            )
+        )
+        dep = result.dependencies[0]
+        assert dep.layer_digest == layer
+        assert dep.locations == ["/app/libs/HdrHistogram-2.2.2.jar"]
+
+    def test_path_and_access_path_are_deduplicated(self):
+        result = self.parser.parse(
+            _syft_cyclonedx_component_sbom(
+                [
+                    {"name": "syft:location:0:path", "value": "/app/libs/HdrHistogram-2.2.2.jar"},
+                    {"name": "syft:location:0:accessPath", "value": "/app/libs/HdrHistogram-2.2.2.jar"},
+                ]
+            )
+        )
+        assert result.dependencies[0].locations == ["/app/libs/HdrHistogram-2.2.2.jar"]
+
+    def test_first_layer_id_wins_across_locations(self):
+        result = self.parser.parse(
+            _syft_cyclonedx_component_sbom(
+                [
+                    {"name": "syft:location:0:layerID", "value": "sha256:first"},
+                    {"name": "syft:location:1:layerID", "value": "sha256:second"},
+                ]
+            )
+        )
+        assert result.dependencies[0].layer_digest == "sha256:first"
+
+    def test_trivy_layer_digest_still_recognised(self):
+        result = self.parser.parse(
+            _syft_cyclonedx_component_sbom([{"name": "aquasecurity:trivy:LayerDigest", "value": "sha256:trivy"}])
+        )
+        assert result.dependencies[0].layer_digest == "sha256:trivy"
+
+    def test_cdx_npm_package_path_still_a_location(self):
+        result = self.parser.parse(
+            _syft_cyclonedx_component_sbom([{"name": "cdx:npm:package:path", "value": "node_modules/parse5"}])
+        )
+        assert result.dependencies[0].locations == ["node_modules/parse5"]
+
+    def test_location_annotation_properties_are_not_locations(self):
+        # Newer syft emits syft:location:N:annotations:evidence; the extra colon
+        # must not fall through to the substring heuristic.
+        result = self.parser.parse(
+            _syft_cyclonedx_component_sbom(
+                [
+                    {"name": "syft:location:0:path", "value": "/app/libs/HdrHistogram-2.2.2.jar"},
+                    {"name": "syft:location:0:annotations:evidence", "value": "primary"},
+                ]
+            )
+        )
+        assert result.dependencies[0].locations == ["/app/libs/HdrHistogram-2.2.2.jar"]
+
+
+class TestSyftCpePropertiesLifted:
+    """Syft-generated CycloneDX carries CPEs only as repeated syft:cpe23 properties."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def test_all_cpe23_properties_are_lifted(self):
+        cpes = [
+            "cpe:2.3:a:org.hdrhistogram:HdrHistogram:2.2.2:*:*:*:*:*:*:*",
+            "cpe:2.3:a:HdrHistogram:HdrHistogram:2.2.2:*:*:*:*:*:*:*",
+            "cpe:2.3:a:hdrhistogram:HdrHistogram:2.2.2:*:*:*:*:*:*:*",
+        ]
+        result = self.parser.parse(_syft_cyclonedx_component_sbom([{"name": "syft:cpe23", "value": c} for c in cpes]))
+        assert result.dependencies[0].cpes == cpes
+
+    def test_spec_cpe_field_and_properties_are_merged_without_duplicates(self):
+        cpe = "cpe:2.3:a:org.hdrhistogram:HdrHistogram:2.2.2:*:*:*:*:*:*:*"
+        result = self.parser.parse(_syft_cyclonedx_component_sbom([{"name": "syft:cpe23", "value": cpe}], cpe=cpe))
+        assert result.dependencies[0].cpes == [cpe]
+
+
+def _cyclonedx_with(components: list[dict], root: dict | None = None) -> dict:
+    return {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.6",
+        "metadata": {"component": root or {"type": "container", "name": "registry.example.com/app", "bom-ref": "root"}},
+        "components": components,
+        "dependencies": [],
+    }
+
+
+class TestFabricatedIdentifiers:
+    """OS descriptors and binary applications got fabricated pkg:generic purls no vulnerability or enrichment source can ever match (10.8k prod rows, 94 syntactically invalid)."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def test_operating_system_component_kept_without_fabricated_purl(self):
+        # Prod shape: bom-ref os:rhel@9.8, purl null, real OS CPE.
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "bom-ref": "os:rhel@9.8",
+                        "type": "operating-system",
+                        "name": "rhel",
+                        "version": "9.8",
+                        "cpe": "cpe:2.3:o:redhat:enterprise_linux:9:*:baseos:*:*:*:*:*",
+                    }
+                ]
+            )
+        )
+        assert len(result.dependencies) == 1
+        dep = result.dependencies[0]
+        assert dep.purl is None
+        assert dep.version == "9.8"
+        assert dep.cpes == ["cpe:2.3:o:redhat:enterprise_linux:9:*:baseos:*:*:*:*:*"]
+
+    def test_binary_application_without_purl_or_cpe_is_skipped(self):
+        result = self.parser.parse(_cyclonedx_with([{"type": "application", "name": "Notifu", "version": "1.7.6.0"}]))
+        assert result.dependencies == []
+        assert result.skipped_reasons.get("unidentifiable") == 1
+
+    def test_application_with_cpe_is_kept_without_fabricated_purl(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "application",
+                        "name": "chrome",
+                        "version": "126.0.6478.126",
+                        "cpe": "cpe:2.3:a:google:chrome:126.0.6478.126:*:*:*:*:*:*:*",
+                    }
+                ]
+            )
+        )
+        assert len(result.dependencies) == 1
+        assert result.dependencies[0].purl is None
+        assert result.dependencies[0].cpes
+
+    def test_device_data_firmware_components_are_skipped(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {"type": "device", "name": "sensor", "version": "1"},
+                    {"type": "data", "name": "training-set", "version": "1"},
+                    {"type": "firmware", "name": "bios", "version": "1"},
+                ]
+            )
+        )
+        assert result.dependencies == []
+        assert result.skipped_reasons.get("non-dependency") == 3
+
+    def test_root_component_repeated_in_component_list_is_skipped(self):
+        root = {
+            "type": "application",
+            "name": "app",
+            "version": "1.0.0",
+            "bom-ref": "app@1.0.0",
+            "purl": "pkg:npm/app@1.0.0",
+        }
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    dict(root),
+                    {"type": "library", "name": "dep", "version": "2.0", "purl": "pkg:npm/dep@2.0"},
+                ],
+                root=root,
+            )
+        )
+        assert [d.name for d in result.dependencies] == ["dep"]
+        assert result.skipped_reasons.get("root-component") == 1
+
+    def test_library_without_purl_and_placeholder_version_is_skipped(self):
+        result = self.parser.parse(
+            _cyclonedx_with([{"type": "library", "name": "mavenEcjBootstrapAgent", "version": "UNKNOWN"}])
+        )
+        assert result.dependencies == []
+        assert result.skipped_reasons.get("unidentifiable") == 1
+
+    def test_placeholder_version_with_real_purl_is_normalized_and_kept(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "library",
+                        "name": "slf4j-api",
+                        "version": "UNKNOWN",
+                        "purl": "pkg:maven/org.slf4j/slf4j-api",
+                    }
+                ]
+            )
+        )
+        assert len(result.dependencies) == 1
+        assert result.dependencies[0].version == "unknown"
+
+    def test_fabricated_purl_segments_are_percent_encoded(self):
+        result = self.parser.parse(_cyclonedx_with([{"type": "library", "name": "my lib", "version": "1.0, rev 2"}]))
+        assert result.dependencies[0].purl == "pkg:generic/my%20lib@1.0%2C%20rev%202"
+
+    def test_syft_artifact_with_placeholder_version_but_purl_is_kept(self):
+        sbom = {
+            "descriptor": {"name": "syft", "version": "1.42.3"},
+            "source": {"id": "src", "type": "directory", "target": "/build"},
+            "artifacts": [
+                {
+                    "id": "a1",
+                    "name": "spring-boot-starter-test",
+                    "version": "UNKNOWN",
+                    "type": "java-archive",
+                    "purl": "pkg:maven/org.springframework.boot/spring-boot-starter-test",
+                },
+                {"id": "a2", "name": "esc-cli.amd64.windows", "version": "UNKNOWN", "type": "binary"},
+            ],
+            "artifactRelationships": [],
+        }
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["spring-boot-starter-test"]
+        assert result.dependencies[0].version == "unknown"
+        assert result.skipped_reasons.get("unidentifiable") == 1
+
+    def test_spdx_package_without_purl_and_noassertion_version_is_skipped(self):
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "packages": [
+                {"SPDXID": "SPDXRef-1", "name": "ghost-pkg", "versionInfo": "NOASSERTION"},
+                {"SPDXID": "SPDXRef-2", "name": "real-pkg", "versionInfo": "1.0"},
+            ],
+            "relationships": [],
+        }
+        result = self.parser.parse(sbom)
+        assert [d.name for d in result.dependencies] == ["real-pkg"]
+
+
+class TestTypeIsPurlEcosystem:
+    """`type` is surfaced as 'ecosystem' by Inventory; all three branches must emit the purl vocabulary, not the generator's."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def test_trivy_framework_component_gets_purl_type(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "framework",
+                        "name": "@angular-devkit/architect",
+                        "version": "0.1902.14",
+                        "purl": "pkg:npm/%40angular-devkit/architect@0.1902.14",
+                    }
+                ]
+            )
+        )
+        assert result.dependencies[0].type == "npm"
+
+    def test_cyclonedx_library_gets_purl_type(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "library",
+                        "name": "guava",
+                        "version": "33.0.0",
+                        "purl": "pkg:maven/com.google.guava/guava@33.0.0",
+                    }
+                ]
+            )
+        )
+        assert result.dependencies[0].type == "maven"
+
+    def test_operating_system_keeps_its_component_type(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "bom-ref": "os:debian@13",
+                        "type": "operating-system",
+                        "name": "debian",
+                        "version": "13",
+                        "cpe": "cpe:2.3:o:debian:debian_linux:13:*:*:*:*:*:*:*",
+                    }
+                ]
+            )
+        )
+        assert result.dependencies[0].type == "operating-system"
+
+    def test_purl_less_application_falls_back_to_syft_package_type_property(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "application",
+                        "name": "windows-kill",
+                        "version": "1.0",
+                        "cpe": "cpe:2.3:a:windows-kill:windows-kill:1.0:*:*:*:*:*:*:*",
+                        "properties": [{"name": "syft:package:type", "value": "binary"}],
+                    }
+                ]
+            )
+        )
+        assert result.dependencies[0].type == "binary"
+
+    def test_fabricated_purl_prefers_syft_package_type_property(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "library",
+                        "name": "some-lib",
+                        "version": "1.0",
+                        "properties": [{"name": "syft:package:type", "value": "java-archive"}],
+                    }
+                ]
+            )
+        )
+        assert result.dependencies[0].type == "java-archive"
+
+    def test_syft_artifact_type_replaced_by_purl_type(self):
+        sbom = {
+            "descriptor": {"name": "syft", "version": "1.42.3"},
+            "source": {"id": "src", "type": "directory", "target": "/build"},
+            "artifacts": [
+                {
+                    "id": "a1",
+                    "name": "slf4j-api",
+                    "version": "2.0.16",
+                    "type": "java-archive",
+                    "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.16",
+                },
+                {
+                    "id": "a2",
+                    "name": "actions/checkout",
+                    "version": "v4",
+                    "type": "github-action",
+                    "purl": "pkg:github/actions/checkout@v4",
+                },
+            ],
+            "artifactRelationships": [],
+        }
+        result = self.parser.parse(sbom)
+        deps = {d.name: d for d in result.dependencies}
+        assert deps["slf4j-api"].type == "maven"
+        assert deps["actions/checkout"].type == "github"
+
+
+class TestVcsUrlNormalization:
+    """Maven SCM strings copied verbatim (4.3% of prod repository_url values) are unusable as links."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def _repo_url(self, vcs_value: str) -> str | None:
+        sbom = _cyclonedx_with(
+            [
+                {
+                    "type": "library",
+                    "name": "pkg",
+                    "version": "1.0",
+                    "purl": "pkg:maven/g/pkg@1.0",
+                    "externalReferences": [{"type": "vcs", "url": vcs_value}],
+                }
+            ]
+        )
+        return self.parser.parse(sbom).dependencies[0].repository_url
+
+    def test_scm_git_git_protocol(self):
+        assert (
+            self._repo_url("scm:git:git://github.com/jayway/JsonPath.git") == "https://github.com/jayway/JsonPath.git"
+        )
+
+    def test_git_at_host_colon_path(self):
+        assert self._repo_url("git@github.com:prometheus/client_java.git") == (
+            "https://github.com/prometheus/client_java.git"
+        )
+
+    def test_scm_git_git_at_host(self):
+        assert self._repo_url("scm:git:git@github.com:lukas-krecan/ShedLock.git") == (
+            "https://github.com/lukas-krecan/ShedLock.git"
+        )
+
+    def test_plain_https_untouched(self):
+        assert self._repo_url("https://github.com/psf/requests") == "https://github.com/psf/requests"
+
+    def test_git_plus_https_prefix_stripped(self):
+        assert self._repo_url("git+https://github.com/acme/lib.git") == "https://github.com/acme/lib.git"
+
+    def test_garbage_is_dropped(self):
+        assert self._repo_url("not a url at all") is None
+
+
+class TestSyftArtifactMetadata:
+    """language lives on the artifact, not in metadata; deb 'source' is a package name, not a URL."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def _parse_artifact(self, artifact: dict):
+        sbom = {
+            "descriptor": {"name": "syft", "version": "1.42.3"},
+            "source": {"id": "src", "type": "directory", "target": "/build"},
+            "artifacts": [artifact],
+            "artifactRelationships": [],
+        }
+        return self.parser.parse(sbom).dependencies[0]
+
+    def test_top_level_language_is_captured(self):
+        dep = self._parse_artifact(
+            {
+                "id": "a1",
+                "name": "slf4j-api",
+                "version": "2.0.16",
+                "type": "java-archive",
+                "language": "java",
+                "purl": "pkg:maven/org.slf4j/slf4j-api@2.0.16",
+                "metadata": {},
+            }
+        )
+        assert dep.properties.get("language") == "java"
+
+    def test_source_package_name_is_not_a_repository_url(self):
+        dep = self._parse_artifact(
+            {
+                "id": "a1",
+                "name": "libssl3",
+                "version": "3.0.11",
+                "type": "deb",
+                "purl": "pkg:deb/debian/libssl3@3.0.11",
+                "metadata": {"source": "openssl-src", "architecture": "amd64"},
+            }
+        )
+        assert dep.repository_url is None
+        assert dep.properties.get("architecture") == "amd64"
+
+    def test_real_source_url_is_kept(self):
+        dep = self._parse_artifact(
+            {
+                "id": "a1",
+                "name": "some-lib",
+                "version": "1.0",
+                "type": "npm",
+                "purl": "pkg:npm/some-lib@1.0",
+                "metadata": {"source": "https://github.com/acme/some-lib"},
+            }
+        )
+        assert dep.repository_url == "https://github.com/acme/some-lib"
+
+
+class TestComponentAccounting:
+    """Every input element the parser sees must land in total_components with a labelled skip reason."""
+
+    def setup_method(self):
+        self.parser = SBOMParser()
+
+    def test_crypto_assets_are_counted(self):
+        result = self.parser.parse(
+            _cyclonedx_with(
+                [
+                    {
+                        "type": "cryptographic-asset",
+                        "name": "AES-256-GCM",
+                        "cryptoProperties": {"assetType": "algorithm"},
+                    },
+                    {"type": "library", "name": "lib", "version": "1.0", "purl": "pkg:npm/lib@1.0"},
+                ]
+            )
+        )
+        assert result.parsed_components == 1
+        assert result.skipped_reasons.get("cryptographic-asset") == 1
+        assert result.total_components == 2
+        assert len(result.crypto_assets) == 1
+
+    def test_syft_files_array_is_counted(self):
+        sbom = {
+            "descriptor": {"name": "syft", "version": "1.42.3"},
+            "source": {"id": "src", "type": "directory", "target": "/build"},
+            "artifacts": [{"id": "a1", "name": "lib", "version": "1.0", "type": "npm", "purl": "pkg:npm/lib@1.0"}],
+            "artifactRelationships": [],
+            "files": [{"id": "f1"}, {"id": "f2"}, {"id": "f3"}, {"id": "f4"}, {"id": "f5"}],
+        }
+        result = self.parser.parse(sbom)
+        assert result.parsed_components == 1
+        assert result.skipped_reasons.get("file") == 5
+        assert result.total_components == 6
+
+    def test_spdx_files_array_is_counted(self):
+        sbom = {
+            "spdxVersion": "SPDX-2.3",
+            "SPDXID": "SPDXRef-DOCUMENT",
+            "packages": [{"SPDXID": "SPDXRef-1", "name": "pkg", "versionInfo": "1.0"}],
+            "files": [{"SPDXID": "SPDXRef-File-1", "fileName": "./src/main.py"}],
+            "relationships": [],
+        }
+        result = self.parser.parse(sbom)
+        assert result.parsed_components == 1
+        assert result.skipped_reasons.get("file") == 1
+        assert result.total_components == 2
+
+    def test_total_still_balances_with_merges(self):
+        result = self.parser.parse(_syft_image_sbom_with_duplicate_package())
+        assert result.total_components == (
+            result.parsed_components + result.skipped_components + result.merged_components
+        )
 
 
 class TestDetectFormatMalformed:

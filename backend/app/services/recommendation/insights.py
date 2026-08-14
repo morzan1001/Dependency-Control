@@ -10,6 +10,7 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
+from app.services.aggregation.components import build_component_index, lookup_component
 from app.services.recommendation.common import ModelOrDict, get_attr, parse_version_tuple, scorecard_details
 
 
@@ -40,13 +41,16 @@ def correlate_scorecard_with_vulnerabilities(
             else False,
         }
 
+    # Quality findings keep the inventory name while a vulnerability component is group-qualified.
+    scorecard_index = build_component_index(scorecard_by_component)
+
     high_risk_vulns: list[dict[str, Any]] = []
 
     for vf in vulnerability_findings:
         component = get_attr(vf, "component", "")
         severity = str(get_attr(vf, "severity", "")).upper()
 
-        scorecard = scorecard_by_component.get(component)
+        scorecard = lookup_component(scorecard_index, component)
         if not scorecard:
             continue
 

@@ -7,10 +7,11 @@ from app.services.recommendation.secrets import process_secrets
 def _secret(
     severity="HIGH",
     component="src/config.py",
-    detector="AWS Key",
+    detector="2",
     finding_id="s1",
 ):
-    # Mirrors the stored TruffleHog shape: the credential type is details.detector.
+    # Mirrors the stored TruffleHog shape: details.detector is the numeric DetectorType
+    # ordinal (2 = AWS), which is what all 31,151 production secret findings carry.
     return {
         "type": "secret",
         "severity": severity,
@@ -70,8 +71,8 @@ class TestProcessSecretsSingleFinding:
 class TestProcessSecretsMultipleGroupedByDetector:
     def test_multiple_same_detector_grouped(self):
         findings = [
-            _secret(detector="AWS Key", finding_id="s1"),
-            _secret(detector="AWS Key", finding_id="s2"),
+            _secret(detector="2", finding_id="s1"),
+            _secret(detector="2", finding_id="s2"),
         ]
         result = process_secrets(findings)
         assert len(result) == 1
@@ -79,27 +80,27 @@ class TestProcessSecretsMultipleGroupedByDetector:
 
     def test_different_detectors_listed_in_description(self):
         findings = [
-            _secret(detector="AWS Key", finding_id="s1"),
-            _secret(detector="GitHub Token", finding_id="s2"),
+            _secret(detector="2", finding_id="s1"),
+            _secret(detector="8", finding_id="s2"),
         ]
         rec = process_secrets(findings)[0]
-        assert "AWS Key" in rec.description
-        assert "GitHub Token" in rec.description
+        assert "AWS" in rec.description
+        assert "Github" in rec.description
 
     def test_secret_types_in_action(self):
         findings = [
-            _secret(detector="AWS Key", finding_id="s1"),
-            _secret(detector="GitHub Token", finding_id="s2"),
-            _secret(detector="Slack Webhook", finding_id="s3"),
+            _secret(detector="2", finding_id="s1"),
+            _secret(detector="8", finding_id="s2"),
+            _secret(detector="30", finding_id="s3"),
         ]
         rec = process_secrets(findings)[0]
         secret_types = rec.action["secret_types"]
-        assert "AWS Key" in secret_types
-        assert "GitHub Token" in secret_types
-        assert "Slack Webhook" in secret_types
+        assert "AWS" in secret_types
+        assert "Github" in secret_types
+        assert "SlackWebhook" in secret_types
 
     def test_secret_types_limited_to_five(self):
-        findings = [_secret(detector=f"Detector{i}", finding_id=f"s{i}") for i in range(8)]
+        findings = [_secret(detector=str(i), finding_id=f"s{i}") for i in range(8)]
         rec = process_secrets(findings)[0]
         assert len(rec.action["secret_types"]) <= 5
 
@@ -190,9 +191,24 @@ class TestProcessSecretsDetectorFallbacks:
     """Credential type comes from details.detector, falling back to 'generic'."""
 
     def test_detector_named_in_description(self):
-        rec = process_secrets([_secret(detector="GitHub Token")])[0]
-        assert "GitHub Token" in rec.description
-        assert rec.action["secret_types"] == ["GitHub Token"]
+        rec = process_secrets([_secret(detector="8")])[0]
+        assert "Github" in rec.description
+        assert rec.action["secret_types"] == ["Github"]
+
+    def test_stored_ordinal_never_reaches_the_reader(self):
+        """Every production secret finding stores a numeric DetectorType ordinal;
+        rendering it raw produced recommendations reading 'These include: 17, 9'."""
+        findings = [
+            _secret(detector="17", finding_id="s1"),
+            _secret(detector="9", finding_id="s2"),
+        ]
+        rec = process_secrets(findings)[0]
+        assert "These include: URI, Gitlab" in rec.description
+        assert rec.action["secret_types"] == ["URI", "Gitlab"]
+
+    def test_unmapped_ordinal_falls_back_to_the_stored_value(self):
+        rec = process_secrets([_secret(detector="999999")])[0]
+        assert rec.action["secret_types"] == ["999999"]
 
     def test_generic_fallback(self):
         finding = {

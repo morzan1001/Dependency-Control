@@ -28,6 +28,12 @@ from app.schemas.analytics import (
     DependencyTreeNode,
     SeverityBreakdown,
 )
+from app.services.aggregation.components import (
+    artifact_segment,
+    cluster_by_package_identity,
+    component_match_query,
+    lookup_component,
+)
 from app.services.recommendation.common import get_attr
 
 from ._shared import _MSG_ACCESS_DENIED, _get_enrichment_info, _resolve_scan_id
@@ -40,10 +46,37 @@ def _dep_key(dep: Any) -> str:
     return get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
 
 
+async def _single_package_query(finding_repo: FindingRepository, scan_ids: list[str], component: str) -> dict[str, Any]:
+    """Finding filter for one component, narrowed to the exact spelling when the name is shared."""
+    base: dict[str, Any] = {
+        "scan_id": {"$in": scan_ids},
+        "waived": {"$ne": True},
+        **component_match_query(component),
+    }
+    names = await finding_repo.collection.distinct("component", base)
+    if len(set(cluster_by_package_identity(names).values())) > 1:
+        return {"scan_id": {"$in": scan_ids}, "waived": {"$ne": True}, "component": component}
+    return base
+
+
+def _resolve_single_package(records: list[Any], component: str) -> list[Any]:
+    """Drop the qualified matches when the requested name belongs to several packages.
+
+    The dependency-tree overlay blanks rather than guess, so an ambiguous name must not
+    return the union of every package that ends in it here either.
+    """
+    names = {get_attr(r, "component", "") for r in records}
+    packages = set(cluster_by_package_identity(names).values())
+    if len(packages) <= 1:
+        return records
+    return [r for r in records if get_attr(r, "component", "") == component]
+
+
 def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> DependencyTreeNode:
     """Build one node without its children; the graph builder fills in child_ids."""
     name = get_attr(dep, "name", "")
-    finding_info = findings_map.get(name, {})
+    # The bare-artifact alias keys are lowercased, dependency names are not.
+    finding_info = lookup_component(findings_map, name) or {}
 
     return DependencyTreeNode(
         # The document id (uuid) is unique per dependency; PURL only backstops dict inputs in tests.
@@ -170,7 +203,7 @@ async def get_dependency_tree(
         return DependencyGraph()
 
     findings = await finding_repo.find_many(
-        {"scan_id": scan_id, "type": "vulnerability"},
+        {"scan_id": scan_id, "type": "vulnerability", "waived": {"$ne": True}},
         limit=ANALYTICS_MAX_QUERY_LIMIT,
     )
     findings_map = build_findings_severity_map(findings)
@@ -200,11 +233,17 @@ async def get_component_findings(
 
     finding_repo = FindingRepository(db)
 
-    query = {"scan_id": {"$in": scan_ids}, "component": component}
+    # Waived findings are excluded here as everywhere else, so this list agrees with the
+    # severity tiles and the hotspot ranking for the same scan.
+    query: dict[str, Any] = {
+        "scan_id": {"$in": scan_ids},
+        "waived": {"$ne": True},
+        **component_match_query(component),
+    }
     if version:
         query["version"] = version
 
-    finding_records = await finding_repo.find_many(query, limit=100)
+    finding_records = _resolve_single_package(await finding_repo.find_many(query, limit=100), component)
 
     results = []
     for fr in finding_records:
@@ -216,12 +255,29 @@ async def get_component_findings(
 
 
 def _build_dep_query(scan_ids: list[str], component: str, version: str | None, type: str | None) -> dict[str, Any]:
-    dep_query: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "name": component}
+    """Dependency filter for a component name that may arrive group-qualified.
+
+    The Hotspots and Impact tabs hand this endpoint a finding component, which the inventory
+    stores under its bare artifact name, so both spellings are candidates.
+    """
+    artifact = artifact_segment(component)
+    names = [component] if artifact == component else [component, artifact]
+    dep_query: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "name": {"$in": names}}
     if version:
         dep_query["version"] = version
     if type:
         dep_query["type"] = type
     return dep_query
+
+
+def _resolve_single_dependency_package(dependencies: list[Any], component: str) -> list[Any]:
+    """Keep one package's rows: the exact spelling if the inventory has it, else the artifact
+    match when it belongs to a single package."""
+    exact = [d for d in dependencies if get_attr(d, "name", "") == component]
+    if exact:
+        return exact
+    packages = set(cluster_by_package_identity({get_attr(d, "name", "") for d in dependencies}).values())
+    return dependencies if len(packages) <= 1 else []
 
 
 def _collect_affected_projects(dependencies: list[Any], project_name_map: dict[str, str]) -> dict[str, dict[str, Any]]:
@@ -270,7 +326,7 @@ async def get_dependency_metadata_endpoint(
     enrichment_repo = DependencyEnrichmentRepository(db)
 
     dep_query = _build_dep_query(scan_ids, component, version, type)
-    dependencies = await dep_repo.find_many(dep_query, limit=100)
+    dependencies = _resolve_single_dependency_package(await dep_repo.find_many(dep_query, limit=100), component)
     if not dependencies:
         return None
 
@@ -286,7 +342,7 @@ async def get_dependency_metadata_endpoint(
     dep_purl = get_attr(first_dep, "purl")
     enrichment_info = await _get_enrichment_info(enrichment_repo, dep_purl)
 
-    finding_query: dict[str, Any] = {"scan_id": {"$in": scan_ids}, "component": component}
+    finding_query = await _single_package_query(finding_repo, scan_ids, component)
     if version:
         finding_query["version"] = version
 
@@ -298,11 +354,11 @@ async def get_dependency_metadata_endpoint(
         version=get_attr(first_dep, "version", version or "unknown"),
         type=get_attr(first_dep, "type", "unknown"),
         purl=dep_purl,
-        description=_first_dep_value(dependencies, "description"),
+        description=_first_dep_value(dependencies, "description") or enrichment_info["description"],
         author=_first_dep_value(dependencies, "author"),
         publisher=_first_dep_value(dependencies, "publisher"),
-        homepage=_first_dep_value(dependencies, "homepage"),
-        repository_url=_first_dep_value(dependencies, "repository_url"),
+        homepage=_first_dep_value(dependencies, "homepage") or enrichment_info["homepage"],
+        repository_url=_first_dep_value(dependencies, "repository_url") or enrichment_info["repository_url"],
         download_url=_first_dep_value(dependencies, "download_url"),
         group=_first_dep_value(dependencies, "group"),
         license=_first_dep_value(dependencies, "license"),

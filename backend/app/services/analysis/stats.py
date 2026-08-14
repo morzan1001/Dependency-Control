@@ -64,20 +64,62 @@ def _process_finding_epss(details: dict[str, Any], summary: EPSSKEVSummary, epss
     return float(epss_score)
 
 
+def vulnerability_entry_cve(entry: dict[str, Any]) -> str | None:
+    """CVE id of one ``details.vulnerabilities`` entry, or None when it carries no CVE."""
+    for candidate in (entry.get("id"), entry.get("resolved_cve"), *(entry.get("aliases") or [])):
+        if isinstance(candidate, str) and candidate.startswith("CVE-"):
+            return candidate
+    return None
+
+
+def finding_vulnerability_id(finding: dict[str, Any]) -> str:
+    """An identifier a user can look up: a CVE where one exists, else a scanner id.
+
+    ``finding_id`` is ``component:version`` on aggregated vulnerability documents, so it must
+    never reach a field labelled "CVE".
+    """
+    entries = [e for e in (finding.get("details") or {}).get("vulnerabilities") or [] if isinstance(e, dict)]
+    for entry in entries:
+        cve = vulnerability_entry_cve(entry)
+        if cve:
+            return cve
+    for alias in finding.get("aliases") or []:
+        if isinstance(alias, str) and alias.startswith("CVE-"):
+            return alias
+    for entry in entries:
+        if entry.get("id"):
+            return str(entry["id"])
+    return str(finding.get("finding_id") or finding.get("id") or "")
+
+
 def _process_finding_kev(finding: dict[str, Any], details: dict[str, Any], summary: EPSSKEVSummary) -> None:
-    """Process KEV data for a single finding."""
+    """Emit one row per known-exploited CVE of a finding."""
     if not details.get("in_kev"):
         return
-    summary["kev_matches"] += 1
-    kev_detail: KEVDetail = {
-        "cve": finding.get("finding_id") or finding.get("id", ""),
-        "component": finding.get("component", ""),
-        "due_date": details.get("kev_due_date"),
-        "ransomware": details.get("kev_ransomware_use", False),
-    }
-    summary["kev_details"].append(kev_detail)
-    if details.get("kev_ransomware_use"):
-        summary["kev_ransomware"] += 1
+    component = finding.get("component", "")
+    rows: list[KEVDetail] = [
+        {
+            "cve": vulnerability_entry_cve(entry) or str(entry.get("id") or ""),
+            "component": component,
+            "due_date": entry.get("kev_due_date"),
+            "ransomware": bool(entry.get("kev_ransomware_use")),
+        }
+        for entry in (details.get("vulnerabilities") or [])
+        if isinstance(entry, dict) and entry.get("in_kev")
+    ]
+    if not rows:
+        # The KEV CVE can come from the finding's own aliases, which match no nested entry.
+        rows = [
+            {
+                "cve": finding_vulnerability_id(finding),
+                "component": component,
+                "due_date": details.get("kev_due_date"),
+                "ransomware": bool(details.get("kev_ransomware_use")),
+            }
+        ]
+    summary["kev_matches"] += len(rows)
+    summary["kev_details"].extend(rows)
+    summary["kev_ransomware"] += sum(1 for row in rows if row["ransomware"])
 
 
 def _process_finding_risk(
@@ -95,7 +137,7 @@ def _process_finding_risk(
     risk_scores.append(float(risk_score))
     if risk_score > HIGH_RISK_SCORE_THRESHOLD:
         high_risk_cve: HighRiskCVE = {
-            "cve": finding.get("finding_id") or finding.get("id", ""),
+            "cve": finding_vulnerability_id(finding),
             "component": finding.get("component", ""),
             "version": finding.get("version") or "",
             "risk_score": round(risk_score, 1),
@@ -207,7 +249,7 @@ def build_reachability_summary(
         tier = reachability_display_tier(reachable, reachability_data.get("analysis_level"))
 
         vuln_info: VulnerabilityInfo = {
-            "cve": finding.get("finding_id") or finding.get("id", ""),
+            "cve": finding_vulnerability_id(finding),
             "component": finding.get("component", ""),
             "version": finding.get("version") or "",
             "severity": finding.get("severity", "unknown"),
@@ -247,7 +289,7 @@ _BUCKETED_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO
 async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
     """Calculate comprehensive statistics including EPSS/KEV and reachability data."""
     pipeline: list[dict[str, Any]] = [
-        {"$match": {"scan_id": scan_id, "waived": False}},
+        {"$match": {"scan_id": scan_id, "waived": {"$ne": True}}},
         {
             "$project": {
                 "severity": 1,

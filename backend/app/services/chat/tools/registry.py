@@ -13,8 +13,10 @@ from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories.teams import TeamRepository
+from app.services.aggregation.components import artifact_segment, build_component_index, lookup_component
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import compute_findings_delta
+from app.services.analyzers.purl_utils import canonical_purl
 
 from ._helpers import (
     _SEVERITY_RANK,
@@ -67,6 +69,17 @@ def _finding_detail_number(finding: dict[str, Any], field: str) -> float:
     details = finding.get("details") or {}
     value = details.get(field)
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else -1.0
+
+
+# How a dependency's directness was established. `direct` alone cannot express it: an
+# inferred-direct package is direct, but ranks below a declared one when ordering fixes.
+_DIRECT_CONFIDENCE_RANK = {"declared": 0, "inferred": 1, "transitive": 2}
+
+
+def _direct_confidence(dep: dict[str, Any]) -> str:
+    if not dep.get("direct"):
+        return "transitive"
+    return "inferred" if dep.get("direct_inferred") else "declared"
 
 
 def _rank_findings(findings: list[dict[str, Any]]) -> None:
@@ -437,7 +450,7 @@ class ChatToolRegistry:
             return {"hotspots": hotspots}
 
         if tool_name == "get_dependency_details":
-            dep = await db["dependency_enrichments"].find_one({"purl": args["dependency_name"]})
+            dep = await db["dependency_enrichments"].find_one({"purl": canonical_purl(args["dependency_name"])})
             if not dep:
                 dep = await db["dependency_enrichments"].find_one(
                     {"name": {"$regex": re.escape(args["dependency_name"]), "$options": "i"}}
@@ -629,6 +642,8 @@ class ChatToolRegistry:
                 if existing and existing.get("direct") and not dep.get("direct"):
                     continue
                 dep_index[key] = dep
+            # Findings carry the qualified component while the inventory keeps the bare name.
+            dep_index = build_component_index(dep_index)
 
             groups: dict[str, dict[str, Any]] = {}
             for f in findings:
@@ -661,8 +676,8 @@ class ChatToolRegistry:
                     if target is None or _compare_versions(cand, target) > 0:
                         target = cand
 
-                dep_meta = dep_index.get(key) or {}
-                is_direct = bool(dep_meta.get("direct")) and not dep_meta.get("direct_inferred")
+                dep_meta = lookup_component(dep_index, key) or {}
+                confidence = _direct_confidence(dep_meta)
                 current = g["current_version"] or dep_meta.get("version")
 
                 resolved = []
@@ -697,7 +712,8 @@ class ChatToolRegistry:
                         "ecosystem": dep_meta.get("type"),
                         "current_version": current,
                         "target_version": target,
-                        "is_direct": is_direct,
+                        "is_direct": confidence != "transitive",
+                        "direct_confidence": confidence,
                         "resolves_findings": resolved[:10],
                         "resolves_count": len(resolved),
                         "critical_count": critical_count,
@@ -714,7 +730,8 @@ class ChatToolRegistry:
             def sort_key(s: dict[str, Any]) -> tuple:
                 return (
                     0 if s["has_fix"] else 1,
-                    0 if s["is_direct"] else 1,
+                    # A graph-declared direct dependency still outranks an inferred one.
+                    _DIRECT_CONFIDENCE_RANK[s["direct_confidence"]],
                     risk_order.get(s["breaking_change_risk"], 3),
                     -s["critical_count"],
                     -s["resolves_count"],
@@ -903,15 +920,27 @@ class ChatToolRegistry:
                 return {"matches": [], "message": "No accessible projects"}
             latest = await self._latest_scan_ids_for_user(user_project_query, None, db)
             latest_scan_ids = list(latest.values())
+            # The caller may quote a finding's group-qualified component; the inventory
+            # stores the bare artifact name, so search on that too.
+            wanted = args["component_name"]
+            patterns = {wanted, artifact_segment(wanted)}
             dep_query: dict[str, Any] = {
-                "name": {"$regex": re.escape(args["component_name"]), "$options": "i"},
+                "name": {"$in": [re.compile(re.escape(p), re.IGNORECASE) for p in patterns if p]},
                 "scan_id": {"$in": latest_scan_ids},
             }
             if args.get("version"):
                 dep_query["version"] = args["version"]
             cursor = db["dependencies"].find(
                 dep_query,
-                {"name": 1, "version": 1, "project_id": 1, "direct": 1, "purl": 1, "license": 1},
+                {
+                    "name": 1,
+                    "version": 1,
+                    "project_id": 1,
+                    "direct": 1,
+                    "direct_inferred": 1,
+                    "purl": 1,
+                    "license": 1,
+                },
                 limit=100,
             )
             rows = await cursor.to_list(length=100)
@@ -925,6 +954,7 @@ class ChatToolRegistry:
                         "component": r.get("name"),
                         "version": r.get("version"),
                         "direct_dependency": bool(r.get("direct")),
+                        "direct_confidence": _direct_confidence(r),
                         "purl": r.get("purl"),
                         "license": r.get("license"),
                     }

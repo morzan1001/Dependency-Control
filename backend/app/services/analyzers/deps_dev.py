@@ -395,11 +395,9 @@ class DepsDevAnalyzer(Analyzer):
             "system": system,
             "purl": purl,
             "published_at": data.get("publishedAt"),
-            "is_default": data.get("isDefault", False),
             "is_deprecated": data.get("isDeprecated", False),
             "licenses": data.get("licenses", []),
             "links": links,
-            "registries": data.get("registries", []),
             "has_attestations": len(data.get("attestations", [])) > 0,
             "has_slsa_provenance": len(data.get("slsaProvenances", [])) > 0,
         }

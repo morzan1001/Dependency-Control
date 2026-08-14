@@ -13,7 +13,6 @@ from app.services.recommendation.common import ModelOrDict, calculate_best_fix_v
 
 def process_vulnerabilities(
     findings: list[ModelOrDict],
-    dep_by_purl: dict[str, ModelOrDict],
     dep_by_name_version: dict[str, ModelOrDict],
     dependencies: list[ModelOrDict],
     source_target: str | None,
@@ -21,13 +20,13 @@ def process_vulnerabilities(
     """Process vulnerability findings."""
     recommendations = []
 
-    vulns_by_source = _categorize_by_source(findings, dep_by_purl, dep_by_name_version)
+    vulns_by_source = _categorize_by_source(findings, dep_by_name_version)
 
     base_image_rec = _analyze_base_image_vulns(vulns_by_source.get("image", []), dependencies, source_target)
     if base_image_rec:
         recommendations.append(base_image_rec)
 
-    direct_recs = _analyze_direct_dependencies(vulns_by_source.get("application", []), dep_by_purl, dep_by_name_version)
+    direct_recs = _analyze_direct_dependencies(vulns_by_source.get("application", []))
     recommendations.extend(direct_recs)
 
     transitive_recs = _analyze_transitive_dependencies(vulns_by_source.get("transitive", []), dependencies)
@@ -40,20 +39,12 @@ def process_vulnerabilities(
 
 
 def _resolve_dep(
-    details: dict,
     component: str,
     version: str,
-    dep_by_purl: dict[str, ModelOrDict],
     dep_by_name_version: dict[str, ModelOrDict],
 ) -> ModelOrDict | None:
-    """Resolve a dependency from purl or name@version lookup."""
-    purl = details.get("purl") if isinstance(details, dict) else None
-
-    if purl and purl in dep_by_purl:
-        return dep_by_purl[purl]
-    if f"{component}@{version}" in dep_by_name_version:
-        return dep_by_name_version[f"{component}@{version}"]
-    return None
+    """Resolve a dependency by name@version."""
+    return dep_by_name_version.get(f"{component}@{version}")
 
 
 def _resolve_cve_id(f: ModelOrDict) -> str:
@@ -105,7 +96,6 @@ def _classify_category(vuln_info: VulnerabilityInfo, dep: ModelOrDict | None) ->
 
 def _categorize_by_source(
     findings: list[ModelOrDict],
-    dep_by_purl: dict[str, ModelOrDict],
     dep_by_name_version: dict[str, ModelOrDict],
 ) -> dict[str, list[VulnerabilityInfo]]:
     """Categorize vulnerabilities by their source type."""
@@ -116,14 +106,9 @@ def _categorize_by_source(
         if get_attr(f, "type") != "vulnerability":
             continue
 
-        details = get_attr(f, "details", {})
-        details_dict = details if isinstance(details, dict) else {}
-
         dep = _resolve_dep(
-            details_dict,
             get_attr(f, "component", ""),
             get_attr(f, "version", ""),
-            dep_by_purl,
             dep_by_name_version,
         )
 
@@ -368,11 +353,7 @@ def _build_direct_recommendation(
     )
 
 
-def _analyze_direct_dependencies(
-    vulns: list[VulnerabilityInfo],
-    _dep_by_purl: dict[str, ModelOrDict],
-    _dep_by_name_version: dict[str, ModelOrDict],
-) -> list[Recommendation]:
+def _analyze_direct_dependencies(vulns: list[VulnerabilityInfo]) -> list[Recommendation]:
     """Analyze direct dependency updates with EPSS/KEV/Reachability prioritization."""
 
     recommendations = []

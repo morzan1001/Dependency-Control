@@ -15,6 +15,7 @@ from app.api.v1.helpers.analytics import (
 )
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.cache import CacheKeys, CacheTTL, cache_service
+from app.core.constants import SCAN_USABLE_STATUSES
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.permissions import Permissions
 from app.repositories import (
@@ -83,7 +84,9 @@ async def _completed_scan_version(db: DatabaseDep, project_ids: list[str]) -> st
     """Completed-scan count: a cache token monotonic per completion, unlike max(created_at) on out-of-order finishes."""
     if not project_ids:
         return "0"
-    count = await db.scans.count_documents({"project_id": {"$in": project_ids}, "status": "completed"})
+    count = await db.scans.count_documents(
+        {"project_id": {"$in": project_ids}, "status": {"$in": SCAN_USABLE_STATUSES}}
+    )
     return str(count)
 
 

@@ -139,16 +139,31 @@ def _build_waiver_query(waiver: Waiver) -> dict[str, str | dict[str, str]]:
     return query
 
 
-async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: list[Waiver]) -> None:
-    """Apply all waivers for a scan."""
+async def _record_match_outcome(waiver_repo: Any, waiver: Waiver, scan_id: str, count: int) -> None:
+    """Persist what a waiver suppressed so an orphaned waiver is visible in the UI."""
+    if waiver_repo is None:
+        return
+    if waiver.last_eval_scan_id != scan_id or waiver.last_match_count != count:
+        await waiver_repo.update(waiver.id, {"last_eval_scan_id": scan_id, "last_match_count": count})
+
+
+async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: list[Waiver], waiver_repo: Any = None) -> None:
+    """Apply all waivers for a scan; ``waiver_repo`` records each waiver's match count.
+
+    Only the caller that owns the authoritative pass supplies ``waiver_repo`` — the engine's
+    initial persistence routes location waivers through here too and its counts would be
+    superseded by the signature pass in the recalculation that follows.
+    """
     for waiver in waivers:
         if waiver.vulnerability_id:
-            await finding_repo.apply_vulnerability_waiver(
+            matched = await finding_repo.apply_vulnerability_waiver(
                 scan_id=scan_id,
                 vulnerability_id=waiver.vulnerability_id,
                 waived=True,
                 waiver_reason=waiver.reason,
+                scope=_build_waiver_query(waiver),
             )
+            await _record_match_outcome(waiver_repo, waiver, scan_id, matched)
             continue
 
         query = _build_waiver_query(waiver)
@@ -166,12 +181,24 @@ async def _apply_waivers(finding_repo: Any, scan_id: str, waivers: list[Waiver])
             )
             continue
 
-        await finding_repo.apply_finding_waiver(
+        matched = await finding_repo.apply_finding_waiver(
             scan_id=scan_id,
             query=query,
             waived=True,
             waiver_reason=waiver.reason,
         )
+        # finding_id is not unique per scan for license/eol findings, so an unscoped waiver
+        # can blanket dozens of unrelated components.
+        if matched > 1 and not waiver.package_name:
+            logger.warning(
+                "Waiver %s (%s, finding_id=%s) has no package scope and suppresses %d findings in scan %s",
+                waiver.id,
+                waiver.finding_type,
+                waiver.finding_id,
+                matched,
+                scan_id,
+            )
+        await _record_match_outcome(waiver_repo, waiver, scan_id, matched)
 
 
 def _is_signature_waiver(waiver: Any) -> bool:
@@ -377,26 +404,20 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
     try:
         logger.info(f"Recalculating stats for project {project_id} (scan {scan_id}) with lock {lock_name}")
 
-        # 1. Reset waivers AND lapsed flags for this scan
+        # 1. Reset waivers AND lapsed flags for this scan, nested vulnerability entries included
         await finding_repo.update_many(
             {"scan_id": scan_id},
             {"waived": False, "waiver_reason": None, "waiver_lapsed": False, "lapsed_waiver_id": None},
         )
+        await finding_repo.reset_nested_vulnerability_waivers(scan_id)
 
         # 2. Fetch active waivers, apply vulnerability-id ones, then signature-match the rest
         waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
-        for waiver in waivers:
-            if waiver.vulnerability_id:
-                await finding_repo.apply_vulnerability_waiver(
-                    scan_id=scan_id,
-                    vulnerability_id=waiver.vulnerability_id,
-                    waived=True,
-                    waiver_reason=waiver.reason,
-                )
+        vuln_waivers = [w for w in waivers if w.vulnerability_id]
         non_vuln = [w for w in waivers if not w.vulnerability_id]
         legacy = [w for w in non_vuln if not _is_signature_waiver(w)]
         loc_waivers = [w for w in non_vuln if _is_signature_waiver(w)]
-        await _apply_waivers(finding_repo, scan_id, legacy)
+        await _apply_waivers(finding_repo, scan_id, vuln_waivers + legacy, waiver_repo)
         await _apply_waivers_signature(finding_repo, waiver_repo, scan_id, loc_waivers)
 
         # 3. Compute the authoritative full Stats from the single canonical pipeline.

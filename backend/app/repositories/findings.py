@@ -4,8 +4,10 @@ from typing import Any
 
 from pymongo import UpdateOne
 
+from app.core.constants import get_severity_value
 from app.models.finding_record import FindingRecord
 from app.repositories.base import BaseRepository
+from app.services.aggregation.components import build_component_index
 
 
 class FindingRepository(BaseRepository[FindingRecord]):
@@ -18,22 +20,28 @@ class FindingRepository(BaseRepository[FindingRecord]):
         vulnerability_id: str,
         waived: bool,
         waiver_reason: str | None = None,
+        scope: dict[str, Any] | None = None,
     ) -> int:
-        """Waive the nested entry known under vulnerability_id, its aliases, or its resolved CVE."""
+        """Waive the nested entry known under vulnerability_id, its aliases, or its resolved CVE.
+
+        ``scope`` narrows the documents (component/version/finding_id) the waiver applies to.
+        """
         update_data: dict[str, Any] = {"details.vulnerabilities.$[vuln].waived": waived}
         if waiver_reason:
             update_data["details.vulnerabilities.$[vuln].waiver_reason"] = waiver_reason
 
+        query: dict[str, Any] = {
+            "scan_id": scan_id,
+            **{k: v for k, v in (scope or {}).items() if k != "type"},
+            "type": "vulnerability",
+            "$or": [
+                {"details.vulnerabilities.id": vulnerability_id},
+                {"details.vulnerabilities.aliases": vulnerability_id},
+                {"details.vulnerabilities.resolved_cve": vulnerability_id},
+            ],
+        }
         result = await self.collection.update_many(
-            {
-                "scan_id": scan_id,
-                "type": "vulnerability",
-                "$or": [
-                    {"details.vulnerabilities.id": vulnerability_id},
-                    {"details.vulnerabilities.aliases": vulnerability_id},
-                    {"details.vulnerabilities.resolved_cve": vulnerability_id},
-                ],
-            },
+            query,
             {"$set": update_data},
             array_filters=[
                 {
@@ -45,7 +53,53 @@ class FindingRepository(BaseRepository[FindingRecord]):
                 }
             ],
         )
+        await self._rollup_vulnerability_waivers(query, waiver_reason)
+        return result.matched_count
+
+    async def reset_nested_vulnerability_waivers(self, scan_id: str) -> int:
+        """Clear per-entry waiver flags so a deleted or expired waiver stops suppressing."""
+        result = await self.collection.update_many(
+            {"scan_id": scan_id, "type": "vulnerability", "details.vulnerabilities.waived": True},
+            {
+                "$set": {
+                    "details.vulnerabilities.$[].waived": False,
+                    "details.vulnerabilities.$[].waiver_reason": None,
+                }
+            },
+        )
+        # The rollup demotes severity to the highest live entry; without this the demotion
+        # outlives the waiver and the buckets under-report until the next rescan.
+        await self._rollup_vulnerability_waivers({"scan_id": scan_id, "type": "vulnerability"}, None)
         return result.modified_count
+
+    async def _rollup_vulnerability_waivers(self, query: dict[str, Any], waiver_reason: str | None) -> None:
+        """Sync the document-level waived flag and severity with the nested entries.
+
+        Every waiver consumer (severity buckets, ignored_count) reads the document level, so a
+        document counts as waived only once all its entries are, and its severity must reflect
+        what is still live.
+        """
+        cursor = self.collection.find(query, {"_id": 1, "severity": 1, "waived": 1, "details.vulnerabilities": 1})
+        updates: list[UpdateOne] = []
+        for doc in await cursor.to_list(None):
+            entries = (doc.get("details") or {}).get("vulnerabilities") or []
+            if not entries:
+                continue
+            live = [e for e in entries if not e.get("waived")] or entries
+            changes: dict[str, Any] = {}
+            all_waived = all(e.get("waived") for e in entries)
+            if bool(doc.get("waived")) != all_waived:
+                changes["waived"] = all_waived
+                changes["waiver_reason"] = waiver_reason if all_waived else None
+            # A fully waived document keeps the severity of its entries, so dropping the
+            # waiver restores it without a rescan.
+            severity = max((e.get("severity") for e in live), key=get_severity_value)
+            if severity and severity != doc.get("severity"):
+                changes["severity"] = severity
+            if changes:
+                updates.append(UpdateOne({"_id": doc["_id"]}, {"$set": changes}))
+        if updates:
+            await self.collection.bulk_write(updates)
 
     async def apply_finding_waiver(
         self,
@@ -61,7 +115,9 @@ class FindingRepository(BaseRepository[FindingRecord]):
             update_data["waiver_reason"] = waiver_reason
 
         result = await self.collection.update_many(full_query, {"$set": update_data})
-        return result.modified_count
+        # Coverage, not writes: a finding already waived by an overlapping waiver reports no
+        # modification, and counting that as 0 badges a working waiver as matching nothing.
+        return result.matched_count
 
     async def find_by_scan(
         self,
@@ -140,15 +196,17 @@ class FindingRepository(BaseRepository[FindingRecord]):
         self,
         scan_ids: list[str],
         project_ids: list[str],
-        component_names: list[str],
     ) -> dict[str, int]:
-        """{component_name: non_waived_vulnerability_count}; scan_ids+project_ids exclude prior-scan findings."""
+        """{component_name: non_waived_vulnerability_count}; scan_ids+project_ids exclude prior-scan findings.
+
+        Also keyed by the bare artifact name where unambiguous, so a bare dependency name
+        resolves a group-qualified finding component.
+        """
         pipeline: list[dict[str, Any]] = [
             {
                 "$match": {
                     "scan_id": {"$in": scan_ids},
                     "project_id": {"$in": project_ids},
-                    "component": {"$in": component_names},
                     "type": "vulnerability",
                     "waived": {"$ne": True},
                 }
@@ -156,4 +214,4 @@ class FindingRepository(BaseRepository[FindingRecord]):
             {"$group": {"_id": "$component", "count": {"$sum": 1}}},
         ]
         results = await self.aggregate(pipeline)
-        return {r["_id"]: r["count"] for r in results}
+        return build_component_index({r["_id"]: r["count"] for r in results if r["_id"]})

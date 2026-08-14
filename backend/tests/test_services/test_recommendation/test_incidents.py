@@ -17,12 +17,14 @@ def _malware_finding(component):
     }
 
 
-def _typosquat_finding(component, similar_to=None):
+def _typosquat_finding(component, imitated_package=None):
+    """Real stored shape: the analyzer emits FindingType.MALWARE with details.imitated_package
+    (2,572 such production findings; zero carry a details.similar_to)."""
     details = {}
-    if similar_to is not None:
-        details["similar_to"] = similar_to
+    if imitated_package is not None:
+        details["imitated_package"] = imitated_package
     return {
-        "type": "typosquatting",
+        "type": "malware",
         "severity": "HIGH",
         "component": component,
         "details": details,
@@ -118,23 +120,23 @@ class TestProcessTyposquattingEmpty:
         assert result == []
 
 
-class TestProcessTyposquattingWithSimilarTo:
-    def test_similar_to_shown_in_affected(self):
-        findings = [_typosquat_finding("loadsh", similar_to="lodash")]
+class TestProcessTyposquattingWithImitatedPackage:
+    def test_imitated_package_shown_in_affected(self):
+        findings = [_typosquat_finding("loadsh", imitated_package="lodash")]
         result = process_typosquatting(findings)
         assert len(result) == 1
         rec = result[0]
         assert any("looks like: lodash" in c for c in rec.affected_components)
 
     def test_type_and_priority(self):
-        findings = [_typosquat_finding("loadsh", similar_to="lodash")]
+        findings = [_typosquat_finding("loadsh", imitated_package="lodash")]
         result = process_typosquatting(findings)
         rec = result[0]
         assert rec.type == RecommendationType.TYPOSQUAT_DETECTED
         assert rec.priority == Priority.HIGH
 
 
-class TestProcessTyposquattingWithoutSimilarTo:
+class TestProcessTyposquattingWithoutImitatedPackage:
     def test_package_name_only(self):
         findings = [_typosquat_finding("suspic-pkg")]
         result = process_typosquatting(findings)
@@ -147,8 +149,8 @@ class TestProcessTyposquattingWithoutSimilarTo:
 class TestProcessTyposquattingMultiple:
     def test_multiple_typosquats_single_recommendation(self):
         findings = [
-            _typosquat_finding("loadsh", similar_to="lodash"),
-            _typosquat_finding("reect", similar_to="react"),
+            _typosquat_finding("loadsh", imitated_package="lodash"),
+            _typosquat_finding("reect", imitated_package="react"),
         ]
         result = process_typosquatting(findings)
         assert len(result) == 1
@@ -159,8 +161,8 @@ class TestProcessTyposquattingMultiple:
 
     def test_description_includes_count(self):
         findings = [
-            _typosquat_finding("loadsh", similar_to="lodash"),
-            _typosquat_finding("reect", similar_to="react"),
+            _typosquat_finding("loadsh", imitated_package="lodash"),
+            _typosquat_finding("reect", imitated_package="react"),
         ]
         result = process_typosquatting(findings)
         assert "2" in result[0].description
@@ -168,7 +170,7 @@ class TestProcessTyposquattingMultiple:
 
 class TestProcessTyposquattingAction:
     def test_action_steps_present(self):
-        findings = [_typosquat_finding("loadsh", similar_to="lodash")]
+        findings = [_typosquat_finding("loadsh", imitated_package="lodash")]
         result = process_typosquatting(findings)
         assert result[0].action["type"] == "verify_packages"
         assert len(result[0].action["steps"]) > 0
@@ -182,7 +184,7 @@ class TestProcessTyposquattingAction:
 class TestProcessTyposquattingEmptyComponent:
     def test_empty_component_excluded(self):
         findings = [
-            {"type": "typosquatting", "severity": "HIGH", "component": "", "details": {}},
+            {"type": "malware", "severity": "HIGH", "component": "", "details": {}},
         ]
         result = process_typosquatting(findings)
         if result:

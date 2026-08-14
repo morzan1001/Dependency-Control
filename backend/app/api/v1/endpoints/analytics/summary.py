@@ -24,6 +24,7 @@ from app.schemas.analytics import (
     DependencyUsage,
     SeverityBreakdown,
 )
+from app.services.aggregation.components import lookup_component
 
 router = CustomAPIRouter()
 
@@ -155,12 +156,11 @@ async def get_top_dependencies(
 
     results = await dep_repo.aggregate(pipeline)
 
-    component_names = [dep["name"] for dep in results]
-    vuln_count_map = await finding_repo.get_vuln_counts_by_components(scan_ids, project_ids, component_names)
+    vuln_count_map = await finding_repo.get_vuln_counts_by_components(scan_ids, project_ids)
 
     enriched = []
     for dep in results:
-        vuln_count = vuln_count_map.get(dep["name"], 0)
+        vuln_count = lookup_component(vuln_count_map, dep["name"]) or 0
         enriched.append(
             DependencyUsage(
                 name=dep["name"],

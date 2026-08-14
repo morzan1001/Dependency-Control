@@ -54,6 +54,7 @@ def evaluate_license(
                 "Find an alternative or obtain a commercial license."
             ),
             obligations=license_info.obligations,
+            risks=license_info.risks,
             purl=purl,
             license_url=lic_url,
         )
@@ -92,6 +93,7 @@ def evaluate_weak_copyleft(
             "to this library must be shared under the same license."
         ),
         obligations=license_info.obligations,
+        risks=license_info.risks,
         purl=purl,
         license_url=lic_url,
         context_reason=context_reason,
@@ -121,6 +123,7 @@ def evaluate_strong_copyleft(
                 "distributing software, so no action is required."
             ),
             obligations=license_info.obligations,
+            risks=license_info.risks,
             purl=purl,
             license_url=lic_url,
             context_reason=("Severity reduced: project is internal-only, GPL distribution obligations do not apply."),
@@ -140,6 +143,7 @@ def evaluate_strong_copyleft(
                 "This project is open source. Ensure your project license is GPL-compatible if distributing."
             ),
             obligations=license_info.obligations,
+            risks=license_info.risks,
             purl=purl,
             license_url=lic_url,
             context_reason=("Severity reduced: project is open source, GPL source disclosure is already satisfied."),
@@ -160,6 +164,7 @@ def evaluate_strong_copyleft(
                 "Ensure compliance with source disclosure requirements if distributing."
             ),
             obligations=license_info.obligations,
+            risks=license_info.risks,
             purl=purl,
             license_url=lic_url,
         )
@@ -218,6 +223,7 @@ def evaluate_network_copyleft(
                 "distribution obligations still apply if distributing."
             ),
             obligations=license_info.obligations,
+            risks=license_info.risks,
             purl=purl,
             license_url=lic_url,
             context_reason=(
@@ -266,6 +272,7 @@ def evaluate_network_copyleft(
                 "network access to users triggers source disclosure."
             ),
             obligations=license_info.obligations,
+            risks=license_info.risks,
             purl=purl,
             license_url=lic_url,
         )

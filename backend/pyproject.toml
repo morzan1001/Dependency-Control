@@ -30,6 +30,7 @@ aiosmtplib = "^5.1.0"
 aiobotocore = "^3.4.0"
 weasyprint = ">=65,<70"
 packaging = ">=24.0"
+cvss = "^3.6"
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^9.0.3"
@@ -59,7 +60,7 @@ module = "app.api.*"
 disable_error_code = ["dict-item"]
 
 [[tool.mypy.overrides]]
-module = ["yaml", "weasyprint"]
+module = ["yaml", "weasyprint", "cvss", "cvss.exceptions"]
 ignore_missing_imports = true
 
 # mypy cannot model pydantic's @computed_field stacked on @property.

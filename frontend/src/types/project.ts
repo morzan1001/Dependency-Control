@@ -91,6 +91,7 @@ export interface BranchInfo {
   name: string;
   is_active: boolean;
   last_scan_at: string | null;
+  is_default: boolean;
 }
 
 export type ProjectsResponse = PaginatedResponse<Project>;

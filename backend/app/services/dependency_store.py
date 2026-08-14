@@ -4,7 +4,7 @@ import logging
 
 from app.models.dependency import Dependency
 from app.repositories import DependencyRepository
-from app.schemas.sbom import ParsedDependency, ParsedSBOM
+from app.schemas.sbom import ParsedDependency
 
 logger = logging.getLogger(__name__)
 
@@ -44,14 +44,14 @@ def _parsed_dep_to_dependency(parsed_dep: ParsedDependency, project_id: str, sca
 
 
 async def _insert_dependencies_chunked(
-    parsed_sbom: ParsedSBOM,
+    dependencies: list[ParsedDependency],
     project_id: str,
     scan_id: str,
     dep_repo: DependencyRepository,
 ) -> int:
     total_inserted = 0
     chunk: list[dict] = []
-    for parsed_dep in parsed_sbom.dependencies:
+    for parsed_dep in dependencies:
         dep = _parsed_dep_to_dependency(parsed_dep, project_id, scan_id)
         chunk.append(dep.model_dump(by_alias=True))
         if len(chunk) >= _DEP_CHUNK_SIZE:
@@ -63,19 +63,20 @@ async def _insert_dependencies_chunked(
     return total_inserted
 
 
-async def store_sbom_dependencies(
-    parsed_sbom: ParsedSBOM,
+async def store_scan_dependencies(
+    dependencies: list[ParsedDependency],
     project_id: str,
     scan_id: str,
     dep_repo: DependencyRepository,
-    old_deps_deleted: bool,
-) -> tuple[int, bool]:
-    """Delete the scan's old deps once per run, then insert in chunks; returns (inserted, old_deps_deleted)."""
-    if not old_deps_deleted:
-        deleted_count = await dep_repo.delete_by_scan(scan_id)
-        if deleted_count:
-            logger.debug(f"Deleted {deleted_count} old dependencies for scan {scan_id}")
-        old_deps_deleted = True
+) -> int:
+    """Replace the scan's dependency inventory with ``dependencies``, deduplicated by the caller.
 
-    inserted = await _insert_dependencies_chunked(parsed_sbom, project_id, scan_id, dep_repo)
-    return inserted, old_deps_deleted
+    Called once per scan with every SBOM's dependencies merged: the unique index spans the
+    whole scan, so storing one SBOM at a time makes the later SBOMs' rows duplicate-key
+    failures and discards the evidence they carried.
+    """
+    deleted_count = await dep_repo.delete_by_scan(scan_id)
+    if deleted_count:
+        logger.debug(f"Deleted {deleted_count} old dependencies for scan {scan_id}")
+
+    return await _insert_dependencies_chunked(dependencies, project_id, scan_id, dep_repo)

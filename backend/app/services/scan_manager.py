@@ -7,6 +7,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import SCAN_USABLE_STATUSES
 from app.core.worker import worker_manager
 from app.models.finding import Finding
 from app.models.project import Project
@@ -209,7 +210,7 @@ class ScanManager:
         current_status = scan.get("status", "pending")
         should_reaggregate = False
 
-        if current_status == "completed":
+        if current_status in SCAN_USABLE_STATUSES:
             logger.info(
                 f"Late result from {analyzer_name} for completed scan {scan_id}. "
                 f"Resetting to pending for re-aggregation."

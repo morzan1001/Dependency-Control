@@ -101,7 +101,8 @@ class TestCacheKeysGhsa:
 class TestCacheKeysOsv:
     def _expected_osv_key(self, purl: str) -> str:
         purl_hash = hashlib.md5(purl.encode()).hexdigest()[:16]
-        return f"osv:{purl_hash}"
+        # v2: entries cached before OSV records were hydrated hold placeholder severities.
+        return f"osv2:{purl_hash}"
 
     def test_basic_purl(self):
         purl = "pkg:pypi/requests@2.31.0"
@@ -123,7 +124,7 @@ class TestCacheKeysOsv:
     def test_long_purl(self):
         long_purl = "pkg:npm/@very-long-scope/very-long-package-name@99.99.99"
         result = CacheKeys.osv(long_purl)
-        assert result.startswith("osv:")
+        assert result.startswith("osv2:")
         assert result == self._expected_osv_key(long_purl)
 
 

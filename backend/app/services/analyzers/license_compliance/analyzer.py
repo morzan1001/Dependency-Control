@@ -8,7 +8,6 @@ from app.models.license import (
     DeploymentModel,
     DistributionModel,
     LibraryUsage,
-    LicenseCategory,
     LicenseInfo,
     LicensePolicy,
 )
@@ -54,6 +53,7 @@ class LicenseAnalyzer(Analyzer):
 
         components = self._get_components(sbom, parsed_components)
         issues: list[dict[str, Any]] = []
+        component_licenses: list[dict[str, Any]] = []
 
         stats = {
             "total_components": len(components),
@@ -71,6 +71,7 @@ class LicenseAnalyzer(Analyzer):
                 component,
                 stats,
                 issues,
+                component_licenses,
                 ignore_dev=ignore_dev,
                 ignore_transitive=ignore_transitive,
                 policy=policy,
@@ -79,13 +80,14 @@ class LicenseAnalyzer(Analyzer):
         compatibility_issues = compatibility.check_license_compatibility(components, ignore_dev)
         issues.extend(compatibility_issues)
 
-        return {"license_issues": issues, "summary": stats}
+        return {"license_issues": issues, "summary": stats, "component_licenses": component_licenses}
 
     def _analyze_component(
         self,
         component: dict[str, Any],
         stats: dict[str, int],
         issues: list[dict[str, Any]],
+        component_licenses: list[dict[str, Any]],
         *,
         ignore_dev: bool,
         ignore_transitive: bool,
@@ -110,7 +112,18 @@ class LicenseAnalyzer(Analyzer):
         spdx_expr = normalizer.has_spdx_expression(component)
         if spdx_expr:
             or_groups = normalizer.parse_spdx_expression(spdx_expr)
-            self._track_expression_stats(or_groups, stats)
+            # The effective classification is the least-restrictive OR alternative.
+            for lic_id in compatibility.least_restrictive_group(or_groups):
+                normalized = normalizer.normalize_license(lic_id)
+                info = LICENSE_DATABASE.get(normalized)
+                if not info:
+                    continue
+                stat_key = CATEGORY_STAT_KEY.get(info.category)
+                if stat_key:
+                    stats[stat_key] += 1
+                component_licenses.append(
+                    self._classification_entry(comp_name, comp_version, comp_purl, normalized, info, spdx_expr)
+                )
             issue = self._evaluate_expression(
                 comp_name,
                 comp_version,
@@ -146,6 +159,10 @@ class LicenseAnalyzer(Analyzer):
             if stat_key:
                 stats[stat_key] += 1
 
+            component_licenses.append(
+                self._classification_entry(comp_name, comp_version, comp_purl, normalized, license_info, raw_expression)
+            )
+
             issue = evaluator.evaluate_license(
                 component=comp_name,
                 version=comp_version,
@@ -161,36 +178,29 @@ class LicenseAnalyzer(Analyzer):
                 if evaluator.should_include_finding(issue, is_transitive):
                     issues.append(issue)
 
-    def _track_expression_stats(self, or_groups: list[list[str]], stats: dict[str, int]) -> None:
-        """Track stats for the least restrictive OR alternative."""
-        best_rank = 999
-        best_licenses: list[str] = []
-        for group in or_groups:
-            worst_rank = 0
-            for lic_id in group:
-                normalized = normalizer.normalize_license(lic_id)
-                info = LICENSE_DATABASE.get(normalized)
-                if info:
-                    cat_rank = {
-                        LicenseCategory.PERMISSIVE: 0,
-                        LicenseCategory.PUBLIC_DOMAIN: 0,
-                        LicenseCategory.WEAK_COPYLEFT: 1,
-                        LicenseCategory.STRONG_COPYLEFT: 2,
-                        LicenseCategory.NETWORK_COPYLEFT: 3,
-                        LicenseCategory.PROPRIETARY: 4,
-                    }.get(info.category, 5)
-                    worst_rank = max(worst_rank, cat_rank)
-            if worst_rank < best_rank:
-                best_rank = worst_rank
-                best_licenses = group
-
-        for lic_id in best_licenses:
-            normalized = normalizer.normalize_license(lic_id)
-            info = LICENSE_DATABASE.get(normalized)
-            if info:
-                stat_key = CATEGORY_STAT_KEY.get(info.category)
-                if stat_key:
-                    stats[stat_key] += 1
+    @staticmethod
+    def _classification_entry(
+        comp_name: str,
+        comp_version: str,
+        comp_purl: str,
+        spdx_id: str,
+        license_info: LicenseInfo,
+        spdx_expression: str | None,
+    ) -> dict[str, Any]:
+        """Classification of one component license, emitted regardless of policy verdict."""
+        entry: dict[str, Any] = {
+            "component": comp_name,
+            "version": comp_version,
+            "purl": comp_purl,
+            "license": spdx_id,
+            "category": license_info.category.value,
+            "obligations": license_info.obligations,
+            "risks": license_info.risks,
+            "explanation": license_info.description,
+        }
+        if spdx_expression:
+            entry["spdx_expression"] = spdx_expression
+        return entry
 
     def _evaluate_expression(
         self,

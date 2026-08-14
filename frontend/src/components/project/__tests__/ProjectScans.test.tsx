@@ -73,4 +73,28 @@ describe('ProjectScans - Delta comparison partner', () => {
 
     expect(screen.queryByRole('button', { name: 'Delta' })).not.toBeInTheDocument()
   })
+
+  it('treats a completed_with_errors scan as a valid delta partner', () => {
+    const newest = makeScan({ id: 'main-new', created_at: '2026-07-03T00:00:00Z' })
+    const partial = makeScan({
+      id: 'main-partial',
+      status: 'completed_with_errors',
+      created_at: '2026-07-01T00:00:00Z',
+    })
+
+    renderScans([newest, partial])
+
+    const deltaButtons = screen.getAllByRole('button', { name: 'Delta' })
+    expect(deltaButtons).toHaveLength(1)
+
+    fireEvent.click(deltaButtons[0])
+
+    expect(mockNavigate).toHaveBeenCalledWith('/projects/p1/delta?from=main-partial&to=main-new')
+  })
+
+  it('renders the completed_with_errors badge in the pipelines table', () => {
+    renderScans([makeScan({ id: 'main-partial', status: 'completed_with_errors' })])
+
+    expect(screen.getByText('completed with errors')).toBeInTheDocument()
+  })
 })

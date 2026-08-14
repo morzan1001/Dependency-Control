@@ -1,22 +1,25 @@
 """Ingest endpoints for scan results from security tools (SBOM, TruffleHog, OpenGrep, KICS, Bearer)."""
 
+import asyncio
 import json
 import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
+from pymongo import ReturnDocument
 
 from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.ingest import process_findings_ingest
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
-from app.core.constants import WEBHOOK_EVENT_SBOM_INGESTED
+from app.core.constants import SCAN_USABLE_STATUSES, WEBHOOK_EVENT_SBOM_INGESTED
 from app.models.project import Project
-from app.repositories import DependencyRepository
+from app.repositories import DependencyRepository, DistributedLocksRepository
 from app.schemas.bearer import BearerIngest
 from app.schemas.ingest import (
     FindingsIngestResponse,
@@ -28,9 +31,10 @@ from app.schemas.ingest import (
 from app.schemas.kics import KicsIngest
 from app.schemas.opengrep import OpenGrepIngest
 from app.schemas.trufflehog import TruffleHogIngest
-from app.services.dependency_store import store_sbom_dependencies
+from app.services.dependency_store import store_scan_dependencies
+from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs
 from app.services.notifications.service import safe_notify_project_event
-from app.services.sbom_parser import parse_sbom
+from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.scan_manager import ScanManager
 from app.services.webhooks import webhook_service
 
@@ -167,23 +171,24 @@ async def _upload_sbom_to_gridfs(fs: AsyncIOMotorGridFSBucket, sbom: Any, scan_i
     }
 
 
-async def _parse_and_store_sbom_deps(
-    sbom: Any,
-    project_id: str,
-    scan_id: str,
-    dep_repo: "DependencyRepository",
-    old_deps_deleted: bool,
-) -> tuple[int, bool]:
-    """Parse one SBOM, delete old deps once, insert new deps in chunks; returns (deps_inserted, old_deps_deleted_after)."""
+def _parse_one_sbom(sbom: Any, index: int, warnings: list[str]) -> Any:
+    """Parse one SBOM; surfaces skipped-component loss as a response warning."""
     parsed_sbom = parse_sbom(sbom)
     logger.info(
         f"Parsed SBOM: format={parsed_sbom.format.value}, "
         f"total={parsed_sbom.total_components}, "
         f"parsed={parsed_sbom.parsed_components}, "
         f"skipped={parsed_sbom.skipped_components}, "
-        f"merged={parsed_sbom.merged_components}"
+        f"merged={parsed_sbom.merged_components}, "
+        f"skipped_reasons={parsed_sbom.skipped_reasons}"
     )
-    return await store_sbom_dependencies(parsed_sbom, project_id, scan_id, dep_repo, old_deps_deleted)
+    if parsed_sbom.skipped_components:
+        reasons = ", ".join(f"{reason}: {count}" for reason, count in sorted(parsed_sbom.skipped_reasons.items()))
+        warnings.append(
+            f"SBOM {index + 1}: skipped {parsed_sbom.skipped_components} of "
+            f"{parsed_sbom.total_components} components ({reasons})"
+        )
+    return parsed_sbom
 
 
 async def _process_sboms(
@@ -193,13 +198,16 @@ async def _process_sboms(
     scan_id: str,
     dep_repo: "DependencyRepository",
 ) -> tuple[list[dict[str, Any]], list[str], int, int, int]:
-    """Upload all SBOMs to GridFS and extract dependencies (chunked); returns (sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted)."""
+    """Upload and parse ALL SBOMs before the first dependency write; returns
+    (sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted).
+
+    The scan's dependency inventory is replaced only when every SBOM uploaded and
+    parsed, so a mixed [good, malformed] payload cannot wipe a prior contribution.
+    """
     sbom_refs: list[dict[str, Any]] = []
     warnings: list[str] = []
-    sboms_processed = 0
+    parsed_sboms: list[Any] = []
     sboms_failed = 0
-    total_deps_inserted = 0
-    old_deps_deleted = False
 
     for idx, sbom in enumerate(sboms):
         try:
@@ -212,17 +220,27 @@ async def _process_sboms(
             continue
 
         try:
-            inserted, old_deps_deleted = await _parse_and_store_sbom_deps(
-                sbom, project_id, scan_id, dep_repo, old_deps_deleted
-            )
-            total_deps_inserted += inserted
-            sboms_processed += 1
+            parsed_sboms.append(_parse_one_sbom(sbom, idx, warnings))
         except Exception as e:
             sboms_failed += 1
             warnings.append(f"SBOM {idx + 1}: Failed to parse dependencies")
             logger.exception("Failed to extract dependencies from SBOM: %s", e)
 
-    return sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted
+    total_deps_inserted = 0
+    if sboms_failed:
+        if parsed_sboms:
+            warnings.append("Dependency inventory left unchanged: at least one SBOM of this payload failed to process")
+    else:
+        # The unique index spans the scan, so duplicates across the payload's SBOMs must be
+        # merged before the first insert or the later ones lose their locations/CPEs/parents.
+        dependencies, _ = merge_duplicate_dependencies(
+            [dep for parsed_sbom in parsed_sboms for dep in parsed_sbom.dependencies]
+        )
+        total_deps_inserted = await store_scan_dependencies(dependencies, project_id, scan_id, dep_repo)
+        if total_deps_inserted < len(dependencies):
+            warnings.append(f"Only {total_deps_inserted} of {len(dependencies)} parsed dependencies were stored")
+
+    return sbom_refs, warnings, len(parsed_sboms), sboms_failed, total_deps_inserted
 
 
 @router.post(
@@ -246,67 +264,96 @@ async def ingest_sbom(
     pipeline_url = manager.build_pipeline_url(data)
     scan_id = _generate_scan_id(str(project.id), data.pipeline_id, data.commit_hash)
 
-    fs = AsyncIOMotorGridFSBucket(db)
+    # Serialise concurrent ingests of the same scan_id (CI retries) best-effort.
+    lock_repo = DistributedLocksRepository(db)
+    lock_name = f"sbom_ingest:{scan_id}"
+    lock_holder = f"ingest-{os.getenv('HOSTNAME', 'unknown')}-{uuid.uuid4().hex[:8]}"
+    locked = False
+    for _ in range(20):
+        locked = await lock_repo.acquire_lock(lock_name, lock_holder, ttl_seconds=120)
+        if locked:
+            break
+        await asyncio.sleep(0.5)
+    if not locked:
+        logger.warning("Proceeding without ingest lock for scan %s (concurrent ingest still running?)", scan_id)
+
     try:
-        sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted = await _process_sboms(
-            data.sboms, fs, str(project.id), scan_id, dep_repo
+        fs = AsyncIOMotorGridFSBucket(db)
+        try:
+            sbom_refs, warnings, sboms_processed, sboms_failed, total_deps_inserted = await _process_sboms(
+                data.sboms, fs, str(project.id), scan_id, dep_repo
+            )
+        except Exception as e:
+            logger.exception("Failed to process SBOMs: %s", e)
+            raise HTTPException(
+                status_code=500,
+                detail="Failed to store dependencies. Please try again.",
+            )
+
+        if sboms_failed > 0 and sboms_processed == 0:
+            raise HTTPException(
+                status_code=400,
+                detail=f"All {sboms_failed} SBOM(s) failed to process. Check server logs for details.",
+            )
+
+        if total_deps_inserted:
+            logger.info(f"Inserted {total_deps_inserted} dependencies for scan {scan_id}")
+
+        now = datetime.now(timezone.utc)
+
+        scan_update: dict[str, Any] = {
+            "$set": {
+                "branch": data.branch or "unknown",
+                "commit_hash": data.commit_hash,
+                "project_url": data.project_url,
+                "pipeline_url": pipeline_url,
+                "job_id": data.job_id,
+                "job_started_at": data.job_started_at,
+                "project_name": data.project_name,
+                "commit_message": data.commit_message,
+                "commit_tag": data.commit_tag,
+                "pipeline_user": data.pipeline_user,
+                "updated_at": now,
+            },
+            "$setOnInsert": {
+                "_id": scan_id,
+                "project_id": str(project.id),
+                "pipeline_id": data.pipeline_id,
+                "pipeline_iid": data.pipeline_iid,
+                "status": "pending",
+                "created_at": now,
+            },
+        }
+
+        # Replace (never append) so a CI retry cannot pile up duplicate SBOMs that get
+        # stored and re-analysed forever; superseded GridFS uploads are deleted below.
+        if sbom_refs:
+            scan_update["$set"]["sbom_refs"] = sbom_refs
+        else:
+            scan_update["$setOnInsert"]["sbom_refs"] = []
+
+        previous = await db.scans.find_one_and_update(
+            {"_id": scan_id}, scan_update, upsert=True, return_document=ReturnDocument.BEFORE
         )
-    except Exception as e:
-        logger.exception("Failed to process SBOMs: %s", e)
-        raise HTTPException(
-            status_code=500,
-            detail="Failed to store dependencies. Please try again.",
+
+        if previous and sbom_refs:
+            new_ids = {ref["gridfs_id"] for ref in sbom_refs}
+            superseded = [
+                gid for gid in extract_gridfs_ids_from_refs(previous.get("sbom_refs", [])) if gid not in new_ids
+            ]
+            if superseded:
+                await cleanup_gridfs_files(db, superseded)
+
+        # Reset a finished scan to pending so re-ingest re-analyses it.
+        await db.scans.update_one(
+            {"_id": scan_id, "status": {"$in": SCAN_USABLE_STATUSES}},
+            {"$set": {"status": "pending", "retry_count": 0}},
         )
 
-    if sboms_failed > 0 and sboms_processed == 0:
-        raise HTTPException(
-            status_code=400,
-            detail=f"All {sboms_failed} SBOM(s) failed to process. Check server logs for details.",
-        )
-
-    if total_deps_inserted:
-        logger.info(f"Inserted {total_deps_inserted} dependencies for scan {scan_id}")
-
-    now = datetime.now(timezone.utc)
-
-    scan_update: dict[str, Any] = {
-        "$set": {
-            "branch": data.branch or "unknown",
-            "commit_hash": data.commit_hash,
-            "project_url": data.project_url,
-            "pipeline_url": pipeline_url,
-            "job_id": data.job_id,
-            "job_started_at": data.job_started_at,
-            "project_name": data.project_name,
-            "commit_message": data.commit_message,
-            "commit_tag": data.commit_tag,
-            "pipeline_user": data.pipeline_user,
-            "updated_at": now,
-        },
-        "$setOnInsert": {
-            "_id": scan_id,
-            "project_id": str(project.id),
-            "pipeline_id": data.pipeline_id,
-            "pipeline_iid": data.pipeline_iid,
-            "status": "pending",
-            "created_at": now,
-        },
-    }
-
-    if sbom_refs:
-        scan_update["$push"] = {"sbom_refs": {"$each": sbom_refs}}
-    else:
-        scan_update["$setOnInsert"]["sbom_refs"] = []
-
-    await db.scans.update_one({"_id": scan_id}, scan_update, upsert=True)
-
-    # Reset a completed scan to pending so re-ingest re-analyses it.
-    await db.scans.update_one(
-        {"_id": scan_id, "status": "completed"},
-        {"$set": {"status": "pending", "retry_count": 0}},
-    )
-
-    await manager.register_result(scan_id, "sbom", trigger_analysis=True)
+        await manager.register_result(scan_id, "sbom", trigger_analysis=True)
+    finally:
+        if locked:
+            await lock_repo.release_lock(lock_name, lock_holder)
 
     # Fire ingest webhook (best-effort).
     await webhook_service.safe_trigger_webhooks(

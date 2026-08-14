@@ -31,6 +31,11 @@ from app.schemas.analytics import (
     SeverityBreakdown,
     VulnerabilityHotspot,
 )
+from app.services.aggregation.components import (
+    artifact_segment,
+    build_component_index,
+    lookup_component,
+)
 from app.services.enrichment import get_cve_enrichment
 
 logger = logging.getLogger(__name__)
@@ -87,7 +92,7 @@ async def get_impact_analysis(
         return []
 
     pipeline: list[dict[str, Any]] = [
-        {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
+        {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability", "waived": {"$ne": True}}},
         {
             "$project": {
                 "component": 1,
@@ -221,7 +226,7 @@ def _build_hotspot(
     severity_counts = _severity_counts_from_row(r)
     fix_versions = extract_fix_versions(r.get("details_list", []))
     has_fix = len(fix_versions) > 0
-    dep_type = dep_type_map.get(r["_id"]["component"], "unknown")
+    dep_type = lookup_component(dep_type_map, r["_id"]["component"], "unknown")
 
     first_seen_str = _format_first_seen(r.get("first_seen"))
     days_known = calculate_days_known(r.get("first_seen"))
@@ -297,7 +302,7 @@ async def get_vulnerability_hotspots(
     post_sort_by = sort_by if sort_by in ["epss", "risk"] else None
 
     pipeline: list[dict[str, Any]] = [
-        {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
+        {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability", "waived": {"$ne": True}}},
         {
             "$project": {
                 "component": 1,
@@ -343,13 +348,17 @@ async def get_vulnerability_hotspots(
         except Exception as e:
             logger.warning(f"Failed to enrich CVEs: {e}")
 
-    component_names = list({r["_id"]["component"] for r in results})
+    # A component can be group-qualified while the inventory keeps the bare artifact name,
+    # so both spellings go into the filter and the index resolves either way.
+    components = {r["_id"]["component"] for r in results}
+    # Stored names are case-sensitive, so the candidate must keep the component's own case.
+    candidates = list(components | {artifact_segment(c) for c in components})
     type_pipeline: list[dict[str, Any]] = [
-        {"$match": {"name": {"$in": component_names}}},
+        {"$match": {"name": {"$in": candidates}}},
         {"$group": {"_id": "$name", "type": {"$first": "$type"}}},
     ]
-    type_results = await dep_repo.aggregate(type_pipeline, limit=len(component_names) + 1)
-    dep_type_map = {d["_id"]: d.get("type", "unknown") for d in type_results}
+    type_results = await dep_repo.aggregate(type_pipeline, limit=len(candidates) + 1)
+    dep_type_map = build_component_index({d["_id"]: d.get("type", "unknown") for d in type_results})
 
     hotspots = [_build_hotspot(r, enrichments, dep_type_map, project_name_map, project_ids) for r in results]
 

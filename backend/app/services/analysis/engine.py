@@ -1,17 +1,25 @@
 import asyncio
 import json
 import logging
+import re
 import time
 import uuid
 from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any, Optional
 
 from bson import ObjectId
 from motor.motor_asyncio import AsyncIOMotorGridFSBucket
-from pymongo import UpdateOne
+from pymongo import UpdateMany, UpdateOne
 
-from app.core.constants import DETAILS_KEY_IN_KEV
+from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
+    SCAN_STATUS_COMPLETED,
+    SCAN_STATUS_COMPLETED_WITH_ERRORS,
+    SCAN_STATUS_FAILED,
+    SCAN_USABLE_STATUSES,
+)
 from app.core.metrics import (
     analysis_aggregation_duration_seconds,
     analysis_components_parsed_total,
@@ -45,6 +53,7 @@ from app.repositories import (
 )
 from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.finding_details import SystemWarningDetails, VulnerabilitySummaryDetails
+from app.schemas.sbom import ParsedDependency
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.integrations import decorate_gitlab_mr
 from app.services.analysis.notifications import send_scan_notifications
@@ -53,13 +62,14 @@ from app.services.analysis.stats import (
     build_epss_kev_summary,
     build_reachability_summary,
     calculate_comprehensive_stats,
+    finding_vulnerability_id,
 )
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
-from app.services.dependency_store import store_sbom_dependencies
+from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment import enrich_vulnerability_findings
 from app.services.reachability_enrichment import enrich_findings_with_reachability
-from app.services.sbom_parser import parse_sbom
+from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 
 logger = logging.getLogger(__name__)
 
@@ -142,6 +152,21 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"],
         logger.exception("Failed to bulk carry over external results: %s", e)
 
 
+# Analyzer result keys reporting incomplete coverage, with how to phrase each.
+_PARTIAL_RESULT_KEYS: tuple[tuple[str, str], ...] = (
+    ("partial_components_skipped", "{count} component(s) were not scanned"),
+    ("partial_vulnerabilities_unhydrated", "{count} vulnerability record(s) could not be fetched"),
+)
+
+
+def _partial_result_reason(result: Any) -> str | None:
+    """Why an analyzer's coverage is incomplete, or None when it is complete."""
+    if not isinstance(result, dict):
+        return None
+    reasons = [template.format(count=result[key]) for key, template in _PARTIAL_RESULT_KEYS if result.get(key)]
+    return "; ".join(reasons) if reasons else None
+
+
 async def process_analyzer(
     analyzer_name: str,
     analyzer: Analyzer,
@@ -196,6 +221,24 @@ async def process_analyzer(
 
         aggregator.aggregate(analyzer_name, result, source=source)
 
+        # CLI analyzers report timeouts/exit-codes/bad JSON as error dicts instead of raising.
+        if isinstance(result, dict) and result.get("error"):
+            if analysis_errors_total:
+                analysis_errors_total.labels(analyzer=analyzer_name).inc()
+            logger.warning(f"Analysis {analyzer_name} returned an error result for {scan_id}: {result.get('error')}")
+            return f"{analyzer_name}: Failed"
+
+        partial_reason = _partial_result_reason(result)
+        if partial_reason:
+            # Surface the coverage gap as a finding and flag the analyzer as partial.
+            aggregator.aggregate(
+                analyzer_name,
+                {"error": f"partial result: {partial_reason}"},
+                source=f"System: {analyzer_name}",
+            )
+            logger.warning(f"Analysis {analyzer_name} returned a partial result for {scan_id}: {partial_reason}")
+            return f"{analyzer_name}: Partial ({partial_reason})"
+
         logger.info(f"Analysis {analyzer_name} completed for {scan_id}")
         return f"{analyzer_name}: Success"
     except Exception as e:
@@ -208,17 +251,42 @@ async def process_analyzer(
         return f"{analyzer_name}: Failed"
 
 
-# Marker substring of the system-error raised (and matched) when a GridFS SBOM cannot be read.
+# Marker substring of the system-error raised when a GridFS SBOM cannot be read.
 _SBOM_GRIDFS_LOAD_ERROR = "Failed to load SBOM from GridFS"
 
 
-def _all_sbom_loads_failed(sboms_to_process: list[Any], aggregated_findings: list[Any]) -> bool:
-    """True when every GridFS SBOM failed to load, so the scan must not be reported as completed."""
-    gridfs_expected = sum(1 for it in sboms_to_process if isinstance(it, dict) and it.get("type") == "gridfs_reference")
-    if gridfs_expected == 0:
-        return False
-    failures = sum(1 for f in aggregated_findings if _SBOM_GRIDFS_LOAD_ERROR in (getattr(f, "description", "") or ""))
-    return failures >= gridfs_expected
+def _count_gridfs_refs(sboms_to_process: list[Any]) -> int:
+    return sum(1 for it in sboms_to_process if isinstance(it, dict) and it.get("type") == "gridfs_reference")
+
+
+def _failed_analyzer_names(results_summary: list[str]) -> list[str]:
+    """Analyzer names whose summary entry reports a failure or partial coverage.
+
+    Post-processor enrichments (EPSS/KEV, reachability) are excluded: their failure loses
+    metadata, not findings, and produces no traceable SCAN-ERROR finding — a transient
+    external-API outage must not downgrade the scan status.
+    """
+    names = set()
+    for entry in results_summary:
+        name, sep, rest = entry.partition(": ")
+        if sep and rest.startswith(("Failed", "Partial")) and name not in _POST_PROCESSOR_ANALYZERS:
+            names.add(name)
+    return sorted(names)
+
+
+def _enrichment_failure_names(results_summary: list[str]) -> list[str]:
+    """Post-processor enrichments that failed or ran partially.
+
+    Recorded on the scan without touching its status (see ``_failed_analyzer_names``): an
+    org-wide EPSS/KEV or reachability outage otherwise leaves no trace outside pod logs,
+    because their result documents are only written on the success path.
+    """
+    names = set()
+    for entry in results_summary:
+        name, sep, rest = entry.partition(": ")
+        if sep and rest.startswith(("Failed", "Partial")) and name in _POST_PROCESSOR_ANALYZERS:
+            names.add(name)
+    return sorted(names)
 
 
 async def _resolve_sbom(item: Any, fs: AsyncIOMotorGridFSBucket, aggregator: ResultAggregator) -> dict[str, Any] | None:
@@ -296,9 +364,9 @@ def _resolve_effective_analyzers(
     """Select analyzers based on whether crypto data and SBOM content are present."""
     has_crypto = scan_type == "cbom" or (parsed_sbom is not None and bool(getattr(parsed_sbom, "crypto_assets", None)))
     if has_crypto:
-        effective_analyzers = list(set(active_analyzers) | CRYPTO_ANALYZERS)
+        effective_analyzers = sorted(set(active_analyzers) | CRYPTO_ANALYZERS)
     else:
-        effective_analyzers = [n for n in active_analyzers if n not in CRYPTO_ANALYZERS]
+        effective_analyzers = sorted(n for n in active_analyzers if n not in CRYPTO_ANALYZERS)
 
     # CBOM-only scans with no real SBOM content: drop SBOM-format scanners
     if not parsed_components and scan_type == "cbom":
@@ -327,6 +395,15 @@ def _build_settings_resolver(
     return _settings_for
 
 
+@dataclass
+class _ScanDependencies:
+    """Dependencies collected across a scan's SBOMs. ``parsed`` stays False when no SBOM
+    reached the parser, so an inventory is never replaced by nothing."""
+
+    parsed: bool = False
+    items: list[ParsedDependency] = field(default_factory=list)
+
+
 async def _process_sbom(
     index: int,
     current_sbom: dict[str, Any],
@@ -339,22 +416,18 @@ async def _process_sbom(
     project_analyzer_settings: dict[str, dict[str, Any]] | None = None,
     project_id: str | None = None,
     scan_type: str | None = None,
-    persist_deps: bool = True,
-    old_deps_deleted: bool = False,
-) -> tuple[list[str], bool]:
-    """Process a single resolved SBOM: parse, persist deps, run analyzers; returns (results summary, old_deps_deleted)."""
+    deps_to_store: "_ScanDependencies | None" = None,
+) -> list[str]:
+    """Process a single resolved SBOM: parse, collect deps, run analyzers; returns the results summary."""
     fallback_source = f"SBOM #{index + 1}"
 
     parsed_sbom, parsed_components = _parse_and_track_sbom(current_sbom)
 
-    # Rescans run under a fresh scan_id with no stored deps; delete-once-then-insert keeps
-    # ingest-origin re-runs idempotent. persist_deps=False (an SBOM of this run failed to
-    # resolve) and the falsy CBOM-only {} placeholder skip it so stored deps are never wiped.
-    if persist_deps and parsed_sbom is not None and project_id and current_sbom:
-        inserted, old_deps_deleted = await store_sbom_dependencies(
-            parsed_sbom, project_id, scan_id, DependencyRepository(db), old_deps_deleted
-        )
-        logger.info(f"Stored {inserted} dependencies for scan {scan_id} (SBOM #{index + 1})")
+    # Collected rather than stored here: the unique index spans the scan, so every SBOM's
+    # dependencies must be merged before the first write (see store_scan_dependencies).
+    if deps_to_store is not None and parsed_sbom is not None and project_id and current_sbom:
+        deps_to_store.parsed = True
+        deps_to_store.items.extend(parsed_sbom.dependencies)
 
     if parsed_sbom is not None and parsed_sbom.crypto_assets and project_id:
         await _persist_embedded_crypto_assets(parsed_sbom, project_id, scan_id, db)
@@ -382,7 +455,7 @@ async def _process_sbom(
 
     batch_results = await asyncio.gather(*tasks)
     del current_sbom, parsed_components
-    return list(batch_results), old_deps_deleted
+    return list(batch_results)
 
 
 def _track_findings_metrics(aggregated_findings: list[Any]) -> None:
@@ -398,56 +471,66 @@ def _track_findings_metrics(aggregated_findings: list[Any]) -> None:
                 analysis_findings_total.labels(analyzer=scanner_name, severity=severity).inc()
 
 
-async def _enrich_dependencies(dependency_enrichments: dict[str, Any], scan_id: str, db: Database) -> None:
-    """Bulk-update dependencies with aggregated enrichment data."""
-    if not dependency_enrichments:
+_DEP_ENRICHMENT_COPY_KEYS = ("license", "license_expression", "license_category", "license_risks")
+_LICENSE_MISSING = {"$in": [None, ""]}
+_LICENSE_PRESENT = {"$nin": [None, ""]}
+
+
+def _dependency_update_ops(scan_id: str, entry: dict[str, Any]) -> list[UpdateMany]:
+    """Per-scan dependency updates for one enrichment entry, covering every duplicate doc."""
+    slim = {key: entry["data"][key] for key in _DEP_ENRICHMENT_COPY_KEYS if key in entry["data"]}
+    if not slim:
+        return []
+
+    dep_filter: dict[str, Any] = {"scan_id": scan_id, "name": entry["name"], "version": entry["version"]}
+    if entry["purl"]:
+        # Prefix match keeps qualifier variants together without touching a
+        # same-named package from another ecosystem.
+        dep_filter["purl"] = {"$regex": f"^{re.escape(entry['purl'])}([?#]|$)"}
+    else:
+        # Without a purl the enrichment describes an unidentified package; restrict it to
+        # the equally purl-less docs so it cannot stamp a same-named package of another
+        # ecosystem with its licence.
+        dep_filter["purl"] = {"$in": [None, ""]}
+
+    if "license" not in slim:
+        return [UpdateMany(dep_filter, {"$set": slim})]
+
+    # The SBOM-declared license is authoritative; enrichment only fills docs that lack one.
+    ops = [UpdateMany({**dep_filter, "license": _LICENSE_MISSING}, {"$set": slim})]
+    without_license = {key: value for key, value in slim.items() if key != "license"}
+    if without_license:
+        ops.append(UpdateMany({**dep_filter, "license": _LICENSE_PRESENT}, {"$set": without_license}))
+    return ops
+
+
+async def _enrich_dependencies(enrichment_entries: list[dict[str, Any]], scan_id: str, db: Database) -> None:
+    """Persist aggregated enrichment: purl-keyed upserts plus a slim per-scan dependency copy."""
+    if not enrichment_entries:
         return
 
-    logger.info(f"Enriching {len(dependency_enrichments)} dependencies with aggregated metadata")
+    logger.info(f"Enriching {len(enrichment_entries)} dependencies with aggregated metadata")
 
-    # purl is the cross-scan join key for dependency_enrichments; name@version only identifies a dep within this scan.
-    purl_by_key: dict[str, str] = {}
-    keys_with_sbom_license: set[str] = set()
-    async for dep_doc in db.dependencies.find({"scan_id": scan_id}, {"name": 1, "version": 1, "purl": 1, "license": 1}):
-        dep_key = f"{dep_doc.get('name')}@{dep_doc.get('version')}"
-        purl = dep_doc.get("purl")
-        if purl:
-            purl_by_key[dep_key] = purl
-        if dep_doc.get("license"):
-            keys_with_sbom_license.add(dep_key)
-
-    bulk_ops: list[UpdateOne] = []
+    bulk_ops: list[UpdateMany] = []
     enrichment_ops: list[UpdateOne] = []
     total_updated = 0
     total_enrichments_persisted = 0
 
-    for key, enrichment_data in dependency_enrichments.items():
-        parts = key.rsplit("@", 1)
-        if len(parts) != 2:
+    for entry in enrichment_entries:
+        if not entry["data"]:
             continue
-        name, version = parts
-        if enrichment_data:
-            # The SBOM-declared license is authoritative; enrichment guesses must not replace it.
-            dep_update = enrichment_data
-            if "license" in dep_update and key in keys_with_sbom_license:
-                dep_update = {k: v for k, v in dep_update.items() if k != "license"}
-            if dep_update:
-                bulk_ops.append(
-                    UpdateOne(
-                        {"scan_id": scan_id, "name": name, "version": version},
-                        {"$set": dep_update},
-                    )
-                )
 
-            purl = purl_by_key.get(key)
-            if purl:
-                enrichment_ops.append(
-                    UpdateOne(
-                        {"purl": purl},
-                        {"$set": {**enrichment_data, "purl": purl, "name": name, "version": version}},
-                        upsert=True,
-                    )
+        bulk_ops.extend(_dependency_update_ops(scan_id, entry))
+
+        purl = entry["purl"]
+        if purl:
+            enrichment_ops.append(
+                UpdateOne(
+                    {"purl": purl},
+                    {"$set": {**entry["data"], "purl": purl, "name": entry["name"], "version": entry["version"]}},
+                    upsert=True,
                 )
+            )
 
         if len(bulk_ops) >= _BULK_CHUNK_SIZE:
             try:
@@ -659,14 +742,18 @@ async def _aggregate_external_results(
     scan_id: str,
     results_summary: list[str],
 ) -> None:
-    """Fetch external analyzer results and aggregate them."""
+    """Fetch external analyzer results and aggregate them; failures land in results_summary."""
     external_results = await result_repo.find_by_scan(scan_id, limit=10000)
     for res in external_results:
         # Skip post-processor rows: they are engine outputs, not external scanner results.
         if res.analyzer_name not in analyzers and res.analyzer_name not in _POST_PROCESSOR_ANALYZERS:
             try:
                 aggregator.aggregate(res.analyzer_name, res.result)
-                results_summary.append(f"{res.analyzer_name}: Success")
+                if isinstance(res.result, dict) and res.result.get("error"):
+                    # Error-shaped rows aggregate into a SCAN-ERROR finding without raising.
+                    results_summary.append(f"{res.analyzer_name}: Failed")
+                else:
+                    results_summary.append(f"{res.analyzer_name}: Success")
             except Exception as exc:
                 logger.warning(
                     "_aggregate_external_results: skipping malformed result for analyzer=%s scan=%s: %s",
@@ -686,6 +773,7 @@ async def _aggregate_external_results(
                         details=SystemWarningDetails(error_details=str(exc)).model_dump(exclude_none=True),
                     )
                 )
+                results_summary.append(f"{res.analyzer_name}: Failed")
     del external_results
 
 
@@ -696,7 +784,7 @@ def _cleanup_analyzer_names(active_analyzers: list[str]) -> list[str]:
     active_analyzers (crypto auto-added by an embedded CBOM), so they must be purged explicitly.
     """
     internal_analyzers = [name for name in active_analyzers if name in analyzers]
-    return list(set(internal_analyzers) | set(_POST_PROCESSOR_ANALYZERS) | set(CRYPTO_ANALYZERS))
+    return sorted(set(internal_analyzers) | set(_POST_PROCESSOR_ANALYZERS) | set(CRYPTO_ANALYZERS))
 
 
 def _prepare_finding_records(
@@ -705,15 +793,25 @@ def _prepare_finding_records(
     project_id: str | None,
     scan_created_at: datetime | None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Convert aggregated findings to insertion records, splitting out vulnerabilities."""
+    """Convert aggregated findings to insertion records, splitting out vulnerabilities.
+
+    ``_id`` is deterministic per (scan, finding identity) so a raced double-persist collides
+    on insert instead of storing the whole finding set twice.
+    """
     findings_to_insert: list[dict[str, Any]] = []
     vulnerability_findings: list[dict[str, Any]] = []
+    seen_identities: dict[str, int] = {}
     for f in aggregated_findings:
         record: dict[str, Any] = f.model_dump()
         record["scan_id"] = scan_id
         record["project_id"] = project_id
         record["finding_id"] = f.id
-        record["_id"] = str(uuid.uuid4())
+        identity = f"{scan_id}:{record.get('type')}:{record.get('component')}:{record.get('version')}:{f.id}"
+        occurrence = seen_identities.get(identity, 0)
+        seen_identities[identity] = occurrence + 1
+        if occurrence:
+            identity = f"{identity}:{occurrence}"
+        record["_id"] = str(uuid.uuid5(uuid.NAMESPACE_URL, identity))
         record.setdefault("scan_created_at", scan_created_at)
         findings_to_insert.append(record)
         if record.get("type") == "vulnerability":
@@ -725,21 +823,6 @@ def _prepare_finding_records(
 _FINDINGS_SUMMARY_LIMIT = 500
 
 
-def _summary_cve_id(record: dict[str, Any]) -> str:
-    """First CVE id found on the aggregated record; falls back to the component:version id."""
-    details = record.get("details") or {}
-    for entry in details.get("vulnerabilities") or []:
-        if not isinstance(entry, dict):
-            continue
-        for candidate in (entry.get("id"), entry.get("resolved_cve"), *(entry.get("aliases") or [])):
-            if isinstance(candidate, str) and candidate.startswith("CVE-"):
-                return candidate
-    for alias in record.get("aliases") or []:
-        if isinstance(alias, str) and alias.startswith("CVE-"):
-            return alias
-    return str(record.get("id") or "")
-
-
 def _build_findings_summary(
     vulnerability_findings: list[dict[str, Any]],
     limit: int = _FINDINGS_SUMMARY_LIMIT,
@@ -747,7 +830,7 @@ def _build_findings_summary(
     """Compact, bounded, vulnerability-only summary; details trimmed to the CVE id to bound size."""
     summary: list[dict[str, Any]] = []
     for record in vulnerability_findings[:limit]:
-        cve_id = _summary_cve_id(record)
+        cve_id = finding_vulnerability_id(record)
         summary.append(
             {
                 "id": record.get("id"),
@@ -799,11 +882,12 @@ async def _persist_findings_and_waivers(
     project_id: str | None,
     finding_repo: FindingRepository,
     db: Database,
-) -> tuple[int, list[Waiver]]:
-    """Insert findings, apply waivers, return (ignored_count, active_waivers)."""
+) -> tuple[int, int, list[Waiver]]:
+    """Insert findings, apply waivers, return (persisted_count, ignored_count, active_waivers)."""
     await finding_repo.delete_many({"scan_id": scan_id})
+    persisted_count = 0
     for i in range(0, len(findings_to_insert), _BULK_CHUNK_SIZE):
-        await finding_repo.create_many_raw(findings_to_insert[i : i + _BULK_CHUNK_SIZE])
+        persisted_count += await finding_repo.create_many_raw(findings_to_insert[i : i + _BULK_CHUNK_SIZE])
 
     from app.repositories import WaiverRepository
 
@@ -819,7 +903,7 @@ async def _persist_findings_and_waivers(
 
     findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
     ignored_count = await findings_primary.count_documents({"scan_id": scan_id, "waived": True})
-    return ignored_count, active_waivers
+    return persisted_count, ignored_count, active_waivers
 
 
 def _as_utc(dt: datetime | None) -> datetime | None:
@@ -835,13 +919,18 @@ async def _should_update_project_latest_scan(
     project_id: str,
     scan_repo: ScanRepository,
     project_repo: ProjectRepository,
+    authoritative: bool = True,
 ) -> bool:
     """True unless a strictly-newer scan (by created_at) is already the project's latest.
 
     Guards against a late/out-of-order scan clobbering latest_scan_id/stats with stale data.
+    A non-authoritative scan (no SBOM ever received) may only become latest when the project
+    has none yet, so a SAST-only pipeline run cannot wipe the SBOM-derived picture.
     """
     project_doc = await project_repo.get_by_id_strong(project_id)
     current_latest_id = getattr(project_doc, "latest_scan_id", None) if project_doc else None
+    if not authoritative and current_latest_id and current_latest_id != scan_id:
+        return False
     if not current_latest_id or current_latest_id == scan_id:
         return True
 
@@ -866,10 +955,13 @@ async def _finalize_scan_and_project(
     latest_run_summary: dict,
     scan_repo: ScanRepository,
     project_repo: ProjectRepository,
-    status: str = "completed",
+    status: str = SCAN_STATUS_COMPLETED,
     error: str | None = None,
     external_load_start: datetime | None = None,
     findings_summary: list[dict[str, Any]] | None = None,
+    failed_analyzers: list[str] | None = None,
+    enrichment_failures: list[str] | None = None,
+    authoritative: bool = True,
 ) -> bool:
     """Persist the final scan status, ignored count, and (on success) project stats.
 
@@ -884,6 +976,8 @@ async def _finalize_scan_and_project(
         "completed_at": datetime.now(timezone.utc),
         "latest_run": latest_run_summary,
         "findings_summary": findings_summary or [],
+        "failed_analyzers": failed_analyzers or None,
+        "enrichment_failures": enrichment_failures or None,
     }
     if error:
         set_fields["error"] = error
@@ -892,7 +986,7 @@ async def _finalize_scan_and_project(
         "last_result_at": "",
     }
 
-    if status == "completed" and external_load_start is not None:
+    if status in SCAN_USABLE_STATUSES and external_load_start is not None:
         # Atomic completion guard: only complete if no scanner result arrived after loading
         # began, closing the TOCTOU window where a late result would be $unset and lost.
         updated = await scan_repo.collection.find_one_and_update(
@@ -931,8 +1025,10 @@ async def _finalize_scan_and_project(
     # A failed or out-of-order scan must not become the project's latest or overwrite its stats.
     if (
         project_id
-        and status != "failed"
-        and await _should_update_project_latest_scan(scan_id, scan_doc, project_id, scan_repo, project_repo)
+        and status != SCAN_STATUS_FAILED
+        and await _should_update_project_latest_scan(
+            scan_id, scan_doc, project_id, scan_repo, project_repo, authoritative=authoritative
+        )
     ):
         await project_repo.update_raw(
             project_id,
@@ -1052,7 +1148,7 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
 
     # For CBOM scans, always include crypto analyzers regardless of project config.
     if scan_type == "cbom":
-        active_analyzers = list(set(active_analyzers) | CRYPTO_ANALYZERS)
+        active_analyzers = sorted(set(active_analyzers) | CRYPTO_ANALYZERS)
 
     cleanup_names = _cleanup_analyzer_names(active_analyzers)
     if cleanup_names:
@@ -1076,20 +1172,26 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
     resolved_sboms: list[dict[str, Any] | None] = [
         await _resolve_sbom(item, fs, aggregator) for item in sboms_to_process
     ]
-    persist_deps = all(resolved is not None for resolved in resolved_sboms)
+    sbom_load_failures = sum(1 for resolved in resolved_sboms if resolved is None)
+    sboms_expected = len(resolved_sboms)
+    gridfs_expected = _count_gridfs_refs(sboms_to_process)
+    persist_deps = sbom_load_failures == 0
     if not persist_deps:
         logger.warning(
             "Scan %s: %d/%d SBOMs failed to resolve; skipping dependency persistence to keep stored dependencies",
             scan_id,
-            sum(1 for resolved in resolved_sboms if resolved is None),
-            len(resolved_sboms),
+            sbom_load_failures,
+            sboms_expected,
         )
 
-    old_deps_deleted = False
+    # Rescans run under a fresh scan_id with no stored deps; delete-then-insert keeps
+    # ingest-origin re-runs idempotent. persist_deps=False (an SBOM of this run failed to
+    # resolve) skips the write entirely so stored deps are never wiped.
+    deps_to_store = _ScanDependencies() if persist_deps else None
     for index, current_sbom in enumerate(resolved_sboms):
         if current_sbom is None:
             continue
-        sbom_results, old_deps_deleted = await _process_sbom(
+        sbom_results = await _process_sbom(
             index,
             current_sbom,
             scan_id,
@@ -1101,11 +1203,17 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
             project_analyzer_settings=project_analyzer_settings,
             project_id=project_id,
             scan_type=scan_type,
-            persist_deps=persist_deps,
-            old_deps_deleted=old_deps_deleted,
+            deps_to_store=deps_to_store,
         )
         resolved_sboms[index] = None
         results_summary.extend(sbom_results)
+
+    if deps_to_store is not None and deps_to_store.parsed and project_id:
+        dependencies, _ = merge_duplicate_dependencies(deps_to_store.items)
+        del deps_to_store
+        inserted = await store_scan_dependencies(dependencies, project_id, scan_id, DependencyRepository(db))
+        logger.info(f"Stored {inserted} of {len(dependencies)} dependencies for scan {scan_id}")
+        del dependencies
 
     external_load_start = datetime.now(timezone.utc)
     await _aggregate_external_results(aggregator, result_repo, scan_id, results_summary)
@@ -1142,20 +1250,40 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         results_summary,
     )
 
-    ignored_count, active_waivers = await _persist_findings_and_waivers(
+    persisted_findings_count, ignored_count, active_waivers = await _persist_findings_and_waivers(
         findings_to_insert, scan_id, project_id, finding_repo, db
     )
     _track_waiver_metrics(active_waivers)
 
     stats = await calculate_comprehensive_stats(db, scan_id)
 
-    sbom_load_failed = _all_sbom_loads_failed(sboms_to_process, aggregated_findings)
-    final_status = "failed" if sbom_load_failed else "completed"
+    sbom_load_failed = gridfs_expected > 0 and sbom_load_failures >= gridfs_expected
     if sbom_load_failed:
         logger.error(
             "Scan %s: all SBOMs failed to load from GridFS — marking failed (was silently completing)",
             scan_id,
         )
+
+    failed_analyzers = _failed_analyzer_names(results_summary)
+    partial_reasons: list[str] = []
+    if failed_analyzers:
+        partial_reasons.append(f"analyzers failed or returned partial results: {', '.join(failed_analyzers)}")
+    if not sbom_load_failed and sbom_load_failures:
+        partial_reasons.append(f"{sbom_load_failures} of {sboms_expected} SBOMs failed to load")
+    if persisted_findings_count < total_findings_count:
+        partial_reasons.append(f"only {persisted_findings_count} of {total_findings_count} findings were persisted")
+    total_findings_count = persisted_findings_count
+
+    if sbom_load_failed:
+        final_status = SCAN_STATUS_FAILED
+        final_error: str | None = "SBOM could not be loaded for analysis"
+    elif partial_reasons:
+        final_status = SCAN_STATUS_COMPLETED_WITH_ERRORS
+        final_error = "; ".join(partial_reasons)
+        logger.warning("Scan %s completed with errors: %s", scan_id, final_error)
+    else:
+        final_status = SCAN_STATUS_COMPLETED
+        final_error = None
 
     latest_run_summary = {
         "scan_id": scan_id,
@@ -1182,9 +1310,12 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         scan_repo,
         project_repo,
         status=final_status,
-        error="SBOM could not be loaded for analysis" if sbom_load_failed else None,
+        error=final_error,
         external_load_start=external_load_start,
         findings_summary=_build_findings_summary(vulnerability_findings),
+        failed_analyzers=failed_analyzers,
+        enrichment_failures=_enrichment_failure_names(results_summary),
+        authoritative=bool(sboms_to_process),
     )
     if not finalized:
         # Rescheduled after a late scanner result raced completion; skip notifying on stale results.

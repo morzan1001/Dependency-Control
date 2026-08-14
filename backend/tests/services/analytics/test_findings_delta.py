@@ -99,6 +99,24 @@ def test_identity_key_license_uses_license():
     assert finding_identity_key(f) == ("license", "lodash@4.17.21", "GPL-3.0-only")
 
 
+def test_identity_key_eol_uses_eol_date_only():
+    """EolDetails declares no `version` and the EOL writer never writes one: 0 of 5,669
+    production EOL findings carry details.version, all 5,669 carry eol_date. The extra
+    fallback key was invisible to the drift guard because it travels through *keys."""
+    f = {
+        "type": "eol",
+        "component": "python",
+        "version": "3.4.10",
+        "details": {"fixed_version": "3.4.13", "eol_date": "2025-12-31", "cycle": "3.4", "link": None, "lts": False},
+    }
+    assert finding_identity_key(f) == ("eol", "python", "2025-12-31")
+
+
+def test_identity_key_eol_without_a_date_falls_back_to_the_fingerprint():
+    f = {"type": "eol", "component": "python", "version": "3.4.10", "description": "EOL", "details": {"cycle": "3.4"}}
+    assert finding_identity_key(f)[2] != "3.4.10"
+
+
 def test_identity_key_malware_typosquat_uses_imitated_package():
     f = {
         "type": "malware",
@@ -543,3 +561,25 @@ async def test_fetch_uses_projection(db, monkeypatch):
         "details.signature",
     ):
         assert gone not in proj
+
+
+def test_identity_key_vulnerability_survives_a_component_requalification():
+    """The same package reported bare and group-qualified must not read as removed + added."""
+    bare = {
+        "type": "vulnerability",
+        "component": "jackson-databind",
+        "version": "2.20.2",
+        "description": "",
+        "details": {"vulnerabilities": [{"id": "CVE-2026-1"}]},
+    }
+    qualified = {**bare, "component": "com.fasterxml.jackson.core:jackson-databind"}
+
+    assert finding_identity_key(bare) == finding_identity_key(qualified)
+
+
+def test_identity_key_keeps_same_named_files_in_different_directories_apart():
+    """Only package components are folded; SAST/secret components are file paths."""
+    a = {"type": "secret", "component": "src/a/util.js", "finding_id": "SECRET-1", "details": {}}
+    b = {"type": "secret", "component": "src/b/util.js", "finding_id": "SECRET-1", "details": {}}
+
+    assert finding_identity_key(a) != finding_identity_key(b)

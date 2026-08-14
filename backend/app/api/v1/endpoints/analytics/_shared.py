@@ -3,6 +3,7 @@
 from typing import Any
 
 from app.api.deps import DatabaseDep
+from app.core.constants import SCAN_USABLE_STATUSES
 from app.repositories import (
     DependencyEnrichmentRepository,
     ProjectRepository,
@@ -23,7 +24,7 @@ async def _resolve_scan_id(project_id: str, db: DatabaseDep) -> str | None:
         return project.latest_scan_id
 
     scan_doc = await db.scans.find_one(
-        {"project_id": project_id, "branch": {"$nin": deleted}, "status": "completed"},
+        {"project_id": project_id, "branch": {"$nin": deleted}, "status": {"$in": SCAN_USABLE_STATUSES}},
         sort=[("created_at", -1)],
         projection={"_id": 1},
     )
@@ -37,6 +38,9 @@ async def _get_enrichment_info(enrichment_repo: DependencyEnrichmentRepository, 
         "license_category": None,
         "license_risks": [],
         "license_obligations": [],
+        "description": None,
+        "homepage": None,
+        "repository_url": None,
     }
     if not purl:
         return result
@@ -44,6 +48,12 @@ async def _get_enrichment_info(enrichment_repo: DependencyEnrichmentRepository, 
     enrichment = await enrichment_repo.get_by_purl(purl)
     if not enrichment:
         return result
+
+    # Dependency docs only carry parser-declared metadata; deps.dev-derived
+    # description/links live solely on the enrichment doc.
+    result["description"] = enrichment.get("description")
+    result["homepage"] = enrichment.get("homepage")
+    result["repository_url"] = enrichment.get("repository_url")
 
     deps_dev_data = enrichment.get("deps_dev")
     if deps_dev_data:

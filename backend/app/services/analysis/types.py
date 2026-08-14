@@ -59,6 +59,9 @@ class EPSSKEVSummary(TypedDict):
     exploit_maturity: ExploitMaturityCounts
     avg_epss_score: float | None
     max_epss_score: float | None
+    # Mean/max of the per-finding threat score (EPSS, KEV and exploit maturity) over this
+    # scan's vulnerability findings — NOT the project-level exposure score of the same name
+    # on the dashboard, which averages projects' saturating severity-weighted stats.risk_score.
     avg_risk_score: float | None
     max_risk_score: float | None
     kev_details: list[KEVDetail]

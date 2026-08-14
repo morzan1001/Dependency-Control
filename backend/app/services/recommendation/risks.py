@@ -13,6 +13,7 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
+from app.services.aggregation.components import build_component_index, lookup_component
 from app.services.recommendation.common import ModelOrDict, get_attr
 
 
@@ -330,7 +331,7 @@ def _record_malware_risk(pkg: dict[str, Any]) -> None:
 def _aggregate_package_risks(findings: list[ModelOrDict]) -> dict[str, dict[str, Any]]:
     """Aggregate risk factors per package from findings."""
     package_risks: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"risk_factors": [], "total_score": 0, "vulns": [], "details": {}}
+        lambda: {"risk_factors": [], "total_score": 0, "vulns": [], "version": "unknown"}
     )
 
     for f in findings:
@@ -345,7 +346,7 @@ def _aggregate_package_risks(findings: list[ModelOrDict]) -> dict[str, dict[str,
         if finding_type == "vulnerability":
             pkg["vulns"].append(f)
             if len(pkg["vulns"]) == 1:
-                pkg["details"]["version"] = get_attr(f, "version", "unknown")
+                pkg["version"] = get_attr(f, "version", "unknown")
         elif finding_type == "quality":
             _record_quality_risk(pkg, details)
         elif finding_type == "eol":
@@ -385,7 +386,7 @@ def _append_vuln_risk_factor(pkg: dict[str, Any]) -> None:
 def _build_toxic_recommendation(component: str, pkg: dict[str, Any]) -> Recommendation:
     """Build a toxic-dependency recommendation."""
     risk_descriptions = [r["description"] for r in pkg["risk_factors"]]
-    version = pkg["details"].get("version", "unknown")
+    version = pkg["version"]
 
     return Recommendation(
         type=RecommendationType.TOXIC_DEPENDENCY,
@@ -452,16 +453,18 @@ def analyze_attack_surface(
 
     recommendations = []
 
-    vuln_count_by_pkg: dict[str, int] = defaultdict(int)
+    counts: dict[str, int] = defaultdict(int)
     for f in findings:
         if get_attr(f, "type") == "vulnerability":
-            vuln_count_by_pkg[get_attr(f, "component", "")] += 1
+            counts[get_attr(f, "component", "")] += 1
+    # Findings carry the qualified component while the inventory keeps the bare name.
+    vuln_count_by_pkg = build_component_index(dict(counts))
 
     transitive_with_vulns = []
     for dep in dependencies:
         pkg_name = get_attr(dep, "name", "")
         is_direct = get_attr(dep, "direct", False)
-        vuln_count = vuln_count_by_pkg.get(pkg_name, 0)
+        vuln_count = lookup_component(vuln_count_by_pkg, pkg_name) or 0
 
         if not is_direct and vuln_count >= 2:
             transitive_with_vulns.append(

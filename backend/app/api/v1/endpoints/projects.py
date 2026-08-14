@@ -1,7 +1,9 @@
+import io
 import json
 import logging
 import re
 import uuid
+import zipfile
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
@@ -34,8 +36,10 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
     RESP_AUTH_404_500,
 )
+from app.core.constants import SCAN_USABLE_STATUSES
 from app.core.permissions import Permissions, has_permission
 from app.core.risk_scoring import risk_score_expr
+from app.core.trufflehog import SECRET_DESCRIPTION_PREFIX, resolve_detector_name
 from app.core.worker import worker_manager
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 from app.models.system import SystemSettings
@@ -67,6 +71,8 @@ from app.schemas.project import (
     RiskyProject,
     ScanFindingsResponse,
 )
+from app.services.aggregation.components import component_match_expr
+from app.services.branches import resolve_default_branch
 from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.findings_export import FINDINGS_COLUMNS, iter_findings_rows
 from app.services.inventory.scan_resolution import latest_completed_scans_by_branch
@@ -634,17 +640,35 @@ async def read_project_branches(
 
     pipeline: list[dict[str, Any]] = [
         {"$match": {"project_id": project_id}},
-        {MONGO_GROUP: {"_id": "$branch", "last_scan_at": {"$max": "$created_at"}}},
+        {
+            MONGO_GROUP: {
+                "_id": "$branch",
+                "last_scan_at": {"$max": "$created_at"},
+                # Ranked on separately: a branch whose newest scans all failed renders nothing.
+                "last_usable_at": {
+                    "$max": {"$cond": [{"$in": ["$status", list(SCAN_USABLE_STATUSES)]}, "$created_at", None]}
+                },
+            }
+        },
     ]
-    last_scans = {}
+    last_scans: dict[str, Any] = {}
+    last_usable: dict[str, Any] = {}
     async for doc in db.scans.aggregate(pipeline):
         last_scans[doc["_id"]] = doc["last_scan_at"]
+        last_usable[doc["_id"]] = doc.get("last_usable_at")
+
+    default_branch = resolve_default_branch(
+        project.default_branch if project else None,
+        [b for b in branches if b not in deleted_set],
+        last_usable,
+    )
 
     result = [
         BranchInfo(
             name=b,
             is_active=b not in deleted_set,
             last_scan_at=last_scans.get(b),
+            is_default=b == default_branch,
         )
         for b in sorted(branches)
     ]
@@ -1082,12 +1106,16 @@ def _scan_findings_lookup_stage() -> dict[str, Any]:
                         "$expr": {
                             "$and": [
                                 {"$eq": ["$scan_id", "$$scan_id"]},
-                                {"$eq": ["$name", "$$component"]},
+                                component_match_expr("$name", "$$component"),
                                 {"$eq": ["$version", "$$version"]},
                             ]
                         }
                     }
                 },
+                # Exact spelling first so a qualified finding never takes a same-artifact
+                # sibling's row when both are present.
+                {"$addFields": {"_exact": {"$eq": ["$name", "$$component"]}}},
+                {"$sort": {"_exact": -1}},
                 {"$limit": 1},
                 {
                     "$project": {
@@ -1197,6 +1225,25 @@ def _build_scan_findings_pipeline(
     return stages
 
 
+def _resolve_secret_detectors(rows: list[dict[str, Any]]) -> None:
+    """Show trufflehog detector names instead of the stored DetectorType ordinals.
+
+    Resolved for display only: the ordinal is baked into ``finding_id`` and into every
+    secret waiver's ``match.rule_key``, so rewriting it in place would un-suppress them.
+    """
+    for row in rows:
+        details = row.get("details")
+        if not isinstance(details, dict):
+            continue
+        raw = details.get("detector")
+        name = resolve_detector_name(raw)
+        if name is None:
+            continue
+        details["detector"] = name
+        if row.get("description") == f"{SECRET_DESCRIPTION_PREFIX}{raw}":
+            row["description"] = f"{SECRET_DESCRIPTION_PREFIX}{name}"
+
+
 def _unpack_scan_findings_facet(result: list[dict[str, Any]]) -> tuple:
     """Pull ``(data, total)`` out of the ``$facet`` result envelope."""
     if not result:
@@ -1270,6 +1317,7 @@ async def read_scan_findings(
     finding_repo = FindingRepository(db)
     result = await finding_repo.aggregate(pipeline)
     data, total = _unpack_scan_findings_facet(result)
+    _resolve_secret_detectors(data)
 
     return build_pagination_response(data, total, skip, limit)
 
@@ -1461,7 +1509,7 @@ async def export_project_sbom(
 
     scan_repo = ScanRepository(db)
 
-    scan = await scan_repo.get_latest_for_project(project_id, status="completed")
+    scan = await scan_repo.get_latest_for_project(project_id, statuses=SCAN_USABLE_STATUSES)
 
     if not scan:
         raise HTTPException(status_code=404, detail="No completed scans found for this project")
@@ -1469,19 +1517,31 @@ async def export_project_sbom(
     if not scan.sbom_refs or len(scan.sbom_refs) == 0:
         raise HTTPException(status_code=404, detail="No SBOM data found for this scan")
 
-    ref = scan.sbom_refs[0]
-    if ref.get("storage") != "gridfs" or not ref.get("file_id"):
-        raise HTTPException(status_code=500, detail="Invalid SBOM reference (not GridFS)")
+    sbom_contents: list[Any] = []
+    for ref in scan.sbom_refs:
+        if ref.get("storage") != "gridfs" or not ref.get("file_id"):
+            raise HTTPException(status_code=500, detail="Invalid SBOM reference (not GridFS)")
+        sbom_content = await load_from_gridfs(db, ref["file_id"])
+        if not sbom_content:
+            raise HTTPException(status_code=404, detail="SBOM file not found in GridFS")
+        sbom_contents.append(sbom_content)
 
-    sbom_content = await load_from_gridfs(db, ref["file_id"])
+    if len(sbom_contents) == 1:
+        return Response(
+            content=json.dumps(sbom_contents[0], indent=2),
+            media_type="application/json",
+            headers={"Content-Disposition": f"attachment; filename=project_{project_id}_sbom.json"},
+        )
 
-    if not sbom_content:
-        raise HTTPException(status_code=404, detail="SBOM file not found in GridFS")
-
+    # Multi-SBOM scans export every SBOM, not just the first upload.
+    buffer = io.BytesIO()
+    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
+        for index, sbom_content in enumerate(sbom_contents):
+            archive.writestr(f"sbom-{index + 1}.json", json.dumps(sbom_content, indent=2))
     return Response(
-        content=json.dumps(sbom_content, indent=2),
-        media_type="application/json",
-        headers={"Content-Disposition": f"attachment; filename=project_{project_id}_sbom.json"},
+        content=buffer.getvalue(),
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename=project_{project_id}_sboms.zip"},
     )
 
 

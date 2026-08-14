@@ -397,3 +397,57 @@ async def test_validity_too_long(db):
     )
     too_long = [f for f in result["findings"] if f["type"] == "crypto_cert_validity_too_long"]
     assert len(too_long) == 1
+
+
+@pytest.mark.asyncio
+async def test_every_check_emits_only_declared_details_keys(db):
+    """_build spreads **details into CryptoCertificateDetails, and the drift guard cannot
+    see through a spread (blind spot 4 in its docstring), so assert it at runtime."""
+    from app.schemas.finding_details import CryptoCertificateDetails
+
+    now = datetime.now(timezone.utc)
+    weak_hash = _algo("a-sha1", "SHA-1", CryptoPrimitive.HASH)
+    weak_key = _algo("a-rsa", "RSA-1024", CryptoPrimitive.PKE, key_size=1024)
+    await CryptoAssetRepository(db).bulk_upsert(
+        "p",
+        "s",
+        [
+            weak_hash,
+            weak_key,
+            _cert(bom_ref="c-expired", not_after=now - timedelta(days=10)),
+            _cert(bom_ref="c-expiring", not_after=now + timedelta(days=15)),
+            _cert(bom_ref="c-future", not_before=now + timedelta(days=5), not_after=now + timedelta(days=90)),
+            _cert(bom_ref="c-selfsigned", subject="CN=self", issuer="CN=self", not_after=now + timedelta(days=200)),
+            _cert(bom_ref="c-weaksig", sig_algo_ref="a-sha1", not_after=now + timedelta(days=200)),
+            _cert(bom_ref="c-weakkey", subject_key_ref="a-rsa", not_after=now + timedelta(days=200)),
+            _cert(
+                bom_ref="c-long",
+                not_before=now - timedelta(days=10),
+                not_after=now + timedelta(days=400),
+            ),
+        ],
+    )
+    validity_rule = CryptoRule(
+        rule_id="validity-398",
+        name="validity",
+        description="",
+        finding_type=FindingType.CRYPTO_CERT_VALIDITY_TOO_LONG,
+        default_severity=Severity.LOW,
+        source=CryptoPolicySource.CUSTOM,
+        validity_too_long_days=398,
+    )
+    await CryptoPolicyRepository(db).upsert_system_policy(
+        CryptoPolicy(
+            scope="system",
+            version=1,
+            rules=[_expiry_rule(), validity_rule, _weak_key_rule(), _weak_hash_rule(names=("SHA-1",))],
+        )
+    )
+
+    result = await CertificateLifecycleAnalyzer().analyze(sbom={}, project_id="p", scan_id="s", db=db)
+
+    emitted_types = {f["type"] for f in result["findings"]}
+    assert len(emitted_types) >= 6, f"the fixture must exercise every check, got {sorted(emitted_types)}"
+    declared = set(CryptoCertificateDetails.model_fields)
+    undeclared = {key for f in result["findings"] for key in f["details"]} - declared
+    assert not undeclared, f"undeclared details keys reach CryptoCertificateDetails: {sorted(undeclared)}"

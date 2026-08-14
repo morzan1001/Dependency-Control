@@ -25,18 +25,21 @@ from app.schemas.analytics import (
     VulnerabilitySearchResponse,
     VulnerabilitySearchResult,
 )
+from app.services.aggregation.components import build_component_index, lookup_component
 from app.services.recommendation.common import get_attr
 
 router = CustomAPIRouter()
 
 
 def _passes_vuln_filter(
-    dep_project_id: str, dep_name: str, has_vulnerabilities: bool | None, vuln_status_map: dict[str, bool]
+    dep_project_id: str,
+    dep_name: str,
+    has_vulnerabilities: bool | None,
+    vuln_status_map: dict[str, dict[str, bool]],
 ) -> bool:
     if has_vulnerabilities is None:
         return True
-    key = f"{dep_project_id}:{dep_name}"
-    has_vulns = vuln_status_map.get(key, False)
+    has_vulns = bool(lookup_component(vuln_status_map.get(dep_project_id, {}), dep_name, False))
     return has_vulnerabilities == has_vulns
 
 
@@ -73,7 +76,7 @@ def _dep_to_search_result(dep: Any, project_name_map: dict[str, str]) -> Depende
 def _build_search_results(
     dependencies: list[Any],
     has_vulnerabilities: bool | None,
-    vuln_status_map: dict[str, bool],
+    vuln_status_map: dict[str, dict[str, bool]],
     project_name_map: dict[str, str],
 ) -> list[DependencySearchResult]:
     results = []
@@ -156,17 +159,17 @@ async def search_dependencies_advanced(
         sort_order=sort_direction,
     )
 
-    vuln_status_map: dict[str, bool] = {}
+    vuln_status_map: dict[str, dict[str, bool]] = {}
     if has_vulnerabilities is not None and dependencies:
         dep_keys = list({(get_attr(dep, "project_id"), get_attr(dep, "name")) for dep in dependencies})
-        component_names = list({get_attr(dep, "name") for dep in dependencies})
 
+        # No component filter: a finding's component can be a qualified form of the
+        # dependency name, which no $in list over inventory names can express.
         vuln_pipeline: list[dict[str, Any]] = [
             {
                 "$match": {
                     "scan_id": {"$in": scan_ids},
                     "project_id": {"$in": [k[0] for k in dep_keys]},
-                    "component": {"$in": component_names},
                     "type": "vulnerability",
                     "waived": {"$ne": True},
                 }
@@ -174,9 +177,10 @@ async def search_dependencies_advanced(
             {"$group": {"_id": {"project_id": "$project_id", "component": "$component"}}},
         ]
         vuln_results = await finding_repo.aggregate(vuln_pipeline)
+        by_project: dict[str, dict[str, bool]] = {}
         for r in vuln_results:
-            key = f"{r['_id']['project_id']}:{r['_id']['component']}"
-            vuln_status_map[key] = True
+            by_project.setdefault(r["_id"]["project_id"], {})[r["_id"]["component"]] = True
+        vuln_status_map = {pid: build_component_index(components) for pid, components in by_project.items()}
 
     results = _build_search_results(dependencies, has_vulnerabilities, vuln_status_map, project_name_map)
 
@@ -251,8 +255,6 @@ def _build_direct_vuln_result(
         kev_due_date=kev_due_date,
         component=finding.component or "",
         version=finding.version or "",
-        component_type=details.get("type"),
-        purl=details.get("purl"),
         project_id=finding.project_id or "",
         project_name=project_name_map.get(finding.project_id or "", "Unknown"),
         scan_id=finding.scan_id,
@@ -299,8 +301,6 @@ def _build_nested_vuln_result(
         kev_due_date=vuln.get("kev_due_date") or kev_due_date,
         component=finding.component or "",
         version=finding.version or "",
-        component_type=details.get("type"),
-        purl=details.get("purl"),
         project_id=project_id,
         project_name=project_name_map.get(project_id, "Unknown"),
         scan_id=finding.scan_id,

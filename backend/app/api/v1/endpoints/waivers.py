@@ -41,6 +41,29 @@ _MSG_NO_MATCHING_FINDING = (
 )
 
 
+# finding_id is not unique within a scan for these types (one document per affected
+# component), so a waiver carrying only a finding_id blankets every one of them.
+_BROAD_FINDING_ID_TYPES = ("license", "eol")
+
+_MSG_NEEDS_PACKAGE_SCOPE = (
+    "A {finding_type} finding_id is shared by every affected component, so this waiver would "
+    "suppress all of them. Add package_name (and package_version) to scope it."
+)
+
+
+def _reject_unscoped_broad_waiver(waiver_in: WaiverCreate) -> None:
+    """Refuse a finding_id-only waiver on a type whose finding_id is not unique per scan."""
+    if waiver_in.finding_type not in _BROAD_FINDING_ID_TYPES:
+        return
+    # "Unknown" is the UI's placeholder and _build_waiver_query discards it, so it is not a scope.
+    if (waiver_in.package_name and waiver_in.package_name != "Unknown") or not waiver_in.finding_id:
+        return
+    raise HTTPException(
+        status_code=422,
+        detail=_MSG_NEEDS_PACKAGE_SCOPE.format(finding_type=waiver_in.finding_type),
+    )
+
+
 async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> dict | None:
     """Reject finding-scope project waivers matching no finding in the latest scan; return the matched finding doc, or None when validation is skipped."""
     if not waiver_in.project_id:
@@ -89,7 +112,8 @@ async def create_waiver(
         if not has_permission(current_user.permissions, Permissions.WAIVER_MANAGE):
             raise HTTPException(status_code=403, detail="Only admins can create global waivers")
 
-    # Reject zombie waivers early, before consuming a write and recalculating stats.
+    # Reject zombie and over-broad waivers early, before consuming a write and recalculating stats.
+    _reject_unscoped_broad_waiver(waiver_in)
     matched_finding = await _ensure_waiver_matches_finding(waiver_in, db)
 
     if waiver_in.scope == "rule" and not waiver_in.rule_id and waiver_in.finding_id and waiver_in.package_name:

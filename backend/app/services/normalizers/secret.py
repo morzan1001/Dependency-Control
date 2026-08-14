@@ -39,8 +39,9 @@ def _extract_git_metadata(finding: dict[str, Any]) -> dict[str, Any]:
 def normalize_trufflehog(aggregator: "ResultAggregator", result: dict[str, Any], source: str | None = None) -> None:
     for finding in result.get("findings") or []:
         file_path = _extract_file_path(finding)
-        # Prefer DetectorName; DetectorType is a numeric ordinal that loses the credential type.
-        detector = str(finding.get("DetectorName") or finding.get("DetectorType") or "Generic Secret")
+        # The DetectorType ordinal is the stored identity (it reaches finding_id and every secret
+        # waiver's match.rule_key); app.core.trufflehog resolves it to a name at render time.
+        detector = str(finding.get("DetectorType") or "Generic Secret")
 
         # Hash the secret so the raw value never lands in the finding key.
         raw_secret = finding.get("Raw") or ""

@@ -9,7 +9,7 @@ from app.services.analyzers.osv import OSVAnalyzer
 
 
 class TestParseCvssScore:
-    """_parse_cvss_score: numeric scores pass through, bare vector strings return None."""
+    """_parse_cvss_score: numeric scores pass through, vectors are scored."""
 
     def setup_method(self):
         self.analyzer = OSVAnalyzer()
@@ -20,15 +20,19 @@ class TestParseCvssScore:
     def test_zero_score(self):
         assert self.analyzer._parse_cvss_score("0.0") == 0.0
 
-    def test_cvss_v3_vector_with_explicit_base_score(self):
-        # A bare vector with no separate numeric score -> None.
+    def test_bare_v3_vector_is_scored(self):
+        # OSV rates with a vector and no number; returning None here discards the rating.
         vector = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"
-        assert self.analyzer._parse_cvss_score(vector) is None
+        assert self.analyzer._parse_cvss_score(vector) == 9.8
 
-    def test_cvss_vector_with_trailing_score_segment(self):
-        # Some sources append the score after the vector as '<vector>/9.8'.
-        appended = "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H/9.8"
-        assert self.analyzer._parse_cvss_score(appended) == 9.8
+    def test_bare_v4_vector_is_scored(self):
+        # 9.3 as published by FIRST's own calculator for this vector.
+        v4 = "CVSS:4.0/AV:N/AC:L/AT:N/PR:N/UI:N/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"
+        assert self.analyzer._parse_cvss_score(v4) == 9.3
+
+    def test_v2_vector_returns_none(self):
+        # No source in the corpus carries v2; it stays unscored rather than mis-scored as v3.
+        assert self.analyzer._parse_cvss_score("AV:N/AC:L/Au:N/C:P/I:P/A:P") is None
 
     def test_garbage_input_returns_none(self):
         assert self.analyzer._parse_cvss_score("not-a-cvss-score") is None
@@ -66,6 +70,26 @@ class TestWithdrawnVulnerabilities:
         vulns = [{"id": "GHSA-x", "summary": "active", "withdrawn": ""}]
         normalized = self.analyzer._normalize_vulnerabilities(vulns)
         assert len(normalized) == 1
+
+
+class TestNormalizedEntryShape:
+    """The shape normalize_osv consumes. Reading anything else there yields UNKNOWN severities."""
+
+    def setup_method(self):
+        self.analyzer = OSVAnalyzer()
+
+    def test_severity_is_a_resolved_top_level_string(self):
+        vulns = [
+            {
+                "id": "GHSA-x",
+                "summary": "s",
+                "database_specific": {"severity": "MODERATE"},
+                "severity": [{"type": "CVSS_V3", "score": "9.8"}],
+            }
+        ]
+        entry = self.analyzer._normalize_vulnerabilities(vulns)[0]
+        assert entry["severity"] == "MEDIUM"
+        assert "database_specific" not in entry
 
 
 class TestCvssVersionAwareSeverity:
@@ -230,3 +254,60 @@ class TestRateLimitRetry:
 async def _noop_sleep(_seconds: float) -> None:
     """Skip real backoff delays in tests."""
     return
+
+
+class TestParseCvssScoreNonFinite:
+    """float() accepts "nan"/"inf"; NaN survives _cvss_to_severity's clamp as 10.0 because no
+    comparison against it is true, so it would land in CRITICAL despite the clamp."""
+
+    @pytest.mark.parametrize("score", ["nan", "NaN", "inf", "-inf", "infinity"])
+    def test_non_finite_scores_do_not_produce_a_severity(self, score):
+        assert OSVAnalyzer()._parse_cvss_score(score) is None
+
+    def test_a_nan_severity_entry_leaves_the_record_unrated(self):
+        record = {"id": "CVE-2026-1", "severity": [{"type": "CVSS_V3", "score": "nan"}]}
+        assert OSVAnalyzer()._extract_severity(record) == "UNKNOWN"
+
+    def test_a_finite_out_of_range_score_is_still_clamped(self):
+        assert OSVAnalyzer()._cvss_to_severity(42.0) == "CRITICAL"
+        assert OSVAnalyzer()._cvss_to_severity(-5.0) == "LOW"
+
+
+class TestV4OnlyRecords:
+    """A live census of 369 OSV records fetched for production findings found 28 rated only by
+    a CVSS:4.0 vector with no database_specific.severity — 28 of the 44 that derived UNKNOWN."""
+
+    def test_a_v4_only_record_is_rated(self):
+        # CVE-2025-55163, exactly as OSV serves it.
+        record = {
+            "id": "CVE-2025-55163",
+            "severity": [
+                {"type": "CVSS_V4", "score": "CVSS:4.0/AV:N/AC:L/AT:P/PR:N/UI:N/VC:N/VI:N/VA:H/SC:N/SI:N/SA:N"}
+            ],
+        }
+        assert OSVAnalyzer()._extract_severity(record) == "HIGH"
+
+    def test_a_v4_record_alongside_v3_still_prefers_v4(self):
+        """_CVSS_TYPE_PREFERENCE puts v4 first; before the delegation it fell through to v3."""
+        record = {
+            "id": "CVE-2024-56326",
+            "severity": [
+                {"type": "CVSS_V3", "score": "CVSS:3.1/AV:L/AC:L/PR:L/UI:N/S:U/C:H/I:H/A:H"},
+                {"type": "CVSS_V4", "score": "CVSS:4.0/AV:L/AC:L/AT:P/PR:L/UI:P/VC:H/VI:H/VA:H/SC:N/SI:N/SA:N"},
+            ],
+        }
+        # v4 scores 5.4 (MEDIUM), the v3 vector 7.8 (HIGH).
+        assert OSVAnalyzer()._extract_severity(record) == "MEDIUM"
+
+    def test_an_unparseable_v4_vector_still_falls_through_to_v3(self):
+        record = {
+            "id": "CVE-2026-2",
+            "severity": [
+                {"type": "CVSS_V4", "score": "CVSS:4.0/AV:N/AC:L"},
+                {"type": "CVSS_V3", "score": "CVSS:3.1/AV:N/AC:L/PR:N/UI:N/S:U/C:H/I:H/A:H"},
+            ],
+        }
+        assert OSVAnalyzer()._extract_severity(record) == "CRITICAL"
+
+    def test_an_unrated_record_still_stays_unknown(self):
+        assert OSVAnalyzer()._extract_severity({"id": "CVE-2026-3", "severity": []}) == "UNKNOWN"

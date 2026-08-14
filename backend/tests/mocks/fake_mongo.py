@@ -107,6 +107,52 @@ def _match_range_ops(value, ops_dict: dict) -> bool:
     return True
 
 
+def _array_filter_identifier(condition: dict) -> str | None:
+    """Identifier an array filter binds, e.g. ``{"vuln.id": x}`` -> ``vuln``."""
+    for key, value in condition.items():
+        if key.startswith("$") and isinstance(value, list):
+            for sub in value:
+                if isinstance(sub, dict) and (found := _array_filter_identifier(sub)):
+                    return found
+        elif "." in key:
+            return key.split(".", 1)[0]
+    return None
+
+
+def _strip_identifier(condition: dict, identifier: str) -> dict:
+    prefix = f"{identifier}."
+    stripped: dict = {}
+    for key, value in condition.items():
+        if key.startswith("$") and isinstance(value, list):
+            stripped[key] = [_strip_identifier(sub, identifier) for sub in value]
+        elif key.startswith(prefix):
+            stripped[key[len(prefix) :]] = value
+        else:
+            stripped[key] = value
+    return stripped
+
+
+def _array_filter_predicates(array_filters: list | None) -> dict:
+    """{identifier: predicate} for ``$[identifier]`` update paths."""
+    predicates: dict = {}
+    for condition in array_filters or []:
+        identifier = _array_filter_identifier(condition)
+        if identifier:
+            predicates[identifier] = _strip_identifier(condition, identifier)
+    return predicates
+
+
+def _in_allowed(value: Any, allowed: list) -> bool:
+    """Mongo's $in accepts regex patterns alongside literals."""
+    for candidate in allowed:
+        if isinstance(candidate, _re.Pattern):
+            if isinstance(value, str) and candidate.search(value):
+                return True
+        elif value == candidate:
+            return True
+    return False
+
+
 def _match_doc(doc: dict, query: dict) -> bool:
     """Return True if doc matches a MongoDB query."""
     for key, condition in query.items():
@@ -116,6 +162,11 @@ def _match_doc(doc: dict, query: dict) -> bool:
             continue
         if key == "$and":
             if not all(_match_doc(doc, sub) for sub in condition):
+                return False
+            continue
+        if key == "$expr":
+            # Unsupported before: an unrecognised operator fell through as "matches".
+            if not _eval_bool(doc, condition):
                 return False
             continue
 
@@ -137,9 +188,9 @@ def _match_doc(doc: dict, query: dict) -> bool:
             if "$in" in condition:
                 allowed = condition["$in"]
                 if isinstance(value, list):
-                    if not any(v in allowed for v in value):
+                    if not any(_in_allowed(v, allowed) for v in value):
                         return False
-                elif value not in allowed:
+                elif not _in_allowed(value, allowed):
                     return False
             if "$nin" in condition:
                 disallowed = condition["$nin"]
@@ -189,6 +240,26 @@ def _to_number(value):
         return None
 
 
+def _bind_map_var(expr, item, prefix: str):
+    """Resolve ``$$var``/``$$var.path`` references inside a $map ``in`` expression."""
+    if isinstance(expr, str) and expr.startswith(prefix):
+        tail = expr[len(prefix) :].lstrip(".")
+        return _resolve_dotted(item, tail) if tail else item
+    if isinstance(expr, dict):
+        return {k: _bind_map_var(v, item, prefix) for k, v in expr.items()}
+    if isinstance(expr, list):
+        return [_bind_map_var(e, item, prefix) for e in expr]
+    return _eval_expr(item, expr) if isinstance(item, dict) else expr
+
+
+def _eval_map(doc: dict, spec: dict):
+    items = _eval_expr(doc, spec.get("input"))
+    if not isinstance(items, list):
+        return []
+    prefix = f"$${spec.get('as', 'this')}"
+    return [_bind_map_var(spec.get("in"), item, prefix) for item in items]
+
+
 def _eval_expr(doc: dict, expr):
     """Evaluate a MongoDB aggregation expression against a single document.
 
@@ -206,6 +277,8 @@ def _eval_expr(doc: dict, expr):
     if not isinstance(expr, dict):
         return expr
 
+    if "$map" in expr:
+        return _eval_map(doc, expr["$map"])
     if "$dateTrunc" in expr:
         spec = expr["$dateTrunc"]
         return _truncate_date(_eval_expr(doc, spec.get("date")), spec.get("unit", "day"))
@@ -217,6 +290,23 @@ def _eval_expr(doc: dict, expr):
         return val if val is not None else _eval_expr(doc, fallback)
     if "$toDouble" in expr:
         return _to_number(_eval_expr(doc, expr["$toDouble"]))
+    if "$split" in expr:
+        value, sep = (_eval_expr(doc, e) for e in expr["$split"])
+        return str(value).split(str(sep)) if value is not None else None
+    if "$arrayElemAt" in expr:
+        array, idx = (_eval_expr(doc, e) for e in expr["$arrayElemAt"])
+        if not isinstance(array, list):
+            return None
+        try:
+            return array[int(idx)]
+        except IndexError:
+            return None
+    if "$indexOfCP" in expr:
+        haystack, needle = (_eval_expr(doc, e) for e in expr["$indexOfCP"])
+        return str(haystack).find(str(needle)) if haystack is not None else -1
+    if "$size" in expr:
+        val = _eval_expr(doc, expr["$size"])
+        return len(val) if isinstance(val, list) else 0
     if "$toLower" in expr:
         val = _eval_expr(doc, expr["$toLower"])
         return str(val).lower() if val is not None else None
@@ -257,6 +347,9 @@ def _eval_expr(doc: dict, expr):
     for op in ("$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$and", "$or", "$in"):
         if op in expr:
             return _eval_bool(doc, expr)
+    # Operator-free dict: Mongo treats it as a document expression, so evaluate each value.
+    if expr and not any(k.startswith("$") for k in expr):
+        return {k: _eval_expr(doc, v) for k, v in expr.items()}
     return expr
 
 
@@ -294,6 +387,9 @@ def _eval_bool(doc: dict, expr) -> bool:
 
 def _run_project(docs: list, project_spec: dict) -> list:
     """Apply a $project stage, evaluating each field expression per document."""
+    # An exclusion-only projection keeps every other field, unlike an inclusion one.
+    if project_spec and all(spec in (0, False) for spec in project_spec.values()):
+        return [{k: v for k, v in doc.items() if k not in project_spec} for doc in docs]
     out = []
     for doc in docs:
         projected: dict = {}
@@ -415,7 +511,28 @@ def _run_group(docs: list, group_spec: dict) -> list:
     return result
 
 
-def _run_pipeline(docs: list, pipeline: list) -> list:
+def _run_lookup(docs: list, spec: dict, database: Any) -> list:
+    """$lookup, both the localField/foreignField and the let/pipeline forms."""
+    if database is None:
+        return docs
+    foreign_docs = list(database[spec["from"]]._docs.values())
+    as_field = spec["as"]
+    for doc in docs:
+        if "pipeline" in spec:
+            # let-vars are visible to the sub-pipeline as "$$name" -> stored under "$name".
+            bound = {f"${var}": _eval_expr(doc, expr) for var, expr in (spec.get("let") or {}).items()}
+            candidates = [{**bound, **fd} for fd in _copy.deepcopy(foreign_docs)]
+            matched = _run_pipeline(candidates, spec["pipeline"], database)
+            doc[as_field] = [{k: v for k, v in m.items() if not k.startswith("$")} for m in matched]
+        else:
+            local = _resolve_dotted(doc, spec["localField"])
+            doc[as_field] = [
+                _copy.deepcopy(fd) for fd in foreign_docs if _resolve_dotted(fd, spec["foreignField"]) == local
+            ]
+    return docs
+
+
+def _run_pipeline(docs: list, pipeline: list, database: Any = None) -> list:
     results = list(docs)
     for stage in pipeline:
         if "$match" in stage:
@@ -433,6 +550,8 @@ def _run_pipeline(docs: list, pipeline: list) -> list:
             results = _run_project(results, stage["$project"])
         elif "$limit" in stage:
             results = results[: stage["$limit"]]
+        elif "$skip" in stage:
+            results = results[stage["$skip"] :]
         elif "$unwind" in stage:
             field_expr = stage["$unwind"]
             field = field_expr.lstrip("$") if isinstance(field_expr, str) else field_expr
@@ -454,7 +573,21 @@ def _run_pipeline(docs: list, pipeline: list) -> list:
                 elif values is not None:
                     unwound.append(d)
             results = unwound
-        # $addFields, $facet, $lookup intentionally skipped.
+        elif "$addFields" in stage or "$set" in stage:
+            spec = stage.get("$addFields") or stage["$set"]
+            for d in results:
+                for field, expr in spec.items():
+                    value = _eval_expr(d, expr)
+                    if value is not _REMOVE:
+                        FakeCollection._set_dotted(d, field, value)
+        elif "$lookup" in stage:
+            results = _run_lookup(results, stage["$lookup"], database)
+        elif "$facet" in stage:
+            results = [
+                {name: _run_pipeline(_copy.deepcopy(results), sub, database) for name, sub in stage["$facet"].items()}
+            ]
+        elif "$count" in stage:
+            results = [{stage["$count"]: len(results)}] if results else []
     return results
 
 
@@ -552,12 +685,42 @@ def _matched_key(docs: dict, query: dict) -> Any:
 class FakeCollection:
     """In-process collection covering the Motor API surface that the app uses."""
 
-    def __init__(self):
+    def __init__(self, db: Any = None):
         self._docs: dict = {}
+        # $lookup needs to reach sibling collections.
+        self._db = db
+        # Unique-index field tuples declared via create_index(..., unique=True).
+        self._unique_keys: list[tuple[str, ...]] = []
 
     # -- writes -----------------------------------------------------------
 
+    def _duplicate_key(self, doc: dict) -> str | None:
+        """The unique index a document collides on, or None.
+
+        Sparse semantics: an entry is indexed unless every indexed field is ABSENT. An explicit
+        null is a value and still collides — which is why init_db rebuilds the sparse compound
+        project indexes with a partialFilterExpression (see _migrate_project_indexes), Pydantic
+        serialising None being exactly how those nulls arrive.
+        """
+        if doc.get("_id") in self._docs:
+            return "_id"
+        for fields in self._unique_keys:
+            if all(field not in doc for field in fields):
+                continue
+            values = tuple(doc.get(field) for field in fields)
+            for existing in self._docs.values():
+                if all(field not in existing for field in fields):
+                    continue
+                if tuple(existing.get(field) for field in fields) == values:
+                    return ", ".join(fields)
+        return None
+
     async def insert_one(self, doc: dict):
+        from pymongo.errors import DuplicateKeyError
+
+        collision = self._duplicate_key(doc)
+        if collision is not None:
+            raise DuplicateKeyError(f"E11000 duplicate key error: {collision}")
         key = doc.get("_id") or str(len(self._docs))
         self._docs[key] = dict(doc)
         result = MagicMock()
@@ -565,11 +728,25 @@ class FakeCollection:
         return result
 
     async def insert_many(self, docs: list, ordered: bool = True):
+        from pymongo.errors import BulkWriteError
+
         inserted = []
-        for doc in docs:
+        write_errors = []
+        for index, doc in enumerate(docs):
+            collision = self._duplicate_key(doc)
+            if collision is not None:
+                # Mirror Mongo's duplicate-key semantics so idempotent-insert paths are testable.
+                write_errors.append(
+                    {"index": index, "code": 11000, "errmsg": f"E11000 duplicate key error: {collision}"}
+                )
+                if ordered:
+                    break
+                continue
             key = doc.get("_id") or str(len(self._docs))
             self._docs[key] = dict(doc)
             inserted.append(key)
+        if write_errors:
+            raise BulkWriteError({"writeErrors": write_errors, "nInserted": len(inserted)})
         result = MagicMock()
         result.inserted_ids = inserted
         return result
@@ -578,8 +755,9 @@ class FakeCollection:
         matched = _matched_key(self._docs, query)
         modified = 0
         if matched is not None:
+            before = _copy.deepcopy(self._docs[matched])
             self._apply_update(self._docs[matched], update)
-            modified = 1
+            modified = int(self._docs[matched] != before)
         elif upsert:
             doc: dict = {}
             for k, v in query.items():
@@ -597,8 +775,12 @@ class FakeCollection:
 
     async def update_many(self, query, update, array_filters=None, upsert: bool = False):
         matched = [k for k, doc in self._docs.items() if _match_doc(doc, query)]
+        modified = 0
         for k in matched:
-            self._apply_update(self._docs[k], update)
+            before = _copy.deepcopy(self._docs[k])
+            self._apply_update(self._docs[k], update, array_filters=array_filters)
+            # Real Mongo does not count a $set that changes nothing.
+            modified += self._docs[k] != before
         if not matched and upsert:
             doc = {k: v for k, v in query.items() if not isinstance(v, dict) and not k.startswith("$")}
             self._apply_update(doc, update, skip_set_on_insert=True)
@@ -606,7 +788,7 @@ class FakeCollection:
             doc["_id"] = key
             self._docs[key] = doc
         result = MagicMock()
-        result.modified_count = len(matched)
+        result.modified_count = modified
         result.matched_count = len(matched)
         return result
 
@@ -620,6 +802,8 @@ class FakeCollection:
             if not upsert:
                 return None
             doc = {k: v for k, v in query.items() if not isinstance(v, dict) and not k.startswith("$")}
+            # Mongo applies $setOnInsert on the upsert-insert path.
+            doc.update(update.get(_SET_ON_INSERT, {}))
             self._apply_update(doc, update, skip_set_on_insert=True)
             key = doc.get("_id") or str(len(self._docs))
             doc["_id"] = key
@@ -630,11 +814,14 @@ class FakeCollection:
         return self._docs[matched] if return_document else before
 
     @staticmethod
-    def _apply_update(target: dict, update: dict, skip_set_on_insert: bool = False) -> None:
+    def _apply_update(
+        target: dict, update: dict, skip_set_on_insert: bool = False, array_filters: list | None = None
+    ) -> None:
+        filters = _array_filter_predicates(array_filters)
         for op, payload in update.items():
             if op == "$set":
                 for k, v in payload.items():
-                    FakeCollection._set_dotted(target, k, v)
+                    FakeCollection._set_dotted(target, k, v, filters)
             elif op == "$setOnInsert" and not skip_set_on_insert:
                 # only applied when called outside upsert insert path
                 for k, v in payload.items():
@@ -663,9 +850,33 @@ class FakeCollection:
         return node, parts[-1]
 
     @staticmethod
-    def _set_dotted(target: dict, dotted_key: str, value) -> None:
-        parent, leaf = FakeCollection._resolve_parent(target, dotted_key)
-        parent[leaf] = value
+    def _set_dotted(target: dict, dotted_key: str, value, filters: dict | None = None) -> None:
+        if "$[" not in dotted_key:
+            parent, leaf = FakeCollection._resolve_parent(target, dotted_key)
+            parent[leaf] = value
+            return
+        FakeCollection._set_through_arrays(target, dotted_key.split("."), value, filters or {})
+
+    @staticmethod
+    def _set_through_arrays(node, parts: list[str], value, filters: dict) -> None:
+        """Apply a positional array update path (``a.$[ident].b`` / ``a.$[].b``)."""
+        part = parts[0]
+        if part.startswith("$["):
+            if not isinstance(node, list):
+                return
+            predicate = filters.get(part[2:-1])
+            for item in node:
+                if predicate is None or _match_doc(item, predicate):
+                    FakeCollection._set_through_arrays(item, parts[1:], value, filters)
+            return
+        if len(parts) == 1:
+            node[part] = value
+            return
+        child = node.get(part)
+        if child is None:
+            child = {}
+            node[part] = child
+        FakeCollection._set_through_arrays(child, parts[1:], value, filters)
 
     async def delete_one(self, query):
         await asyncio.sleep(0)
@@ -691,10 +902,14 @@ class FakeCollection:
             flt = op._filter
             upd = op._doc
             upsert = op._upsert
-            matched = _matched_key(self._docs, flt)
-            if matched is not None:
-                self._apply_update(self._docs[matched], upd)
-                modified += 1
+            matched_keys = [key for key, doc in self._docs.items() if _match_doc(doc, flt)]
+            if matched_keys:
+                # UpdateMany touches every match; UpdateOne only the first (Mongo semantics).
+                if type(op).__name__ != "UpdateMany":
+                    matched_keys = matched_keys[:1]
+                for key in matched_keys:
+                    self._apply_update(self._docs[key], upd)
+                    modified += 1
             elif upsert:
                 doc: dict = {}
                 doc.update(upd.get(_SET_ON_INSERT, {}))
@@ -712,8 +927,10 @@ class FakeCollection:
         result.modified_count = modified
         return result
 
-    async def create_index(self, *args, **kwargs):
-        return None
+    async def create_index(self, keys, **kwargs):
+        if kwargs.get("unique"):
+            fields = [keys] if isinstance(keys, str) else [key for key, _direction in keys]
+            self._unique_keys.append(tuple(fields))
 
     async def index_information(self):
         # No pre-existing indexes in the in-process fake.
@@ -768,7 +985,7 @@ class FakeCollection:
 
     def aggregate(self, pipeline: list, **_kwargs) -> _AsyncIter:
         # ``allowDiskUse`` (and any other server-side option) is a no-op in-process.
-        return _AsyncIter(_run_pipeline(list(self._docs.values()), pipeline))
+        return _AsyncIter(_run_pipeline(_copy.deepcopy(list(self._docs.values())), pipeline, self._db))
 
 
 # ---------------------------------------------------------------------------
@@ -795,12 +1012,12 @@ class FakeDatabase:
             "teams",
             "users",
         ):
-            object.__setattr__(self, name, FakeCollection())
+            object.__setattr__(self, name, FakeCollection(self))
 
     def __getattr__(self, name: str) -> FakeCollection:
         # Auto-vivify collections so repositories that touch unexpected ones
         # don't AttributeError before the test even runs.
-        col = FakeCollection()
+        col = FakeCollection(self)
         object.__setattr__(self, name, col)
         return col
 

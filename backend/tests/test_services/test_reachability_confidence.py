@@ -206,9 +206,8 @@ class TestReachabilityAdjustedScoreWiring:
     def test_unreachable_persists_reduced_adjusted_score(self):
         """A package absent from a callgraph covering its ecosystem is not reachable -> adjusted = base * 0.4."""
         finding = _vuln_finding(component="not-imported-pkg", risk_score=80.0)
-        finding["details"]["purl"] = "pkg:pypi/not-imported-pkg@1.0.0"
         cg = _FakeCallgraph(module_usage={"other": {}}, import_map={"a.py": ["other"]}, language="python")
-        enriched = _enrich_finding_from_callgraphs(finding, [cg])
+        enriched = _enrich_finding_from_callgraphs(finding, [cg], {"not-imported-pkg": frozenset({"python"})})
         assert enriched is True
         assert finding["details"]["reachability"]["is_reachable"] is False
         # 80 * 0.4 == 32.0
@@ -222,15 +221,14 @@ class TestReachabilityFailClosed:
     def test_wrong_language_callgraph_does_not_downweight(self):
         # pypi finding, but only a JS callgraph analyzed -> absence is meaningless.
         finding = _vuln_finding(component="requests", risk_score=80.0)
-        finding["details"]["purl"] = "pkg:pypi/requests@2.31.0"
         cg = _FakeCallgraph(module_usage={"lodash": {}}, import_map={"a.js": ["lodash"]}, language="javascript")
-        _enrich_finding_from_callgraphs(finding, [cg])
+        _enrich_finding_from_callgraphs(finding, [cg], {"requests": frozenset({"python"})})
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is None
         assert finding["details"]["adjusted_risk_score"] == 80.0  # identity, no x0.4
 
     def test_unknown_ecosystem_does_not_downweight(self):
-        # No purl -> can't tell if the callgraph covers it -> unknown, no penalty.
+        # Package absent from the scan's dependency map -> ecosystem unknown -> no penalty.
         finding = _vuln_finding(component="mystery", risk_score=80.0)
         cg = _FakeCallgraph(module_usage={"other": {}}, import_map={"a.py": ["other"]}, language="python")
         _enrich_finding_from_callgraphs(finding, [cg])
@@ -241,9 +239,8 @@ class TestReachabilityFailClosed:
     def test_covering_language_still_downweights(self):
         # npm finding absent from a JS callgraph -> genuine unreachable -> x0.4.
         finding = _vuln_finding(component="left-pad", risk_score=80.0)
-        finding["details"]["purl"] = "pkg:npm/left-pad@1.0.0"
         cg = _FakeCallgraph(module_usage={"lodash": {}}, import_map={"a.js": ["lodash"]}, language="javascript")
-        _enrich_finding_from_callgraphs(finding, [cg])
+        _enrich_finding_from_callgraphs(finding, [cg], {"left-pad": frozenset({"javascript", "typescript"})})
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is False
         assert finding["details"]["adjusted_risk_score"] == 32.0

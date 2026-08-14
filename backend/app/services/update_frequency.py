@@ -13,6 +13,7 @@ from typing import Any
 
 from packaging.version import InvalidVersion, Version
 
+from app.core.constants import SCAN_USABLE_STATUSES
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
@@ -571,7 +572,12 @@ def _as_utc(dt: datetime) -> datetime:
 
 async def _branch_scan_count(scan_repo: ScanRepository, project_id: str, branch: str) -> int:
     scans = await scan_repo.find_many(
-        {"project_id": project_id, "status": "completed", "branch": branch, "is_rescan": {"$ne": True}},
+        {
+            "project_id": project_id,
+            "status": {"$in": SCAN_USABLE_STATUSES},
+            "branch": branch,
+            "is_rescan": {"$ne": True},
+        },
         limit=2,
         projection={"_id": 1},
     )
@@ -599,7 +605,11 @@ async def _resolve_primary_branch(
     ):
         return default_branch
 
-    query: dict[str, Any] = {"project_id": project_id, "status": "completed", "is_rescan": {"$ne": True}}
+    query: dict[str, Any] = {
+        "project_id": project_id,
+        "status": {"$in": SCAN_USABLE_STATUSES},
+        "is_rescan": {"$ne": True},
+    }
     if deleted:
         query["branch"] = {"$nin": list(deleted)}
     doc = await scan_repo.find_one(query, sort=[("created_at", -1), ("_id", -1)])
@@ -645,7 +655,12 @@ async def _load_completed_scans(
     # the limit would empty the window when the newest scans are failed/processing.
     # find_many returns Scan models, so project the fields Scan requires (project_id, branch).
     scans = await scan_repo.find_many(
-        {"project_id": project_id, "status": "completed", "branch": branch, "is_rescan": {"$ne": True}},
+        {
+            "project_id": project_id,
+            "status": {"$in": SCAN_USABLE_STATUSES},
+            "branch": branch,
+            "is_rescan": {"$ne": True},
+        },
         sort=[("created_at", -1), ("_id", -1)],
         limit=fetch_limit,
         projection={"_id": 1, "created_at": 1, "status": 1, "project_id": 1, "branch": 1, "commit_hash": 1},

@@ -192,8 +192,6 @@ class VulnerabilitySearchResult(BaseModel):
 
     component: str
     version: str
-    component_type: str | None = None
-    purl: str | None = None
 
     project_id: str
     project_name: str

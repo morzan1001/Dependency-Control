@@ -19,13 +19,11 @@ from app.schemas.finding import (
 )
 from app.schemas.finding_details import SystemWarningDetails
 from app.services.aggregation.components import (
+    cluster_by_package_identity,
     extract_artifact_name,
     normalize_component,
 )
-from app.services.aggregation.cross_link import (
-    add_context_to_vulnerability,
-    cross_link_pair,
-)
+from app.services.aggregation.cross_link import cross_link_pair
 from app.services.aggregation.merging import (
     merge_findings_data,
     merge_sast_findings,
@@ -37,13 +35,17 @@ from app.services.aggregation.versions import (
     normalize_version,
     resolve_fixed_versions,
 )
-from app.services.analyzers.license_compliance.constants import LICENSE_DATABASE
+from app.services.analyzers.license_compliance.constants import (
+    CATEGORY_RESTRICTIVENESS,
+    LICENSE_DATABASE,
+)
 from app.services.analyzers.license_compliance.normalizer import (
     normalize_license as normalize_spdx_id,
 )
 from app.services.analyzers.license_compliance.normalizer import (
     tokenize_license_string,
 )
+from app.services.analyzers.purl_utils import canonical_purl
 from app.services.normalizers.crypto import normalize_crypto
 from app.services.normalizers.iac import normalize_kics
 from app.services.normalizers.license import normalize_license
@@ -68,6 +70,7 @@ from app.services.normalizers.vulnerability import (
 _LICENSE_SENTINELS = UNKNOWN_LICENSE_PATTERNS | {"NON-STANDARD"}
 _SPDX_TOKEN_SHAPE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+-]*$")
 _SPDX_WITH_SPLIT = re.compile(r"\s+WITH\s+")
+_CATEGORY_RANK_BY_VALUE = {category.value: rank for category, rank in CATEGORY_RESTRICTIVENESS.items()}
 
 
 class ResultAggregator:
@@ -76,13 +79,14 @@ class ResultAggregator:
         self.alias_map: dict[str, str] = {}
         self._scorecard_cache: dict[str, dict[str, Any]] = {}
         self._dependency_enrichments: dict[str, DependencyEnrichment] = {}
-        self._license_data: dict[str, dict[str, Any]] = {}
 
-    def _get_or_create_enrichment(self, name: str, version: str) -> DependencyEnrichment:
-        """Get or create a DependencyEnrichment for the given package."""
-        key = f"{name}@{version}"
+    def _get_or_create_enrichment(self, name: str, version: str, purl: str | None = None) -> DependencyEnrichment:
+        """Get or create a DependencyEnrichment, keyed by canonical purl so qualifier variants merge and same-named packages from different ecosystems stay apart."""
+        key = canonical_purl(purl) if purl else f"{name}@{version}"
         if key not in self._dependency_enrichments:
-            self._dependency_enrichments[key] = DependencyEnrichment(name=name, version=version)
+            self._dependency_enrichments[key] = DependencyEnrichment(
+                name=name, version=version, purl=key if purl else None
+            )
         return self._dependency_enrichments[key]
 
     @staticmethod
@@ -114,6 +118,7 @@ class ResultAggregator:
         """Apply deps.dev project block to enrichment."""
         if not project:
             return
+        enrichment.project_url = project.get("url")
         enrichment.stars = project.get("stars")
         enrichment.forks = project.get("forks")
         enrichment.open_issues = project.get("open_issues")
@@ -153,8 +158,6 @@ class ResultAggregator:
             enrichment.published_at = metadata.get("published_at")
         if metadata.get("is_deprecated"):
             enrichment.is_deprecated = True
-        if metadata.get("is_default"):
-            enrichment.is_default_version = True
         if metadata.get("known_advisories"):
             enrichment.known_advisories = metadata.get("known_advisories", [])
         if metadata.get("has_attestations"):
@@ -174,7 +177,7 @@ class ResultAggregator:
 
     def enrich_from_deps_dev(self, name: str, version: str, metadata: dict[str, Any]) -> None:
         """Enrich dependency with data from deps.dev."""
-        enrichment = self._get_or_create_enrichment(name, version)
+        enrichment = self._get_or_create_enrichment(name, version, metadata.get("purl"))
         if "deps_dev" not in enrichment.sources:
             enrichment.sources.append("deps_dev")
 
@@ -184,6 +187,7 @@ class ResultAggregator:
         if dependents:
             enrichment.dependents_total = dependents.get("total")
             enrichment.dependents_direct = dependents.get("direct")
+            enrichment.dependents_indirect = dependents.get("indirect")
 
         scorecard = metadata.get("scorecard", {})
         if scorecard:
@@ -195,37 +199,61 @@ class ResultAggregator:
         self._apply_deps_dev_flags(enrichment, metadata)
         self._apply_deps_dev_licenses(enrichment, metadata.get("licenses", []))
 
+        # The version-level links homepage is more specific than the project one.
+        project_homepage = (metadata.get("project") or {}).get("homepage")
+        if project_homepage and not enrichment.homepage:
+            enrichment.homepage = project_homepage
+
     def record_scorecard(self, component_key: str, data: dict[str, Any]) -> None:
         """Cache OpenSSF Scorecard data (keyed by ``name@version``) applied to findings during finalization."""
         self._scorecard_cache[component_key] = data
 
+    @staticmethod
+    def _scanner_license_takes_primary(enrichment: DependencyEnrichment, category: str | None) -> bool:
+        """Most-restrictive-wins keeps multi-license primaries order-independent; a scanner classification always beats a deps.dev guess (no category)."""
+        if enrichment.primary_license is None or enrichment.license_category is None:
+            return True
+        incoming_rank = _CATEGORY_RANK_BY_VALUE.get(category or "", 0)
+        current_rank = _CATEGORY_RANK_BY_VALUE.get(enrichment.license_category, 0)
+        return incoming_rank > current_rank
+
     def enrich_from_license_scanner(self, name: str, version: str, license_info: dict[str, Any]) -> None:
-        """Enrich dependency with data from license compliance scanner."""
-        enrichment = self._get_or_create_enrichment(name, version)
+        """Enrich dependency with one classified license from the license compliance scanner."""
+        spdx_id = license_info.get("license")
+        if not spdx_id:
+            return
+
+        enrichment = self._get_or_create_enrichment(name, version, license_info.get("purl"))
         if "license_compliance" not in enrichment.sources:
             enrichment.sources.append("license_compliance")
 
-        spdx_id = license_info.get("license")
-        if spdx_id:
+        category = license_info.get("category")
+        if self._scanner_license_takes_primary(enrichment, category):
             enrichment.primary_license = spdx_id
-            enrichment.license_category = license_info.get("category")
-            if license_info.get("spdx_expression"):
-                enrichment.license_expression = license_info["spdx_expression"]
+            enrichment.license_category = category
+        if license_info.get("spdx_expression"):
+            enrichment.license_expression = license_info["spdx_expression"]
+
+        already_recorded = any(
+            entry.get("spdx_id") == spdx_id and entry.get("source") == "license_compliance"
+            for entry in enrichment.licenses
+        )
+        if not already_recorded:
             enrichment.licenses.append(
                 {
                     "spdx_id": spdx_id,
                     "source": "license_compliance",
-                    "category": license_info.get("category"),
+                    "category": category,
                     "explanation": license_info.get("explanation"),
                 }
             )
 
-            if license_info.get("risks"):
-                enrichment.license_risks.extend(license_info.get("risks", []))
-            if license_info.get("obligations"):
-                enrichment.license_obligations.extend(license_info.get("obligations", []))
-
-            self._license_data[f"{name}@{version}"] = license_info
+        for risk in license_info.get("risks") or []:
+            if risk not in enrichment.license_risks:
+                enrichment.license_risks.append(risk)
+        for obligation in license_info.get("obligations") or []:
+            if obligation not in enrichment.license_obligations:
+                enrichment.license_obligations.append(obligation)
 
     def aggregate(self, analyzer_name: str, result: dict[str, Any], source: str | None = None) -> None:
         """
@@ -318,43 +346,41 @@ class ResultAggregator:
         return groups, sast_groups
 
     @staticmethod
-    def _merge_cluster(cluster: list[Finding]) -> Finding:
-        """Merge a single component cluster into one primary finding."""
+    def _merge_cluster(cluster: list[Finding], representative: str) -> Finding:
+        """Merge one package's findings into the entry carrying the most qualified name."""
         if len(cluster) == 1:
             return cluster[0]
-        # Prefer the shortest name as primary (usually the clean one).
-        primary = min(cluster, key=lambda x: len(x.component))
-        for other in cluster:
+        primary = next(f for f in cluster if normalize_component(f.component or "") == representative)
+        # Merge in name order so the outcome does not depend on analyzer completion order.
+        for other in sorted(cluster, key=lambda f: normalize_component(f.component or "")):
             if other is primary:
                 continue
             merge_findings_data(primary, other)
         return primary
 
-    @staticmethod
-    def _cross_link_primaries(primaries: list[Finding]) -> None:
-        """Cross-link a list of cluster primaries by id."""
-        if len(primaries) <= 1:
-            return
-        for i, p1 in enumerate(primaries):
-            for p2 in primaries[i + 1 :]:
-                cross_link_pair(p1, p2)
-
     def _reduce_vuln_group(self, group: list[Finding]) -> list[Finding]:
-        """Cluster findings in a vuln group by artifact and return primaries."""
+        """Split a vuln group into one primary per distinct package."""
         if len(group) == 1:
             return [group[0]]
 
-        component_clusters: dict[str, list] = {}
+        representatives = cluster_by_package_identity(f.component or "" for f in group)
+        clusters: dict[str, list[Finding]] = {}
         for f in group:
-            name = extract_artifact_name(f.component or "")
-            component_clusters.setdefault(name, []).append(f)
+            key = representatives[normalize_component(f.component or "")]
+            clusters.setdefault(key, []).append(f)
 
-        cluster_primaries = [self._merge_cluster(c) for c in component_clusters.values()]
-        self._cross_link_primaries(cluster_primaries)
-        return cluster_primaries
+        return [self._merge_cluster(cluster, key) for key, cluster in clusters.items()]
+
+    @staticmethod
+    def _finding_sort_key(f: Finding) -> tuple[str, str, str, str]:
+        return (str(f.type), normalize_component(f.component or ""), f.version or "", f.id)
 
     def get_findings(self) -> list[Finding]:
-        """Return deduplicated findings with merge/link post-processing applied."""
+        """Return deduplicated findings with merge/link post-processing applied.
+
+        Analyzers aggregate in completion order, so every step here is kept order-independent:
+        identical scanner output must yield an identical finding set between runs.
+        """
         current_findings = list(self.findings.values())
         groups, sast_groups = self._partition_findings(current_findings)
 
@@ -366,7 +392,7 @@ class ResultAggregator:
             if not group:
                 continue
             # Single-item groups still pass through so every SAST finding gets a consistent sast_findings list.
-            merged_f = merge_sast_findings(group)
+            merged_f = merge_sast_findings(sorted(group, key=self._finding_sort_key))
             if merged_f:
                 final_findings.append(merged_f)
 
@@ -376,6 +402,12 @@ class ResultAggregator:
                 if p.id not in merged_ids:
                     final_findings.append(p)
                     merged_ids.add(p.id)
+
+        final_findings.sort(key=self._finding_sort_key)
+        for f in final_findings:
+            entries = f.details.get("vulnerabilities") if isinstance(f.details, dict) else None
+            if entries:
+                entries.sort(key=lambda entry: str(entry.get("id")))
 
         self._link_related_findings_by_component(final_findings)
         enrich_with_scorecard(final_findings, self._scorecard_cache)
@@ -393,35 +425,33 @@ class ResultAggregator:
                 if f1.id == f2.id:
                     continue
                 cross_link_pair(f1, f2)
-                add_context_to_vulnerability(f1, f2)
-                add_context_to_vulnerability(f2, f1)
 
     def _link_related_findings_by_component(self, findings: list[Finding]) -> None:
-        """Link all findings for the same component to each other (vuln, outdated, quality, license, eol)."""
+        """Link all findings for the same package to each other (vuln, outdated, quality, license, eol)."""
+        representatives = cluster_by_package_identity(f.component for f in findings if f.component)
         component_map: dict[str, list[Finding]] = {}
 
         for f in findings:
             if not f.component:
                 continue
-            key = extract_artifact_name(f.component)
-            if key not in component_map:
-                component_map[key] = []
-            component_map[key].append(f)
+            key = representatives[normalize_component(f.component)]
+            component_map.setdefault(key, []).append(f)
 
         for component_findings in component_map.values():
             if len(component_findings) > 1:
                 self._link_finding_group(component_findings)
 
-    def get_dependency_enrichments(self) -> dict[str, dict[str, Any]]:
-        """Return enrichment data keyed by ``package_name@version`` for MongoDB updates."""
-        result = {}
-        for key, enrichment in self._dependency_enrichments.items():
-            result[key] = enrichment.to_mongo_dict()
-        return result
-
-    def get_license_data(self) -> dict[str, dict[str, Any]]:
-        """Return detailed license analysis data per package."""
-        return self._license_data
+    def get_dependency_enrichments(self) -> list[dict[str, Any]]:
+        """Enrichment entries for persistence: canonical purl (cross-scan key), name/version (per-scan match), payload."""
+        return [
+            {
+                "name": enrichment.name,
+                "version": enrichment.version,
+                "purl": enrichment.purl,
+                "data": enrichment.to_mongo_dict(),
+            }
+            for enrichment in self._dependency_enrichments.values()
+        ]
 
     def add_finding(self, finding: Finding, source: str | None = None) -> None:
         """Add a finding, merging if one already exists for the same key."""
@@ -446,7 +476,7 @@ class ResultAggregator:
             ),
             "cvss_score": (float(cvss) if (cvss := finding.details.get("cvss_score")) is not None else None),
             "cvss_vector": (str(finding.details.get("cvss_vector")) if finding.details.get("cvss_vector") else None),
-            "references": list(set(refs_from_details)),
+            "references": sorted(set(refs_from_details)),
             "aliases": finding.aliases or [],
             "scanners": finding.scanners or [],
             "source": source,
@@ -463,7 +493,7 @@ class ResultAggregator:
         self, existing: Finding, finding: Finding, vuln_entry: VulnerabilityEntry, source: str | None
     ) -> None:
         """Merge a vulnerability finding into an existing aggregate."""
-        existing.scanners = list(set(existing.scanners + finding.scanners))
+        existing.scanners = sorted(set(existing.scanners + finding.scanners))
 
         if get_severity_value(finding.severity) > get_severity_value(existing.severity):
             existing.severity = finding.severity
@@ -538,7 +568,7 @@ class ResultAggregator:
         source: str | None,
     ) -> None:
         """Merge a quality finding into an existing aggregated finding."""
-        existing.scanners = list(set(existing.scanners + finding.scanners))
+        existing.scanners = sorted(set(existing.scanners + finding.scanners))
 
         if get_severity_value(finding.severity) > get_severity_value(existing.severity):
             existing.severity = finding.severity
@@ -620,7 +650,7 @@ class ResultAggregator:
     @staticmethod
     def _merge_generic_into_existing(existing: Finding, finding: Finding, source: str | None) -> None:
         """Merge a generic finding's fields into an existing aggregate."""
-        existing.scanners = list(set(existing.scanners + finding.scanners))
+        existing.scanners = sorted(set(existing.scanners + finding.scanners))
 
         if get_severity_value(finding.severity) > get_severity_value(existing.severity):
             existing.severity = finding.severity
@@ -631,7 +661,7 @@ class ResultAggregator:
         new_aliases.update(finding.aliases)
         if finding.id != existing.id:
             new_aliases.add(finding.id)
-        existing.aliases = list(new_aliases)
+        existing.aliases = sorted(new_aliases)
 
         if source and source not in existing.found_in:
             existing.found_in.append(source)

@@ -15,64 +15,22 @@ import {
   ArrowDownRight,
   Activity
 } from 'lucide-react'
-
-interface ThreatIntelStats {
-  kev_count: number
-  kev_ransomware_count: number
-  high_epss_count: number
-  medium_epss_count: number
-  avg_epss_score: number | null
-  max_epss_score: number | null
-  weaponized_count: number
-  active_exploitation_count: number
-}
-
-interface ReachabilityStats {
-  analyzed_count: number
-  reachable_count: number
-  likely_reachable_count: number
-  unreachable_count: number
-  unknown_count: number
-  reachable_critical: number
-  reachable_high: number
-}
-
-interface PrioritizedCounts {
-  total: number
-  critical: number
-  high: number
-  medium: number
-  low: number
-  actionable_critical: number
-  actionable_high: number
-  actionable_total: number
-  deprioritized_count: number
-}
+import { EnhancedStats } from '@/types/scan'
 
 interface Props {
-  stats: {
-    critical: number
-    high: number
-    medium: number
-    low: number
-    risk_score: number
-    adjusted_risk_score?: number
-    threat_intel?: ThreatIntelStats | null
-    reachability?: ReachabilityStats | null
-    prioritized?: PrioritizedCounts | null
-  }
-  branchCount?: number
+  stats: EnhancedStats
   className?: string
 }
 
-export function ThreatIntelligenceDashboard({ stats, branchCount, className }: Readonly<Props>) {
+export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props>) {
   const threatIntel = stats.threat_intel
   const reachability = stats.reachability
   const prioritized = stats.prioritized
 
   // prioritized.total counts vulnerabilities only — the population the actionable/deprioritized
   // tiles are computed over; the stats.* severity buckets span every finding type.
-  const totalVulns = prioritized?.total ?? (stats.critical + stats.high + stats.medium + stats.low)
+  const totalVulns =
+    prioritized?.total ?? ((stats.critical ?? 0) + (stats.high ?? 0) + (stats.medium ?? 0) + (stats.low ?? 0))
   const actionableCount = prioritized?.actionable_total || 0
   const deprioritizedCount = prioritized?.deprioritized_count || 0
   const reductionPercent = totalVulns > 0
@@ -106,11 +64,6 @@ export function ThreatIntelligenceDashboard({ stats, branchCount, className }: R
               Prioritized View
             </CardTitle>
             <div className="flex items-center gap-2">
-              {branchCount != null && branchCount > 1 && (
-                <Badge variant="secondary" className="text-xs">
-                  Aggregated from {branchCount} branches
-                </Badge>
-              )}
               {reductionPercent > 0 && (
                 <Badge variant="outline" className="bg-green-500/10 text-green-600 border-green-500/30">
                   <ArrowDownRight className="h-3 w-3 mr-1" />

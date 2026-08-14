@@ -2,6 +2,7 @@
 
 from app.api.v1.endpoints.projects import (
     _build_scan_findings_match,
+    _resolve_secret_detectors,
     _scan_findings_sort_stage,
 )
 
@@ -117,3 +118,62 @@ class TestScanFindingsDirectOnly:
     def test_default_keeps_transitive_findings(self):
         pipeline = self._pipeline(False)
         assert not any(st.get("$match", {}).get("direct") == {"$ne": False} for st in pipeline)
+
+
+class TestResolveSecretDetectors:
+    """Production stores the numeric TruffleHog DetectorType ordinal on 31,151 of 31,151
+    secret findings, so the findings table and detail modal rendered "17" as the detector."""
+
+    @staticmethod
+    def _row(detector="17", description="Secret detected: 17"):
+        # Shape of a real production secret finding document.
+        return {
+            "id": "SECRET-17-b8d80f45",
+            "finding_id": "SECRET-17-b8d80f45",
+            "type": "secret",
+            "severity": "CRITICAL",
+            "component": "CHANGELOG.md",
+            "version": "",
+            "description": description,
+            "details": {
+                "detector": detector,
+                "decoder": "PLAIN",
+                "verified": False,
+                "redacted": "https://gitlab-ci-token:********@code.dev.rewe.cloud/bkg/domains/served",
+                "commit": "47f49dce2dfe68c56b1e97b9abcd2b60e5729428",
+                "line": 4,
+                "risk_score": 40.0,
+                "adjusted_risk_score": 40.0,
+            },
+        }
+
+    def test_ordinal_is_rendered_as_the_detector_name(self):
+        rows = [self._row()]
+        _resolve_secret_detectors(rows)
+        assert rows[0]["details"]["detector"] == "URI"
+        assert rows[0]["description"] == "Secret detected: URI"
+
+    def test_stored_identity_fields_are_untouched(self):
+        """finding_id and the waiver rule_key derived from it must stay on the ordinal —
+        373 of 504 production waivers key on it."""
+        rows = [self._row()]
+        _resolve_secret_detectors(rows)
+        assert rows[0]["finding_id"] == "SECRET-17-b8d80f45"
+        assert rows[0]["id"] == "SECRET-17-b8d80f45"
+
+    def test_hand_edited_description_is_left_alone(self):
+        rows = [self._row(description="Reviewed: token belongs to the sandbox")]
+        _resolve_secret_detectors(rows)
+        assert rows[0]["details"]["detector"] == "URI"
+        assert rows[0]["description"] == "Reviewed: token belongs to the sandbox"
+
+    def test_unmapped_ordinal_and_non_secret_rows_pass_through(self):
+        rows = [
+            self._row(detector="999999", description="Secret detected: 999999"),
+            {"type": "vulnerability", "description": "CVE-2021-1", "details": {"cvss_score": 9.8}},
+            {"type": "license", "description": "MIT", "details": None},
+        ]
+        _resolve_secret_detectors(rows)
+        assert rows[0]["details"]["detector"] == "999999"
+        assert rows[1]["description"] == "CVE-2021-1"
+        assert rows[2]["details"] is None

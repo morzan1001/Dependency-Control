@@ -33,8 +33,8 @@ vi.mock('@/components/project/ProjectMembers', () => ({ ProjectMembers: () => nu
 vi.mock('@/components/project/ProjectSettings', () => ({ ProjectSettings: () => null }))
 vi.mock('@/components/project/ProjectArchives', () => ({ ProjectArchives: () => null }))
 
-function branch(name: string, is_active = true) {
-  return { name, is_active }
+function branch(name: string, { is_active = true, is_default = false } = {}) {
+  return { name, is_active, is_default, last_scan_at: '2026-08-14T00:00:00Z' }
 }
 
 function renderPage() {
@@ -53,10 +53,11 @@ beforeEach(() => {
 })
 
 describe('ProjectDetails branch-filter initialization', () => {
-  it('selects the default branch even when branches resolve before the project (race)', () => {
+  it('selects one branch even when the project has no default_branch (W8)', () => {
+    // 530 of 656 production projects have no default_branch; the backend resolves one anyway.
     mockUseProject.mockReturnValue({ data: undefined, isLoading: true })
     mockUseProjectBranches.mockReturnValue({
-      data: [branch('main'), branch('dev')],
+      data: [branch('main'), branch('dev', { is_default: true }), branch('feature-x')],
       isSuccess: true,
     })
 
@@ -65,7 +66,7 @@ describe('ProjectDetails branch-filter initialization', () => {
     expect(screen.queryByTestId('overview-branches')).toBeNull()
 
     mockUseProject.mockReturnValue({
-      data: { id: 'p1', name: 'Proj', default_branch: 'main' },
+      data: { id: 'p1', name: 'Proj', default_branch: undefined },
       isLoading: false,
     })
     rerender(
@@ -76,25 +77,26 @@ describe('ProjectDetails branch-filter initialization', () => {
       </MemoryRouter>,
     )
 
-    // Only the default branch must be selected — not every active branch.
-    expect(screen.getByTestId('overview-branches').textContent).toBe('main')
+    expect(screen.getByTestId('overview-branches').textContent).toBe('dev')
   })
 
   it('preserves an intentionally empty selection when all branches are deselected', () => {
-    // No default_branch -> init selects all active branches.
     mockUseProject.mockReturnValue({
-      data: { id: 'p1', name: 'Proj', default_branch: undefined },
+      data: { id: 'p1', name: 'Proj', default_branch: 'main' },
       isLoading: false,
     })
     mockUseProjectBranches.mockReturnValue({
-      data: [branch('main'), branch('dev')],
+      data: [branch('main', { is_default: true }), branch('dev')],
       isSuccess: true,
     })
 
     renderPage()
-    expect(screen.getByTestId('overview-branches').textContent).toBe('main,dev')
+    expect(screen.getByTestId('overview-branches').textContent).toBe('main')
 
     fireEvent.click(screen.getByRole('button', { name: /Filter Branches/i }))
+    fireEvent.click(screen.getByLabelText('Select All Active'))
+    expect(screen.getByTestId('overview-branches').textContent).toBe('main,dev')
+
     fireEvent.click(screen.getByLabelText('Select All Active'))
 
     // Selection must stay empty; the init guard must not snap it back.
