@@ -70,6 +70,7 @@ from app.schemas.project import (
     RiskyProject,
     ScanFindingsResponse,
 )
+from app.services.aggregation.components import component_match_expr
 from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.findings_export import FINDINGS_COLUMNS, iter_findings_rows
 from app.services.inventory.scan_resolution import latest_completed_scans_by_branch
@@ -1085,12 +1086,16 @@ def _scan_findings_lookup_stage() -> dict[str, Any]:
                         "$expr": {
                             "$and": [
                                 {"$eq": ["$scan_id", "$$scan_id"]},
-                                {"$eq": ["$name", "$$component"]},
+                                component_match_expr("$name", "$$component"),
                                 {"$eq": ["$version", "$$version"]},
                             ]
                         }
                     }
                 },
+                # Exact spelling first so a qualified finding never takes a same-artifact
+                # sibling's row when both are present.
+                {"$addFields": {"_exact": {"$eq": ["$name", "$$component"]}}},
+                {"$sort": {"_exact": -1}},
                 {"$limit": 1},
                 {
                     "$project": {

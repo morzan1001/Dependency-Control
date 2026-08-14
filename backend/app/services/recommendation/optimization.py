@@ -7,6 +7,7 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
+from app.services.aggregation.components import build_component_index, lookup_component
 from app.services.recommendation.common import ModelOrDict, calculate_best_fix_version, get_attr
 
 
@@ -24,10 +25,10 @@ def identify_quick_wins(
         if component and isinstance(details, dict) and details.get("fixed_version"):
             vulns_by_package[component].append(f)
 
-    direct_deps = set()
-    for dep in dependencies:
-        if get_attr(dep, "direct", False):
-            direct_deps.add(get_attr(dep, "name", ""))
+    # Findings carry the qualified component while the inventory keeps the bare name.
+    direct_deps = build_component_index(
+        {get_attr(dep, "name", ""): True for dep in dependencies if get_attr(dep, "direct", False)}
+    )
 
     quick_wins = []
     for pkg, vulns in vulns_by_package.items():
@@ -51,7 +52,7 @@ def identify_quick_wins(
             if isinstance(v_details, dict) and v_details.get(DETAILS_KEY_IN_KEV):
                 kev_count += 1
 
-        is_direct = pkg in direct_deps
+        is_direct = bool(lookup_component(direct_deps, pkg))
 
         score = (
             len(vulns) * QUICK_WIN_SCORING_WEIGHTS["base_per_vuln"]

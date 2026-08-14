@@ -19,6 +19,7 @@ from app.core.constants import (
     REACHABILITY_LEVEL_NONE,
     REACHABILITY_LEVEL_SYMBOL,
 )
+from app.services.aggregation.components import build_component_index, lookup_component
 from app.services.analyzers.purl_utils import get_purl_type
 from app.services.enrichment.scoring import (
     calculate_adjusted_risk_score,
@@ -79,7 +80,8 @@ async def _build_component_language_map(db: AsyncIOMotorDatabase, scan_id: str) 
         langs = _ecosystem_languages(dep.get("type"), dep.get("purl"))
         if langs:
             out[name] = out.get(name, frozenset()) | langs
-    return out
+    # Findings carry the qualified component while the inventory keeps the bare name.
+    return build_component_index(out)
 
 
 def _callgraphs_cover_finding_ecosystem(
@@ -98,8 +100,8 @@ def _callgraphs_cover_finding_ecosystem(
     """
     component = finding.get("component", "")
     langs: frozenset = frozenset()
-    if component_languages and component in component_languages:
-        langs = component_languages[component]
+    if component_languages:
+        langs = lookup_component(component_languages, component) or frozenset()
     if not langs:
         purl = (finding.get("details") or {}).get("purl")
         langs = _ecosystem_languages(None, purl)

@@ -10,6 +10,7 @@ from app.models.finding import FindingType, Severity
 from app.models.project import Scan
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.findings import FindingRepository
+from app.services.aggregation.components import build_component_index, lookup_component
 
 FINDINGS_COLUMNS = [
     "branch",
@@ -77,15 +78,16 @@ _PROJECTION = {
 
 _DEP_PROJECTION = {"name": 1, "version": 1, "purl": 1, "direct": 1}
 
-# component@version -> (purl, direct)
-_DepLookup = dict[str, tuple[str | None, bool | None]]
+# version -> component index of (purl, direct); see build_component_index for the name rule
+_DepLookup = dict[str, dict[str, tuple[str | None, bool | None]]]
 
 
 def _row(scan: Scan, doc: dict[str, Any], dep_lookup: _DepLookup) -> dict[str, Any]:
     details = doc.get("details") or {}
     is_vuln = doc.get("type") == FindingType.VULNERABILITY.value
     is_license = doc.get("type") == FindingType.LICENSE.value
-    dep_purl, direct = dep_lookup.get(f"{doc.get('component')}@{doc.get('version')}", (None, None))
+    by_component = dep_lookup.get(str(doc.get("version")), {})
+    dep_purl, direct = lookup_component(by_component, str(doc.get("component")), (None, None)) or (None, None)
     return {
         "branch": scan.branch,
         "scan_date": scan.created_at,
@@ -117,7 +119,13 @@ def _row(scan: Scan, doc: dict[str, Any], dep_lookup: _DepLookup) -> dict[str, A
 
 async def _dependency_lookup(db: AsyncIOMotorDatabase, scan: Scan) -> _DepLookup:
     cursor = DependencyRepository(db).collection.find({"scan_id": scan.id}, _DEP_PROJECTION)
-    return {f"{dep.get('name')}@{dep.get('version')}": (dep.get("purl"), dep.get("direct")) async for dep in cursor}
+    by_version: dict[str, dict[str, tuple[str | None, bool | None]]] = {}
+    async for dep in cursor:
+        by_version.setdefault(str(dep.get("version")), {})[str(dep.get("name"))] = (
+            dep.get("purl"),
+            dep.get("direct"),
+        )
+    return {version: build_component_index(names) for version, names in by_version.items()}
 
 
 async def iter_findings_rows(db: AsyncIOMotorDatabase, scans: list[Scan]) -> AsyncIterator[dict[str, Any]]:

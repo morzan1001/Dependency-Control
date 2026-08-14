@@ -13,6 +13,7 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
+from app.services.aggregation.components import build_component_index, lookup_component
 from app.services.recommendation.common import ModelOrDict, get_attr
 
 
@@ -452,16 +453,18 @@ def analyze_attack_surface(
 
     recommendations = []
 
-    vuln_count_by_pkg: dict[str, int] = defaultdict(int)
+    counts: dict[str, int] = defaultdict(int)
     for f in findings:
         if get_attr(f, "type") == "vulnerability":
-            vuln_count_by_pkg[get_attr(f, "component", "")] += 1
+            counts[get_attr(f, "component", "")] += 1
+    # Findings carry the qualified component while the inventory keeps the bare name.
+    vuln_count_by_pkg = build_component_index(dict(counts))
 
     transitive_with_vulns = []
     for dep in dependencies:
         pkg_name = get_attr(dep, "name", "")
         is_direct = get_attr(dep, "direct", False)
-        vuln_count = vuln_count_by_pkg.get(pkg_name, 0)
+        vuln_count = lookup_component(vuln_count_by_pkg, pkg_name) or 0
 
         if not is_direct and vuln_count >= 2:
             transitive_with_vulns.append(

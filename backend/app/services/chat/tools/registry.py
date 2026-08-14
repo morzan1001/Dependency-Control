@@ -13,6 +13,7 @@ from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories.teams import TeamRepository
+from app.services.aggregation.components import build_component_index, lookup_component
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import compute_findings_delta
 from app.services.analyzers.purl_utils import canonical_purl
@@ -630,6 +631,8 @@ class ChatToolRegistry:
                 if existing and existing.get("direct") and not dep.get("direct"):
                     continue
                 dep_index[key] = dep
+            # Findings carry the qualified component while the inventory keeps the bare name.
+            dep_index = build_component_index(dep_index)
 
             groups: dict[str, dict[str, Any]] = {}
             for f in findings:
@@ -662,7 +665,7 @@ class ChatToolRegistry:
                     if target is None or _compare_versions(cand, target) > 0:
                         target = cand
 
-                dep_meta = dep_index.get(key) or {}
+                dep_meta = lookup_component(dep_index, key) or {}
                 is_direct = bool(dep_meta.get("direct")) and not dep_meta.get("direct_inferred")
                 current = g["current_version"] or dep_meta.get("version")
 
