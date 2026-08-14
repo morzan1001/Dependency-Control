@@ -71,9 +71,8 @@ def _finding_detail_number(finding: dict[str, Any], field: str) -> float:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else -1.0
 
 
-# How a dependency's directness was established. Reported alongside `direct`, which two
-# tools used to collapse differently: one counted an inferred-direct package as transitive,
-# the other as direct.
+# How a dependency's directness was established. `direct` alone cannot express it: an
+# inferred-direct package is direct, but ranks below a declared one when ordering fixes.
 _DIRECT_CONFIDENCE_RANK = {"declared": 0, "inferred": 1, "transitive": 2}
 
 
