@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import TypeVar
+import re
+from collections.abc import Iterable, Mapping
+from typing import Any, TypeVar
 
 _QUALIFIER_SEPARATORS = (":", "/")
 
@@ -78,12 +79,15 @@ def cluster_by_package_identity(components: Iterable[str]) -> dict[str, str]:
     return representative
 
 
-def add_artifact_name_aliases(by_component: dict[str, _T]) -> dict[str, _T]:
-    """Expose each entry additionally under its bare artifact name when that name is unambiguous.
+def build_component_index(by_component: dict[str, _T]) -> dict[str, _T]:
+    """Index component-keyed entries so either spelling of a package resolves.
 
     Dependency inventories store the bare name (Maven ``group`` sits in its own field) while an
-    aggregated finding carries the qualified coordinate; the alias lets that join resolve without
-    attributing one package's findings to another that ends in the same segment.
+    aggregated finding carries the qualified coordinate. Each entry gains its bare artifact name
+    as an alias, but only when that name belongs to a single package, so one package's data is
+    never attributed to another that ends in the same segment.
+
+    Pair with :func:`lookup_component`; every finding/dependency name join goes through both.
     """
     owners: dict[str, list[str]] = {}
     for component in by_component:
@@ -94,3 +98,47 @@ def add_artifact_name_aliases(by_component: dict[str, _T]) -> dict[str, _T]:
         if len(components) == 1 and artifact not in aliased:
             aliased[artifact] = by_component[components[0]]
     return aliased
+
+
+def lookup_component(index: Mapping[str, _T], component: str, default: _T | None = None) -> _T | None:
+    """Resolve ``component`` against an index built by :func:`build_component_index`.
+
+    The alias keys are lowercased by ``extract_artifact_name`` while real component names are
+    not, so the exact spelling is tried first and the artifact name second.
+    """
+    found = index.get(component)
+    if found is None:
+        found = index.get(extract_artifact_name(component))
+    return default if found is None else found
+
+
+def component_match_query(component: str) -> dict[str, Any]:
+    """Mongo filter matching a stored component exactly, or as a qualified form of ``component``."""
+    return {
+        "$or": [
+            {"component": component},
+            {"component": {"$regex": f"[:/]{re.escape(component)}$"}},
+        ]
+    }
+
+
+def artifact_name_expr(value: Any) -> dict[str, Any]:
+    """``extract_artifact_name`` as an aggregation expression (lowercased, like the Python one)."""
+    lowered = {"$toLower": value}
+    return {
+        "$cond": [
+            {"$gt": [{"$indexOfCP": [lowered, ":"]}, -1]},
+            {"$arrayElemAt": [{"$split": [lowered, ":"]}, -1]},
+            {"$arrayElemAt": [{"$split": [lowered, "/"]}, -1]},
+        ]
+    }
+
+
+def component_match_expr(name_field: Any, component_expr: Any) -> dict[str, Any]:
+    """Aggregation ``$expr`` matching a dependency name against either spelling of a component."""
+    return {
+        "$or": [
+            {"$eq": [name_field, component_expr]},
+            {"$eq": [{"$toLower": name_field}, artifact_name_expr(component_expr)]},
+        ]
+    }
