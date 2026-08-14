@@ -19,6 +19,7 @@ from app.schemas.finding import (
 )
 from app.schemas.finding_details import SystemWarningDetails
 from app.services.aggregation.components import (
+    cluster_by_package_identity,
     extract_artifact_name,
     normalize_component,
 )
@@ -348,40 +349,30 @@ class ResultAggregator:
         return groups, sast_groups
 
     @staticmethod
-    def _merge_cluster(cluster: list[Finding]) -> Finding:
-        """Merge a single component cluster into one primary finding."""
+    def _merge_cluster(cluster: list[Finding], representative: str) -> Finding:
+        """Merge one package's findings into the entry carrying the most qualified name."""
         if len(cluster) == 1:
             return cluster[0]
-        # Prefer the shortest name as primary (usually the clean one).
-        primary = min(cluster, key=lambda x: len(x.component))
-        for other in cluster:
+        primary = next(f for f in cluster if normalize_component(f.component or "") == representative)
+        # Merge in name order so the outcome does not depend on analyzer completion order.
+        for other in sorted(cluster, key=lambda f: normalize_component(f.component or "")):
             if other is primary:
                 continue
             merge_findings_data(primary, other)
         return primary
 
-    @staticmethod
-    def _cross_link_primaries(primaries: list[Finding]) -> None:
-        """Cross-link a list of cluster primaries by id."""
-        if len(primaries) <= 1:
-            return
-        for i, p1 in enumerate(primaries):
-            for p2 in primaries[i + 1 :]:
-                cross_link_pair(p1, p2)
-
     def _reduce_vuln_group(self, group: list[Finding]) -> list[Finding]:
-        """Cluster findings in a vuln group by artifact and return primaries."""
+        """Split a vuln group into one primary per distinct package."""
         if len(group) == 1:
             return [group[0]]
 
-        component_clusters: dict[str, list] = {}
+        representatives = cluster_by_package_identity(f.component or "" for f in group)
+        clusters: dict[str, list[Finding]] = {}
         for f in group:
-            name = extract_artifact_name(f.component or "")
-            component_clusters.setdefault(name, []).append(f)
+            key = representatives[normalize_component(f.component or "")]
+            clusters.setdefault(key, []).append(f)
 
-        cluster_primaries = [self._merge_cluster(c) for c in component_clusters.values()]
-        self._cross_link_primaries(cluster_primaries)
-        return cluster_primaries
+        return [self._merge_cluster(cluster, key) for key, cluster in clusters.items()]
 
     def get_findings(self) -> list[Finding]:
         """Return deduplicated findings with merge/link post-processing applied."""
@@ -427,16 +418,15 @@ class ResultAggregator:
                 add_context_to_vulnerability(f2, f1)
 
     def _link_related_findings_by_component(self, findings: list[Finding]) -> None:
-        """Link all findings for the same component to each other (vuln, outdated, quality, license, eol)."""
+        """Link all findings for the same package to each other (vuln, outdated, quality, license, eol)."""
+        representatives = cluster_by_package_identity(f.component for f in findings if f.component)
         component_map: dict[str, list[Finding]] = {}
 
         for f in findings:
             if not f.component:
                 continue
-            key = extract_artifact_name(f.component)
-            if key not in component_map:
-                component_map[key] = []
-            component_map[key].append(f)
+            key = representatives[normalize_component(f.component)]
+            component_map.setdefault(key, []).append(f)
 
         for component_findings in component_map.values():
             if len(component_findings) > 1:

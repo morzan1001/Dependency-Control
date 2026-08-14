@@ -1,5 +1,6 @@
 """Analytics dependency endpoints: dependency-tree, component-findings, dependency-metadata."""
 
+import re
 from typing import Annotated, Any
 
 from fastapi import HTTPException, Query
@@ -38,6 +39,16 @@ router = CustomAPIRouter()
 def _dep_key(dep: Any) -> str:
     """Node identity for parent matching: PURL (parent_components hold PURLs, as in graph.py), else name@version."""
     return get_attr(dep, "purl") or f"{get_attr(dep, 'name')}@{get_attr(dep, 'version')}"
+
+
+def _component_name_query(component: str) -> dict[str, Any]:
+    """Match the component exactly, or as the bare artifact of a group-qualified finding name."""
+    return {
+        "$or": [
+            {"component": component},
+            {"component": {"$regex": f"[:/]{re.escape(component)}$"}},
+        ]
+    }
 
 
 def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> DependencyTreeNode:
@@ -200,7 +211,7 @@ async def get_component_findings(
 
     finding_repo = FindingRepository(db)
 
-    query = {"scan_id": {"$in": scan_ids}, "component": component}
+    query: dict[str, Any] = {"scan_id": {"$in": scan_ids}, **_component_name_query(component)}
     if version:
         query["version"] = version
 

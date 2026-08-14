@@ -25,7 +25,7 @@ def _capture_pipeline(collection) -> list[dict[str, Any]]:
 class TestGetVulnCountsByComponentsScanScope:
     """get_vuln_counts_by_components must restrict results to the supplied scan_ids."""
 
-    def _run(self, scan_ids, project_ids, component_names, agg_results=None):
+    def _run(self, scan_ids, project_ids, agg_results=None):
         collection = create_mock_collection()
         # base.aggregate() calls collection.aggregate(pipeline).to_list(limit).
         agg_cursor = MagicMock()
@@ -35,12 +35,12 @@ class TestGetVulnCountsByComponentsScanScope:
         db = _make_mock_db(collection)
         repo = FindingRepository(db)
 
-        result = asyncio.run(repo.get_vuln_counts_by_components(scan_ids, project_ids, component_names))
+        result = asyncio.run(repo.get_vuln_counts_by_components(scan_ids, project_ids))
         return result, collection
 
     def test_scan_id_in_pipeline_match(self):
         scan_ids = ["scan-latest"]
-        _, collection = self._run(scan_ids, ["proj-1"], ["requests"])
+        _, collection = self._run(scan_ids, ["proj-1"])
 
         pipeline = _capture_pipeline(collection)
         match_stage = pipeline[0]["$match"]
@@ -52,14 +52,30 @@ class TestGetVulnCountsByComponentsScanScope:
         result, _ = self._run(
             scan_ids=["scan-latest"],
             project_ids=["proj-1"],
-            component_names=["requests"],
             agg_results=agg_results,
         )
         assert result["requests"] == 3
 
+    def test_qualified_component_is_reachable_by_its_bare_artifact_name(self):
+        """Dependencies are inventoried as 'jackson-databind'; the finding carries the coordinate."""
+        agg_results = [{"_id": "com.fasterxml.jackson.core:jackson-databind", "count": 4}]
+        result, _ = self._run(["scan-1"], ["proj-1"], agg_results=agg_results)
+
+        assert result["jackson-databind"] == 4
+        assert result["com.fasterxml.jackson.core:jackson-databind"] == 4
+
+    def test_ambiguous_artifact_name_gets_no_alias(self):
+        agg_results = [
+            {"_id": "@angular/core", "count": 2},
+            {"_id": "@angular-devkit/core", "count": 1},
+        ]
+        result, _ = self._run(["scan-1"], ["proj-1"], agg_results=agg_results)
+
+        assert "core" not in result
+
     def test_project_id_still_in_pipeline_match(self):
         project_ids = ["proj-1", "proj-2"]
-        _, collection = self._run(["scan-1"], project_ids, ["pkg"])
+        _, collection = self._run(["scan-1"], project_ids)
 
         pipeline = _capture_pipeline(collection)
         match_stage = pipeline[0]["$match"]
@@ -67,7 +83,7 @@ class TestGetVulnCountsByComponentsScanScope:
         assert match_stage["project_id"] == {"$in": project_ids}
 
     def test_waived_excluded_from_count(self):
-        _, collection = self._run(["scan-1"], ["proj-1"], ["pkg"])
+        _, collection = self._run(["scan-1"], ["proj-1"])
 
         pipeline = _capture_pipeline(collection)
         match_stage = pipeline[0]["$match"]

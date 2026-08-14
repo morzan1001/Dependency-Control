@@ -32,6 +32,7 @@ from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories import ProjectRepository, ScanRepository
 from app.schemas.analytics import CVEEnrichmentResult
+from app.services.aggregation.components import add_artifact_name_aliases
 from app.services.recommendation.common import get_attr
 
 MONGO_MATCH = "$match"
@@ -275,7 +276,7 @@ def count_severities(severities: list[str | None]) -> dict[str, int]:
 def build_findings_severity_map(
     findings: list[Any],
 ) -> dict[str, dict[str, int]]:
-    """Map component names to their severity counts."""
+    """Map component names to their severity counts, plus unambiguous bare-artifact aliases."""
     findings_map: dict[str, dict[str, int]] = {}
 
     for finding in findings:
@@ -299,7 +300,7 @@ def build_findings_severity_map(
             findings_map[component][sev_lower] += 1
         findings_map[component]["total"] += 1
 
-    return findings_map
+    return add_artifact_name_aliases(findings_map)
 
 
 def build_hotspot_priority_reasons(

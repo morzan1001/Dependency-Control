@@ -6,6 +6,7 @@ from pymongo import UpdateOne
 
 from app.models.finding_record import FindingRecord
 from app.repositories.base import BaseRepository
+from app.services.aggregation.components import add_artifact_name_aliases
 
 
 class FindingRepository(BaseRepository[FindingRecord]):
@@ -140,15 +141,17 @@ class FindingRepository(BaseRepository[FindingRecord]):
         self,
         scan_ids: list[str],
         project_ids: list[str],
-        component_names: list[str],
     ) -> dict[str, int]:
-        """{component_name: non_waived_vulnerability_count}; scan_ids+project_ids exclude prior-scan findings."""
+        """{component_name: non_waived_vulnerability_count}; scan_ids+project_ids exclude prior-scan findings.
+
+        Also keyed by the bare artifact name where unambiguous, so a bare dependency name
+        resolves a group-qualified finding component.
+        """
         pipeline: list[dict[str, Any]] = [
             {
                 "$match": {
                     "scan_id": {"$in": scan_ids},
                     "project_id": {"$in": project_ids},
-                    "component": {"$in": component_names},
                     "type": "vulnerability",
                     "waived": {"$ne": True},
                 }
@@ -156,4 +159,4 @@ class FindingRepository(BaseRepository[FindingRecord]):
             {"$group": {"_id": "$component", "count": {"$sum": 1}}},
         ]
         results = await self.aggregate(pipeline)
-        return {r["_id"]: r["count"] for r in results}
+        return add_artifact_name_aliases({r["_id"]: r["count"] for r in results if r["_id"]})
