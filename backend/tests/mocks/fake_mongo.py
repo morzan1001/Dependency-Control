@@ -142,6 +142,17 @@ def _array_filter_predicates(array_filters: list | None) -> dict:
     return predicates
 
 
+def _in_allowed(value: Any, allowed: list) -> bool:
+    """Mongo's $in accepts regex patterns alongside literals."""
+    for candidate in allowed:
+        if isinstance(candidate, _re.Pattern):
+            if isinstance(value, str) and candidate.search(value):
+                return True
+        elif value == candidate:
+            return True
+    return False
+
+
 def _match_doc(doc: dict, query: dict) -> bool:
     """Return True if doc matches a MongoDB query."""
     for key, condition in query.items():
@@ -177,9 +188,9 @@ def _match_doc(doc: dict, query: dict) -> bool:
             if "$in" in condition:
                 allowed = condition["$in"]
                 if isinstance(value, list):
-                    if not any(v in allowed for v in value):
+                    if not any(_in_allowed(v, allowed) for v in value):
                         return False
-                elif value not in allowed:
+                elif not _in_allowed(value, allowed):
                     return False
             if "$nin" in condition:
                 disallowed = condition["$nin"]
