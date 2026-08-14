@@ -130,3 +130,25 @@ async def test_dependency_metadata_counts_a_requalified_finding(client, db, seed
     )
     assert resp.status_code == 200, resp.text
     assert resp.json()["total_vulnerability_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_component_findings_blanks_on_an_ambiguous_bare_name(client, db, seeded):
+    """Two packages end in 'core'; the tree overlay blanks, so this must not union them."""
+    for idx, component in enumerate(["@angular/core", "@messageformat/core"]):
+        await db.findings.insert_one(_vuln(f"amb{idx}", component, "HIGH", waived=False))
+
+    resp = await client.get("/api/v1/analytics/component-findings", params={"component": "core"}, headers=seeded)
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == []
+
+
+@pytest.mark.asyncio
+async def test_component_findings_still_resolve_an_unambiguous_bare_name(client, db, seeded):
+    await db.findings.insert_one(_vuln("single", "com.fasterxml.jackson.core:jackson-databind", "HIGH", waived=False))
+
+    resp = await client.get(
+        "/api/v1/analytics/component-findings", params={"component": "jackson-databind"}, headers=seeded
+    )
+    assert resp.status_code == 200, resp.text
+    assert [f["component"] for f in resp.json()] == ["com.fasterxml.jackson.core:jackson-databind"]

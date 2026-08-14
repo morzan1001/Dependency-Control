@@ -29,7 +29,7 @@ from app.schemas.analytics import (
     DependencyTreeNode,
     SeverityBreakdown,
 )
-from app.services.aggregation.components import extract_artifact_name
+from app.services.aggregation.components import cluster_by_package_identity, extract_artifact_name
 from app.services.recommendation.common import get_attr
 
 from ._shared import _MSG_ACCESS_DENIED, _get_enrichment_info, _resolve_scan_id
@@ -50,6 +50,19 @@ def _component_name_query(component: str) -> dict[str, Any]:
             {"component": {"$regex": f"[:/]{re.escape(component)}$"}},
         ]
     }
+
+
+def _resolve_single_package(records: list[Any], component: str) -> list[Any]:
+    """Drop the qualified matches when the requested name belongs to several packages.
+
+    The dependency-tree overlay blanks rather than guess, so an ambiguous name must not
+    return the union of every package that ends in it here either.
+    """
+    names = {get_attr(r, "component", "") for r in records}
+    packages = set(cluster_by_package_identity(names).values())
+    if len(packages) <= 1:
+        return records
+    return [r for r in records if get_attr(r, "component", "") == component]
 
 
 def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> DependencyTreeNode:
@@ -223,7 +236,7 @@ async def get_component_findings(
     if version:
         query["version"] = version
 
-    finding_records = await finding_repo.find_many(query, limit=100)
+    finding_records = _resolve_single_package(await finding_repo.find_many(query, limit=100), component)
 
     results = []
     for fr in finding_records:
