@@ -261,6 +261,65 @@ class TestCreateWaiverValidatesFindingMatch:
         mock_repo.create.assert_called_once()
         db.findings.count_documents.assert_not_called()
 
+    def test_unscoped_license_waiver_is_rejected(self, admin_user):
+        """finding_id is not unique per scan for license/eol; prod scan fe02e2bf has 115
+        documents under LIC-GPL-2.0-only, so an unscoped waiver would blanket all of them."""
+        from app.api.v1.endpoints.waivers import create_waiver
+        from app.schemas.waiver import WaiverCreate
+
+        db = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.create = AsyncMock()
+
+        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+            with pytest.raises(HTTPException) as exc:
+                asyncio.run(
+                    create_waiver(
+                        waiver_in=WaiverCreate(
+                            project_id=None,
+                            finding_id="LIC-GPL-2.0-only",
+                            finding_type="license",
+                            scope="finding",
+                            reason="approved",
+                        ),
+                        background_tasks=BackgroundTasks(),
+                        current_user=admin_user,
+                        db=db,
+                    )
+                )
+
+        assert exc.value.status_code == 422
+        assert "package_name" in exc.value.detail
+        mock_repo.create.assert_not_called()
+
+    def test_scoped_license_waiver_is_accepted(self, admin_user):
+        from app.api.v1.endpoints.waivers import create_waiver
+        from app.schemas.waiver import WaiverCreate
+
+        db = MagicMock()
+        mock_repo = MagicMock()
+        mock_repo.create = AsyncMock()
+
+        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+            with patch(f"{MODULE}.recalculate_all_projects"):
+                asyncio.run(
+                    create_waiver(
+                        waiver_in=WaiverCreate(
+                            project_id=None,
+                            finding_id="LIC-GPL-2.0-only",
+                            finding_type="license",
+                            package_name="spring-core",
+                            scope="finding",
+                            reason="approved",
+                        ),
+                        background_tasks=BackgroundTasks(),
+                        current_user=admin_user,
+                        db=db,
+                    )
+                )
+
+        mock_repo.create.assert_called_once()
+
     def test_unscanned_project_skips_match_check(self, admin_user):
         """If the project has no latest_scan_id yet, accept the waiver — no scan to validate against."""
         from app.api.v1.endpoints.waivers import create_waiver
