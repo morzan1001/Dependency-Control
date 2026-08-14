@@ -565,11 +565,22 @@ class FakeCollection:
         return result
 
     async def insert_many(self, docs: list, ordered: bool = True):
+        from pymongo.errors import BulkWriteError
+
         inserted = []
-        for doc in docs:
+        write_errors = []
+        for index, doc in enumerate(docs):
             key = doc.get("_id") or str(len(self._docs))
+            if key in self._docs:
+                # Mirror Mongo's duplicate-key semantics so idempotent-insert paths are testable.
+                write_errors.append({"index": index, "code": 11000, "errmsg": f"E11000 duplicate key error: {key}"})
+                if ordered:
+                    break
+                continue
             self._docs[key] = dict(doc)
             inserted.append(key)
+        if write_errors:
+            raise BulkWriteError({"writeErrors": write_errors, "nInserted": len(inserted)})
         result = MagicMock()
         result.inserted_ids = inserted
         return result
@@ -620,6 +631,8 @@ class FakeCollection:
             if not upsert:
                 return None
             doc = {k: v for k, v in query.items() if not isinstance(v, dict) and not k.startswith("$")}
+            # Mongo applies $setOnInsert on the upsert-insert path.
+            doc.update(update.get(_SET_ON_INSERT, {}))
             self._apply_update(doc, update, skip_set_on_insert=True)
             key = doc.get("_id") or str(len(self._docs))
             doc["_id"] = key
