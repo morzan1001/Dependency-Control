@@ -224,6 +224,26 @@ def _to_number(value):
         return None
 
 
+def _bind_map_var(expr, item, prefix: str):
+    """Resolve ``$$var``/``$$var.path`` references inside a $map ``in`` expression."""
+    if isinstance(expr, str) and expr.startswith(prefix):
+        tail = expr[len(prefix) :].lstrip(".")
+        return _resolve_dotted(item, tail) if tail else item
+    if isinstance(expr, dict):
+        return {k: _bind_map_var(v, item, prefix) for k, v in expr.items()}
+    if isinstance(expr, list):
+        return [_bind_map_var(e, item, prefix) for e in expr]
+    return _eval_expr(item, expr) if isinstance(item, dict) else expr
+
+
+def _eval_map(doc: dict, spec: dict):
+    items = _eval_expr(doc, spec.get("input"))
+    if not isinstance(items, list):
+        return []
+    prefix = f"$${spec.get('as', 'this')}"
+    return [_bind_map_var(spec.get("in"), item, prefix) for item in items]
+
+
 def _eval_expr(doc: dict, expr):
     """Evaluate a MongoDB aggregation expression against a single document.
 
@@ -241,6 +261,8 @@ def _eval_expr(doc: dict, expr):
     if not isinstance(expr, dict):
         return expr
 
+    if "$map" in expr:
+        return _eval_map(doc, expr["$map"])
     if "$dateTrunc" in expr:
         spec = expr["$dateTrunc"]
         return _truncate_date(_eval_expr(doc, spec.get("date")), spec.get("unit", "day"))
@@ -252,6 +274,9 @@ def _eval_expr(doc: dict, expr):
         return val if val is not None else _eval_expr(doc, fallback)
     if "$toDouble" in expr:
         return _to_number(_eval_expr(doc, expr["$toDouble"]))
+    if "$size" in expr:
+        val = _eval_expr(doc, expr["$size"])
+        return len(val) if isinstance(val, list) else 0
     if "$toLower" in expr:
         val = _eval_expr(doc, expr["$toLower"])
         return str(val).lower() if val is not None else None
@@ -292,6 +317,9 @@ def _eval_expr(doc: dict, expr):
     for op in ("$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$and", "$or", "$in"):
         if op in expr:
             return _eval_bool(doc, expr)
+    # Operator-free dict: Mongo treats it as a document expression, so evaluate each value.
+    if expr and not any(k.startswith("$") for k in expr):
+        return {k: _eval_expr(doc, v) for k, v in expr.items()}
     return expr
 
 

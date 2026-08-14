@@ -87,7 +87,7 @@ async def get_impact_analysis(
         return []
 
     pipeline: list[dict[str, Any]] = [
-        {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
+        {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability", "waived": {"$ne": True}}},
         {
             "$project": {
                 "component": 1,
@@ -297,7 +297,7 @@ async def get_vulnerability_hotspots(
     post_sort_by = sort_by if sort_by in ["epss", "risk"] else None
 
     pipeline: list[dict[str, Any]] = [
-        {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability"}},
+        {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability", "waived": {"$ne": True}}},
         {
             "$project": {
                 "component": 1,

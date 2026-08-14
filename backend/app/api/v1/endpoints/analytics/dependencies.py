@@ -181,7 +181,7 @@ async def get_dependency_tree(
         return DependencyGraph()
 
     findings = await finding_repo.find_many(
-        {"scan_id": scan_id, "type": "vulnerability"},
+        {"scan_id": scan_id, "type": "vulnerability", "waived": {"$ne": True}},
         limit=ANALYTICS_MAX_QUERY_LIMIT,
     )
     findings_map = build_findings_severity_map(findings)
@@ -211,7 +211,13 @@ async def get_component_findings(
 
     finding_repo = FindingRepository(db)
 
-    query: dict[str, Any] = {"scan_id": {"$in": scan_ids}, **_component_name_query(component)}
+    # Waived findings are excluded here as everywhere else, so this list agrees with the
+    # severity tiles and the hotspot ranking for the same scan.
+    query: dict[str, Any] = {
+        "scan_id": {"$in": scan_ids},
+        "waived": {"$ne": True},
+        **_component_name_query(component),
+    }
     if version:
         query["version"] = version
 
