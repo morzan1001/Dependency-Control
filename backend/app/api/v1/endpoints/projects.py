@@ -39,6 +39,7 @@ from app.api.v1.helpers.responses import (
 from app.core.constants import SCAN_USABLE_STATUSES
 from app.core.permissions import Permissions, has_permission
 from app.core.risk_scoring import risk_score_expr
+from app.core.trufflehog import SECRET_DESCRIPTION_PREFIX, resolve_detector_name
 from app.core.worker import worker_manager
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 from app.models.system import SystemSettings
@@ -1224,6 +1225,25 @@ def _build_scan_findings_pipeline(
     return stages
 
 
+def _resolve_secret_detectors(rows: list[dict[str, Any]]) -> None:
+    """Show trufflehog detector names instead of the stored DetectorType ordinals.
+
+    Resolved for display only: the ordinal is baked into ``finding_id`` and into every
+    secret waiver's ``match.rule_key``, so rewriting it in place would un-suppress them.
+    """
+    for row in rows:
+        details = row.get("details")
+        if not isinstance(details, dict):
+            continue
+        raw = details.get("detector")
+        name = resolve_detector_name(raw)
+        if name is None:
+            continue
+        details["detector"] = name
+        if row.get("description") == f"{SECRET_DESCRIPTION_PREFIX}{raw}":
+            row["description"] = f"{SECRET_DESCRIPTION_PREFIX}{name}"
+
+
 def _unpack_scan_findings_facet(result: list[dict[str, Any]]) -> tuple:
     """Pull ``(data, total)`` out of the ``$facet`` result envelope."""
     if not result:
@@ -1297,6 +1317,7 @@ async def read_scan_findings(
     finding_repo = FindingRepository(db)
     result = await finding_repo.aggregate(pipeline)
     data, total = _unpack_scan_findings_facet(result)
+    _resolve_secret_detectors(data)
 
     return build_pagination_response(data, total, skip, limit)
 

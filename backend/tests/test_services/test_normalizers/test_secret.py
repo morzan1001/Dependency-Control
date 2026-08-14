@@ -13,7 +13,7 @@ class TestNormalizeTrufflehog:
         result = {
             "findings": [
                 {
-                    "DetectorType": "AWS",
+                    "DetectorType": "2",
                     "Raw": "AKIAIOSFODNN7EXAMPLE",
                     "Verified": True,
                     "SourceMetadata": {"Data": {"Filesystem": {"file": "config/aws.env"}}},
@@ -28,14 +28,14 @@ class TestNormalizeTrufflehog:
         assert f.severity == "CRITICAL"
         assert f.component == "config/aws.env"
         assert "trufflehog" in f.scanners
-        assert "AWS" in f.description
+        assert f.description == "Secret detected: 2"
 
     def test_file_path_from_git_source(self):
         """When no Filesystem source, fall back to Git source."""
         result = {
             "findings": [
                 {
-                    "DetectorType": "GitHub Token",
+                    "DetectorType": "8",
                     "Raw": "ghp_test12345",
                     "SourceMetadata": {"Data": {"Git": {"file": "src/auth.py"}}},
                 }
@@ -49,7 +49,7 @@ class TestNormalizeTrufflehog:
         result = {
             "findings": [
                 {
-                    "DetectorType": "Generic",
+                    "DetectorType": "7",
                     "Raw": "secret123",
                     "SourceMetadata": {"Data": {}},
                 }
@@ -66,7 +66,7 @@ class TestNormalizeTrufflehog:
         result = {
             "findings": [
                 {
-                    "DetectorType": "Generic",
+                    "DetectorType": "7",
                     "Raw": raw_secret,
                     "SourceMetadata": {"Data": {}},
                 }
@@ -80,7 +80,7 @@ class TestNormalizeTrufflehog:
         result = {
             "findings": [
                 {
-                    "DetectorType": "AWS",
+                    "DetectorType": "2",
                     "Verified": True,
                     "Raw": "test",
                     "SourceMetadata": {"Data": {}},
@@ -95,7 +95,7 @@ class TestNormalizeTrufflehog:
         result = {
             "findings": [
                 {
-                    "DetectorType": "Slack Token",
+                    "DetectorType": "13",
                     "Raw": "xoxb-test",
                     "SourceMetadata": {"Data": {}},
                 }
@@ -103,7 +103,7 @@ class TestNormalizeTrufflehog:
         }
         self.agg.aggregate("trufflehog", result)
         f = next(iter(self.agg.findings.values()))
-        assert f.details["detector"] == "Slack Token"
+        assert f.details["detector"] == "13"
 
     def test_empty_findings(self):
         self.agg.aggregate("trufflehog", {"findings": []})
@@ -113,12 +113,12 @@ class TestNormalizeTrufflehog:
         result = {
             "findings": [
                 {
-                    "DetectorType": "AWS",
+                    "DetectorType": "2",
                     "Raw": "secret1",
                     "SourceMetadata": {"Data": {"Filesystem": {"file": "a.env"}}},
                 },
                 {
-                    "DetectorType": "GitHub",
+                    "DetectorType": "8",
                     "Raw": "secret2",
                     "SourceMetadata": {"Data": {"Filesystem": {"file": "b.env"}}},
                 },
@@ -127,8 +127,10 @@ class TestNormalizeTrufflehog:
         self.agg.aggregate("trufflehog", result)
         assert len(self.agg.findings) == 2
 
-    def test_prefers_detector_name_over_numeric_detector_type(self):
-        """Prefer DetectorName over numeric DetectorType so the credential type stays recoverable."""
+    def test_detector_type_ordinal_is_the_stored_identity(self):
+        """The ordinal, not the name, must reach finding_id: 373 of 504 production waivers
+        carry `SECRET-<ordinal>-<hash>` and a `match.rule_key` of the same ordinal, and the
+        ingest schema drops DetectorName, so a name here would silently un-suppress them."""
         result = {
             "findings": [
                 {
@@ -141,17 +143,15 @@ class TestNormalizeTrufflehog:
         }
         self.agg.aggregate("trufflehog", result)
         f = next(iter(self.agg.findings.values()))
-        assert f.details["detector"] == "AWS"
-        assert "AWS" in f.description
-        assert "AWS" in f.id
-        # The numeric ordinal must not leak into user-visible fields.
-        assert f.description == "Secret detected: AWS"
+        assert f.details["detector"] == "2"
+        assert f.id.startswith("SECRET-2-")
+        assert f.description == "Secret detected: 2"
 
     def test_empty_raw_uses_nohash(self):
         result = {
             "findings": [
                 {
-                    "DetectorType": "Generic",
+                    "DetectorType": "7",
                     "Raw": "",
                     "SourceMetadata": {"Data": {}},
                 }
@@ -165,7 +165,7 @@ class TestNormalizeTrufflehog:
         result = {
             "findings": [
                 {
-                    "DetectorType": "AWS",
+                    "DetectorType": "2",
                     "Raw": "AKIAIOSFODNN7EXAMPLE",
                     "SourceMetadata": {
                         "Data": {
@@ -190,7 +190,7 @@ class TestNormalizeTrufflehog:
         result = {
             "findings": [
                 {
-                    "DetectorType": "Generic",
+                    "DetectorType": "7",
                     "Raw": "secret123",
                     "SourceMetadata": {"Data": {"Filesystem": {"file": "a.env"}}},
                 }
@@ -207,7 +207,7 @@ class TestNormalizeTrufflehog:
         result = {
             "findings": [
                 {
-                    "DetectorType": "Generic",
+                    "DetectorType": "7",
                     "Raw": "secret123",
                     "SourceMetadata": {"Data": {"Filesystem": {"file": "a.env"}}},
                     "DcInCurrentTree": True,
@@ -222,7 +222,7 @@ class TestNormalizeTrufflehog:
         result = {
             "findings": [
                 {
-                    "DetectorType": "Generic",
+                    "DetectorType": "7",
                     "Raw": "secret123",
                     "SourceMetadata": {"Data": {"Filesystem": {"file": "a.env"}}},
                     "DcInCurrentTree": False,
@@ -237,7 +237,7 @@ class TestNormalizeTrufflehog:
         result = {
             "findings": [
                 {
-                    "DetectorType": "Generic",
+                    "DetectorType": "7",
                     "Raw": "secret123",
                     "SourceMetadata": {"Data": {"Filesystem": {"file": "a.env"}}},
                 }
@@ -251,7 +251,7 @@ class TestNormalizeTrufflehog:
         result = {
             "findings": [
                 {
-                    "DetectorType": "AWS",
+                    "DetectorType": "2",
                     "Raw": "AKIAIOSFODNN7EXAMPLE",
                     "Verified": True,
                     "SourceMetadata": {"Data": {"Filesystem": {"file": "config/aws.env"}}},
@@ -268,7 +268,7 @@ class TestNormalizeTrufflehog:
         result = {
             "findings": [
                 {
-                    "DetectorType": "Generic",
+                    "DetectorType": "7",
                     "Raw": "secret123",
                     "SourceMetadata": {"Data": {"Filesystem": {"file": "a.env"}}},
                     "DcInCurrentTree": False,
