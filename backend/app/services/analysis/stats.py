@@ -247,7 +247,7 @@ _BUCKETED_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO
 async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
     """Calculate comprehensive statistics including EPSS/KEV and reachability data."""
     pipeline: list[dict[str, Any]] = [
-        {"$match": {"scan_id": scan_id, "waived": False}},
+        {"$match": {"scan_id": scan_id, "waived": {"$ne": True}}},
         {
             "$project": {
                 "severity": 1,

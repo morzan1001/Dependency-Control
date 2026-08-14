@@ -279,3 +279,18 @@ class TestLockContentionRetry:
         from app.services.stats import _LOCK_MAX_RETRIES
 
         assert calls["n"] == _LOCK_MAX_RETRIES + 1
+
+
+@pytest.mark.asyncio
+async def test_stats_count_findings_that_carry_no_waived_field():
+    """One predicate form everywhere: a document without the field must count as not waived."""
+    from app.services.analysis.stats import calculate_comprehensive_stats
+
+    db = FakeDatabase()
+    doc = _finding("f-nofield", "CRITICAL", cvss_score=9.1)
+    del doc["waived"]
+    await db.findings.insert_one(doc)
+
+    stats = await calculate_comprehensive_stats(db, SCAN_ID)
+
+    assert stats.critical == 1
