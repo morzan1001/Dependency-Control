@@ -120,3 +120,46 @@ async def test_the_same_sbom_uploaded_twice_stores_one_inventory(db):
     assert inserted == 1
     assert not warnings
     assert await db.dependencies.count_documents({"scan_id": _SCAN_ID}) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_component_without_its_own_purl_is_still_merged(db):
+    """The parser fabricates a pkg:generic purl for an unidentified component, so these rows
+    reach the index too; the merge has to collapse them like any other duplicate."""
+    await create_indexes(db)
+    no_purl = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "components": [{"type": "library", "bom-ref": "r1", "name": "vendored-blob", "version": "1.0"}],
+    }
+
+    _refs, warnings, _processed, failed, inserted = await _process_sboms(
+        [no_purl, no_purl], _FakeGridFSBucket(db), _PROJECT_ID, _SCAN_ID, DependencyRepository(db)
+    )
+
+    assert (failed, inserted) == (0, 1)
+    assert not warnings
+    assert await db.dependencies.count_documents({"scan_id": _SCAN_ID}) == 1
+
+
+@pytest.mark.asyncio
+async def test_the_fake_index_treats_a_null_purl_as_a_colliding_value(db):
+    """Guards the emulation, not the app. A sparse COMPOUND index only skips a document when
+    every indexed field is absent, and a missing field is indexed as null — so two purl-less
+    rows for one name@version collide in real Mongo exactly as an explicit-null pair does.
+    init_db._migrate_project_indexes documents the same trap for the project indexes."""
+    from pymongo.errors import DuplicateKeyError
+
+    await create_indexes(db)
+    explicit_null = {"scan_id": _SCAN_ID, "name": "vendored-blob", "version": "1.0", "purl": None}
+    await db.dependencies.insert_one({"_id": "a", **explicit_null})
+    with pytest.raises(DuplicateKeyError):
+        await db.dependencies.insert_one({"_id": "b", **explicit_null})
+
+    # An omitted purl produces the same index key as an explicit null.
+    with pytest.raises(DuplicateKeyError):
+        await db.dependencies.insert_one({"_id": "c", "scan_id": _SCAN_ID, "name": "vendored-blob", "version": "1.0"})
+
+    # A different artifact does not collide, so the guard is not matching everything.
+    await db.dependencies.insert_one({"_id": "d", **explicit_null, "name": "other-blob"})
+    assert await db.dependencies.count_documents({"scan_id": _SCAN_ID}) == 2

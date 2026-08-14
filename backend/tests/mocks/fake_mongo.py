@@ -695,15 +695,22 @@ class FakeCollection:
     # -- writes -----------------------------------------------------------
 
     def _duplicate_key(self, doc: dict) -> str | None:
-        """The unique index a document collides on, or None. Mirrors sparse semantics:
-        a null value on an indexed field takes the entry out of the index."""
+        """The unique index a document collides on, or None.
+
+        Sparse semantics: an entry is indexed unless every indexed field is ABSENT. An explicit
+        null is a value and still collides — which is why init_db rebuilds the sparse compound
+        project indexes with a partialFilterExpression (see _migrate_project_indexes), Pydantic
+        serialising None being exactly how those nulls arrive.
+        """
         if doc.get("_id") in self._docs:
             return "_id"
         for fields in self._unique_keys:
-            values = tuple(doc.get(field) for field in fields)
-            if any(value is None for value in values):
+            if all(field not in doc for field in fields):
                 continue
+            values = tuple(doc.get(field) for field in fields)
             for existing in self._docs.values():
+                if all(field not in existing for field in fields):
+                    continue
                 if tuple(existing.get(field) for field in fields) == values:
                     return ", ".join(fields)
         return None
