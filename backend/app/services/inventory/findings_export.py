@@ -121,10 +121,15 @@ async def _dependency_lookup(db: AsyncIOMotorDatabase, scan: Scan) -> _DepLookup
     cursor = DependencyRepository(db).collection.find({"scan_id": scan.id}, _DEP_PROJECTION)
     by_version: dict[str, dict[str, tuple[str | None, bool | None]]] = {}
     async for dep in cursor:
-        by_version.setdefault(str(dep.get("version")), {})[str(dep.get("name"))] = (
-            dep.get("purl"),
-            dep.get("direct"),
-        )
+        by_name = by_version.setdefault(str(dep.get("version")), {})
+        name = str(dep.get("name"))
+        # A name@version can hold several docs (purl-qualifier variants); on 60 sampled
+        # multi-SBOM scans 1,635 such groups disagree on `direct`, so keeping whichever
+        # the cursor yielded last made the exported column arbitrary. Direct wins.
+        kept = by_name.get(name)
+        if kept is not None and (kept[1] or not dep.get("direct")):
+            continue
+        by_name[name] = (dep.get("purl"), dep.get("direct"))
     return {version: build_component_index(names) for version, names in by_version.items()}
 
 

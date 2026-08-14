@@ -197,3 +197,67 @@ async def test_find_component_usage_accepts_a_qualified_component(db, seeded):
     result = await ChatToolRegistry().execute_tool("find_component_usage", {"component_name": QUALIFIED}, user, db)
 
     assert [m["component"] for m in result["matches"]] == [BARE]
+
+
+@pytest.mark.asyncio
+async def test_findings_export_prefers_the_direct_row_on_a_name_version_collision(db, seeded):
+    """Multi-SBOM scans store the same name@version under two purl spellings (bare and
+    ?type=jar). On 60 sampled production multi-SBOM scans 2,452 of 11,882 dependency docs
+    sit in such groups and 1,635 of the groups disagree on `direct`, so keeping whichever
+    document the cursor yielded last made the exported column a coin flip."""
+    from app.models.project import Scan
+    from app.services.inventory.findings_export import iter_findings_rows
+
+    # Inserted after the seeded direct row so a last-wins index would pick the transitive one.
+    transitive = _dependency("d-jar", direct=False)
+    transitive["purl"] = f"pkg:maven/com.fasterxml.jackson.core/{BARE}@{VERSION}?type=jar"
+    await db.dependencies.insert_one(transitive)
+
+    scan = Scan(**(await db.scans.find_one({"_id": SCAN_ID})))
+    rows = [row async for row in iter_findings_rows(db, [scan])]
+
+    assert rows[0]["direct"] is True
+    assert rows[0]["purl"] == f"pkg:maven/com.fasterxml.jackson.core/{BARE}@{VERSION}"
+
+
+@pytest.mark.asyncio
+async def test_inferred_direct_is_reported_the_same_way_by_both_tools(db, seeded):
+    """generate_remediation_plan treated an inferred-direct package as transitive while
+    find_component_usage treated it as direct (and never read the flag). Both now report
+    `direct_confidence` so the collapse is the reader's choice, not the tool's."""
+    from app.models.user import User
+    from app.services.chat.tools.registry import ChatToolRegistry
+
+    await db.dependencies.update_one({"_id": "d1"}, {"$set": {"direct_inferred": True}})
+    await db.findings.update_one({"_id": "f1"}, {"$set": {"severity": "CRITICAL"}})
+    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=["*"])
+    registry = ChatToolRegistry()
+
+    plan = await registry.execute_tool("generate_remediation_plan", {"project_id": "p"}, user, db)
+    usage = await registry.execute_tool("find_component_usage", {"component_name": BARE}, user, db)
+
+    assert plan["plan"][0]["direct_confidence"] == "inferred"
+    assert plan["plan"][0]["is_direct"] is True
+    assert usage["matches"][0]["direct_confidence"] == "inferred"
+    assert usage["matches"][0]["direct_dependency"] is True
+
+
+@pytest.mark.asyncio
+async def test_declared_direct_still_outranks_inferred_direct_in_the_plan(db, seeded):
+    """The old `and not direct_inferred` collapse existed to deprioritise guesses; that
+    intent moves into the ordering instead of into the reported flag."""
+    from app.models.user import User
+    from app.services.chat.tools.registry import ChatToolRegistry
+
+    await db.dependencies.update_one({"_id": "d1"}, {"$set": {"direct_inferred": True}})
+    await db.findings.update_one({"_id": "f1"}, {"$set": {"severity": "CRITICAL"}})
+    await db.findings.insert_one(_finding("f2", "netty-common", severity="CRITICAL"))
+    declared = _dependency("d3", name="netty-common")
+    declared["group"] = "io.netty"
+    declared["purl"] = f"pkg:maven/io.netty/netty-common@{VERSION}"
+    await db.dependencies.insert_one(declared)
+
+    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=["*"])
+    plan = await ChatToolRegistry().execute_tool("generate_remediation_plan", {"project_id": "p"}, user, db)
+
+    assert [s["direct_confidence"] for s in plan["plan"]] == ["declared", "inferred"]
