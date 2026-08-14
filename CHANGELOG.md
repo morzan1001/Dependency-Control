@@ -1,4 +1,12 @@
-# Release 1.8.5
+# Release 1.9.0
+
+## 📦 Build & CI
+
+- chore: bump version to 1.9.0 (#0)
+
+
+
+# Release 1.9.0
 
 ## 📦 Build & CI
 
