@@ -589,3 +589,33 @@ class TestEngineInitialization:
     def test_engine_has_max_dependency_depth(self):
         engine = RecommendationEngine()
         assert engine.max_dependency_depth > 0
+
+
+class TestTyposquatCollection:
+    """The typosquatting analyzer stores the imitated name under details.imitated_package
+    (2,572 production findings; zero carry a details.similar_to)."""
+
+    @staticmethod
+    def _malware_finding(component, imitated_package=None):
+        details = {"info": {"id": "MAL-2026-1"}}
+        if imitated_package:
+            details["imitated_package"] = imitated_package
+        return {"type": "malware", "severity": "CRITICAL", "component": component, "details": details}
+
+    @pytest.mark.asyncio
+    async def test_imitated_package_reaches_the_recommendation(self):
+        engine = RecommendationEngine()
+        findings = [self._malware_finding("loadsh", imitated_package="lodash")]
+
+        recs = await engine.generate_recommendations(findings=findings)
+
+        typosquat = next(r for r in recs if r.type == RecommendationType.TYPOSQUAT_DETECTED)
+        assert "loadsh (looks like: lodash)" in typosquat.affected_components
+
+    @pytest.mark.asyncio
+    async def test_plain_malware_raises_no_typosquat_recommendation(self):
+        engine = RecommendationEngine()
+
+        recs = await engine.generate_recommendations(findings=[self._malware_finding("evil-pkg")])
+
+        assert not [r for r in recs if r.type == RecommendationType.TYPOSQUAT_DETECTED]

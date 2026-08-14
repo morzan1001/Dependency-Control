@@ -99,6 +99,24 @@ def test_identity_key_license_uses_license():
     assert finding_identity_key(f) == ("license", "lodash@4.17.21", "GPL-3.0-only")
 
 
+def test_identity_key_eol_uses_eol_date_only():
+    """EolDetails declares no `version` and the EOL writer never writes one: 0 of 5,664
+    production EOL findings carry details.version, all 5,664 carry eol_date. The extra
+    fallback key was invisible to the drift guard because it travels through *keys."""
+    f = {
+        "type": "eol",
+        "component": "python",
+        "version": "3.4.10",
+        "details": {"fixed_version": "3.4.13", "eol_date": "2025-12-31", "cycle": "3.4", "link": None, "lts": False},
+    }
+    assert finding_identity_key(f) == ("eol", "python", "2025-12-31")
+
+
+def test_identity_key_eol_without_a_date_falls_back_to_the_fingerprint():
+    f = {"type": "eol", "component": "python", "version": "3.4.10", "description": "EOL", "details": {"cycle": "3.4"}}
+    assert finding_identity_key(f)[2] != "3.4.10"
+
+
 def test_identity_key_malware_typosquat_uses_imitated_package():
     f = {
         "type": "malware",

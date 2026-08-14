@@ -94,7 +94,7 @@ _FINDING_TYPE_IDENTIFIER: dict[str, Callable[[dict[str, Any]], str]] = {
     "iac": lambda d: _first_id(d, "rule_id"),
     "license": lambda d: _first_id(d, "license"),
     "malware": _malware_identifier,
-    "eol": lambda d: _first_id(d, "eol_date", "version"),
+    "eol": lambda d: _first_id(d, "eol_date"),
     "outdated": lambda d: _first_id(d, "fixed_version"),
 }
 

@@ -57,10 +57,6 @@ APP_ROOT = Path(finding_details.__file__).resolve().parents[1]
 ALLOWED_UNDECLARED: dict[tuple[str, str], str] = {
     ("writeErrors", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
     ("nInserted", "app/repositories/base.py"): "pymongo BulkWriteError.details key",
-    # Synthetic in-memory dicts inside the recommendation engine, never persisted:
-    # recommendations._collect_typosquat_findings remaps imitated_package -> similar_to.
-    ("similar_to", "app/services/recommendation/incidents.py"): "in-memory remap from recommendations.py",
-    ("version", "app/services/recommendation/risks.py"): "per-package scratch dict, never persisted",
 }
 
 # Dotted Mongo paths are validated one level deep through these fields.

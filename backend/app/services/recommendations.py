@@ -99,26 +99,14 @@ class RecommendationEngine:
 
     @staticmethod
     def _collect_typosquat_findings(malware_findings: list[ModelOrDict]) -> list[ModelOrDict]:
-        """Extract typosquatting findings from the malware finding group.
-
-        The typosquatting analyzer emits its hits as ``FindingType.MALWARE`` with a
-        ``details['imitated_package']`` key (see
-        ``normalizers.quality.normalize_typosquatting``). ``incidents.process_typosquatting``
-        reads the imitated name from ``details['similar_to']``, so remap the key here to
-        populate the "(looks like: X)" context without touching the shared incidents module.
-        """
-        typosquat_findings: list[ModelOrDict] = []
-        for f in malware_findings:
-            details = get_attr(f, "details", {})
-            imitated = details.get("imitated_package") if isinstance(details, dict) else None
-            if imitated:
-                typosquat_findings.append(
-                    {
-                        "component": get_attr(f, "component", ""),
-                        "details": {"similar_to": imitated},
-                    }
-                )
-        return typosquat_findings
+        """The typosquatting analyzer emits its hits as ``FindingType.MALWARE`` carrying
+        ``details['imitated_package']`` (see ``normalizers.quality.normalize_typosquatting``);
+        the rest of the malware group has no imitated package."""
+        return [
+            f
+            for f in malware_findings
+            if isinstance(get_attr(f, "details", {}), dict) and get_attr(f, "details", {}).get("imitated_package")
+        ]
 
     def _process_typosquatting(
         self,

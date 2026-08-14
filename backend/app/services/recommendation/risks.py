@@ -331,7 +331,7 @@ def _record_malware_risk(pkg: dict[str, Any]) -> None:
 def _aggregate_package_risks(findings: list[ModelOrDict]) -> dict[str, dict[str, Any]]:
     """Aggregate risk factors per package from findings."""
     package_risks: dict[str, dict[str, Any]] = defaultdict(
-        lambda: {"risk_factors": [], "total_score": 0, "vulns": [], "details": {}}
+        lambda: {"risk_factors": [], "total_score": 0, "vulns": [], "version": "unknown"}
     )
 
     for f in findings:
@@ -346,7 +346,7 @@ def _aggregate_package_risks(findings: list[ModelOrDict]) -> dict[str, dict[str,
         if finding_type == "vulnerability":
             pkg["vulns"].append(f)
             if len(pkg["vulns"]) == 1:
-                pkg["details"]["version"] = get_attr(f, "version", "unknown")
+                pkg["version"] = get_attr(f, "version", "unknown")
         elif finding_type == "quality":
             _record_quality_risk(pkg, details)
         elif finding_type == "eol":
@@ -386,7 +386,7 @@ def _append_vuln_risk_factor(pkg: dict[str, Any]) -> None:
 def _build_toxic_recommendation(component: str, pkg: dict[str, Any]) -> Recommendation:
     """Build a toxic-dependency recommendation."""
     risk_descriptions = [r["description"] for r in pkg["risk_factors"]]
-    version = pkg["details"].get("version", "unknown")
+    version = pkg["version"]
 
     return Recommendation(
         type=RecommendationType.TOXIC_DEPENDENCY,

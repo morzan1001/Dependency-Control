@@ -62,9 +62,9 @@ def process_typosquatting(
     for f in typosquat_findings:
         pkg = get_attr(f, "component", "")
         details = get_attr(f, "details", {})
-        similar_to = details.get("similar_to", "") if isinstance(details, dict) else ""
-        if pkg and similar_to:
-            affected_packages.append(f"{pkg} (looks like: {similar_to})")
+        imitated = details.get("imitated_package", "") if isinstance(details, dict) else ""
+        if pkg and imitated:
+            affected_packages.append(f"{pkg} (looks like: {imitated})")
         elif pkg:
             affected_packages.append(pkg)
 
