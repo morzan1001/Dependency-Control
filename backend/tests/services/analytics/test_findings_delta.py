@@ -543,3 +543,25 @@ async def test_fetch_uses_projection(db, monkeypatch):
         "details.signature",
     ):
         assert gone not in proj
+
+
+def test_identity_key_vulnerability_survives_a_component_requalification():
+    """The same package reported bare and group-qualified must not read as removed + added."""
+    bare = {
+        "type": "vulnerability",
+        "component": "jackson-databind",
+        "version": "2.20.2",
+        "description": "",
+        "details": {"vulnerabilities": [{"id": "CVE-2026-1"}]},
+    }
+    qualified = {**bare, "component": "com.fasterxml.jackson.core:jackson-databind"}
+
+    assert finding_identity_key(bare) == finding_identity_key(qualified)
+
+
+def test_identity_key_keeps_same_named_files_in_different_directories_apart():
+    """Only package components are folded; SAST/secret components are file paths."""
+    a = {"type": "secret", "component": "src/a/util.js", "finding_id": "SECRET-1", "details": {}}
+    b = {"type": "secret", "component": "src/b/util.js", "finding_id": "SECRET-1", "details": {}}
+
+    assert finding_identity_key(a) != finding_identity_key(b)

@@ -18,6 +18,7 @@ from app.schemas.scan_delta import (
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
+from app.services.aggregation.components import extract_artifact_name
 from app.services.analytics._delta_pagination import MAX_FETCH, paginate
 
 _SEVERITY_RANK = {
@@ -114,6 +115,11 @@ def finding_identity_key(finding: dict[str, Any]) -> tuple[str, str, str]:
     """Stable identity for matching the same finding across two scans (finding_id is per-scan)."""
     ftype = finding.get("type") or ""
     component = finding.get("component") or ""
+    if ftype == "vulnerability":
+        # Scanners disagree on how far a package name is qualified; fold to the artifact name
+        # so a requalified component reads as unchanged instead of removed + added. Other
+        # types keep the raw component because theirs is a file path, not a package name.
+        component = extract_artifact_name(component)
     details = finding.get("details") or {}
 
     full_extractor = _FINDING_TYPE_IDENTIFIER_FULL.get(ftype)
