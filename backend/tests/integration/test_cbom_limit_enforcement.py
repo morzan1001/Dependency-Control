@@ -51,3 +51,18 @@ async def test_cbom_within_cap_is_persisted_before_the_response_returns(client, 
     assert stored == 5
     assert body["assets_received"] == 5
     assert body["assets_stored"] == 5
+
+
+@pytest.mark.asyncio
+async def test_duplicate_bom_refs_report_the_actually_stored_count(client, db, api_key_headers):
+    """Upserts keyed on bom_ref collapse in-payload duplicates; assets_stored must say so."""
+    payload = _cbom_payload(3)
+    payload["cbom"]["components"][1]["bom-ref"] = payload["cbom"]["components"][0]["bom-ref"]
+
+    resp = await client.post("/api/v1/ingest/cbom", json=payload, headers=api_key_headers)
+
+    assert resp.status_code == 202, resp.text
+    body = resp.json()
+    stored = await db.crypto_assets.count_documents({"scan_id": body["scan_id"]})
+    assert stored == 2
+    assert body["assets_stored"] == 2, "assets_stored must reflect persisted docs, not submitted ops"

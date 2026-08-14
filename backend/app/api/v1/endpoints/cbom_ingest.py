@@ -176,12 +176,16 @@ async def _persist_crypto_assets(
         for a in parsed.assets
     ]
 
-    stored = await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
+    await CryptoAssetRepository(db).bulk_upsert(project_id, scan_id, crypto_assets)
+
+    # The summary counts persisted docs, so duplicate bom_refs in one payload are reported honestly
+    # (bulk_upsert returns submitted ops, which always equals the input length).
+    summary = await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
+    stored = int(summary["total"])
 
     logger.info("cbom_ingest: persisted %d assets for scan %s; registering result", stored, scan_id)
 
     # Fire ingest webhook (best-effort).
-    summary = await CryptoAssetRepository(db).summary_for_scan(project_id, scan_id)
     await webhook_service.safe_trigger_webhooks(
         db,
         WEBHOOK_EVENT_CRYPTO_ASSET_INGESTED,
