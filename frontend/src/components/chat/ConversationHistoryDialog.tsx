@@ -56,7 +56,7 @@ export function ConversationHistoryDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="flex max-h-[calc(100dvh-2rem)] max-w-lg flex-col">
         <DialogHeader>
           <DialogTitle>Chat history</DialogTitle>
           <DialogDescription>
@@ -64,14 +64,14 @@ export function ConversationHistoryDialog({
           </DialogDescription>
         </DialogHeader>
 
-        <div className="space-y-3">
+        <div className="flex min-h-0 flex-1 flex-col space-y-3">
           <Input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             placeholder="Search conversations…"
           />
 
-          <div className="max-h-[50vh] overflow-y-auto rounded-md border">
+          <div className="min-h-0 flex-1 overflow-y-auto rounded-md border">
             {filtered.length === 0 ? (
               <div className="flex flex-col items-center justify-center gap-2 p-8 text-center text-sm text-muted-foreground">
                 <MessageSquare className="h-6 w-6" />
