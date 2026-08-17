@@ -162,14 +162,12 @@ interface StreamingMessageProps {
   readonly content: string;
   readonly toolCalls: ToolCall[];
   readonly activeToolCall: string | null;
-  readonly info?: string | null;
 }
 
 export function StreamingMessage({
   content,
   toolCalls,
   activeToolCall,
-  info,
 }: StreamingMessageProps) {
   // Show typing dots when nothing is visible yet (cold start or between tool rounds).
   const isThinking = !content && !activeToolCall;
@@ -183,11 +181,6 @@ export function StreamingMessage({
         {activeToolCall && <ToolCallLoading toolName={activeToolCall} />}
         {content && <MessageBody content={content} toolCalls={toolCalls} />}
         {isThinking && <TypingDots />}
-        {info && (
-          <div className="mt-2 rounded-md border border-muted/60 bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground">
-            {info}
-          </div>
-        )}
       </Card>
     </div>
   );

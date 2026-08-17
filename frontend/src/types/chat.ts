@@ -39,6 +39,5 @@ export type ChatSSEEvent =
   | { type: 'token'; content: string }
   | { type: 'tool_call_start'; tool_name: string }
   | { type: 'tool_call_end'; tool_name: string; arguments: Record<string, unknown>; result: Record<string, unknown> }
-  | { type: 'info'; message: string }
   | { type: 'done' }
   | { type: 'error'; message: string };

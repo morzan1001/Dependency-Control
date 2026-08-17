@@ -83,7 +83,6 @@ export default function Chat() {
     abort,
     streamingContent,
     streamingToolCalls,
-    streamingInfo,
     pendingUserMessage,
     clearPendingUserMessage,
     isStreaming,
@@ -236,7 +235,6 @@ export default function Chat() {
                   content={streamingContent}
                   toolCalls={streamingToolCalls}
                   activeToolCall={activeToolCall}
-                  info={streamingInfo}
                 />
               )}
             </>

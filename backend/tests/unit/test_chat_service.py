@@ -223,7 +223,7 @@ async def test_current_user_message_not_duplicated_in_prompt():
 @pytest.mark.asyncio
 async def test_warmup_task_cancelled_on_client_disconnect(monkeypatch):
     """A client disconnect during warm-up must cancel the shielded first-chunk task."""
-    # Shorten the keepalive slice so the warm-up loop emits an info event fast.
+    # Shorten the keepalive slice so the warm-up loop emits a heartbeat fast.
     monkeypatch.setattr(service_mod, "_WARMUP_SLICE_SECONDS", 0.02)
 
     service = _make_service()
@@ -248,9 +248,9 @@ async def test_warmup_task_cancelled_on_client_disconnect(monkeypatch):
     service.ollama.chat_stream = MagicMock(return_value=HangingStream())
 
     agen = service.send_message("conv-1", user, "hi")
-    # First warm-up keepalive proves we are mid warm-up.
+    # First heartbeat comment proves we are mid warm-up.
     first = await agen.__anext__()
-    assert '"type": "info"' in first
+    assert first.startswith(": keepalive")
 
     # aclose simulates the client disconnecting.
     await agen.aclose()

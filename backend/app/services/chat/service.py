@@ -98,7 +98,6 @@ class ChatService:
             system_doc = await self.db["system_settings"].find_one({"_id": "current"})
             max_rounds = (system_doc or {}).get("chat_max_tool_rounds") or settings.CHAT_MAX_TOOL_ROUNDS
             rounds_used = 0
-            warmup_info_sent = False
             for _ in range(max_rounds):
                 rounds_used += 1
                 round_tool_calls = 0
@@ -106,33 +105,21 @@ class ChatService:
                 while True:
                     try:
                         if not first_token_recorded and total_tool_calls == 0:
-                            # Cold start can take 60-90s to load the model; emit keepalive info
-                            # events so the UI and upstream SSE proxies don't idle-timeout.
+                            # Cold start can take 60-90s to load the model; emit SSE heartbeat
+                            # comments so the connection and upstream proxies don't idle-timeout.
                             # shield + one persistent task keeps the fetch alive across slices,
                             # since asyncio.wait_for would cancel it and abort the load on timeout.
                             pending = asyncio.ensure_future(stream_iter.__anext__())
                             try:
-                                waited = 0.0
-                                slice_seconds = _WARMUP_SLICE_SECONDS
                                 while True:
                                     try:
                                         chunk = await asyncio.wait_for(
                                             asyncio.shield(pending),
-                                            timeout=slice_seconds,
+                                            timeout=_WARMUP_SLICE_SECONDS,
                                         )
                                         break
                                     except asyncio.TimeoutError:
-                                        waited += slice_seconds
-                                        if not warmup_info_sent:
-                                            warmup_info_sent = True
-                                            msg = (
-                                                "Loading the model into GPU memory — "
-                                                "the first request after idle usually "
-                                                "takes 30–90 seconds."
-                                            )
-                                        else:
-                                            msg = f"Still warming up ({int(waited)}s) — hang tight."
-                                        yield ("data: " + json.dumps({"type": "info", "message": msg}) + "\n\n")
+                                        yield ": keepalive\n\n"
                             finally:
                                 # Cancel the shielded fetch if we exit before consuming the
                                 # chunk (e.g. client disconnect), else it keeps pinning Ollama/GPU.
