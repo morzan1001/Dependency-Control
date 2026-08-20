@@ -40,14 +40,32 @@ spec:
               command: ["/bin/sh", "-c"]
               args:
                 - |
+                  set -e
                   echo "Updating Grype vulnerability database..."
                   export GRYPE_DB_CACHE_DIR=/tmp/grype-db
-                  mkdir -p $GRYPE_DB_CACHE_DIR
+                  mkdir -p "$GRYPE_DB_CACHE_DIR"
                   grype db update
-                  echo "Copying database to GCS bucket via GCSFuse mount..."
-                  rm -rf /grype-gcs/*
-                  cp -r $GRYPE_DB_CACHE_DIR/* /grype-gcs/
-                  echo "Grype DB update completed successfully"
+                  # Validate the fresh copy before touching the shared bucket: a broken
+                  # update must never wipe or replace the live DB the backends read.
+                  grype db status
+                  echo "Publishing database to GCS bucket via GCSFuse mount..."
+                  # No pre-delete: GCS object overwrites are atomic, so readers keep the
+                  # live DB until each new object commits — this removes the multi-minute
+                  # empty-bucket window that made backends fail "database does not exist".
+                  for dir in "$GRYPE_DB_CACHE_DIR"/*/; do
+                    ver="$(basename "$dir")"
+                    mkdir -p "/grype-gcs/$ver"
+                    # DB first, metadata last, to shrink the db/checksum mismatch window.
+                    cp "$dir/vulnerability.db" "/grype-gcs/$ver/vulnerability.db"
+                    for f in "$dir"*; do
+                      [ "$(basename "$f")" = vulnerability.db ] || cp "$f" "/grype-gcs/$ver/"
+                    done
+                  done
+                  # Prune stale schema dirs left by a grype DB schema bump.
+                  for old in /grype-gcs/*/; do
+                    [ -d "$GRYPE_DB_CACHE_DIR/$(basename "$old")" ] || rm -rf "$old"
+                  done
+                  echo "Grype DB publish completed successfully"
                   ls -lhR /grype-gcs/
               securityContext:
                 runAsUser: 1000
