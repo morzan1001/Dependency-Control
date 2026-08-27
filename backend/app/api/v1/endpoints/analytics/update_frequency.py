@@ -5,7 +5,6 @@ import contextlib
 import hashlib
 import logging
 from collections.abc import Coroutine
-from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
 import httpx
@@ -49,19 +48,16 @@ router = CustomAPIRouter()
 
 _DISCONNECT_POLL_SECONDS = 1.0
 
+# Ranking projects without a shared window compares different time spans, so the
+# comparison always fixes one; a quarter covers the slowest realistic scan cadence.
+_DEFAULT_COMPARISON_WINDOW_DAYS = 90
+
 # Worst-case wall time of one comparison recompute over the largest tenant.
 _COMPARISON_COMPUTE_BUDGET_SECONDS = 240.0
 # A waiter must outlast the recompute or it starts a duplicate one; the lock must
 # outlast it too, or a second caller recomputes while the holder is still working.
 _COMPARISON_LOCK_WAIT_SECONDS = _COMPARISON_COMPUTE_BUDGET_SECONDS
 _COMPARISON_LOCK_TTL_SECONDS = int(_COMPARISON_COMPUTE_BUDGET_SECONDS) + 60
-
-
-def _resolve_since(window_days: int | None) -> datetime | None:
-    """Translate ``window_days`` into a ``since`` UTC cutoff."""
-    if window_days is None:
-        return None
-    return datetime.now(tz=timezone.utc) - timedelta(days=window_days)
 
 
 async def _await_or_abort[T](request: Request, coro: Coroutine[Any, Any, T]) -> T:
@@ -108,11 +104,11 @@ def _comparison_cache_key(
     team_id: str,
     *,
     max_scans: int,
-    window_days: int | None,
+    window_days: int,
 ) -> str:
     """Cache key shared by every caller with the same visible-project scope."""
     base = CacheKeys.update_frequency_comparison(scope_hash, team_id)
-    return f"{base}:m{max_scans}:w{window_days or 0}"
+    return f"{base}:m{max_scans}:w{window_days}"
 
 
 async def _project_scan_version(db: DatabaseDep, project_id: str) -> str:
@@ -200,7 +196,7 @@ async def get_project_update_frequency(
             dep_repo=dep_repo,
             analysis_repo=analysis_repo,
             max_scans=max_scans,
-            since=_resolve_since(window_days),
+            window_days=window_days,
             release_fetcher=_build_release_fetcher(),
             branch=branch,
             deleted_branches=project.get("deleted_branches"),
@@ -218,7 +214,7 @@ async def _compute_comparison(
     team_id: str | None,
     *,
     max_scans: int,
-    window_days: int | None,
+    window_days: int,
 ) -> dict[str, Any]:
     query: dict[str, Any] = {"_id": {"$in": user_project_ids}}
     if team_id:
@@ -252,7 +248,7 @@ async def _compute_comparison(
         dep_repo=DependencyRepository(db),
         analysis_repo=AnalysisResultRepository(db),
         max_scans=max_scans,
-        since=_resolve_since(window_days),
+        window_days=window_days,
     )
     return comparison.model_dump()
 
@@ -264,19 +260,15 @@ async def get_update_frequency_comparison(
     db: DatabaseDep,
     team_id: str | None = None,
     max_scans: Annotated[int, Query(ge=2, le=200)] = 20,
-    window_days: Annotated[int | None, Query(ge=1, le=3650)] = None,
+    window_days: Annotated[int, Query(ge=1, le=3650)] = _DEFAULT_COMPARISON_WINDOW_DAYS,
 ) -> UpdateFrequencyComparison:
-    """Cross-project ranking. Pass ``window_days`` to align scan cadences."""
+    """Cross-project ranking over one calendar window, so scan cadences stay comparable."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
     user_project_ids = await get_user_project_ids(current_user, db)
 
     if not user_project_ids:
-        return UpdateFrequencyComparison(
-            projects=[],
-            team_avg_updates_per_month=0.0,
-            team_avg_coverage_pct=None,
-        )
+        return UpdateFrequencyComparison(projects=[])
 
     cache_key = _comparison_cache_key(
         _scope_hash(user_project_ids),
@@ -289,9 +281,7 @@ async def get_update_frequency_comparison(
         request,
         cache_service.get_or_fetch_with_lock(
             cache_key,
-            lambda: _compute_comparison(
-                db, user_project_ids, team_id, max_scans=max_scans, window_days=window_days
-            ),
+            lambda: _compute_comparison(db, user_project_ids, team_id, max_scans=max_scans, window_days=window_days),
             ttl_seconds=CacheTTL.UPDATE_FREQUENCY,
             lock_ttl_seconds=_COMPARISON_LOCK_TTL_SECONDS,
             max_wait_seconds=_COMPARISON_LOCK_WAIT_SECONDS,

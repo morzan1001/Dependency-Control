@@ -39,6 +39,7 @@ class _FetchFailed(Exception):
         super().__init__(cause)
         self.cause = cause
 
+
 cache_hits_total: Counter | None = None
 cache_misses_total: Counter | None = None
 cache_operations_total: Counter | None = None

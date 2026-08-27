@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -13,9 +12,9 @@ from fastapi import HTTPException
 
 from app.api.v1.endpoints.analytics.update_frequency import (
     _COMPARISON_COMPUTE_BUDGET_SECONDS,
+    _DEFAULT_COMPARISON_WINDOW_DAYS,
     _comparison_cache_key,
     _project_cache_key,
-    _resolve_since,
     _scope_hash,
     get_update_frequency_comparison,
 )
@@ -243,11 +242,25 @@ class TestComparisonEndpointCaching:
         # The lock must outlast the waiter, otherwise a peer recomputes under the holder.
         assert call["lock_ttl_seconds"] > call["max_wait_seconds"]
 
+    def test_a_caller_without_a_window_gets_the_documented_ninety_days(self):
+        # The ranking only stays comparable while every project is measured over
+        # the same span, so the default is part of the endpoint's contract.
+        cache = FakeCache()
+        compute = AsyncMock(return_value=_comparison())
+        db = _fake_db()
+
+        with _endpoint_patched(cache, ["p1"], compute):
+            asyncio.run(get_update_frequency_comparison(request=FakeRequest(), current_user=_user("u1"), db=db))
+
+        assert compute.await_args.kwargs["window_days"] == 90
+
     def test_negatively_cached_entry_reports_unavailable_without_recomputing(self):
         cache = FakeCache()
         compute = AsyncMock(return_value=_comparison())
         db = _fake_db()
-        key = _comparison_cache_key(_scope_hash(["p1"]), "all", max_scans=20, window_days=None)
+        key = _comparison_cache_key(
+            _scope_hash(["p1"]), "all", max_scans=20, window_days=_DEFAULT_COMPARISON_WINDOW_DAYS
+        )
         cache.store[key] = {}
 
         with _endpoint_patched(cache, ["p1"], compute):
@@ -408,9 +421,7 @@ class TestComparisonEndpointDisconnect:
             with patch(f"{MODULE}._DISCONNECT_POLL_SECONDS", 0.01):
                 with _endpoint_patched(cache, ["p1"], _slow):
                     request_task = asyncio.create_task(
-                        get_update_frequency_comparison(
-                            request=FakeRequest(), current_user=_user("user-1"), db=db
-                        )
+                        get_update_frequency_comparison(request=FakeRequest(), current_user=_user("user-1"), db=db)
                     )
                     # running.set() fires inside the inner task, so _await_or_abort is
                     # already parked in asyncio.wait by the time this returns.
@@ -437,37 +448,3 @@ class TestComparisonEndpointDisconnect:
                 )
 
         assert result.team_avg_updates_per_month == 2.0
-
-
-class TestResolveSince:
-    def test_none_window_returns_none(self):
-        # No window_days -> orchestrator falls back to max_scans behaviour.
-        assert _resolve_since(None) is None
-
-    def test_window_days_translates_to_cutoff_in_past(self):
-        before = datetime.now(tz=timezone.utc)
-        result = _resolve_since(30)
-        after = datetime.now(tz=timezone.utc)
-
-        assert result is not None
-        expected_low = before - timedelta(days=30)
-        expected_high = after - timedelta(days=30)
-        assert expected_low <= result <= expected_high
-
-    def test_result_is_timezone_aware(self):
-        # must be UTC-aware or Mongo date comparison (Mongo stores UTC) compares wrong
-        result = _resolve_since(365)
-        assert result is not None
-        assert result.tzinfo is not None
-        assert result.utcoffset() == timedelta(0)
-
-    def test_one_day_window(self):
-        result = _resolve_since(1)
-        assert result is not None
-        assert (datetime.now(tz=timezone.utc) - result).days <= 1
-
-    def test_long_window_does_not_overflow(self):
-        # the endpoint allows up to 3650 days (10 years)
-        result = _resolve_since(3650)
-        assert result is not None
-        assert result.year < datetime.now(tz=timezone.utc).year

@@ -30,7 +30,7 @@ import {
 } from 'lucide-react'
 import { useUpdateFrequencyComparison } from '@/hooks/queries/use-analytics'
 import { useTeams } from '@/hooks/queries/use-teams'
-import { formatDate, formatCoveragePct } from '@/lib/utils'
+import { formatDate, formatCoveragePct, formatUpdatesPerMonth } from '@/lib/utils'
 import type { ProjectUpdateSummary, UpdateFrequencyComparison as Comparison } from '@/types/analytics'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 import { WindowSelect } from './WindowSelect'
@@ -41,6 +41,8 @@ type Metric = 'coverage' | 'updates'
 const CHART_TOP_N = 25
 const CHART_ANIMATION_MAX_BARS = 15
 const TABLE_PAGE_SIZE = 25
+// Ranking projects needs one shared window; the backend defaults to the same span.
+const DEFAULT_WINDOW_DAYS = 90
 
 interface RequestedFilters {
   teamId?: string
@@ -48,8 +50,8 @@ interface RequestedFilters {
 }
 
 function metricValue(project: ProjectUpdateSummary, metric: Metric): number {
-  if (metric === 'updates') return project.updates_per_month
-  // Unmeasurable coverage ranks below any measured value.
+  // An unmeasured value ranks below every measured one.
+  if (metric === 'updates') return project.updates_per_month ?? -1
   return project.update_coverage_pct ?? -1
 }
 
@@ -62,7 +64,7 @@ function ComparisonSummaryCards({ data }: Readonly<{ data: Comparison }>) {
           <Users className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{data.team_avg_updates_per_month}</div>
+          <div className="text-2xl font-bold">{formatUpdatesPerMonth(data.team_avg_updates_per_month)}</div>
           <p className="text-xs text-muted-foreground">
             across {data.projects.length} projects
             {data.skipped_projects > 0 && ` · ${data.skipped_projects} skipped (need 2+ scans)`}
@@ -123,8 +125,8 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
         .map((p) => ({
           name: p.project_name.length > 20 ? p.project_name.substring(0, 20) + '...' : p.project_name,
           fullName: p.project_name,
-          // null coverage (nothing ever outdated) leaves a gap rather than a zero bar.
-          value: metric === 'coverage' ? p.update_coverage_pct ?? undefined : p.updates_per_month,
+          // An unmeasured value leaves a gap rather than a zero bar.
+          value: (metric === 'coverage' ? p.update_coverage_pct : p.updates_per_month) ?? undefined,
         })),
     [projects, metric]
   )
@@ -234,7 +236,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                     <TableCell className="text-muted-foreground">{offset + idx + 1}</TableCell>
                     <TableCell className="font-medium">{project.project_name}</TableCell>
                     <TableCell className="text-muted-foreground">{project.team_name || '—'}</TableCell>
-                    <TableCell className="text-right font-mono">{project.updates_per_month}</TableCell>
+                    <TableCell className="text-right font-mono">{formatUpdatesPerMonth(project.updates_per_month)}</TableCell>
                     <TableCell className="text-right">
                       <Badge
                         variant="outline"
@@ -277,7 +279,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
 
 export function UpdateFrequencyComparison() {
   const [selectedTeamId, setSelectedTeamId] = useState<string | undefined>(undefined)
-  const [windowDays, setWindowDays] = useState<number | undefined>(90)
+  const [windowDays, setWindowDays] = useState<number | undefined>(DEFAULT_WINDOW_DAYS)
   const [requested, setRequested] = useState<RequestedFilters | null>(null)
 
   const { data: teamsData } = useTeams()
@@ -321,7 +323,7 @@ export function UpdateFrequencyComparison() {
                 ))}
               </SelectContent>
             </Select>
-            <WindowSelect value={windowDays} onChange={setWindowDays} />
+            <WindowSelect value={windowDays} onChange={setWindowDays} allowScans={false} />
             <Button
               variant="outline"
               disabled={isFetching}

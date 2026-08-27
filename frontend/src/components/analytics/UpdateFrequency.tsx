@@ -29,7 +29,7 @@ import {
 } from 'lucide-react'
 import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 import { useUpdateFrequency } from '@/hooks/queries/use-analytics'
-import { formatDate, formatCoveragePct } from '@/lib/utils'
+import { formatDate, formatCoveragePct, formatUpdatesPerMonth } from '@/lib/utils'
 import type { UpdateFrequencyMetrics, DependencyUpdateEvent } from '@/types/analytics'
 
 interface UpdateFrequencyProps {
@@ -70,9 +70,10 @@ function SummaryCards({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
           <RefreshCw className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{data.updates_per_month}</div>
+          <div className="text-2xl font-bold">{formatUpdatesPerMonth(data.updates_per_month)}</div>
           <p className="text-xs text-muted-foreground">
-            {data.total_updates} updates over {formatDays(data.time_range_days)}, extrapolated
+            {data.total_updates} updates over {formatDays(data.time_range_days)}
+            {data.updates_per_month === null && ' · pick a time window for a rate'}
           </p>
         </CardContent>
       </Card>
@@ -100,7 +101,7 @@ function SummaryCards({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
           <p className="text-xs text-muted-foreground">
             {coverageKnown
               ? `${data.outdated_resolved} of ${data.total_outdated_detected} outdated resolved`
-              : 'nothing outdated in this window'}
+              : 'no outdated backlog measured in this window'}
           </p>
         </CardContent>
       </Card>
@@ -163,7 +164,9 @@ function TimelineChart({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
                 stroke="#94a3b8"
                 strokeWidth={2}
                 strokeDasharray="5 5"
-                dot={false}
+                // Scans without an outdated analysis are null, and recharts draws no
+                // segment next to a null: without dots an isolated measurement vanishes.
+                dot={{ r: 2 }}
                 name="Outdated"
               />
             </ComposedChart>

@@ -451,7 +451,8 @@ export interface ScanTimelineEntry {
     scan_id: string;
     date: string;
     updates_count: number;
-    outdated_count: number;
+    // null when the scan carried no outdated analysis.
+    outdated_count: number | null;
     patch: number;
     minor: number;
     major: number;
@@ -477,7 +478,8 @@ export interface UpdateFrequencyMetrics {
     last_scan_date: string;
     total_updates: number;
     updates_per_scan: number;
-    updates_per_month: number;
+    // null when no calendar window was requested.
+    updates_per_month: number | null;
     patch_updates: number;
     minor_updates: number;
     major_updates: number;
@@ -506,7 +508,7 @@ export interface ProjectUpdateSummary {
     project_name: string;
     team_name: string | null;
     scan_count: number;
-    updates_per_month: number;
+    updates_per_month: number | null;
     update_coverage_pct: number | null;
     patch_ratio: number;
     trend_direction: TrendDirection;
@@ -516,7 +518,7 @@ export interface ProjectUpdateSummary {
 
 export interface UpdateFrequencyComparison {
     projects: ProjectUpdateSummary[];
-    team_avg_updates_per_month: number;
+    team_avg_updates_per_month: number | null;
     team_avg_coverage_pct: number | null;
     best_project: string | null;
     worst_project: string | null;
