@@ -83,7 +83,8 @@ export default function ScanDetails() {
   const [complianceLicenseCategory, setComplianceLicenseCategory] = useState<string | undefined>(undefined);
   const [directOnly, setDirectOnly] = useState(false);
   const [hideInfo, setHideInfo] = useState(false);
-  const hasFindingsFilter = directOnly || hideInfo;
+  const [hideHistoricalSecrets, setHideHistoricalSecrets] = useState(false);
+  const hasFindingsFilter = directOnly || hideInfo || hideHistoricalSecrets;
 
   const handleTabChange = (val: string) => {
     setSearchParams(prev => {
@@ -493,8 +494,14 @@ export default function ScanDetails() {
                         <Checkbox id="filter-hide-info" checked={hideInfo} onCheckedChange={(c) => setHideInfo(c === true)} />
                         <label htmlFor="filter-hide-info" className="text-sm cursor-pointer">Hide informational</label>
                     </div>
+                    {activeTab === 'secrets' && (
+                        <div className="flex items-center space-x-2">
+                            <Checkbox id="filter-hide-historical-secrets" checked={hideHistoricalSecrets} onCheckedChange={(c) => setHideHistoricalSecrets(c === true)} />
+                            <label htmlFor="filter-hide-historical-secrets" className="text-sm cursor-pointer">Hide historical secrets</label>
+                        </div>
+                    )}
                     {hasFindingsFilter && (
-                        <Button variant="ghost" size="sm" onClick={() => { setDirectOnly(false); setHideInfo(false); }} className="gap-1">
+                        <Button variant="ghost" size="sm" onClick={() => { setDirectOnly(false); setHideInfo(false); setHideHistoricalSecrets(false); }} className="gap-1">
                             <X className="h-3 w-3" /> Clear
                         </Button>
                     )}
@@ -516,7 +523,7 @@ export default function ScanDetails() {
 
         {showSecrets && (
             <TabsContent value="secrets" className="space-y-4">
-                <FindingsTable scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} />
+                <FindingsTable scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} stickyHeaderTop={0} directOnly={directOnly} hideInfo={hideInfo} hideHistoricalSecrets={hideHistoricalSecrets} />
                 <WaivedFindingsSection scanId={scanId!} projectId={projectId!} category="secret" scanContext={scanContext} />
             </TabsContent>
         )}

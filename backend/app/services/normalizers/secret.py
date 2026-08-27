@@ -1,9 +1,9 @@
 import hashlib
 from typing import TYPE_CHECKING, Any
 
-from app.models.finding import Finding, FindingType, Severity
+from app.models.finding import Finding, FindingType
 from app.schemas.finding_details import SecretDetails
-from app.services.enrichment.scoring import calculate_secret_risk_score
+from app.services.enrichment.scoring import calculate_secret_risk_score, calculate_secret_severity
 from app.services.normalizers.utils import build_finding_id
 
 if TYPE_CHECKING:
@@ -71,7 +71,7 @@ def normalize_trufflehog(aggregator: "ResultAggregator", result: dict[str, Any],
             Finding(
                 id=finding_id,
                 type=FindingType.SECRET,
-                severity=Severity.CRITICAL,
+                severity=calculate_secret_severity(verified, in_current_tree),
                 component=file_path,
                 version="",  # secrets live in files, not packages
                 description=f"Secret detected: {detector}",
