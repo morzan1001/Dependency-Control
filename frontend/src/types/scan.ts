@@ -429,6 +429,8 @@ export interface ScanFindingsParams {
   waived?: boolean;
   /** True: hide findings on transitive dependencies (keeps direct and non-dependency findings). */
   direct_only?: boolean;
+  /** True: hide secrets no longer present in the current git tree (history-only). */
+  hide_historical_secrets?: boolean;
 }
 
 export interface ScanFindingsResponse {

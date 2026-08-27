@@ -6,6 +6,8 @@ import {
   SEVERITY_CHART_COLORS,
   SEVERITY_ORDER,
   getSecretTreeStatusInfo,
+  isSecretDeprioritized,
+  getSecretRemediationHint,
 } from '../finding-utils'
 
 // Color bands are on the backend's 0-100 combined-risk scale, not the 0-10 CVSS scale.
@@ -90,5 +92,61 @@ describe('getSecretTreeStatusInfo', () => {
   it('returns null when tree status is unknown', () => {
     expect(getSecretTreeStatusInfo(null)).toBeNull()
     expect(getSecretTreeStatusInfo(undefined)).toBeNull()
+  })
+})
+
+describe('isSecretDeprioritized', () => {
+  const secret = (in_current_tree: boolean | null | undefined, verified?: boolean) => ({
+    type: 'secret',
+    details: { in_current_tree, verified },
+  })
+
+  it('is true for an unverified secret gone from the current tree', () => {
+    expect(isSecretDeprioritized(secret(false, false))).toBe(true)
+    expect(isSecretDeprioritized(secret(false, undefined))).toBe(true)
+  })
+
+  it('is false for a verified secret even when gone from the tree (live leak)', () => {
+    expect(isSecretDeprioritized(secret(false, true))).toBe(false)
+  })
+
+  it('is false for a secret still in the current tree', () => {
+    expect(isSecretDeprioritized(secret(true, false))).toBe(false)
+  })
+
+  it('is false when tree status is unknown', () => {
+    expect(isSecretDeprioritized(secret(null))).toBe(false)
+    expect(isSecretDeprioritized(secret(undefined))).toBe(false)
+  })
+
+  it('is false for non-secret findings regardless of tree state', () => {
+    expect(isSecretDeprioritized({ type: 'vulnerability', details: { in_current_tree: false } })).toBe(false)
+  })
+})
+
+describe('getSecretRemediationHint', () => {
+  it('flags a verified history-only secret as a live credential to rotate now', () => {
+    const hint = getSecretRemediationHint(true, false)
+    expect(hint?.tone).toBe('danger')
+    expect(hint?.text).toMatch(/rotate/i)
+    expect(hint?.text).toMatch(/history/i)
+  })
+
+  it('tells the user an unverified history-only secret cannot be deleted away', () => {
+    const hint = getSecretRemediationHint(false, false)
+    expect(hint?.tone).toBe('muted')
+    expect(hint?.text).toMatch(/history/i)
+    expect(hint?.text).toMatch(/rotate|waive/i)
+  })
+
+  it('tells the user to remove an in-tree secret from the code and rotate', () => {
+    const hint = getSecretRemediationHint(false, true)
+    expect(hint?.tone).toBe('muted')
+    expect(hint?.text).toMatch(/rotate/i)
+  })
+
+  it('returns null when tree status is unknown', () => {
+    expect(getSecretRemediationHint(false, null)).toBeNull()
+    expect(getSecretRemediationHint(true, undefined)).toBeNull()
   })
 })

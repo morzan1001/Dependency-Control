@@ -1,5 +1,6 @@
 from app.core.constants import EPSS_HIGH_THRESHOLD, EPSS_MEDIUM_THRESHOLD, SEVERITY_CALCULATED_RISK_SCORES
 from app.core.epss import bucket_epss
+from app.models.finding import Severity
 
 
 def calculate_exploit_maturity(is_kev: bool, kev_ransomware: bool, epss_score: float | None) -> str:
@@ -104,3 +105,13 @@ def calculate_secret_risk_score(
         modifier = 1.0
     adjusted = min(base * modifier, 100.0)
     return base, adjusted
+
+
+def calculate_secret_severity(verified: bool | None, in_current_tree: bool | None) -> Severity:
+    """Deprioritized secrets (unverified AND gone from the current tree) drop to LOW so they leave
+    the critical counts; everything else stays CRITICAL. A verified credential is a live leak until
+    rotated, so it stays CRITICAL even when the file is gone. Mirrors the secret_deprioritized_count
+    predicate in analysis.stats (verified != True AND in_current_tree is False)."""
+    if verified is not True and in_current_tree is False:
+        return Severity.LOW
+    return Severity.CRITICAL

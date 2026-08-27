@@ -13,7 +13,7 @@ import { useWaiverById } from '@/hooks/queries/use-waivers'
 import { canCreateProjectWaiver } from '@/lib/project-roles'
 import { FindingTypeBadge } from './FindingTypeBadge'
 import { CollapsibleReferences } from './CollapsibleReferences'
-import { getSeverityBadgeVariant, getExploitMaturityClass, advisoryUrl, getSecretTreeStatusInfo } from '@/lib/finding-utils'
+import { getSeverityBadgeVariant, getExploitMaturityClass, advisoryUrl, getSecretTreeStatusInfo, getSecretRemediationHint } from '@/lib/finding-utils'
 import { formatDate, shortCommitHash } from '@/lib/utils'
 import { ContextBannersSection } from './details/ContextBannersSection'
 import { OriginBadge } from './details/OriginBadge'
@@ -290,6 +290,20 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                             scmContext={scanContext}
                                         />
                                     )}
+                                    {(() => {
+                                        const hint = getSecretRemediationHint(finding.details?.verified, finding.details?.in_current_tree)
+                                        if (!hint) return null
+                                        const toneClass = hint.tone === 'danger'
+                                            ? 'bg-destructive/10 border-destructive/30 text-destructive'
+                                            : 'bg-muted/50 border-border text-muted-foreground'
+                                        const Icon = hint.tone === 'danger' ? ShieldAlert : Shield
+                                        return (
+                                            <div className={`flex items-start gap-2 rounded-lg border p-3 text-sm ${toneClass}`}>
+                                                <Icon className="h-4 w-4 mt-0.5 shrink-0" />
+                                                <p>{hint.text}</p>
+                                            </div>
+                                        )
+                                    })()}
                                     <div className="grid grid-cols-2 gap-4 p-4 bg-muted/50 rounded-lg border">
                                         <DetailSection label="Detector" compact>
                                             <p className="font-medium">{finding.details?.detector || "Unknown"}</p>
@@ -316,12 +330,12 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                     {finding.details?.line && (
                                                         <span>:{finding.details.line}</span>
                                                     )}
-                                                    {finding.details?.commit_timestamp && (
-                                                        <span className="text-muted-foreground ml-2">
-                                                            {formatDate(finding.details.commit_timestamp)}
-                                                        </span>
-                                                    )}
                                                 </p>
+                                                {finding.details?.commit_timestamp && (
+                                                    <p className="text-xs text-muted-foreground mt-0.5">
+                                                        {formatDate(finding.details.commit_timestamp)}
+                                                    </p>
+                                                )}
                                             </DetailSection>
                                         )}
                                         {finding.details?.redacted && (

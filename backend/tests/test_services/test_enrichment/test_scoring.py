@@ -1,10 +1,12 @@
 """Tests for risk scoring and exploit maturity calculation."""
 
+from app.models.finding import Severity
 from app.services.enrichment.scoring import (
     calculate_adjusted_risk_score,
     calculate_exploit_maturity,
     calculate_risk_score,
     calculate_secret_risk_score,
+    calculate_secret_severity,
     map_reachability_level_to_modifier,
 )
 
@@ -209,3 +211,29 @@ class TestCalculateSecretRiskScore:
     def test_adjusted_score_capped_at_100(self):
         _, adjusted = calculate_secret_risk_score(verified=True, in_current_tree=True)
         assert adjusted <= 100.0
+
+
+class TestCalculateSecretSeverity:
+    """Only unverified secrets that are gone from the current tree drop to LOW; this must
+    match the secret_deprioritized_count predicate (type=secret AND verified!=True AND
+    in_current_tree=False) so the downgraded findings are exactly the deprioritized bucket."""
+
+    def test_unverified_historical_only_drops_to_low(self):
+        assert calculate_secret_severity(verified=False, in_current_tree=False) == Severity.LOW
+
+    def test_unknown_verified_historical_only_drops_to_low(self):
+        # secret_deprioritized_count uses $ne verified True, so unknown-verified counts as not-verified.
+        assert calculate_secret_severity(verified=None, in_current_tree=False) == Severity.LOW
+
+    def test_verified_historical_only_stays_critical(self):
+        # A verified credential is a live leak until rotated, even after the file is gone.
+        assert calculate_secret_severity(verified=True, in_current_tree=False) == Severity.CRITICAL
+
+    def test_unverified_in_current_tree_stays_critical(self):
+        assert calculate_secret_severity(verified=False, in_current_tree=True) == Severity.CRITICAL
+
+    def test_unknown_tree_stays_critical(self):
+        assert calculate_secret_severity(verified=None, in_current_tree=None) == Severity.CRITICAL
+
+    def test_verified_in_current_tree_stays_critical(self):
+        assert calculate_secret_severity(verified=True, in_current_tree=True) == Severity.CRITICAL
