@@ -504,23 +504,21 @@ export interface UpdateFrequencyMetrics {
 export interface ProjectUpdateSummary {
     project_id: string;
     project_name: string;
-    team_name?: string;
+    team_name: string | null;
     scan_count: number;
-    time_range_days: number;
     updates_per_month: number;
     update_coverage_pct: number | null;
     patch_ratio: number;
     trend_direction: TrendDirection;
     total_outdated: number;
     last_scan_date: string;
-    dominant_ecosystem: string | null;
 }
 
 export interface UpdateFrequencyComparison {
     projects: ProjectUpdateSummary[];
     team_avg_updates_per_month: number;
     team_avg_coverage_pct: number | null;
-    best_project?: string;
-    worst_project?: string;
+    best_project: string | null;
+    worst_project: string | null;
     skipped_projects: number;
 }

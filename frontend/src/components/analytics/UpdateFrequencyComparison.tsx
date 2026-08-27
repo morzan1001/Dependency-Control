@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
@@ -22,14 +23,35 @@ import {
 import {
   Trophy,
   AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  RefreshCw,
   Users,
 } from 'lucide-react'
 import { useUpdateFrequencyComparison } from '@/hooks/queries/use-analytics'
 import { useTeams } from '@/hooks/queries/use-teams'
 import { formatDate, formatCoveragePct } from '@/lib/utils'
 import type { ProjectUpdateSummary, UpdateFrequencyComparison as Comparison } from '@/types/analytics'
+import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 import { WindowSelect } from './WindowSelect'
 import { TREND_CONFIG } from './trend-config'
+
+type Metric = 'coverage' | 'updates'
+
+const CHART_TOP_N = 25
+const CHART_ANIMATION_MAX_BARS = 15
+const TABLE_PAGE_SIZE = 25
+
+interface RequestedFilters {
+  teamId?: string
+  windowDays?: number
+}
+
+function metricValue(project: ProjectUpdateSummary, metric: Metric): number {
+  if (metric === 'updates') return project.updates_per_month
+  // Unmeasurable coverage ranks below any measured value.
+  return project.update_coverage_pct ?? -1
+}
 
 function ComparisonSummaryCards({ data }: Readonly<{ data: Comparison }>) {
   return (
@@ -67,7 +89,7 @@ function ComparisonSummaryCards({ data }: Readonly<{ data: Comparison }>) {
           <Trophy className="h-4 w-4 text-green-500" />
         </CardHeader>
         <CardContent>
-          <div className="text-lg font-bold truncate" title={data.best_project}>
+          <div className="text-lg font-bold truncate" title={data.best_project ?? undefined}>
             {data.best_project || '—'}
           </div>
           <p className="text-xs text-muted-foreground">highest measured coverage</p>
@@ -80,7 +102,7 @@ function ComparisonSummaryCards({ data }: Readonly<{ data: Comparison }>) {
           <AlertTriangle className="h-4 w-4 text-amber-500" />
         </CardHeader>
         <CardContent>
-          <div className="text-lg font-bold truncate" title={data.worst_project}>
+          <div className="text-lg font-bold truncate" title={data.worst_project ?? undefined}>
             {data.worst_project || '—'}
           </div>
           <p className="text-xs text-muted-foreground">lowest measured coverage</p>
@@ -91,14 +113,23 @@ function ComparisonSummaryCards({ data }: Readonly<{ data: Comparison }>) {
 }
 
 function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary[] }>) {
-  const [metric, setMetric] = useState<'coverage' | 'updates'>('coverage')
+  const [metric, setMetric] = useState<Metric>('coverage')
 
-  const chartData = projects.map((p) => ({
-    name: p.project_name.length > 20 ? p.project_name.substring(0, 20) + '...' : p.project_name,
-    fullName: p.project_name,
-    // null coverage (nothing ever outdated) leaves a gap rather than a zero bar.
-    value: metric === 'coverage' ? p.update_coverage_pct ?? undefined : p.updates_per_month,
-  }))
+  const chartData = useMemo(
+    () =>
+      [...projects]
+        .sort((a, b) => metricValue(b, metric) - metricValue(a, metric))
+        .slice(0, CHART_TOP_N)
+        .map((p) => ({
+          name: p.project_name.length > 20 ? p.project_name.substring(0, 20) + '...' : p.project_name,
+          fullName: p.project_name,
+          // null coverage (nothing ever outdated) leaves a gap rather than a zero bar.
+          value: metric === 'coverage' ? p.update_coverage_pct ?? undefined : p.updates_per_month,
+        })),
+    [projects, metric]
+  )
+
+  const metricLabel = metric === 'coverage' ? 'Update coverage percentage' : 'Updates per month'
 
   return (
     <Card>
@@ -106,10 +137,12 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
         <div>
           <CardTitle>Project Comparison</CardTitle>
           <CardDescription>
-            {metric === 'coverage' ? 'Update coverage percentage' : 'Updates per month'} by project
+            {projects.length > CHART_TOP_N
+              ? `${metricLabel} — top ${CHART_TOP_N} of ${projects.length} projects`
+              : `${metricLabel} by project`}
           </CardDescription>
         </div>
-        <Select value={metric} onValueChange={(v) => setMetric(v as 'coverage' | 'updates')}>
+        <Select value={metric} onValueChange={(v) => setMetric(v as Metric)}>
           <SelectTrigger className="w-[180px]">
             <SelectValue />
           </SelectTrigger>
@@ -120,7 +153,7 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
         </Select>
       </CardHeader>
       <CardContent>
-        <div className="w-full min-w-0" style={{ height: Math.max(250, projects.length * 40) }}>
+        <div className="w-full min-w-0" style={{ height: Math.max(250, chartData.length * 40) }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} layout="vertical" margin={{ left: 20 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -141,6 +174,7 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
                 dataKey="value"
                 fill="hsl(var(--primary))"
                 radius={[0, 4, 4, 0]}
+                isAnimationActive={chartData.length <= CHART_ANIMATION_MAX_BARS}
               />
             </BarChart>
           </ResponsiveContainer>
@@ -158,12 +192,20 @@ function getCoverageBadgeClass(pct: number | null): string {
 }
 
 function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSummary[] }>) {
+  const [requestedPage, setPage] = useState(1)
+
+  const totalPages = Math.max(1, Math.ceil(projects.length / TABLE_PAGE_SIZE))
+  // A shorter project list can strand the page index past the last page.
+  const page = Math.min(requestedPage, totalPages)
+  const offset = (page - 1) * TABLE_PAGE_SIZE
+  const visible = projects.slice(offset, offset + TABLE_PAGE_SIZE)
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Project Ranking</CardTitle>
         <CardDescription>
-          All projects ranked by update coverage and frequency
+          {projects.length} projects ranked by update coverage and frequency
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -183,13 +225,13 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
               </TableRow>
             </TableHeader>
             <TableBody>
-              {projects.map((project, idx) => {
+              {visible.map((project, idx) => {
                 const trend = TREND_CONFIG[project.trend_direction] ?? TREND_CONFIG.stable
                 const TrendIcon = trend.icon
 
                 return (
                   <TableRow key={project.project_id}>
-                    <TableCell className="text-muted-foreground">{idx + 1}</TableCell>
+                    <TableCell className="text-muted-foreground">{offset + idx + 1}</TableCell>
                     <TableCell className="font-medium">{project.project_name}</TableCell>
                     <TableCell className="text-muted-foreground">{project.team_name || '—'}</TableCell>
                     <TableCell className="text-right font-mono">{project.updates_per_month}</TableCell>
@@ -217,6 +259,17 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
             </TableBody>
           </Table>
         </div>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-end gap-2 py-4 text-sm text-muted-foreground">
+            Page {page} of {totalPages}
+            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+              <ChevronLeft className="h-4 w-4" /> Previous
+            </Button>
+            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+              Next <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -225,9 +278,21 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
 export function UpdateFrequencyComparison() {
   const [selectedTeamId, setSelectedTeamId] = useState<string | undefined>(undefined)
   const [windowDays, setWindowDays] = useState<number | undefined>(90)
+  const [requested, setRequested] = useState<RequestedFilters | null>(null)
 
   const { data: teamsData } = useTeams()
-  const { data, isLoading, error } = useUpdateFrequencyComparison(selectedTeamId, { windowDays })
+  const { data, isFetching, error, refetch } = useUpdateFrequencyComparison(
+    requested?.teamId,
+    { windowDays: requested?.windowDays },
+    requested !== null
+  )
+
+  // A disabled query still hands back whatever sits in the cache for its key.
+  const comparison = requested === null ? undefined : data
+  const loadError = requested === null ? null : error
+
+  const filtersDirty =
+    requested === null || requested.teamId !== selectedTeamId || requested.windowDays !== windowDays
 
   return (
     <div className="space-y-6">
@@ -238,7 +303,7 @@ export function UpdateFrequencyComparison() {
             Compare how well projects keep their dependencies up to date
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-2">
           <div className="flex flex-wrap items-center gap-4">
             <Select
               value={selectedTeamId || 'all'}
@@ -257,11 +322,26 @@ export function UpdateFrequencyComparison() {
               </SelectContent>
             </Select>
             <WindowSelect value={windowDays} onChange={setWindowDays} />
+            <Button
+              variant="outline"
+              disabled={isFetching}
+              onClick={() =>
+                filtersDirty ? setRequested({ teamId: selectedTeamId, windowDays }) : refetch()
+              }
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
+              {filtersDirty ? 'Load comparison' : 'Reload comparison'}
+            </Button>
           </div>
+          <p className="text-xs text-muted-foreground">
+            {filtersDirty && requested !== null
+              ? 'Filters changed — load the comparison to apply them.'
+              : 'Replays the scan history of every project in scope and can take several minutes.'}
+          </p>
         </CardContent>
       </Card>
 
-      {isLoading && (
+      {isFetching && (
         <div className="space-y-4">
           <div className="grid gap-4 md:grid-cols-4">
             {Array.from({ length: 4 }, (_, i) => (
@@ -272,18 +352,26 @@ export function UpdateFrequencyComparison() {
         </div>
       )}
 
-      {error && (
+      {loadError && !isFetching && (
+        <AnalyticsErrorCard
+          title="Failed to load comparison data"
+          error={loadError}
+          onRetry={() => refetch()}
+        />
+      )}
+
+      {requested === null && (
         <Card>
-          <CardContent className="py-8">
-            <div className="flex flex-col items-center gap-2 text-muted-foreground">
-              <AlertTriangle className="h-12 w-12" />
-              <p>Failed to load comparison data</p>
+          <CardContent className="py-12">
+            <div className="flex flex-col items-center gap-4 text-muted-foreground">
+              <Users className="h-12 w-12" />
+              <p>Pick a team and time window, then load the comparison</p>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {data?.projects.length === 0 && (
+      {comparison?.projects.length === 0 && !isFetching && (
         <Card>
           <CardContent className="py-12">
             <div className="flex flex-col items-center gap-4 text-muted-foreground">
@@ -295,11 +383,11 @@ export function UpdateFrequencyComparison() {
         </Card>
       )}
 
-      {data && data.projects.length > 0 && (
+      {comparison && comparison.projects.length > 0 && !isFetching && (
         <>
-          <ComparisonSummaryCards data={data} />
-          <ComparisonChart projects={data.projects} />
-          <ProjectRankingTable projects={data.projects} />
+          <ComparisonSummaryCards data={comparison} />
+          <ComparisonChart projects={comparison.projects} />
+          <ProjectRankingTable projects={comparison.projects} />
         </>
       )}
     </div>

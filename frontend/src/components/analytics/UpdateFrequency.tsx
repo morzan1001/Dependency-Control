@@ -25,9 +25,9 @@ import {
   Clock,
   Package,
   ArrowRight,
-  AlertTriangle,
   GitBranch,
 } from 'lucide-react'
+import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 import { useUpdateFrequency } from '@/hooks/queries/use-analytics'
 import { formatDate, formatCoveragePct } from '@/lib/utils'
 import type { UpdateFrequencyMetrics, DependencyUpdateEvent } from '@/types/analytics'
@@ -368,7 +368,7 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
   const [selectedProjectId, setSelectedProjectId] = useState<string>(initialProjectId || '')
   const [windowDays, setWindowDays] = useState<number | undefined>(90)
 
-  const { data, isLoading, error } = useUpdateFrequency(selectedProjectId, { windowDays })
+  const { data, isFetching, error, refetch } = useUpdateFrequency(selectedProjectId, { windowDays })
 
   return (
     <div className="space-y-6">
@@ -399,7 +399,7 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
         </div>
       )}
 
-      {isLoading && selectedProjectId && (
+      {isFetching && selectedProjectId && (
         <div className="space-y-4">
           <div className="grid gap-4 md:grid-cols-4">
             {Array.from({ length: 4 }, (_, i) => (
@@ -410,15 +410,12 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
         </div>
       )}
 
-      {error && (
-        <Card>
-          <CardContent className="py-8">
-            <div className="flex flex-col items-center gap-2 text-muted-foreground">
-              <AlertTriangle className="h-12 w-12" />
-              <p>Failed to load update frequency data</p>
-            </div>
-          </CardContent>
-        </Card>
+      {error && !isFetching && (
+        <AnalyticsErrorCard
+          title="Failed to load update frequency data"
+          error={error}
+          onRetry={() => refetch()}
+        />
       )}
 
       {!selectedProjectId && !initialProjectId && (
@@ -432,7 +429,7 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
         </Card>
       )}
 
-      {data && data.scan_count < 2 && (
+      {data && data.scan_count < 2 && !isFetching && (
         <Card>
           <CardContent className="py-12">
             <div className="flex flex-col items-center gap-4 text-muted-foreground">
@@ -444,7 +441,7 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
         </Card>
       )}
 
-      {data && data.scan_count >= 2 && (
+      {data && data.scan_count >= 2 && !isFetching && (
         <>
           {data.branch && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
