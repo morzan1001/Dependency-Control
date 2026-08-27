@@ -107,6 +107,9 @@ class Settings(BaseSettings):
     # Compliance report retention (days from completion until sweep deletes report + artifact).
     COMPLIANCE_REPORT_RETENTION_DAYS: int = 90
 
+    # Kill switch for the per-scan update-frequency rollup written during ingest.
+    UPDATE_FREQUENCY_ROLLUP_ENABLED: bool = True
+
     model_config = SettingsConfigDict(case_sensitive=True, env_file=".env")
 
 

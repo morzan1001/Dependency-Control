@@ -16,6 +16,14 @@ Supported update operators
 --------------------------
 - ``$set``, ``$setOnInsert``, ``$inc``, ``$addToSet``
 
+Server-side behaviour that tests rely on
+----------------------------------------
+- Projections in ``find``/``find_one``, inclusion and exclusion, dotted paths
+  included, so a too-narrow projection surfaces here instead of in production.
+- BSON datetimes: a written aware datetime is stored (and read back) as naive
+  UTC, and an aware query value is normalised before comparison, matching what
+  the driver puts on the wire.
+
 Supported aggregation stages
 ----------------------------
 - ``$match``, ``$sort``, ``$group``, ``$project``, ``$limit``, ``$unwind``
@@ -41,6 +49,7 @@ import operator as _op
 import re as _re
 from datetime import datetime as _datetime
 from datetime import timedelta as _timedelta
+from datetime import timezone as _timezone
 from typing import Any
 from unittest.mock import MagicMock
 
@@ -63,6 +72,26 @@ def _truncate_date(value: Any, unit: str) -> Any:
 
 _SET_ON_INSERT = "$setOnInsert"
 _CMP = {"$lt": _op.lt, "$lte": _op.le, "$gt": _op.gt, "$gte": _op.ge}
+
+
+# ---------------------------------------------------------------------------
+# BSON datetime semantics
+# ---------------------------------------------------------------------------
+
+
+def _naive_utc(value: Any) -> Any:
+    """BSON has no offsets: an aware datetime is stored (and read back) as naive UTC."""
+    if isinstance(value, _datetime) and value.tzinfo is not None:
+        return value.astimezone(_timezone.utc).replace(tzinfo=None)
+    return value
+
+
+def _bsonify(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {k: _bsonify(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_bsonify(v) for v in value]
+    return _naive_utc(value)
 
 
 # ---------------------------------------------------------------------------
@@ -100,7 +129,9 @@ def _match_range_ops(value, ops_dict: dict) -> bool:
             if value is None:
                 return False
             try:
-                if not cmp_fn(value, ops_dict[op_key]):
+                # The driver encodes an aware query value to UTC, so it compares
+                # against the stored naive datetime instead of raising.
+                if not cmp_fn(_naive_utc(value), _naive_utc(ops_dict[op_key])):
                     return False
             except TypeError:
                 return False
@@ -213,7 +244,7 @@ def _match_doc(doc: dict, query: dict) -> bool:
             if not _match_range_ops(value, condition):
                 return False
         else:
-            if value != condition:
+            if _naive_utc(value) != _naive_utc(condition):
                 return False
     return True
 
@@ -618,14 +649,15 @@ class _AsyncIter:
 
 
 class _FakeCursor:
-    """Chainable cursor for ``find()``. Supports skip/limit/sort."""
+    """Chainable cursor for ``find()``. Supports skip/limit/sort/projection."""
 
-    def __init__(self, docs: dict, query: dict, sort=None, limit: int = 0, skip: int = 0):
+    def __init__(self, docs: dict, query: dict, sort=None, limit: int = 0, skip: int = 0, projection=None):
         self._docs = docs
         self._query = query
         self._sort: list[tuple[str, int]] = list(sort) if sort else []
         self._skip_n = skip
         self._limit_n = limit
+        self._projection = projection
         self._iter = None
 
     def skip(self, n: int) -> _FakeCursor:
@@ -653,6 +685,8 @@ class _FakeCursor:
         results = results[self._skip_n :]
         if self._limit_n:
             results = results[: self._limit_n]
+        if self._projection:
+            return [_apply_projection(doc, self._projection) for doc in results]
         return results
 
     async def to_list(self, length=None) -> list:
@@ -672,6 +706,66 @@ class _FakeCursor:
 # ---------------------------------------------------------------------------
 # Collection
 # ---------------------------------------------------------------------------
+
+
+def _copy_projected_path(src: dict, parts: list[str], dst: dict) -> None:
+    head = parts[0]
+    if head not in src:
+        return
+    value = src[head]
+    if len(parts) == 1:
+        dst[head] = _copy.deepcopy(value)
+        return
+    if isinstance(value, list):
+        # Sibling paths sharing an array prefix project into the same elements,
+        # so the bucket is filled positionally instead of appended to.
+        bucket = dst.setdefault(head, [])
+        position = 0
+        for element in value:
+            if not isinstance(element, dict):
+                continue
+            if position == len(bucket):
+                bucket.append({})
+            _copy_projected_path(element, parts[1:], bucket[position])
+            position += 1
+        return
+    if isinstance(value, dict):
+        _copy_projected_path(value, parts[1:], dst.setdefault(head, {}))
+
+
+def _drop_projected_path(node: Any, parts: list[str]) -> None:
+    if isinstance(node, list):
+        for element in node:
+            _drop_projected_path(element, parts)
+        return
+    head = parts[0]
+    if not isinstance(node, dict) or head not in node:
+        return
+    if len(parts) == 1:
+        node.pop(head)
+        return
+    _drop_projected_path(node[head], parts[1:])
+
+
+def _apply_projection(doc: dict | None, projection: dict | None) -> dict | None:
+    """Trim a document the way the server does, so a too-narrow projection is visible in tests."""
+    if doc is None or not projection:
+        return doc
+    fields = {path: spec for path, spec in projection.items() if path != "_id"}
+    if any(spec in (1, True) for spec in fields.values()):
+        out: dict = {}
+        for path, spec in fields.items():
+            if spec in (1, True):
+                _copy_projected_path(doc, path.split("."), out)
+        if projection.get("_id", 1) not in (0, False) and "_id" in doc:
+            out["_id"] = doc["_id"]
+        return out
+    out = _copy.deepcopy(doc)
+    for path in fields:
+        _drop_projected_path(out, path.split("."))
+    if projection.get("_id") in (0, False):
+        out.pop("_id", None)
+    return out
 
 
 def _matched_key(docs: dict, query: dict) -> Any:
@@ -722,7 +816,7 @@ class FakeCollection:
         if collision is not None:
             raise DuplicateKeyError(f"E11000 duplicate key error: {collision}")
         key = doc.get("_id") or str(len(self._docs))
-        self._docs[key] = dict(doc)
+        self._docs[key] = _bsonify(doc)
         result = MagicMock()
         result.inserted_id = key
         return result
@@ -743,7 +837,7 @@ class FakeCollection:
                     break
                 continue
             key = doc.get("_id") or str(len(self._docs))
-            self._docs[key] = dict(doc)
+            self._docs[key] = _bsonify(doc)
             inserted.append(key)
         if write_errors:
             raise BulkWriteError({"writeErrors": write_errors, "nInserted": len(inserted)})
@@ -768,7 +862,7 @@ class FakeCollection:
             self._apply_update(doc, update, skip_set_on_insert=True)
             key = doc.get("_id") or str(len(self._docs))
             doc["_id"] = key
-            self._docs[key] = doc
+            self._docs[key] = _bsonify(doc)
         result = MagicMock()
         result.modified_count = modified
         return result
@@ -786,7 +880,7 @@ class FakeCollection:
             self._apply_update(doc, update, skip_set_on_insert=True)
             key = doc.get("_id") or str(len(self._docs))
             doc["_id"] = key
-            self._docs[key] = doc
+            self._docs[key] = _bsonify(doc)
         result = MagicMock()
         result.modified_count = modified
         result.matched_count = len(matched)
@@ -807,7 +901,7 @@ class FakeCollection:
             self._apply_update(doc, update, skip_set_on_insert=True)
             key = doc.get("_id") or str(len(self._docs))
             doc["_id"] = key
-            self._docs[key] = doc
+            self._docs[key] = _bsonify(doc)
             return doc if return_document else None
         before = dict(self._docs[matched])
         self._apply_update(self._docs[matched], update)
@@ -818,6 +912,7 @@ class FakeCollection:
         target: dict, update: dict, skip_set_on_insert: bool = False, array_filters: list | None = None
     ) -> None:
         filters = _array_filter_predicates(array_filters)
+        update = _bsonify(update)
         for op, payload in update.items():
             if op == "$set":
                 for k, v in payload.items():
@@ -922,7 +1017,7 @@ class FakeCollection:
                     else:
                         ident_parts = [str(flt.get(f, "")) for f in ("project_id", "scan_id", "bom_ref")]
                         doc["_id"] = ":".join(p for p in ident_parts if p) or str(len(self._docs))
-                self._docs[doc["_id"]] = doc
+                self._docs[doc["_id"]] = _bsonify(doc)
         result = MagicMock()
         result.modified_count = modified
         return result
@@ -944,7 +1039,7 @@ class FakeCollection:
     async def find_one(self, query, projection=None, sort=None):
         # Fast path for _id-only queries (common in repository code)
         if set(query.keys()) == {"_id"} and not isinstance(query["_id"], dict):
-            return self._docs.get(query["_id"])
+            return _apply_projection(self._docs.get(query["_id"]), projection)
         if sort:
             # Mirror real Mongo: apply the sort, then return the first match.
             matches = [doc for doc in self._docs.values() if _match_doc(doc, query)]
@@ -953,10 +1048,10 @@ class FakeCollection:
                     key=lambda d, k=key: (d.get(k) is None, d.get(k)),
                     reverse=direction < 0,
                 )
-            return matches[0] if matches else None
+            return _apply_projection(matches[0], projection) if matches else None
         for doc in self._docs.values():
             if _match_doc(doc, query):
-                return doc
+                return _apply_projection(doc, projection)
         return None
 
     async def count_documents(self, query, limit: int = 0, **_kwargs):
@@ -974,14 +1069,14 @@ class FakeCollection:
         return seen
 
     def find(self, query=None, projection=None, **kwargs) -> _FakeCursor:
-        cursor = _FakeCursor(
+        return _FakeCursor(
             self._docs,
             query or {},
             sort=kwargs.get("sort"),
             limit=kwargs.get("limit", 0),
             skip=kwargs.get("skip", 0),
+            projection=projection,
         )
-        return cursor
 
     def aggregate(self, pipeline: list, **_kwargs) -> _AsyncIter:
         # ``allowDiskUse`` (and any other server-side option) is a no-op in-process.
