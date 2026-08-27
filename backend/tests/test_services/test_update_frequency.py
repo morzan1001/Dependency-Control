@@ -13,12 +13,13 @@ from app.services.release_history import ReleaseHistory, ReleaseInfo
 from app.services.update_frequency import (
     _COMPARISON_CONCURRENCY,
     _aggregate_metrics,
-    _compute_trend,
     _dominant_ecosystem,
     _empty_metrics,
     classify_version_change,
+    compute_trend,
     compute_update_frequency,
     compute_update_frequency_comparison,
+    window_cutoff,
 )
 
 
@@ -172,26 +173,26 @@ def _baseline_entry() -> ScanTimelineEntry:
 class TestComputeTrend:
     # trend is "unknown" when there isn't enough data, not "stable"
     def test_empty_timeline_returns_unknown(self):
-        direction, _ = _compute_trend([])
+        direction, _ = compute_trend([])
         assert direction == "unknown"
 
     def test_four_scans_returns_unknown(self):
         # Baseline + 3 real entries is still too little signal.
         timeline = [_baseline_entry()] + [_make_timeline_entry(i + 1, updates=2) for i in range(3)]
-        direction, detail = _compute_trend(timeline)
+        direction, detail = compute_trend(timeline)
         assert direction == "unknown"
         assert "enough" in detail.lower()
 
     def test_consistent_rate_returns_stable(self):
         timeline = [_baseline_entry()] + [_make_timeline_entry(i + 1, updates=2, outdated=5) for i in range(4)]
-        direction, _ = _compute_trend(timeline)
+        direction, _ = compute_trend(timeline)
         assert direction == "stable"
 
     def test_constant_rate_never_improving_regardless_of_length(self):
         # The structural zero of the baseline entry must not fabricate acceleration.
         for n in (4, 6, 9, 19):
             timeline = [_baseline_entry()] + [_make_timeline_entry(i + 1, updates=3, outdated=7) for i in range(n)]
-            direction, _ = _compute_trend(timeline)
+            direction, _ = compute_trend(timeline)
             assert direction == "stable", f"length {n} classified {direction}"
 
     def test_improving_trend(self):
@@ -200,7 +201,7 @@ class TestComputeTrend:
             + [_make_timeline_entry(i + 1, updates=1, outdated=10) for i in range(3)]
             + [_make_timeline_entry(i + 4, updates=10, outdated=10) for i in range(3)]
         )
-        direction, _ = _compute_trend(timeline)
+        direction, _ = compute_trend(timeline)
         assert direction == "improving"
 
     def test_conflicting_signals_return_stable(self):
@@ -210,7 +211,7 @@ class TestComputeTrend:
             + [_make_timeline_entry(i + 1, updates=1, outdated=2) for i in range(3)]
             + [_make_timeline_entry(i + 4, updates=10, outdated=30) for i in range(3)]
         )
-        direction, detail = _compute_trend(timeline)
+        direction, detail = compute_trend(timeline)
         assert direction == "stable"
         assert "Updates/scan" in detail
         assert "Outdated" in detail
@@ -359,33 +360,31 @@ class FakeDepRepo:
         return [_apply_projection(d, projection) for d in self._deps_by_scan.get(scan_id, [])]
 
 
-class _AnalysisResultStub:
-    def __init__(self, scan_id: str, analyzer_name: str, result: dict[str, Any]):
-        self.scan_id = scan_id
-        self.analyzer_name = analyzer_name
-        self.result = result
-
-
 class FakeAnalysisRepo:
-    def __init__(self, results: list[_AnalysisResultStub]):
+    def __init__(self, results: list[dict[str, Any]]):
         self._results = results
-        self.find_many_calls: list[dict[str, Any]] = []
+        self.queries: list[dict[str, Any]] = []
 
-    async def find_many(self, query: dict[str, Any], limit: int = 1000) -> list[_AnalysisResultStub]:
-        self.find_many_calls.append(query)
+    async def find_many_raw(
+        self,
+        query: dict[str, Any],
+        limit: int = 1000,
+        projection: dict[str, int] | None = None,
+    ) -> list[dict[str, Any]]:
+        self.queries.append(query)
         scan_filter = query.get("scan_id")
         analyzer = query.get("analyzer_name")
         out = []
         for r in self._results:
             if isinstance(scan_filter, dict):
                 ids = scan_filter.get("$in", [])
-                if r.scan_id not in ids:
+                if r["scan_id"] not in ids:
                     continue
-            elif scan_filter is not None and r.scan_id != scan_filter:
+            elif scan_filter is not None and r["scan_id"] != scan_filter:
                 continue
-            if analyzer is not None and r.analyzer_name != analyzer:
+            if analyzer is not None and r["analyzer_name"] != analyzer:
                 continue
-            out.append(r)
+            out.append(_apply_projection(r, projection))
         return out[:limit]
 
 
@@ -411,6 +410,15 @@ def _make_scan(
     }
 
 
+def _recent_scans(count: int, spacing_days: int = 1) -> list[dict[str, Any]]:
+    """Scans ending at now, so a ``window_days`` cutoff can select a known suffix."""
+    now = datetime.now(tz=timezone.utc)
+    scans = [_make_scan(f"s{i}", i) for i in range(count)]
+    for i, scan in enumerate(scans):
+        scan["created_at"] = now - timedelta(days=(count - 1 - i) * spacing_days)
+    return scans
+
+
 def _make_dep(scan_id: str, name: str, version: str, ptype: str = "pypi") -> dict[str, Any]:
     return {
         "scan_id": scan_id,
@@ -421,12 +429,12 @@ def _make_dep(scan_id: str, name: str, version: str, ptype: str = "pypi") -> dic
     }
 
 
-def _outdated_result(scan_id: str, entries: list[dict[str, str]]) -> _AnalysisResultStub:
-    return _AnalysisResultStub(
-        scan_id=scan_id,
-        analyzer_name="outdated_packages",
-        result={"outdated_dependencies": entries},
-    )
+def _outdated_result(scan_id: str, entries: list[dict[str, str]]) -> dict[str, Any]:
+    return {
+        "scan_id": scan_id,
+        "analyzer_name": "outdated_packages",
+        "result": {"outdated_dependencies": entries},
+    }
 
 
 class TestBranchScopedScanSelection:
@@ -607,9 +615,9 @@ class TestBranchScopedScanSelection:
 
     @pytest.mark.asyncio
     async def test_naive_created_at_is_coerced_to_utc(self):
-        # Motor returns naive UTC datetimes; a tz-aware `since` cutoff and the
+        # Motor returns naive UTC datetimes; the tz-aware window cutoff and the
         # downstream date math must both survive that.
-        naive = _BASE_SCAN_DATE.replace(tzinfo=None)
+        naive = (datetime.now(tz=timezone.utc) - timedelta(days=40)).replace(tzinfo=None)
         scans = [
             {**_make_scan("s1", 0), "created_at": naive},
             {**_make_scan("s2", 30), "created_at": naive + timedelta(days=30)},
@@ -618,7 +626,7 @@ class TestBranchScopedScanSelection:
             "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
             "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
         }
-        m = await self._compute(scans, deps, since=_BASE_SCAN_DATE - timedelta(days=1))
+        m = await self._compute(scans, deps, window_days=60)
         assert m.scan_count == 2
         assert m.first_scan_date.endswith("+00:00")
         assert m.last_scan_date.endswith("+00:00")
@@ -816,6 +824,7 @@ class TestOutdatedTracking:
         }
         results = [
             _outdated_result("s1", [{"component": "pkg-a", "current_version": "1.0.0", "latest_version": "3.0.0"}]),
+            _outdated_result("s2", []),
         ]
         m = await self._compute(deps, results)
         assert m.outdated_resolved == 1
@@ -829,10 +838,108 @@ class TestOutdatedTracking:
         }
         results = [
             _outdated_result("s1", [{"component": "pkg-a", "current_version": "1.0.0", "latest_version": "3.0.0"}]),
+            _outdated_result("s2", []),
         ]
         m = await self._compute(deps, results)
         assert m.outdated_resolved == 0
         assert m.update_coverage_pct == 0.0
+
+
+_BACKLOG = ("pkg-a", "pkg-b", "pkg-c")
+
+
+def _backlog_deps(scan_id: str) -> list[dict[str, Any]]:
+    return [_make_dep(scan_id, name, "1.0.0") for name in _BACKLOG]
+
+
+def _backlog_outdated(scan_id: str, names: Sequence[str] = _BACKLOG) -> dict[str, Any]:
+    return _outdated_result(
+        scan_id,
+        [{"component": name, "current_version": "1.0.0", "latest_version": "9.0.0"} for name in names],
+    )
+
+
+class TestUnmeasuredScans:
+    """A scan carrying no outdated analysis is not a scan with an empty backlog.
+
+    Roughly one scan in thirty ships without an SBOM and therefore without the
+    analysis, so every metric derived from the backlog has to survive the gap.
+    """
+
+    @staticmethod
+    async def _compute(scans, deps, analysis_results):
+        return await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo(analysis_results),
+        )
+
+    @pytest.mark.asyncio
+    async def test_missing_final_analysis_is_not_a_cleared_backlog(self):
+        # Identical dependency sets: nothing was updated, so nothing can have
+        # been resolved either.
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {sid: _backlog_deps(sid) for sid in ("s1", "s2")}
+        m = await self._compute(scans, deps, [_backlog_outdated("s1")])
+        assert m.total_updates == 0
+        assert m.total_outdated_detected == 3
+        assert m.outdated_resolved == 0
+        assert m.update_coverage_pct == 0.0
+        assert [e.outdated_count for e in m.scan_timeline] == [3, None]
+
+    @pytest.mark.asyncio
+    async def test_coverage_is_none_when_no_scan_measured_a_backlog(self):
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {sid: _backlog_deps(sid) for sid in ("s1", "s2")}
+        m = await self._compute(scans, deps, [])
+        assert m.update_coverage_pct is None
+        assert m.total_outdated_detected == 0
+        assert [e.outdated_count for e in m.scan_timeline] == [None, None]
+
+    @pytest.mark.asyncio
+    async def test_resolution_across_a_measurement_gap_is_not_credited(self):
+        # pkg-b and pkg-c leave the backlog, but the only scan in between
+        # carries no analysis, so the transition was never observed.
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30), _make_scan("s3", 60)]
+        deps = {
+            "s1": [*_backlog_deps("s1"), _make_dep("s1", "churn", "1.0.0")],
+            "s2": [*_backlog_deps("s2"), _make_dep("s2", "churn", "1.0.0")],
+            "s3": [*_backlog_deps("s3"), _make_dep("s3", "churn", "1.1.0")],
+        }
+        results = [_backlog_outdated("s1"), _backlog_outdated("s3", ["pkg-a"])]
+        m = await self._compute(scans, deps, results)
+        assert m.total_outdated_detected == 3
+        assert m.outdated_resolved == 0
+        assert m.update_coverage_pct == 0.0
+        assert [e.outdated_count for e in m.scan_timeline] == [3, None, 1]
+        # churn was updated out of the gap: its predecessor's backlog is unknown, not empty.
+        assert m.total_updates == 1
+        assert m.recent_updates[0].was_outdated is False
+
+    @pytest.mark.asyncio
+    async def test_backlog_stays_listed_when_the_newest_scan_is_unmeasured(self):
+        scans = [_make_scan("s1", 0), _make_scan("s2", 30)]
+        deps = {sid: _backlog_deps(sid) for sid in ("s1", "s2")}
+        m = await self._compute(scans, deps, [_backlog_outdated("s1")])
+        assert sorted(p.name for p in m.slowest_packages) == list(_BACKLOG)
+        assert {p.latest_version for p in m.slowest_packages} == {"9.0.0"}
+
+    @pytest.mark.asyncio
+    async def test_an_unmeasured_last_scan_does_not_read_as_a_shrinking_backlog(self):
+        backlog = [f"pkg-{i}" for i in range(10)]
+        scans = [_make_scan(f"s{i}", i * 7) for i in range(6)]
+        deps = {
+            f"s{i}": [_make_dep(f"s{i}", name, "1.0.0") for name in backlog] + [_make_dep(f"s{i}", "churn", f"1.0.{i}")]
+            for i in range(6)
+        }
+        # The newest scan ran without the analyzer; the backlog never moved.
+        results = [_backlog_outdated(f"s{i}", backlog) for i in range(5)]
+        m = await self._compute(scans, deps, results)
+        assert [e.outdated_count for e in m.scan_timeline] == [10, 10, 10, 10, 10, None]
+        assert m.trend_direction == "stable"
+        assert "~10 outdated" in m.trend_detail
 
 
 class TestAggregationAccuracy:
@@ -852,7 +959,6 @@ class TestAggregationAccuracy:
         )
         assert m.total_updates == 0
         assert m.downgrade_updates == 1
-        assert m.updates_per_month == 0.0
         assert m.scan_timeline[1].updates_count == 0
         assert m.scan_timeline[1].downgrades == 1
         # Still visible in the event list, labeled as what it is.
@@ -877,7 +983,44 @@ class TestAggregationAccuracy:
             analysis_repo=FakeAnalysisRepo([]),
         )
         assert m.time_range_days == pytest.approx(1.5)
-        assert m.updates_per_month == pytest.approx(1 / (1.5 / 30.44), abs=0.01)
+
+    @staticmethod
+    async def _one_update_over(hours: int, window_days: int | None):
+        now = datetime.now(tz=timezone.utc)
+        scans = [
+            {**_make_scan("s1", 0), "created_at": now - timedelta(hours=hours)},
+            {**_make_scan("s2", 1), "created_at": now},
+        ]
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
+        }
+        return await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+            window_days=window_days,
+            hard_limit=10,
+        )
+
+    @pytest.mark.asyncio
+    async def test_the_monthly_rate_measures_the_window_not_the_scan_cadence(self):
+        fast = await self._one_update_over(36, window_days=None)
+        slow = await self._one_update_over(24 * 60, window_days=None)
+        # No window: extrapolating one update to a monthly rate would say 20/month
+        # for the fast project and 0.5/month for the slow one on identical activity.
+        assert fast.updates_per_month is None
+        assert slow.updates_per_month is None
+
+    @pytest.mark.asyncio
+    async def test_the_monthly_rate_is_the_same_for_both_cadences_in_one_window(self):
+        # window_days here is only the rate denominator; both scan pairs fall
+        # inside the cutoff, so the selection itself is unaffected.
+        expected = round(1 / (90 / 30.44), 2)
+        assert (await self._one_update_over(36, window_days=90)).updates_per_month == expected
+        assert (await self._one_update_over(24 * 60, window_days=90)).updates_per_month == expected
 
     @pytest.mark.asyncio
     async def test_slowest_packages_only_lists_still_outdated_with_fresh_versions(self):
@@ -1070,22 +1213,18 @@ class TestStreamingOrchestrator:
         assert "1.0.0" not in latest_versions
 
     @pytest.mark.asyncio
-    async def test_since_parameter_filters_scans(self):
-        scans = [_make_scan(f"s{i}", i) for i in range(20)]
+    async def test_window_days_filters_scans(self):
+        # Twenty scans two days apart; an 11-day window holds the newest six.
+        scans = _recent_scans(20, spacing_days=2)
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(20)}
-        scan_repo = FakeScanRepo(scans)
-        dep_repo = FakeDepRepo(deps)
-        analysis_repo = FakeAnalysisRepo([])
 
-        # Restrict to scans on or after day 14 -> s14..s19 (6 scans)
-        cutoff = _BASE_SCAN_DATE + timedelta(days=14)
         m = await compute_update_frequency(
             project_id="proj-1",
             project_name="Project",
-            scan_repo=scan_repo,
-            dep_repo=dep_repo,
-            analysis_repo=analysis_repo,
-            since=cutoff,
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+            window_days=11,
         )
 
         assert m.scan_count == 6
@@ -1189,45 +1328,37 @@ class TestStreamingOrchestrator:
         assert ("pypi", "pkg-a") in fetcher.calls[0]
 
     @pytest.mark.asyncio
-    async def test_since_overrides_max_scans_when_window_holds_more(self):
-        # 30 daily scans, max_scans=5, since=very-old: the entire since window must be honored (hard_limit-bounded load).
-        scans = [_make_scan(f"s{i}", i) for i in range(30)]
+    async def test_window_overrides_max_scans_when_it_holds_more(self):
+        # 30 daily scans, max_scans=5, a window spanning them all (hard_limit-bounded load).
+        scans = _recent_scans(30)
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(30)}
-        scan_repo = FakeScanRepo(scans)
-        dep_repo = FakeDepRepo(deps)
-        analysis_repo = FakeAnalysisRepo([])
 
-        cutoff = _BASE_SCAN_DATE - timedelta(days=1)  # before everything
         m = await compute_update_frequency(
             project_id="proj-1",
             project_name="Project",
-            scan_repo=scan_repo,
-            dep_repo=dep_repo,
-            analysis_repo=analysis_repo,
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
             max_scans=5,
-            since=cutoff,
+            window_days=40,
         )
-        assert m.scan_count == 30, "since cutoff should trump max_scans when the window contains more scans"
+        assert m.scan_count == 30, "the calendar window should trump max_scans when it contains more scans"
 
     @pytest.mark.asyncio
     async def test_hard_limit_caps_runaway_queries(self):
-        # 5000 scans + since=epoch -> the hard_limit safety cap must keep
+        # 2500 scans inside the window -> the hard_limit safety cap must keep
         # us from loading the whole collection.
-        scans = [_make_scan(f"s{i}", i) for i in range(2500)]
+        scans = _recent_scans(2500)
         deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(2500)}
-        scan_repo = FakeScanRepo(scans)
-        dep_repo = FakeDepRepo(deps)
-        analysis_repo = FakeAnalysisRepo([])
 
-        cutoff = _BASE_SCAN_DATE - timedelta(days=1)
         m = await compute_update_frequency(
             project_id="proj-1",
             project_name="Project",
-            scan_repo=scan_repo,
-            dep_repo=dep_repo,
-            analysis_repo=analysis_repo,
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
             max_scans=5,
-            since=cutoff,
+            window_days=3000,
             hard_limit=100,
         )
         # Only the newest 100 scans should be analysed under the safety cap.
@@ -1319,10 +1450,10 @@ class TestStreamingOrchestrator:
         )
 
         # No call should use {"$in": [...all scan ids...]}; calls are per-scan.
-        for q in analysis_repo.find_many_calls:
+        for q in analysis_repo.queries:
             scan_filter = q.get("scan_id")
             assert not isinstance(scan_filter, dict), (
-                f"analysis_repo.find_many called with bulk scan filter {scan_filter}; expected per-scan loading"
+                f"analysis results loaded with bulk scan filter {scan_filter}; expected per-scan loading"
             )
 
     @pytest.mark.asyncio
@@ -1443,3 +1574,27 @@ class TestStreamingOrchestrator:
         second = asyncio.run(_run())
         assert len(first.projects) == n_projects
         assert len(second.projects) == n_projects
+
+
+class TestWindowCutoff:
+    def test_no_window_returns_none(self):
+        assert window_cutoff(None) is None
+
+    def test_window_days_translates_to_a_cutoff_in_the_past(self):
+        before = datetime.now(tz=timezone.utc)
+        result = window_cutoff(30)
+        after = datetime.now(tz=timezone.utc)
+
+        assert result is not None
+        assert before - timedelta(days=30) <= result <= after - timedelta(days=30)
+
+    def test_result_is_utc_aware(self):
+        # A naive cutoff compares wrong against the UTC dates Mongo stores.
+        result = window_cutoff(365)
+        assert result is not None
+        assert result.utcoffset() == timedelta(0)
+
+    def test_the_longest_allowed_window_does_not_overflow(self):
+        result = window_cutoff(3650)
+        assert result is not None
+        assert result.year < datetime.now(tz=timezone.utc).year

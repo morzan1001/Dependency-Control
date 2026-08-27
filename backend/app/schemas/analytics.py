@@ -302,7 +302,7 @@ class ScanTimelineEntry(BaseModel):
     scan_id: str
     date: str
     updates_count: int  # excludes downgrades
-    outdated_count: int
+    outdated_count: int | None  # None when the scan carried no outdated analysis
     patch: int
     minor: int
     major: int
@@ -335,7 +335,8 @@ class UpdateFrequencyMetrics(BaseModel):
     # Downgrades/rollbacks are tracked separately and never counted as updates.
     total_updates: int
     updates_per_scan: float
-    updates_per_month: float  # extrapolated from time_range_days
+    # Rate over the requested calendar window; None when none was requested.
+    updates_per_month: float | None
 
     patch_updates: int
     minor_updates: int
@@ -377,7 +378,7 @@ class ProjectUpdateSummary(BaseModel):
     project_name: str
     team_name: str | None = None
     scan_count: int
-    updates_per_month: float
+    updates_per_month: float | None
     update_coverage_pct: float | None = None
     patch_ratio: float  # proportion of patch updates (0-1)
     trend_direction: str  # "improving" | "stable" | "deteriorating" | "unknown"
@@ -394,7 +395,7 @@ class UpdateFrequencyComparison(BaseModel):
     """
 
     projects: list[ProjectUpdateSummary]
-    team_avg_updates_per_month: float
+    team_avg_updates_per_month: float | None = None  # None when no window fixed a denominator
     team_avg_coverage_pct: float | None = None  # None when no project has measurable coverage
     best_project: str | None = None
     worst_project: str | None = None

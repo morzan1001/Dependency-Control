@@ -8,8 +8,9 @@ import asyncio
 import contextlib
 import logging
 from collections import Counter, defaultdict, deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from packaging.version import InvalidVersion, Version
@@ -42,7 +43,9 @@ logger = logging.getLogger(__name__)
 # pytest-asyncio tests) can't raise "bound to a different event loop".
 _COMPARISON_CONCURRENCY = 3
 
-_DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "purl": 1, "scan_id": 1}
+DEP_PROJECTION = {"name": 1, "version": 1, "type": 1, "purl": 1}
+
+DAYS_PER_MONTH = 30.44
 
 
 def _release_tuple(version: Version) -> tuple[int, int]:
@@ -146,55 +149,77 @@ def _resolve_duplicate(candidates: list[dict[str, str]]) -> dict[str, str]:
     return max(candidates, key=lambda cand: cand["version"])
 
 
-def _pregroup_deps_by_scan(
-    all_deps: list[dict[str, Any]],
-) -> dict[str, dict[str, dict[str, str]]]:
-    """Group dependencies by ``scan_id`` into ``{scan_id: {identity: info}}``."""
-    candidates: dict[str, dict[str, list[dict[str, str]]]] = defaultdict(lambda: defaultdict(list))
-    for dep in all_deps:
-        scan_id = dep.get("scan_id", "")
+def fold_scan_deps(deps: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    """Fold one scan's dependency documents into ``{identity: info}``."""
+    candidates: dict[str, list[dict[str, str]]] = defaultdict(list)
+    for dep in deps:
         record = _dep_record(dep)
-        if scan_id and record:
+        if record:
             identity, info = record
-            candidates[scan_id][identity].append(info)
-    return {
-        scan_id: {identity: _resolve_duplicate(infos) for identity, infos in per_identity.items()}
-        for scan_id, per_identity in candidates.items()
-    }
+            candidates[identity].append(info)
+    return {identity: _resolve_duplicate(infos) for identity, infos in candidates.items()}
 
 
 # One outdated_packages row is stored per SBOM of a scan; well above any real SBOM count.
 _MAX_OUTDATED_RESULTS_PER_SCAN = 50
 
 
+async def load_outdated_entries(
+    analysis_repo: AnalysisResultRepository,
+    scan_id: str,
+    projection: dict[str, int] | None = None,
+) -> list[dict[str, Any]] | None:
+    """The scan's ``outdated_dependencies`` entries, or None when it carries no such analysis.
+
+    An analyzer that raised leaves no document behind and one that failed stores a
+    result without ``outdated_dependencies``; reading either as an empty backlog
+    would report the whole backlog of the previous scan as brought up to date.
+    """
+    docs = await analysis_repo.find_many_raw(
+        {"scan_id": scan_id, "analyzer_name": "outdated_packages"},
+        limit=_MAX_OUTDATED_RESULTS_PER_SCAN,
+        projection=projection,
+    )
+    entries: list[dict[str, Any]] = []
+    measured = False
+    for doc in docs:
+        found = (doc.get("result") or {}).get("outdated_dependencies")
+        if not isinstance(found, list):
+            continue
+        measured = True
+        entries.extend(found)
+    return entries if measured else None
+
+
 async def _load_outdated_for_scan(
     analysis_repo: AnalysisResultRepository,
     scan_id: str,
     package_latest_info: dict[str, dict[str, str]],
-) -> set:
-    """Union of the scan's outdated_packages results, returning component names.
+) -> set[str] | None:
+    """Component names the scan flagged as outdated, or None when it carries no such analysis.
 
     Updates ``package_latest_info`` in-place; later writes for the same
     package overwrite earlier ones, which is fine since ``slowest_packages``
     only needs one consistent current/latest pair per name.
     """
-    results = await analysis_repo.find_many(
-        {"scan_id": scan_id, "analyzer_name": "outdated_packages"},
-        limit=_MAX_OUTDATED_RESULTS_PER_SCAN,
-    )
-    outdated_names: set = set()
-    for result in results:
-        result_data = getattr(result, "result", {}) or {}
-        for entry in result_data.get("outdated_dependencies", []):
-            comp = entry.get("component", "")
-            if not comp:
-                continue
-            outdated_names.add(comp)
-            package_latest_info[comp] = {
-                "current_version": entry.get("current_version", ""),
-                "latest_version": entry.get("latest_version", ""),
-            }
+    entries = await load_outdated_entries(analysis_repo, scan_id)
+    if entries is None:
+        return None
+    outdated_names: set[str] = set()
+    for entry in entries:
+        comp = entry.get("component", "")
+        if not comp:
+            continue
+        outdated_names.add(comp)
+        package_latest_info[comp] = {
+            "current_version": entry.get("current_version", ""),
+            "latest_version": entry.get("latest_version", ""),
+        }
     return outdated_names
+
+
+def _measured_count(outdated: set[str] | None) -> int | None:
+    return None if outdated is None else len(outdated)
 
 
 def _compare_scan_pair(
@@ -203,7 +228,7 @@ def _compare_scan_pair(
     prev_scan_date: datetime,
     curr_scan_id: str,
     curr_scan_date: datetime,
-    prev_outdated: set,
+    prev_outdated: set[str] | None,
 ) -> list[tuple[DependencyUpdateEvent, str]]:
     """Compare two consecutive scans, returning ``(event, identity)`` pairs."""
     days_between = max(1, (curr_scan_date - prev_scan_date).days)
@@ -233,7 +258,7 @@ def _compare_scan_pair(
                     scan_date=curr_scan_date.isoformat(),
                     previous_scan_date=prev_scan_date.isoformat(),
                     days_between_scans=days_between,
-                    was_outdated=prev_info["name"] in prev_outdated,
+                    was_outdated=prev_info["name"] in (prev_outdated or ()),
                 ),
                 identity,
             )
@@ -245,7 +270,7 @@ def _build_timeline_entry(
     scan_id: str,
     scan_date: datetime,
     events: list[DependencyUpdateEvent],
-    outdated_count: int,
+    outdated_count: int | None,
 ) -> ScanTimelineEntry:
     """Build a timeline entry from a list of update events for a scan."""
     type_counts = Counter(e.update_type for e in events)
@@ -263,14 +288,22 @@ def _build_timeline_entry(
     )
 
 
-def _compute_trend(
-    scan_timeline: list[ScanTimelineEntry],
-) -> tuple[str, str]:
+def _mean_outdated(entries: Sequence[ScanTimelineEntry]) -> float | None:
+    """Mean backlog over the scans that carried an outdated analysis, or None if none did."""
+    measured = [s.outdated_count for s in entries if s.outdated_count is not None]
+    if not measured:
+        return None
+    return sum(measured) / len(measured)
+
+
+def compute_trend(scan_timeline: Sequence[ScanTimelineEntry]) -> tuple[str, str]:
     """Trend ``(direction, detail)`` from comparing the first vs second half of the timeline.
 
     The leading baseline entry (no predecessor, structurally zero updates)
     is excluded — averaging it in would report "improving" for every
-    project with a steady update rate.
+    project with a steady update rate. The backlog signal is dropped when
+    either half has no outdated analysis, since a missing measurement is
+    not a backlog of zero.
     """
     timeline = scan_timeline[1:]
     if len(timeline) < 4:
@@ -282,20 +315,26 @@ def _compute_trend(
 
     older_avg_updates = sum(s.updates_count for s in older) / len(older)
     newer_avg_updates = sum(s.updates_count for s in newer) / len(newer)
-    older_avg_outdated = sum(s.outdated_count for s in older) / len(older)
-    newer_avg_outdated = sum(s.outdated_count for s in newer) / len(newer)
+    older_avg_outdated = _mean_outdated(older)
+    newer_avg_outdated = _mean_outdated(newer)
 
     update_improving = newer_avg_updates > older_avg_updates * 1.1
-    outdated_improving = newer_avg_outdated < older_avg_outdated * 0.9
     update_deteriorating = newer_avg_updates < older_avg_updates * 0.9
-    outdated_deteriorating = newer_avg_outdated > older_avg_outdated * 1.1
-
     updates_msg = f"Updates/scan: {older_avg_updates:.1f} → {newer_avg_updates:.1f}"
-    outdated_msg = f"Outdated: {older_avg_outdated:.1f} → {newer_avg_outdated:.1f}"
-    improving_parts = [m for m, ok in ((updates_msg, update_improving), (outdated_msg, outdated_improving)) if ok]
-    deteriorating_parts = [
-        m for m, ok in ((updates_msg, update_deteriorating), (outdated_msg, outdated_deteriorating)) if ok
-    ]
+    signals = [(updates_msg, update_improving, update_deteriorating)]
+
+    if older_avg_outdated is not None and newer_avg_outdated is not None:
+        outdated_msg = f"Outdated: {older_avg_outdated:.1f} → {newer_avg_outdated:.1f}"
+        signals.append(
+            (
+                outdated_msg,
+                newer_avg_outdated < older_avg_outdated * 0.9,
+                newer_avg_outdated > older_avg_outdated * 1.1,
+            )
+        )
+
+    improving_parts = [msg for msg, improving, _ in signals if improving]
+    deteriorating_parts = [msg for msg, _, deteriorating in signals if deteriorating]
 
     if improving_parts and deteriorating_parts:
         return "stable", f"Mixed signals. {'. '.join(improving_parts + deteriorating_parts)}"
@@ -304,10 +343,13 @@ def _compute_trend(
     if deteriorating_parts:
         return "deteriorating", ". ".join(deteriorating_parts)
 
-    return "stable", (f"Consistent (~{newer_avg_updates:.1f} updates/scan, ~{newer_avg_outdated:.0f} outdated)")
+    steady = f"Consistent (~{newer_avg_updates:.1f} updates/scan"
+    if newer_avg_outdated is None:
+        return "stable", f"{steady})"
+    return "stable", f"{steady}, ~{newer_avg_outdated:.0f} outdated)"
 
 
-def _granularity_ratio(type_counter: Counter, total_updates: int) -> dict[str, float]:
+def granularity_ratio(type_counter: Counter, total_updates: int) -> dict[str, float]:
     """Per-update-type share of all updates, rounded to 2 dp."""
     if not total_updates:
         return {"patch": 0.0, "minor": 0.0, "major": 0.0, "unknown": 0.0}
@@ -317,10 +359,30 @@ def _granularity_ratio(type_counter: Counter, total_updates: int) -> dict[str, f
     }
 
 
+def window_cutoff(window_days: int | None) -> datetime | None:
+    """UTC timestamp ``window_days`` back, or None when no calendar window was selected."""
+    if window_days is None:
+        return None
+    return datetime.now(tz=timezone.utc) - timedelta(days=window_days)
+
+
+def updates_per_month(total_updates: int, window_days: int | None) -> float | None:
+    """Monthly update rate over the selected calendar window, or None without one.
+
+    Deriving the denominator from the observed scan span instead would make the
+    number mean something different for every CI cadence — a project scanning
+    twice an hour would outrank a weekly one on the same activity — and this is
+    the ranking's primary sort key.
+    """
+    if window_days is None:
+        return None
+    return round(total_updates / (window_days / DAYS_PER_MONTH), 2)
+
+
 def _aggregate_metrics(
     completed_scans: list[dict[str, Any]],
-    ever_outdated: set,
-    ever_resolved: set,
+    ever_outdated: set[str],
+    ever_resolved: set[str],
     scan_timeline: list[ScanTimelineEntry],
     dep_type_map: dict[str, str],
     package_outdated_counts: dict[str, int],
@@ -332,8 +394,9 @@ def _aggregate_metrics(
     recent_events: list[DependencyUpdateEvent],
     upstream: UpstreamCadenceMetrics | None = None,
     branch: str | None = None,
-    final_outdated: set | None = None,
+    latest_outdated: set[str] | None = None,
     final_versions: dict[str, str] | None = None,
+    window_days: int | None = None,
 ) -> UpdateFrequencyMetrics:
     """Build the final metrics response from streamed counters."""
     downgrade_total = type_counter.get("downgrade", 0)
@@ -344,33 +407,33 @@ def _aggregate_metrics(
     first_date: datetime = completed_scans[0]["created_at"]
     last_date: datetime = completed_scans[-1]["created_at"]
     raw_range_days = (last_date - first_date).total_seconds() / 86400.0
-    # Floored at one day so a single CI burst can't explode the monthly rate.
+    # Floored at one day so the rendered span never reads as zero.
     time_range_days = max(1.0, raw_range_days)
-    time_range_months = time_range_days / 30.44
 
     patch_total = type_counter.get("patch", 0)
     minor_total = type_counter.get("minor", 0)
     major_total = type_counter.get("major", 0)
     unknown_total = type_counter.get("unknown", 0)
 
-    granularity_ratio = _granularity_ratio(type_counter, total_updates)
+    ratio = granularity_ratio(type_counter, total_updates)
     # Cadence reports the real average interval, not the floored range.
     avg_days_between = raw_range_days / num_intervals if num_intervals else 0
 
     total_outdated_detected = len(ever_outdated)
     outdated_resolved_count = len(ever_outdated & ever_resolved)
-    # None means "nothing was ever outdated" — distinct from 0.0 ("nothing resolved").
+    # Both sets carry measured scans only, so None means "no backlog was ever
+    # measured here" — distinct from 0.0 ("measured, nothing resolved").
     update_coverage_pct: float | None = (
         round(outdated_resolved_count / total_outdated_detected * 100, 1) if total_outdated_detected else None
     )
 
-    trend_direction, trend_detail = _compute_trend(scan_timeline)
+    trend_direction, trend_detail = compute_trend(scan_timeline)
 
     slowest_packages = _build_slowest_packages(
         package_outdated_counts,
         package_latest_info,
         dep_type_map,
-        final_outdated or set(),
+        latest_outdated or set(),
         final_versions or {},
     )
 
@@ -384,13 +447,13 @@ def _aggregate_metrics(
         last_scan_date=last_date.isoformat(),
         total_updates=total_updates,
         updates_per_scan=round(total_updates / num_intervals, 2) if num_intervals else 0,
-        updates_per_month=round(total_updates / time_range_months, 2) if time_range_months else 0,
+        updates_per_month=updates_per_month(total_updates, window_days),
         patch_updates=patch_total,
         minor_updates=minor_total,
         major_updates=major_total,
         unknown_updates=unknown_total,
         downgrade_updates=downgrade_total,
-        granularity_ratio=granularity_ratio,
+        granularity_ratio=ratio,
         avg_days_between_scans=round(avg_days_between, 1),
         total_outdated_detected=total_outdated_detected,
         outdated_resolved=outdated_resolved_count,
@@ -426,16 +489,17 @@ def _build_slowest_packages(
     package_outdated_counts: dict[str, int],
     package_latest_info: dict[str, dict[str, str]],
     dep_type_map: dict[str, str],
-    final_outdated: set,
+    latest_outdated: set[str],
     final_versions: dict[str, str],
 ) -> list[SlowPackage]:
     """Slowest-to-update packages: the remaining backlog, ranked by scans outdated.
 
-    Only packages still outdated in the newest scan qualify — resolved ones
-    are history, not backlog. ``current_version`` comes from the newest
-    scan's dependency set; analyzer entries may be scans old.
+    Only packages still outdated in the newest scan that carried an outdated
+    analysis qualify — resolved ones are history, not backlog, and a scan
+    without the analysis is not a cleared backlog. ``current_version`` comes
+    from the newest scan's dependency set; analyzer entries may be scans old.
     """
-    remaining = {pkg: count for pkg, count in package_outdated_counts.items() if pkg in final_outdated}
+    remaining = {pkg: count for pkg, count in package_outdated_counts.items() if pkg in latest_outdated}
     slowest = sorted(remaining.items(), key=lambda x: x[1], reverse=True)[:15]
     return [
         SlowPackage(
@@ -468,7 +532,7 @@ def _empty_metrics(
         last_scan_date=scan_date,
         total_updates=0,
         updates_per_scan=0.0,
-        updates_per_month=0.0,
+        updates_per_month=None,
         patch_updates=0,
         minor_updates=0,
         major_updates=0,
@@ -492,7 +556,7 @@ _RECENT_EVENTS_BUFFER_SIZE = 30
 # Far above realistic projects; protects against pathological version churn.
 _MAX_OBSERVATIONS = 10_000
 
-_ECOSYSTEM_DOMINANCE_THRESHOLD = 0.7
+ECOSYSTEM_DOMINANCE_THRESHOLD = 0.7
 
 
 def _dominant_ecosystem(dep_type_map: dict[str, str]) -> str | None:
@@ -505,7 +569,7 @@ def _dominant_ecosystem(dep_type_map: dict[str, str]) -> str | None:
         return None
     counts = Counter(classified)
     top_type, top_count = counts.most_common(1)[0]
-    if top_count / len(classified) >= _ECOSYSTEM_DOMINANCE_THRESHOLD:
+    if top_count / len(classified) >= ECOSYSTEM_DOMINANCE_THRESHOLD:
         return top_type
     return "mixed"
 
@@ -525,8 +589,8 @@ class _AccumulatorState:
     package_outdated_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
     package_latest_info: dict[str, dict[str, str]] = field(default_factory=dict)
     dep_type_map: dict[str, str] = field(default_factory=dict)
-    ever_outdated: set = field(default_factory=set)
-    ever_resolved: set = field(default_factory=set)
+    ever_outdated: set[str] = field(default_factory=set)
+    ever_resolved: set[str] = field(default_factory=set)
     first_seen_versions: dict[tuple[str, str], datetime] = field(default_factory=dict)
     # identity -> (deps.dev system, deps_dev_name); deps.dev keys by deps_dev_name, not the bare DB name.
     package_specs: dict[str, tuple[str, str]] = field(default_factory=dict)
@@ -540,17 +604,26 @@ class _AccumulatorState:
             if system and identity not in self.package_specs:
                 self.package_specs[identity] = (system, info["deps_dev_name"])
 
-    def record_outdated(self, outdated: set) -> None:
-        for pkg in outdated:
+    def record_outdated(self, outdated: set[str] | None) -> None:
+        for pkg in outdated or ():
             self.package_outdated_counts[pkg] += 1
             self.ever_outdated.add(pkg)
 
-    def record_resolved(self, prev_outdated: set, curr_outdated: set, curr_deps: dict[str, dict[str, str]]) -> None:
+    def record_resolved(
+        self,
+        prev_outdated: set[str] | None,
+        curr_outdated: set[str] | None,
+        curr_deps: dict[str, dict[str, str]],
+    ) -> None:
         """Resolved = still present but no longer flagged outdated.
 
         A version bump that stays behind latest is not a resolution, and
-        neither is removing the package.
+        neither is removing the package. Both scans must carry an outdated
+        analysis: a missing one is not an empty backlog, and reading it as
+        one would report the predecessor's whole backlog as resolved.
         """
+        if prev_outdated is None or curr_outdated is None:
+            return
         curr_names = {info["name"] for info in curr_deps.values()}
         for pkg in prev_outdated:
             if pkg in curr_names and pkg not in curr_outdated:
@@ -566,7 +639,7 @@ class _AccumulatorState:
                     self.first_seen_versions[key] = curr_scan_date
 
 
-def _as_utc(dt: datetime) -> datetime:
+def as_utc(dt: datetime) -> datetime:
     """Mongo/Motor returns naive UTC datetimes; make them aware once at load."""
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
@@ -574,11 +647,11 @@ def _as_utc(dt: datetime) -> datetime:
 def _scan_created_at(value: Any) -> datetime | None:
     """Archive restore inserts unauthenticated bundle JSON verbatim, so a scan date can arrive as an ISO string."""
     if isinstance(value, datetime):
-        return _as_utc(value)
+        return as_utc(value)
     if isinstance(value, str):
         with contextlib.suppress(ValueError):
             # An ISO string may carry any offset; the rest of the module assumes UTC.
-            return _as_utc(datetime.fromisoformat(value)).astimezone(timezone.utc)
+            return as_utc(datetime.fromisoformat(value)).astimezone(timezone.utc)
     return None
 
 
@@ -626,7 +699,7 @@ async def _resolve_primary_branch(
     return doc.get("branch") if doc else None
 
 
-def _collapse_same_commit_runs(scans_raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def collapse_same_commit_runs(scans_raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Keep only the first scan of each consecutive same-commit run.
 
     CI retries and duplicate ingests produce bursts of scans for one commit;
@@ -683,7 +756,7 @@ async def _load_completed_scans(
     if since is not None:
         scans_raw = [s for s in scans_raw if s["created_at"] >= since]
     scans_raw.reverse()
-    collapsed = _collapse_same_commit_runs(scans_raw)
+    collapsed = collapse_same_commit_runs(scans_raw)
     # Collapse first, THEN cap, so distinct commits fill the window even after a storm.
     if since is None and len(collapsed) > max_scans:
         collapsed = collapsed[-max_scans:]
@@ -697,7 +770,7 @@ async def compute_update_frequency(
     dep_repo: DependencyRepository,
     analysis_repo: AnalysisResultRepository,
     max_scans: int = 20,
-    since: datetime | None = None,
+    window_days: int | None = None,
     release_fetcher: ReleaseHistoryFetcher | None = None,
     hard_limit: int = _DEFAULT_HARD_LIMIT,
     branch: str | None = None,
@@ -709,14 +782,17 @@ async def compute_update_frequency(
     ``branch`` defaults to the project's ``default_branch`` (if scanned),
     else the branch of the newest completed non-rescan scan; comparing
     across branches would count branch differences as updates. With
-    ``since`` set, all scans newer than the cutoff are analysed (up to
-    ``hard_limit``). Otherwise the newest ``max_scans`` are taken.
+    ``window_days`` set, all scans of that calendar window are analysed (up
+    to ``hard_limit``). Otherwise the newest ``max_scans`` are taken and no
+    monthly rate is reported, since there is no shared denominator.
     """
     analyzed_branch = branch or await _resolve_primary_branch(scan_repo, project_id, deleted_branches, default_branch)
     if analyzed_branch is None:
         return _empty_metrics(project_id, project_name, 0, "", branch=None)
 
-    completed_scans = await _load_completed_scans(scan_repo, project_id, analyzed_branch, max_scans, since, hard_limit)
+    completed_scans = await _load_completed_scans(
+        scan_repo, project_id, analyzed_branch, max_scans, window_cutoff(window_days), hard_limit
+    )
 
     if len(completed_scans) < 2:
         first_date_str = completed_scans[0]["created_at"].isoformat() if completed_scans else ""
@@ -725,8 +801,8 @@ async def compute_update_frequency(
     state = _AccumulatorState()
 
     async def _load_scan_deps(scan_id: str) -> dict[str, dict[str, str]]:
-        docs = await dep_repo.find_all({"scan_id": scan_id}, projection=_DEP_PROJECTION)
-        return _pregroup_deps_by_scan(docs).get(scan_id, {})
+        docs = await dep_repo.find_all({"scan_id": scan_id}, projection=DEP_PROJECTION)
+        return fold_scan_deps(docs)
 
     first_scan = completed_scans[0]
     prev_deps = await _load_scan_deps(first_scan["_id"])
@@ -734,8 +810,9 @@ async def compute_update_frequency(
     prev_outdated = await _load_outdated_for_scan(analysis_repo, first_scan["_id"], state.package_latest_info)
     state.record_outdated(prev_outdated)
     state.scan_timeline.append(
-        _build_timeline_entry(first_scan["_id"], first_scan["created_at"], [], len(prev_outdated))
+        _build_timeline_entry(first_scan["_id"], first_scan["created_at"], [], _measured_count(prev_outdated))
     )
+    latest_outdated = prev_outdated
 
     for i in range(1, len(completed_scans)):
         prev_scan = completed_scans[i - 1]
@@ -758,11 +835,15 @@ async def compute_update_frequency(
         )
         state.absorb_events(events, curr_scan["created_at"])
         state.scan_timeline.append(
-            _build_timeline_entry(curr_scan["_id"], curr_scan["created_at"], [e for e, _ in events], len(curr_outdated))
+            _build_timeline_entry(
+                curr_scan["_id"], curr_scan["created_at"], [e for e, _ in events], _measured_count(curr_outdated)
+            )
         )
 
         prev_deps = curr_deps
         prev_outdated = curr_outdated
+        if curr_outdated is not None:
+            latest_outdated = curr_outdated
 
     upstream = await _maybe_fetch_upstream_cadence(release_fetcher, state.package_specs, state.first_seen_versions)
 
@@ -780,8 +861,9 @@ async def compute_update_frequency(
         recent_events=list(state.recent_events_buffer)[::-1],  # newest first
         upstream=upstream,
         branch=analyzed_branch,
-        final_outdated=prev_outdated,
+        latest_outdated=latest_outdated,
         final_versions=_final_versions_by_name(prev_deps),
+        window_days=window_days,
     )
 
 
@@ -814,20 +896,25 @@ async def _maybe_fetch_upstream_cadence(
     return aggregate_upstream_metrics(history, observations=observations)
 
 
+def _rate(summary: ProjectUpdateSummary) -> float:
+    """Sort key: an unavailable monthly rate ranks below every measured one."""
+    return summary.updates_per_month if summary.updates_per_month is not None else -1.0
+
+
 async def compute_update_frequency_comparison(
     projects: list[dict[str, Any]],
     scan_repo: ScanRepository,
     dep_repo: DependencyRepository,
     analysis_repo: AnalysisResultRepository,
     max_scans: int = 10,
-    since: datetime | None = None,
+    window_days: int | None = None,
     release_fetcher: ReleaseHistoryFetcher | None = None,
 ) -> UpdateFrequencyComparison:
     """Cross-project update-frequency ranking.
 
-    Per-project computations run with bounded concurrency. Pass ``since``
-    to align projects on the same calendar window; otherwise scan-cadence
-    differences make the comparison apples-to-oranges.
+    Per-project computations run with bounded concurrency. ``window_days``
+    aligns every project on the same calendar window; without one the
+    monthly rate is unavailable and projects rank on coverage alone.
     """
     # Created per call so it binds to the loop running this gather (see note
     # at module top); a module-global semaphore would pin to the first loop.
@@ -847,7 +934,7 @@ async def compute_update_frequency_comparison(
                     dep_repo=dep_repo,
                     analysis_repo=analysis_repo,
                     max_scans=max_scans,
-                    since=since,
+                    window_days=window_days,
                     release_fetcher=release_fetcher,
                     deleted_branches=project.get("deleted_branches"),
                     default_branch=project.get("default_branch"),
@@ -875,15 +962,16 @@ async def compute_update_frequency_comparison(
     results = await asyncio.gather(*[_compute_single(p) for p in projects], return_exceptions=True)
     summaries: list[ProjectUpdateSummary] = [s for s in results if isinstance(s, ProjectUpdateSummary)]
 
-    # None coverage means "nothing was ever outdated" — no measurement, so those
-    # projects rank after every measured one and never become best or worst.
+    # None coverage means no backlog was ever measured, so those projects rank
+    # after every measured one and never become best or worst.
     measured = [s for s in summaries if s.update_coverage_pct is not None]
     unmeasured = [s for s in summaries if s.update_coverage_pct is None]
-    measured.sort(key=lambda s: (s.update_coverage_pct, s.updates_per_month), reverse=True)
-    unmeasured.sort(key=lambda s: s.updates_per_month, reverse=True)
+    measured.sort(key=lambda s: (s.update_coverage_pct, _rate(s)), reverse=True)
+    unmeasured.sort(key=_rate, reverse=True)
     summaries = measured + unmeasured
 
-    avg_updates = sum(s.updates_per_month for s in summaries) / len(summaries) if summaries else 0.0
+    rates = [s.updates_per_month for s in summaries if s.updates_per_month is not None]
+    avg_updates = round(sum(rates) / len(rates), 2) if rates else None
     avg_coverage = (
         round(sum(s.update_coverage_pct for s in measured) / len(measured), 1)  # type: ignore[misc]
         if measured
@@ -894,7 +982,7 @@ async def compute_update_frequency_comparison(
 
     return UpdateFrequencyComparison(
         projects=summaries,
-        team_avg_updates_per_month=round(avg_updates, 2),
+        team_avg_updates_per_month=avg_updates,
         team_avg_coverage_pct=avg_coverage,
         best_project=best,
         worst_project=worst,
