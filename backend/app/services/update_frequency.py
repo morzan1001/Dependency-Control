@@ -5,6 +5,7 @@ Streaming model — one scan pair at a time so peak memory stays at
 """
 
 import asyncio
+import contextlib
 import logging
 from collections import Counter, defaultdict, deque
 from dataclasses import dataclass, field
@@ -570,8 +571,19 @@ def _as_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
+def _scan_created_at(value: Any) -> datetime | None:
+    """Archive restore inserts unauthenticated bundle JSON verbatim, so a scan date can arrive as an ISO string."""
+    if isinstance(value, datetime):
+        return _as_utc(value)
+    if isinstance(value, str):
+        with contextlib.suppress(ValueError):
+            # An ISO string may carry any offset; the rest of the module assumes UTC.
+            return _as_utc(datetime.fromisoformat(value)).astimezone(timezone.utc)
+    return None
+
+
 async def _branch_scan_count(scan_repo: ScanRepository, project_id: str, branch: str) -> int:
-    scans = await scan_repo.find_many(
+    return await scan_repo.count(
         {
             "project_id": project_id,
             "status": {"$in": SCAN_USABLE_STATUSES},
@@ -579,9 +591,7 @@ async def _branch_scan_count(scan_repo: ScanRepository, project_id: str, branch:
             "is_rescan": {"$ne": True},
         },
         limit=2,
-        projection={"_id": 1},
     )
-    return len(scans)
 
 
 async def _resolve_primary_branch(
@@ -653,8 +663,7 @@ async def _load_completed_scans(
     fetch_limit = hard_limit if since is not None else min(hard_limit, max_scans * _COLLAPSE_HEADROOM)
     # Filter status in the query so the limit counts only completed scans; filtering after
     # the limit would empty the window when the newest scans are failed/processing.
-    # find_many returns Scan models, so project the fields Scan requires (project_id, branch).
-    scans = await scan_repo.find_many(
+    docs = await scan_repo.find_many_raw(
         {
             "project_id": project_id,
             "status": {"$in": SCAN_USABLE_STATUSES},
@@ -663,12 +672,14 @@ async def _load_completed_scans(
         },
         sort=[("created_at", -1), ("_id", -1)],
         limit=fetch_limit,
-        projection={"_id": 1, "created_at": 1, "status": 1, "project_id": 1, "branch": 1, "commit_hash": 1},
+        projection={"_id": 1, "created_at": 1, "commit_hash": 1},
     )
-    scans_raw: list[dict[str, Any]] = [
-        {"_id": s.id, "created_at": _as_utc(s.created_at), "status": s.status, "commit_hash": s.commit_hash}
-        for s in scans
-    ]
+    scans_raw: list[dict[str, Any]] = []
+    for d in docs:
+        created_at = _scan_created_at(d.get("created_at"))
+        # A scan without a usable date has no place on a timeline.
+        if created_at is not None:
+            scans_raw.append({"_id": d["_id"], "created_at": created_at, "commit_hash": d.get("commit_hash")})
     if since is not None:
         scans_raw = [s for s in scans_raw if s["created_at"] >= since]
     scans_raw.reverse()

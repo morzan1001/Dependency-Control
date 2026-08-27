@@ -280,15 +280,16 @@ class TestAggregateMetricsCoverage:
 # --- Fake repos for streaming-orchestrator tests ---
 
 
-class _FakeScanObj:
-    """Mirrors the attribute access (.id/.created_at/...) of the real Scan model."""
-
-    def __init__(self, doc: dict[str, Any]):
-        self.id = doc["_id"]
-        self.created_at = doc["created_at"]
-        self.status = doc.get("status", "completed")
-        self.branch = doc.get("branch", "main")
-        self.commit_hash = doc.get("commit_hash")
+def _apply_projection(doc: dict[str, Any], projection: dict[str, int] | None) -> dict[str, Any]:
+    """Mongo inclusion projection: only the named fields survive, plus _id unless excluded."""
+    if not projection:
+        return dict(doc)
+    keep = {field for field, include in projection.items() if include}
+    if projection.get("_id", 1):
+        keep.add("_id")
+    else:
+        keep.discard("_id")
+    return {k: v for k, v in doc.items() if k in keep}
 
 
 def _matches_scan_query(scan: dict[str, Any], query: dict[str, Any]) -> bool:
@@ -322,22 +323,25 @@ class FakeScanRepo:
         matched = self._filtered(query, sort)
         return matched[0] if matched else None
 
-    async def find_many(
+    async def find_many_raw(
         self,
         query: dict[str, Any],
         sort: list[tuple[str, int]] | None = None,
         skip: int = 0,
         limit: int | None = None,
         projection: dict[str, int] | None = None,
-    ) -> list[_FakeScanObj]:
-        # Mirrors ScanRepository.find_many: filter by the query (incl. status),
+    ) -> list[dict[str, Any]]:
+        # Mirrors ScanRepository.find_many_raw: filter by the query (incl. status),
         # sort, then apply the limit — status is filtered BEFORE the limit.
         matched = self._filtered(query, sort)
-        if limit is not None:
-            matched = matched[skip : skip + limit]
-        else:
-            matched = matched[skip:]
-        return [_FakeScanObj(s) for s in matched]
+        matched = matched[skip : skip + limit] if limit is not None else matched[skip:]
+        return [_apply_projection(s, projection) for s in matched]
+
+    async def count(self, query: dict[str, Any] | None = None, limit: int | None = None) -> int:
+        # count_documents documents limit as "must be a positive integer"; 0 would reach the server as $limit: 0.
+        assert limit is None or limit > 0
+        matched = self._filtered(query or {}, None)
+        return len(matched) if limit is None else min(len(matched), limit)
 
 
 class FakeDepRepo:
@@ -352,7 +356,7 @@ class FakeDepRepo:
     ) -> list[dict[str, Any]]:
         scan_id = query.get("scan_id")
         self.calls.append(scan_id)
-        return list(self._deps_by_scan.get(scan_id, []))
+        return [_apply_projection(d, projection) for d in self._deps_by_scan.get(scan_id, [])]
 
 
 class _AnalysisResultStub:
@@ -483,6 +487,24 @@ class TestBranchScopedScanSelection:
         assert m.scan_count == 3
 
     @pytest.mark.asyncio
+    async def test_default_branch_wins_at_the_two_scan_minimum(self):
+        # Two scans is the least history that keeps default_branch; one fewer falls back.
+        scans = [
+            _make_scan("m1", 0, branch="main"),
+            _make_scan("m2", 1, branch="main"),
+            _make_scan("f1", 2, branch="feature"),
+        ]
+        deps = {
+            "m1": [_make_dep("m1", "pkg-a", "1.0.0")],
+            "m2": [_make_dep("m2", "pkg-a", "1.0.1")],
+            "f1": [_make_dep("f1", "pkg-a", "9.0.0")],
+        }
+        m = await self._compute(scans, deps, default_branch="main")
+        assert m.branch == "main"
+        assert m.scan_count == 2
+        assert m.total_updates == 1
+
+    @pytest.mark.asyncio
     async def test_default_branch_ignored_when_too_sparse(self):
         # default_branch has a single scan -> fall back to the active branch.
         scans = [
@@ -600,6 +622,40 @@ class TestBranchScopedScanSelection:
         assert m.scan_count == 2
         assert m.first_scan_date.endswith("+00:00")
         assert m.last_scan_date.endswith("+00:00")
+
+    @pytest.mark.asyncio
+    async def test_iso_string_created_at_is_parsed(self):
+        # Archive restore inserts bundle JSON verbatim and JSON has no date type,
+        # so a restored scan can carry created_at as a plain ISO string.
+        scans = [
+            {**_make_scan("s1", 0), "created_at": "2026-01-01T00:00:00Z"},
+            {**_make_scan("s2", 30), "created_at": "2026-01-31T00:00:00Z"},
+        ]
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
+        }
+        m = await self._compute(scans, deps)
+        assert m.scan_count == 2
+        assert m.total_updates == 1
+        assert m.first_scan_date == "2026-01-01T00:00:00+00:00"
+        assert m.last_scan_date == "2026-01-31T00:00:00+00:00"
+
+    @pytest.mark.asyncio
+    async def test_unparseable_created_at_drops_the_scan(self):
+        scans = [
+            {**_make_scan("s1", 0), "created_at": "2026-01-01T00:00:00Z"},
+            {**_make_scan("s2", 30), "created_at": "2026-01-31T00:00:00Z"},
+            {**_make_scan("s3", 60), "created_at": "whenever"},
+        ]
+        deps = {
+            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
+            "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
+            "s3": [_make_dep("s3", "pkg-a", "2.0.0")],
+        }
+        m = await self._compute(scans, deps)
+        assert m.scan_count == 2
+        assert m.total_updates == 1
 
     @pytest.mark.asyncio
     async def test_same_commit_scan_storm_collapses(self):
@@ -1351,9 +1407,9 @@ class TestStreamingOrchestrator:
         n_projects = _COMPARISON_CONCURRENCY + 2  # 5 > concurrency limit of 3
 
         class _SuspendingScanRepo(FakeScanRepo):
-            async def find_many(self, *args, **kwargs):
+            async def find_many_raw(self, *args, **kwargs):
                 await asyncio.sleep(0)  # yield to the loop while holding the semaphore
-                return await super().find_many(*args, **kwargs)
+                return await super().find_many_raw(*args, **kwargs)
 
         class _SuspendingDepRepo(FakeDepRepo):
             async def find_all(self, *args, **kwargs):
