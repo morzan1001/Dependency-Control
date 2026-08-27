@@ -56,6 +56,7 @@ from app.repositories import (
     UserRepository,
     WaiverRepository,
 )
+from app.repositories.update_frequency import ScanOutdatedSetRepository, ScanUpdateDeltaRepository
 from app.schemas.project import (
     BranchInfo,
     DashboardStats,
@@ -1568,6 +1569,8 @@ async def delete_project(
     waiver_repo = WaiverRepository(db)
     invitation_repo = InvitationRepository(db)
     callgraph_repo = CallgraphRepository(db)
+    delta_repo = ScanUpdateDeltaRepository(db)
+    outdated_set_repo = ScanOutdatedSetRepository(db)
 
     # Stream scans to collect IDs and GridFS files without loading them all at once.
     scan_ids = []
@@ -1583,6 +1586,9 @@ async def delete_project(
         await analysis_repo.delete_many({"scan_id": {"$in": scan_ids}})
         await finding_repo.delete_many({"scan_id": {"$in": scan_ids}})
         await dep_repo.delete_many({"scan_id": {"$in": scan_ids}})
+        # The update-frequency rollups are keyed by scan id, not by a scan_id field.
+        await delta_repo.delete_many({"_id": {"$in": scan_ids}})
+        await outdated_set_repo.delete_many({"_id": {"$in": scan_ids}})
 
     await scan_repo.delete_many({"project_id": project_id})
     await delete_gridfs_files(db, gridfs_ids)

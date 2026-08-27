@@ -82,6 +82,9 @@ async def _delete_scans_and_related_data(db: Any, scan_ids: list[str], label: st
     await db.dependencies.delete_many({"scan_id": {"$in": scan_ids}})
     await db.callgraphs.delete_many({"scan_id": {"$in": scan_ids}})
     await db.crypto_assets.delete_many({"scan_id": {"$in": scan_ids}})
+    # The update-frequency rollups are keyed by scan id, not by a scan_id field.
+    await db.scan_update_deltas.delete_many({"_id": {"$in": scan_ids}})
+    await db.scan_outdated_sets.delete_many({"_id": {"$in": scan_ids}})
     result = await db.scans.delete_many({"_id": {"$in": scan_ids}})
 
     await cleanup_gridfs_files(db, gridfs_ids, deleted_scan_ids=scan_ids)

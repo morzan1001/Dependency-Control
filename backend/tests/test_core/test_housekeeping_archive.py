@@ -612,6 +612,8 @@ async def test_delete_scans_purges_crypto_assets():
     db.dependencies.delete_many = AsyncMock()
     db.callgraphs.delete_many = AsyncMock()
     db.crypto_assets.delete_many = AsyncMock()
+    db.scan_update_deltas.delete_many = AsyncMock()
+    db.scan_outdated_sets.delete_many = AsyncMock()
     db.scans.delete_many = AsyncMock(return_value=MagicMock(deleted_count=2))
 
     with patch(f"{MODULE}._collect_gridfs_ids", new=AsyncMock(return_value=[])):
@@ -620,9 +622,11 @@ async def test_delete_scans_purges_crypto_assets():
 
     assert count == 2
     db.crypto_assets.delete_many.assert_awaited_once_with({"scan_id": {"$in": ["s1", "s2"]}})
-    # Sanity: the other 5 collections are still being deleted.
+    # Sanity: the other per-scan collections are still being deleted.
     db.findings.delete_many.assert_awaited_once()
     db.finding_records.delete_many.assert_awaited_once()
     db.dependencies.delete_many.assert_awaited_once()
     db.analysis_results.delete_many.assert_awaited_once()
     db.callgraphs.delete_many.assert_awaited_once()
+    db.scan_update_deltas.delete_many.assert_awaited_once_with({"_id": {"$in": ["s1", "s2"]}})
+    db.scan_outdated_sets.delete_many.assert_awaited_once_with({"_id": {"$in": ["s1", "s2"]}})
