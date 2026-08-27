@@ -1,11 +1,15 @@
 """Analytics update-frequency endpoints."""
 
+import asyncio
+import contextlib
+import hashlib
 import logging
+from collections.abc import Coroutine
 from datetime import datetime, timedelta, timezone
 from typing import Annotated, Any
 
 import httpx
-from fastapi import HTTPException, Query
+from fastapi import HTTPException, Query, Request
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
@@ -43,12 +47,40 @@ logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
 
+_DISCONNECT_POLL_SECONDS = 1.0
+
+# Worst-case wall time of one comparison recompute over the largest tenant.
+_COMPARISON_COMPUTE_BUDGET_SECONDS = 240.0
+# A waiter must outlast the recompute or it starts a duplicate one; the lock must
+# outlast it too, or a second caller recomputes while the holder is still working.
+_COMPARISON_LOCK_WAIT_SECONDS = _COMPARISON_COMPUTE_BUDGET_SECONDS
+_COMPARISON_LOCK_TTL_SECONDS = int(_COMPARISON_COMPUTE_BUDGET_SECONDS) + 60
+
 
 def _resolve_since(window_days: int | None) -> datetime | None:
     """Translate ``window_days`` into a ``since`` UTC cutoff."""
     if window_days is None:
         return None
     return datetime.now(tz=timezone.utc) - timedelta(days=window_days)
+
+
+async def _await_or_abort[T](request: Request, coro: Coroutine[Any, Any, T]) -> T:
+    """Drop the computation once the caller is gone instead of running it to completion."""
+    task = asyncio.ensure_future(coro)
+    try:
+        while True:
+            done, _pending = await asyncio.wait({task}, timeout=_DISCONNECT_POLL_SECONDS)
+            if done:
+                return task.result()
+            if await request.is_disconnected():
+                raise HTTPException(status_code=499, detail="Client disconnected")
+    finally:
+        # asyncio.wait() leaves its futures running, so the task outlives us on any
+        # exit path -- including an outer cancellation at shutdown -- unless killed here.
+        if not task.done():
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
 
 
 def _project_cache_key(
@@ -66,27 +98,26 @@ def _project_cache_key(
     )
 
 
+def _scope_hash(project_ids: list[str]) -> str:
+    """Digest of the caller's visible projects: the authorization boundary, shared by equal scopes."""
+    return hashlib.md5(",".join(sorted(project_ids)).encode(), usedforsecurity=False).hexdigest()[:16]
+
+
 def _comparison_cache_key(
-    user_id: str,
+    scope_hash: str,
     team_id: str,
     *,
     max_scans: int,
     window_days: int | None,
-    version_token: str,
 ) -> str:
-    """Cache key carrying a completion-monotonic token across the scoped projects."""
-    return (
-        f"{CacheKeys.update_frequency_comparison(user_id, team_id)}:m{max_scans}:w{window_days or 0}:v{version_token}"
-    )
+    """Cache key shared by every caller with the same visible-project scope."""
+    base = CacheKeys.update_frequency_comparison(scope_hash, team_id)
+    return f"{base}:m{max_scans}:w{window_days or 0}"
 
 
-async def _completed_scan_version(db: DatabaseDep, project_ids: list[str]) -> str:
+async def _project_scan_version(db: DatabaseDep, project_id: str) -> str:
     """Completed-scan count: a cache token monotonic per completion, unlike max(created_at) on out-of-order finishes."""
-    if not project_ids:
-        return "0"
-    count = await db.scans.count_documents(
-        {"project_id": {"$in": project_ids}, "status": {"$in": SCAN_USABLE_STATUSES}}
-    )
+    count = await db.scans.count_documents({"project_id": project_id, "status": {"$in": SCAN_USABLE_STATUSES}})
     return str(count)
 
 
@@ -125,6 +156,7 @@ def _build_release_fetcher() -> ReleaseHistoryFetcher:
 @router.get("/projects/{project_id}/update-frequency", responses=RESP_AUTH_404)
 async def get_project_update_frequency(
     project_id: str,
+    request: Request,
     current_user: CurrentUserDep,
     db: DatabaseDep,
     max_scans: Annotated[int, Query(ge=2, le=500)] = 20,
@@ -147,7 +179,7 @@ async def get_project_update_frequency(
     if project_id not in user_project_ids:
         raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
 
-    version_token = await _completed_scan_version(db, [project_id])
+    version_token = await _project_scan_version(db, project_id)
     cache_key = _project_cache_key(
         project_id, max_scans=max_scans, window_days=window_days, branch=branch, version_token=version_token
     )
@@ -159,65 +191,45 @@ async def get_project_update_frequency(
     dep_repo = DependencyRepository(db)
     analysis_repo = AnalysisResultRepository(db)
 
-    metrics = await compute_update_frequency(
-        project_id=project_id,
-        project_name=project.get("name", "Unknown"),
-        scan_repo=scan_repo,
-        dep_repo=dep_repo,
-        analysis_repo=analysis_repo,
-        max_scans=max_scans,
-        since=_resolve_since(window_days),
-        release_fetcher=_build_release_fetcher(),
-        branch=branch,
-        deleted_branches=project.get("deleted_branches"),
-        default_branch=project.get("default_branch"),
+    metrics = await _await_or_abort(
+        request,
+        compute_update_frequency(
+            project_id=project_id,
+            project_name=project.get("name", "Unknown"),
+            scan_repo=scan_repo,
+            dep_repo=dep_repo,
+            analysis_repo=analysis_repo,
+            max_scans=max_scans,
+            since=_resolve_since(window_days),
+            release_fetcher=_build_release_fetcher(),
+            branch=branch,
+            deleted_branches=project.get("deleted_branches"),
+            default_branch=project.get("default_branch"),
+        ),
     )
 
     await cache_service.set(cache_key, metrics.model_dump(), ttl_seconds=CacheTTL.UPDATE_FREQUENCY)
     return metrics
 
 
-@router.get("/update-frequency/comparison", responses=RESP_AUTH)
-async def get_update_frequency_comparison(
-    current_user: CurrentUserDep,
+async def _compute_comparison(
     db: DatabaseDep,
-    team_id: str | None = None,
-    max_scans: Annotated[int, Query(ge=2, le=200)] = 20,
-    window_days: Annotated[int | None, Query(ge=1, le=3650)] = None,
-) -> UpdateFrequencyComparison:
-    """Cross-project ranking. Pass ``window_days`` to align scan cadences."""
-    require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
-
-    project_repo = ProjectRepository(db)
-    user_project_ids = await get_user_project_ids(current_user, db)
-
-    if not user_project_ids:
-        return UpdateFrequencyComparison(
-            projects=[],
-            team_avg_updates_per_month=0.0,
-            team_avg_coverage_pct=None,
-        )
-
+    user_project_ids: list[str],
+    team_id: str | None,
+    *,
+    max_scans: int,
+    window_days: int | None,
+) -> dict[str, Any]:
     query: dict[str, Any] = {"_id": {"$in": user_project_ids}}
     if team_id:
         query["team_id"] = team_id
 
+    project_repo = ProjectRepository(db)
     projects_raw = await project_repo.find_many_raw(
         query,
         projection={"_id": 1, "name": 1, "team_id": 1, "deleted_branches": 1, "default_branch": 1},
         limit=len(user_project_ids),
     )
-
-    # Version the cache over the scoped projects so a team filter never serves
-    # a token computed across the user's other teams.
-    scoped_ids = [str(p["_id"]) for p in projects_raw]
-    version_token = await _completed_scan_version(db, scoped_ids)
-    cache_key = _comparison_cache_key(
-        current_user.id, team_id or "all", max_scans=max_scans, window_days=window_days, version_token=version_token
-    )
-    cached = await cache_service.get(cache_key)
-    if cached:
-        return UpdateFrequencyComparison(**cached)
 
     unique_team_ids = list({str(p["team_id"]) for p in projects_raw if p.get("team_id")})
     team_names: dict[str, str] = {}
@@ -232,20 +244,60 @@ async def get_update_frequency_comparison(
     for p in projects_raw:
         p["team_name"] = team_names.get(p.get("team_id", ""))
 
-    scan_repo = ScanRepository(db)
-    dep_repo = DependencyRepository(db)
-    analysis_repo = AnalysisResultRepository(db)
-
     # No release-history fetcher: comparison only needs team-velocity fields, and
     # per-package deps.dev round-trips per project would dominate latency.
     comparison = await compute_update_frequency_comparison(
         projects=projects_raw,
-        scan_repo=scan_repo,
-        dep_repo=dep_repo,
-        analysis_repo=analysis_repo,
+        scan_repo=ScanRepository(db),
+        dep_repo=DependencyRepository(db),
+        analysis_repo=AnalysisResultRepository(db),
         max_scans=max_scans,
         since=_resolve_since(window_days),
     )
+    return comparison.model_dump()
 
-    await cache_service.set(cache_key, comparison.model_dump(), ttl_seconds=CacheTTL.UPDATE_FREQUENCY)
-    return comparison
+
+@router.get("/update-frequency/comparison", responses=RESP_AUTH)
+async def get_update_frequency_comparison(
+    request: Request,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    team_id: str | None = None,
+    max_scans: Annotated[int, Query(ge=2, le=200)] = 20,
+    window_days: Annotated[int | None, Query(ge=1, le=3650)] = None,
+) -> UpdateFrequencyComparison:
+    """Cross-project ranking. Pass ``window_days`` to align scan cadences."""
+    require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
+
+    user_project_ids = await get_user_project_ids(current_user, db)
+
+    if not user_project_ids:
+        return UpdateFrequencyComparison(
+            projects=[],
+            team_avg_updates_per_month=0.0,
+            team_avg_coverage_pct=None,
+        )
+
+    cache_key = _comparison_cache_key(
+        _scope_hash(user_project_ids),
+        team_id or "all",
+        max_scans=max_scans,
+        window_days=window_days,
+    )
+
+    payload = await _await_or_abort(
+        request,
+        cache_service.get_or_fetch_with_lock(
+            cache_key,
+            lambda: _compute_comparison(
+                db, user_project_ids, team_id, max_scans=max_scans, window_days=window_days
+            ),
+            ttl_seconds=CacheTTL.UPDATE_FREQUENCY,
+            lock_ttl_seconds=_COMPARISON_LOCK_TTL_SECONDS,
+            max_wait_seconds=_COMPARISON_LOCK_WAIT_SECONDS,
+            reraise_fetch_errors=True,
+        ),
+    )
+    if not payload:
+        raise HTTPException(status_code=503, detail="Update-frequency comparison is temporarily unavailable")
+    return UpdateFrequencyComparison(**payload)
