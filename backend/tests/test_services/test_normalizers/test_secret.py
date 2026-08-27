@@ -278,3 +278,66 @@ class TestNormalizeTrufflehog:
         self.agg.aggregate("trufflehog", result)
         f = next(iter(self.agg.findings.values()))
         assert f.details["adjusted_risk_score"] == 16.0
+
+    def test_unverified_historical_secret_severity_is_low(self):
+        """Unverified + gone-from-tree is the deprioritized bucket: severity drops to LOW so it
+        leaves the critical counts everywhere (all aggregations key on severity)."""
+        result = {
+            "findings": [
+                {
+                    "DetectorType": "7",
+                    "Raw": "secret123",
+                    "SourceMetadata": {"Data": {"Filesystem": {"file": "a.env"}}},
+                    "DcInCurrentTree": False,
+                }
+            ]
+        }
+        self.agg.aggregate("trufflehog", result)
+        f = next(iter(self.agg.findings.values()))
+        assert f.severity == "LOW"
+
+    def test_verified_historical_secret_stays_critical(self):
+        """A verified credential is a live leak until rotated, even after the file is gone."""
+        result = {
+            "findings": [
+                {
+                    "DetectorType": "2",
+                    "Raw": "AKIAIOSFODNN7EXAMPLE",
+                    "Verified": True,
+                    "SourceMetadata": {"Data": {"Filesystem": {"file": "a.env"}}},
+                    "DcInCurrentTree": False,
+                }
+            ]
+        }
+        self.agg.aggregate("trufflehog", result)
+        f = next(iter(self.agg.findings.values()))
+        assert f.severity == "CRITICAL"
+
+    def test_unverified_in_current_tree_stays_critical(self):
+        result = {
+            "findings": [
+                {
+                    "DetectorType": "7",
+                    "Raw": "secret123",
+                    "SourceMetadata": {"Data": {"Filesystem": {"file": "a.env"}}},
+                    "DcInCurrentTree": True,
+                }
+            ]
+        }
+        self.agg.aggregate("trufflehog", result)
+        f = next(iter(self.agg.findings.values()))
+        assert f.severity == "CRITICAL"
+
+    def test_unknown_tree_status_stays_critical(self):
+        result = {
+            "findings": [
+                {
+                    "DetectorType": "7",
+                    "Raw": "secret123",
+                    "SourceMetadata": {"Data": {"Filesystem": {"file": "a.env"}}},
+                }
+            ]
+        }
+        self.agg.aggregate("trufflehog", result)
+        f = next(iter(self.agg.findings.values()))
+        assert f.severity == "CRITICAL"

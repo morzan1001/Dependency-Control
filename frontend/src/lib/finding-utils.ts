@@ -139,6 +139,47 @@ export function getSecretTreeStatusInfo(
   return null
 }
 
+interface SecretFindingLike {
+  type?: string
+  details?: { in_current_tree?: boolean | null; verified?: boolean }
+}
+
+// A deprioritized secret is unverified AND gone from the current tree; the backend lowers
+// these to LOW severity. Mirrors calculate_secret_severity so the row de-emphasis matches
+// the stored severity (and stays correct on pre-change scans, which keep CRITICAL).
+export function isSecretDeprioritized(finding: SecretFindingLike): boolean {
+  return (
+    finding.type === 'secret' &&
+    finding.details?.in_current_tree === false &&
+    finding.details?.verified !== true
+  )
+}
+
+// Remediation guidance keyed on tree state: a history-only secret cannot be cleared by deleting
+// the current file — the credential must be rotated (verified ones are a live leak). Null for
+// unknown tree state (no actionable, non-obvious advice to give).
+export function getSecretRemediationHint(
+  verified: boolean | null | undefined,
+  inCurrentTree: boolean | null | undefined
+): { text: string; tone: 'danger' | 'muted' } | null {
+  if (inCurrentTree === false) {
+    if (verified === true) {
+      return {
+        tone: 'danger',
+        text: 'Live credential found only in git history. Deleting the file will not remove it — rotate this secret immediately.',
+      }
+    }
+    return {
+      tone: 'muted',
+      text: 'This secret only exists in git history. Deleting the current file will not clear it — rotate the credential to be safe, then waive this finding to dismiss it.',
+    }
+  }
+  if (inCurrentTree === true) {
+    return { tone: 'muted', text: 'Remove the secret from the code and rotate the credential.' }
+  }
+  return null
+}
+
 export interface SourceInfo {
   icon: LucideIcon
   label: string

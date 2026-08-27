@@ -50,6 +50,20 @@ class TestBuildScanFindingsMatch:
         match = _build_scan_findings_match("scan-1", severity="info", hide_info=True)
         assert match["severity"] == {"$in": []}
 
+    def test_hide_historical_secrets_excludes_history_only_secrets(self):
+        match = _build_scan_findings_match("scan-1", hide_historical_secrets=True)
+        assert match["$nor"] == [{"type": "secret", "details.in_current_tree": False}]
+
+    def test_hide_historical_secrets_default_omits_filter(self):
+        match = _build_scan_findings_match("scan-1")
+        assert "$nor" not in match
+
+    def test_hide_historical_secrets_composes_with_secret_category(self):
+        # On the secrets tab (type=secret) the exclusion still narrows to in-tree/unknown secrets.
+        match = _build_scan_findings_match("scan-1", category="secret", hide_historical_secrets=True)
+        assert match["type"] == "secret"
+        assert match["$nor"] == [{"type": "secret", "details.in_current_tree": False}]
+
 
 class TestScanFindingsSortStage:
     """Every sort must end with the unique _id tiebreaker for stable pagination; finding_id isn't unique per scan (one CVE across N components)."""

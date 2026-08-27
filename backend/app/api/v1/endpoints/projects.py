@@ -1054,6 +1054,7 @@ def _build_scan_findings_match(
     license_category: str | None = None,
     hide_info: bool | None = None,
     waived: bool | None = None,
+    hide_historical_secrets: bool | None = None,
 ) -> dict[str, Any]:
     """Compose the $match stage for the scan-findings aggregation."""
     query: dict[str, Any] = {"scan_id": scan_id}
@@ -1080,6 +1081,9 @@ def _build_scan_findings_match(
     if waived is not None:
         # Explicit True/False splits active vs waived; None returns both.
         query["waived"] = waived
+    if hide_historical_secrets:
+        # Drop secrets no longer in the current tree; unknown-tree (field absent) stays visible.
+        query["$nor"] = [{"type": "secret", "details.in_current_tree": False}]
     if search:
         escaped_search = re.escape(search)
         query["$or"] = [
@@ -1291,6 +1295,7 @@ async def read_scan_findings(
     hide_info: bool | None = None,  # Hide INFO severity findings
     waived: bool | None = None,  # True: only waived; False: only active; None: both
     direct_only: bool | None = None,  # Hide findings on transitive dependencies
+    hide_historical_secrets: bool | None = None,  # Hide secrets no longer in the current git tree
 ) -> dict[str, Any]:
     """Get paginated findings for a scan."""
     await _resolve_scan_for_findings(scan_id, current_user, db)
@@ -1304,6 +1309,7 @@ async def read_scan_findings(
         license_category=license_category,
         hide_info=hide_info,
         waived=waived,
+        hide_historical_secrets=hide_historical_secrets,
     )
     pipeline = _build_scan_findings_pipeline(
         query,

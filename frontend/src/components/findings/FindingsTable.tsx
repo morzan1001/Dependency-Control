@@ -18,7 +18,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { SeverityBadge } from './SeverityBadge'
 import { FindingTypeBadge } from './FindingTypeBadge'
-import { getSourceInfo, getSecretTreeStatusInfo } from '@/lib/finding-utils'
+import { getSourceInfo, isSecretDeprioritized } from '@/lib/finding-utils'
 import { ScanContext } from './details/SastDetailsView'
 import { resolveRelatedFindingInRows, fetchRelatedFinding } from './related-finding-rows'
 
@@ -78,27 +78,6 @@ function ReachabilityIndicator({ reachability }: ReachabilityIndicatorProps) {
                         </p>
                     )}
                 </div>
-            </TooltipContent>
-        </Tooltip>
-    )
-}
-
-interface TreeStatusIndicatorProps {
-    readonly inCurrentTree: boolean | null | undefined
-}
-
-function TreeStatusIndicator({ inCurrentTree }: TreeStatusIndicatorProps) {
-    const info = getSecretTreeStatusInfo(inCurrentTree)
-    if (!info) return null
-    return (
-        <Tooltip>
-            <TooltipTrigger asChild>
-                <div className={`flex items-center justify-center w-5 h-5 rounded-full ${info.className}`}>
-                    <Shield className="h-3 w-3" />
-                </div>
-            </TooltipTrigger>
-            <TooltipContent side="right">
-                <p className="font-medium">{info.label}</p>
             </TooltipContent>
         </Tooltip>
     )
@@ -187,9 +166,11 @@ interface FindingsTableProps {
     readonly waivedFilter?: "active" | "waived" | "all";
     /** Hide findings on transitive dependencies (direct and non-dependency findings stay). */
     readonly directOnly?: boolean;
+    /** Hide secrets no longer in the current git tree (history-only). */
+    readonly hideHistoricalSecrets?: boolean;
 }
 
-export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0, licenseCategory, hideInfo, waivedFilter = "active", directOnly = false }: FindingsTableProps) {
+export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0, licenseCategory, hideInfo, waivedFilter = "active", directOnly = false, hideHistoricalSecrets = false }: FindingsTableProps) {
     const sentinelRef = useRef<HTMLDivElement>(null)
     const scrollTargetRef = useRef<HTMLTableRowElement | null>(null)
     const hasScrolledRef = useRef(false)
@@ -249,7 +230,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
         isError
     } = useInfiniteQuery({
         // severity is NOT passed to API - we show all findings but scroll to the target
-        queryKey: ['findings', scanId, category, search, sortBy, sortOrder, licenseCategory, hideInfo, waivedFilter, directOnly],
+        queryKey: ['findings', scanId, category, search, sortBy, sortOrder, licenseCategory, hideInfo, waivedFilter, directOnly, hideHistoricalSecrets],
         queryFn: async ({ pageParam = 0 }) => {
             const res = await scanApi.getFindings(scanId, {
                 skip: pageParam,
@@ -264,6 +245,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                 ...(waivedFilter === "active" ? { waived: false } : {}),
                 ...(waivedFilter === "waived" ? { waived: true } : {}),
                 ...(directOnly ? { direct_only: true } : {}),
+                ...(hideHistoricalSecrets ? { hide_historical_secrets: true } : {}),
             });
             return res;
         },
@@ -394,7 +376,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                             const isScrollTarget = index === scrollTargetIndex
                             const rowClass = `border-b transition-colors hover:bg-muted/50 data-[state=selected]:bg-muted cursor-pointer ${
                                 finding.type === 'system_warning' ? 'bg-destructive/5 hover:bg-destructive/10 border-l-2 border-l-destructive' : ''
-                            }`
+                            } ${isSecretDeprioritized(finding) ? 'opacity-60 hover:opacity-100' : ''}`
                             return (
                                 <TableRow
                                     ref={isScrollTarget ? scrollTargetRef : undefined}
@@ -407,9 +389,6 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                                             <SeverityBadge severity={finding.severity} />
                                             {finding.details?.reachability && (
                                                 <ReachabilityIndicator reachability={finding.details.reachability} />
-                                            )}
-                                            {finding.type === 'secret' && (
-                                                <TreeStatusIndicator inCurrentTree={finding.details?.in_current_tree} />
                                             )}
                                         </div>
                                     </TableCell>
@@ -428,6 +407,15 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                                     <TableCell className="p-4 align-middle">
                                         <div className="flex flex-col gap-1">
                                             <TypeBadges finding={finding} />
+                                            {finding.type === 'secret' && finding.details?.in_current_tree === false && (
+                                                <Badge
+                                                    variant="outline"
+                                                    title="Secret is no longer in the current tree — only in git history"
+                                                    className="text-[10px] border-amber-400 bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-400 dark:border-amber-600 w-fit whitespace-nowrap"
+                                                >
+                                                    Only in history
+                                                </Badge>
+                                            )}
                                             {finding.waiver_lapsed && !finding.waived && (
                                                 <Badge
                                                     variant="outline"
