@@ -79,7 +79,18 @@ jobs:
           git add CHANGELOG.md
           
           git commit -m "chore: release v${{ steps.get_version.outputs.VERSION }} [skip ci]"
-          git push
+
+          # Rebase-and-retry so a concurrent push to main can't abort the release with a
+          # non-fast-forward rejection; the release commit is replayed onto the new tip.
+          for attempt in 1 2 3 4 5; do
+            if git push; then
+              exit 0
+            fi
+            echo "push rejected (attempt ${attempt}/5); rebasing onto latest main and retrying"
+            git pull --rebase origin main
+          done
+          echo "::error::Failed to push release commit after 5 attempts"
+          exit 1
 
       - name: Create Tag
         run: |
