@@ -113,8 +113,8 @@ export const useProjectRecommendations = (projectId: string, scanId?: string) =>
     });
 }
 
-// Both update-frequency queries cost minutes of server time, so they only ever run
-// when the user asks for them.
+// An uncached update-frequency run is open-ended, so neither query ever refetches on its own;
+// new results only appear once the user asks again.
 export const useUpdateFrequency = (projectId: string, opts?: UpdateFrequencyOpts) => {
     return useQuery<Awaited<ReturnType<typeof analyticsApi.getUpdateFrequency>>, ApiError>({
         queryKey: analyticsKeys.updateFrequency(projectId, opts),

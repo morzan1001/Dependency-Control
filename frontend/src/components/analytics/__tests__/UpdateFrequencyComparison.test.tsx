@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ProjectUpdateSummary, UpdateFrequencyComparison as Comparison } from "@/types/analytics";
@@ -53,22 +53,49 @@ const makeProject = (idx: number): ProjectUpdateSummary => ({
   project_id: `p${idx}`,
   project_name: `project-${idx}`,
   team_name: null,
+  branch: "main",
+  window_days: 90,
   scan_count: 5,
   updates_per_month: idx,
   update_coverage_pct: idx,
   patch_ratio: 0.5,
   trend_direction: "stable",
   total_outdated: idx,
+  total_updates: idx * 2,
   last_scan_date: "2026-08-01T00:00:00Z",
+  data_status: "ready",
 });
 
-const makeComparison = (count: number): Comparison => ({
+const makeUnmeasured = (
+  name: string,
+  status: Exclude<ProjectUpdateSummary["data_status"], "ready">,
+): ProjectUpdateSummary => ({
+  project_id: name,
+  project_name: name,
+  team_name: null,
+  branch: null,
+  window_days: 90,
+  scan_count: null,
+  updates_per_month: null,
+  update_coverage_pct: null,
+  patch_ratio: null,
+  trend_direction: "unknown",
+  total_outdated: null,
+  total_updates: null,
+  last_scan_date: null,
+  data_status: status,
+});
+
+const makeComparison = (count: number, overrides: Partial<Comparison> = {}): Comparison => ({
   projects: Array.from({ length: count }, (_, i) => makeProject(count - i)),
   team_avg_updates_per_month: 3,
   team_avg_coverage_pct: 42,
   best_project: null,
   worst_project: null,
-  skipped_projects: 0,
+  pending_projects: 0,
+  skipped_insufficient_data: 0,
+  skipped_error: 0,
+  ...overrides,
 });
 
 function renderComparison(): void {
@@ -82,6 +109,12 @@ function renderComparison(): void {
 
 const clickLoad = (): void => {
   fireEvent.click(screen.getByRole("button", { name: /load comparison/i }));
+};
+
+const rowFor = (projectName: string): HTMLElement => {
+  const row = screen.getByText(projectName).closest("tr");
+  if (!row) throw new Error(`no table row for ${projectName}`);
+  return row;
 };
 
 describe("UpdateFrequencyComparison", () => {
@@ -109,7 +142,7 @@ describe("UpdateFrequencyComparison", () => {
 
     const chart = await screen.findByTestId("bar-chart");
     expect(chart).toHaveAttribute("data-bars", "25");
-    expect(screen.getByText(/top 25 of 60 projects/i)).toBeInTheDocument();
+    expect(screen.getByText(/top 25 of 60 measured projects/i)).toBeInTheDocument();
     expect(screen.getByTestId("bar")).toHaveAttribute("data-animated", "false");
   });
 
@@ -165,6 +198,73 @@ describe("UpdateFrequencyComparison", () => {
     fireEvent.click(reload);
 
     await waitFor(() => expect(mockedComparison).toHaveBeenCalledTimes(2));
+  });
+
+  it("names the branch each project was measured on", async () => {
+    mockedComparison.mockResolvedValue(makeComparison(1));
+    renderComparison();
+    clickLoad();
+
+    await screen.findByText("Project Ranking");
+    expect(screen.getByRole("columnheader", { name: "Branch" })).toBeInTheDocument();
+    expect(within(rowFor("project-1")).getByText("main")).toBeInTheDocument();
+  });
+
+  it("marks a project without a rollup as pending instead of scoring it zero", async () => {
+    mockedComparison.mockResolvedValue(
+      makeComparison(1, {
+        projects: [makeProject(1), makeUnmeasured("waiting-project", "pending")],
+        pending_projects: 1,
+      }),
+    );
+    renderComparison();
+    clickLoad();
+
+    await screen.findByText("Project Ranking");
+    const row = rowFor("waiting-project");
+    expect(within(row).getByText("Not computed yet")).toBeInTheDocument();
+    expect(within(row).queryByText("0%")).not.toBeInTheDocument();
+    expect(within(row).queryByText("N/A")).not.toBeInTheDocument();
+    expect(screen.getByText("1 project not computed yet")).toBeInTheDocument();
+    expect(screen.getByText("across 1 measured project")).toBeInTheDocument();
+  });
+
+  it("tells too few scans apart from a failed measurement and drops the banner", async () => {
+    mockedComparison.mockResolvedValue(
+      makeComparison(1, {
+        projects: [
+          makeUnmeasured("thin-project", "insufficient_data"),
+          makeUnmeasured("broken-project", "error"),
+        ],
+        skipped_insufficient_data: 1,
+        skipped_error: 1,
+      }),
+    );
+    renderComparison();
+    clickLoad();
+
+    await screen.findByText("Project Ranking");
+    expect(within(rowFor("thin-project")).getByText("Too few scans")).toBeInTheDocument();
+    expect(within(rowFor("broken-project")).getByText("Measurement failed")).toBeInTheDocument();
+    expect(screen.getByText("1 with too few scans · 1 failed")).toBeInTheDocument();
+    expect(screen.queryByText(/not computed yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByTestId("bar-chart")).not.toBeInTheDocument();
+  });
+
+  it("charts only the measured projects while listing every one", async () => {
+    mockedComparison.mockResolvedValue(
+      makeComparison(1, {
+        projects: [makeProject(1), makeProject(2), makeUnmeasured("waiting-project", "pending")],
+        pending_projects: 1,
+      }),
+    );
+    renderComparison();
+    clickLoad();
+
+    const chart = await screen.findByTestId("bar-chart");
+    expect(chart).toHaveAttribute("data-bars", "2");
+    const bodyRows = screen.getAllByRole("row").filter((row) => row.querySelector("td"));
+    expect(bodyRows).toHaveLength(3);
   });
 
   it("surfaces the failure reason and lets the user retry", async () => {

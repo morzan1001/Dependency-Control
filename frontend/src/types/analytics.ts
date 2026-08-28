@@ -503,17 +503,27 @@ export interface UpdateFrequencyMetrics {
     recent_updates: DependencyUpdateEvent[];
 }
 
+// "pending" = no per-scan rollup recorded yet, "insufficient_data" = fewer than two
+// usable scans in the window, "error" = the rollup itself failed.
+export type UpdateDataStatus = 'ready' | 'pending' | 'insufficient_data' | 'error';
+
 export interface ProjectUpdateSummary {
     project_id: string;
     project_name: string;
     team_name: string | null;
-    scan_count: number;
+    // The branch the numbers were measured on; picked heuristically without a default branch.
+    branch: string | null;
+    window_days: number;
+    // Every metric below is null unless data_status is "ready".
+    scan_count: number | null;
     updates_per_month: number | null;
     update_coverage_pct: number | null;
-    patch_ratio: number;
-    trend_direction: TrendDirection;
-    total_outdated: number;
-    last_scan_date: string;
+    patch_ratio: number | null;
+    trend_direction: TrendDirection | null;
+    total_outdated: number | null;
+    total_updates: number | null;
+    last_scan_date: string | null;
+    data_status: UpdateDataStatus;
 }
 
 export interface UpdateFrequencyComparison {
@@ -522,5 +532,7 @@ export interface UpdateFrequencyComparison {
     team_avg_coverage_pct: number | null;
     best_project: string | null;
     worst_project: string | null;
-    skipped_projects: number;
+    pending_projects: number;
+    skipped_insufficient_data: number;
+    skipped_error: number;
 }
