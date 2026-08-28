@@ -5,9 +5,11 @@ from collections import Counter
 from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
+import app.services.update_frequency as update_frequency_module
 from app.schemas.analytics import ScanTimelineEntry
 from app.services.release_history import ReleaseHistory, ReleaseInfo
 from app.services.update_frequency import (
@@ -1366,7 +1368,11 @@ class TestStreamingOrchestrator:
 
     @staticmethod
     def _two_scan_project(pid: str, pkg: str, versions: tuple[str, str]) -> tuple[list, dict]:
+        # Inside the comparison's calendar window, which is what it now ranks over.
+        now = datetime.now(tz=timezone.utc)
         scans = [_make_scan(f"{pid}-s1", 0, project_id=pid), _make_scan(f"{pid}-s2", 30, project_id=pid)]
+        scans[0]["created_at"] = now - timedelta(days=30)
+        scans[1]["created_at"] = now
         deps = {
             f"{pid}-s1": [_make_dep(f"{pid}-s1", pkg, versions[0])],
             f"{pid}-s2": [_make_dep(f"{pid}-s2", pkg, versions[1])],
@@ -1397,7 +1403,7 @@ class TestStreamingOrchestrator:
         assert result.best_project == "Measured"
         # A single measured project cannot be both best and worst.
         assert result.worst_project is None
-        assert result.skipped_projects == 0
+        assert result.skipped_insufficient_data == 0
 
     @pytest.mark.asyncio
     async def test_all_unmeasured_yields_no_best_worst_and_null_avg(self):
@@ -1419,6 +1425,7 @@ class TestStreamingOrchestrator:
     async def test_projects_without_enough_scans_are_counted_as_skipped(self):
         scans_a, deps_a = self._two_scan_project("proj-a", "pkg-a", ("1.0.0", "1.0.1"))
         single_scan = [_make_scan("proj-c-s1", 0, project_id="proj-c")]
+        single_scan[0]["created_at"] = datetime.now(tz=timezone.utc)
 
         result = await compute_update_frequency_comparison(
             projects=[{"_id": "proj-a", "name": "A"}, {"_id": "proj-c", "name": "C"}],
@@ -1428,7 +1435,38 @@ class TestStreamingOrchestrator:
         )
 
         assert len(result.projects) == 1
-        assert result.skipped_projects == 1
+        assert result.skipped_insufficient_data == 1
+
+    @pytest.mark.asyncio
+    async def test_a_project_whose_summary_cannot_be_built_is_counted_rather_than_lost(self):
+        # Building the summary happens outside the per-project guard, so a schema
+        # violation there reaches asyncio.gather(return_exceptions=True) as the
+        # exception itself. Such a project must not vanish from every counter.
+        scans_a, deps_a = self._two_scan_project("proj-a", "pkg-a", ("1.0.0", "1.0.1"))
+        scans_b, deps_b = self._two_scan_project("proj-b", "pkg-b", ("2.0.0", "2.1.0"))
+        projects = [{"_id": "proj-a", "name": "A"}, {"_id": "proj-b", "name": "B"}]
+
+        real_compute = update_frequency_module.compute_update_frequency
+
+        async def _bad_ratio_for_b(**kwargs):
+            metrics = await real_compute(**kwargs)
+            if kwargs["project_id"] == "proj-b":
+                # Survives here and fails when the summary is built, which is
+                # outside the guard.
+                metrics.granularity_ratio = {"patch": "not a number"}
+            return metrics
+
+        with patch.object(update_frequency_module, "compute_update_frequency", _bad_ratio_for_b):
+            result = await compute_update_frequency_comparison(
+                projects=projects,
+                scan_repo=FakeScanRepo(scans_a + scans_b),
+                dep_repo=FakeDepRepo({**deps_a, **deps_b}),
+                analysis_repo=FakeAnalysisRepo([]),
+            )
+
+        accounted = len(result.projects) + result.skipped_insufficient_data + result.skipped_error
+        assert accounted == len(projects)
+        assert result.skipped_error == 1
 
     @pytest.mark.asyncio
     async def test_outdated_loaded_per_pair_not_upfront(self):
@@ -1553,8 +1591,9 @@ class TestStreamingOrchestrator:
         for i in range(n_projects):
             pid = f"proj-{i}"
             s1, s2 = f"{pid}-s1", f"{pid}-s2"
-            all_scans.append(_make_scan(s1, 0, project_id=pid))
-            all_scans.append(_make_scan(s2, 30, project_id=pid))
+            now = datetime.now(tz=timezone.utc)
+            all_scans.append(_make_scan(s1, 0, project_id=pid) | {"created_at": now - timedelta(days=30)})
+            all_scans.append(_make_scan(s2, 30, project_id=pid) | {"created_at": now})
             deps[s1] = [_make_dep(s1, "pkg-a", "1.0.0")]
             deps[s2] = [_make_dep(s2, "pkg-a", "1.0.1")]
 

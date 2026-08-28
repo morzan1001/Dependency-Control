@@ -703,10 +703,14 @@ class TestModelConstruction:
         assert metrics.adoption_latency_days_median == 2.5
 
     def test_to_summary(self) -> None:
-        summary = _fold_golden().to_summary("p1", "Project One", team_name="Platform")
+        summary = _fold_golden().to_summary("p1", "Project One", team_name="Platform", branch="main", window_days=90)
         assert summary.project_id == "p1"
         assert summary.project_name == "Project One"
         assert summary.team_name == "Platform"
+        assert summary.data_status == "ready"
+        assert summary.branch == "main"
+        assert summary.window_days == 90
+        assert summary.total_updates == 11
         assert summary.scan_count == 5
         assert summary.updates_per_month == 3.72
         assert summary.update_coverage_pct == 57.1
@@ -717,10 +721,6 @@ class TestModelConstruction:
 
     def test_summary_keeps_unmeasured_coverage_none(self) -> None:
         deltas = _chain([_delta("s0", 0), _delta("s1", 10, patch=1)])
-        summary = _fold(deltas).to_summary("p1", "Project One")
+        summary = _fold(deltas).to_summary("p1", "Project One", window_days=90)
         assert summary.update_coverage_pct is None
         assert summary.team_name is None
-
-    def test_summary_without_a_window_carries_no_rate(self) -> None:
-        summary = _fold_golden(window_days=None).to_summary("p1", "Project One")
-        assert summary.updates_per_month is None

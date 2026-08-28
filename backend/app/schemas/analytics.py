@@ -371,27 +371,47 @@ class UpdateFrequencyMetrics(BaseModel):
     recent_updates: list[DependencyUpdateEvent]
 
 
+UpdateDataStatus = Literal["ready", "pending", "insufficient_data", "error"]
+"""Why a project row carries metrics, or why it does not.
+
+``pending`` means no rollup delta exists yet, so the project is listed but
+unmeasured; ``insufficient_data`` means deltas exist but the window holds
+fewer than two comparable scans; ``error`` means the deltas carry a writer
+failure.
+"""
+
+
 class ProjectUpdateSummary(BaseModel):
-    """Lightweight update metrics for cross-project comparison."""
+    """Lightweight update metrics for cross-project comparison.
+
+    Every metric field is None unless ``data_status`` is ``"ready"``.
+    """
 
     project_id: str
     project_name: str
     team_name: str | None = None
-    scan_count: int
-    updates_per_month: float | None
+    data_status: UpdateDataStatus
+    # Branch the metrics describe; projects rarely carry a default_branch, so the
+    # row has to say which one was picked.
+    branch: str | None = None
+    window_days: int
+    scan_count: int | None = None
+    updates_per_month: float | None = None
     update_coverage_pct: float | None = None
-    patch_ratio: float  # proportion of patch updates (0-1)
-    trend_direction: str  # "improving" | "stable" | "deteriorating" | "unknown"
-    total_outdated: int
-    last_scan_date: str
+    patch_ratio: float | None = None  # proportion of patch updates (0-1)
+    trend_direction: str | None = None  # "improving" | "stable" | "deteriorating" | "unknown"
+    total_updates: int | None = None
+    total_outdated: int | None = None
+    last_scan_date: str | None = None
 
 
 class UpdateFrequencyComparison(BaseModel):
     """Cross-project comparison of update frequency metrics.
 
     Ranking: measured coverage first (descending), then projects where
-    nothing was ever outdated (no measurable coverage). best/worst are
-    drawn from measured projects only.
+    nothing was ever outdated (no measurable coverage). best/worst and the
+    team averages are drawn from ``ready`` projects only, so an unmeasured
+    project never dilutes them.
     """
 
     projects: list[ProjectUpdateSummary]
@@ -399,7 +419,9 @@ class UpdateFrequencyComparison(BaseModel):
     team_avg_coverage_pct: float | None = None  # None when no project has measurable coverage
     best_project: str | None = None
     worst_project: str | None = None
-    skipped_projects: int = 0  # projects dropped for lacking >=2 completed scans
+    pending_projects: int = 0
+    skipped_insufficient_data: int = 0
+    skipped_error: int = 0
 
 
 # Crypto analytics schemas

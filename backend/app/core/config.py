@@ -109,6 +109,9 @@ class Settings(BaseSettings):
 
     # Kill switch for the per-scan update-frequency rollup written during ingest.
     UPDATE_FREQUENCY_ROLLUP_ENABLED: bool = True
+    # Serve the update-frequency analytics from that rollup. Stays off until the
+    # backfill has run: without deltas a project can only be reported as pending.
+    UPDATE_FREQUENCY_USE_ROLLUP: bool = False
 
     model_config = SettingsConfigDict(case_sensitive=True, env_file=".env")
 

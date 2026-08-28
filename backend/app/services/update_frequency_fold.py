@@ -106,16 +106,29 @@ class FoldedWindow:
             adoption_latency_days_median=(upstream.adoption_latency_days_median if upstream else None),
         )
 
-    def to_summary(self, project_id: str, project_name: str, team_name: str | None = None) -> ProjectUpdateSummary:
+    def to_summary(
+        self,
+        project_id: str,
+        project_name: str,
+        team_name: str | None = None,
+        *,
+        branch: str | None = None,
+        window_days: int,
+    ) -> ProjectUpdateSummary:
+        """A folded window is by definition measured, so the row is always ``ready``."""
         return ProjectUpdateSummary(
             project_id=project_id,
             project_name=project_name,
             team_name=team_name,
+            data_status="ready",
+            branch=branch,
+            window_days=window_days,
             scan_count=self.scan_count,
             updates_per_month=self.updates_per_month,
             update_coverage_pct=self.update_coverage_pct,
             patch_ratio=self.granularity_ratio.get("patch", 0.0),
             trend_direction=self.trend_direction,
+            total_updates=self.total_updates,
             total_outdated=self.total_outdated_detected,
             last_scan_date=self.last_scan_date,
         )

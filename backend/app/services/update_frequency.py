@@ -24,6 +24,7 @@ from app.schemas.analytics import (
     ProjectUpdateSummary,
     ScanTimelineEntry,
     SlowPackage,
+    UpdateDataStatus,
     UpdateFrequencyComparison,
     UpdateFrequencyMetrics,
 )
@@ -901,26 +902,68 @@ def _rate(summary: ProjectUpdateSummary) -> float:
     return summary.updates_per_month if summary.updates_per_month is not None else -1.0
 
 
+def rank_summaries(summaries: list[ProjectUpdateSummary]) -> UpdateFrequencyComparison:
+    """Order the measured projects and count the rest, which carry no numbers to average.
+
+    Coverage of None means no backlog was ever measured, so those rank after
+    every measured project and never become best or worst. Rows that carry no
+    metrics at all stay out of the averages entirely.
+    """
+    ready = [s for s in summaries if s.data_status == "ready"]
+    pending = sorted((s for s in summaries if s.data_status == "pending"), key=lambda s: s.project_name)
+
+    measured = [s for s in ready if s.update_coverage_pct is not None]
+    unmeasured = [s for s in ready if s.update_coverage_pct is None]
+    measured.sort(key=lambda s: (s.update_coverage_pct, _rate(s)), reverse=True)
+    unmeasured.sort(key=_rate, reverse=True)
+
+    rates = [s.updates_per_month for s in ready if s.updates_per_month is not None]
+    return UpdateFrequencyComparison(
+        projects=measured + unmeasured + pending,
+        team_avg_updates_per_month=round(sum(rates) / len(rates), 2) if rates else None,
+        team_avg_coverage_pct=(
+            round(sum(s.update_coverage_pct for s in measured) / len(measured), 1)  # type: ignore[misc]
+            if measured
+            else None
+        ),
+        best_project=measured[0].project_name if measured else None,
+        worst_project=measured[-1].project_name if len(measured) >= 2 else None,
+        pending_projects=len(pending),
+        skipped_insufficient_data=sum(1 for s in summaries if s.data_status == "insufficient_data"),
+        skipped_error=sum(1 for s in summaries if s.data_status == "error"),
+    )
+
+
 async def compute_update_frequency_comparison(
     projects: list[dict[str, Any]],
     scan_repo: ScanRepository,
     dep_repo: DependencyRepository,
     analysis_repo: AnalysisResultRepository,
     max_scans: int = 10,
-    window_days: int | None = None,
+    window_days: int = 90,
     release_fetcher: ReleaseHistoryFetcher | None = None,
 ) -> UpdateFrequencyComparison:
     """Cross-project update-frequency ranking.
 
     Per-project computations run with bounded concurrency. ``window_days``
-    aligns every project on the same calendar window; without one the
-    monthly rate is unavailable and projects rank on coverage alone.
+    aligns every project on the same calendar window; ranking projects across
+    different spans would compare scan cadence rather than update activity.
     """
     # Created per call so it binds to the loop running this gather (see note
     # at module top); a module-global semaphore would pin to the first loop.
     semaphore = asyncio.Semaphore(_COMPARISON_CONCURRENCY)
 
-    async def _compute_single(project: dict[str, Any]) -> ProjectUpdateSummary | None:
+    def _placeholder(project: dict[str, Any], status: UpdateDataStatus) -> ProjectUpdateSummary:
+        """A row without numbers, so every project stays accounted for exactly once."""
+        return ProjectUpdateSummary(
+            project_id=str(project.get("_id") or project.get("id", "")),
+            project_name=project.get("name", ""),
+            team_name=project.get("team_name"),
+            data_status=status,
+            window_days=window_days,
+        )
+
+    async def _compute_single(project: dict[str, Any]) -> ProjectUpdateSummary:
         project_id = project.get("_id") or project.get("id", "")
         project_name = project.get("name", "")
         team_name = project.get("team_name")
@@ -941,50 +984,39 @@ async def compute_update_frequency_comparison(
                 )
             except Exception:
                 logger.warning(f"Failed to compute update frequency for project {project_id}", exc_info=True)
-                return None
+                return _placeholder(project, "error")
 
             if metrics.scan_count < 2:
-                return None
+                return _placeholder(project, "insufficient_data")
 
             return ProjectUpdateSummary(
                 project_id=metrics.project_id,
                 project_name=metrics.project_name,
                 team_name=team_name,
+                # This path only returns projects it actually computed.
+                data_status="ready",
+                branch=metrics.branch,
+                window_days=window_days,
                 scan_count=metrics.scan_count,
                 updates_per_month=metrics.updates_per_month,
                 update_coverage_pct=metrics.update_coverage_pct,
                 patch_ratio=metrics.granularity_ratio.get("patch", 0),
                 trend_direction=metrics.trend_direction,
+                total_updates=metrics.total_updates,
                 total_outdated=metrics.total_outdated_detected,
                 last_scan_date=metrics.last_scan_date,
             )
 
     results = await asyncio.gather(*[_compute_single(p) for p in projects], return_exceptions=True)
-    summaries: list[ProjectUpdateSummary] = [s for s in results if isinstance(s, ProjectUpdateSummary)]
+    summaries = [
+        r
+        if isinstance(r, ProjectUpdateSummary)
+        # gather() hands back anything that escaped _compute_single's own guard.
+        else _placeholder(project, "error")
+        for project, r in zip(projects, results, strict=True)
+    ]
+    for outcome in results:
+        if isinstance(outcome, BaseException):
+            logger.warning("Update-frequency comparison lost a project", exc_info=outcome)
 
-    # None coverage means no backlog was ever measured, so those projects rank
-    # after every measured one and never become best or worst.
-    measured = [s for s in summaries if s.update_coverage_pct is not None]
-    unmeasured = [s for s in summaries if s.update_coverage_pct is None]
-    measured.sort(key=lambda s: (s.update_coverage_pct, _rate(s)), reverse=True)
-    unmeasured.sort(key=_rate, reverse=True)
-    summaries = measured + unmeasured
-
-    rates = [s.updates_per_month for s in summaries if s.updates_per_month is not None]
-    avg_updates = round(sum(rates) / len(rates), 2) if rates else None
-    avg_coverage = (
-        round(sum(s.update_coverage_pct for s in measured) / len(measured), 1)  # type: ignore[misc]
-        if measured
-        else None
-    )
-    best = measured[0].project_name if measured else None
-    worst = measured[-1].project_name if len(measured) >= 2 else None
-
-    return UpdateFrequencyComparison(
-        projects=summaries,
-        team_avg_updates_per_month=avg_updates,
-        team_avg_coverage_pct=avg_coverage,
-        best_project=best,
-        worst_project=worst,
-        skipped_projects=len(projects) - len(summaries),
-    )
+    return rank_summaries(summaries)
