@@ -3,7 +3,6 @@ import { analyticsApi } from '@/api/analytics';
 import type { ApiError } from '@/api/client';
 
 export interface UpdateFrequencyOpts {
-    maxScans?: number;
     windowDays?: number;
 }
 

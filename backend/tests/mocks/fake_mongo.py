@@ -23,6 +23,13 @@ Server-side behaviour that tests rely on
 - BSON datetimes: a written aware datetime is stored (and read back) as naive
   UTC, and an aware query value is normalised before comparison, matching what
   the driver puts on the wire.
+- Cross-type BSON ordering: sorts, ``$min`` and ``$max`` rank a mixed column
+  (missing < number < string < date) instead of raising, while a range query
+  brackets to its bound's type and skips the other types outright.
+- ``$group`` drops a grouping key the document does not carry rather than
+  binding it to null.
+- Only false, null and zero are false to ``$cond``/``$switch``; ``""`` and
+  ``[]`` are true.
 
 Supported aggregation stages
 ----------------------------
@@ -75,7 +82,7 @@ _CMP = {"$lt": _op.lt, "$lte": _op.le, "$gt": _op.gt, "$gte": _op.ge}
 
 
 # ---------------------------------------------------------------------------
-# BSON datetime semantics
+# BSON value semantics
 # ---------------------------------------------------------------------------
 
 
@@ -94,9 +101,72 @@ def _bsonify(value: Any) -> Any:
     return _naive_utc(value)
 
 
+def _bson_type_rank(value: Any) -> int:
+    """Position of a value's BSON type in the server's cross-type ordering.
+
+    A missing field reaches this as None and shares the null rank, so it sorts
+    first ascending. Ints and floats share one rank; bool is its own type and
+    therefore never compares against a number.
+    """
+    if value is None:
+        return 1
+    if isinstance(value, bool):
+        return 6
+    if isinstance(value, (int, float)):
+        return 2
+    if isinstance(value, str):
+        return 3
+    if isinstance(value, dict):
+        return 4
+    if isinstance(value, (list, tuple)):
+        return 5
+    if isinstance(value, _datetime):
+        return 7
+    return 8
+
+
+def _bson_sort_key(value: Any) -> tuple[int, Any]:
+    """Mongo orders across BSON types instead of refusing to compare them.
+
+    Verified against the server: ascending puts a missing field before a string
+    before a date, so a scan whose date an archive restore left as text sorts
+    rather than raising.
+    """
+    rank = _bson_type_rank(value)
+    if rank == 1:
+        return (rank, 0)
+    if rank == 2:
+        return (rank, float(value))
+    if rank == 6:
+        return (rank, int(value))
+    if rank == 7:
+        # Equal ranks are all a tuple comparison ever reaches, so the datetimes
+        # only ever meet each other, and normalising to naive keeps that legal.
+        return (rank, _naive_utc(value))
+    if rank == 3:
+        return (rank, value)
+    # Documents and arrays have no total order in Python; their text form has one.
+    return (rank, str(value))
+
+
+def _sort_docs(docs: list, sort_spec) -> list:
+    """Sort in place by a ``[(field, direction)]`` spec, using BSON ordering."""
+    for key, direction in reversed(list(sort_spec)):
+        docs.sort(key=lambda d, k=key: _bson_sort_key(_resolve_dotted(d, k)), reverse=direction < 0)
+    return docs
+
+
 # ---------------------------------------------------------------------------
 # Query matching helpers
 # ---------------------------------------------------------------------------
+
+
+def _has_field(doc: dict, path: str) -> bool:
+    """Whether the document carries the path at all, as opposed to holding None there."""
+    head, _, rest = path.partition(".")
+    if not isinstance(doc, dict) or head not in doc:
+        return False
+    return _has_field(doc[head], rest) if rest else True
 
 
 def _resolve_dotted(doc: dict, path: str):
@@ -128,12 +198,15 @@ def _match_range_ops(value, ops_dict: dict) -> bool:
         if op_key in ops_dict:
             if value is None:
                 return False
-            try:
-                # The driver encodes an aware query value to UTC, so it compares
-                # against the stored naive datetime instead of raising.
-                if not cmp_fn(_naive_utc(value), _naive_utc(ops_dict[op_key])):
-                    return False
-            except TypeError:
+            # The driver encodes an aware query value to UTC, so it compares
+            # against the stored naive datetime instead of raising.
+            left, right = _naive_utc(value), _naive_utc(ops_dict[op_key])
+            # A range query is bracketed to the bound's BSON type, so a date
+            # bound skips a document holding a string there rather than
+            # widening the match.
+            if _bson_type_rank(left) != _bson_type_rank(right):
+                return False
+            if not cmp_fn(_bson_sort_key(left), _bson_sort_key(right)):
                 return False
     return True
 
@@ -337,7 +410,11 @@ def _eval_expr(doc: dict, expr):
         return str(haystack).find(str(needle)) if haystack is not None else -1
     if "$size" in expr:
         val = _eval_expr(doc, expr["$size"])
-        return len(val) if isinstance(val, list) else 0
+        if not isinstance(val, list):
+            # The server fails the whole aggregation here, so a pipeline that
+            # forgot an $ifNull must not read as a zero-length array.
+            raise TypeError(f"$size requires an array, got {val!r}")
+        return len(val)
     if "$toLower" in expr:
         val = _eval_expr(doc, expr["$toLower"])
         return str(val).lower() if val is not None else None
@@ -384,12 +461,21 @@ def _eval_expr(doc: dict, expr):
     return expr
 
 
+def _truthy(value) -> bool:
+    """Mongo counts only false, null and zero as false — "" and [] are true."""
+    if value is None or value is False or value is _REMOVE:
+        return False
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        return value != 0
+    return True
+
+
 def _eval_bool(doc: dict, expr) -> bool:
     """Evaluate a boolean aggregation expression."""
     if isinstance(expr, bool):
         return expr
     if not isinstance(expr, dict):
-        return bool(_eval_expr(doc, expr))
+        return _truthy(_eval_expr(doc, expr))
     if "$and" in expr:
         return all(_eval_bool(doc, sub) for sub in expr["$and"])
     if "$or" in expr:
@@ -397,23 +483,14 @@ def _eval_bool(doc: dict, expr) -> bool:
     if "$in" in expr:
         needle, haystack = expr["$in"]
         return _eval_expr(doc, needle) in (_eval_expr(doc, haystack) or [])
-    for op, cmp_fn in (
-        ("$eq", lambda a, b: a == b),
-        ("$ne", lambda a, b: a != b),
-    ):
+    # Comparison expressions rank across BSON types rather than bracketing to one,
+    # so a null operand answers by its position in that order instead of failing,
+    # and a bool never equals the number it would coerce to in Python.
+    for op, cmp_fn in (("$eq", _op.eq), ("$ne", _op.ne), *_CMP.items()):
         if op in expr:
             a, b = (_eval_expr(doc, e) for e in expr[op])
-            return cmp_fn(a, b)
-    for op, cmp_fn in _CMP.items():
-        if op in expr:
-            a, b = (_eval_expr(doc, e) for e in expr[op])
-            if a is None or b is None:
-                return False
-            try:
-                return cmp_fn(a, b)
-            except TypeError:
-                return False
-    return bool(_eval_expr(doc, expr))
+            return cmp_fn(_bson_sort_key(_naive_utc(a)), _bson_sort_key(_naive_utc(b)))
+    return _truthy(_eval_expr(doc, expr))
 
 
 def _run_project(docs: list, project_spec: dict) -> list:
@@ -458,8 +535,13 @@ def _resolve_group_key(doc: dict, id_spec):
         for k, v in id_spec.items():
             if isinstance(v, dict) and "$dateTrunc" in v:
                 resolved[k] = _eval_expr(doc, v)
-            else:
-                resolved[k] = _resolve_field(doc, v)
+                continue
+            value = _resolve_field(doc, v)
+            # Mongo omits a grouping key whose field the document does not carry,
+            # rather than setting it to None, so a reader indexing it raises.
+            if value is None and isinstance(v, str) and v.startswith("$") and not _has_field(doc, v[1:]):
+                continue
+            resolved[k] = value
         try:
             return tuple(sorted(resolved.items()))
         except TypeError:
@@ -517,13 +599,15 @@ def _run_group(docs: list, group_spec: dict) -> list:
             elif op == "$push":
                 if val is not _REMOVE:
                     grp.setdefault(acc_name, []).append(val)
-            elif op == "$min":
+            elif op in ("$min", "$max"):
+                # Null and missing values are skipped unless the whole group is
+                # null, and the survivors are ranked across BSON types, so a
+                # column holding both dates and strings answers with a date.
+                if is_new:
+                    grp[acc_name] = None
                 cur = grp.get(acc_name)
-                if val is not None and (cur is None or val < cur) or is_new:
-                    grp[acc_name] = val
-            elif op == "$max":
-                cur = grp.get(acc_name)
-                if val is not None and (cur is None or val > cur) or is_new:
+                beats = _op.lt if op == "$min" else _op.gt
+                if val is not None and (cur is None or beats(_bson_sort_key(val), _bson_sort_key(cur))):
                     grp[acc_name] = val
 
     result = []
@@ -569,12 +653,7 @@ def _run_pipeline(docs: list, pipeline: list, database: Any = None) -> list:
         if "$match" in stage:
             results = _match_all(results, stage["$match"])
         elif "$sort" in stage:
-            sort_spec = stage["$sort"]
-            for field, direction in reversed(list(sort_spec.items())):
-                results.sort(
-                    key=lambda d, f=field: (d.get(f) is None, d.get(f)),
-                    reverse=(direction == -1),
-                )
+            results = _sort_docs(results, stage["$sort"].items())
         elif "$group" in stage:
             results = _run_group(results, stage["$group"])
         elif "$project" in stage:
@@ -676,12 +755,7 @@ class _FakeCursor:
         return self
 
     def _filtered(self) -> list:
-        results = [d for d in self._docs.values() if _match_doc(d, self._query)]
-        for key, direction in reversed(self._sort):
-            results.sort(
-                key=lambda d, k=key: (d.get(k) is None, d.get(k)),
-                reverse=direction < 0,
-            )
+        results = _sort_docs([d for d in self._docs.values() if _match_doc(d, self._query)], self._sort)
         results = results[self._skip_n :]
         if self._limit_n:
             results = results[: self._limit_n]
@@ -1042,12 +1116,7 @@ class FakeCollection:
             return _apply_projection(self._docs.get(query["_id"]), projection)
         if sort:
             # Mirror real Mongo: apply the sort, then return the first match.
-            matches = [doc for doc in self._docs.values() if _match_doc(doc, query)]
-            for key, direction in reversed(list(sort)):
-                matches.sort(
-                    key=lambda d, k=key: (d.get(k) is None, d.get(k)),
-                    reverse=direction < 0,
-                )
+            matches = _sort_docs([doc for doc in self._docs.values() if _match_doc(doc, query)], sort)
             return _apply_projection(matches[0], projection) if matches else None
         for doc in self._docs.values():
             if _match_doc(doc, query):

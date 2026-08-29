@@ -53,7 +53,8 @@ const makeProject = (idx: number): ProjectUpdateSummary => ({
   project_id: `p${idx}`,
   project_name: `project-${idx}`,
   team_name: null,
-  branch: "main",
+  // Distinct per project: a branch cell that ignored its row would still read "main".
+  branch: `release/${idx}.x`,
   window_days: 90,
   scan_count: 5,
   updates_per_month: idx,
@@ -86,12 +87,21 @@ const makeUnmeasured = (
   data_status: status,
 });
 
+const makePartial = (name: string): ProjectUpdateSummary => ({
+  ...makeProject(9),
+  project_id: name,
+  project_name: name,
+  data_status: "partial",
+  scan_count: 2,
+});
+
 const makeComparison = (count: number, overrides: Partial<Comparison> = {}): Comparison => ({
   projects: Array.from({ length: count }, (_, i) => makeProject(count - i)),
   team_avg_updates_per_month: 3,
   team_avg_coverage_pct: 42,
   best_project: null,
   worst_project: null,
+  partial_projects: 0,
   pending_projects: 0,
   skipped_insufficient_data: 0,
   skipped_error: 0,
@@ -201,13 +211,57 @@ describe("UpdateFrequencyComparison", () => {
   });
 
   it("names the branch each project was measured on", async () => {
-    mockedComparison.mockResolvedValue(makeComparison(1));
+    mockedComparison.mockResolvedValue(makeComparison(2));
     renderComparison();
     clickLoad();
 
     await screen.findByText("Project Ranking");
     expect(screen.getByRole("columnheader", { name: "Branch" })).toBeInTheDocument();
-    expect(within(rowFor("project-1")).getByText("main")).toBeInTheDocument();
+    // Each row shows its own branch, so neither a constant nor a neighbour's value passes.
+    expect(within(rowFor("project-1")).getByText("release/1.x")).toBeInTheDocument();
+    expect(within(rowFor("project-2")).getByText("release/2.x")).toBeInTheDocument();
+  });
+
+  it("shows a partially covered project's numbers with the caveat, not as a failure", async () => {
+    mockedComparison.mockResolvedValue(
+      makeComparison(1, {
+        projects: [makeProject(1), makePartial("half-measured")],
+        partial_projects: 1,
+      }),
+    );
+    renderComparison();
+    clickLoad();
+
+    await screen.findByText("Project Ranking");
+    const row = rowFor("half-measured");
+    const badge = within(row).getByText("Partial window");
+    expect(badge.closest("[title]")).toHaveAttribute("title", expect.stringContaining("only 2 scans"));
+    // The numbers it does carry are shown rather than replaced by a status placeholder.
+    const cells = within(row).getAllByRole("cell");
+    expect(cells[4]).toHaveTextContent("9");
+    expect(cells[5]).toHaveTextContent("9%");
+    expect(cells[6]).toHaveTextContent("50%");
+  });
+
+  it("leaves a partially covered project unranked, uncharted and out of the averages", async () => {
+    mockedComparison.mockResolvedValue(
+      makeComparison(1, {
+        projects: [makeProject(1), makePartial("half-measured")],
+        partial_projects: 1,
+      }),
+    );
+    renderComparison();
+    clickLoad();
+
+    const chart = await screen.findByTestId("bar-chart");
+    expect(chart).toHaveAttribute("data-bars", "1");
+    expect(screen.getByText("across 1 measured project")).toBeInTheDocument();
+    expect(screen.getByText("1 on a partial window")).toBeInTheDocument();
+    expect(screen.getByText("1 project measured on part of the window")).toBeInTheDocument();
+    expect(screen.getByText(/1 of 2 projects ranked/i)).toBeInTheDocument();
+    // The rank column stays empty for a row that was not ranked.
+    expect(within(rowFor("half-measured")).getAllByRole("cell")[0]).toHaveTextContent("—");
+    expect(within(rowFor("project-1")).getAllByRole("cell")[0]).toHaveTextContent("1");
   });
 
   it("marks a project without a rollup as pending instead of scoring it zero", async () => {
@@ -265,6 +319,21 @@ describe("UpdateFrequencyComparison", () => {
     expect(chart).toHaveAttribute("data-bars", "2");
     const bodyRows = screen.getAllByRole("row").filter((row) => row.querySelector("td"));
     expect(bodyRows).toHaveLength(3);
+  });
+
+  it("keeps a project with too few scans in the table rather than reporting an empty scope", async () => {
+    mockedComparison.mockResolvedValue(
+      makeComparison(1, {
+        projects: [makeUnmeasured("thin-project", "insufficient_data")],
+        skipped_insufficient_data: 1,
+      }),
+    );
+    renderComparison();
+    clickLoad();
+
+    await screen.findByText("Project Ranking");
+    expect(screen.getByText("thin-project")).toBeInTheDocument();
+    expect(screen.queryByText("No projects in this scope")).not.toBeInTheDocument();
   });
 
   it("surfaces the failure reason and lets the user retry", async () => {

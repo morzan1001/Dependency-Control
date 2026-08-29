@@ -503,9 +503,11 @@ export interface UpdateFrequencyMetrics {
     recent_updates: DependencyUpdateEvent[];
 }
 
-// "pending" = no per-scan rollup recorded yet, "insufficient_data" = fewer than two
-// usable scans in the window, "error" = the rollup itself failed.
-export type UpdateDataStatus = 'ready' | 'pending' | 'insufficient_data' | 'error';
+// "partial" = the numbers are exact but cover noticeably fewer scans than the window
+// holds, so they may not be compared with fully measured projects, "pending" = no
+// per-scan rollup recorded yet, "insufficient_data" = fewer than two usable scans in
+// the window, "error" = the rollup itself failed.
+export type UpdateDataStatus = 'ready' | 'partial' | 'pending' | 'insufficient_data' | 'error';
 
 export interface ProjectUpdateSummary {
     project_id: string;
@@ -514,7 +516,7 @@ export interface ProjectUpdateSummary {
     // The branch the numbers were measured on; picked heuristically without a default branch.
     branch: string | null;
     window_days: number;
-    // Every metric below is null unless data_status is "ready".
+    // Every metric below is null unless data_status is "ready" or "partial".
     scan_count: number | null;
     updates_per_month: number | null;
     update_coverage_pct: number | null;
@@ -526,12 +528,15 @@ export interface ProjectUpdateSummary {
     data_status: UpdateDataStatus;
 }
 
+// projects holds every project in scope: the ranked ones first, then partial,
+// pending, insufficient_data and error rows, none of which enter the averages.
 export interface UpdateFrequencyComparison {
     projects: ProjectUpdateSummary[];
     team_avg_updates_per_month: number | null;
     team_avg_coverage_pct: number | null;
     best_project: string | null;
     worst_project: string | null;
+    partial_projects: number;
     pending_projects: number;
     skipped_insufficient_data: number;
     skipped_error: number;

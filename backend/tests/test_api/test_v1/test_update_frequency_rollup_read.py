@@ -7,16 +7,20 @@ delta ledger plus fold. Where the two disagree by design, the test says so.
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
+from app.api.v1.endpoints.analytics import update_frequency as endpoint
 from app.api.v1.endpoints.analytics.update_frequency import (
+    _compute_comparison,
     _compute_comparison_from_rollup,
-    _pick_branch,
+    _fold_branch,
     _resolve_window,
     _rollup_project_metrics,
 )
 from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
+from app.repositories.update_frequency import WINDOW_HARD_LIMIT, BranchWindowActivity
 from app.schemas.analytics import UpdateFrequencyComparison, UpdateFrequencyMetrics
 from app.services.update_frequency import compute_update_frequency
 from app.services.update_frequency_rollup import record_scan_update_delta
@@ -98,7 +102,9 @@ def _project(**overrides: Any) -> dict[str, Any]:
     return {"_id": PROJECT, "name": "Project One", "default_branch": None, "deleted_branches": []} | overrides
 
 
-async def _live(db: FakeDatabase, project: dict[str, Any] | None = None) -> UpdateFrequencyMetrics:
+async def _live(
+    db: FakeDatabase, project: dict[str, Any] | None = None, hard_limit: int = WINDOW_HARD_LIMIT
+) -> UpdateFrequencyMetrics:
     project = project or _project()
     return await compute_update_frequency(
         project_id=str(project["_id"]),
@@ -107,6 +113,7 @@ async def _live(db: FakeDatabase, project: dict[str, Any] | None = None) -> Upda
         dep_repo=DependencyRepository(db),
         analysis_repo=AnalysisResultRepository(db),
         window_days=WINDOW_DAYS,
+        hard_limit=hard_limit,
         deleted_branches=project.get("deleted_branches"),
         default_branch=project.get("default_branch"),
     )
@@ -256,6 +263,35 @@ class TestDifferentialNormalHistory:
         assert live.total_updates == 2
 
     @pytest.mark.asyncio
+    async def test_a_restored_scan_dated_in_text_is_invisible_to_both_paths(self):
+        # An archive restore inserts bundle JSON verbatim and JSON has no date type.
+        # No ingest hook ever runs for such a scan, and the backfill cannot collect it
+        # either, because a range query is bracketed to its bound's BSON type.
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ())
+        await _seed_scan(db, "s3", _days_ago(40), {"requests": "2.1.0"}, ())
+        await _build_ledger(db)
+        await db.scans.insert_one(
+            {
+                "_id": "restored",
+                "project_id": PROJECT,
+                "branch": BRANCH,
+                "created_at": "2026-07-01T00:00:00+00:00",
+                "commit_hash": "commit-restored",
+                "status": "completed",
+                "is_rescan": False,
+            }
+        )
+        await db.dependencies.insert_one(_dep("restored", "requests", "9.9.9"))
+
+        live = await _live(db)
+        rolled = await _rollup(db)
+
+        _assert_same_metrics(live, rolled)
+        assert [e.scan_id for e in live.scan_timeline] == ["s1", "s3"]
+        assert live.total_updates == 1
+
+    @pytest.mark.asyncio
     async def test_a_window_without_scans_falls_back_to_the_live_path(self):
         db = FakeDatabase()
         await _seed_scan(db, "s1", _days_ago(300), {"requests": "2.0.0"}, ())
@@ -269,11 +305,10 @@ class TestDifferentialNormalHistory:
 
 
 class TestDifferentialSbomLessScans:
+    """A scan that produced no SBOM measured nothing, so both paths compare across it."""
+
     @pytest.mark.asyncio
-    async def test_the_rollup_bridges_the_gap_the_live_path_reads_as_quiet(self):
-        # A scan that produced no SBOM is a missing measurement, not a scan
-        # without updates: the live path counts two zero-update intervals
-        # around it, the rollup compares across it.
+    async def test_both_paths_compare_across_the_gap_instead_of_reading_it_as_quiet(self):
         db = FakeDatabase()
         await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ())
         await _seed_scan(db, "s2", _days_ago(50), {}, ())
@@ -283,12 +318,61 @@ class TestDifferentialSbomLessScans:
         live = await _live(db)
         rolled = await _rollup(db)
 
-        assert rolled is not None
-        assert live.scan_count == 3
-        assert live.total_updates == 0
-        assert rolled.scan_count == 2
-        assert rolled.total_updates == 1
-        assert rolled.minor_updates == 1
+        _assert_same_metrics(live, rolled)
+        # Keeping s2 framed the bump across it as two quiet intervals.
+        assert live.scan_count == 2
+        assert (live.total_updates, live.minor_updates) == (1, 1)
+        assert [e.scan_id for e in live.scan_timeline] == ["s1", "s3"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("sbom_less", ["s1", "s2"])
+    async def test_two_scans_one_without_an_sbom_supports_no_comparison_on_either_path(self, sbom_less: str):
+        db = FakeDatabase()
+        for scan_id, day in (("s1", 60), ("s2", 50)):
+            packages = {} if scan_id == sbom_less else {"requests": "2.0.0"}
+            await _seed_scan(db, scan_id, _days_ago(day), packages, ())
+        await _build_ledger(db)
+
+        live = await _live(db)
+
+        assert (live.scan_count, live.updates_per_month) == (1, None)
+        assert await _rollup(db) is None
+
+    @pytest.mark.asyncio
+    async def test_three_scans_two_without_an_sbom_supports_no_comparison_on_either_path(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ())
+        await _seed_scan(db, "s2", _days_ago(50), {}, ())
+        await _seed_scan(db, "s3", _days_ago(40), {}, ())
+        await _build_ledger(db)
+
+        live = await _live(db)
+
+        assert (live.scan_count, live.updates_per_month) == (1, None)
+        assert await _rollup(db) is None
+
+    @pytest.mark.asyncio
+    async def test_a_project_with_nothing_to_say_stays_out_of_the_team_average(self):
+        # A "ready" row at 0.0 updates/month dragged the team average down and could
+        # be named worst_project, for a project no comparison was possible on.
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _days_ago(60), {}, ())
+        await _seed_scan(db, "s2", _days_ago(50), {"requests": "2.0.0"}, ())
+        await _seed_scan(db, "b1", _days_ago(60), {"flask": "3.0.0"}, (), project_id="proj-2")
+        await _seed_scan(db, "b2", _days_ago(50), {"flask": "3.1.0"}, (), project_id="proj-2")
+        await _build_ledger(db)
+        await _seed_projects(db, [PROJECT, "proj-2"])
+
+        live = await _live_comparison(db, [PROJECT, "proj-2"])
+        rolled = UpdateFrequencyComparison(
+            **await _compute_comparison_from_rollup(db, [PROJECT, "proj-2"], None, window_days=WINDOW_DAYS)
+        )
+
+        for comparison in (live, rolled):
+            statuses = {p.project_id: p.data_status for p in comparison.projects}
+            assert statuses == {PROJECT: "insufficient_data", "proj-2": "ready"}
+            assert comparison.team_avg_updates_per_month == 0.34
+            assert comparison.skipped_insufficient_data == 1
 
 
 class TestDataStatus:
@@ -319,7 +403,8 @@ class TestDataStatus:
         row = comparison.projects[0]
         assert row.data_status == "pending"
         assert comparison.pending_projects == 1
-        assert (row.branch, row.scan_count, row.updates_per_month, row.total_updates) == (None, None, None, None)
+        # The scans name the branch even where the ledger has nothing to say yet.
+        assert (row.branch, row.scan_count, row.updates_per_month, row.total_updates) == (BRANCH, None, None, None)
         assert (row.update_coverage_pct, row.patch_ratio, row.trend_direction, row.last_scan_date) == (
             None,
             None,
@@ -334,19 +419,23 @@ class TestDataStatus:
 
         comparison = await _comparison(db, [PROJECT])
 
-        assert comparison.projects == []
+        row = comparison.projects[0]
+        assert (row.project_id, row.data_status, row.branch) == (PROJECT, "insufficient_data", None)
         assert comparison.pending_projects == 0
         assert comparison.skipped_insufficient_data == 1
 
     @pytest.mark.asyncio
-    async def test_a_single_in_window_scan_is_insufficient_data(self):
+    async def test_a_single_in_window_scan_is_named_not_merely_counted(self):
+        # A bare "1 with too few scans" leaves nobody able to go and look at it.
         db = FakeDatabase()
         await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ())
         await _build_ledger(db)
 
         comparison = await _comparison(db, [PROJECT])
 
-        assert comparison.projects == []
+        row = comparison.projects[0]
+        assert (row.project_id, row.data_status, row.branch) == (PROJECT, "insufficient_data", BRANCH)
+        assert (row.scan_count, row.updates_per_month, row.total_updates) == (None, None, None)
         assert comparison.skipped_insufficient_data == 1
         assert comparison.skipped_error == 0
 
@@ -360,9 +449,35 @@ class TestDataStatus:
 
         comparison = await _comparison(db, [PROJECT])
 
-        assert comparison.projects == []
+        row = comparison.projects[0]
+        assert (row.project_id, row.data_status) == (PROJECT, "error")
+        assert row.scan_count is None
         assert comparison.skipped_error == 1
         assert comparison.skipped_insufficient_data == 0
+
+    @pytest.mark.asyncio
+    async def test_unmeasurable_rows_come_last_and_in_the_agreed_order(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ())
+        await _seed_scan(db, "s2", _days_ago(50), {"requests": "2.1.0"}, ())
+        await _seed_scan(db, "e1", _days_ago(60), {"flask": "3.0.0"}, (), project_id="proj-err")
+        await _seed_scan(db, "e2", _days_ago(50), {"flask": "3.1.0"}, (), project_id="proj-err")
+        await _seed_scan(db, "t1", _days_ago(60), {"click": "8.0.0"}, (), project_id="proj-thin")
+        await _build_ledger(db)
+        await db.scan_update_deltas.update_many({"project_id": "proj-err"}, {"$set": {"error": "boom", "dep_count": 0}})
+        # proj-wait scanned but the backfill has not reached it.
+        await _seed_scan(db, "w1", _days_ago(60), {"attrs": "1.0.0"}, (), project_id="proj-wait")
+        await _seed_scan(db, "w2", _days_ago(50), {"attrs": "1.1.0"}, (), project_id="proj-wait")
+
+        comparison = await _comparison(db, [PROJECT, "proj-err", "proj-thin", "proj-wait"])
+
+        assert [p.data_status for p in comparison.projects] == [
+            "ready",
+            "pending",
+            "insufficient_data",
+            "error",
+        ]
+        assert [p.project_id for p in comparison.projects] == [PROJECT, "proj-wait", "proj-thin", "proj-err"]
 
     @pytest.mark.asyncio
     async def test_a_broken_chain_never_reaches_the_fold_out_of_order(self):
@@ -419,8 +534,11 @@ class TestPendingRowsDoNotSkewTheRanking:
         assert comparison.worst_project is None
 
 
-def _fake_deltas(branch: str, count: int, newest_days_ago: float) -> list[dict[str, Any]]:
-    """A linked chain of usable deltas, oldest first, as the repository hands it over."""
+def _fake_deltas(branch: str, count: int, newest_days_ago: float, retries: int = 1) -> list[dict[str, Any]]:
+    """A linked chain of usable deltas, oldest first, as the repository hands it over.
+
+    ``retries`` is how many times CI scanned each commit.
+    """
     ids = [f"{branch}-{i}" for i in range(count)]
     return [
         {
@@ -428,7 +546,7 @@ def _fake_deltas(branch: str, count: int, newest_days_ago: float) -> list[dict[s
             "project_id": PROJECT,
             "branch": branch,
             "scan_created_at": _days_ago(newest_days_ago + count - 1 - i),
-            "commit_hash": f"c-{scan_id}",
+            "commit_hash": f"c-{branch}-{i // retries}",
             "prev_scan_id": ids[i - 1] if i else None,
             "dep_count": 1,
             "updates": {"patch": 1, "minor": 0, "major": 0, "unknown": 0, "downgrade": 0},
@@ -443,32 +561,23 @@ def _fake_deltas(branch: str, count: int, newest_days_ago: float) -> list[dict[s
 
 
 class TestBranchChoice:
-    def test_the_default_branch_wins_when_it_can_be_folded(self):
-        branches = {"main": _fake_deltas("main", 2, 1), "develop": _fake_deltas("develop", 3, 1)}
-        windows = {name: list(deltas) for name, deltas in branches.items()}
-        assert _pick_branch(branches, windows, "main", []) == "main"
-
-    def test_a_default_branch_with_too_little_history_yields_to_the_busiest(self):
-        branches = {"main": _fake_deltas("main", 1, 1), "develop": _fake_deltas("develop", 3, 1)}
-        windows = {name: list(deltas) for name, deltas in branches.items()}
-        assert _pick_branch(branches, windows, "main", []) == "develop"
-
-    def test_a_deleted_default_branch_is_never_chosen(self):
-        branches = {"main": _fake_deltas("main", 3, 1), "develop": _fake_deltas("develop", 2, 1)}
-        windows = {name: list(deltas) for name, deltas in branches.items()}
-        assert _pick_branch(branches, windows, "main", ["main"]) == "develop"
-
-    def test_a_tie_on_delta_count_goes_to_the_branch_scanned_last(self):
-        branches = {"old": _fake_deltas("old", 2, 20), "fresh": _fake_deltas("fresh", 2, 2)}
-        windows = {name: list(deltas) for name, deltas in branches.items()}
-        assert _pick_branch(branches, windows, None, []) == "fresh"
-
     def test_a_project_whose_only_branches_are_deleted_resolves_to_nothing(self):
         resolved = _resolve_window(
+            {"gone": BranchWindowActivity(3, _days_ago(2))},
             {"gone": _fake_deltas("gone", 3, 2)},
             {"_id": PROJECT, "deleted_branches": ["gone"]},
         )
         assert (resolved.branch, resolved.status) == (None, "insufficient_data")
+
+    def test_the_branch_comes_from_the_scans_not_from_the_ledger(self):
+        # A ledger that only reached the quieter branch must not move the project
+        # onto it; the live path would still report the branch the scans elect.
+        resolved = _resolve_window(
+            {"old": BranchWindowActivity(3, _days_ago(60)), "new": BranchWindowActivity(2, _days_ago(10))},
+            {"new": _fake_deltas("new", 2, 10)},
+            {"_id": PROJECT},
+        )
+        assert (resolved.branch, resolved.status) == ("old", "pending")
 
     @pytest.mark.asyncio
     async def test_the_chosen_branch_is_reported_on_the_row(self):
@@ -480,6 +589,230 @@ class TestBranchChoice:
         comparison = await _comparison(db, [PROJECT])
 
         assert comparison.projects[0].branch == "develop"
+
+    @pytest.mark.asyncio
+    async def test_a_busy_branch_beats_a_fresher_one_on_both_read_paths(self):
+        db = FakeDatabase()
+        for i, day in enumerate((80, 70, 60)):
+            await _seed_scan(db, f"o{i}", _days_ago(day), {"requests": f"2.0.{i}"}, (), branch="old")
+        for i, day in enumerate((20, 10)):
+            await _seed_scan(db, f"n{i}", _days_ago(day), {"requests": f"9.0.{i}"}, (), branch="new")
+        await _build_ledger(db)
+        await _seed_projects(db, [PROJECT])
+
+        live = await _live_comparison(db, [PROJECT])
+        rolled = UpdateFrequencyComparison(
+            **await _compute_comparison_from_rollup(db, [PROJECT], None, window_days=WINDOW_DAYS)
+        )
+
+        assert live.projects[0].branch == rolled.projects[0].branch == "old"
+        assert live.projects[0].scan_count == rolled.projects[0].scan_count == 3
+
+    @pytest.mark.asyncio
+    async def test_a_ledger_that_only_reached_the_quiet_branch_does_not_switch_branches(self):
+        db = FakeDatabase()
+        for i, day in enumerate((80, 70, 60)):
+            await _seed_scan(db, f"o{i}", _days_ago(day), {"requests": f"2.0.{i}"}, (), branch="old")
+        for i, day in enumerate((20, 10)):
+            await _seed_scan(db, f"n{i}", _days_ago(day), {"requests": f"9.0.{i}"}, (), branch="new")
+        await _build_ledger(db)
+        # The backfill got as far as one scan of the busy branch.
+        await db.scan_update_deltas.delete_many({"_id": {"$in": ["o1", "o2"]}})
+
+        comparison = await _comparison(db, [PROJECT])
+
+        row = comparison.projects[0]
+        assert (row.branch, row.data_status) == ("old", "insufficient_data")
+
+
+async def _seed_series(
+    db: FakeDatabase,
+    project_id: str,
+    package: str,
+    count: int,
+    *,
+    outdated_at: int | None = None,
+) -> None:
+    """``count`` scans of one branch, one patch bump apart, newest 5 days back."""
+    for i in range(count):
+        outdated: tuple[str, ...] = (package,) if i == outdated_at else ()
+        await _seed_scan(
+            db,
+            f"{project_id}-{i}",
+            _days_ago(5 + (count - 1 - i) * 5),
+            {package: f"3.0.{i}"},
+            outdated,
+            project_id=project_id,
+        )
+
+
+class TestPartialCoverage:
+    @pytest.mark.asyncio
+    async def test_a_window_the_ledger_only_partly_covers_is_partial_not_ready(self):
+        # The measured state right after a deploy without a backfill: ten scans in
+        # the window, deltas for the two newest.
+        db = FakeDatabase()
+        await _seed_series(db, PROJECT, "requests", 10)
+        await _build_ledger(db)
+        await db.scan_update_deltas.delete_many({"_id": {"$in": [f"{PROJECT}-{i}" for i in range(8)]}})
+
+        comparison = await _comparison(db, [PROJECT])
+
+        row = comparison.projects[0]
+        assert row.data_status == "partial"
+        # Exact for what it covers, and it says how little that is.
+        assert (row.scan_count, row.total_updates) == (2, 1)
+        assert comparison.partial_projects == 1
+
+    @pytest.mark.asyncio
+    async def test_the_ready_threshold_is_four_fifths_of_the_window(self):
+        # The fold drops same-commit retries and SBOM-less scans on purpose, so a
+        # small shortfall must not demote a healthy project while a large one must.
+        for folded, expected in ((8, "ready"), (7, "partial")):
+            db = FakeDatabase()
+            await _seed_series(db, PROJECT, "requests", 10)
+            await _build_ledger(db)
+            await db.scan_update_deltas.delete_many({"_id": {"$in": [f"{PROJECT}-{i}" for i in range(10 - folded)]}})
+
+            comparison = await _comparison(db, [PROJECT])
+
+            assert (comparison.projects[0].scan_count, comparison.projects[0].data_status) == (folded, expected)
+
+    @pytest.mark.asyncio
+    async def test_a_retry_heavy_project_is_fully_covered_on_both_paths(self):
+        # Both paths keep only the first scan of a same-commit run, so coverage counts
+        # commits too. Counting raw scans instead read a CI retry storm as missing data
+        # and dropped a healthy project out of the ranking.
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, (), commit_hash="c1")
+        for i, day in enumerate((50, 49, 48)):
+            await _seed_scan(db, f"r{i}", _days_ago(day), {"requests": "2.1.0"}, (), commit_hash="c2")
+        await _build_ledger(db)
+        await _seed_projects(db, [PROJECT])
+
+        live = await _live_comparison(db, [PROJECT])
+        rolled = UpdateFrequencyComparison(
+            **await _compute_comparison_from_rollup(db, [PROJECT], None, window_days=WINDOW_DAYS)
+        )
+
+        assert live.projects[0].data_status == rolled.projects[0].data_status == "ready"
+        assert live.projects[0].scan_count == rolled.projects[0].scan_count == 2
+
+    @pytest.mark.asyncio
+    async def test_a_partial_row_never_reaches_the_averages_or_the_podium(self):
+        db = FakeDatabase()
+        # Fully covered, and nothing it flagged was ever resolved.
+        await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ("requests",))
+        await _seed_scan(db, "s2", _days_ago(50), {"requests": "2.0.1"}, ("requests",))
+        # Ten scans but only the newest two folded, with a spotless coverage record.
+        await _seed_series(db, "proj-2", "flask", 10, outdated_at=8)
+        await _build_ledger(db)
+        await db.scan_update_deltas.delete_many({"_id": {"$in": [f"proj-2-{i}" for i in range(8)]}})
+
+        comparison = await _comparison(db, [PROJECT, "proj-2"])
+
+        ranked, held_back = comparison.projects
+        assert (ranked.project_id, ranked.data_status) == (PROJECT, "ready")
+        assert (held_back.project_id, held_back.data_status) == ("proj-2", "partial")
+        assert held_back.update_coverage_pct == 100.0
+        # Every one of these would move if the partial row were ranked with the rest.
+        assert comparison.team_avg_coverage_pct == 0.0
+        assert comparison.team_avg_updates_per_month == ranked.updates_per_month
+        assert (comparison.best_project, comparison.worst_project) == ("Project proj-1", None)
+
+
+async def _seed_storm(db: FakeDatabase, commits: int, retries: int) -> None:
+    """``commits`` commits of one branch, each scanned ``retries`` times, one patch bump apart."""
+    for i in range(commits * retries):
+        await _seed_scan(
+            db,
+            f"s{i:04d}",
+            _days_ago(80 - i * 0.02),
+            {"requests": f"2.0.{i // retries}"},
+            (),
+            commit_hash=f"c{i // retries}",
+        )
+
+
+class TestWindowCap:
+    """A branch busier than the document cap is truncated, not demoted."""
+
+    @staticmethod
+    async def _both(db: FakeDatabase, cap: int) -> tuple[UpdateFrequencyMetrics, UpdateFrequencyMetrics | None]:
+        live = await _live(db, hard_limit=cap)
+        with patch.object(endpoint, "WINDOW_HARD_LIMIT", cap):
+            return live, await _rollup(db)
+
+    @pytest.mark.asyncio
+    async def test_both_paths_fold_the_same_newest_documents_when_the_cap_bites(self):
+        db = FakeDatabase()
+        await _seed_storm(db, commits=20, retries=1)
+        await _build_ledger(db)
+
+        live, rolled = await self._both(db, cap=10)
+
+        _assert_same_metrics(live, rolled)
+        assert live.scan_count == 10
+
+    @pytest.mark.asyncio
+    async def test_a_capped_branch_full_of_retries_is_not_demoted_out_of_the_ranking(self):
+        # The cap counts documents on both paths, coverage counts commits: measuring the
+        # truncated stretch against the whole window's commits made the rollup call this
+        # partial while the live walk called it ready, over the very same scans.
+        db = FakeDatabase()
+        await _seed_storm(db, commits=10, retries=2)
+        await _build_ledger(db)
+
+        live, rolled = await self._both(db, cap=10)
+
+        _assert_same_metrics(live, rolled)
+        assert live.scan_count == 5
+
+    @pytest.mark.parametrize(
+        ("documents", "retries", "window_commits", "folded"),
+        [(1200, 1, 1200, 1000), (1881, 2, 941, 501), (1881, 3, 627, 334)],
+    )
+    def test_the_largest_production_branches_stay_ready(
+        self, documents: int, retries: int, window_commits: int, folded: int
+    ) -> None:
+        # 1881 scans is the largest project in production. Both paths read only the
+        # newest WINDOW_HARD_LIMIT documents, which hold fewer commits than the window.
+        deltas = _fake_deltas("main", documents, 1, retries=retries)
+        assert len({d["commit_hash"] for d in deltas}) == window_commits
+
+        resolved = _fold_branch("main", deltas, BranchWindowActivity(window_commits, _days_ago(1)))
+
+        assert (resolved.status, len(resolved.window)) == ("ready", folded)
+
+    def test_a_branch_under_the_cap_is_still_measured_against_its_own_commits(self) -> None:
+        # The cap must not become a blanket amnesty: a ledger that reached three of ten
+        # commits is partial however small the window is.
+        deltas = _fake_deltas("main", 3, 1)
+
+        resolved = _fold_branch("main", deltas, BranchWindowActivity(10, _days_ago(1)))
+
+        assert resolved.status == "partial"
+
+
+class TestComparisonRowDifferential:
+    @pytest.mark.asyncio
+    async def test_both_read_paths_report_the_same_ready_row(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _days_ago(60), {"a": "1.0.0", "b": "1.0.0", "c": "1.0.0", "d": "1.0.0"}, ("a",))
+        await _seed_scan(db, "s2", _days_ago(50), {"a": "1.0.1", "b": "1.0.1", "c": "1.0.1", "d": "1.1.0"}, ())
+        await _build_ledger(db)
+        await _seed_projects(db, [PROJECT])
+
+        live = await _live_comparison(db, [PROJECT])
+        rolled = UpdateFrequencyComparison(
+            **await _compute_comparison_from_rollup(db, [PROJECT], None, window_days=WINDOW_DAYS)
+        )
+
+        assert live.projects[0].model_dump() == rolled.projects[0].model_dump()
+        # Three of four forward updates are patches; no other field of this row
+        # carries 0.75, so a row reporting another tier's share is visible here.
+        assert (live.projects[0].patch_ratio, rolled.projects[0].patch_ratio) == (0.75, 0.75)
+        assert (live.projects[0].total_updates, live.projects[0].update_coverage_pct) == (4, 100.0)
 
 
 class TestScopeAndTeams:
@@ -509,9 +842,7 @@ class TestScopeAndTeams:
         assert comparison.projects[0].team_name == "Platform"
 
 
-async def _comparison(
-    db: FakeDatabase, project_ids: list[str], team_id: str | None = None
-) -> UpdateFrequencyComparison:
+async def _seed_projects(db: FakeDatabase, project_ids: list[str], team_id: str | None = None) -> None:
     for project_id in project_ids:
         await db.projects.insert_one(
             {
@@ -522,5 +853,17 @@ async def _comparison(
                 "deleted_branches": [],
             }
         )
+
+
+async def _comparison(
+    db: FakeDatabase, project_ids: list[str], team_id: str | None = None
+) -> UpdateFrequencyComparison:
+    await _seed_projects(db, project_ids, team_id)
     payload = await _compute_comparison_from_rollup(db, project_ids, team_id, window_days=WINDOW_DAYS)
+    return UpdateFrequencyComparison(**payload)
+
+
+async def _live_comparison(db: FakeDatabase, project_ids: list[str]) -> UpdateFrequencyComparison:
+    """The same endpoint with the flag off: the live walk over every scan."""
+    payload = await _compute_comparison(db, project_ids, None, window_days=WINDOW_DAYS)
     return UpdateFrequencyComparison(**payload)

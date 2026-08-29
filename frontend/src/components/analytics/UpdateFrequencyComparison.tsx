@@ -28,6 +28,7 @@ import {
   Clock,
   GitBranch,
   Hourglass,
+  Info,
   RefreshCw,
   Users,
 } from 'lucide-react'
@@ -53,8 +54,10 @@ const DEFAULT_WINDOW_DAYS = 90
 
 const NO_VALUE = '—'
 
+// A partial row carries numbers, so it is not one of these: it renders its metrics
+// with a caveat instead of a placeholder.
 const STATUS_CONFIG: Record<
-  Exclude<UpdateDataStatus, 'ready'>,
+  Exclude<UpdateDataStatus, 'ready' | 'partial'>,
   { label: string; hint: string; icon: typeof Clock; className: string }
 > = {
   pending: {
@@ -82,6 +85,7 @@ interface RequestedFilters {
   windowDays?: number
 }
 
+// Only a fully covered project may be ranked, charted or averaged against the rest.
 function isMeasured(project: ProjectUpdateSummary): boolean {
   return project.data_status === 'ready'
 }
@@ -92,7 +96,7 @@ function metricValue(project: ProjectUpdateSummary, metric: Metric): number {
   return project.update_coverage_pct ?? -1
 }
 
-function StatusBadge({ status }: Readonly<{ status: Exclude<UpdateDataStatus, 'ready'> }>) {
+function StatusBadge({ status }: Readonly<{ status: Exclude<UpdateDataStatus, 'ready' | 'partial'> }>) {
   const config = STATUS_CONFIG[status]
   const StatusIcon = config.icon
 
@@ -104,8 +108,31 @@ function StatusBadge({ status }: Readonly<{ status: Exclude<UpdateDataStatus, 'r
   )
 }
 
+function partialHint(scanCount: number | null): string {
+  const scans = scanCount === null ? 'only part of' : `only ${scanCount} scans of`
+  return (
+    `Measured on ${scans} this window. The numbers are exact for those scans, but they ` +
+    'cover a shorter stretch than a fully measured project, so this row carries no rank ' +
+    'and stays out of the team averages.'
+  )
+}
+
+function PartialBadge({ scanCount }: Readonly<{ scanCount: number | null }>) {
+  return (
+    <Badge
+      variant="outline"
+      className="gap-1 whitespace-nowrap font-normal bg-blue-500/10 text-blue-600 border-blue-500/20"
+      title={partialHint(scanCount)}
+    >
+      <Info className="h-3 w-3" />
+      Partial window
+    </Badge>
+  )
+}
+
 function unmeasuredNote(data: Comparison): string | null {
   const parts = [
+    data.partial_projects > 0 && `${data.partial_projects} on a partial window`,
     data.pending_projects > 0 && `${data.pending_projects} not computed yet`,
     data.skipped_insufficient_data > 0 && `${data.skipped_insufficient_data} with too few scans`,
     data.skipped_error > 0 && `${data.skipped_error} failed`,
@@ -125,6 +152,28 @@ function PendingBanner({ count }: Readonly<{ count: number }>) {
             Update metrics are recorded while a scan is ingested, so a project stays blank until two of
             its scans have run through. It is listed without numbers and left out of the team averages.
             Reload the comparison once those scans have finished.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function PartialBanner({ count }: Readonly<{ count: number }>) {
+  return (
+    <Card className="border-dashed">
+      <CardContent className="flex items-start gap-3 py-4">
+        <Info className="h-5 w-5 shrink-0 text-muted-foreground" />
+        <div className="space-y-1 text-sm">
+          <p className="font-medium">
+            {count} project{count === 1 ? '' : 's'} measured on part of the window
+          </p>
+          <p className="text-muted-foreground">
+            Their numbers are exact for the scans they cover, but those scans span a shorter
+            stretch than the window holds — usually because the update metrics of the older
+            scans have not been recorded yet. Each is listed with its numbers and left out of
+            the ranking and the team averages, so a project measured over three weeks is not
+            compared with one measured over three months.
           </p>
         </div>
       </CardContent>
@@ -305,13 +354,17 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
   const page = Math.min(requestedPage, totalPages)
   const offset = (page - 1) * TABLE_PAGE_SIZE
   const visible = projects.slice(offset, offset + TABLE_PAGE_SIZE)
+  // Ranked rows lead the list, so a row's position is its rank up to that count.
+  const rankedCount = projects.filter(isMeasured).length
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Project Ranking</CardTitle>
         <CardDescription>
-          {projects.length} projects ranked by update coverage and frequency
+          {rankedCount === projects.length
+            ? `${rankedCount} projects ranked by update coverage and frequency`
+            : `${rankedCount} of ${projects.length} projects ranked by update coverage and frequency; the rest are listed unranked`}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -334,8 +387,15 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
             <TableBody>
               {visible.map((project, idx) => (
                 <TableRow key={project.project_id}>
-                  <TableCell className="text-muted-foreground">{offset + idx + 1}</TableCell>
-                  <TableCell className="font-medium">{project.project_name}</TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {isMeasured(project) ? offset + idx + 1 : NO_VALUE}
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    <span className="inline-flex flex-wrap items-center gap-2">
+                      {project.project_name}
+                      {project.data_status === 'partial' && <PartialBadge scanCount={project.scan_count} />}
+                    </span>
+                  </TableCell>
                   <TableCell className="text-muted-foreground">
                     {project.branch ? (
                       <span className="inline-flex items-center gap-1 font-mono text-xs">
@@ -347,7 +407,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                     )}
                   </TableCell>
                   <TableCell className="text-muted-foreground">{project.team_name || NO_VALUE}</TableCell>
-                  {project.data_status === 'ready' ? (
+                  {project.data_status === 'ready' || project.data_status === 'partial' ? (
                     <MeasuredCells project={project} />
                   ) : (
                     // One spanning cell keeps unmeasured rows from parking a value under a metric header.
@@ -479,8 +539,8 @@ export function UpdateFrequencyComparison() {
           <CardContent className="py-12">
             <div className="flex flex-col items-center gap-4 text-muted-foreground">
               <Users className="h-12 w-12" />
-              <p>No projects with enough scan history found</p>
-              <p className="text-sm">Projects need at least 2 completed scans for comparison</p>
+              <p>No projects in this scope</p>
+              <p className="text-sm">Projects without enough scans are listed too, so this means the filter matched none</p>
             </div>
           </CardContent>
         </Card>
@@ -489,6 +549,7 @@ export function UpdateFrequencyComparison() {
       {comparison && comparison.projects.length > 0 && !isFetching && (
         <>
           <ComparisonSummaryCards data={comparison} measuredCount={measuredProjects.length} />
+          {comparison.partial_projects > 0 && <PartialBanner count={comparison.partial_projects} />}
           {comparison.pending_projects > 0 && <PendingBanner count={comparison.pending_projects} />}
           {measuredProjects.length > 0 && <ComparisonChart projects={measuredProjects} />}
           <ProjectRankingTable projects={comparison.projects} />

@@ -140,11 +140,10 @@ export const analyticsApi = {
 
     getUpdateFrequency: async (
         projectId: string,
-        opts?: { maxScans?: number; windowDays?: number },
+        opts?: { windowDays?: number },
         signal?: AbortSignal
     ): Promise<UpdateFrequencyMetrics> => {
         const params = buildQueryParams({
-            max_scans: opts?.maxScans,
             window_days: opts?.windowDays,
         });
         const response = await api.get<UpdateFrequencyMetrics>(
@@ -156,12 +155,11 @@ export const analyticsApi = {
 
     getUpdateFrequencyComparison: async (
         teamId?: string,
-        opts?: { maxScans?: number; windowDays?: number },
+        opts?: { windowDays?: number },
         signal?: AbortSignal
     ): Promise<UpdateFrequencyComparison> => {
         const params = buildQueryParams({
             team_id: teamId,
-            max_scans: opts?.maxScans,
             window_days: opts?.windowDays,
         });
         const response = await api.get<UpdateFrequencyComparison>(

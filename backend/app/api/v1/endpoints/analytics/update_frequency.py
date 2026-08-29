@@ -5,7 +5,7 @@ import contextlib
 import hashlib
 import logging
 from collections import Counter
-from collections.abc import Coroutine, Sequence
+from collections.abc import Coroutine, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any, cast
@@ -32,8 +32,11 @@ from app.repositories import (
     ScanRepository,
 )
 from app.repositories.update_frequency import (
+    WINDOW_HARD_LIMIT,
+    BranchWindowActivity,
     ScanOutdatedSetRepository,
     ScanUpdateDeltaRepository,
+    window_scans_by_branch,
 )
 from app.schemas.analytics import (
     ProjectUpdateSummary,
@@ -48,15 +51,16 @@ from app.services.release_history import (
 )
 from app.services.update_frequency import (
     DEP_PROJECTION,
-    as_utc,
     compute_update_frequency,
     compute_update_frequency_comparison,
     fold_scan_deps,
     load_outdated_entries,
     rank_summaries,
+    select_primary_branch,
+    window_coverage_status,
     window_cutoff,
 )
-from app.services.update_frequency_fold import fold_window, select_window
+from app.services.update_frequency_fold import accounted_commits, fold_window, select_window
 
 from ._shared import _MSG_ACCESS_DENIED
 
@@ -76,8 +80,6 @@ _DEFAULT_COMPARISON_WINDOW_DAYS = 90
 _LIVE_COMPARISON_BUDGET_SECONDS = 240.0
 _ROLLUP_COMPARISON_BUDGET_SECONDS = 30.0
 
-# Caps the delta series of one project, mirroring the live path's scan cap.
-_ROLLUP_WINDOW_HARD_LIMIT = 1000
 _SLOWEST_PACKAGES_LIMIT = 15
 
 
@@ -135,18 +137,17 @@ def _comparison_cache_key(
     scope_hash: str,
     team_id: str,
     *,
-    max_scans: int,
     window_days: int,
     use_rollup: bool,
 ) -> str:
     """Cache key shared by every caller with the same visible-project scope.
 
-    The read path is part of the key: the two paths answer with different
-    branches and data statuses, so flipping the flag must not serve the
-    other path's entry for the rest of its TTL.
+    The read path is part of the key: only the rollup can tell that the ledger
+    is behind, so the two disagree on ``data_status`` while it is, and flipping
+    the flag must not serve the other path's entry for the rest of its TTL.
     """
     base = CacheKeys.update_frequency_comparison(scope_hash, team_id)
-    return f"{base}:m{max_scans}:w{window_days}:r{int(use_rollup)}"
+    return f"{base}:w{window_days}:r{int(use_rollup)}"
 
 
 async def _project_scan_version(db: DatabaseDep, project_id: str) -> str:
@@ -292,7 +293,6 @@ async def _compute_comparison(
     user_project_ids: list[str],
     team_id: str | None,
     *,
-    max_scans: int,
     window_days: int,
 ) -> dict[str, Any]:
     projects_raw = await _scoped_projects(db, user_project_ids, team_id)
@@ -304,7 +304,6 @@ async def _compute_comparison(
         scan_repo=ScanRepository(db),
         dep_repo=DependencyRepository(db),
         analysis_repo=AnalysisResultRepository(db),
-        max_scans=max_scans,
         window_days=window_days,
     )
     return comparison.model_dump()
@@ -319,65 +318,41 @@ class _ResolvedWindow:
     status: UpdateDataStatus
 
 
-def _group_by_branch(deltas: Sequence[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
-    grouped: dict[str, list[dict[str, Any]]] = {}
-    for delta in deltas:
-        grouped.setdefault(delta["branch"], []).append(delta)
-    return grouped
+def _resolve_window(
+    activity: Mapping[str, BranchWindowActivity],
+    deltas_by_branch: Mapping[str, list[dict[str, Any]]],
+    project: dict[str, Any],
+) -> _ResolvedWindow:
+    """The branch the scans elect, and how much of that branch's window the ledger can fold.
 
-
-def _pick_branch(
-    branches: dict[str, list[dict[str, Any]]],
-    windows: dict[str, list[dict[str, Any]]],
-    default_branch: str | None,
-    deleted_branches: Sequence[str],
-) -> str | None:
-    """The configured default branch when it can be folded, else the busiest live one.
-
-    A one-off scan on a feature branch must not hijack a project's numbers, but
-    most projects carry no default branch at all, so the fallback has to rank.
+    The branch is chosen from the scans rather than from the deltas, so a ledger
+    with holes cannot make this path report a different branch than the live one.
     """
-    deleted = set(deleted_branches)
-    live = [branch for branch in branches if branch not in deleted]
-    if not live:
-        return None
-    if default_branch in live and len(windows[default_branch]) >= 2:
-        return default_branch
-    return max(live, key=lambda b: (len(windows[b]), as_utc(branches[b][-1]["scan_created_at"])))
-
-
-def _resolve_window(branches: dict[str, list[dict[str, Any]]], project: dict[str, Any]) -> _ResolvedWindow:
-    if not branches:
-        return _ResolvedWindow(None, [], "pending")
-    windows = {branch: select_window(deltas) for branch, deltas in branches.items()}
-    branch = _pick_branch(branches, windows, project.get("default_branch"), project.get("deleted_branches") or [])
+    branch = select_primary_branch(activity, project.get("default_branch"), project.get("deleted_branches"))
     if branch is None:
         return _ResolvedWindow(None, [], "insufficient_data")
-    window = windows[branch]
-    if len(window) >= 2:
-        return _ResolvedWindow(branch, window, "ready")
-    # A writer failure is the reason there is nothing to fold, not a scan cadence.
-    if any(delta.get("error") for delta in branches[branch]):
-        return _ResolvedWindow(branch, [], "error")
-    return _ResolvedWindow(branch, window, "insufficient_data")
+    return _fold_branch(branch, deltas_by_branch.get(branch, []), activity[branch])
 
 
-async def _projects_with_window_scans(db: DatabaseDep, project_ids: Sequence[str], since: datetime) -> set[str]:
-    """Projects that did scan inside the window, so a missing delta means the backfill is behind."""
-    rows = await ScanRepository(db).aggregate(
-        [
-            {
-                "$match": {
-                    "project_id": {"$in": list(project_ids)},
-                    "created_at": {"$gte": since},
-                    "status": {"$in": SCAN_USABLE_STATUSES},
-                    "is_rescan": {"$ne": True},
-                }
-            },
-            {"$group": {"_id": "$project_id"}},
-        ]
+def _fold_branch(branch: str, deltas: list[dict[str, Any]], activity: BranchWindowActivity) -> _ResolvedWindow:
+    """How much of one branch's window the ledger can fold, and what that leaves out."""
+    # The live walk stops at the same count of documents, so a branch busier than the
+    # cap is truncated to the same newest stretch on both paths.
+    capped = len(deltas) >= WINDOW_HARD_LIMIT
+    deltas = deltas[-WINDOW_HARD_LIMIT:]
+    if not deltas:
+        return _ResolvedWindow(branch, [], "pending")
+
+    window = select_window(deltas)
+    if len(window) < 2:
+        # A writer failure is the reason there is nothing to fold, not a scan cadence.
+        return _ResolvedWindow(branch, [], "error" if any(d.get("error") for d in deltas) else "insufficient_data")
+    # Past the cap the branch's own commit count describes a longer stretch than either
+    # path reads, so comparing against it would demote exactly the busiest projects.
+    status: UpdateDataStatus = (
+        "ready" if capped else window_coverage_status(accounted_commits(deltas, window), activity.commit_count)
     )
-    return {row["_id"] for row in rows}
+    return _ResolvedWindow(branch, window, status)
 
 
 def _rollup_summary(
@@ -389,7 +364,7 @@ def _rollup_summary(
     project_id = str(project["_id"])
     project_name = project.get("name", "")
     team_name = project.get("team_name")
-    if resolved.status != "ready":
+    if resolved.status not in ("ready", "partial"):
         return ProjectUpdateSummary(
             project_id=project_id,
             project_name=project_name,
@@ -407,6 +382,7 @@ def _rollup_summary(
         team_name,
         branch=resolved.branch,
         window_days=window_days,
+        data_status=resolved.status,
     )
 
 
@@ -423,23 +399,26 @@ async def _compute_comparison_from_rollup(
         return UpdateFrequencyComparison(projects=[]).model_dump()
 
     since = cast(datetime, window_cutoff(window_days))
-    buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch([str(p["_id"]) for p in projects_raw], since)
+    project_ids = [str(p["_id"]) for p in projects_raw]
+    activity = await window_scans_by_branch(ScanRepository(db), project_ids, since)
+    buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(project_ids, since)
 
-    by_project: dict[str, dict[str, list[dict[str, Any]]]] = {}
+    scans_by_project: dict[str, dict[str, BranchWindowActivity]] = {}
+    for (project_id, branch), seen in activity.items():
+        scans_by_project.setdefault(project_id, {})[branch] = seen
+    deltas_by_project: dict[str, dict[str, list[dict[str, Any]]]] = {}
     for (project_id, branch), deltas in buckets.items():
-        by_project.setdefault(project_id, {})[branch] = deltas
+        deltas_by_project.setdefault(project_id, {})[branch] = deltas
 
-    resolved = {str(p["_id"]): _resolve_window(by_project.get(str(p["_id"]), {}), p) for p in projects_raw}
-
-    unbackfilled = [pid for pid, r in resolved.items() if r.status == "pending"]
-    if unbackfilled:
-        scanned = await _projects_with_window_scans(db, unbackfilled, since)
-        for project_id in unbackfilled:
-            if project_id not in scanned:
-                resolved[project_id] = _ResolvedWindow(None, [], "insufficient_data")
+    resolved = {
+        project_id: _resolve_window(
+            scans_by_project.get(project_id, {}), deltas_by_project.get(project_id, {}), project
+        )
+        for project_id, project in zip(project_ids, projects_raw, strict=True)
+    }
 
     baselines = await ScanOutdatedSetRepository(db).names_by_scan(
-        [r.window[0]["_id"] for r in resolved.values() if r.status == "ready"]
+        [r.window[0]["_id"] for r in resolved.values() if r.window]
     )
 
     summaries = [_rollup_summary(p, resolved[str(p["_id"])], baselines, window_days) for p in projects_raw]
@@ -483,13 +462,20 @@ async def _rollup_project_metrics(
 ) -> UpdateFrequencyMetrics | None:
     """Metrics folded from the delta ledger, or None when it cannot answer for this project.
 
-    Falling back rather than reporting an empty history keeps a project whose
-    deltas the backfill has not reached yet on the live path.
+    A partial fold falls back to the live walk rather than being served: one
+    project's walk is affordable, and it reads the scans the ledger has not
+    reached yet.
     """
     project_id = str(project["_id"])
     since = cast(datetime, window_cutoff(window_days))
-    deltas = await ScanUpdateDeltaRepository(db).find_project_window(project_id, since, _ROLLUP_WINDOW_HARD_LIMIT)
-    resolved = _resolve_window(_group_by_branch(deltas), project)
+    activity = await window_scans_by_branch(ScanRepository(db), [project_id], since)
+    by_branch = {branch: seen for (_project_id, branch), seen in activity.items()}
+    branch = select_primary_branch(by_branch, project.get("default_branch"), project.get("deleted_branches"))
+    if branch is None:
+        return None
+
+    deltas = await ScanUpdateDeltaRepository(db).find_project_window(project_id, branch, since, WINDOW_HARD_LIMIT)
+    resolved = _fold_branch(branch, deltas, by_branch[branch])
     if resolved.status != "ready":
         return None
 
@@ -510,10 +496,13 @@ async def get_update_frequency_comparison(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     team_id: str | None = None,
-    max_scans: Annotated[int, Query(ge=2, le=200)] = 20,
     window_days: Annotated[int, Query(ge=1, le=3650)] = _DEFAULT_COMPARISON_WINDOW_DAYS,
 ) -> UpdateFrequencyComparison:
-    """Cross-project ranking over one calendar window, so scan cadences stay comparable."""
+    """Cross-project ranking over one calendar window, so scan cadences stay comparable.
+
+    There is no scan-count mode here: a shared calendar window is what makes the
+    projects comparable, and it selects the scans on both read paths.
+    """
     require_analytics_permission(current_user, Permissions.ANALYTICS_RECOMMENDATIONS)
 
     user_project_ids = await get_user_project_ids(current_user, db)
@@ -525,7 +514,6 @@ async def get_update_frequency_comparison(
     cache_key = _comparison_cache_key(
         _scope_hash(user_project_ids),
         team_id or "all",
-        max_scans=max_scans,
         window_days=window_days,
         use_rollup=use_rollup,
     )
@@ -538,7 +526,7 @@ async def get_update_frequency_comparison(
     else:
 
         def _fetch() -> Coroutine[Any, Any, dict[str, Any]]:
-            return _compute_comparison(db, user_project_ids, team_id, max_scans=max_scans, window_days=window_days)
+            return _compute_comparison(db, user_project_ids, team_id, window_days=window_days)
 
     payload = await _await_or_abort(
         request,

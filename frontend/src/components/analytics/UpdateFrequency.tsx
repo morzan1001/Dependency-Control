@@ -340,8 +340,6 @@ function UpstreamCadenceCard({ data }: Readonly<{ data: UpdateFrequencyMetrics }
     { label: 'Adoption latency', value: data.adoption_latency_days_median, suffix: 'd', digits: 0 },
   ]
 
-  if (metrics.every((m) => m.value === null)) return null
-
   return (
     <Card>
       <CardHeader>
@@ -362,6 +360,12 @@ function UpstreamCadenceCard({ data }: Readonly<{ data: UpdateFrequencyMetrics }
             </div>
           ))}
         </div>
+        {metrics.every((m) => m.value === null) && (
+          <p className="pt-4 text-xs text-muted-foreground">
+            No upstream release data for this project. Either none of its packages could be
+            resolved on deps.dev, or the lookup was skipped for this view.
+          </p>
+        )}
       </CardContent>
     </Card>
   )

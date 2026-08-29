@@ -63,14 +63,14 @@ class TestScopeHash:
 
 
 def _ckey(scope: str = "scope-a", team: str = "all", **overrides: Any) -> str:
-    kwargs: dict[str, Any] = {"max_scans": 20, "window_days": 90, "use_rollup": False}
+    kwargs: dict[str, Any] = {"window_days": 90, "use_rollup": False}
     return _comparison_cache_key(scope, team, **(kwargs | overrides))
 
 
 class TestComparisonCacheKey:
     def test_key_separates_scope_team_and_params(self):
-        keys = {_ckey(), _ckey(scope="scope-b"), _ckey(team="team-x"), _ckey(max_scans=50), _ckey(window_days=30)}
-        assert len(keys) == 5
+        keys = {_ckey(), _ckey(scope="scope-b"), _ckey(team="team-x"), _ckey(window_days=30)}
+        assert len(keys) == 4
 
     def test_flipping_the_read_path_does_not_reuse_the_other_paths_answer(self):
         assert _ckey(use_rollup=False) != _ckey(use_rollup=True)
@@ -305,6 +305,9 @@ class TestComparisonEndpointCaching:
             asyncio.run(get_update_frequency_comparison(request=FakeRequest(), current_user=_user("u1"), db=db))
 
         assert compute.await_args.kwargs["window_days"] == 90
+        # A scan-count cap selects nothing once a calendar window does; carrying
+        # one would only fragment the cache across values that answer alike.
+        assert "max_scans" not in compute.await_args.kwargs
 
     def test_negatively_cached_entry_reports_unavailable_without_recomputing(self):
         cache = FakeCache()
@@ -313,7 +316,6 @@ class TestComparisonEndpointCaching:
         key = _comparison_cache_key(
             _scope_hash(["p1"]),
             "all",
-            max_scans=20,
             window_days=_DEFAULT_COMPARISON_WINDOW_DAYS,
             use_rollup=False,
         )

@@ -93,4 +93,21 @@ describe("UpdateFrequency", () => {
     expect(await screen.findByText("Update Timeline")).toBeInTheDocument();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
+
+  it("keeps the upstream card and says why it is empty", async () => {
+    mockedFrequency.mockResolvedValue(metrics);
+    renderFrequency();
+
+    expect(await screen.findByText("Upstream Release Cadence")).toBeInTheDocument();
+    expect(screen.getByText(/no upstream release data for this project/i)).toBeInTheDocument();
+  });
+
+  it("drops that note as soon as one cadence median arrives", async () => {
+    mockedFrequency.mockResolvedValue({ ...metrics, upstream_releases_last_12m_median: 4 });
+    renderFrequency();
+
+    await screen.findByText("Upstream Release Cadence");
+    expect(screen.getByText("4.0")).toBeInTheDocument();
+    expect(screen.queryByText(/no upstream release data/i)).not.toBeInTheDocument();
+  });
 });
