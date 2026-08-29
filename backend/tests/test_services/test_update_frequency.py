@@ -10,10 +10,18 @@ from unittest.mock import patch
 import pytest
 
 import app.services.update_frequency as update_frequency_module
-from app.schemas.analytics import ScanTimelineEntry
+from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
+from app.repositories.update_frequency import (
+    BranchWindowActivity,
+    ScanOutdatedSetRepository,
+    ScanUpdateDeltaRepository,
+    window_scans_by_branch,
+)
+from app.schemas.analytics import ScanTimelineEntry, UpdateFrequencyMetrics
 from app.services.release_history import ReleaseHistory, ReleaseInfo
 from app.services.update_frequency import (
     _COMPARISON_CONCURRENCY,
+    READY_COVERAGE_RATIO,
     _aggregate_metrics,
     _dominant_ecosystem,
     _empty_metrics,
@@ -21,8 +29,13 @@ from app.services.update_frequency import (
     compute_trend,
     compute_update_frequency,
     compute_update_frequency_comparison,
+    select_primary_branch,
+    window_coverage_status,
     window_cutoff,
 )
+from app.services.update_frequency_fold import fold_window, select_window
+from app.services.update_frequency_rollup import record_scan_update_delta
+from tests.mocks.fake_mongo import FakeDatabase, _bson_sort_key
 
 
 def _make_timeline_entry(idx: int, updates: int = 0, outdated: int = 0) -> ScanTimelineEntry:
@@ -319,12 +332,8 @@ class FakeScanRepo:
         matched = [s for s in self._scans if _matches_scan_query(s, query)]
         if sort:
             for field, order in reversed(sort):
-                matched.sort(key=lambda s: s[field], reverse=(order == -1))
+                matched.sort(key=lambda s, f=field: _bson_sort_key(s.get(f)), reverse=(order == -1))
         return matched
-
-    async def find_one(self, query: dict[str, Any], sort: list[tuple[str, int]] | None = None) -> dict[str, Any] | None:
-        matched = self._filtered(query, sort)
-        return matched[0] if matched else None
 
     async def find_many_raw(
         self,
@@ -340,11 +349,14 @@ class FakeScanRepo:
         matched = matched[skip : skip + limit] if limit is not None else matched[skip:]
         return [_apply_projection(s, projection) for s in matched]
 
-    async def count(self, query: dict[str, Any] | None = None, limit: int | None = None) -> int:
-        # count_documents documents limit as "must be a positive integer"; 0 would reach the server as $limit: 0.
-        assert limit is None or limit > 0
-        matched = self._filtered(query or {}, None)
-        return len(matched) if limit is None else min(len(matched), limit)
+    async def aggregate(self, pipeline: list[dict[str, Any]], limit: int | None = None) -> list[dict[str, Any]]:
+        # Run the real pipeline through the fake Mongo engine rather than
+        # reimplementing it: a pipeline that would not answer in Mongo must not
+        # answer here either, down to the naive UTC datetimes it stores.
+        db = FakeDatabase()
+        for scan in self._scans:
+            await db.scans.insert_one(dict(scan))
+        return await db.scans.aggregate(pipeline).to_list(limit)
 
 
 class FakeDepRepo:
@@ -412,6 +424,11 @@ def _make_scan(
     }
 
 
+def _scan_days_ago(scan_id: str, days: float, **overrides: Any) -> dict[str, Any]:
+    """A scan placed relative to now, so a ``window_days`` cutoff includes or excludes it."""
+    return _make_scan(scan_id, 0, **overrides) | {"created_at": datetime.now(tz=timezone.utc) - timedelta(days=days)}
+
+
 def _recent_scans(count: int, spacing_days: int = 1) -> list[dict[str, Any]]:
     """Scans ending at now, so a ``window_days`` cutoff can select a known suffix."""
     now = datetime.now(tz=timezone.utc)
@@ -437,6 +454,76 @@ def _outdated_result(scan_id: str, entries: list[dict[str, str]]) -> dict[str, A
         "analyzer_name": "outdated_packages",
         "result": {"outdated_dependencies": entries},
     }
+
+
+def _activity(branches: dict[str, tuple[int, int]]) -> dict[str, BranchWindowActivity]:
+    """``branch -> (scans in the window, day offset of its newest scan)``."""
+    return {
+        branch: BranchWindowActivity(count, _BASE_SCAN_DATE + timedelta(days=day))
+        for branch, (count, day) in branches.items()
+    }
+
+
+class TestSelectPrimaryBranch:
+    """One rule for both read paths: the branch that carries the project's history."""
+
+    def test_a_project_without_any_scanned_branch_has_none(self):
+        assert select_primary_branch({}, "main", []) is None
+
+    def test_the_default_branch_wins_at_the_two_scan_minimum(self):
+        activity = _activity({"main": (2, 1), "develop": (9, 2)})
+        assert select_primary_branch(activity, "main", []) == "main"
+
+    def test_a_default_branch_scanned_once_yields_to_the_busiest_branch(self):
+        activity = _activity({"main": (1, 5), "develop": (3, 1)})
+        assert select_primary_branch(activity, "main", []) == "develop"
+
+    def test_a_deleted_default_branch_is_never_chosen(self):
+        activity = _activity({"main": (5, 5), "develop": (2, 1)})
+        assert select_primary_branch(activity, "main", ["main"]) == "develop"
+
+    def test_deleted_branches_drop_out_of_the_fallback_too(self):
+        activity = _activity({"gone": (9, 5), "develop": (2, 1)})
+        assert select_primary_branch(activity, None, ["gone"]) == "develop"
+
+    def test_a_project_whose_branches_are_all_deleted_has_none(self):
+        assert select_primary_branch(_activity({"gone": (9, 5)}), None, ["gone"]) is None
+
+    def test_the_busiest_branch_wins_over_the_most_recently_scanned_one(self):
+        # The rule both paths promise: a single fresh scan must not hijack a project.
+        activity = _activity({"old": (3, 0), "new": (2, 70)})
+        assert select_primary_branch(activity, None, []) == "old"
+
+    def test_a_tie_on_scan_count_goes_to_the_branch_scanned_last(self):
+        activity = _activity({"stale": (2, 1), "fresh": (2, 30)})
+        assert select_primary_branch(activity, None, []) == "fresh"
+
+    def test_a_full_tie_is_broken_by_name_rather_than_by_input_order(self):
+        activity = _activity({"alpha": (2, 5), "beta": (2, 5)})
+        reversed_activity = dict(reversed(list(activity.items())))
+        assert select_primary_branch(activity, None, []) == select_primary_branch(reversed_activity, None, []) == "beta"
+
+
+class TestWindowCoverageStatus:
+    def test_full_coverage_is_ready(self):
+        assert window_coverage_status(10, 10) == "ready"
+
+    def test_the_drop_the_fold_makes_on_purpose_still_reads_as_ready(self):
+        # Same-commit retries and SBOM-less scans are dropped by design.
+        assert window_coverage_status(9, 10) == "ready"
+
+    def test_a_window_the_backfill_barely_reached_is_partial(self):
+        # The measured post-deploy state: deltas for only the two newest of ten scans.
+        assert window_coverage_status(2, 10) == "partial"
+
+    def test_the_threshold_is_the_documented_ratio(self):
+        assert window_coverage_status(80, 100) == "ready"
+        assert window_coverage_status(79, 100) == "partial"
+        assert READY_COVERAGE_RATIO == 0.8
+
+    def test_more_analyzed_scans_than_the_window_counted_is_ready(self):
+        # A scan can land between the two reads; that is not a coverage gap.
+        assert window_coverage_status(3, 2) == "ready"
 
 
 class TestBranchScopedScanSelection:
@@ -601,6 +688,32 @@ class TestBranchScopedScanSelection:
         assert all(e.new_version != "0.9.0" for e in m.recent_updates)
 
     @pytest.mark.asyncio
+    async def test_a_single_fresh_scan_on_another_branch_does_not_hijack_the_project(self):
+        # The branch that was scanned most owns the numbers, not the newest one.
+        scans = [_scan_days_ago(f"o{i}", 80 - i * 10, branch="old") for i in range(3)]
+        scans += [_scan_days_ago(f"n{i}", 20 - i * 10, branch="new") for i in range(2)]
+        deps = {s["_id"]: [_make_dep(s["_id"], "pkg-a", "1.0.0")] for s in scans}
+
+        m = await self._compute(scans, deps, window_days=90)
+
+        assert m.branch == "old"
+        assert m.scan_count == 3
+
+    @pytest.mark.asyncio
+    async def test_the_default_branch_needs_its_two_scans_inside_the_window(self):
+        # release was busy before the window and scanned once inside it; counting
+        # its whole history would hand it a window it cannot describe.
+        scans = [_scan_days_ago(f"r{i}", 200 + i, branch="release") for i in range(10)]
+        scans.append(_scan_days_ago("r-recent", 30, branch="release"))
+        scans += [_scan_days_ago(f"m{i}", 60 - i * 10, branch="main") for i in range(3)]
+        deps = {s["_id"]: [_make_dep(s["_id"], "pkg-a", "1.0.0")] for s in scans}
+
+        m = await self._compute(scans, deps, window_days=90, default_branch="release")
+
+        assert m.branch == "main"
+        assert m.scan_count == 3
+
+    @pytest.mark.asyncio
     async def test_deleted_branches_excluded_from_auto_resolution(self):
         scans = [
             _make_scan("m1", 0, branch="main"),
@@ -634,37 +747,26 @@ class TestBranchScopedScanSelection:
         assert m.last_scan_date.endswith("+00:00")
 
     @pytest.mark.asyncio
-    async def test_iso_string_created_at_is_parsed(self):
-        # Archive restore inserts bundle JSON verbatim and JSON has no date type,
-        # so a restored scan can carry created_at as a plain ISO string.
+    async def test_a_textual_created_at_drops_the_scan(self):
+        # Archive restore inserts bundle JSON verbatim and JSON has no date type, so a
+        # restored scan can carry created_at as text. A range query brackets to its
+        # bound's BSON type, so the window aggregation and the backfill both skip such
+        # a scan; parsing it here would put it on a timeline nothing else accounts for.
         scans = [
             {**_make_scan("s1", 0), "created_at": "2026-01-01T00:00:00Z"},
-            {**_make_scan("s2", 30), "created_at": "2026-01-31T00:00:00Z"},
+            {**_make_scan("s2", 30), "created_at": "whenever"},
+            _make_scan("s3", 60),
+            _make_scan("s4", 90),
         ]
         deps = {
             "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
-            "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
-        }
-        m = await self._compute(scans, deps)
-        assert m.scan_count == 2
-        assert m.total_updates == 1
-        assert m.first_scan_date == "2026-01-01T00:00:00+00:00"
-        assert m.last_scan_date == "2026-01-31T00:00:00+00:00"
-
-    @pytest.mark.asyncio
-    async def test_unparseable_created_at_drops_the_scan(self):
-        scans = [
-            {**_make_scan("s1", 0), "created_at": "2026-01-01T00:00:00Z"},
-            {**_make_scan("s2", 30), "created_at": "2026-01-31T00:00:00Z"},
-            {**_make_scan("s3", 60), "created_at": "whenever"},
-        ]
-        deps = {
-            "s1": [_make_dep("s1", "pkg-a", "1.0.0")],
-            "s2": [_make_dep("s2", "pkg-a", "1.0.1")],
+            "s2": [_make_dep("s2", "pkg-a", "1.5.0")],
             "s3": [_make_dep("s3", "pkg-a", "2.0.0")],
+            "s4": [_make_dep("s4", "pkg-a", "2.0.1")],
         }
         m = await self._compute(scans, deps)
         assert m.scan_count == 2
+        assert [e.scan_id for e in m.scan_timeline] == ["s3", "s4"]
         assert m.total_updates == 1
 
     @pytest.mark.asyncio
@@ -1434,7 +1536,10 @@ class TestStreamingOrchestrator:
             analysis_repo=FakeAnalysisRepo([]),
         )
 
-        assert len(result.projects) == 1
+        assert [(p.project_name, p.data_status) for p in result.projects] == [
+            ("A", "ready"),
+            ("C", "insufficient_data"),
+        ]
         assert result.skipped_insufficient_data == 1
 
     @pytest.mark.asyncio
@@ -1464,8 +1569,7 @@ class TestStreamingOrchestrator:
                 analysis_repo=FakeAnalysisRepo([]),
             )
 
-        accounted = len(result.projects) + result.skipped_insufficient_data + result.skipped_error
-        assert accounted == len(projects)
+        assert {p.project_name for p in result.projects} == {"A", "B"}
         assert result.skipped_error == 1
 
     @pytest.mark.asyncio
@@ -1613,6 +1717,170 @@ class TestStreamingOrchestrator:
         second = asyncio.run(_run())
         assert len(first.projects) == n_projects
         assert len(second.projects) == n_projects
+
+
+_DIFFERENTIAL_FIELDS = (
+    "branch",
+    "scan_count",
+    "time_range_days",
+    "first_scan_date",
+    "last_scan_date",
+    "total_updates",
+    "updates_per_scan",
+    "updates_per_month",
+    "patch_updates",
+    "minor_updates",
+    "major_updates",
+    "avg_days_between_scans",
+    "trend_direction",
+    "scan_timeline",
+)
+
+
+class TestBranchRuleDifferential:
+    """One history read twice. Both paths must settle on the same branch, hence the same numbers."""
+
+    _PROJECT = "proj-diff"
+    _WINDOW = 90
+
+    @staticmethod
+    async def _seed(db: FakeDatabase, scan_id: str, days_ago: float, branch: str, version: str) -> None:
+        await db.scans.insert_one(
+            {
+                "_id": scan_id,
+                "project_id": TestBranchRuleDifferential._PROJECT,
+                "branch": branch,
+                "created_at": datetime.now(tz=timezone.utc) - timedelta(days=days_ago),
+                "commit_hash": f"commit-{scan_id}",
+                "status": "completed",
+                "is_rescan": False,
+            }
+        )
+        await db.dependencies.insert_one(
+            {"_id": f"{scan_id}:pkg-a", "scan_id": scan_id, "name": "pkg-a", "version": version, "type": "library"}
+            | {"purl": f"pkg:pypi/pkg-a@{version}"}
+        )
+
+    async def _live(self, db: FakeDatabase) -> UpdateFrequencyMetrics:
+        return await compute_update_frequency(
+            project_id=self._PROJECT,
+            project_name="Diff",
+            scan_repo=ScanRepository(db),
+            dep_repo=DependencyRepository(db),
+            analysis_repo=AnalysisResultRepository(db),
+            window_days=self._WINDOW,
+        )
+
+    async def _rollup(self, db: FakeDatabase) -> UpdateFrequencyMetrics:
+        """The ledger read the way the comparison endpoint assembles it."""
+        since = window_cutoff(self._WINDOW)
+        assert since is not None
+        activity = await window_scans_by_branch(ScanRepository(db), [self._PROJECT], since)
+        branch = select_primary_branch({b: seen for (_pid, b), seen in activity.items()}, None, [])
+        assert branch is not None
+        deltas = await ScanUpdateDeltaRepository(db).find_project_window(self._PROJECT, branch, since, 1000)
+        window = select_window(deltas)
+        baselines = await ScanOutdatedSetRepository(db).names_by_scan([window[0]["_id"]])
+        folded = fold_window(window, baselines.get(window[0]["_id"]), self._WINDOW)
+        return folded.to_metrics(self._PROJECT, "Diff", branch=branch)
+
+    @pytest.mark.asyncio
+    async def test_a_busy_branch_beats_a_fresher_one_on_both_paths(self):
+        # Measured in production: the branch of the newest scan is not the branch
+        # the project lives on. Whichever branch each path picks decides every
+        # field it reports, down to first_scan_date.
+        db = FakeDatabase()
+        for i, version in enumerate(("1.0.0", "1.1.0", "2.0.0")):
+            await self._seed(db, f"o{i}", 80 - i * 10, "old", version)
+        for i, version in enumerate(("5.0.0", "5.0.1")):
+            await self._seed(db, f"n{i}", 20 - i * 10, "new", version)
+        for scan in sorted(await db.scans.find({}).to_list(None), key=lambda s: (s["created_at"], s["_id"])):
+            await record_scan_update_delta(db, scan["_id"])
+
+        live = await self._live(db)
+        rolled = await self._rollup(db)
+
+        assert {
+            field: (getattr(live, field), getattr(rolled, field))
+            for field in _DIFFERENTIAL_FIELDS
+            if getattr(live, field) != getattr(rolled, field)
+        } == {}
+        assert live.branch == "old"
+        assert (live.scan_count, live.total_updates, live.minor_updates, live.major_updates) == (3, 2, 1, 1)
+
+
+class TestTheLiveWalkIsAlwaysFullyCovered:
+    """The walk reads the scans coverage is measured against, so it never reports partial."""
+
+    @staticmethod
+    def _retry_storm_project(pid: str) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+        """Ten in-window scans of which eight are CI retries of one commit."""
+        scans = [_scan_days_ago(f"{pid}-s0", 60, project_id=pid, commit_hash="c0")]
+        scans += [_scan_days_ago(f"{pid}-r{i}", 59 - i, project_id=pid, commit_hash="c1") for i in range(8)]
+        scans.append(_scan_days_ago(f"{pid}-s9", 50, project_id=pid, commit_hash="c2"))
+        deps = {s["_id"]: [_make_dep(s["_id"], "pkg-a", "1.0.0")] for s in scans}
+        deps[f"{pid}-s9"] = [_make_dep(f"{pid}-s9", "pkg-a", "2.0.0")]
+        return scans, deps
+
+    @staticmethod
+    def _steady_project(pid: str) -> tuple[list[dict[str, Any]], dict[str, list[dict[str, Any]]]]:
+        scans = [_scan_days_ago(f"{pid}-s1", 30, project_id=pid), _scan_days_ago(f"{pid}-s2", 1, project_id=pid)]
+        deps = {
+            f"{pid}-s1": [_make_dep(f"{pid}-s1", "pkg-b", "1.0.0")],
+            f"{pid}-s2": [_make_dep(f"{pid}-s2", "pkg-b", "1.0.1")],
+        }
+        return scans, deps
+
+    @staticmethod
+    async def _compare(projects, scans, deps):
+        return await compute_update_frequency_comparison(
+            projects=projects,
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_retry_storm_leaves_a_project_fully_covered(self):
+        # Eight of ten scans are CI retries of one commit. Both read paths keep
+        # the first of a run, so counting the retries as missing coverage would
+        # take a healthy project out of the ranking for scanning too often.
+        scans, deps = self._retry_storm_project("proj-retry")
+
+        result = await self._compare([{"_id": "proj-retry", "name": "Retry"}], scans, deps)
+
+        row = result.projects[0]
+        assert row.data_status == "ready"
+        assert (row.scan_count, row.total_updates) == (3, 1)
+        assert result.partial_projects == 0
+
+    @pytest.mark.asyncio
+    async def test_scans_older_than_the_window_do_not_make_a_project_look_partial(self):
+        # Coverage is measured against the window the numbers describe, not the
+        # project's whole history, which no window could ever cover.
+        scans, deps = self._steady_project("proj-ready")
+        scans += [_scan_days_ago(f"ancient-{i}", 200 + i, project_id="proj-ready") for i in range(100)]
+
+        result = await self._compare([{"_id": "proj-ready", "name": "Ready"}], scans, deps)
+
+        assert [p.data_status for p in result.projects] == ["ready"]
+
+    @pytest.mark.asyncio
+    async def test_scans_the_walk_cannot_date_leave_coverage_alone(self):
+        # An archive restore can insert a scan date as text. A range match on a date
+        # does not select those, so they leave the window on both sides at once --
+        # the walk cannot place them on a timeline and coverage does not expect them.
+        scans, deps = self._steady_project("proj-thin")
+        scans += [
+            _scan_days_ago(f"undated-{i}", 20 + i, project_id="proj-thin") | {"created_at": "not a date"}
+            for i in range(8)
+        ]
+
+        result = await self._compare([{"_id": "proj-thin", "name": "Thin"}], scans, deps)
+
+        row = result.projects[0]
+        assert (row.data_status, row.scan_count) == ("ready", 2)
+        assert result.partial_projects == 0
 
 
 class TestWindowCutoff:

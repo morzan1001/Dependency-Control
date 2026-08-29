@@ -1,13 +1,16 @@
-"""Repositories for the per-scan update-frequency rollups."""
+"""Reads over the per-scan update-frequency rollups and over the scan window they summarise."""
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from itertools import batched
 from typing import Any
 
+from app.core.constants import SCAN_USABLE_STATUSES
 from app.core.metrics import track_db_operation
 from app.models.update_frequency import UPDATE_DELTA_SCHEMA_VERSION, ScanOutdatedSet, ScanUpdateDelta
 from app.repositories.base import BaseRepository
+from app.repositories.scans import ScanRepository
 
 _NEIGHBOUR_PROJECTION = {"_id": 1, "scan_created_at": 1, "prev_scan_id": 1, "dep_count": 1}
 
@@ -37,10 +40,87 @@ _WINDOW_FIELDS = {
 _WINDOW_PROJECT_BATCH = 100
 
 
+def _as_utc(at: datetime) -> datetime:
+    """Mongo returns naive UTC datetimes."""
+    return at if at.tzinfo else at.replace(tzinfo=timezone.utc)
+
+
 def _chain_order(doc: dict[str, Any]) -> tuple[datetime, str]:
-    """The writer's total order over one branch, normalised: Mongo returns naive UTC."""
-    at = doc["scan_created_at"]
-    return (at if at.tzinfo else at.replace(tzinfo=timezone.utc), doc["_id"])
+    """The writer's total order over one branch."""
+    return (_as_utc(doc["scan_created_at"]), doc["_id"])
+
+
+@dataclass(frozen=True)
+class BranchWindowActivity:
+    """What one branch of one project really holds in the window, before any fold drops a scan."""
+
+    commit_count: int
+    last_scan_at: datetime
+
+
+# Sorts last on the recency tie-break.
+_UNDATED = datetime.min.replace(tzinfo=timezone.utc)
+
+# The index on (project_id, branch, created_at) bounds the scan to the batch's projects;
+# status and is_rescan are not in it, so their documents are fetched. A whole-scope
+# comparison touches at most the 50k documents of the collection once and groups them
+# into one row per branch holding that branch's commit hashes, which keeps every batch
+# far under the 100 MB limit.
+_SCAN_WINDOW_PROJECT_BATCH = 200
+
+# Neither read path analyses more than this many documents of one branch: the live walk
+# fetches at most this many scans, and the rollup folds at most this many deltas. A
+# branch busier than that is truncated to the same newest stretch on both paths, so
+# what the cap left out is what neither path was going to read.
+WINDOW_HARD_LIMIT = 1000
+
+# Two scans of one commit carry the same SBOM, so both read paths keep only the first
+# of a run. Counting documents instead would read a CI retry storm as missing data.
+# A scan that names no commit stands for itself, matching collapse_same_commit_runs.
+_COMMIT_TOKEN = {"$cond": [{"$eq": [{"$ifNull": ["$commit_hash", ""]}, ""]}, "$_id", "$commit_hash"]}
+
+
+async def window_scans_by_branch(
+    scan_repo: ScanRepository,
+    project_ids: Sequence[str],
+    since: datetime | None,
+) -> dict[tuple[str, str], BranchWindowActivity]:
+    """Comparable commits per (project, branch), over the window itself when one is given.
+
+    Both read paths choose their branch from these counts, so neither can settle on a
+    branch the other would not, and both can tell how much of the window their numbers
+    actually cover.
+    """
+    scoped: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}, "is_rescan": {"$ne": True}}
+    if since is not None:
+        scoped["created_at"] = {"$gte": since}
+
+    activity: dict[tuple[str, str], BranchWindowActivity] = {}
+    for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH):
+        pipeline = [
+            {"$match": {"project_id": {"$in": list(batch)}, **scoped}},
+            {"$addFields": {"_commit": _COMMIT_TOKEN}},
+            {
+                "$group": {
+                    "_id": {"p": "$project_id", "b": "$branch"},
+                    "commits": {"$addToSet": "$_commit"},
+                    "last_scan_at": {"$max": "$created_at"},
+                }
+            },
+            {"$project": {"commit_count": {"$size": "$commits"}, "last_scan_at": 1}},
+        ]
+        for row in await scan_repo.aggregate(pipeline):
+            # A grouping key drops the field entirely when a document lacks it, so this
+            # reads a scan with no branch as absent rather than raising.
+            branch = row["_id"].get("b")
+            # Scans that name no branch cannot be diffed against one another.
+            if not isinstance(branch, str) or not branch:
+                continue
+            last_scan_at = row["last_scan_at"]
+            # Archive restore can insert a scan date as an ISO string, which $max hands back verbatim.
+            moment = _as_utc(last_scan_at) if isinstance(last_scan_at, datetime) else _UNDATED
+            activity[row["_id"]["p"], branch] = BranchWindowActivity(int(row["commit_count"]), moment)
+    return activity
 
 
 def _outside(at: datetime, at_id: str, operator: str) -> list[dict[str, Any]]:
@@ -119,7 +199,10 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
                 # instead of quietly spilling to the mongod's disk.
                 rows = await self.collection.aggregate(pipeline, allowDiskUse=False).to_list(None)
             for row in rows:
-                project_id, branch = row["_id"]["p"], row["_id"]["b"]
+                # A grouping key drops the field entirely when a document lacks it.
+                project_id, branch = row["_id"].get("p"), row["_id"].get("b")
+                if not isinstance(project_id, str) or not isinstance(branch, str) or not branch:
+                    continue
                 deltas = sorted(row["deltas"], key=_chain_order)
                 for delta in deltas:
                     # Carried in the group key rather than per document; the fold
@@ -128,13 +211,20 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
                 buckets[project_id, branch] = deltas
         return buckets
 
-    async def find_project_window(self, project_id: str, since: datetime, limit: int) -> list[dict[str, Any]]:
-        """The newest ``limit`` in-window deltas of one project, oldest first, arrays included."""
+    async def find_project_window(
+        self, project_id: str, branch: str, since: datetime, limit: int
+    ) -> list[dict[str, Any]]:
+        """The newest ``limit`` in-window deltas of one branch, oldest first, arrays included.
+
+        The limit is per branch, as the live path's is: spending it across every
+        branch of a project would truncate the analysed one behind the others.
+        """
         with track_db_operation(self.collection_name, "find"):
             docs = (
                 await self.collection.find(
                     {
                         "project_id": project_id,
+                        "branch": branch,
                         "scan_created_at": {"$gte": since},
                         "schema_version": UPDATE_DELTA_SCHEMA_VERSION,
                     }

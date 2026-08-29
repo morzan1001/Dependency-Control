@@ -5,13 +5,12 @@ Streaming model — one scan pair at a time so peak memory stays at
 """
 
 import asyncio
-import contextlib
 import logging
 from collections import Counter, defaultdict, deque
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Literal
 
 from packaging.version import InvalidVersion, Version
 
@@ -19,6 +18,11 @@ from app.core.constants import SCAN_USABLE_STATUSES
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
+from app.repositories.update_frequency import (
+    WINDOW_HARD_LIMIT,
+    BranchWindowActivity,
+    window_scans_by_branch,
+)
 from app.schemas.analytics import (
     DependencyUpdateEvent,
     ProjectUpdateSummary,
@@ -575,9 +579,6 @@ def _dominant_ecosystem(dep_type_map: dict[str, str]) -> str | None:
     return "mixed"
 
 
-_DEFAULT_HARD_LIMIT = 1000
-
-
 @dataclass
 class _AccumulatorState:
     """Streaming-loop state, bundled so each helper takes a single argument."""
@@ -645,59 +646,46 @@ def as_utc(dt: datetime) -> datetime:
     return dt if dt.tzinfo is not None else dt.replace(tzinfo=timezone.utc)
 
 
-def _scan_created_at(value: Any) -> datetime | None:
-    """Archive restore inserts unauthenticated bundle JSON verbatim, so a scan date can arrive as an ISO string."""
-    if isinstance(value, datetime):
-        return as_utc(value)
-    if isinstance(value, str):
-        with contextlib.suppress(ValueError):
-            # An ISO string may carry any offset; the rest of the module assumes UTC.
-            return as_utc(datetime.fromisoformat(value)).astimezone(timezone.utc)
-    return None
+_MIN_COMPARABLE_COMMITS = 2
 
 
-async def _branch_scan_count(scan_repo: ScanRepository, project_id: str, branch: str) -> int:
-    return await scan_repo.count(
-        {
-            "project_id": project_id,
-            "status": {"$in": SCAN_USABLE_STATUSES},
-            "branch": branch,
-            "is_rescan": {"$ne": True},
-        },
-        limit=2,
-    )
-
-
-async def _resolve_primary_branch(
-    scan_repo: ScanRepository,
-    project_id: str,
-    deleted_branches: list[str] | None,
+def select_primary_branch(
+    activity: Mapping[str, BranchWindowActivity],
     default_branch: str | None,
+    deleted_branches: Sequence[str] | None = None,
 ) -> str | None:
-    """Branch to analyze when the caller names none.
+    """The branch a project's numbers describe, from what each branch was scanned in the window.
 
-    The project's configured ``default_branch`` wins when it has enough
-    history to compute anything; only then do we fall back to the newest
-    scanned live branch, so a one-off scan on a feature branch can't hijack
-    the analysis.
+    The configured ``default_branch`` wins as soon as it can be compared at all;
+    otherwise the busiest branch does, because a one-off scan on a feature
+    branch must not hijack a project and most projects configure no default
+    branch. Ties go to the branch scanned last, then to its name, so the pick
+    never depends on document order.
     """
-    deleted = deleted_branches or []
-    if (
-        default_branch
-        and default_branch not in deleted
-        and await _branch_scan_count(scan_repo, project_id, default_branch) >= 2
-    ):
+    deleted = set(deleted_branches or ())
+    live = {branch: seen for branch, seen in activity.items() if branch not in deleted}
+    if not live:
+        return None
+    if default_branch in live and live[default_branch].commit_count >= _MIN_COMPARABLE_COMMITS:
         return default_branch
+    return max(live, key=lambda branch: (live[branch].commit_count, live[branch].last_scan_at, branch))
 
-    query: dict[str, Any] = {
-        "project_id": project_id,
-        "status": {"$in": SCAN_USABLE_STATUSES},
-        "is_rescan": {"$ne": True},
-    }
-    if deleted:
-        query["branch"] = {"$nin": list(deleted)}
-    doc = await scan_repo.find_one(query, sort=[("created_at", -1), ("_id", -1)])
-    return doc.get("branch") if doc else None
+
+# Slack for the scans the ledger reached between the two reads. A missing backfill
+# or a broken delta chain loses far more than a fifth of a window.
+READY_COVERAGE_RATIO = 0.8
+
+
+def window_coverage_status(accounted_commits: int, window_commits: int) -> Literal["ready", "partial"]:
+    """``partial`` when the ledger accounts for noticeably less than the branch really holds.
+
+    A partial row's numbers are exact for what they cover, but they measure a
+    shorter stretch than a fully covered project's, so callers must keep them out
+    of averages, best/worst and the ranking. Both arguments count commits of the
+    same stretch; a caller that truncated its own stretch to a document cap knows
+    no commit count for what it kept and must not ask.
+    """
+    return "ready" if accounted_commits >= window_commits * READY_COVERAGE_RATIO else "partial"
 
 
 def collapse_same_commit_runs(scans_raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -748,12 +736,14 @@ async def _load_completed_scans(
         limit=fetch_limit,
         projection={"_id": 1, "created_at": 1, "commit_hash": 1},
     )
-    scans_raw: list[dict[str, Any]] = []
-    for d in docs:
-        created_at = _scan_created_at(d.get("created_at"))
-        # A scan without a usable date has no place on a timeline.
-        if created_at is not None:
-            scans_raw.append({"_id": d["_id"], "created_at": created_at, "commit_hash": d.get("commit_hash")})
+    scans_raw: list[dict[str, Any]] = [
+        {"_id": d["_id"], "created_at": as_utc(d["created_at"]), "commit_hash": d.get("commit_hash")}
+        for d in docs
+        # Archive restore inserts bundle JSON verbatim, so a date can arrive as an ISO string.
+        # Neither the window aggregation nor the delta writer matches those, so analysing them
+        # here would put scans on the timeline that nothing else in the pipeline accounts for.
+        if isinstance(d.get("created_at"), datetime)
+    ]
     if since is not None:
         scans_raw = [s for s in scans_raw if s["created_at"] >= since]
     scans_raw.reverse()
@@ -773,31 +763,32 @@ async def compute_update_frequency(
     max_scans: int = 20,
     window_days: int | None = None,
     release_fetcher: ReleaseHistoryFetcher | None = None,
-    hard_limit: int = _DEFAULT_HARD_LIMIT,
+    hard_limit: int = WINDOW_HARD_LIMIT,
     branch: str | None = None,
     deleted_branches: list[str] | None = None,
     default_branch: str | None = None,
 ) -> UpdateFrequencyMetrics:
     """Compute update-frequency metrics for one project on one branch.
 
-    ``branch`` defaults to the project's ``default_branch`` (if scanned),
-    else the branch of the newest completed non-rescan scan; comparing
-    across branches would count branch differences as updates. With
+    ``branch`` defaults to ``select_primary_branch``'s pick over the same window;
+    comparing across branches would count branch differences as updates. With
     ``window_days`` set, all scans of that calendar window are analysed (up
     to ``hard_limit``). Otherwise the newest ``max_scans`` are taken and no
     monthly rate is reported, since there is no shared denominator.
     """
-    analyzed_branch = branch or await _resolve_primary_branch(scan_repo, project_id, deleted_branches, default_branch)
+    since = window_cutoff(window_days)
+    analyzed_branch = branch
+    if analyzed_branch is None:
+        activity = await window_scans_by_branch(scan_repo, [project_id], since)
+        analyzed_branch = select_primary_branch(
+            {seen_branch: seen for (_project_id, seen_branch), seen in activity.items()},
+            default_branch,
+            deleted_branches,
+        )
     if analyzed_branch is None:
         return _empty_metrics(project_id, project_name, 0, "", branch=None)
 
-    completed_scans = await _load_completed_scans(
-        scan_repo, project_id, analyzed_branch, max_scans, window_cutoff(window_days), hard_limit
-    )
-
-    if len(completed_scans) < 2:
-        first_date_str = completed_scans[0]["created_at"].isoformat() if completed_scans else ""
-        return _empty_metrics(project_id, project_name, len(completed_scans), first_date_str, branch=analyzed_branch)
+    completed_scans = await _load_completed_scans(scan_repo, project_id, analyzed_branch, max_scans, since, hard_limit)
 
     state = _AccumulatorState()
 
@@ -805,51 +796,56 @@ async def compute_update_frequency(
         docs = await dep_repo.find_all({"scan_id": scan_id}, projection=DEP_PROJECTION)
         return fold_scan_deps(docs)
 
-    first_scan = completed_scans[0]
-    prev_deps = await _load_scan_deps(first_scan["_id"])
-    state.accumulate_types(prev_deps)
-    prev_outdated = await _load_outdated_for_scan(analysis_repo, first_scan["_id"], state.package_latest_info)
-    state.record_outdated(prev_outdated)
-    state.scan_timeline.append(
-        _build_timeline_entry(first_scan["_id"], first_scan["created_at"], [], _measured_count(prev_outdated))
-    )
-    latest_outdated = prev_outdated
+    analysed: list[dict[str, Any]] = []
+    prev_deps: dict[str, dict[str, str]] = {}
+    prev_outdated: set[str] | None = None
+    latest_outdated: set[str] | None = None
 
-    for i in range(1, len(completed_scans)):
-        prev_scan = completed_scans[i - 1]
-        curr_scan = completed_scans[i]
-
+    for curr_scan in completed_scans:
         curr_deps = await _load_scan_deps(curr_scan["_id"])
+        # A scan that produced no SBOM measured nothing, so the delta ledger drops it.
+        # Keeping it here would frame the update that happened across it as two quiet
+        # intervals and put a structural zero-update bar on the timeline.
+        if not curr_deps:
+            continue
         state.accumulate_types(curr_deps)
 
         curr_outdated = await _load_outdated_for_scan(analysis_repo, curr_scan["_id"], state.package_latest_info)
         state.record_outdated(curr_outdated)
-        state.record_resolved(prev_outdated, curr_outdated, curr_deps)
 
-        events = _compare_scan_pair(
-            {prev_scan["_id"]: prev_deps, curr_scan["_id"]: curr_deps},
-            prev_scan["_id"],
-            prev_scan["created_at"],
-            curr_scan["_id"],
-            curr_scan["created_at"],
-            prev_outdated,
-        )
-        state.absorb_events(events, curr_scan["created_at"])
+        events: list[tuple[DependencyUpdateEvent, str]] = []
+        if analysed:
+            prev_scan = analysed[-1]
+            state.record_resolved(prev_outdated, curr_outdated, curr_deps)
+            events = _compare_scan_pair(
+                {prev_scan["_id"]: prev_deps, curr_scan["_id"]: curr_deps},
+                prev_scan["_id"],
+                prev_scan["created_at"],
+                curr_scan["_id"],
+                curr_scan["created_at"],
+                prev_outdated,
+            )
+            state.absorb_events(events, curr_scan["created_at"])
         state.scan_timeline.append(
             _build_timeline_entry(
                 curr_scan["_id"], curr_scan["created_at"], [e for e, _ in events], _measured_count(curr_outdated)
             )
         )
 
+        analysed.append(curr_scan)
         prev_deps = curr_deps
         prev_outdated = curr_outdated
         if curr_outdated is not None:
             latest_outdated = curr_outdated
 
+    if len(analysed) < 2:
+        first_date_str = analysed[0]["created_at"].isoformat() if analysed else ""
+        return _empty_metrics(project_id, project_name, len(analysed), first_date_str, branch=analyzed_branch)
+
     upstream = await _maybe_fetch_upstream_cadence(release_fetcher, state.package_specs, state.first_seen_versions)
 
     return _aggregate_metrics(
-        completed_scans,
+        analysed,
         state.ever_outdated,
         state.ever_resolved,
         state.scan_timeline,
@@ -903,14 +899,20 @@ def _rate(summary: ProjectUpdateSummary) -> float:
 
 
 def rank_summaries(summaries: list[ProjectUpdateSummary]) -> UpdateFrequencyComparison:
-    """Order the measured projects and count the rest, which carry no numbers to average.
+    """Order the fully measured projects and list the rest behind them, unranked.
 
     Coverage of None means no backlog was ever measured, so those rank after
-    every measured project and never become best or worst. Rows that carry no
-    metrics at all stay out of the averages entirely.
+    every measured project and never become best or worst. A ``partial`` row
+    carries numbers for a shorter stretch of the window than a ready one, so it
+    is listed with its caveat but stays out of the averages and the ranking.
+    Rows without any metrics are listed last and named: a bare count of projects
+    that could not be measured leaves the reader unable to go and look at them.
     """
     ready = [s for s in summaries if s.data_status == "ready"]
+    partial = sorted((s for s in summaries if s.data_status == "partial"), key=lambda s: (-_rate(s), s.project_name))
     pending = sorted((s for s in summaries if s.data_status == "pending"), key=lambda s: s.project_name)
+    thin = sorted((s for s in summaries if s.data_status == "insufficient_data"), key=lambda s: s.project_name)
+    failed = sorted((s for s in summaries if s.data_status == "error"), key=lambda s: s.project_name)
 
     measured = [s for s in ready if s.update_coverage_pct is not None]
     unmeasured = [s for s in ready if s.update_coverage_pct is None]
@@ -919,7 +921,8 @@ def rank_summaries(summaries: list[ProjectUpdateSummary]) -> UpdateFrequencyComp
 
     rates = [s.updates_per_month for s in ready if s.updates_per_month is not None]
     return UpdateFrequencyComparison(
-        projects=measured + unmeasured + pending,
+        projects=measured + unmeasured + partial + pending + thin + failed,
+        partial_projects=len(partial),
         team_avg_updates_per_month=round(sum(rates) / len(rates), 2) if rates else None,
         team_avg_coverage_pct=(
             round(sum(s.update_coverage_pct for s in measured) / len(measured), 1)  # type: ignore[misc]
@@ -929,8 +932,8 @@ def rank_summaries(summaries: list[ProjectUpdateSummary]) -> UpdateFrequencyComp
         best_project=measured[0].project_name if measured else None,
         worst_project=measured[-1].project_name if len(measured) >= 2 else None,
         pending_projects=len(pending),
-        skipped_insufficient_data=sum(1 for s in summaries if s.data_status == "insufficient_data"),
-        skipped_error=sum(1 for s in summaries if s.data_status == "error"),
+        skipped_insufficient_data=len(thin),
+        skipped_error=len(failed),
     )
 
 
@@ -939,7 +942,6 @@ async def compute_update_frequency_comparison(
     scan_repo: ScanRepository,
     dep_repo: DependencyRepository,
     analysis_repo: AnalysisResultRepository,
-    max_scans: int = 10,
     window_days: int = 90,
     release_fetcher: ReleaseHistoryFetcher | None = None,
 ) -> UpdateFrequencyComparison:
@@ -948,25 +950,44 @@ async def compute_update_frequency_comparison(
     Per-project computations run with bounded concurrency. ``window_days``
     aligns every project on the same calendar window; ranking projects across
     different spans would compare scan cadence rather than update activity.
+    One batched read of the scan window feeds both the branch choice and the
+    coverage verdict, so a project scanned outside the window costs no query.
     """
     # Created per call so it binds to the loop running this gather (see note
     # at module top); a module-global semaphore would pin to the first loop.
     semaphore = asyncio.Semaphore(_COMPARISON_CONCURRENCY)
+    since = window_cutoff(window_days)
 
-    def _placeholder(project: dict[str, Any], status: UpdateDataStatus) -> ProjectUpdateSummary:
-        """A row without numbers, so every project stays accounted for exactly once."""
+    def _project_key(project: dict[str, Any]) -> str:
+        return str(project.get("_id") or project.get("id", ""))
+
+    activity = await window_scans_by_branch(scan_repo, [_project_key(p) for p in projects], since)
+    by_project: dict[str, dict[str, BranchWindowActivity]] = {}
+    for (project_id, branch), seen in activity.items():
+        by_project.setdefault(project_id, {})[branch] = seen
+
+    def _placeholder(
+        project: dict[str, Any], status: UpdateDataStatus, branch: str | None = None
+    ) -> ProjectUpdateSummary:
+        """A row without numbers, naming the branch it looked at, so every project stays accounted for once."""
         return ProjectUpdateSummary(
-            project_id=str(project.get("_id") or project.get("id", "")),
+            project_id=_project_key(project),
             project_name=project.get("name", ""),
             team_name=project.get("team_name"),
             data_status=status,
+            branch=branch,
             window_days=window_days,
         )
 
     async def _compute_single(project: dict[str, Any]) -> ProjectUpdateSummary:
-        project_id = project.get("_id") or project.get("id", "")
+        project_id = _project_key(project)
         project_name = project.get("name", "")
         team_name = project.get("team_name")
+
+        branches = by_project.get(project_id, {})
+        primary = select_primary_branch(branches, project.get("default_branch"), project.get("deleted_branches"))
+        if primary is None:
+            return _placeholder(project, "insufficient_data")
 
         async with semaphore:
             try:
@@ -976,24 +997,23 @@ async def compute_update_frequency_comparison(
                     scan_repo=scan_repo,
                     dep_repo=dep_repo,
                     analysis_repo=analysis_repo,
-                    max_scans=max_scans,
                     window_days=window_days,
                     release_fetcher=release_fetcher,
-                    deleted_branches=project.get("deleted_branches"),
-                    default_branch=project.get("default_branch"),
+                    branch=primary,
                 )
             except Exception:
                 logger.warning(f"Failed to compute update frequency for project {project_id}", exc_info=True)
-                return _placeholder(project, "error")
+                return _placeholder(project, "error", primary)
 
             if metrics.scan_count < 2:
-                return _placeholder(project, "insufficient_data")
+                return _placeholder(project, "insufficient_data", primary)
 
             return ProjectUpdateSummary(
                 project_id=metrics.project_id,
                 project_name=metrics.project_name,
                 team_name=team_name,
-                # This path only returns projects it actually computed.
+                # The walk reads the very scans coverage is measured against, so it
+                # cannot fall behind them the way the delta ledger can.
                 data_status="ready",
                 branch=metrics.branch,
                 window_days=window_days,

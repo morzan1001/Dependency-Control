@@ -6,8 +6,8 @@ import logging
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
-from itertools import pairwise
-from typing import Any
+from itertools import dropwhile, pairwise
+from typing import Any, Literal
 
 from app.schemas.analytics import (
     DependencyUpdateEvent,
@@ -114,13 +114,18 @@ class FoldedWindow:
         *,
         branch: str | None = None,
         window_days: int,
+        data_status: Literal["ready", "partial"] = "ready",
     ) -> ProjectUpdateSummary:
-        """A folded window is by definition measured, so the row is always ``ready``."""
+        """A row carrying the folded numbers.
+
+        ``data_status`` is the caller's verdict from ``window_coverage_status``:
+        the fold knows what it summed, not how many scans the window really held.
+        """
         return ProjectUpdateSummary(
             project_id=project_id,
             project_name=project_name,
             team_name=team_name,
-            data_status="ready",
+            data_status=data_status,
             branch=branch,
             window_days=window_days,
             scan_count=self.scan_count,
@@ -152,6 +157,19 @@ def select_window(deltas: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     _reject_broken_contract(deltas)
     usable = [d for d in deltas if int(d.get("dep_count", 0)) > 0 and not d.get("error")]
     return collapse_same_commit_runs(_contiguous_tail(usable))
+
+
+def accounted_commits(deltas: Sequence[dict[str, Any]], window: Sequence[dict[str, Any]]) -> int:
+    """Commits the ledger accounted for over the stretch ``select_window(deltas)`` covered.
+
+    Counting only the folded deltas would read a healthy branch as half measured,
+    because same-commit retries and SBOM-less scans are dropped by design and
+    nothing is missing where they were. A delta the writer failed on is a real
+    hole, and so is everything before the window's anchor, which the fold could
+    not reach. A scan that names no commit stands for itself.
+    """
+    covered = dropwhile(lambda delta: delta["_id"] != window[0]["_id"], deltas)
+    return len({d.get("commit_hash") or d["_id"] for d in covered if not d.get("error")})
 
 
 def fold_window(

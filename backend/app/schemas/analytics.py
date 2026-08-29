@@ -371,20 +371,21 @@ class UpdateFrequencyMetrics(BaseModel):
     recent_updates: list[DependencyUpdateEvent]
 
 
-UpdateDataStatus = Literal["ready", "pending", "insufficient_data", "error"]
+UpdateDataStatus = Literal["ready", "partial", "pending", "insufficient_data", "error"]
 """Why a project row carries metrics, or why it does not.
 
-``pending`` means no rollup delta exists yet, so the project is listed but
-unmeasured; ``insufficient_data`` means deltas exist but the window holds
-fewer than two comparable scans; ``error`` means the deltas carry a writer
-failure.
+``partial`` means the numbers are exact but cover noticeably fewer scans than
+the window really holds, so they may not be compared with fully measured
+projects; ``pending`` means no rollup delta exists yet, so the project is listed
+but unmeasured; ``insufficient_data`` means the window holds fewer than two
+comparable scans; ``error`` means the deltas carry a writer failure.
 """
 
 
 class ProjectUpdateSummary(BaseModel):
     """Lightweight update metrics for cross-project comparison.
 
-    Every metric field is None unless ``data_status`` is ``"ready"``.
+    Every metric field is None unless ``data_status`` is ``"ready"`` or ``"partial"``.
     """
 
     project_id: str
@@ -410,8 +411,8 @@ class UpdateFrequencyComparison(BaseModel):
 
     Ranking: measured coverage first (descending), then projects where
     nothing was ever outdated (no measurable coverage). best/worst and the
-    team averages are drawn from ``ready`` projects only, so an unmeasured
-    project never dilutes them.
+    team averages are drawn from ``ready`` projects only, so neither an
+    unmeasured nor a partially covered project dilutes them.
     """
 
     projects: list[ProjectUpdateSummary]
@@ -419,6 +420,7 @@ class UpdateFrequencyComparison(BaseModel):
     team_avg_coverage_pct: float | None = None  # None when no project has measurable coverage
     best_project: str | None = None
     worst_project: str | None = None
+    partial_projects: int = 0
     pending_projects: int = 0
     skipped_insufficient_data: int = 0
     skipped_error: int = 0

@@ -11,6 +11,7 @@ from app.services.release_history import UpstreamCadenceMetrics
 from app.services.update_frequency import DAYS_PER_MONTH, compute_trend
 from app.services.update_frequency_fold import (
     FoldedWindow,
+    accounted_commits,
     fold_window,
     select_window,
 )
@@ -374,6 +375,54 @@ class TestUnusableScans:
         assert _fold(with_empties).updates_per_scan == 4.0
 
 
+class TestAccountedCommits:
+    """What the ledger reached over the stretch the fold covered, in commits."""
+
+    @staticmethod
+    def _over(deltas: list[dict[str, Any]]) -> int:
+        return accounted_commits(deltas, select_window(deltas))
+
+    def test_the_scans_the_fold_drops_on_purpose_leave_no_hole(self) -> None:
+        # Same-commit retries and SBOM-less scans are dropped by design; counting the
+        # folded documents instead would read this healthy branch as half measured.
+        deltas = _chain(
+            [
+                _delta("s0", 0, commit_hash="c1"),
+                _delta("s1", 10, patch=1, commit_hash="c2"),
+                _delta("s2", 11, commit_hash="c2"),
+                _delta("s3", 12, commit_hash="c2"),
+                _delta("s4", 20, dep_count=0, commit_hash="c3"),
+                _delta("s5", 30, patch=1, commit_hash="c4"),
+            ]
+        )
+        assert len(select_window(deltas)) == 3
+        assert self._over(deltas) == 4
+
+    def test_a_scan_naming_no_commit_stands_for_itself(self) -> None:
+        deltas = _chain([_delta("s0", 0, commit_hash=""), _delta("s1", 10, patch=1, commit_hash="")])
+        assert self._over(deltas) == 2
+
+    def test_everything_before_the_anchor_is_a_hole_the_fold_could_not_reach(self) -> None:
+        deltas = _chain([_delta(f"s{i}", i * 10, patch=1) for i in range(5)])
+        # The branch history before s3 was pruned, so the fold anchors there.
+        deltas[3]["prev_scan_id"] = None
+        assert [d["_id"] for d in select_window(deltas)] == ["s3", "s4"]
+        assert self._over(deltas) == 2
+
+    def test_a_delta_the_writer_failed_on_is_a_real_hole(self) -> None:
+        intact = _chain([_delta(f"s{i}", i * 10, patch=1) for i in range(4)])
+        broken = _chain(
+            [
+                _delta("s0", 0, patch=1),
+                _delta("s1", 10, patch=1),
+                _delta("s2", 20, error="dependency read failed"),
+                _delta("s3", 30, patch=1),
+            ]
+        )
+        assert self._over(intact) == 4
+        assert self._over(broken) == 3
+
+
 class TestCoverage:
     def test_never_outdated_is_none_not_zero(self) -> None:
         deltas = _chain([_delta("s0", 0), _delta("s1", 10, patch=1)])
@@ -724,3 +773,11 @@ class TestModelConstruction:
         summary = _fold(deltas).to_summary("p1", "Project One", window_days=90)
         assert summary.update_coverage_pct is None
         assert summary.team_name is None
+
+    def test_a_partial_row_carries_the_folded_numbers_under_the_caveat(self) -> None:
+        # The fold sums what it was given; only the caller knows the window held more.
+        folded = _fold_golden()
+        summary = folded.to_summary("p1", "Project One", window_days=90, data_status="partial")
+        assert summary.data_status == "partial"
+        assert (summary.scan_count, summary.total_updates) == (folded.scan_count, folded.total_updates)
+        assert summary.updates_per_month == folded.updates_per_month
