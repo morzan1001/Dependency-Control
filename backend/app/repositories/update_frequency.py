@@ -51,6 +51,24 @@ def _chain_order(doc: dict[str, Any]) -> tuple[datetime, str]:
 
 
 @dataclass(frozen=True)
+class LedgerEntry:
+    """What the reconcile knows about one delta without reading the delta itself."""
+
+    schema_version: int | None
+    prev_scan_id: str | None
+    prev_created_at: datetime | None
+
+
+def _ledger_entry(pushed: dict[str, Any]) -> LedgerEntry:
+    prev_at = pushed.get("prev_at")
+    return LedgerEntry(
+        pushed.get("v"),
+        pushed.get("prev"),
+        _as_utc(prev_at) if isinstance(prev_at, datetime) else None,
+    )
+
+
+@dataclass(frozen=True)
 class BranchWindowActivity:
     """What one branch of one project really holds in the window, before any fold drops a scan."""
 
@@ -80,6 +98,26 @@ WINDOW_HARD_LIMIT = 1000
 _COMMIT_TOKEN = {"$cond": [{"$eq": [{"$ifNull": ["$commit_hash", ""]}, ""]}, "$_id", "$commit_hash"]}
 
 
+def _usable_scan_match(since: datetime | None) -> dict[str, Any]:
+    """The scans the rollup writer accepts and both read paths fold."""
+    scoped: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}, "is_rescan": {"$ne": True}}
+    if since is not None:
+        scoped["created_at"] = {"$gte": since}
+    return scoped
+
+
+def _named_branch(row_id: Any) -> tuple[str, str] | None:
+    """The (project, branch) a ``$group`` row names, or None when it is missing either.
+
+    A grouping key drops the field entirely when a document lacks it, and a scan that
+    names no branch cannot be diffed against another, so both read paths skip it.
+    """
+    project_id, branch = row_id.get("p"), row_id.get("b")
+    if not isinstance(project_id, str) or not isinstance(branch, str) or not branch:
+        return None
+    return project_id, branch
+
+
 async def window_scans_by_branch(
     scan_repo: ScanRepository,
     project_ids: Sequence[str],
@@ -91,9 +129,7 @@ async def window_scans_by_branch(
     branch the other would not, and both can tell how much of the window their numbers
     actually cover.
     """
-    scoped: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}, "is_rescan": {"$ne": True}}
-    if since is not None:
-        scoped["created_at"] = {"$gte": since}
+    scoped = _usable_scan_match(since)
 
     activity: dict[tuple[str, str], BranchWindowActivity] = {}
     for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH):
@@ -110,17 +146,48 @@ async def window_scans_by_branch(
             {"$project": {"commit_count": {"$size": "$commits"}, "last_scan_at": 1}},
         ]
         for row in await scan_repo.aggregate(pipeline):
-            # A grouping key drops the field entirely when a document lacks it, so this
-            # reads a scan with no branch as absent rather than raising.
-            branch = row["_id"].get("b")
-            # Scans that name no branch cannot be diffed against one another.
-            if not isinstance(branch, str) or not branch:
+            chain = _named_branch(row["_id"])
+            if chain is None:
                 continue
             last_scan_at = row["last_scan_at"]
             # Archive restore can insert a scan date as an ISO string, which $max hands back verbatim.
             moment = _as_utc(last_scan_at) if isinstance(last_scan_at, datetime) else _UNDATED
-            activity[row["_id"]["p"], branch] = BranchWindowActivity(int(row["commit_count"]), moment)
+            activity[chain] = BranchWindowActivity(int(row["commit_count"]), moment)
     return activity
+
+
+async def window_scan_ids_by_branch(
+    scan_repo: ScanRepository,
+    project_ids: Sequence[str],
+    since: datetime,
+) -> dict[tuple[str, str], list[tuple[str, datetime]]]:
+    """Every in-window scan the writer owes a delta, per (project, branch), unordered.
+
+    Deliberately not ``window_scans_by_branch``: that one collapses a commit's scans
+    into one entry, while the writer records one delta per scan, so a CI retry storm
+    would read as a hole in the ledger.
+
+    A date floor brackets by BSON type, so a scan whose ``created_at`` is missing or a
+    string drops out here exactly as it does in the writer, which cannot place it on a
+    timeline either.
+    """
+    scans: dict[tuple[str, str], list[tuple[str, datetime]]] = {}
+    for batch in batched(project_ids, _SCAN_WINDOW_PROJECT_BATCH):
+        pipeline = [
+            {"$match": {"project_id": {"$in": list(batch)}, **_usable_scan_match(since)}},
+            {
+                "$group": {
+                    "_id": {"p": "$project_id", "b": "$branch"},
+                    "scans": {"$push": {"i": "$_id", "t": "$created_at"}},
+                }
+            },
+        ]
+        for row in await scan_repo.aggregate(pipeline):
+            chain = _named_branch(row["_id"])
+            if chain is None:
+                continue
+            scans[chain] = [(entry["i"], _as_utc(entry["t"])) for entry in row["scans"]]
+    return scans
 
 
 def _outside(at: datetime, at_id: str, operator: str) -> list[dict[str, Any]]:
@@ -199,10 +266,10 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
                 # instead of quietly spilling to the mongod's disk.
                 rows = await self.collection.aggregate(pipeline, allowDiskUse=False).to_list(None)
             for row in rows:
-                # A grouping key drops the field entirely when a document lacks it.
-                project_id, branch = row["_id"].get("p"), row["_id"].get("b")
-                if not isinstance(project_id, str) or not isinstance(branch, str) or not branch:
+                chain = _named_branch(row["_id"])
+                if chain is None:
                     continue
+                project_id, branch = chain
                 deltas = sorted(row["deltas"], key=_chain_order)
                 for delta in deltas:
                     # Carried in the group key rather than per document; the fold
@@ -210,6 +277,53 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
                     delta["project_id"], delta["branch"] = project_id, branch
                 buckets[project_id, branch] = deltas
         return buckets
+
+    async def window_ledger_by_branch(
+        self, project_ids: Sequence[str], since: datetime
+    ) -> dict[tuple[str, str], dict[str, LedgerEntry]]:
+        """Version and predecessor link of every in-window delta, keyed by scan id, per chain.
+
+        Only those three fields travel, not the document: the reconcile compares ledger
+        membership and the chain links, and pushing whole deltas would make the nightly
+        census as heavy as the comparison endpoint's fold.
+        """
+        chains: dict[tuple[str, str], dict[str, LedgerEntry]] = {}
+        for batch in batched(project_ids, _WINDOW_PROJECT_BATCH):
+            pipeline = [
+                {"$match": {"project_id": {"$in": list(batch)}, "scan_created_at": {"$gte": since}}},
+                {
+                    "$group": {
+                        "_id": {"p": "$project_id", "b": "$branch"},
+                        "deltas": {
+                            "$push": {
+                                "i": "$_id",
+                                "v": "$schema_version",
+                                "prev": "$prev_scan_id",
+                                "prev_at": "$prev_created_at",
+                            }
+                        },
+                    }
+                },
+            ]
+            with track_db_operation(self.collection_name, "aggregate"):
+                rows = await self.collection.aggregate(pipeline, allowDiskUse=False).to_list(None)
+            for row in rows:
+                chain = _named_branch(row["_id"])
+                if chain is None:
+                    continue
+                chains[chain] = {entry["i"]: _ledger_entry(entry) for entry in row["deltas"]}
+        return chains
+
+    async def find_dependents(self, project_id: str, branch: str, prev_scan_ids: Sequence[str]) -> list[dict[str, Any]]:
+        """Deltas of the branch that were diffed against one of the given scans."""
+        if not prev_scan_ids:
+            return []
+        with track_db_operation(self.collection_name, "find"):
+            docs = await self.collection.find(
+                {"project_id": project_id, "branch": branch, "prev_scan_id": {"$in": list(prev_scan_ids)}},
+                _NEIGHBOUR_PROJECTION,
+            ).to_list(None)
+        return docs
 
     async def find_project_window(
         self, project_id: str, branch: str, since: datetime, limit: int

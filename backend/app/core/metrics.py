@@ -294,6 +294,15 @@ update_frequency_delta_writes_total = Counter(
     ["result"],  # result in: ok|error
 )
 
+# A write path that inserts, changes or deletes scans without calling the rollup writer
+# shows up here and nowhere else: the ledger keeps serving numbers either way.
+update_frequency_reconcile_drift_total = Counter(
+    "update_frequency_reconcile_drift_total",
+    "Ledger entries the update-frequency reconcile found out of step with the scans, by kind and outcome.",
+    # kind in: missing|stale|severed|dependent|orphan; outcome in: resolved|deferred
+    ["kind", "outcome"],
+)
+
 archive_operations_total = Counter(
     "archive_operations_total",
     "Archive operations (archive/restore/download) by status.",
