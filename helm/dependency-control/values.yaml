@@ -289,6 +289,13 @@ backend:
     # Options: primary, primaryPreferred, secondary, secondaryPreferred, nearest
     # secondaryPreferred distributes read load across replicas (recommended for production)
     mongodbReadPreference: "secondaryPreferred"
+    # Serve the update-frequency analytics from the delta ledger instead of walking
+    # every scan. Turn on only once the backfill has run: without deltas a project
+    # can only be reported as pending.
+    updateFrequencyUseRollup: false
+    # Nightly reconcile of that ledger against the scans it summarises. Same
+    # precondition: an unbackfilled window is drift in every chain.
+    updateFrequencyReconcileEnabled: false
   # Secret key for JWT signing
   secrets:
     secretKey: ""  # Leave empty to auto-generate

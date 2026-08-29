@@ -521,6 +521,48 @@ class TestPendingRowsDoNotSkewTheRanking:
         assert comparison.projects[-1].data_status == "pending"
 
     @pytest.mark.asyncio
+    async def test_a_ready_project_that_never_flagged_a_package_ranks_behind_a_measured_one(self):
+        # Coverage of None is "nothing was ever outdated", not "everything is late",
+        # so it must not outrank a project whose backlog was actually measured --
+        # not even when it moves more packages.
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ("requests",))
+        await _seed_scan(db, "s2", _days_ago(50), {"requests": "2.0.1"}, ())
+        await _seed_scan(db, "b1", _days_ago(60), {"flask": "3.0.0", "click": "8.0.0"}, (), project_id="proj-2")
+        await _seed_scan(db, "b2", _days_ago(50), {"flask": "3.1.0", "click": "8.1.0"}, (), project_id="proj-2")
+        await _build_ledger(db)
+
+        comparison = await _comparison(db, [PROJECT, "proj-2"])
+
+        measured, unmeasured = comparison.projects
+        assert (measured.project_id, measured.data_status, measured.update_coverage_pct) == (PROJECT, "ready", 100.0)
+        assert (unmeasured.project_id, unmeasured.data_status, unmeasured.update_coverage_pct) == (
+            "proj-2",
+            "ready",
+            None,
+        )
+        assert unmeasured.updates_per_month > measured.updates_per_month
+        assert (comparison.best_project, comparison.worst_project) == ("Project proj-1", None)
+
+    @pytest.mark.asyncio
+    async def test_a_scope_where_nothing_was_ever_outdated_crowns_nobody(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ())
+        await _seed_scan(db, "s2", _days_ago(50), {"requests": "2.1.0"}, ())
+        await _seed_scan(db, "b1", _days_ago(60), {"flask": "3.0.0"}, (), project_id="proj-2")
+        await _seed_scan(db, "b2", _days_ago(50), {"flask": "3.1.0"}, (), project_id="proj-2")
+        await _build_ledger(db)
+
+        comparison = await _comparison(db, [PROJECT, "proj-2"])
+
+        assert [p.data_status for p in comparison.projects] == ["ready", "ready"]
+        assert [p.update_coverage_pct for p in comparison.projects] == [None, None]
+        assert (comparison.best_project, comparison.worst_project) == (None, None)
+        assert comparison.team_avg_coverage_pct is None
+        # The rows are ranked and averaged on cadence; only the podium is empty.
+        assert comparison.team_avg_updates_per_month is not None
+
+    @pytest.mark.asyncio
     async def test_a_scope_of_only_pending_projects_reports_no_averages(self):
         db = FakeDatabase()
         await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ())
@@ -677,6 +719,24 @@ class TestPartialCoverage:
             comparison = await _comparison(db, [PROJECT])
 
             assert (comparison.projects[0].scan_count, comparison.projects[0].data_status) == (folded, expected)
+
+    @pytest.mark.asyncio
+    async def test_a_partial_window_is_not_served_to_the_project_page(self):
+        # UpdateFrequencyMetrics has no field for a caveat, so a partly folded
+        # window would read as the whole one. The comparison holds the same row
+        # back from its ranking; the project page instead falls back to the walk,
+        # which reads the scans the ledger has not reached.
+        db = FakeDatabase()
+        await _seed_series(db, PROJECT, "requests", 10)
+        await _build_ledger(db)
+        await db.scan_update_deltas.delete_many({"_id": {"$in": [f"{PROJECT}-{i}" for i in range(8)]}})
+
+        comparison = await _comparison(db, [PROJECT])
+
+        assert (comparison.projects[0].data_status, comparison.projects[0].scan_count) == ("partial", 2)
+        assert await _rollup(db) is None
+        # What the fallback delivers instead of the ledger's two-scan stretch.
+        assert (await _live(db)).scan_count == 10
 
     @pytest.mark.asyncio
     async def test_a_retry_heavy_project_is_fully_covered_on_both_paths(self):

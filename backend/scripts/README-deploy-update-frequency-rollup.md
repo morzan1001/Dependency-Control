@@ -9,15 +9,15 @@ Prod context: `gke_rd-itsecurity-sboms-prod_europe-west1_prod-1`, namespace `dep
 
 Three independent flags gate this feature:
 
-| Flag | Controls | Code default | Ship as |
-|---|---|---|---|
-| `UPDATE_FREQUENCY_ROLLUP_ENABLED` | writing a delta at ingest | `true` | on — nothing to set |
-| `UPDATE_FREQUENCY_USE_ROLLUP` | reading the analytics from the ledger | `false` | **off** until step 5 |
-| `UPDATE_FREQUENCY_RECONCILE_ENABLED` | the nightly reconcile of ledger against scans | `false` | **off** until step 6 |
+| Flag | Controls | Code default | Helm value | Ship as |
+|---|---|---|---|---|
+| `UPDATE_FREQUENCY_ROLLUP_ENABLED` | writing a delta at ingest | `true` | none | on — nothing to set |
+| `UPDATE_FREQUENCY_USE_ROLLUP` | reading the analytics from the ledger | `false` | `backend.env.updateFrequencyUseRollup` | **off** until step 5 |
+| `UPDATE_FREQUENCY_RECONCILE_ENABLED` | the nightly reconcile of ledger against scans | `false` | `backend.env.updateFrequencyReconcileEnabled` | **off** until step 6 |
 
-No flag has a Helm value or an entry in `backend-deployment.yaml`; all three run on the
-`app/core/config.py` default. Steps 5 and 6 therefore need a chart change, not a values
-override.
+The two flags with a Helm value are rendered as literal `env` entries of
+`backend-deployment.yaml`, so steps 5 and 6 are a values change plus a rollout. The write flag
+runs on its `app/core/config.py` default and can only be turned off in the chart.
 
 ## 1. Deploy with the read flag off — this step already changes numbers
 
@@ -159,13 +159,11 @@ the totals regardless; it is where the reason per project is spelled out.
 
 ## 5. Flip the read flag
 
-Set `UPDATE_FREQUENCY_USE_ROLLUP=true` and roll out. The comparison then answers from a handful
+Set `backend.env.updateFrequencyUseRollup: true` in the production values file and upgrade. The
+chart renders it as `UPDATE_FREQUENCY_USE_ROLLUP`. The comparison then answers from a handful
 of bounded queries instead of walking every scan of every visible project. Budget for it: the
 endpoint gives the rollup recompute 30 s against the live path's 240 s, and the lock waiter is
 sized to that, so treat 30 s as the number to alert on, not a sub-second answer.
-
-The flag reaches the pod only through `backend-deployment.yaml`; the chart carries no value for
-it. Add it next to the other literal `env` entries there, or the rollout changes nothing.
 
 **Rollback** is setting it back to `false`. Nothing is deleted and the live path is untouched, so
 the fallback stays available. The cache key carries the flag state, so flipping it does not serve
@@ -173,7 +171,8 @@ the other path's entries for the rest of their TTL.
 
 ## 6. Arm the nightly reconcile — only once step 4 came back clean
 
-Set `UPDATE_FREQUENCY_RECONCILE_ENABLED=true` in `backend-deployment.yaml` and roll out.
+Set `backend.env.updateFrequencyReconcileEnabled: true` in the production values file and
+upgrade. The chart renders it as `UPDATE_FREQUENCY_RECONCILE_ENABLED`.
 
 **Not before the backfill.** The reconcile repairs at most 500 scans a night, throttled to the
 backfill's own rate. Against an unbackfilled 90-day window every one of the ~30,159 in-window
