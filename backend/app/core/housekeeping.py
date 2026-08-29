@@ -17,6 +17,7 @@ from app.core.constants import (
     HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS,
     HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS,
     HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS,
+    HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC,
     RETENTION_ACTION_ARCHIVE,
     RETENTION_ACTION_DELETE,
     SCAN_USABLE_STATUSES,
@@ -35,6 +36,7 @@ from app.repositories.system_settings import SystemSettingsRepository
 from app.services.audit.retention import prune_old_audit_entries
 from app.services.compliance.retention import sweep_expired_compliance_reports
 from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs, reap_orphan_gridfs_files
+from app.services.update_frequency_reconcile import run_update_frequency_reconcile
 
 if TYPE_CHECKING:
     from app.core.worker import WorkerManager
@@ -827,6 +829,27 @@ async def stale_scan_loop(
         await asyncio.sleep(HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS)
 
 
+def _reconcile_due(now: datetime, last_run: datetime) -> bool:
+    """Once per calendar day, and only inside the quiet hour.
+
+    An elapsed-time gate would anchor the run to whenever the pod that wins the lock was
+    rolled out, so a midday deploy would put a run that re-reads a dependency set per
+    repaired scan straight into the working day.
+    """
+    return now.hour == HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC and last_run.date() < now.date()
+
+
+async def reconcile_update_frequency_ledger() -> None:
+    """Check the update-frequency delta ledger against the scans and repair what drifted."""
+    if not settings.UPDATE_FREQUENCY_RECONCILE_ENABLED:
+        return
+    try:
+        db = await get_database()
+        await run_update_frequency_reconcile(db)
+    except Exception as e:
+        logger.exception("Update-frequency reconcile failed: %s", e)
+
+
 async def housekeeping_loop(
     worker_manager: Optional["WorkerManager"] = None,
 ) -> None:
@@ -838,11 +861,13 @@ async def housekeeping_loop(
     - Cache stats update: On each loop iteration
     - Data retention cleanup: Every 24 hours
     - Branch status sync: Every 6 hours
+    - Update-frequency ledger reconcile: Once a night, behind its own flag
 
     Note: Stale pending scan aggregation runs in a separate faster loop.
     """
     last_retention_run = datetime.min.replace(tzinfo=timezone.utc)
     last_branch_sync = datetime.min.replace(tzinfo=timezone.utc)
+    last_update_frequency_reconcile = datetime.min.replace(tzinfo=timezone.utc)
 
     while True:
         await recover_stuck_scans(worker_manager)
@@ -874,5 +899,12 @@ async def housekeeping_loop(
         if (datetime.now(timezone.utc) - last_branch_sync) > timedelta(hours=HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS):
             await sync_branch_status()
             last_branch_sync = datetime.now(timezone.utc)
+
+        # Stamped whatever the reconcile did: only one pod gets the lock, and the others
+        # must not come back for it every five minutes.
+        now = datetime.now(timezone.utc)
+        if _reconcile_due(now, last_update_frequency_reconcile):
+            await reconcile_update_frequency_ledger()
+            last_update_frequency_reconcile = now
 
         await asyncio.sleep(HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS)

@@ -919,6 +919,27 @@ class FakeCollection:
         result.inserted_ids = inserted
         return result
 
+    def _insert_upserted(self, query: dict, update: dict) -> dict:
+        """The document an upsert inserts once its filter matched nothing.
+
+        The server builds it from the filter's equality terms plus the update and then
+        *inserts* it, so a filter that missed on a non-_id condition collides on E11000
+        instead of overwriting the document that is already there. The distributed lock
+        depends on exactly that: a held lock fails the expiry condition, and the E11000
+        is what tells the second holder it lost the race.
+        """
+        from pymongo.errors import DuplicateKeyError
+
+        doc = {k: v for k, v in query.items() if not isinstance(v, dict) and not k.startswith("$")}
+        doc.update(update.get(_SET_ON_INSERT, {}))
+        self._apply_update(doc, update, skip_set_on_insert=True)
+        doc["_id"] = doc.get("_id") or str(len(self._docs))
+        collision = self._duplicate_key(doc)
+        if collision is not None:
+            raise DuplicateKeyError(f"E11000 duplicate key error: {collision}")
+        self._docs[doc["_id"]] = _bsonify(doc)
+        return self._docs[doc["_id"]]
+
     async def update_one(self, query, update, upsert: bool = False):
         matched = _matched_key(self._docs, query)
         modified = 0
@@ -927,16 +948,7 @@ class FakeCollection:
             self._apply_update(self._docs[matched], update)
             modified = int(self._docs[matched] != before)
         elif upsert:
-            doc: dict = {}
-            for k, v in query.items():
-                if not isinstance(v, dict) and not k.startswith("$"):
-                    doc[k] = v
-            on_insert = update.get(_SET_ON_INSERT, {})
-            doc.update(on_insert)
-            self._apply_update(doc, update, skip_set_on_insert=True)
-            key = doc.get("_id") or str(len(self._docs))
-            doc["_id"] = key
-            self._docs[key] = _bsonify(doc)
+            self._insert_upserted(query, update)
         result = MagicMock()
         result.modified_count = modified
         return result
@@ -950,11 +962,7 @@ class FakeCollection:
             # Real Mongo does not count a $set that changes nothing.
             modified += self._docs[k] != before
         if not matched and upsert:
-            doc = {k: v for k, v in query.items() if not isinstance(v, dict) and not k.startswith("$")}
-            self._apply_update(doc, update, skip_set_on_insert=True)
-            key = doc.get("_id") or str(len(self._docs))
-            doc["_id"] = key
-            self._docs[key] = _bsonify(doc)
+            self._insert_upserted(query, update)
         result = MagicMock()
         result.modified_count = modified
         result.matched_count = len(matched)
@@ -969,13 +977,7 @@ class FakeCollection:
         if matched is None:
             if not upsert:
                 return None
-            doc = {k: v for k, v in query.items() if not isinstance(v, dict) and not k.startswith("$")}
-            # Mongo applies $setOnInsert on the upsert-insert path.
-            doc.update(update.get(_SET_ON_INSERT, {}))
-            self._apply_update(doc, update, skip_set_on_insert=True)
-            key = doc.get("_id") or str(len(self._docs))
-            doc["_id"] = key
-            self._docs[key] = _bsonify(doc)
+            doc = self._insert_upserted(query, update)
             return doc if return_document else None
         before = dict(self._docs[matched])
         self._apply_update(self._docs[matched], update)
@@ -995,6 +997,9 @@ class FakeCollection:
                 # only applied when called outside upsert insert path
                 for k, v in payload.items():
                     target.setdefault(k, v)
+            elif op == "$unset":
+                for field in payload:
+                    FakeCollection._unset_dotted(target, field)
             elif op == "$inc":
                 for field, delta in payload.items():
                     parent, leaf = FakeCollection._resolve_parent(target, field)
@@ -1017,6 +1022,16 @@ class FakeCollection:
                 node[part] = nxt
             node = nxt
         return node, parts[-1]
+
+    @staticmethod
+    def _unset_dotted(target: dict, dotted_key: str) -> None:
+        """Drop a (possibly nested) field. Unlike $set, a missing path creates nothing."""
+        parts = dotted_key.split(".")
+        node: Any = target
+        for part in parts[:-1]:
+            node = node.get(part) if isinstance(node, dict) else None
+        if isinstance(node, dict):
+            node.pop(parts[-1], None)
 
     @staticmethod
     def _set_dotted(target: dict, dotted_key: str, value, filters: dict | None = None) -> None:
