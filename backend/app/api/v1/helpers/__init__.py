@@ -25,10 +25,8 @@ from app.api.v1.helpers.auth import (
 from app.api.v1.helpers.callgraph import (
     check_callgraph_access,
     detect_format,
-    normalize_module_name,
     parse_generic_format,
     parse_madge_format,
-    parse_pyan_format,
 )
 from app.api.v1.helpers.findings import (
     CATEGORY_TYPE_MAP,
@@ -173,10 +171,8 @@ __all__ = [
     "is_2fa_setup_mode",
     "is_write_superuser",
     "load_from_gridfs",
-    "normalize_module_name",
     "parse_generic_format",
     "parse_madge_format",
-    "parse_pyan_format",
     "parse_sort_direction",
     "process_cve_enrichments",
     # Ingest helpers

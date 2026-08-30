@@ -208,6 +208,10 @@ def build_epss_kev_summary(findings: list[dict[str, Any]]) -> EPSSKEVSummary:
     return summary
 
 
+# The vulnerability lists are UI samples; reachable_total / unreachable_total carry the real counts.
+_VULNERABILITY_SAMPLE_CAP = 30
+
+
 def build_reachability_summary(
     findings: list[dict[str, Any]],
     callgraphs: list[dict[str, Any]],
@@ -224,8 +228,9 @@ def build_reachability_summary(
     callgraph_info: list[CallgraphInfo] = [
         {
             "language": cg.get("language", "unknown"),
-            "total_modules": len(cg.get("module_usage", {})),
-            "total_imports": len(cg.get("import_map", {})),
+            "total_modules": len(cg.get("module_usage") or {}),
+            "total_imports": cg.get("total_imports", 0),
+            "coverage_modules": len(cg.get("analyzed_modules") or []),
             "generated_at": _format_datetime(cg.get("created_at")),
         }
         for cg in callgraphs
@@ -237,6 +242,8 @@ def build_reachability_summary(
         "reachability_levels": reachability_levels,
         "callgraph_info": callgraph_info,
         "languages": [cg.get("language", "unknown") for cg in callgraphs],
+        "reachable_total": 0,
+        "unreachable_total": 0,
         "reachable_vulnerabilities": [],
         "unreachable_vulnerabilities": [],
         "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -267,20 +274,27 @@ def build_reachability_summary(
         elif reachable is False:
             summary["unreachable_vulnerabilities"].append(vuln_info)
 
+    summary["reachable_total"] = len(summary["reachable_vulnerabilities"])
+    summary["unreachable_total"] = len(summary["unreachable_vulnerabilities"])
+
     summary["reachable_vulnerabilities"] = sort_by_severity(
         summary["reachable_vulnerabilities"], key="severity", reverse=True
-    )
+    )[:_VULNERABILITY_SAMPLE_CAP]
     summary["unreachable_vulnerabilities"] = sort_by_severity(
         summary["unreachable_vulnerabilities"], key="severity", reverse=True
-    )
-
-    summary["reachable_vulnerabilities"] = summary["reachable_vulnerabilities"][:30]
-    summary["unreachable_vulnerabilities"] = summary["unreachable_vulnerabilities"][:30]
+    )[:_VULNERABILITY_SAMPLE_CAP]
 
     return summary
 
 
 _VULN_TYPE_GATE: dict[str, Any] = {"$eq": ["$type", "vulnerability"]}
+
+# ``reachable`` is tri-state: only these predicates may gate a reachability counter, so that an
+# unanalysed finding (null) can never be counted as reachable or as unreachable.
+_REACHABLE_TRUE: dict[str, Any] = {"$eq": ["$reachable", True]}
+_REACHABLE_FALSE: dict[str, Any] = {"$eq": ["$reachable", False]}
+_REACHABLE_UNKNOWN: dict[str, Any] = {"$eq": ["$reachable", None]}
+_REACHABILITY_ANALYZED: dict[str, Any] = {"$ne": ["$reachable", None]}
 
 # Severities with a dedicated bucket; anything else is counted as unknown so buckets always sum to total.
 _BUCKETED_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO")
@@ -315,11 +329,11 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                 "reach_modifier": {
                     "$switch": {
                         "branches": [
-                            {"case": {"$eq": ["$reachable", False]}, "then": UNREACHABLE_RISK_MODIFIER},
+                            {"case": _REACHABLE_FALSE, "then": UNREACHABLE_RISK_MODIFIER},
                             {
                                 "case": {
                                     "$and": [
-                                        {"$eq": ["$reachable", True]},
+                                        _REACHABLE_TRUE,
                                         {"$eq": ["$reachability_level", REACHABILITY_LEVEL_SYMBOL]},
                                     ]
                                 },
@@ -385,16 +399,16 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                     }
                 },
                 # Reachability statistics
-                "reachability_analyzed": {"$sum": {"$cond": [{"$ne": ["$reachable", None]}, 1, 0]}},
-                "reachable_count": {"$sum": {"$cond": [{"$eq": ["$reachable", True]}, 1, 0]}},
-                "unreachable_count": {"$sum": {"$cond": [{"$eq": ["$reachable", False]}, 1, 0]}},
+                "reachability_analyzed": {"$sum": {"$cond": [_REACHABILITY_ANALYZED, 1, 0]}},
+                "reachable_count": {"$sum": {"$cond": [_REACHABLE_TRUE, 1, 0]}},
+                "unreachable_count": {"$sum": {"$cond": [_REACHABLE_FALSE, 1, 0]}},
                 # Symbol-level reachable = confirmed tier; import-level reachable = likely tier.
                 "confirmed_reachable": {
                     "$sum": {
                         "$cond": [
                             {
                                 "$and": [
-                                    {"$eq": ["$reachable", True]},
+                                    _REACHABLE_TRUE,
                                     {"$eq": ["$reachability_level", REACHABILITY_LEVEL_SYMBOL]},
                                 ]
                             },
@@ -408,7 +422,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                         "$cond": [
                             {
                                 "$and": [
-                                    {"$eq": ["$reachable", True]},
+                                    _REACHABLE_TRUE,
                                     {"$eq": ["$reachability_level", REACHABILITY_LEVEL_IMPORT]},
                                 ]
                             },
@@ -423,7 +437,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                         "$cond": [
                             {
                                 "$and": [
-                                    {"$eq": ["$reachable", True]},
+                                    _REACHABLE_TRUE,
                                     {"$eq": ["$severity", "CRITICAL"]},
                                 ]
                             },
@@ -437,7 +451,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                         "$cond": [
                             {
                                 "$and": [
-                                    {"$eq": ["$reachable", True]},
+                                    _REACHABLE_TRUE,
                                     {"$eq": ["$severity", "HIGH"]},
                                 ]
                             },
@@ -452,7 +466,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                         "$cond": [
                             {
                                 "$and": [
-                                    {"$eq": ["$reachable", True]},
+                                    _REACHABLE_TRUE,
                                     {
                                         "$gte": [
                                             "$reachability_confidence",
@@ -471,7 +485,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                         "$cond": [
                             {
                                 "$and": [
-                                    {"$eq": ["$reachable", True]},
+                                    _REACHABLE_TRUE,
                                     {"$eq": ["$severity", "CRITICAL"]},
                                     {
                                         "$gte": [
@@ -491,7 +505,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                         "$cond": [
                             {
                                 "$and": [
-                                    {"$eq": ["$reachable", True]},
+                                    _REACHABLE_TRUE,
                                     {"$eq": ["$severity", "HIGH"]},
                                     {
                                         "$gte": [
@@ -522,8 +536,8 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                                     },
                                     {
                                         "$or": [
-                                            {"$eq": ["$reachable", True]},
-                                            {"$eq": ["$reachable", None]},
+                                            _REACHABLE_TRUE,
+                                            _REACHABLE_UNKNOWN,
                                         ]
                                     },
                                 ]
@@ -548,8 +562,8 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                                     },
                                     {
                                         "$or": [
-                                            {"$eq": ["$reachable", True]},
-                                            {"$eq": ["$reachable", None]},
+                                            _REACHABLE_TRUE,
+                                            _REACHABLE_UNKNOWN,
                                         ]
                                     },
                                 ]
@@ -573,8 +587,8 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                                     },
                                     {
                                         "$or": [
-                                            {"$eq": ["$reachable", True]},
-                                            {"$eq": ["$reachable", None]},
+                                            _REACHABLE_TRUE,
+                                            _REACHABLE_UNKNOWN,
                                         ]
                                     },
                                 ]
@@ -594,7 +608,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
                                     _VULN_TYPE_GATE,
                                     {
                                         "$or": [
-                                            {"$eq": ["$reachable", False]},
+                                            _REACHABLE_FALSE,
                                             {
                                                 "$and": [
                                                     {"$ne": ["$is_kev", True]},

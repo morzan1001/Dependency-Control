@@ -3,6 +3,7 @@
 import logging
 import uuid
 from collections.abc import Mapping
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, TypedDict
 
@@ -10,6 +11,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from pymongo import UpdateOne
 
 from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
     REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS,
     REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO,
     REACHABILITY_CONFIDENCE_NOT_USED,
@@ -19,7 +21,7 @@ from app.core.constants import (
     REACHABILITY_LEVEL_NONE,
     REACHABILITY_LEVEL_SYMBOL,
 )
-from app.services.aggregation.components import build_component_index, lookup_component
+from app.services.aggregation.components import build_component_index, canonical_module_key, lookup_component
 from app.services.analyzers.purl_utils import get_purl_type
 from app.services.enrichment.scoring import (
     calculate_adjusted_risk_score,
@@ -33,6 +35,11 @@ logger = logging.getLogger(__name__)
 # analysis engine's dependency bulk-update chunking so a large scan doesn't hold
 # the callgraph-upload request open for thousands of serial Mongo updates.
 _BULK_CHUNK_SIZE = 500
+
+_FINDINGS_PAGE_SIZE = 1000
+# Upper bound on findings held in memory for one enrichment run; whatever it cuts
+# off is logged and reported, never dropped silently.
+_MAX_FINDINGS_PER_RUN = 100_000
 
 # Ecosystem identifier (a dependency's `type`, e.g. "pypi"/"npm"/"go-module", OR a
 # purl type) -> the callgraph language(s) that can actually analyze it. Anything
@@ -84,26 +91,61 @@ async def _build_component_language_map(db: AsyncIOMotorDatabase, scan_id: str) 
     return build_component_index(out)
 
 
-def _callgraphs_cover_finding_ecosystem(
-    finding: dict[str, Any],
-    callgraph_languages: list[str],
-    component_languages: dict[str, frozenset] | None = None,
-) -> bool:
-    """True only when an analyzed callgraph's language can cover this finding's
-    package ecosystem.
+@dataclass(frozen=True)
+class _PreparedCallgraph:
+    """One callgraph's lookup structures, built once per enrichment run."""
 
-    Gates the x0.4 ``unreachable`` down-weight: absence from a wrong-language or
-    unsupported callgraph (or when the ecosystem is unknown) is not evidence of
-    unreachability and must be treated as unknown, not a definitive verdict. The
-    ecosystem comes from the scan's dependency inventory (``component_languages``).
+    language: str
+    usage_index: dict[str, Any]
+    import_map: dict[str, list[str]]
+    analyzed_index: dict[str, bool]
+
+
+def _prepare_callgraph(callgraph: Any) -> _PreparedCallgraph:
+    analyzed_modules = callgraph.analyzed_modules or []
+    return _PreparedCallgraph(
+        language=callgraph.language or "unknown",
+        usage_index=build_component_index(callgraph.module_usage or {}),
+        import_map=callgraph.import_map or {},
+        analyzed_index=build_component_index(dict.fromkeys(analyzed_modules, True)),
+    )
+
+
+def _find_usage(prepared: _PreparedCallgraph, component: str) -> Any | None:
+    """The callgraph's usage entry for a component, under either spelling.
+
+    The single resolution point for the gate and the analysis, so a component the
+    gate resolves can never be missed by the verdict that follows it.
     """
-    component = finding.get("component", "")
-    langs: frozenset = frozenset()
-    if component_languages:
-        langs = lookup_component(component_languages, component) or frozenset()
-    if not langs:
+    normalized = _normalize_component(component, prepared.language)
+    return lookup_component(prepared.usage_index, component) or lookup_component(prepared.usage_index, normalized)
+
+
+def _find_import_locations(prepared: _PreparedCallgraph, component: str) -> list[str]:
+    return _check_package_in_imports(_normalize_component(component, prepared.language), prepared.import_map)
+
+
+def _callgraph_can_falsify(
+    prepared: _PreparedCallgraph,
+    component: str,
+    component_languages: dict[str, frozenset] | None,
+) -> bool:
+    """True only when this callgraph's absence of a component is real evidence.
+
+    Requires the producer to have listed the component in its coverage universe
+    (``analyzed_modules``) for a language that covers the component's ecosystem.
+    Anything weaker — wrong language, unknown ecosystem, empty or non-matching
+    coverage universe — means the package was never inspected.
+    """
+    langs = lookup_component(component_languages or {}, component) or frozenset()
+    if prepared.language not in langs:
         return False
-    return any(lang in langs for lang in callgraph_languages)
+    if not prepared.analyzed_index:
+        return False
+    normalized = _normalize_component(component, prepared.language)
+    return bool(
+        lookup_component(prepared.analyzed_index, component) or lookup_component(prepared.analyzed_index, normalized)
+    )
 
 
 def _apply_adjusted_risk_score(finding: dict[str, Any], reachability: Mapping[str, Any]) -> None:
@@ -116,14 +158,17 @@ def _apply_adjusted_risk_score(finding: dict[str, Any], reachability: Mapping[st
     base = details.get("risk_score")
     if base is None:
         return
-    modifier_level = map_reachability_level_to_modifier(
-        reachability.get("analysis_level"),
-        reachability.get("is_reachable"),
-    )
+    is_reachable = reachability.get("is_reachable")
+    analysis_level = reachability.get("analysis_level")
+    modifier_level = map_reachability_level_to_modifier(analysis_level, is_reachable)
+    down_weighting = is_reachable is False or modifier_level == "unreachable"
+    if down_weighting and analysis_level != REACHABILITY_LEVEL_SYMBOL and details.get(DETAILS_KEY_IN_KEV):
+        # A known-exploited CVE is never de-prioritised on import-level absence alone.
+        is_reachable, modifier_level = None, None
     details["adjusted_risk_score"] = round(
         calculate_adjusted_risk_score(
             float(base),
-            is_reachable=reachability.get("is_reachable"),
+            is_reachable=is_reachable,
             reachability_level=modifier_level,
         ),
         1,
@@ -218,12 +263,7 @@ def store_reachability(finding: dict[str, Any], reachability: Mapping[str, Any])
     _apply_adjusted_risk_score(finding, reachability)
 
 
-def _enrich_single_finding(
-    finding: dict[str, Any],
-    module_usage: dict[str, Any],
-    import_map: dict[str, list[str]],
-    language: str,
-) -> bool:
+def _enrich_single_finding(finding: dict[str, Any], prepared: _PreparedCallgraph) -> bool:
     """
     Enrich a single finding with reachability data. Returns True if enriched.
     """
@@ -234,81 +274,81 @@ def _enrich_single_finding(
     if not component:
         return False
 
-    reachability = _analyze_reachability(
-        finding=finding,
-        component=component,
-        module_usage=module_usage,
-        import_map=import_map,
-        language=language,
-    )
-
-    store_reachability(finding, reachability)
+    store_reachability(finding, _analyze_reachability(finding, component, prepared))
     return True
 
 
-def _is_package_in_callgraph(
-    component: str,
-    module_usage: dict[str, Any],
-    import_map: dict[str, list[str]],
-    language: str,
-) -> bool:
+def _is_package_in_callgraph(prepared: _PreparedCallgraph, component: str) -> bool:
     """Check whether a package appears in a callgraph's module usage or imports."""
-    normalized = _normalize_component(component, language)
-    usage = module_usage.get(normalized) or module_usage.get(component)
-    return bool(usage or _check_package_in_imports(normalized, import_map))
+    return bool(_find_usage(prepared, component) or _find_import_locations(prepared, component))
+
+
+def _unknown_message(
+    component: str,
+    prepared_graphs: list[_PreparedCallgraph],
+    component_languages: dict[str, frozenset] | None,
+) -> str:
+    """Explain why absence from the analyzed callgraphs yields no verdict."""
+    langs = lookup_component(component_languages or {}, component) or frozenset()
+    covering = [p for p in prepared_graphs if p.language in langs]
+    analyzed = ", ".join(p.language for p in prepared_graphs) or "none"
+    if not covering:
+        return (
+            f"Package '{component}' has no callgraph covering its ecosystem "
+            f"(analyzed: {analyzed}); reachability unknown."
+        )
+    covering_langs = ", ".join(p.language for p in covering)
+    if all(not p.analyzed_index for p in covering):
+        return (
+            f"Package '{component}' is absent from the {covering_langs} callgraph(s), "
+            "which published no coverage universe; reachability unknown."
+        )
+    return (
+        f"Package '{component}' is outside the coverage universe resolved by the "
+        f"{covering_langs} callgraph(s); reachability unknown."
+    )
 
 
 def _enrich_finding_from_callgraphs(
     finding: dict[str, Any],
-    callgraphs: list[Any],
+    prepared_graphs: list[_PreparedCallgraph],
     component_languages: dict[str, frozenset] | None = None,
 ) -> bool:
     """
     Try each callgraph for a finding. Returns True if enriched.
 
-    Uses the first callgraph where the package is imported.
-    If no callgraph matches, marks the finding as not reachable.
+    Uses the first callgraph where the package is imported. Absence only becomes
+    an unreachable verdict when a callgraph can falsify it.
     """
     component = finding.get("component", "")
     if not component:
         return False
 
-    for callgraph in callgraphs:
-        module_usage = callgraph.module_usage or {}
-        import_map = callgraph.import_map or {}
-        language = callgraph.language or "unknown"
-
-        if _is_package_in_callgraph(component, module_usage, import_map, language):
-            _enrich_single_finding(finding, module_usage, import_map, language)
+    for prepared in prepared_graphs:
+        if _is_package_in_callgraph(prepared, component):
+            _enrich_single_finding(finding, prepared)
             return True
 
-    # Package not found in any callgraph
-    languages = [cg.language or "unknown" for cg in callgraphs]
-    if _callgraphs_cover_finding_ecosystem(finding, languages, component_languages):
-        # A callgraph of the finding's own ecosystem analyzed the code and the
-        # package isn't imported there -> genuinely unreachable (fail-closed x0.4).
+    falsifying = [p.language for p in prepared_graphs if _callgraph_can_falsify(p, component, component_languages)]
+    if falsifying:
         reachability: dict[str, Any] = {
             "is_reachable": False,
             "confidence_score": REACHABILITY_CONFIDENCE_NOT_USED,
             "analysis_level": REACHABILITY_LEVEL_IMPORT,
             "matched_symbols": [],
             "import_locations": [],
-            "message": f"Package '{component}' is not imported in any analyzed source file ({', '.join(languages)}).",
+            "message": (
+                f"Package '{component}' was analyzed but is not imported in any source file ({', '.join(falsifying)})."
+            ),
         }
     else:
-        # No analyzed callgraph covers this package's ecosystem (wrong language,
-        # unsupported ecosystem, or unknown purl). Absence is NOT evidence of
-        # unreachability -> record unknown (identity modifier), never down-weight.
         reachability = {
             "is_reachable": None,
             "confidence_score": 0.0,
             "analysis_level": REACHABILITY_LEVEL_NONE,
             "matched_symbols": [],
             "import_locations": [],
-            "message": (
-                f"Package '{component}' not found in analyzed callgraph(s) ({', '.join(languages)}); "
-                "reachability unknown (its ecosystem was not analyzed)."
-            ),
+            "message": _unknown_message(component, prepared_graphs, component_languages),
         }
     store_reachability(finding, reachability)
     return True
@@ -340,8 +380,8 @@ async def enrich_findings_with_reachability(
         logger.debug(f"No callgraph available for scan {scan_id}")
         return 0
 
-    languages = [cg.language or "unknown" for cg in callgraphs]
-    logger.debug(f"Found {len(callgraphs)} callgraph(s) for scan {scan_id}: {languages}")
+    prepared_graphs = [_prepare_callgraph(cg) for cg in callgraphs]
+    logger.debug(f"Found {len(callgraphs)} callgraph(s) for scan {scan_id}: {[p.language for p in prepared_graphs]}")
 
     # Per-finding ecosystem gates the unreachable down-weight to the analyzed languages.
     component_languages = await _build_component_language_map(db, scan_id)
@@ -351,7 +391,7 @@ async def enrich_findings_with_reachability(
     for finding in findings:
         if finding.get("type") != "vulnerability":
             continue
-        if _enrich_finding_from_callgraphs(finding, callgraphs, component_languages):
+        if _enrich_finding_from_callgraphs(finding, prepared_graphs, component_languages):
             enriched_count += 1
 
     return enriched_count
@@ -360,122 +400,73 @@ async def enrich_findings_with_reachability(
 def _analyze_reachability(
     finding: dict[str, Any],
     component: str,
-    module_usage: dict[str, Any],
-    import_map: dict[str, list[str]],
-    language: str,
+    prepared: _PreparedCallgraph,
 ) -> ReachabilityResult:
-    """Analyze reachability for one finding: import-based, then symbol-based."""
+    """Analyze reachability for one finding: import-based, then symbol-based.
+
+    Callers establish presence with :func:`_is_package_in_callgraph` first, so the
+    package is known to be imported here.
+    """
+    usage = _find_usage(prepared, component)
+    locations = usage.get("import_locations") or [] if usage else _find_import_locations(prepared, component)
+    import_count = len(locations[:10])
+
     result: ReachabilityResult = {
-        "is_reachable": False,
-        "confidence_score": 0.0,
-        "analysis_level": REACHABILITY_LEVEL_NONE,
+        "is_reachable": True,
+        "confidence_score": REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS,
+        "analysis_level": REACHABILITY_LEVEL_IMPORT,
         "matched_symbols": [],
-        "import_locations": [],
-        "message": "",
+        "import_locations": locations[:10],
+        "message": (
+            f"Package is imported in {import_count} file(s). Could not determine specific vulnerable functions."
+        ),
     }
 
-    normalized = _normalize_component(component, language)
-    usage = module_usage.get(normalized) or module_usage.get(component)
-    package_in_imports = _check_package_in_imports(normalized, import_map)
-
-    if not usage and not package_in_imports:
-        result["is_reachable"] = False
-        result["confidence_score"] = REACHABILITY_CONFIDENCE_NOT_USED
-        result["analysis_level"] = REACHABILITY_LEVEL_IMPORT
-        result["message"] = f"Package '{component}' is not imported in any analyzed source file."
-        return result
-
-    # Package is imported - collect import locations
-    import_locations: list[str] = []
-    if usage:
-        import_locations = usage.get("import_locations", [])[:10]  # Limit to 10
-    elif package_in_imports:
-        import_locations = package_in_imports[:10]
-
-    result["import_locations"] = import_locations
-    import_count = len(import_locations)
-
-    # Extract vulnerable symbols from CVE descriptions
     extracted = get_symbols_for_finding(finding)
-
     if not extracted.symbols:
-        # No symbols extracted - can only confirm import-level reachability
-        result["is_reachable"] = True
-        result["confidence_score"] = REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS
-        result["analysis_level"] = REACHABILITY_LEVEL_IMPORT
-        result["message"] = (
-            f"Package is imported in {import_count} file(s). Could not determine specific vulnerable functions."
-        )
         return result
 
-    # We have extracted symbols - check if they're used
     used_symbols = usage.get("used_symbols", []) if usage else []
-
-    # Match extracted vulnerable symbols against used symbols
     matched_symbols = _match_symbols(extracted.symbols, used_symbols)
 
     if matched_symbols:
-        # Vulnerable functions ARE used
-        result["is_reachable"] = True
         result["confidence_score"] = _calculate_confidence(extracted.confidence, "matched")
         result["analysis_level"] = REACHABILITY_LEVEL_SYMBOL
         result["matched_symbols"] = matched_symbols
         result["message"] = f"Vulnerable function(s) {', '.join(matched_symbols[:5])} are used in the codebase."
     elif used_symbols:
-        # Package is used but not the vulnerable functions (potentially)
-        result["is_reachable"] = True  # Still mark as reachable but lower confidence
+        # Symbols were searched and not found: import-level evidence only, never "confirmed".
         result["confidence_score"] = _calculate_confidence(extracted.confidence, "partial")
-        result["analysis_level"] = REACHABILITY_LEVEL_SYMBOL
         result["message"] = (
             f"Package is imported but extracted vulnerable functions "
             f"({', '.join(extracted.symbols[:3])}) were not found in direct usage. "
             f"May still be reachable through indirect calls."
         )
     else:
-        # Package imported but no symbol usage info
-        result["is_reachable"] = True
         result["confidence_score"] = REACHABILITY_CONFIDENCE_NO_SYMBOL_INFO
-        result["analysis_level"] = REACHABILITY_LEVEL_IMPORT
         result["message"] = f"Package is imported in {import_count} file(s). Symbol-level analysis not available."
 
-    # Add extraction metadata
     result["extraction_method"] = extracted.extraction_method
     result["extraction_confidence"] = extracted.confidence
-    result["vulnerable_symbols"] = extracted.symbols[:10]  # Limit
+    result["vulnerable_symbols"] = extracted.symbols[:10]
 
     return result
 
 
 def _normalize_component(component: str, language: str) -> str:
-    """
-    Normalize component name for matching with callgraph data.
+    """Read-side key for a finding's component, identical to the key the parsers stored.
+
+    Delegates the per-language rule to ``canonical_module_key`` so the write and read
+    sides cannot drift; only the version suffix is stripped here, because findings carry
+    it (``pkg@1.0.0``) and callgraph module names never do.
     """
     if not component:
         return component
 
-    # Remove version suffix if present (npm style: package@1.0.0)
     if "@" in component and not component.startswith("@"):
         component = component.rsplit("@", 1)[0]
 
-    # Handle scoped packages (@scope/package)
-    if component.startswith("@"):
-        parts = component.split("/")
-        if len(parts) >= 2:
-            return f"{parts[0]}/{parts[1]}"
-
-    # For Python, normalize underscores/hyphens
-    if language == "python":
-        return component.lower().replace("-", "_").replace(".", "_")
-
-    # For JavaScript/TypeScript
-    if language in ("javascript", "typescript"):
-        return component.lower()
-
-    # For Go, keep full path
-    if language == "go":
-        return component
-
-    return component.lower()
+    return canonical_module_key(component, language)
 
 
 def _check_package_in_imports(package: str, import_map: dict[str, list[str]]) -> list[str]:
@@ -576,17 +567,34 @@ async def _sync_project_stats_if_latest(
         await project_repo.update_raw(project_id, {"$set": {"stats": stats.model_dump()}})
 
 
+async def _load_vulnerability_findings(finding_repo: Any, scan_id: str) -> tuple[list[Any], int]:
+    """Page through a scan's vulnerability findings; second element is how many the cap left behind."""
+    query = {"scan_id": scan_id, "type": "vulnerability"}
+    findings: list[Any] = []
+    while len(findings) < _MAX_FINDINGS_PER_RUN:
+        page = await finding_repo.find_many(query, skip=len(findings), limit=_FINDINGS_PAGE_SIZE, sort_by="_id")
+        findings.extend(page)
+        if len(page) < _FINDINGS_PAGE_SIZE:
+            return findings, 0
+    total = await finding_repo.count(query)
+    return findings, max(total - len(findings), 0)
+
+
 async def run_pending_reachability_for_scan(
     scan_id: str,
     project_id: str,
     db: AsyncIOMotorDatabase,
 ) -> dict[str, Any]:
-    """Run pending reachability for a scan after its callgraph is uploaded.
+    """Run reachability for a scan after a callgraph is uploaded.
 
-    Returns ``{"findings_enriched": int, "error": str | None}``.
+    Runs on every upload, not just the first: a multi-language repo publishes one
+    callgraph per language and each one recomputes every finding from the full set.
+
+    Returns ``{"findings_enriched": int, "findings_dropped": int, "error": str | None}``.
     """
     result: dict[str, Any] = {
         "findings_enriched": 0,
+        "findings_dropped": 0,
         "error": None,
     }
 
@@ -607,12 +615,16 @@ async def run_pending_reachability_for_scan(
         logger.debug(f"Scan {scan_id} not found")
         return result
 
-    if not scan.reachability_pending:
-        logger.debug(f"Scan {scan_id} has no pending reachability analysis")
-        return result
-
     try:
-        findings = await finding_repo.find_many({"scan_id": scan_id, "type": "vulnerability"}, limit=10000)
+        findings, dropped = await _load_vulnerability_findings(finding_repo, scan_id)
+        if dropped:
+            result["findings_dropped"] = dropped
+            logger.warning(
+                "[reachability] Scan %s has more than %d vulnerability findings; %d left unenriched",
+                scan_id,
+                _MAX_FINDINGS_PER_RUN,
+                dropped,
+            )
 
         if not findings:
             logger.debug(f"No vulnerability findings for scan {scan_id}")

@@ -17,6 +17,7 @@ from app.services.aggregation.components import artifact_segment, build_componen
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import compute_findings_delta
 from app.services.analyzers.purl_utils import canonical_purl
+from app.services.reachability_enrichment import reachability_display_tier
 
 from ._helpers import (
     _SEVERITY_RANK,
@@ -62,6 +63,20 @@ _FIELD_EPSS_SCORE = "details.epss_score"
 # lexicographically and drops the highest severities; pull a bounded candidate
 # set and rank in-process against `_SEVERITY_RANK` before slicing to the limit.
 _FINDING_RANK_FETCH_CAP = 1000
+
+# A callgraph's `imports`/`calls` arrays run into the megabytes; the tool answers from the
+# aggregates only.
+_CALLGRAPH_SUMMARY_PROJECTION = {
+    "_id": 1,
+    "module_usage": 1,
+    "analyzed_modules": 1,
+    "language": 1,
+    "created_at": 1,
+    "scan_id": 1,
+    "pipeline_id": 1,
+    "total_imports": 1,
+    "total_calls": 1,
+}
 
 
 def _finding_detail_number(finding: dict[str, Any], field: str) -> float:
@@ -1218,13 +1233,25 @@ class ChatToolRegistry:
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
             if tool_name == "get_callgraph":
-                doc = await db["callgraph"].find_one({"project_id": args["project_id"]})
+                doc = await db["callgraphs"].find_one(
+                    {"project_id": args["project_id"]},
+                    _CALLGRAPH_SUMMARY_PROJECTION,
+                    sort=[("created_at", -1)],
+                )
                 return {"callgraph": _serialize_doc(doc) if doc else None}
-            if tool_name == "check_reachability":
-                finding = await db["findings"].find_one({"_id": args["finding_id"], "project_id": args["project_id"]})
-                if not finding:
-                    return {"error": _ERR_FINDING_NOT_FOUND}
-                return {"reachable": finding.get("reachable", "unknown"), "finding_id": args["finding_id"]}
+            finding = await db["findings"].find_one({"_id": args["finding_id"], "project_id": args["project_id"]})
+            if not finding:
+                return {"error": _ERR_FINDING_NOT_FOUND}
+            reachability = (finding.get("details") or {}).get("reachability") or {}
+            is_reachable = finding.get("reachable")
+            analysis_level = finding.get("reachability_level")
+            return {
+                "finding_id": args["finding_id"],
+                "is_reachable": is_reachable,
+                "status": reachability_display_tier(is_reachable, analysis_level),
+                "analysis_level": analysis_level,
+                "confidence_score": reachability.get("confidence_score"),
+            }
 
         if tool_name == "list_archives":
             query = {}

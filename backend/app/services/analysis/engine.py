@@ -665,8 +665,8 @@ async def _run_reachability_enrichment(
         if analysis_reachable_vulnerabilities_total:
             for vf in vulnerability_findings:
                 reachability = vf.get("details", {}).get("reachability", {})
-                if reachability.get("is_reachable"):
-                    level = reachability.get("level", "unknown")
+                if reachability.get("is_reachable") is True:
+                    level = reachability.get("analysis_level") or "unknown"
                     analysis_reachable_vulnerabilities_total.labels(reachability_level=level).inc()
     except Exception as e:
         results_summary.append("reachability: Failed")

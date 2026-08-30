@@ -4,7 +4,7 @@ from app.models.callgraph import Callgraph
 from app.repositories.base import BaseRepository
 from app.schemas.projections import CallgraphMinimal
 
-_MINIMAL_PROJECTION = {"_id": 1, "module_usage": 1, "import_map": 1, "language": 1}
+_MINIMAL_PROJECTION = {"_id": 1, "module_usage": 1, "analyzed_modules": 1, "language": 1, "created_at": 1}
 
 
 class CallgraphRepository(BaseRepository[Callgraph]):
@@ -21,6 +21,3 @@ class CallgraphRepository(BaseRepository[Callgraph]):
 
     async def delete_by_project(self, project_id: str) -> int:
         return await self.delete_many({"project_id": project_id})
-
-    async def delete_by_scan(self, project_id: str, scan_id: str) -> int:
-        return await self.delete_many({"project_id": project_id, "scan_id": scan_id})

@@ -84,6 +84,8 @@ class CallgraphInfo(TypedDict):
     language: str
     total_modules: int
     total_imports: int
+    # Size of the coverage universe: packages the producer resolved and inspected.
+    coverage_modules: int
     generated_at: str | None
 
 
@@ -108,6 +110,9 @@ class ReachabilitySummary(TypedDict):
     reachability_levels: ReachabilityLevelCounts
     callgraph_info: list[CallgraphInfo]
     languages: list[str]
+    # Pre-cap counts; the vulnerability lists below are truncated samples.
+    reachable_total: int
+    unreachable_total: int
     reachable_vulnerabilities: list[VulnerabilityInfo]
     unreachable_vulnerabilities: list[VulnerabilityInfo]
     timestamp: str

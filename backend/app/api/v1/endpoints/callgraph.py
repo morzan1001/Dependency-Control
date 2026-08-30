@@ -6,16 +6,16 @@ from typing import Any
 
 from fastapi import HTTPException
 
-from app.api.deps import CurrentUserDep, DatabaseDep
+from app.api.deps import CallgraphWriteDep, CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.callgraph import (
     check_callgraph_access,
     detect_format,
     parse_generic_format,
     parse_madge_format,
-    parse_pyan_format,
 )
 from app.api.v1.helpers.responses import RESP_AUTH_400, RESP_AUTH_404
+from app.core.constants import CALLGRAPH_MAX_ENTRIES
 from app.models.callgraph import CallEdge, Callgraph, ImportEntry, ModuleUsage
 from app.repositories import CallgraphRepository
 from app.schemas.callgraph import (
@@ -31,16 +31,10 @@ router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
 
 
-_FORMAT_LANGUAGE_MAP = {
-    "madge": "javascript",
-    "pyan": "python",
-    "go-callvis": "go",
-}
+_FORMAT_LANGUAGE_MAP = {"madge": "javascript"}
 
 _FORMAT_PARSERS = {
     "madge": parse_madge_format,
-    "pyan": parse_pyan_format,
-    "go-callvis": parse_pyan_format,
     "generic": parse_generic_format,
 }
 
@@ -58,6 +52,17 @@ def _resolve_format(request_format: str, data: dict[str, Any]) -> str:
     return detected
 
 
+def _resolve_language(request_language: str | None, format_type: str) -> str:
+    """Resolve the callgraph language; only madge implies one."""
+    language = request_language or _FORMAT_LANGUAGE_MAP.get(format_type)
+    if not language:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'language' is required for '{format_type}' callgraph payloads",
+        )
+    return language
+
+
 def _resolve_scan_id(
     request_scan_id: str | None, project_id: str, pipeline_id: int | None, commit_hash: str | None
 ) -> str | None:
@@ -73,19 +78,10 @@ def _resolve_scan_id(
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, scan_id_seed))
 
 
-def _build_upsert_filter(
-    project_id: str, language: str, scan_id: str | None, pipeline_id: int | None, warnings: list[str]
-) -> tuple[dict[str, Any], str]:
+def _build_upsert_filter(project_id: str, language: str, scan_id: str | None) -> tuple[dict[str, Any], str]:
     """Build the MongoDB upsert filter and a context string for logging."""
     if scan_id:
         return {"project_id": project_id, "language": language, "scan_id": scan_id}, f"scan {scan_id} ({language})"
-    if pipeline_id:
-        return {
-            "project_id": project_id,
-            "language": language,
-            "pipeline_id": pipeline_id,
-        }, f"pipeline {pipeline_id} ({language})"
-    warnings.append("No pipeline_id or scan_id provided - callgraph may not match scans correctly")
     return {
         "project_id": project_id,
         "language": language,
@@ -96,7 +92,7 @@ def _build_upsert_filter(
 
 def _parse_callgraph(
     format_type: str, data: dict[str, Any], language: str
-) -> tuple[list[ImportEntry], list[CallEdge], dict[str, ModuleUsage]]:
+) -> tuple[list[ImportEntry], list[CallEdge], dict[str, ModuleUsage], list[str]]:
     """Parse callgraph data using the appropriate parser for the format."""
     parser = _FORMAT_PARSERS.get(format_type)
     if not parser:
@@ -109,27 +105,34 @@ async def upload_callgraph(
     project_id: str,
     request: CallgraphUploadRequest,
     db: DatabaseDep,
-    current_user: CurrentUserDep,
+    _: CallgraphWriteDep,
 ) -> CallgraphUploadResponse:
-    """Upload call graph data (madge, pyan, go-callvis, or generic format) for reachability analysis."""
-    await check_callgraph_access(project_id, current_user, db, require_write=True)
-
+    """Upload call graph data (madge or generic format) for reachability analysis."""
     callgraph_repo = CallgraphRepository(db)
 
     format_type = _resolve_format(request.format, request.data)
-    language = request.language or _FORMAT_LANGUAGE_MAP.get(format_type, "unknown")
+    language = _resolve_language(request.language, format_type)
 
     warnings: list[str] = []
     try:
-        imports, calls, module_usage = _parse_callgraph(format_type, request.data, language)
+        imports, calls, module_usage, analyzed_modules = _parse_callgraph(format_type, request.data, language)
     except HTTPException:
         raise
     except Exception as e:
         logger.exception("Failed to parse callgraph: %s", e)
         raise HTTPException(status_code=400, detail=f"Failed to parse callgraph: {e!s}")
 
+    entry_count = len(imports) + len(calls)
+    if entry_count > CALLGRAPH_MAX_ENTRIES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"Callgraph too large: {entry_count} entries exceeds the limit of {CALLGRAPH_MAX_ENTRIES}",
+        )
+
     scan_id = _resolve_scan_id(request.scan_id, project_id, request.pipeline_id, request.commit_hash)
-    if scan_id and not request.scan_id:
+    if not scan_id:
+        warnings.append("No pipeline_id or scan_id provided - callgraph may not match scans correctly")
+    elif not request.scan_id:
         logger.debug(f"Generated deterministic scan_id {scan_id} from pipeline_id {request.pipeline_id}")
 
     callgraph = Callgraph(
@@ -143,26 +146,28 @@ async def upload_callgraph(
         tool_version=request.tool_version,
         imports=imports,
         calls=calls,
-        module_usage={k: v.model_dump() for k, v in module_usage.items()},
+        module_usage=module_usage,
+        analyzed_modules=analyzed_modules,
         source_files_analyzed=request.source_files_count or len({i.file for i in imports}),
         total_imports=len(imports),
         total_calls=len(calls),
         analysis_duration_ms=request.analysis_duration_ms,
     )
 
-    upsert_filter, match_context = _build_upsert_filter(project_id, language, scan_id, request.pipeline_id, warnings)
+    upsert_filter, match_context = _build_upsert_filter(project_id, language, scan_id)
 
     callgraph_data = callgraph.model_dump(by_alias=True)
-    callgraph_id = callgraph_data.pop("_id")
+    insert_only = {"_id": callgraph_data.pop("_id"), "created_at": callgraph_data.pop("created_at")}
     await callgraph_repo.collection.update_one(
         upsert_filter,
-        {"$set": callgraph_data, "$setOnInsert": {"_id": callgraph_id}},
+        {"$set": callgraph_data, "$setOnInsert": insert_only},
         upsert=True,
     )
 
     logger.info(
         f"Uploaded callgraph for project {project_id} ({match_context}): "
-        f"{len(imports)} imports, {len(calls)} calls, {len(module_usage)} modules"
+        f"{len(imports)} imports, {len(calls)} calls, {len(module_usage)} modules, "
+        f"{len(analyzed_modules)} analyzed modules"
     )
 
     if scan_id:
@@ -188,6 +193,7 @@ async def upload_callgraph(
         imports_parsed=len(imports),
         calls_parsed=len(calls),
         modules_detected=len(module_usage),
+        analyzed_modules_count=len(analyzed_modules),
         warnings=warnings,
     )
 
@@ -236,14 +242,14 @@ async def get_module_usage(
 
     sorted_modules = sorted(
         module_usage.items(),
-        key=lambda x: getattr(x[1], "import_count", 0) + getattr(x[1], "call_count", 0),
+        key=lambda x: x[1].import_count + x[1].call_count,
         reverse=True,
     )
 
     return ModuleUsageResponse(
         project_id=project_id,
         language=callgraph.language,
-        modules=[{"name": k, "module": k, **v} for k, v in sorted_modules],
+        modules=[{"name": k, "module": k, **v.model_dump()} for k, v in sorted_modules],
     )
 
 

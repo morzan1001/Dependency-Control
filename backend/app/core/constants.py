@@ -874,6 +874,9 @@ REACHABILITY_EXTRACTION_CONFIDENCE = {
 # typically import-only matches without symbol-level corroboration.
 REACHABILITY_HIGH_CONFIDENCE_THRESHOLD = 0.6
 
+# Upper bound on parsed imports + calls accepted from a single callgraph upload
+CALLGRAPH_MAX_ENTRIES = 200_000
+
 GITLAB_ACCESS_GUEST = 10
 GITLAB_ACCESS_REPORTER = 20
 GITLAB_ACCESS_DEVELOPER = 30

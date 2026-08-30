@@ -8,7 +8,7 @@ from pydantic import BaseModel
 class CallgraphUploadRequest(BaseModel):
     """Request body for callgraph upload endpoint."""
 
-    format: str = "auto"  # auto, madge, pyan, go-callvis, generic
+    format: str = "auto"  # auto, madge, generic
 
     # Required if format is generic or auto-detection fails.
     language: str | None = None  # javascript, typescript, python, go, java
@@ -39,6 +39,7 @@ class CallgraphUploadResponse(BaseModel):
     imports_parsed: int = 0
     calls_parsed: int = 0
     modules_detected: int = 0
+    analyzed_modules_count: int = 0
 
     warnings: list[str] = []
 
@@ -76,6 +77,7 @@ class CallgraphResponse(BaseModel):
     imports: list[dict[str, Any]] = []
     calls: list[dict[str, Any]] = []
     module_usage: dict[str, Any] = {}
+    analyzed_modules: list[str] = []
     source_files_analyzed: int = 0
     total_imports: int = 0
     total_calls: int = 0
