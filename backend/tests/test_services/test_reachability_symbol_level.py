@@ -3,7 +3,15 @@ normalization and aggregation so the reachability engine can reach the symbol ti
 
 from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD
 from app.services.aggregation import ResultAggregator
-from app.services.reachability_enrichment import _analyze_reachability
+from app.services.reachability_enrichment import _analyze_reachability, _prepare_callgraph
+
+
+class _FakeCallgraph:
+    def __init__(self, module_usage, language):
+        self.module_usage = module_usage
+        self.import_map = {}
+        self.language = language
+        self.analyzed_modules = list(module_usage)
 
 
 def _go_osv_result():
@@ -64,7 +72,7 @@ def test_symbol_level_reachability_from_stored_shape():
             "used_symbols": ["ConfigureServer"],
         }
     }
-    result = _analyze_reachability(finding, "golang.org/x/net", module_usage, {}, "go")
+    result = _analyze_reachability(finding, "golang.org/x/net", _prepare_callgraph(_FakeCallgraph(module_usage, "go")))
     assert result["analysis_level"] == "symbol"
     assert result["is_reachable"] is True
     assert result["confidence_score"] >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD
@@ -78,6 +86,6 @@ def test_import_level_when_no_symbols_in_advisory():
     agg.aggregate("osv", payload)
     finding = agg.get_findings()[0].model_dump()
     module_usage = {"golang.org/x/net": {"import_locations": ["main.go"], "used_symbols": ["X"]}}
-    result = _analyze_reachability(finding, "golang.org/x/net", module_usage, {}, "go")
+    result = _analyze_reachability(finding, "golang.org/x/net", _prepare_callgraph(_FakeCallgraph(module_usage, "go")))
     assert result["analysis_level"] == "import"
     assert result["confidence_score"] < REACHABILITY_HIGH_CONFIDENCE_THRESHOLD

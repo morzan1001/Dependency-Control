@@ -8,6 +8,7 @@ import {
   getSecretTreeStatusInfo,
   isSecretDeprioritized,
   getSecretRemediationHint,
+  getReachabilityDisplay,
 } from '../finding-utils'
 
 // Color bands are on the backend's 0-100 combined-risk scale, not the 0-10 CVSS scale.
@@ -148,5 +149,37 @@ describe('getSecretRemediationHint', () => {
   it('returns null when tree status is unknown', () => {
     expect(getSecretRemediationHint(false, null)).toBeNull()
     expect(getSecretRemediationHint(true, undefined)).toBeNull()
+  })
+})
+
+describe('getReachabilityDisplay', () => {
+  it('treats a missing verdict as unknown, never as unreachable', () => {
+    expect(getReachabilityDisplay({})).toEqual({ verdict: 'unknown', label: 'Reachability unknown' })
+    expect(getReachabilityDisplay({ is_reachable: null })).toEqual({
+      verdict: 'unknown',
+      label: 'Reachability unknown',
+    })
+  })
+
+  it('reports only an explicit false as not reachable', () => {
+    expect(getReachabilityDisplay({ is_reachable: false })).toEqual({
+      verdict: 'unreachable',
+      label: 'Not Reachable',
+    })
+  })
+
+  it('labels a symbol-level match as confirmed and anything else as imported', () => {
+    expect(getReachabilityDisplay({ is_reachable: true, analysis_level: 'symbol' })).toEqual({
+      verdict: 'reachable',
+      label: 'Reachable (confirmed)',
+    })
+    expect(getReachabilityDisplay({ is_reachable: true, analysis_level: 'import' })).toEqual({
+      verdict: 'reachable',
+      label: 'Reachable (imported)',
+    })
+    expect(getReachabilityDisplay({ is_reachable: true })).toEqual({
+      verdict: 'reachable',
+      label: 'Reachable (imported)',
+    })
   })
 })

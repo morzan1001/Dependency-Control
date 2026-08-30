@@ -1,8 +1,7 @@
-"""K6: reachability verdicts must reach ``scan.stats``.
+"""Reachability verdicts must reach ``scan.stats``, inline and on the deferred path.
 
-The stats pipeline reads top-level ``reachable``/``reachability_level``; the enrichment only
-ever wrote ``details.reachability``, so every reachability counter stayed at zero. The deferred
-path (callgraph uploaded after the scan finished) additionally never recomputed the stats.
+The stats pipeline reads the top-level ``reachable``/``reachability_level`` mirrors, so a
+verdict written only under ``details.reachability`` leaves every counter at zero.
 """
 
 from datetime import datetime, timezone
@@ -44,7 +43,8 @@ async def _seed_callgraph(db) -> None:
             "project_id": _PROJECT_ID,
             "scan_id": _SCAN_ID,
             "language": "python",
-            "tool": "pyan",
+            "tool": "ast",
+            "analyzed_modules": ["requests", "urllib3"],
             "module_usage": {
                 "requests": {
                     "module": "requests",
@@ -54,7 +54,6 @@ async def _seed_callgraph(db) -> None:
                     "used_symbols": ["get"],
                 }
             },
-            "import_map": {"app/client.py": ["requests"]},
             "created_at": datetime.now(timezone.utc),
         }
     )
@@ -124,6 +123,11 @@ async def test_deferred_run_recomputes_and_persists_scan_stats(db):
 
     project = await db.projects.find_one({"_id": _PROJECT_ID})
     assert project["stats"]["reachability"]["analyzed_count"] == 2
+
+    # The persisted summary is built from the minimal projection, which now carries both fields.
+    info = (await db.analysis_results.find_one({"scan_id": _SCAN_ID}))["result"]["callgraph_info"][0]
+    assert info["coverage_modules"] == 2
+    assert info["generated_at"] is not None
 
 
 @pytest.mark.asyncio

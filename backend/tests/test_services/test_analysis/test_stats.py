@@ -395,16 +395,13 @@ def _make_reachable_finding(
     }
 
 
-def _make_callgraph(language="python", modules=None, imports=None, created_at=None):
-    cg = {"language": language}
-    if modules is not None:
-        cg["module_usage"] = modules
-    else:
-        cg["module_usage"] = {}
-    if imports is not None:
-        cg["import_map"] = imports
-    else:
-        cg["import_map"] = {}
+def _make_callgraph(language="python", modules=None, total_imports=0, analyzed_modules=None, created_at=None):
+    cg = {
+        "language": language,
+        "module_usage": modules if modules is not None else {},
+        "analyzed_modules": analyzed_modules if analyzed_modules is not None else [],
+        "total_imports": total_imports,
+    }
     if created_at is not None:
         cg["created_at"] = created_at
     return cg
@@ -475,10 +472,25 @@ class TestBuildReachabilitySummaryCallgraph:
         result = build_reachability_summary([], [cg], 0)
         assert result["callgraph_info"][0]["total_modules"] == 2
 
-    def test_import_count(self):
-        cg = _make_callgraph(imports={"imp_a": [], "imp_b": [], "imp_c": []})
+    def test_import_count_uses_persisted_counter(self):
+        cg = _make_callgraph(modules={"mod_a": {}}, total_imports=17)
         result = build_reachability_summary([], [cg], 0)
-        assert result["callgraph_info"][0]["total_imports"] == 3
+        assert result["callgraph_info"][0]["total_imports"] == 17
+
+    def test_coverage_modules_from_analyzed_modules(self):
+        cg = _make_callgraph(analyzed_modules=["requests", "urllib3"])
+        result = build_reachability_summary([], [cg], 0)
+        assert result["callgraph_info"][0]["coverage_modules"] == 2
+
+    def test_coverage_modules_zero_without_analyzed_modules(self):
+        result = build_reachability_summary([], [_make_callgraph()], 0)
+        assert result["callgraph_info"][0]["coverage_modules"] == 0
+
+    def test_null_module_usage_is_not_a_crash(self):
+        cg = _make_callgraph()
+        cg["module_usage"] = None
+        result = build_reachability_summary([], [cg], 0)
+        assert result["callgraph_info"][0]["total_modules"] == 0
 
     def test_generated_at_from_datetime(self):
         dt = datetime(2024, 1, 15, 8, 0, 0, tzinfo=timezone.utc)
@@ -492,7 +504,7 @@ class TestBuildReachabilitySummaryCallgraph:
         assert result["callgraph_info"][0]["generated_at"] is None
 
     def test_missing_language_defaults_to_unknown(self):
-        result = build_reachability_summary([], [{"module_usage": {}, "import_map": {}}], 0)
+        result = build_reachability_summary([], [{"module_usage": {}}], 0)
         assert result["callgraph_info"][0]["language"] == "unknown"
 
 
@@ -582,6 +594,7 @@ class TestBuildReachabilitySummaryLimits:
         ]
         result = build_reachability_summary(findings, [_make_callgraph()], 35)
         assert len(result["reachable_vulnerabilities"]) == 30
+        assert result["reachable_total"] == 35
 
     def test_unreachable_limited_to_30(self):
         findings = [
@@ -594,6 +607,17 @@ class TestBuildReachabilitySummaryLimits:
         ]
         result = build_reachability_summary(findings, [_make_callgraph()], 35)
         assert len(result["unreachable_vulnerabilities"]) == 30
+        assert result["unreachable_total"] == 35
+
+    def test_totals_exclude_unanalysed_findings(self):
+        findings = [
+            _make_reachable_finding(finding_id="CVE-1", reachable=True, reachability_level="confirmed"),
+            _make_reachable_finding(finding_id="CVE-2", reachable=False, reachability_level="unreachable"),
+            _make_reachable_finding(finding_id="CVE-3", reachability_level="unknown"),
+        ]
+        result = build_reachability_summary(findings, [_make_callgraph()], 2)
+        assert result["reachable_total"] == 1
+        assert result["unreachable_total"] == 1
 
     def test_analyzed_count_passthrough(self):
         result = build_reachability_summary([], [_make_callgraph()], 42)
