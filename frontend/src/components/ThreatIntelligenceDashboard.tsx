@@ -275,17 +275,17 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4 text-severity-critical" />
-                  <span className="text-sm">Confirmed Reachable</span>
+                  <span className="text-sm">Confirmed Reachable (symbol-level)</span>
                 </div>
-                <Badge variant={reachability.reachable_count > 0 ? "destructive" : "secondary"}>
-                  {reachability.reachable_count}
+                <Badge variant={reachability.confirmed_reachable_count > 0 ? "destructive" : "secondary"}>
+                  {reachability.confirmed_reachable_count}
                 </Badge>
               </div>
               
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <AlertCircle className="h-4 w-4 text-severity-high" />
-                  <span className="text-sm">Likely Reachable</span>
+                  <span className="text-sm">Likely Reachable (import-level)</span>
                 </div>
                 <Badge variant="secondary" className="bg-orange-500/20">
                   {reachability.likely_reachable_count}

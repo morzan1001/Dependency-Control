@@ -1,4 +1,5 @@
 import { Container, FileCode, HardDrive, Layers, type LucideIcon } from 'lucide-react'
+import type { ReachabilityInfo } from '@/types/scan'
 
 export type Severity = 'CRITICAL' | 'HIGH' | 'MEDIUM' | 'LOW' | 'NEGLIGIBLE' | 'INFO' | 'UNKNOWN'
 
@@ -125,6 +126,23 @@ export function getExploitMaturityClass(maturity: string | null | undefined): st
   if (maturity === 'high') return 'text-severity-high';
   if (maturity === 'medium') return 'text-severity-medium';
   return '';
+}
+
+export type ReachabilityVerdict = 'reachable' | 'unreachable' | 'unknown'
+
+// is_reachable is tri-state: only an explicit false means a callgraph covering the finding's
+// ecosystem falsified it. Missing verdicts must never read as "not reachable".
+export function getReachabilityDisplay(
+  reachability: ReachabilityInfo
+): { verdict: ReachabilityVerdict; label: string } {
+  if (reachability.is_reachable === true) {
+    const confirmed = reachability.analysis_level === 'symbol'
+    return { verdict: 'reachable', label: confirmed ? 'Reachable (confirmed)' : 'Reachable (imported)' }
+  }
+  if (reachability.is_reachable === false) {
+    return { verdict: 'unreachable', label: 'Not Reachable' }
+  }
+  return { verdict: 'unknown', label: 'Reachability unknown' }
 }
 
 export function getSecretTreeStatusInfo(

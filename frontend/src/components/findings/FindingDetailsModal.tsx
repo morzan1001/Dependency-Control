@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { useState } from "react"
 import { Finding, NestedVulnerability } from "@/types/scan"
-import { AlertTriangle, ExternalLink, Shield, ShieldAlert, ServerCrash } from "lucide-react"
+import { AlertTriangle, ExternalLink, HelpCircle, Shield, ShieldAlert, ServerCrash, type LucideIcon } from "lucide-react"
 import ReactMarkdown from 'react-markdown'
 import { useAuth } from "@/context/useAuth"
 import { useNavigate } from "react-router-dom"
@@ -13,7 +13,7 @@ import { useWaiverById } from '@/hooks/queries/use-waivers'
 import { canCreateProjectWaiver } from '@/lib/project-roles'
 import { FindingTypeBadge } from './FindingTypeBadge'
 import { CollapsibleReferences } from './CollapsibleReferences'
-import { getSeverityBadgeVariant, getExploitMaturityClass, advisoryUrl, getSecretTreeStatusInfo, getSecretRemediationHint } from '@/lib/finding-utils'
+import { getSeverityBadgeVariant, getExploitMaturityClass, advisoryUrl, getSecretTreeStatusInfo, getSecretRemediationHint, getReachabilityDisplay, type ReachabilityVerdict } from '@/lib/finding-utils'
 import { formatDate, shortCommitHash } from '@/lib/utils'
 import { ContextBannersSection } from './details/ContextBannersSection'
 import { OriginBadge } from './details/OriginBadge'
@@ -29,6 +29,12 @@ import {
   getFindingTitle,
   getFindingVersion,
 } from './details/finding-details-helpers'
+
+const REACHABILITY_STYLES: Record<ReachabilityVerdict, { className: string; icon: LucideIcon }> = {
+    reachable: { className: 'bg-red-500/10 text-severity-critical', icon: AlertTriangle },
+    unreachable: { className: 'bg-green-500/10 text-success', icon: Shield },
+    unknown: { className: 'bg-muted text-muted-foreground', icon: HelpCircle },
+}
 
 function MatchedSymbolsList({ symbols }: { symbols: string[] }) {
     return (
@@ -494,27 +500,16 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                                 </div>
                                                                 )
                                                             })()}
-                                                            {(vuln.reachability || finding.details?.reachability) && (() => {
-                                                                const reachability = vuln.reachability ?? finding.details?.reachability
-                                                                const confidenceScore = reachability?.confidence_score
+                                                            {(vuln.reachability ?? finding.details?.reachability) && (() => {
+                                                                const reachability = (vuln.reachability ?? finding.details?.reachability)!
+                                                                const { verdict, label } = getReachabilityDisplay(reachability)
+                                                                const { className, icon: ReachabilityIcon } = REACHABILITY_STYLES[verdict]
+                                                                const confidenceScore = reachability.confidence_score
                                                                 return (
-                                                                <div className={`flex items-center gap-1 px-2 py-0.5 rounded-md flex-wrap ${
-                                                                    reachability?.is_reachable
-                                                                        ? 'bg-red-500/10 text-severity-critical'
-                                                                        : 'bg-green-500/10 text-success'
-                                                                }`}>
-                                                                    {reachability?.is_reachable ? (
-                                                                        <>
-                                                                            <AlertTriangle className="h-3 w-3" />
-                                                                            <span className="font-medium">Reachable</span>
-                                                                        </>
-                                                                    ) : (
-                                                                        <>
-                                                                            <Shield className="h-3 w-3" />
-                                                                            <span className="font-medium">Not Reachable</span>
-                                                                        </>
-                                                                    )}
-                                                                    {reachability?.analysis_level && (
+                                                                <div className={`flex items-center gap-1 px-2 py-0.5 rounded-md flex-wrap ${className}`}>
+                                                                    <ReachabilityIcon className="h-3 w-3" />
+                                                                    <span className="font-medium">{label}</span>
+                                                                    {reachability.analysis_level && (
                                                                         <Badge variant="outline" className="text-[10px] py-0 h-4 ml-1">
                                                                             {reachability.analysis_level}
                                                                         </Badge>

@@ -49,7 +49,8 @@ export interface ScanAnalysisResult {
 }
 
 export interface ReachabilityInfo {
-  is_reachable?: boolean;
+  // Tri-state: null/undefined means no callgraph could confirm or falsify the finding.
+  is_reachable?: boolean | null;
   analysis_level?: string;
   confidence_score?: number;
   call_path?: string[];
@@ -335,15 +336,52 @@ export interface ThreatIntelligenceStats {
 
 export interface ReachabilityStats {
   analyzed_count: number;
+  // Total = confirmed (symbol-level) + likely (import-level).
   reachable_count: number;
+  confirmed_reachable_count: number;
   likely_reachable_count: number;
   unreachable_count: number;
   unknown_count: number;
   reachable_critical: number;
   reachable_high: number;
-  reachable?: number;
-  potentially_reachable?: number;
-  total_analyzed?: number;
+}
+
+export interface ReachabilityCallgraphInfo {
+  language: string;
+  total_modules: number;
+  total_imports: number;
+  // Packages the producer resolved and inspected; only these can be falsified.
+  coverage_modules?: number;
+  generated_at?: string;
+}
+
+export interface ReachabilityVulnerabilityInfo {
+  cve: string;
+  component: string;
+  version: string;
+  severity: string;
+  reachability_level: string;
+  reachable_functions: string[];
+  is_high_confidence?: boolean;
+}
+
+export interface ReachabilitySummary {
+  total_vulnerabilities: number;
+  analyzed: number;
+  reachability_levels: {
+    confirmed: number;
+    likely: number;
+    unknown: number;
+    unreachable: number;
+  };
+  callgraph_info: ReachabilityCallgraphInfo[];
+  languages: string[];
+  reachable_vulnerabilities: ReachabilityVulnerabilityInfo[];
+  unreachable_vulnerabilities: ReachabilityVulnerabilityInfo[];
+  // Totals before the server-side cap on the two lists above.
+  reachable_total?: number;
+  unreachable_total?: number;
+  timestamp: string;
 }
 
 export interface PrioritizedCounts {

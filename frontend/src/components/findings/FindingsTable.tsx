@@ -7,7 +7,7 @@ import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/compon
 import { Skeleton } from '@/components/ui/skeleton'
 import { InlineError, NoData } from '@/components/ui/state-components'
 import { FindingDetailsModal } from './FindingDetailsModal'
-import { ArrowUp, ArrowDown, Shield, AlertTriangle, Loader2 } from 'lucide-react';
+import { ArrowUp, ArrowDown, Shield, AlertTriangle, HelpCircle, Loader2, type LucideIcon } from 'lucide-react';
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants';
 import {
   Tooltip,
@@ -18,7 +18,7 @@ import {
 import { Badge } from '@/components/ui/badge'
 import { SeverityBadge } from './SeverityBadge'
 import { FindingTypeBadge } from './FindingTypeBadge'
-import { getSourceInfo, isSecretDeprioritized } from '@/lib/finding-utils'
+import { getSourceInfo, isSecretDeprioritized, getReachabilityDisplay, type ReachabilityVerdict } from '@/lib/finding-utils'
 import { ScanContext } from './details/SastDetailsView'
 import { resolveRelatedFindingInRows, fetchRelatedFinding } from './related-finding-rows'
 
@@ -53,17 +53,20 @@ interface ReachabilityIndicatorProps {
     readonly reachability: NonNullable<NonNullable<Finding['details']>['reachability']>
 }
 
+const REACHABILITY_STYLES: Record<ReachabilityVerdict, { className: string; icon: LucideIcon }> = {
+    reachable: { className: 'bg-red-100 text-severity-critical', icon: AlertTriangle },
+    unreachable: { className: 'bg-green-100 text-success', icon: Shield },
+    unknown: { className: 'bg-muted text-muted-foreground', icon: HelpCircle },
+}
+
 function ReachabilityIndicator({ reachability }: ReachabilityIndicatorProps) {
-    const isReachable = reachability.is_reachable
-    const containerClass = isReachable
-        ? 'bg-red-100 text-severity-critical'
-        : 'bg-green-100 text-success'
-    const label = isReachable ? 'Reachable Code' : 'Not Reachable'
+    const { verdict, label } = getReachabilityDisplay(reachability)
+    const { className, icon: Icon } = REACHABILITY_STYLES[verdict]
     return (
         <Tooltip>
             <TooltipTrigger asChild>
-                <div className={`flex items-center justify-center w-5 h-5 rounded-full ${containerClass}`}>
-                    {isReachable ? <AlertTriangle className="h-3 w-3" /> : <Shield className="h-3 w-3" />}
+                <div className={`flex items-center justify-center w-5 h-5 rounded-full ${className}`}>
+                    <Icon className="h-3 w-3" />
                 </div>
             </TooltipTrigger>
             <TooltipContent side="right">
@@ -72,7 +75,7 @@ function ReachabilityIndicator({ reachability }: ReachabilityIndicatorProps) {
                     {reachability.analysis_level && (
                         <p className="text-xs">Analysis: {reachability.analysis_level}</p>
                     )}
-                    {reachability.confidence_score && (
+                    {reachability.confidence_score !== undefined && (
                         <p className="text-xs">
                             Confidence: {Math.round(reachability.confidence_score * 100)}%
                         </p>
