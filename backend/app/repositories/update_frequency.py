@@ -15,28 +15,26 @@ from app.repositories.scans import ScanRepository
 _NEIGHBOUR_PROJECTION = {"_id": 1, "scan_created_at": 1, "prev_scan_id": 1, "dep_count": 1}
 
 # Everything the pure fold needs for a comparison row. updates_sample and
-# prev_created_at are left behind: only the single-project timeline reads them,
-# and they would multiply the size of a $group that already holds every delta.
-_WINDOW_FIELDS = {
-    "_id": "$_id",
-    "scan_created_at": "$scan_created_at",
-    "commit_hash": "$commit_hash",
-    "prev_scan_id": "$prev_scan_id",
-    "dep_count": "$dep_count",
-    "updates": "$updates",
-    "outdated_count": "$outdated_count",
-    "outdated_added": "$outdated_added",
-    "outdated_resolved": "$outdated_resolved",
-    "eco": "$eco",
-    "error": "$error",
+# prev_created_at are left behind: only the single-project timeline reads them.
+_WINDOW_PROJECTION = {
+    "_id": 1,
+    "project_id": 1,
+    "branch": 1,
+    "scan_created_at": 1,
+    "commit_hash": 1,
+    "prev_scan_id": 1,
+    "dep_count": 1,
+    "updates": 1,
+    "outdated_count": 1,
+    "outdated_added": 1,
+    "outdated_resolved": 1,
+    "eco": 1,
+    "error": 1,
 }
 
-# A scan whose predecessor carried no outdated analysis reports its whole outdated set
-# in outdated_added, so a delta can reach ~11 KB instead of ~500 B. Batching by project
-# keeps the $group output around 2-10 MB in practice, far under the 100 MB limit for
-# blocking stages. It is not a hard bound: batches are sized by project count, so a
-# batch of unusually large projects made entirely of such scans could still exceed it.
-# allowDiskUse stays off so that case fails loudly instead of silently spilling.
+# Bounds the $in list per read. A scan whose predecessor carried no outdated analysis
+# reports its whole outdated set in outdated_added, so a delta can reach ~11 KB instead
+# of ~500 B; the read streams either way, this only keeps one query's filter sane.
 _WINDOW_PROJECT_BATCH = 100
 
 
@@ -259,41 +257,30 @@ class ScanUpdateDeltaRepository(BaseRepository[ScanUpdateDelta]):
     ) -> dict[tuple[str, str], list[dict[str, Any]]]:
         """In-window deltas of every project, bucketed by (project, branch), oldest first.
 
-        Grouping only buckets; every metric stays in the pure fold, so the two
-        cannot drift apart.
+        Bucketing happens here rather than in a ``$group``: a delta carries the outdated
+        names its scan added and resolved, and accumulating those arrays server-side costs
+        an order of magnitude more memory than the documents themselves -- 8.7 MB of them
+        exceeded the 100 MB a blocking stage may hold. Reading them plainly has no such
+        ceiling, transfers the same bytes, and leaves every metric in the pure fold.
         """
         buckets: dict[tuple[str, str], list[dict[str, Any]]] = {}
         for batch in batched(project_ids, _WINDOW_PROJECT_BATCH):
-            pipeline = [
-                {
-                    "$match": {
-                        "project_id": {"$in": list(batch)},
-                        "scan_created_at": {"$gte": since},
-                        "schema_version": UPDATE_DELTA_SCHEMA_VERSION,
-                    }
-                },
-                {
-                    "$group": {
-                        "_id": {"p": "$project_id", "b": "$branch"},
-                        "deltas": {"$push": _WINDOW_FIELDS},
-                    }
-                },
-            ]
-            with track_db_operation(self.collection_name, "aggregate"):
-                # allowDiskUse stays off so outgrowing the batch sizing fails loudly
-                # instead of quietly spilling to the mongod's disk.
-                rows = await self.collection.aggregate(pipeline, allowDiskUse=False).to_list(None)
-            for row in rows:
-                chain = _named_branch(row["_id"])
+            query = {
+                "project_id": {"$in": list(batch)},
+                "scan_created_at": {"$gte": since},
+                "schema_version": UPDATE_DELTA_SCHEMA_VERSION,
+            }
+            with track_db_operation(self.collection_name, "find"):
+                # Unsorted: an in-memory sort carries the same ceiling as the group did,
+                # and each chain is ordered below anyway.
+                docs = await self.collection.find(query, _WINDOW_PROJECTION).to_list(None)
+            for doc in docs:
+                chain = _named_branch({"p": doc.get("project_id"), "b": doc.get("branch")})
                 if chain is None:
                     continue
-                project_id, branch = chain
-                deltas = sorted(row["deltas"], key=_chain_order)
-                for delta in deltas:
-                    # Carried in the group key rather than per document; the fold
-                    # rejects a window that does not name its project and branch.
-                    delta["project_id"], delta["branch"] = project_id, branch
-                buckets[project_id, branch] = deltas
+                buckets.setdefault(chain, []).append(doc)
+        for deltas in buckets.values():
+            deltas.sort(key=_chain_order)
         return buckets
 
     async def window_ledger_by_branch(
