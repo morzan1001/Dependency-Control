@@ -32,16 +32,18 @@ MADGE_OUTPUT = """
 }
 """
 
-# The `.callgraph-python` ast scanner from callgraph.yaml, run over a fixture package.
-# analyzed_modules keeps the three distributions of that package; the run listed 129 installed.
+# The `.callgraph-python` ast scanner from callgraph.yaml, run over a fixture package with
+# requests/urllib3/PyYAML installed. The scanner resolves each import back to its distribution
+# name (yaml -> PyYAML), which is the spelling findings carry; analyzed_modules is trimmed to
+# the three distributions of that package.
 PYTHON_AST_OUTPUT = """
 {
   "imports": [
     {"module": "requests", "file": "app/client.py", "line": 1, "symbols": []},
-    {"module": "urllib3.util", "file": "app/client.py", "line": 2, "symbols": []},
-    {"module": "urllib3.util.retry", "file": "app/client.py", "line": 3, "symbols": ["Retry"]},
+    {"module": "urllib3", "file": "app/client.py", "line": 2, "symbols": []},
+    {"module": "urllib3", "file": "app/client.py", "line": 3, "symbols": ["Retry"]},
     {"module": "typing", "file": "app/helpers.py", "line": 1, "symbols": ["Any"]},
-    {"module": "yaml", "file": "app/helpers.py", "line": 3, "symbols": []}
+    {"module": "PyYAML", "file": "app/helpers.py", "line": 3, "symbols": []}
   ],
   "analyzed_modules": ["PyYAML", "requests", "urllib3"]
 }
@@ -119,7 +121,7 @@ class TestPythonAstGoldenFixture:
 
     def test_module_usage_keys_are_top_level_package_names(self):
         _, _, module_usage, _ = _parse(PYTHON_AST_OUTPUT, "python")
-        assert set(module_usage) == {"requests", "urllib3", "typing", "yaml"}
+        assert set(module_usage) == {"requests", "urllib3", "typing", "pyyaml"}
         assert not set(module_usage) & PATH_ARTEFACTS
 
     def test_submodule_imports_collapse_onto_one_usage_entry(self):
@@ -173,6 +175,30 @@ class TestJdepsGoldenFixture:
     def test_analyzed_modules_survives(self):
         _, _, _, analyzed = _parse(JDEPS_OUTPUT, "java")
         assert analyzed == ["com.example:textkit", "hdrhistogram:hdrhistogram"]
+
+
+class TestUniverseMeetsUsage:
+    """A package the producer both published as covered and recorded as imported must resolve.
+
+    When the two disagree the gate reads "analyzed but unused" and falsifies a package the code
+    demonstrably imports, which is the one verdict that must never be wrong.
+    """
+
+    @pytest.mark.parametrize(
+        ("payload", "language", "imported"),
+        [
+            (MADGE_OUTPUT, "javascript", ["lodash", "@babel/core"]),
+            (PYTHON_AST_OUTPUT, "python", ["requests", "urllib3", "PyYAML"]),
+            (GO_LIST_OUTPUT, "go", ["github.com/Masterminds/semver", "github.com/example/textkit"]),
+            (JDEPS_OUTPUT, "java", ["com.example:textkit", "hdrhistogram:hdrhistogram"]),
+        ],
+    )
+    def test_every_covered_and_imported_package_resolves_in_usage(self, payload, language, imported):
+        _, _, module_usage, analyzed = _parse(payload, language)
+        index = build_component_index(module_usage)
+        for component in imported:
+            assert canonical_module_key(component, language) in analyzed
+            assert lookup_component(index, _normalize_component(component, language)) is not None
 
 
 class TestWriteReadMeetingPoint:
