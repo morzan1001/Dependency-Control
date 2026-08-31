@@ -1,7 +1,5 @@
 """Call graph data uploaded from CI/CD pipelines for reachability analysis."""
 
-from datetime import datetime, timezone
-
 from pydantic import BaseModel, Field
 
 from app.models.base import CreatedAtModel
@@ -55,7 +53,7 @@ class Callgraph(MongoDocument, CreatedAtModel):
 
     # Language and tool info
     language: str  # javascript, typescript, python, go, java, etc.
-    tool: str  # madge, pyan, go-callvis, jdeps, etc.
+    tool: str  # madge, jdeps, etc.
     tool_version: str | None = None
 
     # Graph data
@@ -65,9 +63,12 @@ class Callgraph(MongoDocument, CreatedAtModel):
     # Aggregated data for quick lookups
     module_usage: dict[str, ModuleUsage] = Field(default_factory=dict)
 
+    # Coverage universe: packages the producer actually resolved and inspected.
+    # Only these may ever be falsified as unreachable.
+    analyzed_modules: list[str] = Field(default_factory=list)
+
     # Metadata
     source_files_analyzed: int = 0
     total_imports: int = 0
     total_calls: int = 0
     analysis_duration_ms: int | None = None
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

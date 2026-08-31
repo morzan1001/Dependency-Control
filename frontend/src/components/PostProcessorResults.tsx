@@ -31,6 +31,7 @@ import {
 } from "@/components/ui/collapsible";
 import { getSeverityBadgeVariant } from "@/lib/finding-utils";
 import { formatDateTime } from "@/lib/utils";
+import { ReachabilitySummary } from "@/types/scan";
 
 interface EPSSKEVSummary {
   total_vulnerabilities: number;
@@ -68,40 +69,6 @@ interface EPSSKEVSummary {
     epss_score: number | null;
     in_kev: boolean;
     exploit_maturity: string;
-  }>;
-  timestamp: string;
-}
-
-interface ReachabilitySummary {
-  total_vulnerabilities: number;
-  analyzed: number;
-  reachability_levels: {
-    confirmed: number;
-    likely: number;
-    unknown: number;
-    unreachable: number;
-  };
-  callgraph_info: Array<{
-    language: string;
-    total_modules: number;
-    total_imports: number;
-    generated_at?: string;
-  }>;
-  languages: string[];
-  reachable_vulnerabilities: Array<{
-    cve: string;
-    component: string;
-    version: string;
-    severity: string;
-    reachability_level: string;
-    reachable_functions: string[];
-  }>;
-  unreachable_vulnerabilities: Array<{
-    cve: string;
-    component: string;
-    version: string;
-    severity: string;
-    reachability_level: string;
   }>;
   timestamp: string;
 }
@@ -403,9 +370,15 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
     data.reachability_levels.unknown + 
     data.reachability_levels.unreachable;
 
-  const reachableCount = 
-    data.reachability_levels.confirmed + 
+  const reachableCount =
+    data.reachability_levels.confirmed +
     data.reachability_levels.likely;
+
+  // The lists are capped server-side, so their length is not the population size.
+  const shownReachable = data.reachable_vulnerabilities.slice(0, 15);
+  const shownUnreachable = data.unreachable_vulnerabilities.slice(0, 10);
+  const reachableTotal = data.reachable_total ?? data.reachable_vulnerabilities.length;
+  const unreachableTotal = data.unreachable_total ?? data.unreachable_vulnerabilities.length;
 
   return (
     <div className="space-y-6">
@@ -482,7 +455,7 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
         <CardContent>
           <div className="space-y-3">
             {data.callgraph_info.map((cg) => (
-              <div key={cg.language} className="grid gap-4 md:grid-cols-3">
+              <div key={cg.language} className="grid gap-4 md:grid-cols-4">
                 <div className="flex items-center gap-3">
                   <Badge variant="outline" className="capitalize">{cg.language}</Badge>
                   <span className="text-sm text-muted-foreground">Language</span>
@@ -494,6 +467,10 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
                 <div className="flex items-center gap-3">
                   <span className="font-mono text-lg">{cg.total_imports}</span>
                   <span className="text-sm text-muted-foreground">Import mappings</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <span className="font-mono text-lg">{cg.coverage_modules ?? 0}</span>
+                  <span className="text-sm text-muted-foreground">Packages in coverage</span>
                 </div>
               </div>
             ))}
@@ -580,12 +557,12 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
           <CardHeader className="bg-red-50 dark:bg-red-950">
             <CardTitle className="text-base flex items-center gap-2 text-severity-critical">
               <AlertCircle className="h-4 w-4" />
-              Reachable Vulnerabilities ({data.reachable_vulnerabilities.length})
+              Reachable Vulnerabilities ({reachableTotal})
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-4">
             <div className="space-y-2">
-              {data.reachable_vulnerabilities.slice(0, 15).map((vuln) => (
+              {shownReachable.map((vuln) => (
                 <Collapsible key={`${vuln.cve}-${vuln.component}`}>
                   <CollapsibleTrigger className="flex items-center justify-between w-full p-3 rounded-lg bg-red-50/50 dark:bg-red-950/50 hover:bg-red-100/50 dark:hover:bg-red-900/50 transition-colors">
                     <div className="flex items-center gap-4">
@@ -628,6 +605,11 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
                   </CollapsibleContent>
                 </Collapsible>
               ))}
+              {reachableTotal > shownReachable.length && (
+                <p className="text-sm text-muted-foreground text-center pt-2">
+                  Showing {shownReachable.length} of {reachableTotal}
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -638,7 +620,7 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
           <CardHeader className="bg-green-50 dark:bg-green-950">
             <CardTitle className="text-base flex items-center gap-2 text-success">
               <ShieldCheck className="h-4 w-4" />
-              Unreachable Vulnerabilities ({data.unreachable_vulnerabilities.length})
+              Unreachable Vulnerabilities ({unreachableTotal})
             </CardTitle>
           </CardHeader>
           <CardContent className="pt-4">
@@ -646,7 +628,7 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
               These vulnerabilities exist in dependencies but the vulnerable code paths are not used by your application.
             </p>
             <div className="grid gap-2">
-              {data.unreachable_vulnerabilities.slice(0, 10).map((vuln) => (
+              {shownUnreachable.map((vuln) => (
                 <div key={`${vuln.cve}-${vuln.component}`} className="flex items-center justify-between p-2 rounded bg-muted/50">
                   <div className="flex items-center gap-3">
                     <span className="font-mono text-sm">{vuln.cve}</span>
@@ -659,9 +641,9 @@ export function ReachabilityResults({ data }: { data: ReachabilitySummary }) {
                   </Badge>
                 </div>
               ))}
-              {data.unreachable_vulnerabilities.length > 10 && (
+              {unreachableTotal > shownUnreachable.length && (
                 <p className="text-sm text-muted-foreground text-center pt-2">
-                  +{data.unreachable_vulnerabilities.length - 10} more
+                  Showing {shownUnreachable.length} of {unreachableTotal}
                 </p>
               )}
             </div>

@@ -5,22 +5,56 @@ from typing import Any
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.api.v1.helpers.projects import is_write_superuser
+from app.core.constants import (
+    PROJECT_ROLE_ADMIN,
+    PROJECT_ROLE_EDITOR,
+    PROJECT_ROLE_VIEWER,
+    PROJECT_ROLES,
+    TEAM_ROLE_ADMIN,
+)
 from app.core.permissions import Permissions, has_permission
 from app.models.callgraph import CallEdge, ImportEntry, ModuleUsage
 from app.models.user import User
 from app.repositories import ProjectRepository, TeamRepository
+from app.services.aggregation.components import canonical_module_key, npm_package_key
+
+_MSG_ACCESS_DENIED = "Access denied"
+_NODE_MODULES = "node_modules/"
+_ANALYZED_MODULES_KEY = "__analyzed_modules__"
 
 
-def _has_global_permission(user: User, require_write: bool) -> bool:
-    """Check if user has global permissions for callgraph access."""
-    if require_write:
-        return has_permission(user.permissions, Permissions.PROJECT_UPDATE)
-    return has_permission(user.permissions, [Permissions.PROJECT_READ_ALL, Permissions.PROJECT_UPDATE])
+def _member_role(members: list[dict[str, Any]], user_id: str) -> str | None:
+    """Return the role of ``user_id`` in a members list, or None if absent."""
+    for member in members:
+        if member.get("user_id") == user_id:
+            return member.get("role")
+    return None
 
 
-def _is_member(members: list[dict[str, Any]], user_id: str) -> bool:
-    """Check if user_id appears in a members list."""
-    return any(member.get("user_id") == user_id for member in members)
+async def _effective_project_role(
+    project: dict[str, Any],
+    user_id: str,
+    team_repo: TeamRepository,
+) -> str | None:
+    """Return MAX(direct member role, team-derived role), or None if not a member."""
+    roles = []
+
+    direct_role = _member_role(project.get("members", []), user_id)
+    if direct_role:
+        roles.append(direct_role)
+
+    team_id = project.get("team_id")
+    if team_id:
+        team = await team_repo.get_raw_by_id(team_id)
+        if team:
+            team_role = _member_role(team.get("members", []), user_id)
+            if team_role:
+                roles.append(PROJECT_ROLE_ADMIN if team_role == TEAM_ROLE_ADMIN else PROJECT_ROLE_VIEWER)
+
+    if not roles:
+        return None
+    return max(roles, key=PROJECT_ROLES.index)
 
 
 async def check_callgraph_access(
@@ -29,10 +63,10 @@ async def check_callgraph_access(
     db: AsyncIOMotorDatabase,
     require_write: bool = False,
 ) -> dict[str, Any]:
-    """Verify user has access to the project's callgraph and return the project document.
+    """Verify callgraph access and return the raw project document, or raise 403/404.
 
-    require_write=True demands write permission (for upload/delete).
-    Raises 404 if the project is not found, 403 if access is denied.
+    Mirrors ``check_project_access``: project:update/project:delete is the write
+    superuser, project:read_all is read-only, members need editor or admin to write.
     """
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
@@ -41,50 +75,35 @@ async def check_callgraph_access(
     if not project:
         raise HTTPException(status_code=404, detail="Project not found")
 
-    user_id = str(user.id)
-
-    if _has_global_permission(user, require_write):
+    if is_write_superuser(user):
         return project
 
-    team_id = project.get("team_id")
-    if team_id:
-        team = await team_repo.get_raw_by_id(team_id)
-        if team and _is_member(team.get("members", []), user_id):
-            return project
-
-    if _is_member(project.get("members", []), user_id):
+    if not require_write and has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
         return project
 
-    raise HTTPException(status_code=403, detail="Access denied")
+    role = await _effective_project_role(project, str(user.id), team_repo)
+    if role is None:
+        raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
+
+    if require_write and PROJECT_ROLES.index(role) < PROJECT_ROLES.index(PROJECT_ROLE_EDITOR):
+        raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
+
+    return project
 
 
-def normalize_module_name(module: str, _language: str) -> str:
-    """Normalize a module/package name for consistent matching.
+def _canonical_module_list(names: Any, language: str) -> list[str]:
+    """Canonicalise and de-duplicate an uploaded analyzed_modules list, order-stable."""
+    if not isinstance(names, list):
+        return []
 
-    Relative paths are kept as-is; scoped packages keep ``@org/pkg``; regular
-    packages are reduced to their base name (``lodash/get`` -> ``lodash``).
-    """
-    if not module:
-        return module
-
-    if module.startswith(("./", "../")):
-        return module
-
-    if module.startswith("@"):
-        parts = module.split("/")
-        if len(parts) >= 2:
-            return f"{parts[0]}/{parts[1]}"
-        return module
-
-    if "/" in module:
-        return module.split("/")[0]
-
-    return module
-
-
-def _is_external_module(dep: str) -> bool:
-    """Check if a dependency is an external module (not a relative path)."""
-    return not dep.startswith("./") and not dep.startswith("../")
+    result: list[str] = []
+    for name in names:
+        if not isinstance(name, str):
+            continue
+        key = canonical_module_key(name, language)
+        if key and key not in result:
+            result.append(key)
+    return result
 
 
 def _get_or_create_module_usage(module_usage: dict[str, ModuleUsage], base_module: str) -> ModuleUsage:
@@ -100,222 +119,156 @@ def _get_or_create_module_usage(module_usage: dict[str, ModuleUsage], base_modul
     return module_usage[base_module]
 
 
+def _madge_package(dep: str) -> str | None:
+    """Package name of a madge dependency, or None when it is a first-party source file."""
+    if _NODE_MODULES in dep:
+        return npm_package_key(dep.rsplit(_NODE_MODULES, 1)[1])
+
+    if "/" not in dep and "." not in dep:
+        return dep
+
+    return None
+
+
+def _record_madge_dep(
+    dep: str,
+    file_path: str,
+    language: str,
+    imports: list[ImportEntry],
+    module_usage: dict[str, ModuleUsage],
+) -> None:
+    """Record one madge dependency; only external packages get a ModuleUsage."""
+    imports.append(
+        ImportEntry(
+            module=dep,
+            file=file_path,
+            line=0,  # madge provides no line numbers
+            imported_symbols=[],
+            is_dynamic=False,
+        )
+    )
+
+    package = _madge_package(dep)
+    if package is None:
+        return
+
+    usage = _get_or_create_module_usage(module_usage, canonical_module_key(package, language))
+    usage.import_count += 1
+    if file_path not in usage.import_locations:
+        usage.import_locations.append(file_path)
+
+
 def parse_madge_format(
     data: dict[str, Any], language: str
-) -> tuple[list[ImportEntry], list[CallEdge], dict[str, ModuleUsage]]:
+) -> tuple[list[ImportEntry], list[CallEdge], dict[str, ModuleUsage], list[str]]:
     """Parse madge JSON output ({file: [dependencies]}); returns no call edges."""
-    imports = []
+    imports: list[ImportEntry] = []
     module_usage: dict[str, ModuleUsage] = {}
+    analyzed_modules = _canonical_module_list(data.get(_ANALYZED_MODULES_KEY), language)
 
     for file_path, dependencies in data.items():
-        if not isinstance(dependencies, list):
+        if file_path == _ANALYZED_MODULES_KEY or not isinstance(dependencies, list):
             continue
-
         for dep in dependencies:
-            if not isinstance(dep, str):
-                continue
+            if isinstance(dep, str) and dep:
+                _record_madge_dep(dep, file_path, language, imports, module_usage)
 
-            imports.append(
-                ImportEntry(
-                    module=dep,
-                    file=file_path,
-                    line=0,  # madge provides no line numbers
-                    imported_symbols=[],
-                    is_dynamic=False,
-                )
-            )
-
-            if _is_external_module(dep):
-                base_module = normalize_module_name(dep, language)
-                usage = _get_or_create_module_usage(module_usage, base_module)
-                usage.import_count += 1
-                if file_path not in usage.import_locations:
-                    usage.import_locations.append(file_path)
-
-    return imports, [], module_usage
+    return imports, [], module_usage, analyzed_modules
 
 
-def _track_module_call(module_usage: dict[str, ModuleUsage], target: str, language: str) -> None:
-    """Track a call edge's module usage and used symbol."""
-    if "." not in target:
-        return
-    module = target.rsplit(".", 1)[0]
-    base_module = normalize_module_name(module, language)
-    usage = _get_or_create_module_usage(module_usage, base_module)
-    usage.call_count += 1
-
-    symbol = target.rsplit(".", 1)[-1]
-    if symbol not in usage.used_symbols:
-        usage.used_symbols.append(symbol)
-
-
-def _track_module_import(
-    module_usage: dict[str, ModuleUsage],
-    target: str,
+def _record_generic_import(
+    imp: dict[str, Any],
     language: str,
-    source_info: dict[str, Any],
     imports: list[ImportEntry],
-    seen_imports: set[tuple[str, str]],
+    module_usage: dict[str, ModuleUsage],
 ) -> None:
-    """Track a uses edge's import and module usage."""
-    if "." not in target:
+    """Record one generic-format import entry and its module usage."""
+    module = imp.get("module", "")
+    file_path = imp.get("file", "")
+    symbols = imp.get("symbols", [])
+
+    imports.append(
+        ImportEntry(
+            module=module,
+            file=file_path,
+            line=imp.get("line", 0),
+            imported_symbols=symbols,
+            is_dynamic=False,
+        )
+    )
+
+    if not module or module.startswith(("./", "../")):
         return
 
-    module = target.rsplit(".", 1)[0]
-    symbol = target.rsplit(".", 1)[-1]
-    file_path = source_info.get("file", "")
-    import_key = (module, file_path)
+    usage = _get_or_create_module_usage(module_usage, canonical_module_key(module, language))
+    usage.import_count += 1
+    if file_path and file_path not in usage.import_locations:
+        usage.import_locations.append(file_path)
+    for symbol in symbols:
+        if symbol not in usage.used_symbols:
+            usage.used_symbols.append(symbol)
 
-    if import_key not in seen_imports:
-        seen_imports.add(import_key)
-        imports.append(
-            ImportEntry(
-                module=module,
-                file=file_path,
-                line=source_info.get("line", 0),
-                imported_symbols=[symbol],
-                is_dynamic=False,
-            )
+
+def _record_generic_call(
+    call: dict[str, Any],
+    language: str,
+    calls: list[CallEdge],
+    module_usage: dict[str, ModuleUsage],
+) -> None:
+    """Record one generic-format call edge and its module usage."""
+    calls.append(
+        CallEdge(
+            caller=f"{call.get('caller_file', '')}:{call.get('caller_function', '')}",
+            callee=f"{call.get('callee_module', '')}:{call.get('callee_function', '')}",
+            file=call.get("caller_file", ""),
+            line=call.get("line", 0),
+            call_type="direct",
         )
+    )
 
-        base_module = normalize_module_name(module, language)
-        usage = _get_or_create_module_usage(module_usage, base_module)
-        usage.import_count += 1
-        if file_path and file_path not in usage.import_locations:
-            usage.import_locations.append(file_path)
+    module = call.get("callee_module", "")
+    if not module:
+        return
 
-    base_module = normalize_module_name(module, language)
-    if base_module in module_usage and symbol not in module_usage[base_module].used_symbols:
-        module_usage[base_module].used_symbols.append(symbol)
-
-
-def parse_pyan_format(
-    data: dict[str, Any], language: str
-) -> tuple[list[ImportEntry], list[CallEdge], dict[str, ModuleUsage]]:
-    """Parse pyan JSON output (nodes + calls/uses edges)."""
-    imports: list[ImportEntry] = []
-    calls: list[CallEdge] = []
-    module_usage: dict[str, ModuleUsage] = {}
-
-    nodes = data.get("nodes", [])
-    edges = data.get("edges", [])
-
-    node_info: dict[str, dict[str, Any]] = {}
-    for node in nodes:
-        name = node.get("name", "")
-        node_info[name] = {
-            "file": node.get("file", ""),
-            "line": node.get("line", 0),
-            "type": node.get("type", ""),
-        }
-
-    seen_imports: set[tuple[str, str]] = set()
-
-    for edge in edges:
-        source = edge.get("source", "")
-        target = edge.get("target", "")
-        edge_type = edge.get("type", "calls")
-        source_info = node_info.get(source, {})
-
-        if edge_type == "calls":
-            calls.append(
-                CallEdge(
-                    caller=source,
-                    callee=target,
-                    file=source_info.get("file", ""),
-                    line=source_info.get("line", 0),
-                    call_type="direct",
-                )
-            )
-            _track_module_call(module_usage, target, language)
-
-        elif edge_type == "uses":
-            _track_module_import(module_usage, target, language, source_info, imports, seen_imports)
-
-    return imports, calls, module_usage
+    usage = _get_or_create_module_usage(module_usage, canonical_module_key(module, language))
+    usage.call_count += 1
+    func = call.get("callee_function", "")
+    if func and func not in usage.used_symbols:
+        usage.used_symbols.append(func)
 
 
 def parse_generic_format(
     data: dict[str, Any], language: str
-) -> tuple[list[ImportEntry], list[CallEdge], dict[str, ModuleUsage]]:
+) -> tuple[list[ImportEntry], list[CallEdge], dict[str, ModuleUsage], list[str]]:
     """Parse the generic callgraph format."""
-    imports = []
-    calls = []
+    imports: list[ImportEntry] = []
+    calls: list[CallEdge] = []
     module_usage: dict[str, ModuleUsage] = {}
+    analyzed_modules = _canonical_module_list(data.get("analyzed_modules"), language)
 
     for imp in data.get("imports", []):
-        imports.append(
-            ImportEntry(
-                module=imp.get("module", ""),
-                file=imp.get("file", ""),
-                line=imp.get("line", 0),
-                imported_symbols=imp.get("symbols", []),
-                is_dynamic=False,
-            )
-        )
-
-        module = imp.get("module", "")
-        if module and not module.startswith("./") and not module.startswith("../"):
-            base_module = normalize_module_name(module, language)
-            if base_module not in module_usage:
-                module_usage[base_module] = ModuleUsage(
-                    module=base_module,
-                    import_count=0,
-                    call_count=0,
-                    import_locations=[],
-                    used_symbols=[],
-                )
-            module_usage[base_module].import_count += 1
-            file_path = imp.get("file", "")
-            if file_path not in module_usage[base_module].import_locations:
-                module_usage[base_module].import_locations.append(file_path)
-            for sym in imp.get("symbols", []):
-                if sym not in module_usage[base_module].used_symbols:
-                    module_usage[base_module].used_symbols.append(sym)
+        _record_generic_import(imp, language, imports, module_usage)
 
     for call in data.get("calls", []):
-        calls.append(
-            CallEdge(
-                caller=f"{call.get('caller_file', '')}:{call.get('caller_function', '')}",
-                callee=f"{call.get('callee_module', '')}:{call.get('callee_function', '')}",
-                file=call.get("caller_file", ""),
-                line=call.get("line", 0),
-                call_type="direct",
-            )
-        )
+        _record_generic_call(call, language, calls, module_usage)
 
-        module = call.get("callee_module", "")
-        if module:
-            base_module = normalize_module_name(module, language)
-            if base_module not in module_usage:
-                module_usage[base_module] = ModuleUsage(
-                    module=base_module,
-                    import_count=0,
-                    call_count=0,
-                    import_locations=[],
-                    used_symbols=[],
-                )
-            module_usage[base_module].call_count += 1
-            func = call.get("callee_function", "")
-            if func and func not in module_usage[base_module].used_symbols:
-                module_usage[base_module].used_symbols.append(func)
-
-    return imports, calls, module_usage
+    return imports, calls, module_usage, analyzed_modules
 
 
 def detect_format(data: dict[str, Any]) -> str:
-    """Auto-detect callgraph format from data structure."""
-    if "nodes" in data and "edges" in data:
-        nodes = data.get("nodes", [])
-        if nodes and isinstance(nodes[0], dict):
-            if "package" in nodes[0]:
-                return "go-callvis"
-            return "pyan"
-
-    if "imports" in data or "calls" in data:
+    """Auto-detect the callgraph wire format: madge, generic or unknown."""
+    if "imports" in data or "calls" in data or "analyzed_modules" in data:
         return "generic"
 
-    if all(isinstance(v, list) for v in data.values() if v):
+    file_entries = {key: value for key, value in data.items() if key != _ANALYZED_MODULES_KEY}
+    if not file_entries or not all(
+        isinstance(deps, list) and all(isinstance(dep, str) for dep in deps) for deps in file_entries.values()
+    ):
+        return "unknown"
+
+    # An all-empty graph is only meaningful alongside a coverage universe; without one it is
+    # indistinguishable from an unrelated payload whose values happen to be empty lists.
+    if any(file_entries.values()) or _ANALYZED_MODULES_KEY in data:
         return "madge"
 
     return "unknown"

@@ -98,6 +98,52 @@ async def _delete_scans_and_related_data(db: Any, scan_ids: list[str], label: st
     return count
 
 
+async def _reap_orphan_callgraphs(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
+    """Delete callgraphs whose scan_id matches no scan, once past the orphan safety window.
+
+    Scan deletion already removes callgraphs by scan_id; this covers uploads whose scan never
+    existed. The age window protects a callgraph that arrives before its scan is created.
+    """
+    cutoff = datetime.now(timezone.utc) - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS)
+
+    async def _reap_batch(scan_ids: list[str]) -> int:
+        candidates = set(scan_ids)
+        async for scan in db.scans.find({"_id": {"$in": sorted(candidates)}}, {"_id": 1}):
+            candidates.discard(scan.get("_id"))
+        if not candidates:
+            return 0
+        orphaned = sorted(candidates)
+        try:
+            result = await db.callgraphs.delete_many(
+                {"scan_id": {"$in": orphaned}, "created_at": {"$lt": cutoff}},
+            )
+        except Exception as e:
+            logger.warning(f"Failed to delete orphan callgraphs for scans {orphaned}: {e}")
+            return 0
+        count: int = result.deleted_count
+        if count:
+            logger.info(f"Reaped {count} orphan callgraph(s) belonging to {len(orphaned)} missing scan(s)")
+        return count
+
+    deleted = 0
+    batch: list[str] = []
+    cursor = db.callgraphs.find(
+        {"created_at": {"$lt": cutoff}, "scan_id": {"$ne": None}},
+        {"scan_id": 1},
+    )
+    async for callgraph in cursor:
+        scan_id = callgraph.get("scan_id")
+        if not scan_id:
+            continue
+        batch.append(scan_id)
+        if len(batch) >= batch_size:
+            deleted += await _reap_batch(batch)
+            batch = []
+    if batch:
+        deleted += await _reap_batch(batch)
+    return deleted
+
+
 def _resolve_rescan_interval(project: Project, system_settings: Any) -> int | None:
     """Return effective rescan interval hours, or None if rescans are disabled."""
     enabled = project.rescan_enabled
@@ -513,6 +559,11 @@ async def run_housekeeping() -> None:
             await reap_orphan_gridfs_files(db)
         except Exception as e:
             logger.exception("GridFS orphan reaper failed: %s", e)
+
+        try:
+            await _reap_orphan_callgraphs(db)
+        except Exception as e:
+            logger.exception("Callgraph orphan reaper failed: %s", e)
 
     except Exception as e:
         logger.exception("Housekeeping task failed: %s", e)

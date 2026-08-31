@@ -1,8 +1,7 @@
-"""K6: reachability verdicts must reach ``scan.stats``.
+"""Reachability verdicts must reach ``scan.stats``, inline and on the deferred path.
 
-The stats pipeline reads top-level ``reachable``/``reachability_level``; the enrichment only
-ever wrote ``details.reachability``, so every reachability counter stayed at zero. The deferred
-path (callgraph uploaded after the scan finished) additionally never recomputed the stats.
+The stats pipeline reads the top-level ``reachable``/``reachability_level`` mirrors, so a
+verdict written only under ``details.reachability`` leaves every counter at zero.
 """
 
 from datetime import datetime, timezone
@@ -44,7 +43,8 @@ async def _seed_callgraph(db) -> None:
             "project_id": _PROJECT_ID,
             "scan_id": _SCAN_ID,
             "language": "python",
-            "tool": "pyan",
+            "tool": "ast",
+            "analyzed_modules": ["requests", "urllib3"],
             "module_usage": {
                 "requests": {
                     "module": "requests",
@@ -54,7 +54,6 @@ async def _seed_callgraph(db) -> None:
                     "used_symbols": ["get"],
                 }
             },
-            "import_map": {"app/client.py": ["requests"]},
             "created_at": datetime.now(timezone.utc),
         }
     )
@@ -125,6 +124,11 @@ async def test_deferred_run_recomputes_and_persists_scan_stats(db):
     project = await db.projects.find_one({"_id": _PROJECT_ID})
     assert project["stats"]["reachability"]["analyzed_count"] == 2
 
+    # The persisted summary is built from the minimal projection, which now carries both fields.
+    info = (await db.analysis_results.find_one({"scan_id": _SCAN_ID}))["result"]["callgraph_info"][0]
+    assert info["coverage_modules"] == 2
+    assert info["generated_at"] is not None
+
 
 @pytest.mark.asyncio
 async def test_deferred_run_leaves_a_superseded_project_alone(db):
@@ -152,3 +156,80 @@ async def test_deferred_run_leaves_a_superseded_project_alone(db):
 
     project = await db.projects.find_one({"_id": _PROJECT_ID})
     assert project["stats"] == {"high": 7}
+
+
+@pytest.mark.asyncio
+async def test_a_second_language_supersedes_the_first_summary(db):
+    """Each callgraph re-runs enrichment, so the scan must keep exactly one, current summary."""
+    await _seed_callgraph(db)
+    await _seed_dependencies(db)
+    await db.findings.insert_one(_finding("CVE-1", "requests"))
+    await db.scans.insert_one(
+        {
+            "_id": _SCAN_ID,
+            "project_id": _PROJECT_ID,
+            "branch": "main",
+            "status": "completed",
+            "created_at": datetime.now(timezone.utc),
+            "reachability_pending": True,
+        }
+    )
+    await db.projects.insert_one({"_id": _PROJECT_ID, "name": "p", "latest_scan_id": _SCAN_ID})
+
+    await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
+
+    await db.callgraphs.insert_one(
+        {
+            "_id": "cg-2",
+            "project_id": _PROJECT_ID,
+            "scan_id": _SCAN_ID,
+            "language": "javascript",
+            "tool": "madge",
+            "analyzed_modules": ["lodash"],
+            "module_usage": {},
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
+    second = await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
+
+    assert second["findings_enriched"] == 1, "a callgraph arriving after the first must still be applied"
+
+    results = await db.analysis_results.find({"scan_id": _SCAN_ID, "analyzer_name": "reachability"}).to_list(None)
+    assert len(results) == 1, "a stale duplicate would render twice in the raw-data view"
+    assert sorted(results[0]["result"]["languages"]) == ["javascript", "python"]
+
+
+@pytest.mark.asyncio
+async def test_coverable_count_excludes_os_packages(db):
+    """Container scans are almost all OS packages, which no callgraph tool can ever cover.
+
+    Without this figure a team cannot tell "reachability found nothing yet" from "reachability
+    can never say anything here", and enables callgraph jobs that cannot help them.
+    """
+    from app.services.reachability_enrichment import count_coverable_findings
+
+    await db.dependencies.insert_many(
+        [
+            {"scan_id": _SCAN_ID, "name": "libssl3", "type": "deb", "purl": "pkg:deb/debian/libssl3@3.5.5"},
+            {"scan_id": _SCAN_ID, "name": "sqlite-libs", "type": "apk", "purl": "pkg:apk/alpine/sqlite-libs@3.40"},
+            {"scan_id": _SCAN_ID, "name": "org.json:json", "type": "maven", "purl": "pkg:maven/org.json/json@2023"},
+            {"scan_id": _SCAN_ID, "name": "lodash", "type": "npm", "purl": "pkg:npm/lodash@4.17.21"},
+        ]
+    )
+    for finding_id, component in (
+        ("CVE-1", "libssl3"),
+        ("CVE-2", "sqlite-libs"),
+        ("CVE-3", "org.json:json"),
+        ("CVE-4", "lodash"),
+    ):
+        await db.findings.insert_one(_finding(finding_id, component))
+
+    assert await count_coverable_findings(db, _SCAN_ID) == 1
+
+
+@pytest.mark.asyncio
+async def test_coverable_count_is_zero_without_dependencies(db):
+    from app.services.reachability_enrichment import count_coverable_findings
+
+    await db.findings.insert_one(_finding("CVE-1", "libssl3"))
+    assert await count_coverable_findings(db, _SCAN_ID) == 0

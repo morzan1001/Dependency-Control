@@ -96,7 +96,7 @@ class TestCallgraphModel:
         defaults = {
             "project_id": "proj-1",
             "language": "python",
-            "tool": "pyan",
+            "tool": "ast",
         }
         defaults.update(overrides)
         return Callgraph(**defaults)
@@ -105,7 +105,7 @@ class TestCallgraphModel:
         cg = self._make_callgraph()
         assert cg.project_id == "proj-1"
         assert cg.language == "python"
-        assert cg.tool == "pyan"
+        assert cg.tool == "ast"
 
     def test_id_auto_generated(self):
         a = self._make_callgraph()
@@ -128,6 +128,7 @@ class TestCallgraphModel:
         assert cg.imports == []
         assert cg.calls == []
         assert cg.module_usage == {}
+        assert cg.analyzed_modules == []
 
     def test_numeric_defaults_zero(self):
         cg = self._make_callgraph()
@@ -140,7 +141,6 @@ class TestCallgraphModel:
         cg = self._make_callgraph()
         after = datetime.now(timezone.utc)
         assert before <= cg.created_at <= after
-        assert before <= cg.updated_at <= after
 
     def test_with_nested_imports_and_calls(self):
         cg = self._make_callgraph(
@@ -165,9 +165,13 @@ class TestCallgraphModel:
         assert "requests" in cg.module_usage
         assert cg.module_usage["requests"].import_count == 3
 
+    def test_analyzed_modules_persisted(self):
+        cg = self._make_callgraph(analyzed_modules=["requests", "urllib3"])
+        assert cg.model_dump(by_alias=True)["analyzed_modules"] == ["requests", "urllib3"]
+
     def test_missing_required_field_rejected(self):
         with pytest.raises(ValidationError):
-            Callgraph(language="python", tool="pyan")
+            Callgraph(language="python", tool="ast")
 
 
 class TestCallgraphIdAlias:
@@ -175,7 +179,7 @@ class TestCallgraphIdAlias:
         defaults = {
             "project_id": "proj-1",
             "language": "python",
-            "tool": "pyan",
+            "tool": "ast",
         }
         defaults.update(overrides)
         return Callgraph(**defaults)
@@ -191,7 +195,7 @@ class TestCallgraphIdAlias:
             _id="cg-custom-id",
             project_id="p1",
             language="go",
-            tool="go-callvis",
+            tool="go-list",
         )
         assert cg.id == "cg-custom-id"
 

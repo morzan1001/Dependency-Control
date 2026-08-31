@@ -7,8 +7,40 @@ from collections.abc import Iterable, Mapping
 from typing import Any, TypeVar
 
 _QUALIFIER_SEPARATORS = (":", "/")
+_JVM_LANGUAGES = frozenset({"java", "kotlin", "scala", "groovy"})
 
 _T = TypeVar("_T")
+
+
+def npm_package_key(name: str) -> str:
+    """Reduce an npm specifier to its package: ``@scope/pkg`` keeps two segments."""
+    parts = name.split("/")
+    if name.startswith("@") and len(parts) >= 2:
+        return f"{parts[0]}/{parts[1]}".lower()
+    return parts[0].lower()
+
+
+def canonical_module_key(name: str, language: str) -> str:
+    """Canonical lookup key for a module/package name, per language.
+
+    The single meeting point between the callgraph parsers, which key stored modules by
+    it, and reachability enrichment, which derives it from a finding's component name.
+    """
+    if name.startswith(("./", "../")):
+        return name
+
+    language = language.lower()
+
+    if language == "python":
+        return name.split(".")[0].lower().replace("-", "_")
+
+    if language == "go":
+        return name.lower()
+
+    if language in _JVM_LANGUAGES:
+        return name.strip().lower()
+
+    return npm_package_key(name)
 
 
 def normalize_component(component: str) -> str:

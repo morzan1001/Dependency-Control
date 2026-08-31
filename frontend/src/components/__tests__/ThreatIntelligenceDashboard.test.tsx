@@ -51,3 +51,33 @@ describe("ThreatIntelligenceDashboard noise reduction", () => {
     expect(screen.queryByText(/noise reduction/)).not.toBeInTheDocument();
   });
 });
+
+describe("ThreatIntelligenceDashboard reachability card", () => {
+  const reachability = {
+    analyzed_count: 30,
+    reachable_count: 12,
+    confirmed_reachable_count: 4,
+    likely_reachable_count: 8,
+    unreachable_count: 10,
+    unknown_count: 8,
+    reachable_critical: 0,
+    reachable_high: 0,
+  };
+
+  it("shows the symbol-level count as confirmed, not the reachable total", () => {
+    render(
+      <ThreatIntelligenceDashboard stats={{ ...makeStats({ total: 30, deprioritized_count: 0 }), reachability }} />,
+    );
+    const confirmedRow = screen.getByText(/Confirmed Reachable/).closest("div")?.parentElement;
+    expect(confirmedRow).toHaveTextContent("4");
+    expect(confirmedRow).not.toHaveTextContent("12");
+  });
+
+  it("keeps the import-level count on the likely row", () => {
+    render(
+      <ThreatIntelligenceDashboard stats={{ ...makeStats({ total: 30, deprioritized_count: 0 }), reachability }} />,
+    );
+    const likelyRow = screen.getByText(/Likely Reachable/).closest("div")?.parentElement;
+    expect(likelyRow).toHaveTextContent("8");
+  });
+});

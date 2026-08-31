@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 _MSG_INVALID_API_KEY = "Invalid API Key"
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token")
+optional_oauth2_scheme = OAuth2PasswordBearer(tokenUrl=f"{settings.API_V1_STR}/login/access-token", auto_error=False)
 
 auth_token_validations_total: Counter | None = None
 
@@ -467,5 +468,31 @@ async def get_project_for_ingest(
     raise HTTPException(status_code=401, detail="Missing authentication credentials")
 
 
+async def authorize_callgraph_write(
+    project_id: str,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+    oidc_token: str | None = Header(None, alias="Job-Token"),
+    token: str | None = Depends(optional_oauth2_scheme),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    settings_: SystemSettings = Depends(get_system_settings),
+) -> str:
+    """Authorize a callgraph write for CI credentials or a logged-in user; returns the project id."""
+    from app.api.v1.helpers.callgraph import check_callgraph_access
+
+    if x_api_key or oidc_token:
+        project = await get_project_for_ingest(x_api_key=x_api_key, oidc_token=oidc_token, db=db, settings=settings_)
+        if str(project.id) != project_id:
+            raise HTTPException(status_code=403, detail="CI credentials do not match the target project")
+        return project_id
+
+    if token:
+        user = await get_current_user(db=db, token=token)
+        await check_callgraph_access(project_id, await get_current_active_user(user), db, require_write=True)
+        return project_id
+
+    raise HTTPException(status_code=401, detail="Missing authentication credentials")
+
+
 DatabaseDep = Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)]
 CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
+CallgraphWriteDep = Annotated[str, Depends(authorize_callgraph_write)]

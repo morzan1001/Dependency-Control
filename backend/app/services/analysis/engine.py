@@ -68,7 +68,7 @@ from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment import enrich_vulnerability_findings
-from app.services.reachability_enrichment import enrich_findings_with_reachability
+from app.services.reachability_enrichment import enrich_findings_with_reachability, persist_reachability_result
 from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
 from app.services.update_frequency_rollup import record_scan_update_delta
 
@@ -648,15 +648,7 @@ async def _run_reachability_enrichment(
             [cg.model_dump(by_alias=True) for cg in callgraphs],
             enriched_count,
         )
-        await result_repo.create_raw(
-            {
-                "_id": str(uuid.uuid4()),
-                "scan_id": scan_id,
-                "analyzer_name": "reachability",
-                "result": reachability_summary,
-                "created_at": datetime.now(timezone.utc),
-            }
-        )
+        await persist_reachability_result(result_repo, scan_id, reachability_summary)
         results_summary.append(f"reachability: Success ({enriched_count} enriched)")
         logger.info(f"[reachability] Enriched {enriched_count} findings for scan {scan_id}")
 
@@ -666,8 +658,8 @@ async def _run_reachability_enrichment(
         if analysis_reachable_vulnerabilities_total:
             for vf in vulnerability_findings:
                 reachability = vf.get("details", {}).get("reachability", {})
-                if reachability.get("is_reachable"):
-                    level = reachability.get("level", "unknown")
+                if reachability.get("is_reachable") is True:
+                    level = reachability.get("analysis_level") or "unknown"
                     analysis_reachable_vulnerabilities_total.labels(reachability_level=level).inc()
     except Exception as e:
         results_summary.append("reachability: Failed")

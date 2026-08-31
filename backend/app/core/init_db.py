@@ -401,6 +401,31 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("reachable", pymongo.ASCENDING)])
 
+    # Callgraphs
+    await database["callgraphs"].create_index([("project_id", pymongo.ASCENDING), ("scan_id", pymongo.ASCENDING)])
+    await database["callgraphs"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
+    # One callgraph per language per scan. The type filter keeps rows with a null scan_id
+    # (pipeline-only uploads) out of the uniqueness scope. Guarded like the teams index so a
+    # pre-existing duplicate cannot crash startup.
+    try:
+        await database["callgraphs"].create_index(
+            [
+                ("project_id", pymongo.ASCENDING),
+                ("language", pymongo.ASCENDING),
+                ("scan_id", pymongo.ASCENDING),
+            ],
+            unique=True,
+            partialFilterExpression={"scan_id": {MONGO_TYPE: "string"}},
+        )
+    except (pymongo.errors.DuplicateKeyError, pymongo.errors.OperationFailure) as exc:
+        key_info = getattr(exc, "details", None) or str(exc)
+        logger.error(
+            "Skipping unique callgraphs (project_id, language, scan_id) index: build failed "
+            "(likely a pre-existing duplicate). Startup continues without it; reconcile the "
+            "duplicate and re-run. Offending key/error: %s",
+            key_info,
+        )
+
     # System Invitations
     await database["system_invitations"].create_index("token", unique=True)
     await database["system_invitations"].create_index(

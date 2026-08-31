@@ -84,5 +84,6 @@ class SBOMIngestResponse(BaseModel):
 class ProjectConfigResponse(BaseModel):
     """Response for project configuration endpoint."""
 
+    project_id: str = Field(..., description="Identifier of the authenticated project")
     active_analyzers: list[str] = Field(default_factory=list, description="List of active analyzer names")
     retention_days: int = Field(90, description="Scan retention period in days")

@@ -263,6 +263,25 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
           </Card>
         )}
 
+        {reachability && reachability.analyzed_count === 0 && (
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <Target className="h-4 w-4" />
+                Reachability Analysis
+              </CardTitle>
+              <CardDescription>
+                {(reachability.coverable_count ?? 0) === 0
+                  ? 'No finding here is in an ecosystem a callgraph can analyse (npm, PyPI, Go). ' +
+                    'OS packages from a container image are never coverable, so enabling the ' +
+                    'callgraph jobs would not change these results.'
+                  : `${reachability.coverable_count} of ${totalVulns} findings are in a callgraph-supported ` +
+                    'ecosystem. Add the callgraph job for that language to your pipeline to get verdicts.'}
+              </CardDescription>
+            </CardHeader>
+          </Card>
+        )}
+
         {reachability && reachability.analyzed_count > 0 && (
           <Card>
             <CardHeader className="pb-2">
@@ -275,17 +294,17 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <AlertTriangle className="h-4 w-4 text-severity-critical" />
-                  <span className="text-sm">Confirmed Reachable</span>
+                  <span className="text-sm">Confirmed Reachable (symbol-level)</span>
                 </div>
-                <Badge variant={reachability.reachable_count > 0 ? "destructive" : "secondary"}>
-                  {reachability.reachable_count}
+                <Badge variant={reachability.confirmed_reachable_count > 0 ? "destructive" : "secondary"}>
+                  {reachability.confirmed_reachable_count}
                 </Badge>
               </div>
               
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">
                   <AlertCircle className="h-4 w-4 text-severity-high" />
-                  <span className="text-sm">Likely Reachable</span>
+                  <span className="text-sm">Likely Reachable (import-level)</span>
                 </div>
                 <Badge variant="secondary" className="bg-orange-500/20">
                   {reachability.likely_reachable_count}
@@ -309,6 +328,13 @@ export function ThreatIntelligenceDashboard({ stats, className }: Readonly<Props
                 </div>
                 <Badge variant="secondary">{reachability.unknown_count}</Badge>
               </div>
+
+              {reachability.coverable_count !== undefined && (
+                <p className="text-xs text-muted-foreground pt-1">
+                  {reachability.coverable_count} of {totalVulns} findings are in a callgraph-supported
+                  ecosystem; the rest can never receive a verdict.
+                </p>
+              )}
               
               {(reachability.reachable_critical > 0 || reachability.reachable_high > 0) && (
                 <div className="pt-2 border-t text-xs text-muted-foreground">

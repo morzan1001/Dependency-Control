@@ -408,6 +408,7 @@ async def get_project_config(
 ) -> ProjectConfigResponse:
     """Get project configuration (active analyzers and settings) for CI/CD pipelines."""
     return ProjectConfigResponse(
+        project_id=str(project.id),
         active_analyzers=project.active_analyzers,
         retention_days=project.retention_days,
     )

@@ -115,13 +115,11 @@ class TestDatetimeSerialization:
         cg = Callgraph(
             project_id="p1",
             language="python",
-            tool="pyan",
+            tool="ast-scan",
         )
         data = cg.model_dump(mode="json")
         assert isinstance(data["created_at"], str)
-        assert isinstance(data["updated_at"], str)
         datetime.fromisoformat(data["created_at"])
-        datetime.fromisoformat(data["updated_at"])
 
     def test_project_datetime_json(self):
         from app.models.project import Project
@@ -681,7 +679,7 @@ class TestMongoDocumentIdConsolidation:
         "app.models.callgraph:Callgraph": {
             "project_id": "p1",
             "language": "python",
-            "tool": "pyan",
+            "tool": "ast",
         },
         "app.models.dependency:Dependency": {
             "project_id": "p1",
