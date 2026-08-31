@@ -6,7 +6,7 @@ import hashlib
 import logging
 from collections import Counter
 from collections.abc import Coroutine, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Annotated, Any, cast
 
@@ -61,7 +61,12 @@ from app.services.update_frequency import (
     window_coverage_status,
     window_cutoff,
 )
-from app.services.update_frequency_fold import accounted_commits, fold_window, select_window
+from app.services.update_frequency_fold import (
+    accounted_commits,
+    fold_window,
+    select_window,
+    window_bars,
+)
 
 from ._shared import _MSG_ACCESS_DENIED
 
@@ -320,6 +325,7 @@ class _ResolvedWindow:
     # Set only when the cap truncated the branch: the rate then has to divide by the
     # stretch actually read, not by a window whose older part was never looked at.
     measured_days: int | None = None
+    bars: list[list[dict[str, Any]]] = field(default_factory=list)
 
 
 def _resolve_window(
@@ -348,7 +354,8 @@ def _fold_branch(branch: str, deltas: list[dict[str, Any]], activity: BranchWind
         return _ResolvedWindow(branch, [], "pending")
 
     window = select_window(deltas)
-    if len(window) < 2:
+    bars = window_bars(window)
+    if len(bars) < 2:
         # A writer failure is the reason there is nothing to fold, not a scan cadence.
         return _ResolvedWindow(branch, [], "error" if any(d.get("error") for d in deltas) else "insufficient_data")
     # Past the cap the branch's own commit count describes a longer stretch than either
@@ -356,13 +363,16 @@ def _fold_branch(branch: str, deltas: list[dict[str, Any]], activity: BranchWind
     status: UpdateDataStatus = (
         "ready" if capped else window_coverage_status(accounted_commits(deltas, window), activity.commit_count)
     )
-    measured_days = _spanned_days(window) if capped else None
-    return _ResolvedWindow(branch, window, status, measured_days)
+    measured_days = _spanned_days(bars) if capped else None
+    return _ResolvedWindow(branch, window, status, measured_days, bars)
 
 
-def _spanned_days(window: list[dict[str, Any]]) -> int:
-    """Whole days the folded stretch covers, floored at one so a burst cannot inflate a rate."""
-    span = as_utc(window[-1]["scan_created_at"]) - as_utc(window[0]["scan_created_at"])
+def _spanned_days(bars: list[list[dict[str, Any]]]) -> int:
+    """Whole days the folded stretch covers, floored at one so a burst cannot inflate a rate.
+
+    Measured representative to representative, the two scans the bars are dated by.
+    """
+    span = as_utc(bars[-1][-1]["scan_created_at"]) - as_utc(bars[0][-1]["scan_created_at"])
     return max(1, round(span.total_seconds() / 86400))
 
 
@@ -436,9 +446,13 @@ async def _compute_comparison_from_rollup(
     return rank_summaries(summaries).model_dump()
 
 
-async def _rollup_slowest_packages(db: DatabaseDep, window: Sequence[dict[str, Any]]) -> list[SlowPackage]:
-    """Remaining backlog, ranked by how many window scans kept flagging the package."""
-    scan_ids = [delta["_id"] for delta in window]
+async def _scan_deps(db: DatabaseDep, scan_id: str) -> dict[str, dict[str, str]]:
+    return fold_scan_deps(await DependencyRepository(db).find_all({"scan_id": scan_id}, projection=DEP_PROJECTION))
+
+
+async def _rollup_slowest_packages(db: DatabaseDep, bars: Sequence[Sequence[dict[str, Any]]]) -> list[SlowPackage]:
+    """Remaining backlog, ranked by how many timeline bars kept flagging the package."""
+    scan_ids = [bar[-1]["_id"] for bar in bars]
     outdated_sets = await ScanOutdatedSetRepository(db).names_by_scan(scan_ids)
     latest_id = next((scan_id for scan_id in reversed(scan_ids) if scan_id in outdated_sets), None)
     if latest_id is None:
@@ -450,11 +464,14 @@ async def _rollup_slowest_packages(db: DatabaseDep, window: Sequence[dict[str, A
 
     entries = await load_outdated_entries(AnalysisResultRepository(db), latest_id) or []
     analyzer_info = {component: e for e in entries if (component := e.get("component"))}
-    deps = fold_scan_deps(await DependencyRepository(db).find_all({"scan_id": latest_id}, projection=DEP_PROJECTION))
+    deps = await _scan_deps(db, latest_id)
     types = {info["name"]: info["type"] for info in deps.values()}
+    # current_version describes what the project holds now, so it comes from the newest bar
+    # even when the backlog was last measured on an older one.
+    newest_deps = deps if scan_ids[-1] == latest_id else await _scan_deps(db, scan_ids[-1])
     # An ambiguous bare name would show one purl sibling's version for the other.
-    per_name = Counter(info["name"] for info in deps.values())
-    versions = {info["name"]: info["version"] for info in deps.values() if per_name[info["name"]] == 1}
+    per_name = Counter(info["name"] for info in newest_deps.values())
+    versions = {info["name"]: info["version"] for info in newest_deps.values() if per_name[info["name"]] == 1}
 
     return [
         SlowPackage(
@@ -497,7 +514,7 @@ async def _rollup_project_metrics(
         project_id,
         project.get("name", "Unknown"),
         branch=resolved.branch,
-        slowest_packages=await _rollup_slowest_packages(db, resolved.window),
+        slowest_packages=await _rollup_slowest_packages(db, resolved.bars),
     )
 
 

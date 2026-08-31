@@ -4,10 +4,12 @@ This is the gate for flipping UPDATE_FREQUENCY_USE_ROLLUP, so it checks both rea
 switches: the cross-project comparison endpoint — every row field, the row order and the
 aggregate counters — and the per-project metrics behind the project page.
 
-No deviation is excused by project. Both paths select the same scans by the same rules, so
-every scan only one of them folded is a gap in the ledger and is named with what the ledger
-holds for it — an unwritten delta, a writer failure, or a delta the fold left out. Those are
-what the backfill is for.
+No deviation is excused by project. Both paths select the same scans by the same rules and
+bar them the same way, so every scan only one of them selected is a gap in the ledger and is
+named with what the ledger holds for it — an unwritten delta, a writer failure, or a delta
+the fold left out. Those are what the backfill is for. The scan sets are compared over the
+two windows rather than the two timelines: a same-commit run names one timeline bar, so a
+timeline comparison would be blind to every scan inside a run.
 
 Deviations that are not a scan-set difference
 ---------------------------------------------
@@ -55,12 +57,13 @@ from app.api.v1.endpoints.analytics.update_frequency import (
 from app.core.config import settings
 from app.core.constants import SCAN_USABLE_STATUSES
 from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
+from app.repositories.update_frequency import WINDOW_HARD_LIMIT, ScanUpdateDeltaRepository
 from app.schemas.analytics import UpdateFrequencyMetrics
 from app.services.update_frequency import (
     compute_update_frequency,
     window_cutoff,
 )
-from app.services.update_frequency_fold import _RECENT_UPDATES_LIMIT
+from app.services.update_frequency_fold import _RECENT_UPDATES_LIMIT, select_window
 from app.services.update_frequency_rollup import _UPDATES_SAMPLE_CAP
 
 DEFAULT_SAMPLE = 20
@@ -291,17 +294,45 @@ async def known_causes(
     )
 
 
-async def scan_set_diff(db: Any, live: UpdateFrequencyMetrics, rollup: UpdateFrequencyMetrics) -> ScanSetDiff:
-    """Which scans only one path folded, and why the ledger has no usable delta for each."""
-    live_ids = [entry.scan_id for entry in live.scan_timeline]
-    rollup_ids = {entry.scan_id for entry in rollup.scan_timeline}
-    missing = [scan_id for scan_id in live_ids if scan_id not in rollup_ids]
+async def scan_set_diff(db: Any, project_id: str, branch: str, since: datetime) -> ScanSetDiff:
+    """Which scans only one path selects, and why the ledger has no usable delta for each.
 
-    docs = await db.scan_update_deltas.find({"_id": {"$in": missing}}, {"dep_count": 1, "error": 1}).to_list(None)
-    deltas = {doc["_id"]: doc for doc in docs}
+    Compared over the two windows, not the two timelines: a same-commit run names one
+    timeline bar on both paths, so a timeline comparison would be blind to every scan
+    inside a run.
+    """
+    deltas = await ScanUpdateDeltaRepository(db).find_project_window(project_id, branch, since, WINDOW_HARD_LIMIT)
+    folded = [delta["_id"] for delta in select_window(deltas)]
+
+    docs = await db.scans.find(
+        {
+            "project_id": project_id,
+            "branch": branch,
+            "status": {"$in": SCAN_USABLE_STATUSES},
+            "is_rescan": {"$ne": True},
+            "created_at": {"$gte": since},
+        },
+        {"_id": 1},
+        sort=[("created_at", -1), ("_id", -1)],
+        limit=WINDOW_HARD_LIMIT,
+    ).to_list(None)
+    usable = [doc["_id"] for doc in reversed(docs)]
+
+    # Only the scans the ledger left out need a dependency lookup; the rest carry some by
+    # definition, because the writer recorded a dep_count above zero for them.
+    candidates = [scan_id for scan_id in usable if scan_id not in set(folded)]
+    rows = await db.dependencies.aggregate(
+        [{"$match": {"scan_id": {"$in": candidates}}}, {"$group": {"_id": "$scan_id"}}]
+    ).to_list(None)
+    with_deps = {row["_id"] for row in rows}
+
+    delta_docs = await db.scan_update_deltas.find({"_id": {"$in": candidates}}, {"dep_count": 1, "error": 1}).to_list(
+        None
+    )
+    by_id = {doc["_id"]: doc for doc in delta_docs}
 
     def _why(scan_id: str) -> str:
-        doc = deltas.get(scan_id)
+        doc = by_id.get(scan_id)
         if doc is None:
             return _ABSENCE_NO_DELTA
         if doc.get("error"):
@@ -311,8 +342,8 @@ async def scan_set_diff(db: Any, live: UpdateFrequencyMetrics, rollup: UpdateFre
         return _ABSENCE_NOT_FOLDED
 
     return ScanSetDiff(
-        live_only=tuple((scan_id, _why(scan_id)) for scan_id in missing),
-        rollup_only=tuple(scan_id for scan_id in rollup_ids if scan_id not in set(live_ids)),
+        live_only=tuple((scan_id, _why(scan_id)) for scan_id in candidates if scan_id in with_deps),
+        rollup_only=tuple(scan_id for scan_id in folded if scan_id not in set(usable)),
     )
 
 
@@ -362,7 +393,7 @@ async def verify_project(db: Any, project: dict[str, Any], window_days: int) -> 
         project_name=project_name,
         branch=rollup.branch,
         deviations=tuple(compare_metrics(live, rollup, causes)),
-        scan_diff=await scan_set_diff(db, live, rollup),
+        scan_diff=await scan_set_diff(db, project_id, cast(str, rollup.branch), since),
     )
 
 

@@ -92,9 +92,11 @@ _SCAN_WINDOW_PROJECT_BATCH = 200
 # what the cap left out is what neither path was going to read.
 WINDOW_HARD_LIMIT = 1000
 
-# Two scans of one commit carry the same SBOM, so both read paths keep only the first
-# of a run. Counting documents instead would read a CI retry storm as missing data.
-# A scan that names no commit stands for itself, matching collapse_same_commit_runs.
+# Counting documents would read a CI retry storm as missing data, so coverage counts the
+# commits the window names. Only the token rule is shared with the timeline bars — a scan
+# naming no commit stands for itself; this is a set cardinality over the whole window,
+# while a bar is a maximal *consecutive* run, so a commit reused later is one token but
+# two bars.
 _COMMIT_TOKEN = {"$cond": [{"$eq": [{"$ifNull": ["$commit_hash", ""]}, ""]}, "$_id", "$commit_hash"]}
 
 

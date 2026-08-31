@@ -11,6 +11,7 @@ from typing import Any
 
 import pytest
 
+from app.api.v1.endpoints.analytics.update_frequency import _rollup_project_metrics
 from app.schemas.analytics import ProjectUpdateSummary
 from app.services.update_frequency import rank_summaries
 from scripts import verify_update_frequency_parity as parity
@@ -42,6 +43,7 @@ async def _seed_scan(
     *,
     project_id: str = PROJECT,
     branch: str = BRANCH,
+    commit_hash: str | None = None,
 ) -> None:
     await db.scans.insert_one(
         {
@@ -49,7 +51,7 @@ async def _seed_scan(
             "project_id": project_id,
             "branch": branch,
             "created_at": created_at,
-            "commit_hash": f"commit-{scan_id}",
+            "commit_hash": commit_hash or f"commit-{scan_id}",
             "status": "completed",
             "is_rescan": False,
         }
@@ -87,13 +89,17 @@ async def _seed_project(db: FakeDatabase, project_id: str = PROJECT, name: str =
     return project
 
 
-async def _build_ledger(db: FakeDatabase) -> None:
-    """Run the ingest writer over every seeded scan, oldest first, as the backfill does."""
+async def _record_delta(db: FakeDatabase, scan_id: str) -> None:
     from app.services.update_frequency_rollup import record_scan_update_delta
 
+    await record_scan_update_delta(db, scan_id)
+
+
+async def _build_ledger(db: FakeDatabase) -> None:
+    """Run the ingest writer over every seeded scan, oldest first, as the backfill does."""
     scans = await db.scans.find({}).to_list(None)
     for scan in sorted(scans, key=lambda s: (s["created_at"], s["_id"])):
-        await record_scan_update_delta(db, scan["_id"])
+        await _record_delta(db, scan["_id"])
 
 
 async def _seed_agreeing_history(db: FakeDatabase) -> dict[str, Any]:
@@ -209,6 +215,30 @@ class TestLedgerGaps:
 
         assert report.scan_diff.live_only == (("s1", "its delta was left out of the folded window"),)
         assert report.unexplained == report.deviations
+
+    @pytest.mark.asyncio
+    async def test_a_missing_delta_inside_a_same_commit_run_is_still_named(self):
+        # The run's last scan names the bar on both paths, so the two timelines agree
+        # while the windows do not. Comparing timelines would let this gap through.
+        db = FakeDatabase()
+        await _seed_scan(db, "s1", _days_ago(60), {"requests": "1.0.0"}, (), commit_hash="cA")
+        await _seed_scan(db, "b1", _days_ago(50), {"requests": "1.0.1"}, (), commit_hash="cB")
+        await _seed_scan(db, "b2", _days_ago(49), {"requests": "2.0.0"}, (), commit_hash="cB")
+        await _seed_scan(db, "b3", _days_ago(48), {"requests": "2.1.0"}, (), commit_hash="cB")
+        await _seed_scan(db, "s5", _days_ago(40), {"requests": "2.1.1"}, (), commit_hash="cC")
+        # The rollup was off while b2 was ingested, so b3 was diffed straight against b1.
+        for scan_id in ("s1", "b1", "b3", "s5"):
+            await _record_delta(db, scan_id)
+        project = await _seed_project(db)
+
+        report = await verify_project(db, project, WINDOW_DAYS)
+        live = await parity._live_metrics(db, project, WINDOW_DAYS)
+        rolled = await _rollup_project_metrics(db, project, WINDOW_DAYS)
+
+        assert [e.scan_id for e in live.scan_timeline] == [e.scan_id for e in rolled.scan_timeline]
+        assert report.scan_diff.live_only == (("b2", "no delta written yet"),)
+        # Two hops across b2 classify as major then minor; the single hop is one major.
+        assert {d.field: (d.live, d.rollup) for d in report.unexplained}["total_updates"] == (4, 3)
 
     @pytest.mark.asyncio
     async def test_a_scan_only_the_ledger_folds_excuses_nothing(self):

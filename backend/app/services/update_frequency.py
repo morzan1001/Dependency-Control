@@ -7,7 +7,7 @@ Streaming model — one scan pair at a time so peak memory stays at
 import asyncio
 import logging
 from collections import Counter, defaultdict, deque
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
@@ -304,11 +304,11 @@ def _mean_outdated(entries: Sequence[ScanTimelineEntry]) -> float | None:
 def compute_trend(scan_timeline: Sequence[ScanTimelineEntry]) -> tuple[str, str]:
     """Trend ``(direction, detail)`` from comparing the first vs second half of the timeline.
 
-    The leading baseline entry (no predecessor, structurally zero updates)
-    is excluded — averaging it in would report "improving" for every
-    project with a steady update rate. The backlog signal is dropped when
-    either half has no outdated analysis, since a missing measurement is
-    not a backlog of zero.
+    The leading entry is excluded because its incoming edge lies outside the
+    window: its height is not comparable with the others, and averaging it in
+    would report "improving" for every project with a steady update rate. The
+    backlog signal is dropped when either half has no outdated analysis, since
+    a missing measurement is not a backlog of zero.
     """
     timeline = scan_timeline[1:]
     if len(timeline) < 4:
@@ -385,10 +385,9 @@ def updates_per_month(total_updates: int, window_days: int | None) -> float | No
 
 
 def _aggregate_metrics(
-    completed_scans: list[dict[str, Any]],
+    bars: list[ScanTimelineEntry],
     ever_outdated: set[str],
     ever_resolved: set[str],
-    scan_timeline: list[ScanTimelineEntry],
     dep_type_map: dict[str, str],
     package_outdated_counts: dict[str, int],
     package_latest_info: dict[str, dict[str, str]],
@@ -407,10 +406,10 @@ def _aggregate_metrics(
     downgrade_total = type_counter.get("downgrade", 0)
     # Downgrades are recorded but are not update activity.
     total_updates = sum(type_counter.values()) - downgrade_total
-    num_intervals = len(completed_scans) - 1
+    num_intervals = len(bars) - 1
 
-    first_date: datetime = completed_scans[0]["created_at"]
-    last_date: datetime = completed_scans[-1]["created_at"]
+    first_date = datetime.fromisoformat(bars[0].date)
+    last_date = datetime.fromisoformat(bars[-1].date)
     raw_range_days = (last_date - first_date).total_seconds() / 86400.0
     # Floored at one day so the rendered span never reads as zero.
     time_range_days = max(1.0, raw_range_days)
@@ -432,7 +431,7 @@ def _aggregate_metrics(
         round(outdated_resolved_count / total_outdated_detected * 100, 1) if total_outdated_detected else None
     )
 
-    trend_direction, trend_detail = compute_trend(scan_timeline)
+    trend_direction, trend_detail = compute_trend(bars)
 
     slowest_packages = _build_slowest_packages(
         package_outdated_counts,
@@ -446,7 +445,7 @@ def _aggregate_metrics(
         project_id=project_id,
         project_name=project_name,
         branch=branch,
-        scan_count=len(completed_scans),
+        scan_count=len(bars),
         time_range_days=round(time_range_days, 2),
         first_scan_date=first_date.isoformat(),
         last_scan_date=last_date.isoformat(),
@@ -465,7 +464,7 @@ def _aggregate_metrics(
         update_coverage_pct=update_coverage_pct,
         trend_direction=trend_direction,
         trend_detail=trend_detail,
-        scan_timeline=scan_timeline,
+        scan_timeline=bars,
         slowest_packages=slowest_packages,
         recent_updates=recent_events,
         upstream_releases_last_12m_median=(upstream.upstream_releases_last_12m_median if upstream else None),
@@ -607,9 +606,13 @@ class _AccumulatorState:
                 self.package_specs[identity] = (system, info["deps_dev_name"])
 
     def record_outdated(self, outdated: set[str] | None) -> None:
+        """A backlog observed anywhere in the window counts, whether or not it names a bar."""
+        self.ever_outdated.update(outdated or ())
+
+    def record_bar_outdated(self, outdated: set[str] | None) -> None:
+        """The per-package tally counts bars, so only a run's representative feeds it."""
         for pkg in outdated or ():
             self.package_outdated_counts[pkg] += 1
-            self.ever_outdated.add(pkg)
 
     def record_resolved(
         self,
@@ -688,25 +691,53 @@ def window_coverage_status(accounted_commits: int, window_commits: int) -> Liter
     return "ready" if accounted_commits >= window_commits * READY_COVERAGE_RATIO else "partial"
 
 
-def collapse_same_commit_runs(scans_raw: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Keep only the first scan of each consecutive same-commit run.
+def same_commit_runs[T](items: Sequence[T], *, commit_of: Callable[[T], str | None]) -> list[list[T]]:
+    """Group one branch's window scans into same-commit runs, oldest first.
 
-    CI retries and duplicate ingests produce bursts of scans for one commit;
-    they carry identical SBOMs, so extra entries only pad the timeline with
-    zero-update bars and compress the covered time range.
+    Both read paths sum movement over every consecutive pair of window scans. A
+    run only merges those scans into one timeline bar, named by the run's last
+    scan; it never removes a pair from a sum. The bars therefore tile the pairs:
+    ``sum(bar.updates_count) == total_updates``, so a rate over the bars still
+    accounts for the pairs that fall inside a run.
+
+    A scan naming no commit stands for itself.
     """
-    collapsed: list[dict[str, Any]] = []
-    for scan in scans_raw:
-        prev = collapsed[-1] if collapsed else None
-        if prev is not None and scan["commit_hash"] and prev["commit_hash"] == scan["commit_hash"]:
-            continue
-        collapsed.append(scan)
-    return collapsed
+    runs: list[list[T]] = []
+    for item in items:
+        commit = commit_of(item)
+        if runs and commit and commit_of(runs[-1][-1]) == commit:
+            runs[-1].append(item)
+        else:
+            runs.append([item])
+    return runs
 
 
-# Same-commit collapse can shrink the fetched set; over-fetch so a burst of
-# CI retries on the head commit can't starve the window below max_scans.
-_COLLAPSE_HEADROOM = 5
+def fold_runs_into_bars(entries: Sequence[ScanTimelineEntry], commits: Sequence[str | None]) -> list[ScanTimelineEntry]:
+    """One bar per same-commit run, named and dated by the run's last scan."""
+    pairs = list(zip(entries, commits, strict=True))
+    bars: list[ScanTimelineEntry] = []
+    for run in same_commit_runs(pairs, commit_of=lambda pair: pair[1]):
+        members = [entry for entry, _commit in run]
+        last = members[-1]
+        bars.append(
+            ScanTimelineEntry(
+                scan_id=last.scan_id,
+                date=last.date,
+                updates_count=sum(m.updates_count for m in members),
+                outdated_count=last.outdated_count,
+                patch=sum(m.patch for m in members),
+                minor=sum(m.minor for m in members),
+                major=sum(m.major for m in members),
+                unknown=sum(m.unknown for m in members),
+                downgrades=sum(m.downgrades for m in members),
+            )
+        )
+    return bars
+
+
+# max_scans counts timeline bars, and a bar can hold a whole run; over-fetch so a
+# burst of CI retries on the head commit can't starve the window below max_scans.
+_BAR_FETCH_HEADROOM = 5
 
 
 async def _load_completed_scans(
@@ -722,7 +753,7 @@ async def _load_completed_scans(
     When ``since`` is set the calendar window dominates (capped by
     ``hard_limit``) and ``max_scans`` is ignored.
     """
-    fetch_limit = hard_limit if since is not None else min(hard_limit, max_scans * _COLLAPSE_HEADROOM)
+    fetch_limit = hard_limit if since is not None else min(hard_limit, max_scans * _BAR_FETCH_HEADROOM)
     # Filter status in the query so the limit counts only completed scans; filtering after
     # the limit would empty the window when the newest scans are failed/processing.
     docs = await scan_repo.find_many_raw(
@@ -747,18 +778,18 @@ async def _load_completed_scans(
     if since is not None:
         scans_raw = [s for s in scans_raw if s["created_at"] >= since]
     scans_raw.reverse()
-    collapsed = collapse_same_commit_runs(scans_raw)
-    # Collapse first, THEN cap, so distinct commits fill the window even after a storm.
-    if since is None and len(collapsed) > max_scans:
-        collapsed = collapsed[-max_scans:]
+    if since is None:
+        # Cap whole runs, so a retry storm cannot thin the window below max_scans bars.
+        runs = same_commit_runs(scans_raw, commit_of=lambda scan: scan["commit_hash"])
+        scans_raw = [scan for run in runs[-max_scans:] for scan in run]
     # A full fetch means older scans of this branch went unread, so the window the caller
     # asked for is wider than the stretch it is about to fold.
-    return collapsed, len(docs) >= fetch_limit
+    return scans_raw, len(docs) >= fetch_limit
 
 
-def _spanned_days(scans: list[dict[str, Any]]) -> int:
+def _spanned_days(bars: Sequence[ScanTimelineEntry]) -> int:
     """Whole days the retained stretch covers, floored at one so a burst cannot inflate a rate."""
-    span: timedelta = scans[-1]["created_at"] - scans[0]["created_at"]
+    span: timedelta = datetime.fromisoformat(bars[-1].date) - datetime.fromisoformat(bars[0].date)
     return max(1, round(span.total_seconds() / 86400))
 
 
@@ -811,6 +842,13 @@ async def compute_update_frequency(
     prev_outdated: set[str] | None = None
     latest_outdated: set[str] | None = None
 
+    def _close_bar() -> None:
+        """The previous survivor ended its run, so it is the scan the bar tallies read."""
+        nonlocal latest_outdated
+        state.record_bar_outdated(prev_outdated)
+        if prev_outdated is not None:
+            latest_outdated = prev_outdated
+
     for curr_scan in completed_scans:
         curr_deps = await _load_scan_deps(curr_scan["_id"])
         # A scan that produced no SBOM measured nothing, so the delta ledger drops it.
@@ -826,6 +864,8 @@ async def compute_update_frequency(
         events: list[tuple[DependencyUpdateEvent, str]] = []
         if analysed:
             prev_scan = analysed[-1]
+            if not curr_scan["commit_hash"] or prev_scan["commit_hash"] != curr_scan["commit_hash"]:
+                _close_bar()
             state.record_resolved(prev_outdated, curr_outdated, curr_deps)
             events = _compare_scan_pair(
                 {prev_scan["_id"]: prev_deps, curr_scan["_id"]: curr_deps},
@@ -845,24 +885,24 @@ async def compute_update_frequency(
         analysed.append(curr_scan)
         prev_deps = curr_deps
         prev_outdated = curr_outdated
-        if curr_outdated is not None:
-            latest_outdated = curr_outdated
 
-    if len(analysed) < 2:
-        first_date_str = analysed[0]["created_at"].isoformat() if analysed else ""
-        return _empty_metrics(project_id, project_name, len(analysed), first_date_str, branch=analyzed_branch)
+    if analysed:
+        _close_bar()
+    bars = fold_runs_into_bars(state.scan_timeline, [scan["commit_hash"] for scan in analysed])
+
+    if len(bars) < 2:
+        return _empty_metrics(project_id, project_name, len(bars), bars[0].date if bars else "", branch=analyzed_branch)
 
     upstream = await _maybe_fetch_upstream_cadence(release_fetcher, state.package_specs, state.first_seen_versions)
 
     # Past the cap the walk never saw the older part of the window, so the rate divides by
     # the stretch it did fold rather than by a window it only partly covered.
-    rate_days = _spanned_days(analysed) if truncated else window_days
+    rate_days = _spanned_days(bars) if truncated else window_days
 
     return _aggregate_metrics(
-        analysed,
+        bars,
         state.ever_outdated,
         state.ever_resolved,
-        state.scan_timeline,
         state.dep_type_map,
         state.package_outdated_counts,
         state.package_latest_info,

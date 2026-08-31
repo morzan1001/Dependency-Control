@@ -247,18 +247,12 @@ class TestEmptyMetrics:
 class TestAggregateMetricsCoverage:
     # coverage is None when nothing has ever been outdated
     def test_coverage_none_when_no_outdated(self):
-        scans = [
-            {"_id": "s1", "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc)},
-            {"_id": "s2", "created_at": datetime(2026, 1, 31, tzinfo=timezone.utc)},
-        ]
-        timeline = [_make_timeline_entry(0), _make_timeline_entry(1)]
         m = _aggregate_metrics(
             type_counter=Counter(),
             recent_events=[],
-            completed_scans=scans,
+            bars=[_make_timeline_entry(0), _make_timeline_entry(30)],
             ever_outdated=set(),
             ever_resolved=set(),
-            scan_timeline=timeline,
             dep_type_map={},
             package_outdated_counts={},
             package_latest_info={},
@@ -270,18 +264,12 @@ class TestAggregateMetricsCoverage:
         assert m.outdated_resolved == 0
 
     def test_coverage_pct_when_outdated_resolved(self):
-        scans = [
-            {"_id": "s1", "created_at": datetime(2026, 1, 1, tzinfo=timezone.utc)},
-            {"_id": "s2", "created_at": datetime(2026, 1, 31, tzinfo=timezone.utc)},
-        ]
-        timeline = [_make_timeline_entry(0), _make_timeline_entry(1)]
         m = _aggregate_metrics(
             type_counter=Counter(),
             recent_events=[],
-            completed_scans=scans,
+            bars=[_make_timeline_entry(0), _make_timeline_entry(30)],
             ever_outdated={"pkg-a", "pkg-b"},
             ever_resolved={"pkg-a"},
-            scan_timeline=timeline,
             dep_type_map={},
             package_outdated_counts={"pkg-a": 1, "pkg-b": 2},
             package_latest_info={},
@@ -637,7 +625,7 @@ class TestBranchScopedScanSelection:
     @pytest.mark.asyncio
     async def test_head_commit_storm_does_not_starve_window(self):
         # The newest max_scans raw scans are all the same head commit; distinct
-        # older commits must still fill the window after collapse.
+        # older commits must still fill the window.
         scans = [_make_scan(f"h{i}", 100 + i, commit_hash="head") for i in range(5)]
         scans += [_make_scan(f"c{i}", i, commit_hash=f"c{i}") for i in range(5)]
         deps: dict[str, list[dict[str, Any]]] = {}
@@ -646,9 +634,9 @@ class TestBranchScopedScanSelection:
         for i in range(5):
             deps[f"c{i}"] = [_make_dep(f"c{i}", "pkg-a", f"1.0.{i}")]
         m = await self._compute(scans, deps, branch="main", max_scans=5)
-        # Without collapse-before-cap this returns 1 scan and empty metrics.
-        assert m.scan_count >= 2
-        assert m.total_updates >= 1
+        # max_scans counts bars, so the storm takes one of the five and leaves four commits.
+        assert m.scan_count == 5
+        assert m.total_updates == 4
 
     @pytest.mark.asyncio
     async def test_explicit_branch_parameter_wins(self):
@@ -770,20 +758,22 @@ class TestBranchScopedScanSelection:
         assert m.total_updates == 1
 
     @pytest.mark.asyncio
-    async def test_same_commit_scan_storm_collapses(self):
+    async def test_a_same_commit_scan_storm_becomes_one_bar(self):
         # 5 CI runs of one commit within a day, then a real new commit.
         scans = [
             _make_scan("s0", 0, commit_hash="aaa"),
             *[_make_scan(f"s{i}", 0, commit_hash="bbb") for i in range(1, 6)],
             _make_scan("s6", 1, commit_hash="ccc"),
         ]
-        # Same commit -> identical dep sets.
         deps = {"s0": [_make_dep("s0", "pkg-a", "1.0.0")]}
         for i in range(1, 6):
             deps[f"s{i}"] = [_make_dep(f"s{i}", "pkg-a", "1.0.1")]
         deps["s6"] = [_make_dep("s6", "pkg-a", "1.1.0")]
         m = await self._compute(scans, deps)
         assert m.scan_count == 3
+        assert [e.scan_id for e in m.scan_timeline] == ["s0", "s5", "s6"]
+        # The storm's own bump lands on the bar its run named, not on the run's first try.
+        assert [e.updates_count for e in m.scan_timeline] == [0, 1, 1]
         assert m.total_updates == 2
 
 
@@ -1842,9 +1832,9 @@ class TestTheLiveWalkIsAlwaysFullyCovered:
 
     @pytest.mark.asyncio
     async def test_a_retry_storm_leaves_a_project_fully_covered(self):
-        # Eight of ten scans are CI retries of one commit. Both read paths keep
-        # the first of a run, so counting the retries as missing coverage would
-        # take a healthy project out of the ranking for scanning too often.
+        # Eight of ten scans are CI retries of one commit. Both read paths give a run
+        # one bar, so counting the retries as missing coverage would take a healthy
+        # project out of the ranking for scanning too often.
         scans, deps = self._retry_storm_project("proj-retry")
 
         result = await self._compare([{"_id": "proj-retry", "name": "Retry"}], scans, deps)

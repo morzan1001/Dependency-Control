@@ -6,6 +6,7 @@ import logging
 from collections import Counter
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime
 from itertools import dropwhile, pairwise
 from typing import Any, Literal
 
@@ -20,9 +21,10 @@ from app.services.release_history import UpstreamCadenceMetrics
 from app.services.update_frequency import (
     ECOSYSTEM_DOMINANCE_THRESHOLD,
     as_utc,
-    collapse_same_commit_runs,
     compute_trend,
+    fold_runs_into_bars,
     granularity_ratio,
+    same_commit_runs,
     updates_per_month,
 )
 
@@ -149,14 +151,18 @@ def select_window(deltas: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
     SBOM-less scans and writer failures drop out: a missing measurement is
     not a measurement of zero, and keeping it would add a structural
     zero-update bar. The chain is then cut back to the newest run of scans
-    that really do follow one another, and same-commit CI retries collapse
-    into the first scan of their run. ``window[0]`` is the anchor: its update
+    that really do follow one another. ``window[0]`` is the anchor: its update
     counts are dropped because they compare against a scan outside the window,
     while its id, date and outdated count still enter the fold.
     """
     _reject_broken_contract(deltas)
     usable = [d for d in deltas if int(d.get("dep_count", 0)) > 0 and not d.get("error")]
-    return collapse_same_commit_runs(_contiguous_tail(usable))
+    return _contiguous_tail(usable)
+
+
+def window_bars(window: Sequence[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    """The window's same-commit runs: one timeline bar each."""
+    return same_commit_runs(window, commit_of=lambda delta: delta.get("commit_hash"))
 
 
 def accounted_commits(deltas: Sequence[dict[str, Any]], window: Sequence[dict[str, Any]]) -> int:
@@ -184,11 +190,11 @@ def fold_window(
     calendar span the caller selected on, or None when it asked for a fixed
     number of scans instead.
     """
-    if len(window) < 2:
-        return _short_window(window)
-
-    timeline = [_timeline_entry(window[0], baseline=True)]
-    timeline.extend(_timeline_entry(delta, baseline=False) for delta in window[1:])
+    per_scan = [_timeline_entry(window[0], baseline=True)] if window else []
+    per_scan.extend(_timeline_entry(delta, baseline=False) for delta in window[1:])
+    timeline = fold_runs_into_bars(per_scan, [delta.get("commit_hash") for delta in window])
+    if len(timeline) < 2:
+        return _short_window(timeline)
 
     kinds: Counter[str] = Counter()
     for delta in window[1:]:
@@ -199,17 +205,17 @@ def fold_window(
     ever_outdated, ever_resolved = _outdated_movement(window, baseline_outdated)
 
     total_updates = sum(kinds[kind] for kind in _UPDATE_KINDS)
-    num_intervals = len(window) - 1
+    num_intervals = len(timeline) - 1
 
-    first_date = as_utc(window[0]["scan_created_at"])
-    last_date = as_utc(window[-1]["scan_created_at"])
+    first_date = datetime.fromisoformat(timeline[0].date)
+    last_date = datetime.fromisoformat(timeline[-1].date)
     raw_range_days = (last_date - first_date).total_seconds() / 86400.0
 
     resolved_count = len(ever_outdated & ever_resolved)
     trend_direction, trend_detail = compute_trend(timeline)
 
     return FoldedWindow(
-        scan_count=len(window),
+        scan_count=len(timeline),
         # Floored at one day so the rendered span never reads as zero.
         time_range_days=round(max(1.0, raw_range_days), 2),
         first_scan_date=first_date.isoformat(),
@@ -286,11 +292,11 @@ def _outdated_movement(
     return ever_outdated, ever_resolved
 
 
-def _short_window(window: Sequence[dict[str, Any]]) -> FoldedWindow:
-    """A window with fewer than two scans supports no comparison at all."""
-    scan_date = as_utc(window[0]["scan_created_at"]).isoformat() if window else ""
+def _short_window(bars: Sequence[ScanTimelineEntry]) -> FoldedWindow:
+    """A window with fewer than two bars supports no comparison at all."""
+    scan_date = bars[0].date if bars else ""
     return FoldedWindow(
-        scan_count=len(window),
+        scan_count=len(bars),
         time_range_days=0.0,
         first_scan_date=scan_date,
         last_scan_date=scan_date,

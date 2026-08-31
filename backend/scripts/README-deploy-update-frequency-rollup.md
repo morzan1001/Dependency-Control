@@ -36,6 +36,29 @@ fall on the changed fallback, so `branch`, `scan_count`, `updates_per_month`, `p
 Rows whose numbers are unavailable are also listed now instead of being counted away, so the
 table gets longer.
 
+**The same-commit rule changed too, and it moves numbers on both paths at this step.** A CI
+retry storm used to be represented by the *first* scan of its run, and the movement across the
+other scans of that run was dropped. A run is now one timeline bar named by its *last* scan, and
+every consecutive pair of window scans is summed. 44.7% of the 30,354 usable scans in a 90-day
+window are same-commit repetitions and 1,202 of 2,574 chains are affected, 226 of them by more
+than half, so this is broadly visible:
+
+* `total_outdated_detected` rises wherever a backlog moved inside a run — measured at 42% of
+  adjacent same-commit pairs in production.
+* `update_coverage_pct` moves either way, and it is the ranking's sort key, so a project can
+  leave the podium. A package removed and re-added inside a run is no longer a resolution, so
+  its coverage falls; measured on synthetic histories it fell in 9 of 44 movements, in one case
+  from 100% to 0%. That is the fabrication going away, but it reads like a regression.
+* `total_updates` mostly rises, by the same-commit pairs whose SBOM really differs (2.9% of
+  them), and falls where a package moved away and back inside one run.
+* `first_scan_date` and `last_scan_date` move to the last member of their run, so a project
+  whose head commit was retried no longer reads as stale.
+* `slowest_packages.scans_outdated` counts bars, so it can only fall.
+
+Expect the live path to read roughly 1.8x more dependency sets than before (30,354 instead of
+about 16,800 in a 90-day window; 1,881 instead of about 1,040 for the largest project). Whether
+two scans of one commit carry the same SBOM is only knowable after reading both.
+
 ```
 kubectl rollout status deployment/dependency-control-backend -n dependency-control
 ```

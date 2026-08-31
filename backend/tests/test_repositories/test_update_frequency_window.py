@@ -195,7 +195,7 @@ class TestWindowScansByBranch:
 
     @pytest.mark.asyncio
     async def test_scans_naming_no_commit_each_stand_for_themselves(self):
-        # collapse_same_commit_runs keeps every one of them, so they must each count.
+        # Each gets a timeline bar of its own, so each must count towards coverage too.
         db = FakeDatabase()
         await _seed_scan(db, "s1", "p1", "main", 0, commit_hash=None)
         await _seed_scan(db, "s2", "p1", "main", 10, commit_hash="")

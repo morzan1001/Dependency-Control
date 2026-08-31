@@ -217,7 +217,7 @@ class TestDifferentialNormalHistory:
         assert live.total_updates == 1
 
     @pytest.mark.asyncio
-    async def test_same_commit_retries_collapse_in_both_paths(self):
+    async def test_same_commit_retries_share_one_bar_in_both_paths(self):
         db = FakeDatabase()
         await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, (), commit_hash="c1")
         await _seed_scan(db, "s2", _days_ago(50), {"requests": "2.1.0"}, (), commit_hash="c2")
@@ -230,6 +230,9 @@ class TestDifferentialNormalHistory:
 
         _assert_same_metrics(live, rolled)
         assert live.scan_count == 2
+        # The bar is the run's newest scan, so the project's last activity is not backdated.
+        assert [e.scan_id for e in live.scan_timeline] == ["s1", "s4"]
+        assert live.last_scan_date == _days_ago(48).isoformat()
 
     @pytest.mark.asyncio
     async def test_a_scan_without_outdated_analysis_matches(self):
@@ -740,9 +743,9 @@ class TestPartialCoverage:
 
     @pytest.mark.asyncio
     async def test_a_retry_heavy_project_is_fully_covered_on_both_paths(self):
-        # Both paths keep only the first scan of a same-commit run, so coverage counts
-        # commits too. Counting raw scans instead read a CI retry storm as missing data
-        # and dropped a healthy project out of the ranking.
+        # Both paths give a same-commit run one bar, so coverage counts commits too.
+        # Counting raw scans instead read a CI retry storm as missing data and dropped
+        # a healthy project out of the ranking.
         db = FakeDatabase()
         await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, (), commit_hash="c1")
         for i, day in enumerate((50, 49, 48)):
@@ -829,11 +832,11 @@ class TestWindowCap:
         assert live.scan_count == 5
 
     @pytest.mark.parametrize(
-        ("documents", "retries", "window_commits", "folded"),
+        ("documents", "retries", "window_commits", "bars"),
         [(1200, 1, 1200, 1000), (1881, 2, 941, 501), (1881, 3, 627, 334)],
     )
     def test_the_largest_production_branches_stay_ready(
-        self, documents: int, retries: int, window_commits: int, folded: int
+        self, documents: int, retries: int, window_commits: int, bars: int
     ) -> None:
         # 1881 scans is the largest project in production. Both paths read only the
         # newest WINDOW_HARD_LIMIT documents, which hold fewer commits than the window.
@@ -842,7 +845,10 @@ class TestWindowCap:
 
         resolved = _fold_branch("main", deltas, BranchWindowActivity(window_commits, _days_ago(1)))
 
-        assert (resolved.status, len(resolved.window)) == ("ready", folded)
+        assert resolved.status == "ready"
+        assert len(resolved.window) == min(documents, WINDOW_HARD_LIMIT)
+        # A cap landing inside a run leaves that run a bar of its surviving members.
+        assert len(resolved.bars) == bars
 
     def test_a_branch_under_the_cap_is_still_measured_against_its_own_commits(self) -> None:
         # The cap must not become a blanket amnesty: a ledger that reached three of ten

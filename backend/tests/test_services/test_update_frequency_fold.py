@@ -14,6 +14,7 @@ from app.services.update_frequency_fold import (
     accounted_commits,
     fold_window,
     select_window,
+    window_bars,
 )
 
 BASE = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -256,7 +257,7 @@ class TestChainContinuity:
 
 
 class TestSameCommitRuns:
-    def test_ci_retries_of_one_commit_collapse_into_their_first_scan(self) -> None:
+    def test_ci_retries_of_one_commit_become_one_bar_named_by_their_last_scan(self) -> None:
         real = _chain([_delta("s0", 0, commit_hash="c1"), _delta("s1", 10, patch=8, commit_hash="c2")])
         with_retries = _chain(
             [
@@ -269,7 +270,11 @@ class TestSameCommitRuns:
         folded_retries = _fold(with_retries)
         assert folded_retries.scan_count == folded_real.scan_count == 2
         assert folded_retries.updates_per_scan == folded_real.updates_per_scan == 8.0
-        assert folded_retries.avg_days_between_scans == folded_real.avg_days_between_scans == 10.0
+        assert [e.scan_id for e in folded_real.scan_timeline] == ["s0", "s1"]
+        assert [e.scan_id for e in folded_retries.scan_timeline] == ["s0", "r5"]
+        # The bar sits on r5, six hours past s1, so the cadence lengthens by those hours.
+        assert folded_real.avg_days_between_scans == 10.0
+        assert folded_retries.avg_days_between_scans == 10.2
         assert folded_retries.trend_direction == folded_real.trend_direction == "unknown"
 
     def test_updates_of_the_first_scan_of_a_run_survive(self) -> None:
@@ -282,10 +287,11 @@ class TestSameCommitRuns:
             ]
         )
         folded = _fold(deltas)
-        assert [e.scan_id for e in folded.scan_timeline] == ["s0", "s1", "s3"]
+        assert [e.scan_id for e in folded.scan_timeline] == ["s0", "s2", "s3"]
+        assert [e.updates_count for e in folded.scan_timeline] == [0, 3, 4]
         assert folded.total_updates == 7
 
-    def test_non_consecutive_reuse_of_a_commit_is_kept(self) -> None:
+    def test_non_consecutive_reuse_of_a_commit_is_three_bars(self) -> None:
         # A revert back to an earlier commit is real movement, not a retry.
         deltas = _chain(
             [
@@ -294,7 +300,7 @@ class TestSameCommitRuns:
                 _delta("s2", 20, downgrade=2, commit_hash="c1"),
             ]
         )
-        assert [d["_id"] for d in select_window(deltas)] == ["s0", "s1", "s2"]
+        assert [[d["_id"] for d in bar] for bar in window_bars(select_window(deltas))] == [["s0"], ["s1"], ["s2"]]
 
 
 class TestShortWindows:
@@ -325,6 +331,15 @@ class TestShortWindows:
     def test_window_that_collapses_to_one_usable_scan(self) -> None:
         deltas = _chain([_delta("s0", 0), _delta("s1", 1, dep_count=0), _delta("s2", 2, error="boom")])
         assert _fold(deltas).scan_count == 1
+
+    def test_a_window_of_one_run_has_no_interval_to_divide_by(self) -> None:
+        # Several documents, one bar: dividing by the documents would divide by zero intervals.
+        deltas = _chain([_delta(f"r{i}", i, patch=1, commit_hash="c1") for i in range(5)])
+        folded = _fold(deltas)
+        assert folded.scan_count == 1
+        assert folded.updates_per_scan == 0.0
+        assert folded.avg_days_between_scans == 0.0
+        assert folded.trend_detail == "Not enough scans to analyze (need at least 2)"
 
 
 class TestUnusableScans:
@@ -383,8 +398,8 @@ class TestAccountedCommits:
         return accounted_commits(deltas, select_window(deltas))
 
     def test_the_scans_the_fold_drops_on_purpose_leave_no_hole(self) -> None:
-        # Same-commit retries and SBOM-less scans are dropped by design; counting the
-        # folded documents instead would read this healthy branch as half measured.
+        # SBOM-less scans are dropped by design and same-commit retries share a bar;
+        # counting bars instead would read this healthy branch as half measured.
         deltas = _chain(
             [
                 _delta("s0", 0, commit_hash="c1"),
@@ -395,7 +410,9 @@ class TestAccountedCommits:
                 _delta("s5", 30, patch=1, commit_hash="c4"),
             ]
         )
-        assert len(select_window(deltas)) == 3
+        window = select_window(deltas)
+        assert len(window) == 5
+        assert len(window_bars(window)) == 3
         assert self._over(deltas) == 4
 
     def test_a_scan_naming_no_commit_stands_for_itself(self) -> None:
