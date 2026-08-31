@@ -45,7 +45,7 @@ def _run(monkeypatch, findings):
             scan_doc=SimpleNamespace(pipeline_id=None),  # type: ignore[arg-type]
             db=MagicMock(),
             callgraph_repo=callgraph_repo,  # type: ignore[arg-type]
-            result_repo=SimpleNamespace(create_raw=AsyncMock()),  # type: ignore[arg-type]
+            result_repo=SimpleNamespace(collection=SimpleNamespace(update_one=AsyncMock())),  # type: ignore[arg-type]
             scan_repo=SimpleNamespace(update_raw=AsyncMock()),  # type: ignore[arg-type]
             results_summary=[],
         )

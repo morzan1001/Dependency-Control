@@ -156,3 +156,44 @@ async def test_deferred_run_leaves_a_superseded_project_alone(db):
 
     project = await db.projects.find_one({"_id": _PROJECT_ID})
     assert project["stats"] == {"high": 7}
+
+
+@pytest.mark.asyncio
+async def test_a_second_language_supersedes_the_first_summary(db):
+    """Each callgraph re-runs enrichment, so the scan must keep exactly one, current summary."""
+    await _seed_callgraph(db)
+    await _seed_dependencies(db)
+    await db.findings.insert_one(_finding("CVE-1", "requests"))
+    await db.scans.insert_one(
+        {
+            "_id": _SCAN_ID,
+            "project_id": _PROJECT_ID,
+            "branch": "main",
+            "status": "completed",
+            "created_at": datetime.now(timezone.utc),
+            "reachability_pending": True,
+        }
+    )
+    await db.projects.insert_one({"_id": _PROJECT_ID, "name": "p", "latest_scan_id": _SCAN_ID})
+
+    await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
+
+    await db.callgraphs.insert_one(
+        {
+            "_id": "cg-2",
+            "project_id": _PROJECT_ID,
+            "scan_id": _SCAN_ID,
+            "language": "javascript",
+            "tool": "madge",
+            "analyzed_modules": ["lodash"],
+            "module_usage": {},
+            "created_at": datetime.now(timezone.utc),
+        }
+    )
+    second = await run_pending_reachability_for_scan(_SCAN_ID, _PROJECT_ID, db)
+
+    assert second["findings_enriched"] == 1, "a callgraph arriving after the first must still be applied"
+
+    results = await db.analysis_results.find({"scan_id": _SCAN_ID, "analyzer_name": "reachability"}).to_list(None)
+    assert len(results) == 1, "a stale duplicate would render twice in the raw-data view"
+    assert sorted(results[0]["result"]["languages"]) == ["javascript", "python"]

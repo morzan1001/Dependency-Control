@@ -552,6 +552,22 @@ def _calculate_confidence(extraction_confidence: str, match_type: str) -> float:
         return extraction_score * 0.5
 
 
+async def persist_reachability_result(result_repo: Any, scan_id: str, summary: Mapping[str, Any]) -> None:
+    """Store the scan's single reachability summary, replacing any earlier one.
+
+    Each language's callgraph re-runs enrichment over the full set, so every run supersedes
+    the last; inserting instead would leave the raw-data view rendering a stale duplicate.
+    """
+    await result_repo.collection.update_one(
+        {"scan_id": scan_id, "analyzer_name": "reachability"},
+        {
+            "$set": {"result": summary, "created_at": datetime.now(timezone.utc)},
+            "$setOnInsert": {"_id": str(uuid.uuid4())},
+        },
+        upsert=True,
+    )
+
+
 async def _sync_project_stats_if_latest(
     db: AsyncIOMotorDatabase,
     project_id: str,
@@ -682,15 +698,7 @@ async def run_pending_reachability_for_scan(
                 [cg.model_dump(by_alias=True) for cg in callgraphs],
                 enriched_count,
             )
-            await result_repo.create_raw(
-                {
-                    "_id": str(uuid.uuid4()),
-                    "scan_id": scan_id,
-                    "analyzer_name": "reachability",
-                    "result": reachability_summary,
-                    "created_at": datetime.now(timezone.utc),
-                }
-            )
+            await persist_reachability_result(result_repo, scan_id, reachability_summary)
 
         # The scan's stats were frozen at completion, before any reachability verdict existed.
         stats = await calculate_comprehensive_stats(db, scan_id)
