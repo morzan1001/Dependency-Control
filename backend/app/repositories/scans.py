@@ -117,8 +117,18 @@ class ScanRepository:
         sort: list[tuple] | None = None,
         skip: int = 0,
         limit: int | None = None,
-        projection: dict[str, int] | None = None,
     ) -> list[Scan]:
+        docs = await self.find_many_raw(query, sort=sort, skip=skip, limit=limit)
+        return [Scan(**doc) for doc in docs]
+
+    async def find_many_raw(
+        self,
+        query: dict[str, Any],
+        sort: list[tuple] | None = None,
+        skip: int = 0,
+        limit: int | None = None,
+        projection: dict[str, int] | None = None,
+    ) -> list[dict[str, Any]]:
         # limit=0 means unbounded in pymongo; floor to 1. None stays unbounded via to_list(None).
         safe_limit: int | None = max(limit, 1) if limit is not None else None
         cursor = self.collection.find(query, projection)
@@ -128,8 +138,7 @@ class ScanRepository:
             cursor = cursor.skip(skip)
         if safe_limit is not None:
             cursor = cursor.limit(safe_limit)
-        docs = await cursor.to_list(safe_limit)
-        return [Scan(**doc) for doc in docs]
+        return await cursor.to_list(safe_limit)
 
     async def find_many_with_stats(
         self,
@@ -140,8 +149,10 @@ class ScanRepository:
         docs = await cursor.to_list(limit)
         return [ScanWithStats(**doc) for doc in docs]
 
-    async def count(self, query: dict[str, Any] | None = None) -> int:
+    async def count(self, query: dict[str, Any] | None = None, limit: int | None = None) -> int:
         with track_db_operation(_COL, "count"):
+            if limit is not None:
+                return await self.collection.count_documents(query or {}, limit=limit)
             return await self.collection.count_documents(query or {})
 
     async def get_latest_for_project(self, project_id: str, statuses: list[str] | None = None) -> Scan | None:

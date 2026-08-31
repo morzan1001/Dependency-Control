@@ -25,10 +25,20 @@ T = TypeVar("T")
 
 REDIS_CONNECTION_LOST_MSG = "Redis connection lost, disabling cache temporarily"
 REDIS_OPERATION_TIMEOUT_SECONDS = 5.0
+_LOCK_POLL_INTERVAL_SECONDS = 0.1
 
 # Atomic compare-and-delete: release the lock only if the value still matches our
 # token, so a slow fetch can't delete a lock re-acquired by another pod.
 _UNLOCK_LUA = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
+
+
+class _FetchFailed(Exception):
+    """Carries a fetch_fn failure past the handlers that retry on cache-infrastructure errors."""
+
+    def __init__(self, cause: BaseException):
+        super().__init__(cause)
+        self.cause = cause
+
 
 cache_hits_total: Counter | None = None
 cache_misses_total: Counter | None = None
@@ -157,8 +167,10 @@ class CacheKeys:
         return f"releases:{system}:{package}"
 
     @staticmethod
-    def update_frequency_comparison(user_id: str, team_id: str = "all") -> str:
-        return f"update_freq_cmp:{user_id}:{team_id}"
+    def update_frequency_comparison(scope_hash: str, team_id: str = "all") -> str:
+        # Keying on the scope digest rather than the user shares one entry between
+        # callers that see the same projects, without crossing access boundaries.
+        return f"update_freq_cmp:{scope_hash}:{team_id}"
 
     @staticmethod
     def recommendations(project_id: str, scan_id: str, scope_hash: str) -> str:
@@ -417,9 +429,15 @@ class CacheService:
         ttl_seconds: int | None = None,
         lock_ttl_seconds: int = 30,
         max_wait_seconds: float = 5.0,
+        reraise_fetch_errors: bool = False,
     ) -> Any | None:
         """Cache-through with a distributed lock so only one pod fetches on miss while
-        peers wait, preventing cache-stampede on multi-pod deploys."""
+        peers wait, preventing cache-stampede on multi-pod deploys.
+
+        Set ``reraise_fetch_errors`` when a failed fetch must surface as an error rather
+        than as an empty result -- appropriate where the value is authoritative, not a
+        best-effort enrichment that callers can survive without.
+        """
         cached = await self.get(key)
         if cached is not None:
             return cached
@@ -428,60 +446,65 @@ class CacheService:
             try:
                 return await fetch_fn()
             except Exception as e:
+                if reraise_fetch_errors:
+                    raise
                 logger.warning(f"Fetch failed (no cache): {key}: {e}")
                 return None
 
-        lock_key = f"lock:{key}"
-        # Unique per-acquisition token so we only release a lock we still own.
-        lock_token = uuid.uuid4().hex
+        lock_key = self._make_key(f"lock:{key}")
         try:
             client = await self.get_client()
+            deadline = time.monotonic() + max_wait_seconds
 
-            lock_acquired = await client.set(
-                self._make_key(lock_key),
-                lock_token,
-                nx=True,
-                ex=lock_ttl_seconds,  # Auto-expire to prevent deadlock on pod crash.
-            )
+            # Re-acquiring on each pass covers a holder that dropped the lock without
+            # publishing (crash or cancellation): a waiter takes over instead of
+            # reporting the miss as a permanent absence to its caller.
+            while time.monotonic() < deadline:
+                # Unique per-acquisition token so we only release a lock we still own.
+                lock_token = uuid.uuid4().hex
+                lock_acquired = await client.set(
+                    lock_key,
+                    lock_token,
+                    nx=True,
+                    ex=lock_ttl_seconds,  # Auto-expire to prevent deadlock on pod crash.
+                )
 
-            if lock_acquired:
-                try:
-                    data = await fetch_fn()
-                    if data is not None:
-                        await self.set(key, data, ttl_seconds)
-                    else:
-                        # Negative cache so peers don't all retry the failed fetch.
-                        await self.set(key, {}, CacheTTL.NEGATIVE_RESULT)
-                    return data
-                finally:
-                    await self._release_lock(client, self._make_key(lock_key), lock_token)
-            else:
-                wait_interval = 0.1
-                waited = 0.0
+                if lock_acquired:
+                    try:
+                        try:
+                            data = await fetch_fn()
+                        except Exception as e:
+                            raise _FetchFailed(e) from e
+                        if data is not None:
+                            await self.set(key, data, ttl_seconds)
+                        else:
+                            # Negative cache so peers don't all retry the failed fetch.
+                            await self.set(key, {}, CacheTTL.NEGATIVE_RESULT)
+                        return data
+                    finally:
+                        await self._release_lock(client, lock_key, lock_token)
 
-                while waited < max_wait_seconds:
-                    await asyncio.sleep(wait_interval)
-                    waited += wait_interval
+                cached = await self._wait_for_lock_holder(client, key, lock_key, deadline)
+                if cached is not None:
+                    return cached
 
-                    cached = await self.get(key)
-                    if cached is not None:
-                        return cached
+            logger.warning(f"Lock wait timeout for {key}, fetching anyway")
+            try:
+                data = await fetch_fn()
+                if data is not None:
+                    await self.set(key, data, ttl_seconds)
+                return data
+            except Exception as e:
+                if reraise_fetch_errors:
+                    raise
+                logger.warning(f"Fallback fetch failed for {key}: {e}")
+                return None
 
-                    # Lock released but no value cached → fetch returned None.
-                    lock_exists = await client.exists(self._make_key(lock_key))
-                    if not lock_exists:
-                        return await self.get(key)
-
-                logger.warning(f"Lock wait timeout for {key}, fetching anyway")
-                try:
-                    data = await fetch_fn()
-                    if data is not None:
-                        await self.set(key, data, ttl_seconds)
-                    return data
-                except Exception as e:
-                    logger.warning(f"Fallback fetch failed for {key}: {e}")
-                    return None
-
+        except _FetchFailed as e:
+            if reraise_fetch_errors:
+                raise e.cause from None
+            logger.warning(f"Fetch failed for {key}", exc_info=e.cause)
+            return None
         except redis.ConnectionError:
             self._available = False
             try:
@@ -495,6 +518,19 @@ class CacheService:
                 return await fetch_fn()
             except Exception:
                 return None
+
+    async def _wait_for_lock_holder(
+        self, client: "redis.Redis", key: str, full_lock_key: str, deadline: float
+    ) -> Any | None:
+        """Poll until the holder publishes a value, returning None once it drops the lock."""
+        while time.monotonic() < deadline:
+            await asyncio.sleep(_LOCK_POLL_INTERVAL_SECONDS)
+            cached = await self.get(key)
+            if cached is not None:
+                return cached
+            if not await client.exists(full_lock_key):
+                return None
+        return None
 
     async def _release_lock(self, client: "redis.Redis", full_lock_key: str, token: str) -> None:
         """Release the stampede lock only if we still hold it (value == token)."""

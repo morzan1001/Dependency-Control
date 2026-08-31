@@ -70,6 +70,7 @@ from app.services.dependency_store import store_scan_dependencies
 from app.services.enrichment import enrich_vulnerability_findings
 from app.services.reachability_enrichment import enrich_findings_with_reachability
 from app.services.sbom_parser import merge_duplicate_dependencies, parse_sbom
+from app.services.update_frequency_rollup import record_scan_update_delta
 
 logger = logging.getLogger(__name__)
 
@@ -1340,6 +1341,9 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
         )
 
     del aggregated_findings
+
+    # Runs on the released findings: the rollup holds two dependency maps of its own.
+    await record_scan_update_delta(db, scan_id)
 
     _release_memory_to_os()
 

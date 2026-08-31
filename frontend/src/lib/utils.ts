@@ -75,3 +75,8 @@ export function shortCommitHash(hash: string | undefined | null): string {
 export function formatCoveragePct(pct: number | null): string {
   return pct === null ? 'N/A' : `${pct}%`
 }
+
+// null means no calendar window was requested, so no rate can be stated.
+export function formatUpdatesPerMonth(rate: number | null | undefined): string {
+  return rate === null || rate === undefined ? 'N/A' : `${rate}`
+}

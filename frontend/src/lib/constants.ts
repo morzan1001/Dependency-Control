@@ -46,6 +46,10 @@ export const DEBOUNCE_DELAY_MS = 300;
 export const COPY_FEEDBACK_DELAY_MS = 2000;
 export const API_TIMEOUT_MS = 30000;
 export const API_REFRESH_TIMEOUT_MS = 10000;
+// An update-frequency request can sit behind another caller's recompute before its own work
+// starts, so the client stays patient for minutes: giving up early only abandons a result that
+// finishes anyway and lands in the cache.
+export const UPDATE_FREQUENCY_TIMEOUT_MS = 300000;
 
 export const ANALYTICS_PERMISSIONS = [
   Permissions.ANALYTICS_READ,

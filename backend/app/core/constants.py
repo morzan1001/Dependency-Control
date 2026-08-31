@@ -948,6 +948,10 @@ HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS: int = 24
 # Interval (hours) for branch status sync against VCS providers
 HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS: int = 6
 
+# UTC hour the nightly update-frequency ledger reconcile runs in. Local night in
+# europe-west1, so its repair writes do not land in the working day.
+HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC: int = 2
+
 # Archive / Retention Action Constants
 RETENTION_ACTION_DELETE = "delete"
 RETENTION_ACTION_ARCHIVE = "archive"

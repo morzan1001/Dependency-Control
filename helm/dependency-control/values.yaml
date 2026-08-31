@@ -289,6 +289,17 @@ backend:
     # Options: primary, primaryPreferred, secondary, secondaryPreferred, nearest
     # secondaryPreferred distributes read load across replicas (recommended for production)
     mongodbReadPreference: "secondaryPreferred"
+    # Record a per-scan delta for the update-frequency analytics as each scan finishes.
+    # Off means the ledger stops growing and drifts from the scans, so the reads below
+    # have to stay off too; it is the brake for when writing costs more than it is worth.
+    updateFrequencyRollupEnabled: true
+    # Serve the update-frequency analytics from the delta ledger instead of walking
+    # every scan. Turn on only once the backfill has run: without deltas a project
+    # can only be reported as pending.
+    updateFrequencyUseRollup: false
+    # Nightly reconcile of that ledger against the scans it summarises. Same
+    # precondition: an unbackfilled window is drift in every chain.
+    updateFrequencyReconcileEnabled: false
   # Secret key for JWT signing
   secrets:
     secretKey: ""  # Leave empty to auto-generate

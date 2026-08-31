@@ -1,4 +1,5 @@
 import { api, buildQueryParams } from '@/api/client';
+import { UPDATE_FREQUENCY_TIMEOUT_MS } from '@/lib/constants';
 import {
     DashboardStats,
     SearchResult,
@@ -139,31 +140,31 @@ export const analyticsApi = {
 
     getUpdateFrequency: async (
         projectId: string,
-        opts?: { maxScans?: number; windowDays?: number }
+        opts?: { windowDays?: number },
+        signal?: AbortSignal
     ): Promise<UpdateFrequencyMetrics> => {
         const params = buildQueryParams({
-            max_scans: opts?.maxScans,
             window_days: opts?.windowDays,
         });
         const response = await api.get<UpdateFrequencyMetrics>(
             `/analytics/projects/${projectId}/update-frequency`,
-            { params }
+            { params, signal, timeout: UPDATE_FREQUENCY_TIMEOUT_MS }
         );
         return response.data;
     },
 
     getUpdateFrequencyComparison: async (
         teamId?: string,
-        opts?: { maxScans?: number; windowDays?: number }
+        opts?: { windowDays?: number },
+        signal?: AbortSignal
     ): Promise<UpdateFrequencyComparison> => {
         const params = buildQueryParams({
             team_id: teamId,
-            max_scans: opts?.maxScans,
             window_days: opts?.windowDays,
         });
         const response = await api.get<UpdateFrequencyComparison>(
             '/analytics/update-frequency/comparison',
-            { params }
+            { params, signal, timeout: UPDATE_FREQUENCY_TIMEOUT_MS }
         );
         return response.data;
     },

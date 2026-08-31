@@ -288,6 +288,21 @@ analysis_aggregation_duration_seconds = Histogram(
     buckets=(0.5, 1, 2, 5, 10, 20, 30, 60, 120),
 )
 
+update_frequency_delta_writes_total = Counter(
+    "update_frequency_delta_writes_total",
+    "Scan update-delta rollup documents written, by result.",
+    ["result"],  # result in: ok|error
+)
+
+# A write path that inserts, changes or deletes scans without calling the rollup writer
+# shows up here and nowhere else: the ledger keeps serving numbers either way.
+update_frequency_reconcile_drift_total = Counter(
+    "update_frequency_reconcile_drift_total",
+    "Ledger entries the update-frequency reconcile found out of step with the scans, by kind and outcome.",
+    # kind in: missing|stale|severed|dependent|orphan; outcome in: resolved|deferred
+    ["kind", "outcome"],
+)
+
 archive_operations_total = Counter(
     "archive_operations_total",
     "Archive operations (archive/restore/download) by status.",

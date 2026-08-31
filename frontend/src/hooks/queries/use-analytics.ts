@@ -3,7 +3,6 @@ import { analyticsApi } from '@/api/analytics';
 import type { ApiError } from '@/api/client';
 
 export interface UpdateFrequencyOpts {
-    maxScans?: number;
     windowDays?: number;
 }
 
@@ -113,21 +112,32 @@ export const useProjectRecommendations = (projectId: string, scanId?: string) =>
     });
 }
 
+// An uncached update-frequency run is open-ended, so neither query ever refetches on its own;
+// new results only appear once the user asks again.
 export const useUpdateFrequency = (projectId: string, opts?: UpdateFrequencyOpts) => {
-    return useQuery({
+    return useQuery<Awaited<ReturnType<typeof analyticsApi.getUpdateFrequency>>, ApiError>({
         queryKey: analyticsKeys.updateFrequency(projectId, opts),
-        queryFn: () => analyticsApi.getUpdateFrequency(projectId, opts),
+        queryFn: ({ signal }) => analyticsApi.getUpdateFrequency(projectId, opts, signal),
         enabled: !!projectId,
         staleTime: 5 * 60 * 1000,
-        refetchOnWindowFocus: true,
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: false,
+        retry: false,
     });
 }
 
-export const useUpdateFrequencyComparison = (teamId?: string, opts?: UpdateFrequencyOpts) => {
-    return useQuery({
+export const useUpdateFrequencyComparison = (
+    teamId: string | undefined,
+    opts: UpdateFrequencyOpts | undefined,
+    enabled: boolean,
+) => {
+    return useQuery<Awaited<ReturnType<typeof analyticsApi.getUpdateFrequencyComparison>>, ApiError>({
         queryKey: analyticsKeys.updateFrequencyComparison(teamId, opts),
-        queryFn: () => analyticsApi.getUpdateFrequencyComparison(teamId, opts),
+        queryFn: ({ signal }) => analyticsApi.getUpdateFrequencyComparison(teamId, opts, signal),
+        enabled,
         staleTime: 5 * 60 * 1000,
-        refetchOnWindowFocus: true,
+        refetchOnWindowFocus: false,
+        refetchOnReconnect: false,
+        retry: false,
     });
 }

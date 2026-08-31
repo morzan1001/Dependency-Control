@@ -25,11 +25,11 @@ import {
   Clock,
   Package,
   ArrowRight,
-  AlertTriangle,
   GitBranch,
 } from 'lucide-react'
+import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 import { useUpdateFrequency } from '@/hooks/queries/use-analytics'
-import { formatDate, formatCoveragePct } from '@/lib/utils'
+import { formatDate, formatCoveragePct, formatUpdatesPerMonth } from '@/lib/utils'
 import type { UpdateFrequencyMetrics, DependencyUpdateEvent } from '@/types/analytics'
 
 interface UpdateFrequencyProps {
@@ -57,7 +57,7 @@ function formatDays(days: number): string {
   return `${days.toFixed(days < 10 ? 1 : 0)}d`
 }
 
-function SummaryCards({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
+function SummaryCards({ data, windowDays }: Readonly<{ data: UpdateFrequencyMetrics; windowDays?: number }>) {
   const trend = TREND_CONFIG[data.trend_direction] ?? TREND_CONFIG.unknown
   const TrendIcon = trend.icon
   const coverageKnown = data.update_coverage_pct !== null
@@ -70,9 +70,13 @@ function SummaryCards({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
           <RefreshCw className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{data.updates_per_month}</div>
+          <div className="text-2xl font-bold">{formatUpdatesPerMonth(data.updates_per_month)}</div>
           <p className="text-xs text-muted-foreground">
-            {data.total_updates} updates over {formatDays(data.time_range_days)}, extrapolated
+            {/* The rate divides by the window, so naming the observed span here would
+                put two different denominators on one card. */}
+            {windowDays
+              ? `${data.total_updates} updates in the last ${windowDays}d`
+              : `${data.total_updates} updates over ${formatDays(data.time_range_days)} · pick a time window for a rate`}
           </p>
         </CardContent>
       </Card>
@@ -100,7 +104,7 @@ function SummaryCards({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
           <p className="text-xs text-muted-foreground">
             {coverageKnown
               ? `${data.outdated_resolved} of ${data.total_outdated_detected} outdated resolved`
-              : 'nothing outdated in this window'}
+              : 'no outdated backlog measured in this window'}
           </p>
         </CardContent>
       </Card>
@@ -163,7 +167,9 @@ function TimelineChart({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
                 stroke="#94a3b8"
                 strokeWidth={2}
                 strokeDasharray="5 5"
-                dot={false}
+                // Scans without an outdated analysis are null, and recharts draws no
+                // segment next to a null: without dots an isolated measurement vanishes.
+                dot={{ r: 2 }}
                 name="Outdated"
               />
             </ComposedChart>
@@ -337,8 +343,6 @@ function UpstreamCadenceCard({ data }: Readonly<{ data: UpdateFrequencyMetrics }
     { label: 'Adoption latency', value: data.adoption_latency_days_median, suffix: 'd', digits: 0 },
   ]
 
-  if (metrics.every((m) => m.value === null)) return null
-
   return (
     <Card>
       <CardHeader>
@@ -359,6 +363,12 @@ function UpstreamCadenceCard({ data }: Readonly<{ data: UpdateFrequencyMetrics }
             </div>
           ))}
         </div>
+        {metrics.every((m) => m.value === null) && (
+          <p className="pt-4 text-xs text-muted-foreground">
+            No upstream release data for this project. Either none of its packages could be
+            resolved on deps.dev, or the lookup was skipped for this view.
+          </p>
+        )}
       </CardContent>
     </Card>
   )
@@ -368,7 +378,7 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
   const [selectedProjectId, setSelectedProjectId] = useState<string>(initialProjectId || '')
   const [windowDays, setWindowDays] = useState<number | undefined>(90)
 
-  const { data, isLoading, error } = useUpdateFrequency(selectedProjectId, { windowDays })
+  const { data, isFetching, error, refetch } = useUpdateFrequency(selectedProjectId, { windowDays })
 
   return (
     <div className="space-y-6">
@@ -399,7 +409,7 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
         </div>
       )}
 
-      {isLoading && selectedProjectId && (
+      {isFetching && selectedProjectId && (
         <div className="space-y-4">
           <div className="grid gap-4 md:grid-cols-4">
             {Array.from({ length: 4 }, (_, i) => (
@@ -410,15 +420,12 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
         </div>
       )}
 
-      {error && (
-        <Card>
-          <CardContent className="py-8">
-            <div className="flex flex-col items-center gap-2 text-muted-foreground">
-              <AlertTriangle className="h-12 w-12" />
-              <p>Failed to load update frequency data</p>
-            </div>
-          </CardContent>
-        </Card>
+      {error && !isFetching && (
+        <AnalyticsErrorCard
+          title="Failed to load update frequency data"
+          error={error}
+          onRetry={() => refetch()}
+        />
       )}
 
       {!selectedProjectId && !initialProjectId && (
@@ -432,7 +439,7 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
         </Card>
       )}
 
-      {data && data.scan_count < 2 && (
+      {data && data.scan_count < 2 && !isFetching && (
         <Card>
           <CardContent className="py-12">
             <div className="flex flex-col items-center gap-4 text-muted-foreground">
@@ -444,7 +451,7 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
         </Card>
       )}
 
-      {data && data.scan_count >= 2 && (
+      {data && data.scan_count >= 2 && !isFetching && (
         <>
           {data.branch && (
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -456,7 +463,7 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
             </div>
           )}
 
-          <SummaryCards data={data} />
+          <SummaryCards data={data} windowDays={windowDays} />
 
           <TimelineChart data={data} />
 

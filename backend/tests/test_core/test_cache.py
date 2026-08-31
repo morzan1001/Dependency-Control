@@ -1,5 +1,7 @@
 """Tests for cache key builders and TTL constants."""
 
+import asyncio
+import contextlib
 import hashlib
 
 import fakeredis.aioredis
@@ -229,3 +231,36 @@ class TestStampedeLockRelease:
 
         assert result == {"score": 0.9}
         assert await fake_cache._client.exists(full_lock_key) == 0
+
+
+class TestStampedeHolderVanishes:
+    """A holder that drops the lock without publishing must not turn waiters into misses."""
+
+    @pytest.mark.asyncio
+    async def test_waiter_takes_over_after_the_holder_is_cancelled(self, fake_cache):
+        key = "update_freq_cmp:scope-a:all"
+        holder_running = asyncio.Event()
+
+        async def holder_fetch():
+            holder_running.set()
+            await asyncio.sleep(30)
+            return {"unreachable": True}
+
+        async def waiter_fetch():
+            return {"value": 42}
+
+        def call(fetch_fn):
+            return fake_cache.get_or_fetch_with_lock(
+                key, fetch_fn, ttl_seconds=60, lock_ttl_seconds=60, max_wait_seconds=5.0
+            )
+
+        holder = asyncio.create_task(call(holder_fetch))
+        await holder_running.wait()
+        waiter = asyncio.create_task(call(waiter_fetch))
+        await asyncio.sleep(0.2)
+
+        holder.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await holder
+
+        assert await waiter == {"value": 42}

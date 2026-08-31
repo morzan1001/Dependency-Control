@@ -40,6 +40,7 @@ from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.schemas.archive import ArchiveRestoreResponse
 from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames
+from app.services.update_frequency_rollup import record_scan_update_delta
 
 logger = logging.getLogger(__name__)
 
@@ -695,6 +696,9 @@ async def _run_restore_pipeline(
         return None
     if gridfs_entries:
         collections_restored.append("gridfs_sboms")
+
+    # The restored scan re-enters its branch timeline, so the rollup also re-points the successor.
+    await record_scan_update_delta(db, scan_id)
 
     await _finalize_restore_cleanup(repo, metadata, scan_id)
 

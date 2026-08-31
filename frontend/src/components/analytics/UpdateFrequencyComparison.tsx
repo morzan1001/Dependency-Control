@@ -1,6 +1,7 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import {
@@ -22,16 +23,167 @@ import {
 import {
   Trophy,
   AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  Clock,
+  GitBranch,
+  Hourglass,
+  Info,
+  RefreshCw,
   Users,
 } from 'lucide-react'
 import { useUpdateFrequencyComparison } from '@/hooks/queries/use-analytics'
 import { useTeams } from '@/hooks/queries/use-teams'
-import { formatDate, formatCoveragePct } from '@/lib/utils'
-import type { ProjectUpdateSummary, UpdateFrequencyComparison as Comparison } from '@/types/analytics'
+import { formatDate, formatCoveragePct, formatUpdatesPerMonth } from '@/lib/utils'
+import type {
+  ProjectUpdateSummary,
+  UpdateDataStatus,
+  UpdateFrequencyComparison as Comparison,
+} from '@/types/analytics'
+import { AnalyticsErrorCard } from './AnalyticsErrorCard'
 import { WindowSelect } from './WindowSelect'
 import { TREND_CONFIG } from './trend-config'
 
-function ComparisonSummaryCards({ data }: Readonly<{ data: Comparison }>) {
+type Metric = 'coverage' | 'updates'
+
+const CHART_TOP_N = 25
+const CHART_ANIMATION_MAX_BARS = 15
+const TABLE_PAGE_SIZE = 25
+// Ranking projects needs one shared window; the backend defaults to the same span.
+const DEFAULT_WINDOW_DAYS = 90
+
+const NO_VALUE = '—'
+
+// A partial row carries numbers, so it is not one of these: it renders its metrics
+// with a caveat instead of a placeholder.
+const STATUS_CONFIG: Record<
+  Exclude<UpdateDataStatus, 'ready' | 'partial'>,
+  { label: string; hint: string; icon: typeof Clock; className: string }
+> = {
+  pending: {
+    label: 'Not computed yet',
+    hint: 'No update metrics recorded for this project yet.',
+    icon: Clock,
+    className: 'bg-gray-500/10 text-gray-500 border-gray-500/20',
+  },
+  insufficient_data: {
+    label: 'Too few scans',
+    hint: 'Fewer than 2 comparable scans in this window.',
+    icon: Hourglass,
+    className: 'bg-yellow-500/10 text-yellow-600 border-yellow-500/20',
+  },
+  error: {
+    label: 'Measurement failed',
+    hint: 'Recording the update metrics for this project failed.',
+    icon: AlertTriangle,
+    className: 'bg-red-500/10 text-red-600 border-red-500/20',
+  },
+}
+
+interface RequestedFilters {
+  teamId?: string
+  windowDays?: number
+}
+
+// Only a fully covered project may be ranked, charted or averaged against the rest.
+function isMeasured(project: ProjectUpdateSummary): boolean {
+  return project.data_status === 'ready'
+}
+
+function metricValue(project: ProjectUpdateSummary, metric: Metric): number {
+  // An unmeasured value ranks below every measured one.
+  if (metric === 'updates') return project.updates_per_month ?? -1
+  return project.update_coverage_pct ?? -1
+}
+
+function StatusBadge({ status }: Readonly<{ status: Exclude<UpdateDataStatus, 'ready' | 'partial'> }>) {
+  const config = STATUS_CONFIG[status]
+  const StatusIcon = config.icon
+
+  return (
+    <Badge variant="outline" className={`gap-1 whitespace-nowrap font-normal ${config.className}`} title={config.hint}>
+      <StatusIcon className="h-3 w-3" />
+      {config.label}
+    </Badge>
+  )
+}
+
+function partialHint(scanCount: number | null): string {
+  const scans = scanCount === null ? 'only part of' : `only ${scanCount} scans of`
+  return (
+    `Measured on ${scans} this window. The numbers are exact for those scans, but they ` +
+    'cover a shorter stretch than a fully measured project, so this row carries no rank ' +
+    'and stays out of the team averages.'
+  )
+}
+
+function PartialBadge({ scanCount }: Readonly<{ scanCount: number | null }>) {
+  return (
+    <Badge
+      variant="outline"
+      className="gap-1 whitespace-nowrap font-normal bg-blue-500/10 text-blue-600 border-blue-500/20"
+      title={partialHint(scanCount)}
+    >
+      <Info className="h-3 w-3" />
+      Partial window
+    </Badge>
+  )
+}
+
+function unmeasuredNote(data: Comparison): string | null {
+  const parts = [
+    data.partial_projects > 0 && `${data.partial_projects} on a partial window`,
+    data.pending_projects > 0 && `${data.pending_projects} not computed yet`,
+    data.skipped_insufficient_data > 0 && `${data.skipped_insufficient_data} with too few scans`,
+    data.skipped_error > 0 && `${data.skipped_error} failed`,
+  ].filter((part): part is string => typeof part === 'string')
+
+  return parts.length > 0 ? parts.join(' · ') : null
+}
+
+function PendingBanner({ count }: Readonly<{ count: number }>) {
+  return (
+    <Card className="border-dashed">
+      <CardContent className="flex items-start gap-3 py-4">
+        <Clock className="h-5 w-5 shrink-0 text-muted-foreground" />
+        <div className="space-y-1 text-sm">
+          <p className="font-medium">{count} project{count === 1 ? '' : 's'} not computed yet</p>
+          <p className="text-muted-foreground">
+            Update metrics are recorded while a scan is ingested, so a project stays blank until two of
+            its scans have run through. It is listed without numbers and left out of the team averages.
+            Reload the comparison once those scans have finished.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function PartialBanner({ count }: Readonly<{ count: number }>) {
+  return (
+    <Card className="border-dashed">
+      <CardContent className="flex items-start gap-3 py-4">
+        <Info className="h-5 w-5 shrink-0 text-muted-foreground" />
+        <div className="space-y-1 text-sm">
+          <p className="font-medium">
+            {count} project{count === 1 ? '' : 's'} measured on part of the window
+          </p>
+          <p className="text-muted-foreground">
+            Their numbers are exact for the scans they cover, but those scans span a shorter
+            stretch than the window holds — usually because the update metrics of the older
+            scans have not been recorded yet. Each is listed with its numbers and left out of
+            the ranking and the team averages, so a project measured over three weeks is not
+            compared with one measured over three months.
+          </p>
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
+
+function ComparisonSummaryCards({ data, measuredCount }: Readonly<{ data: Comparison; measuredCount: number }>) {
+  const unmeasured = unmeasuredNote(data)
+
   return (
     <div className="grid gap-4 md:grid-cols-4">
       <Card>
@@ -40,11 +192,11 @@ function ComparisonSummaryCards({ data }: Readonly<{ data: Comparison }>) {
           <Users className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{data.team_avg_updates_per_month}</div>
+          <div className="text-2xl font-bold">{formatUpdatesPerMonth(data.team_avg_updates_per_month)}</div>
           <p className="text-xs text-muted-foreground">
-            across {data.projects.length} projects
-            {data.skipped_projects > 0 && ` · ${data.skipped_projects} skipped (need 2+ scans)`}
+            across {measuredCount} measured project{measuredCount === 1 ? '' : 's'}
           </p>
+          {unmeasured && <p className="text-xs text-muted-foreground">{unmeasured}</p>}
         </CardContent>
       </Card>
 
@@ -67,8 +219,8 @@ function ComparisonSummaryCards({ data }: Readonly<{ data: Comparison }>) {
           <Trophy className="h-4 w-4 text-green-500" />
         </CardHeader>
         <CardContent>
-          <div className="text-lg font-bold truncate" title={data.best_project}>
-            {data.best_project || '—'}
+          <div className="text-lg font-bold truncate" title={data.best_project ?? undefined}>
+            {data.best_project || NO_VALUE}
           </div>
           <p className="text-xs text-muted-foreground">highest measured coverage</p>
         </CardContent>
@@ -80,8 +232,8 @@ function ComparisonSummaryCards({ data }: Readonly<{ data: Comparison }>) {
           <AlertTriangle className="h-4 w-4 text-amber-500" />
         </CardHeader>
         <CardContent>
-          <div className="text-lg font-bold truncate" title={data.worst_project}>
-            {data.worst_project || '—'}
+          <div className="text-lg font-bold truncate" title={data.worst_project ?? undefined}>
+            {data.worst_project || NO_VALUE}
           </div>
           <p className="text-xs text-muted-foreground">lowest measured coverage</p>
         </CardContent>
@@ -91,14 +243,23 @@ function ComparisonSummaryCards({ data }: Readonly<{ data: Comparison }>) {
 }
 
 function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary[] }>) {
-  const [metric, setMetric] = useState<'coverage' | 'updates'>('coverage')
+  const [metric, setMetric] = useState<Metric>('coverage')
 
-  const chartData = projects.map((p) => ({
-    name: p.project_name.length > 20 ? p.project_name.substring(0, 20) + '...' : p.project_name,
-    fullName: p.project_name,
-    // null coverage (nothing ever outdated) leaves a gap rather than a zero bar.
-    value: metric === 'coverage' ? p.update_coverage_pct ?? undefined : p.updates_per_month,
-  }))
+  const chartData = useMemo(
+    () =>
+      [...projects]
+        .sort((a, b) => metricValue(b, metric) - metricValue(a, metric))
+        .slice(0, CHART_TOP_N)
+        .map((p) => ({
+          name: p.project_name.length > 20 ? p.project_name.substring(0, 20) + '...' : p.project_name,
+          fullName: p.project_name,
+          // An unmeasured value leaves a gap rather than a zero bar.
+          value: (metric === 'coverage' ? p.update_coverage_pct : p.updates_per_month) ?? undefined,
+        })),
+    [projects, metric]
+  )
+
+  const metricLabel = metric === 'coverage' ? 'Update coverage percentage' : 'Updates per month'
 
   return (
     <Card>
@@ -106,10 +267,12 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
         <div>
           <CardTitle>Project Comparison</CardTitle>
           <CardDescription>
-            {metric === 'coverage' ? 'Update coverage percentage' : 'Updates per month'} by project
+            {projects.length > CHART_TOP_N
+              ? `${metricLabel} — top ${CHART_TOP_N} of ${projects.length} measured projects`
+              : `${metricLabel} by measured project`}
           </CardDescription>
         </div>
-        <Select value={metric} onValueChange={(v) => setMetric(v as 'coverage' | 'updates')}>
+        <Select value={metric} onValueChange={(v) => setMetric(v as Metric)}>
           <SelectTrigger className="w-[180px]">
             <SelectValue />
           </SelectTrigger>
@@ -120,7 +283,7 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
         </Select>
       </CardHeader>
       <CardContent>
-        <div className="w-full min-w-0" style={{ height: Math.max(250, projects.length * 40) }}>
+        <div className="w-full min-w-0" style={{ height: Math.max(250, chartData.length * 40) }}>
           <ResponsiveContainer width="100%" height="100%">
             <BarChart data={chartData} layout="vertical" margin={{ left: 20 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
@@ -141,6 +304,7 @@ function ComparisonChart({ projects }: Readonly<{ projects: ProjectUpdateSummary
                 dataKey="value"
                 fill="hsl(var(--primary))"
                 radius={[0, 4, 4, 0]}
+                isAnimationActive={chartData.length <= CHART_ANIMATION_MAX_BARS}
               />
             </BarChart>
           </ResponsiveContainer>
@@ -157,13 +321,50 @@ function getCoverageBadgeClass(pct: number | null): string {
   return 'bg-red-500/10 text-red-600 border-red-500/20'
 }
 
+function MeasuredCells({ project }: Readonly<{ project: ProjectUpdateSummary }>) {
+  const trend = TREND_CONFIG[project.trend_direction ?? 'unknown'] ?? TREND_CONFIG.unknown
+  const TrendIcon = trend.icon
+
+  return (
+    <>
+      <TableCell className="text-right font-mono">{formatUpdatesPerMonth(project.updates_per_month)}</TableCell>
+      <TableCell className="text-right">
+        <Badge variant="outline" className={getCoverageBadgeClass(project.update_coverage_pct)}>
+          {formatCoveragePct(project.update_coverage_pct)}
+        </Badge>
+      </TableCell>
+      <TableCell className="text-right font-mono">
+        {project.patch_ratio === null ? NO_VALUE : `${(project.patch_ratio * 100).toFixed(0)}%`}
+      </TableCell>
+      <TableCell className="text-center">
+        <TrendIcon className={`h-4 w-4 inline ${trend.color}`} />
+        <span className="sr-only">{trend.label}</span>
+      </TableCell>
+      <TableCell className="text-right">{project.total_outdated ?? NO_VALUE}</TableCell>
+      <TableCell className="text-xs text-muted-foreground">{formatDate(project.last_scan_date)}</TableCell>
+    </>
+  )
+}
+
 function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSummary[] }>) {
+  const [requestedPage, setPage] = useState(1)
+
+  const totalPages = Math.max(1, Math.ceil(projects.length / TABLE_PAGE_SIZE))
+  // A shorter project list can strand the page index past the last page.
+  const page = Math.min(requestedPage, totalPages)
+  const offset = (page - 1) * TABLE_PAGE_SIZE
+  const visible = projects.slice(offset, offset + TABLE_PAGE_SIZE)
+  // Ranked rows lead the list, so a row's position is its rank up to that count.
+  const rankedCount = projects.filter(isMeasured).length
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Project Ranking</CardTitle>
         <CardDescription>
-          All projects ranked by update coverage and frequency
+          {rankedCount === projects.length
+            ? `${rankedCount} projects ranked by update coverage and frequency`
+            : `${rankedCount} of ${projects.length} projects ranked by update coverage and frequency; the rest are listed unranked`}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -173,6 +374,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
               <TableRow>
                 <TableHead>#</TableHead>
                 <TableHead>Project</TableHead>
+                <TableHead>Branch</TableHead>
                 <TableHead>Team</TableHead>
                 <TableHead className="text-right">Updates/Mo</TableHead>
                 <TableHead className="text-right">Coverage</TableHead>
@@ -183,40 +385,52 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
               </TableRow>
             </TableHeader>
             <TableBody>
-              {projects.map((project, idx) => {
-                const trend = TREND_CONFIG[project.trend_direction] ?? TREND_CONFIG.stable
-                const TrendIcon = trend.icon
-
-                return (
-                  <TableRow key={project.project_id}>
-                    <TableCell className="text-muted-foreground">{idx + 1}</TableCell>
-                    <TableCell className="font-medium">{project.project_name}</TableCell>
-                    <TableCell className="text-muted-foreground">{project.team_name || '—'}</TableCell>
-                    <TableCell className="text-right font-mono">{project.updates_per_month}</TableCell>
-                    <TableCell className="text-right">
-                      <Badge
-                        variant="outline"
-                        className={getCoverageBadgeClass(project.update_coverage_pct)}
-                      >
-                        {formatCoveragePct(project.update_coverage_pct)}
-                      </Badge>
+              {visible.map((project, idx) => (
+                <TableRow key={project.project_id}>
+                  <TableCell className="text-muted-foreground">
+                    {isMeasured(project) ? offset + idx + 1 : NO_VALUE}
+                  </TableCell>
+                  <TableCell className="font-medium">
+                    <span className="inline-flex flex-wrap items-center gap-2">
+                      {project.project_name}
+                      {project.data_status === 'partial' && <PartialBadge scanCount={project.scan_count} />}
+                    </span>
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">
+                    {project.branch ? (
+                      <span className="inline-flex items-center gap-1 font-mono text-xs">
+                        <GitBranch className="h-3 w-3" />
+                        {project.branch}
+                      </span>
+                    ) : (
+                      NO_VALUE
+                    )}
+                  </TableCell>
+                  <TableCell className="text-muted-foreground">{project.team_name || NO_VALUE}</TableCell>
+                  {project.data_status === 'ready' || project.data_status === 'partial' ? (
+                    <MeasuredCells project={project} />
+                  ) : (
+                    // One spanning cell keeps unmeasured rows from parking a value under a metric header.
+                    <TableCell colSpan={6}>
+                      <StatusBadge status={project.data_status} />
                     </TableCell>
-                    <TableCell className="text-right font-mono">
-                      {(project.patch_ratio * 100).toFixed(0)}%
-                    </TableCell>
-                    <TableCell className="text-center">
-                      <TrendIcon className={`h-4 w-4 inline ${trend.color}`} />
-                    </TableCell>
-                    <TableCell className="text-right">{project.total_outdated}</TableCell>
-                    <TableCell className="text-xs text-muted-foreground">
-                      {formatDate(project.last_scan_date)}
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
+                  )}
+                </TableRow>
+              ))}
             </TableBody>
           </Table>
         </div>
+        {totalPages > 1 && (
+          <div className="flex items-center justify-end gap-2 py-4 text-sm text-muted-foreground">
+            Page {page} of {totalPages}
+            <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(page - 1)}>
+              <ChevronLeft className="h-4 w-4" /> Previous
+            </Button>
+            <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(page + 1)}>
+              Next <ChevronRight className="h-4 w-4" />
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   )
@@ -224,10 +438,24 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
 
 export function UpdateFrequencyComparison() {
   const [selectedTeamId, setSelectedTeamId] = useState<string | undefined>(undefined)
-  const [windowDays, setWindowDays] = useState<number | undefined>(90)
+  const [windowDays, setWindowDays] = useState<number | undefined>(DEFAULT_WINDOW_DAYS)
+  const [requested, setRequested] = useState<RequestedFilters | null>(null)
 
   const { data: teamsData } = useTeams()
-  const { data, isLoading, error } = useUpdateFrequencyComparison(selectedTeamId, { windowDays })
+  const { data, isFetching, error, refetch } = useUpdateFrequencyComparison(
+    requested?.teamId,
+    { windowDays: requested?.windowDays },
+    requested !== null
+  )
+
+  // A disabled query still hands back whatever sits in the cache for its key.
+  const comparison = requested === null ? undefined : data
+  const loadError = requested === null ? null : error
+
+  const measuredProjects = useMemo(() => (comparison?.projects ?? []).filter(isMeasured), [comparison])
+
+  const filtersDirty =
+    requested === null || requested.teamId !== selectedTeamId || requested.windowDays !== windowDays
 
   return (
     <div className="space-y-6">
@@ -238,7 +466,7 @@ export function UpdateFrequencyComparison() {
             Compare how well projects keep their dependencies up to date
           </CardDescription>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-2">
           <div className="flex flex-wrap items-center gap-4">
             <Select
               value={selectedTeamId || 'all'}
@@ -256,12 +484,27 @@ export function UpdateFrequencyComparison() {
                 ))}
               </SelectContent>
             </Select>
-            <WindowSelect value={windowDays} onChange={setWindowDays} />
+            <WindowSelect value={windowDays} onChange={setWindowDays} allowScans={false} />
+            <Button
+              variant="outline"
+              disabled={isFetching}
+              onClick={() =>
+                filtersDirty ? setRequested({ teamId: selectedTeamId, windowDays }) : refetch()
+              }
+            >
+              <RefreshCw className={`h-4 w-4 mr-2 ${isFetching ? 'animate-spin' : ''}`} />
+              {filtersDirty ? 'Load comparison' : 'Reload comparison'}
+            </Button>
           </div>
+          <p className="text-xs text-muted-foreground">
+            {filtersDirty && requested !== null
+              ? 'Filters changed — load the comparison to apply them.'
+              : 'Ranks every project in scope over one shared window; an uncached run can take a while.'}
+          </p>
         </CardContent>
       </Card>
 
-      {isLoading && (
+      {isFetching && (
         <div className="space-y-4">
           <div className="grid gap-4 md:grid-cols-4">
             {Array.from({ length: 4 }, (_, i) => (
@@ -272,34 +515,44 @@ export function UpdateFrequencyComparison() {
         </div>
       )}
 
-      {error && (
-        <Card>
-          <CardContent className="py-8">
-            <div className="flex flex-col items-center gap-2 text-muted-foreground">
-              <AlertTriangle className="h-12 w-12" />
-              <p>Failed to load comparison data</p>
-            </div>
-          </CardContent>
-        </Card>
+      {loadError && !isFetching && (
+        <AnalyticsErrorCard
+          title="Failed to load comparison data"
+          error={loadError}
+          onRetry={() => refetch()}
+        />
       )}
 
-      {data?.projects.length === 0 && (
+      {requested === null && (
         <Card>
           <CardContent className="py-12">
             <div className="flex flex-col items-center gap-4 text-muted-foreground">
               <Users className="h-12 w-12" />
-              <p>No projects with enough scan history found</p>
-              <p className="text-sm">Projects need at least 2 completed scans for comparison</p>
+              <p>Pick a team and time window, then load the comparison</p>
             </div>
           </CardContent>
         </Card>
       )}
 
-      {data && data.projects.length > 0 && (
+      {comparison?.projects.length === 0 && !isFetching && (
+        <Card>
+          <CardContent className="py-12">
+            <div className="flex flex-col items-center gap-4 text-muted-foreground">
+              <Users className="h-12 w-12" />
+              <p>No projects in this scope</p>
+              <p className="text-sm">Projects without enough scans are listed too, so this means the filter matched none</p>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {comparison && comparison.projects.length > 0 && !isFetching && (
         <>
-          <ComparisonSummaryCards data={data} />
-          <ComparisonChart projects={data.projects} />
-          <ProjectRankingTable projects={data.projects} />
+          <ComparisonSummaryCards data={comparison} measuredCount={measuredProjects.length} />
+          {comparison.partial_projects > 0 && <PartialBanner count={comparison.partial_projects} />}
+          {comparison.pending_projects > 0 && <PendingBanner count={comparison.pending_projects} />}
+          {measuredProjects.length > 0 && <ComparisonChart projects={measuredProjects} />}
+          <ProjectRankingTable projects={comparison.projects} />
         </>
       )}
     </div>

@@ -107,6 +107,16 @@ class Settings(BaseSettings):
     # Compliance report retention (days from completion until sweep deletes report + artifact).
     COMPLIANCE_REPORT_RETENTION_DAYS: int = 90
 
+    # Kill switch for the per-scan update-frequency rollup written during ingest.
+    UPDATE_FREQUENCY_ROLLUP_ENABLED: bool = True
+    # Serve the update-frequency analytics from that rollup. Stays off until the
+    # backfill has run: without deltas a project can only be reported as pending.
+    UPDATE_FREQUENCY_USE_ROLLUP: bool = False
+    # The nightly reconcile of that rollup against the scans. Stays off until the backfill
+    # has run: an unbackfilled window is drift in every chain, which turns the reconcile
+    # into a second backfill that never gets past its per-night cap.
+    UPDATE_FREQUENCY_RECONCILE_ENABLED: bool = False
+
     model_config = SettingsConfigDict(case_sensitive=True, env_file=".env")
 
 

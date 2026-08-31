@@ -242,6 +242,16 @@ spec:
             # MongoDB read preference for replica sets (distributes read load)
             - name: MONGODB_READ_PREFERENCE
               value: "{{ .Values.backend.env.mongodbReadPreference | default "secondaryPreferred" }}"
+            # Update-frequency switches, all three flipped from the manifest, so turning
+            # one off is a value change rather than an image build.
+            # hasKey rather than `| default true`: Go templates treat false as empty, so
+            # the default would win over an explicit false and the brake would not release.
+            - name: UPDATE_FREQUENCY_ROLLUP_ENABLED
+              value: "{{ if hasKey .Values.backend.env "updateFrequencyRollupEnabled" }}{{ .Values.backend.env.updateFrequencyRollupEnabled }}{{ else }}true{{ end }}"
+            - name: UPDATE_FREQUENCY_USE_ROLLUP
+              value: "{{ .Values.backend.env.updateFrequencyUseRollup | default false }}"
+            - name: UPDATE_FREQUENCY_RECONCILE_ENABLED
+              value: "{{ .Values.backend.env.updateFrequencyReconcileEnabled | default false }}"
             {{- if .Values.trivyServer.enabled }}
             # Trivy Server: send scans via HTTP to central server (no local DB needed)
             - name: TRIVY_SERVER_URL

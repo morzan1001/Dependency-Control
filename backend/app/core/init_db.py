@@ -250,6 +250,20 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("name", pymongo.ASCENDING)])
     await database["dependencies"].create_index([("scan_id", pymongo.ASCENDING), ("direct", pymongo.ASCENDING)])
 
+    # Update-frequency rollups (scan_outdated_sets is only ever read by _id)
+    # _id joins the key because the neighbour lookups order by (scan_created_at, _id).
+    await database["scan_update_deltas"].create_index(
+        [
+            ("project_id", pymongo.ASCENDING),
+            ("branch", pymongo.ASCENDING),
+            ("scan_created_at", pymongo.DESCENDING),
+            ("_id", pymongo.DESCENDING),
+        ]
+    )
+    await database["scan_update_deltas"].create_index(
+        [("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.DESCENDING)]
+    )
+
     # Findings
     await database["findings"].create_index("severity")
     await database["findings"].create_index("type")

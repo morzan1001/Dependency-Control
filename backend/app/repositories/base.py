@@ -39,13 +39,9 @@ class BaseRepository[T: BaseModel]:
         with track_db_operation(self.collection_name, "find_one"):
             return await self.collection.find_one({"_id": id})
 
-    async def find_one(
-        self,
-        query: dict[str, Any],
-        projection: dict[str, int] | None = None,
-    ) -> T | None:
+    async def find_one(self, query: dict[str, Any]) -> T | None:
         with track_db_operation(self.collection_name, "find_one"):
-            data = await self.collection.find_one(query, projection)
+            data = await self.collection.find_one(query)
         return self._to_model(data)
 
     async def find_one_raw(
@@ -63,12 +59,11 @@ class BaseRepository[T: BaseModel]:
         limit: int = 100,
         sort_by: str | None = None,
         sort_order: int = 1,
-        projection: dict[str, int] | None = None,
     ) -> list[T]:
         # pymongo .limit(0) means unbounded; floor to 1 to avoid loading the whole collection.
         safe_limit = max(limit, 1)
         with track_db_operation(self.collection_name, "find"):
-            cursor = self.collection.find(query, projection)
+            cursor = self.collection.find(query)
             if sort_by:
                 cursor = cursor.sort(sort_by, sort_order)
             cursor = cursor.skip(skip).limit(safe_limit)
@@ -183,12 +178,8 @@ class BaseRepository[T: BaseModel]:
             )
             return await cursor.to_list(limit)
 
-    async def iterate(
-        self,
-        query: dict[str, Any] | None = None,
-        projection: dict[str, int] | None = None,
-    ) -> AsyncGenerator[T | None, None]:
-        async for doc in self.collection.find(query or {}, projection):
+    async def iterate(self, query: dict[str, Any] | None = None) -> AsyncGenerator[T | None, None]:
+        async for doc in self.collection.find(query or {}):
             yield self._to_model(doc)
 
     async def iterate_raw(
