@@ -156,6 +156,16 @@ describe("UpdateFrequencyComparison", () => {
     expect(screen.getByTestId("bar")).toHaveAttribute("data-animated", "false");
   });
 
+  it("explains that Outdated is the window-cumulative count, not the current one", async () => {
+    renderComparison();
+    clickLoad();
+    await screen.findByText("Project Ranking");
+
+    expect(
+      screen.getByLabelText(/distinct packages outdated at any point in the window/i),
+    ).toBeInTheDocument();
+  });
+
   it("paginates the ranking table instead of rendering every project", async () => {
     mockedComparison.mockResolvedValue(makeComparison(60));
     renderComparison();

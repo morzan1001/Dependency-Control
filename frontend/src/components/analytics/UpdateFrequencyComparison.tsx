@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, type ReactNode } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -32,6 +32,12 @@ import {
   RefreshCw,
   Users,
 } from 'lucide-react'
+import {
+  Tooltip as HintTooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip'
 import { useUpdateFrequencyComparison } from '@/hooks/queries/use-analytics'
 import { useTeams } from '@/hooks/queries/use-teams'
 import { formatDate, formatCoveragePct, formatUpdatesPerMonth } from '@/lib/utils'
@@ -53,6 +59,26 @@ const TABLE_PAGE_SIZE = 25
 const DEFAULT_WINDOW_DAYS = 90
 
 const NO_VALUE = '—'
+
+// A column header whose figure has non-obvious window semantics carries an info
+// affordance; the copy is the only place a reader learns what the number counts.
+function HintHeader({
+  children,
+  hint,
+  align = 'left',
+}: Readonly<{ children: ReactNode; hint: string; align?: 'left' | 'right' }>) {
+  return (
+    <TableHead className={align === 'right' ? 'text-right' : undefined}>
+      <HintTooltip>
+        <TooltipTrigger className={`inline-flex items-center gap-1 ${align === 'right' ? 'flex-row-reverse' : ''}`}>
+          {children}
+          <Info className="h-3 w-3 text-muted-foreground" aria-label={hint} />
+        </TooltipTrigger>
+        <TooltipContent className="max-w-xs">{hint}</TooltipContent>
+      </HintTooltip>
+    </TableHead>
+  )
+}
 
 // A partial row carries numbers, so it is not one of these: it renders its metrics
 // with a caveat instead of a placeholder.
@@ -369,6 +395,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
       </CardHeader>
       <CardContent>
         <div className="overflow-x-auto">
+          <TooltipProvider delayDuration={200}>
           <Table>
             <TableHeader className="sticky top-0 bg-background z-10 shadow-sm">
               <TableRow>
@@ -376,11 +403,19 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                 <TableHead>Project</TableHead>
                 <TableHead>Branch</TableHead>
                 <TableHead>Team</TableHead>
-                <TableHead className="text-right">Updates/Mo</TableHead>
-                <TableHead className="text-right">Coverage</TableHead>
-                <TableHead className="text-right">Patch %</TableHead>
+                <HintHeader align="right" hint="Version changes per month, measured over the selected window (updates ÷ window in months). Not extrapolated from scan spacing.">
+                  Updates/Mo
+                </HintHeader>
+                <HintHeader align="right" hint="Of the packages that were outdated at some point in the window, the share later brought up to date.">
+                  Coverage
+                </HintHeader>
+                <HintHeader align="right" hint="Share of the counted updates that were patch-level (x.y.Z).">
+                  Patch %
+                </HintHeader>
                 <TableHead className="text-center">Trend</TableHead>
-                <TableHead className="text-right">Outdated</TableHead>
+                <HintHeader align="right" hint="Distinct packages outdated at any point in the window, not the number outdated right now.">
+                  Outdated
+                </HintHeader>
                 <TableHead>Last Scan</TableHead>
               </TableRow>
             </TableHeader>
@@ -419,6 +454,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
               ))}
             </TableBody>
           </Table>
+          </TooltipProvider>
         </div>
         {totalPages > 1 && (
           <div className="flex items-center justify-end gap-2 py-4 text-sm text-muted-foreground">
