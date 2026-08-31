@@ -30,6 +30,12 @@ PROJECT = "proj-1"
 BRANCH = "main"
 WINDOW_DAYS = 90
 
+
+def _one_scan_each(commit_count: int) -> dict[str, int]:
+    """A window whose commits were each scanned once, the shape most cases only need."""
+    return {f"commit-{index}": 1 for index in range(commit_count)}
+
+
 # Anchored inside the window so both paths see the same scans.
 NOW = datetime.now(tz=timezone.utc)
 
@@ -608,7 +614,7 @@ def _fake_deltas(branch: str, count: int, newest_days_ago: float, retries: int =
 class TestBranchChoice:
     def test_a_project_whose_only_branches_are_deleted_resolves_to_nothing(self):
         resolved = _resolve_window(
-            {"gone": BranchWindowActivity(3, _days_ago(2))},
+            {"gone": BranchWindowActivity(_one_scan_each(3), _days_ago(2))},
             {"gone": _fake_deltas("gone", 3, 2)},
             {"_id": PROJECT, "deleted_branches": ["gone"]},
         )
@@ -618,7 +624,10 @@ class TestBranchChoice:
         # A ledger that only reached the quieter branch must not move the project
         # onto it; the live path would still report the branch the scans elect.
         resolved = _resolve_window(
-            {"old": BranchWindowActivity(3, _days_ago(60)), "new": BranchWindowActivity(2, _days_ago(10))},
+            {
+                "old": BranchWindowActivity(_one_scan_each(3), _days_ago(60)),
+                "new": BranchWindowActivity(_one_scan_each(2), _days_ago(10)),
+            },
             {"new": _fake_deltas("new", 2, 10)},
             {"_id": PROJECT},
         )
@@ -843,7 +852,7 @@ class TestWindowCap:
         deltas = _fake_deltas("main", documents, 1, retries=retries)
         assert len({d["commit_hash"] for d in deltas}) == window_commits
 
-        resolved = _fold_branch("main", deltas, BranchWindowActivity(window_commits, _days_ago(1)))
+        resolved = _fold_branch("main", deltas, BranchWindowActivity(_one_scan_each(window_commits), _days_ago(1)))
 
         assert resolved.status == "ready"
         assert len(resolved.window) == min(documents, WINDOW_HARD_LIMIT)
@@ -855,7 +864,7 @@ class TestWindowCap:
         # commits is partial however small the window is.
         deltas = _fake_deltas("main", 3, 1)
 
-        resolved = _fold_branch("main", deltas, BranchWindowActivity(10, _days_ago(1)))
+        resolved = _fold_branch("main", deltas, BranchWindowActivity(_one_scan_each(10), _days_ago(1)))
 
         assert resolved.status == "partial"
 

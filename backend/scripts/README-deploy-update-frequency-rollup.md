@@ -231,8 +231,10 @@ notes:
   walk, and on any project whose fold is not `ready` and therefore falls back to it — so the
   tiles come and go with the ledger's coverage, which is confusing and worth a release note.
 - A `ready` row does not promise full coverage. `ready` means the ledger accounts for at least
-  80% of the branch's commits in the window; below that the row turns `partial`. So a row can
-  be ranked and averaged while up to a fifth of its window is unmeasured. A branch with 1000 or
+  80% of the branch's window commits that any scan of them measured; below that the row turns
+  `partial`. So a row can be ranked and averaged while up to a fifth of its window is unmeasured.
+  A commit only ever scanned without an SBOM counts on neither side of that share, because both
+  read paths drop such a scan and no backfill would change what it holds. A branch with 1000 or
   more documents in the window is `ready` by construction: both paths read only the newest 1000,
   and the branch's own commit count describes more than either of them analysed.
 - A project whose window holds fewer than two scans *with an SBOM* now reports insufficient data

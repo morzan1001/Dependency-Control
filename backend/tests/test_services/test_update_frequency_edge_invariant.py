@@ -7,6 +7,7 @@ uses, with the gate's own exceptions.
 """
 
 import random
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -15,7 +16,12 @@ from unittest.mock import patch
 import pytest
 
 from app.api.v1.endpoints.analytics import update_frequency as endpoint
-from app.api.v1.endpoints.analytics.update_frequency import _fold_branch, _rollup_project_metrics
+from app.api.v1.endpoints.analytics.update_frequency import (
+    _compute_comparison,
+    _compute_comparison_from_rollup,
+    _fold_branch,
+    _rollup_project_metrics,
+)
 from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
 from app.repositories.update_frequency import BranchWindowActivity
 from app.schemas.analytics import ScanTimelineEntry, UpdateFrequencyMetrics
@@ -24,9 +30,9 @@ from app.services.update_frequency import (
     fold_runs_into_bars,
     same_commit_runs,
 )
-from app.services.update_frequency_fold import accounted_commits, fold_window, select_window, window_bars
+from app.services.update_frequency_fold import commit_coverage, fold_window, select_window, window_bars
 from app.services.update_frequency_rollup import record_scan_update_delta
-from scripts.verify_update_frequency_parity import KnownCauses, compare_metrics
+from scripts.verify_update_frequency_parity import KnownCauses, compare_comparisons, compare_metrics
 from tests.mocks.fake_mongo import FakeDatabase
 
 PROJECT = "proj-1"
@@ -145,6 +151,30 @@ async def _assert_identical(db: FakeDatabase) -> UpdateFrequencyMetrics:
     return live
 
 
+async def _comparisons(db: FakeDatabase) -> tuple[dict[str, Any], dict[str, Any]]:
+    """The comparison payload of each read path over this project, ``data_status`` included."""
+    await db.projects.insert_one(
+        {"_id": PROJECT, "name": "Project One", "team_id": None, "default_branch": None, "deleted_branches": []}
+    )
+    return (
+        await _compute_comparison(db, [PROJECT], None, window_days=WINDOW_DAYS),
+        await _compute_comparison_from_rollup(db, [PROJECT], None, window_days=WINDOW_DAYS),
+    )
+
+
+async def _assert_both_paths_agree(db: FakeDatabase) -> dict[str, Any]:
+    """Every field of both gate checks, and the row the paths agree on.
+
+    ``UpdateFrequencyMetrics`` carries no ``data_status``, so the verdict is only
+    visible on the comparison row; the metrics check is what pins the numbers
+    behind it.
+    """
+    await _assert_identical(db)
+    live, rolled = await _comparisons(db)
+    assert compare_comparisons(live, rolled) == []
+    return rolled["projects"][0]
+
+
 class TestMovementInsideARun:
     """The two histories that first showed the collapse and the delta chain disagreeing."""
 
@@ -242,7 +272,8 @@ class TestRunPlacement:
         assert live.total_updates == 0
         # A single bar cannot be divided by its intervals; the ledger declines rather than fold it.
         assert await _rollup(db) is None
-        assert _fold_branch(BRANCH, await _deltas(db), _activity(5)).status == "insufficient_data"
+        deltas = await _deltas(db)
+        assert _fold_branch(BRANCH, deltas, _activity(deltas)).status == "insufficient_data"
 
     @pytest.mark.asyncio
     async def test_runs_alternating_with_single_scans(self):
@@ -349,7 +380,8 @@ class TestDataStatusIsUnmoved:
         await _seed_scan(db, "c1", _days_ago(40), {"p": "1.2.0"}, commit_hash="cC")
         await _build_ledger(db)
 
-        resolved = _fold_branch(BRANCH, await _deltas(db), _activity(3))
+        deltas = await _deltas(db)
+        resolved = _fold_branch(BRANCH, deltas, _activity(deltas))
 
         assert resolved.status == "ready"
         assert len(resolved.window) == 5
@@ -367,12 +399,177 @@ class TestDataStatusIsUnmoved:
         deltas = await _deltas(db)
 
         window = select_window(deltas)
+        coverage = commit_coverage(deltas, window, _activity(deltas).scans_per_commit)
 
-        # The SBOM-less a1 is what the fold cannot reach, and cA is what it does not account for.
+        # The fold starts at b1, and cA is the commit of a scan that measured nothing.
         assert window[0]["_id"] == "b1"
-        assert accounted_commits(deltas, window) == 2
-        assert _fold_branch(BRANCH, deltas, _activity(3)).status == "partial"
-        assert _fold_branch(BRANCH, deltas, _activity(2)).status == "ready"
+        assert (coverage.accounted, coverage.coverable) == (2, 2)
+        assert _fold_branch(BRANCH, deltas, _activity(deltas)).status == "ready"
+
+
+class TestScansThatMeasuredNothing:
+    """Both paths drop a scan that produced no SBOM, so it is no gap between them.
+
+    The ledger records such a scan as a delta counting no dependencies. Holding
+    its commit against the ledger read the two paths' agreement as ledger drift
+    and sent the operator into a backfill that had nothing left to write.
+    """
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("commits", [2, 3, 4])
+    async def test_the_oldest_scan_of_the_window_carries_no_sbom(self, commits: int):
+        db = FakeDatabase()
+        await _seed_scan(db, "e0", _days_ago(70), {}, commit_hash="cE0")
+        for index in range(commits):
+            await _seed_scan(
+                db, f"s{index}", _days_ago(60 - index * 10), {"p": f"1.{index}.0"}, commit_hash=f"c{index}"
+            )
+        await _build_ledger(db)
+
+        row = await _assert_both_paths_agree(db)
+
+        assert (row["data_status"], row["scan_count"]) == ("ready", commits)
+
+    @pytest.mark.asyncio
+    async def test_a_window_that_opens_on_three_scans_without_an_sbom(self):
+        db = FakeDatabase()
+        for index in range(3):
+            await _seed_scan(db, f"e{index}", _days_ago(70 - index), {}, commit_hash=f"cE{index}")
+        for index in range(3):
+            await _seed_scan(
+                db, f"s{index}", _days_ago(60 - index * 10), {"p": f"1.{index}.0"}, commit_hash=f"c{index}"
+            )
+        await _build_ledger(db)
+
+        row = await _assert_both_paths_agree(db)
+
+        assert (row["data_status"], row["scan_count"]) == ("ready", 3)
+
+    @pytest.mark.asyncio
+    async def test_a_scan_without_an_sbom_in_the_middle(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "s0", _days_ago(60), {"p": "1.0.0"}, commit_hash="c0")
+        await _seed_scan(db, "e1", _days_ago(50), {}, commit_hash="cE1")
+        await _seed_scan(db, "s2", _days_ago(40), {"p": "1.1.0"}, commit_hash="c2")
+        await _seed_scan(db, "s3", _days_ago(30), {"p": "1.2.0"}, commit_hash="c3")
+        await _build_ledger(db)
+
+        row = await _assert_both_paths_agree(db)
+
+        assert (row["data_status"], row["scan_count"]) == ("ready", 3)
+
+    @pytest.mark.asyncio
+    async def test_the_newest_scan_of_the_window_carries_no_sbom(self):
+        db = FakeDatabase()
+        for index in range(3):
+            await _seed_scan(
+                db, f"s{index}", _days_ago(60 - index * 10), {"p": f"1.{index}.0"}, commit_hash=f"c{index}"
+            )
+        await _seed_scan(db, "e3", _days_ago(20), {}, commit_hash="cE3")
+        await _build_ledger(db)
+
+        row = await _assert_both_paths_agree(db)
+
+        assert (row["data_status"], row["scan_count"]) == ("ready", 3)
+
+    @pytest.mark.asyncio
+    async def test_scans_without_an_sbom_at_both_ends_and_in_between(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "e0", _days_ago(70), {}, commit_hash="cE0")
+        await _seed_scan(db, "e1", _days_ago(69), {}, commit_hash="cE1")
+        await _seed_scan(db, "s2", _days_ago(60), {"p": "1.0.0"}, commit_hash="c2")
+        await _seed_scan(db, "e3", _days_ago(50), {}, commit_hash="cE3")
+        await _seed_scan(db, "s4", _days_ago(40), {"p": "1.1.0"}, commit_hash="c4")
+        await _seed_scan(db, "s5", _days_ago(30), {"p": "1.2.0"}, commit_hash="c5")
+        await _seed_scan(db, "e6", _days_ago(20), {}, commit_hash="cE6")
+        await _build_ledger(db)
+
+        row = await _assert_both_paths_agree(db)
+
+        assert (row["data_status"], row["scan_count"]) == ("ready", 3)
+
+    @pytest.mark.asyncio
+    async def test_a_commit_whose_retries_only_partly_produced_an_sbom_still_counts(self):
+        """One measurement of a commit is enough; the retry that produced none is not its verdict."""
+        db = FakeDatabase()
+        await _seed_scan(db, "a1", _days_ago(60), {}, commit_hash="cA")
+        await _seed_scan(db, "a2", _days_ago(59), {"p": "1.0.0"}, commit_hash="cA")
+        await _seed_scan(db, "b1", _days_ago(50), {"p": "1.1.0"}, commit_hash="cB")
+        await _build_ledger(db)
+        deltas = await _deltas(db)
+
+        coverage = commit_coverage(deltas, select_window(deltas), _activity(deltas).scans_per_commit)
+
+        assert (coverage.accounted, coverage.coverable) == (2, 2)
+        assert (await _assert_both_paths_agree(db))["data_status"] == "ready"
+
+
+class TestAGapInTheLedgerIsStillPartial:
+    """A delta that is missing or failed is a real hole, and the row must keep saying so."""
+
+    @pytest.mark.asyncio
+    async def test_a_scan_the_writer_never_reached(self):
+        db = FakeDatabase()
+        for index in range(4):
+            await _seed_scan(
+                db, f"s{index}", _days_ago(60 - index * 10), {"p": f"1.{index}.0"}, commit_hash=f"c{index}"
+            )
+        await _build_ledger(db)
+        await db.scan_update_deltas.delete_one({"_id": "s0"})
+
+        live, rolled = await _comparisons(db)
+
+        assert live["projects"][0]["data_status"] == "ready"
+        assert rolled["projects"][0]["data_status"] == "partial"
+
+    @pytest.mark.asyncio
+    async def test_a_missing_delta_next_to_scans_that_measured_nothing(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "e0", _days_ago(70), {}, commit_hash="cE0")
+        for index in range(4):
+            await _seed_scan(
+                db, f"s{index}", _days_ago(60 - index * 10), {"p": f"1.{index}.0"}, commit_hash=f"c{index}"
+            )
+        await _build_ledger(db)
+        await db.scan_update_deltas.delete_one({"_id": "s0"})
+
+        live, rolled = await _comparisons(db)
+
+        assert live["projects"][0]["data_status"] == "ready"
+        assert rolled["projects"][0]["data_status"] == "partial"
+
+    @pytest.mark.asyncio
+    async def test_scans_that_measured_nothing_do_not_cover_the_stretch_before_the_anchor(self):
+        """They leave both sides of the verdict, so they cannot stand in for the missing ones."""
+        db = FakeDatabase()
+        for index in range(3):
+            await _seed_scan(db, f"s{index}", _days_ago(60 - index * 5), {"p": f"1.{index}.0"}, commit_hash=f"c{index}")
+        await _seed_scan(db, "e3", _days_ago(40), {}, commit_hash="cE3")
+        await _seed_scan(db, "s4", _days_ago(30), {"p": "1.4.0"}, commit_hash="c4")
+        await _seed_scan(db, "e5", _days_ago(20), {}, commit_hash="cE5")
+        await _build_ledger(db)
+        # The chain now breaks at s2, so s0 and s1 are outside what the fold reaches.
+        await db.scan_update_deltas.delete_one({"_id": "s1"})
+
+        live, rolled = await _comparisons(db)
+
+        assert live["projects"][0]["data_status"] == "ready"
+        assert rolled["projects"][0]["data_status"] == "partial"
+
+    @pytest.mark.asyncio
+    async def test_a_delta_the_writer_failed_on(self):
+        db = FakeDatabase()
+        for index in range(4):
+            await _seed_scan(
+                db, f"s{index}", _days_ago(60 - index * 10), {"p": f"1.{index}.0"}, commit_hash=f"c{index}"
+            )
+        await _build_ledger(db)
+        await db.scan_update_deltas.update_one({"_id": "s3"}, {"$set": {"error": "boom", "dep_count": 0}})
+
+        live, rolled = await _comparisons(db)
+
+        assert live["projects"][0]["data_status"] == "ready"
+        assert rolled["projects"][0]["data_status"] == "partial"
 
 
 class TestCappedRate:
@@ -388,7 +585,7 @@ class TestCappedRate:
         deltas = await _deltas(db)
 
         with patch.object(endpoint, "WINDOW_HARD_LIMIT", len(deltas)):
-            resolved = _fold_branch(BRANCH, deltas, _activity(2))
+            resolved = _fold_branch(BRANCH, deltas, _activity(deltas))
         folded = fold_window(resolved.window, None, resolved.measured_days)
 
         # a2 to b2 is 45 days; the runs' first members span only 40.
@@ -501,8 +698,19 @@ async def _deltas(db: FakeDatabase) -> list[dict[str, Any]]:
     return sorted(docs, key=lambda doc: (doc["scan_created_at"], doc["_id"]))
 
 
-def _activity(commit_count: int) -> BranchWindowActivity:
-    return BranchWindowActivity(commit_count=commit_count, last_scan_at=NOW)
+def _activity(deltas: Sequence[dict[str, Any]], undelivered: dict[str, int] | None = None) -> BranchWindowActivity:
+    """The scan side these deltas imply, as `window_scans_by_branch` would report it.
+
+    Every delta stands for one scan of its commit; ``undelivered`` adds scans the ledger
+    has not written a delta for, which is what makes a window read as only partly covered.
+    """
+    scans_per_commit: dict[str, int] = {}
+    for delta in deltas:
+        token = delta.get("commit_hash") or delta["_id"]
+        scans_per_commit[token] = scans_per_commit.get(token, 0) + 1
+    for token, count in (undelivered or {}).items():
+        scans_per_commit[token] = scans_per_commit.get(token, 0) + count
+    return BranchWindowActivity(scans_per_commit=scans_per_commit, last_scan_at=NOW)
 
 
 # ---------------------------------------------------------------------------
@@ -639,7 +847,8 @@ class TestGeneratedHistoriesWithALedgerHole:
         await db.scan_update_deltas.delete_one({"_id": hole})
 
         live = await _live(db)
-        resolved = _fold_branch(BRANCH, await _deltas(db), _activity(len(scans)))
+        deltas = await _deltas(db)
+        resolved = _fold_branch(BRANCH, deltas, _activity(deltas))
 
         if resolved.status in ("ready", "partial"):
             folded = [bar[-1]["_id"] for bar in window_bars(resolved.window)]

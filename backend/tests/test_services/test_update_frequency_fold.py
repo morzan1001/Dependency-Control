@@ -11,7 +11,7 @@ from app.services.release_history import UpstreamCadenceMetrics
 from app.services.update_frequency import DAYS_PER_MONTH, compute_trend
 from app.services.update_frequency_fold import (
     FoldedWindow,
-    accounted_commits,
+    commit_coverage,
     fold_window,
     select_window,
     window_bars,
@@ -390,16 +390,30 @@ class TestUnusableScans:
         assert _fold(with_empties).updates_per_scan == 4.0
 
 
-class TestAccountedCommits:
-    """What the ledger reached over the stretch the fold covered, in commits."""
+class TestCommitCoverage:
+    """What the ledger reached, against the commits of the window it could reach."""
 
     @staticmethod
-    def _over(deltas: list[dict[str, Any]]) -> int:
-        return accounted_commits(deltas, select_window(deltas))
+    def _over(
+        deltas: list[dict[str, Any]], _window_commits: int | None = None, undelivered: dict[str, int] | None = None
+    ) -> tuple[int, int, str]:
+        """Coverage against the scan side these deltas imply, plus scans that owe one.
+
+        Every delta stands for one scan of its commit, so the scan side follows from the
+        fixture; ``undelivered`` adds scans the ledger has not written a delta for.
+        """
+        scans_per_commit: dict[str, int] = {}
+        for delta in deltas:
+            token = delta.get("commit_hash") or delta["_id"]
+            scans_per_commit[token] = scans_per_commit.get(token, 0) + 1
+        for token, count in (undelivered or {}).items():
+            scans_per_commit[token] = scans_per_commit.get(token, 0) + count
+        coverage = commit_coverage(deltas, select_window(deltas), scans_per_commit)
+        return coverage.accounted, coverage.coverable, coverage.status
 
     def test_the_scans_the_fold_drops_on_purpose_leave_no_hole(self) -> None:
-        # SBOM-less scans are dropped by design and same-commit retries share a bar;
-        # counting bars instead would read this healthy branch as half measured.
+        # Same-commit retries share a bar and an SBOM-less scan measured nothing;
+        # counting bars or documents instead read this healthy branch as half measured.
         deltas = _chain(
             [
                 _delta("s0", 0, commit_hash="c1"),
@@ -413,18 +427,35 @@ class TestAccountedCommits:
         window = select_window(deltas)
         assert len(window) == 5
         assert len(window_bars(window)) == 3
-        assert self._over(deltas) == 4
+        # c3 was never measurable, so it leaves both sides rather than one.
+        assert self._over(deltas, 4) == (3, 3, "ready")
+
+    def test_a_commit_measured_by_one_of_its_retries_stays_on_both_sides(self) -> None:
+        deltas = _chain(
+            [
+                _delta("s0", 0, dep_count=0, commit_hash="c1"),
+                _delta("s1", 1, patch=1, commit_hash="c1"),
+                _delta("s2", 10, patch=1, commit_hash="c2"),
+            ]
+        )
+        assert self._over(deltas, 2) == (2, 2, "ready")
 
     def test_a_scan_naming_no_commit_stands_for_itself(self) -> None:
         deltas = _chain([_delta("s0", 0, commit_hash=""), _delta("s1", 10, patch=1, commit_hash="")])
-        assert self._over(deltas) == 2
+        assert self._over(deltas, 2) == (2, 2, "ready")
 
     def test_everything_before_the_anchor_is_a_hole_the_fold_could_not_reach(self) -> None:
         deltas = _chain([_delta(f"s{i}", i * 10, patch=1) for i in range(5)])
         # The branch history before s3 was pruned, so the fold anchors there.
         deltas[3]["prev_scan_id"] = None
         assert [d["_id"] for d in select_window(deltas)] == ["s3", "s4"]
-        assert self._over(deltas) == 2
+        assert self._over(deltas, 5) == (2, 5, "partial")
+
+    def test_a_scan_the_writer_never_wrote_a_delta_for_is_a_real_hole(self) -> None:
+        # Four commits scanned, a delta for the newest three: the fourth is unwritten,
+        # and an unwritten delta says nothing about what its scan measured.
+        deltas = _chain([_delta(f"s{i}", i * 10, patch=1) for i in range(4)])
+        assert self._over(deltas[1:], undelivered={"commit-s0": 1}) == (3, 4, "partial")
 
     def test_a_delta_the_writer_failed_on_is_a_real_hole(self) -> None:
         intact = _chain([_delta(f"s{i}", i * 10, patch=1) for i in range(4)])
@@ -436,8 +467,21 @@ class TestAccountedCommits:
                 _delta("s3", 30, patch=1),
             ]
         )
-        assert self._over(intact) == 4
-        assert self._over(broken) == 3
+        assert self._over(intact, 4) == (4, 4, "ready")
+        assert self._over(broken, 4) == (3, 4, "partial")
+
+    def test_a_failure_on_a_scan_that_carried_no_dependencies_is_still_a_hole(self) -> None:
+        # The writer stores no dep_count on a failure, so only the error tells the
+        # two apart: a scan it never measured is not a scan it measured as empty.
+        deltas = _chain(
+            [
+                _delta("s0", 0, patch=1),
+                _delta("s1", 10, patch=1),
+                _delta("s2", 20, patch=1),
+                _delta("s3", 30, dep_count=0, error="dependency read failed"),
+            ]
+        )
+        assert self._over(deltas, 4) == (3, 4, "partial")
 
 
 class TestCoverage:

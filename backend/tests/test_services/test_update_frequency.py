@@ -444,10 +444,15 @@ def _outdated_result(scan_id: str, entries: list[dict[str, str]]) -> dict[str, A
     }
 
 
+def _one_scan_each(commit_count: int) -> dict[str, int]:
+    """A window whose commits were each scanned once, the shape most cases only need."""
+    return {f"commit-{index}": 1 for index in range(commit_count)}
+
+
 def _activity(branches: dict[str, tuple[int, int]]) -> dict[str, BranchWindowActivity]:
     """``branch -> (scans in the window, day offset of its newest scan)``."""
     return {
-        branch: BranchWindowActivity(count, _BASE_SCAN_DATE + timedelta(days=day))
+        branch: BranchWindowActivity(_one_scan_each(count), _BASE_SCAN_DATE + timedelta(days=day))
         for branch, (count, day) in branches.items()
     }
 

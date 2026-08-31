@@ -70,10 +70,19 @@ def _ledger_entry(pushed: dict[str, Any]) -> LedgerEntry:
 
 @dataclass(frozen=True)
 class BranchWindowActivity:
-    """What one branch of one project really holds in the window, before any fold drops a scan."""
+    """What one branch of one project really holds in the window, before any fold drops a scan.
 
-    commit_count: int
+    ``scans_per_commit`` carries the count and not just the token, because a commit is only
+    beyond measuring when every one of its scans said so; one scan of it without a delta is a
+    hole in the ledger, not a commit nobody could measure.
+    """
+
+    scans_per_commit: dict[str, int]
     last_scan_at: datetime
+
+    @property
+    def commit_count(self) -> int:
+        return len(self.scans_per_commit)
 
 
 # Sorts last on the recency tie-break.
@@ -140,12 +149,18 @@ async def window_scans_by_branch(
             {"$addFields": {"_commit": _COMMIT_TOKEN}},
             {
                 "$group": {
-                    "_id": {"p": "$project_id", "b": "$branch"},
-                    "commits": {"$addToSet": "$_commit"},
+                    "_id": {"p": "$project_id", "b": "$branch", "c": "$_commit"},
+                    "scans": {"$sum": 1},
                     "last_scan_at": {"$max": "$created_at"},
                 }
             },
-            {"$project": {"commit_count": {"$size": "$commits"}, "last_scan_at": 1}},
+            {
+                "$group": {
+                    "_id": {"p": "$_id.p", "b": "$_id.b"},
+                    "commits": {"$push": {"t": "$_id.c", "n": "$scans"}},
+                    "last_scan_at": {"$max": "$last_scan_at"},
+                }
+            },
         ]
         for row in await scan_repo.aggregate(pipeline):
             chain = _named_branch(row["_id"])
@@ -154,7 +169,8 @@ async def window_scans_by_branch(
             last_scan_at = row["last_scan_at"]
             # Archive restore can insert a scan date as an ISO string, which $max hands back verbatim.
             moment = _as_utc(last_scan_at) if isinstance(last_scan_at, datetime) else _UNDATED
-            activity[chain] = BranchWindowActivity(int(row["commit_count"]), moment)
+            per_commit = {c["t"]: int(c["n"]) for c in row["commits"] if isinstance(c.get("t"), str)}
+            activity[chain] = BranchWindowActivity(per_commit, moment)
     return activity
 
 

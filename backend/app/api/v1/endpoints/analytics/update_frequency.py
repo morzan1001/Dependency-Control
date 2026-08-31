@@ -58,11 +58,10 @@ from app.services.update_frequency import (
     load_outdated_entries,
     rank_summaries,
     select_primary_branch,
-    window_coverage_status,
     window_cutoff,
 )
 from app.services.update_frequency_fold import (
-    accounted_commits,
+    commit_coverage,
     fold_window,
     select_window,
     window_bars,
@@ -360,9 +359,7 @@ def _fold_branch(branch: str, deltas: list[dict[str, Any]], activity: BranchWind
         return _ResolvedWindow(branch, [], "error" if any(d.get("error") for d in deltas) else "insufficient_data")
     # Past the cap the branch's own commit count describes a longer stretch than either
     # path reads, so comparing against it would demote exactly the busiest projects.
-    status: UpdateDataStatus = (
-        "ready" if capped else window_coverage_status(accounted_commits(deltas, window), activity.commit_count)
-    )
+    status: UpdateDataStatus = "ready" if capped else commit_coverage(deltas, window, activity.scans_per_commit).status
     measured_days = _spanned_days(bars) if capped else None
     return _ResolvedWindow(branch, window, status, measured_days, bars)
 

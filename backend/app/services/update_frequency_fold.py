@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from itertools import dropwhile, pairwise
@@ -26,6 +26,7 @@ from app.services.update_frequency import (
     granularity_ratio,
     same_commit_runs,
     updates_per_month,
+    window_coverage_status,
 )
 
 logger = logging.getLogger(__name__)
@@ -165,17 +166,58 @@ def window_bars(window: Sequence[dict[str, Any]]) -> list[list[dict[str, Any]]]:
     return same_commit_runs(window, commit_of=lambda delta: delta.get("commit_hash"))
 
 
-def accounted_commits(deltas: Sequence[dict[str, Any]], window: Sequence[dict[str, Any]]) -> int:
-    """Commits the ledger accounted for over the stretch ``select_window(deltas)`` covered.
+def _commit_token(delta: dict[str, Any]) -> str:
+    """A scan that names no commit stands for itself."""
+    token: str = delta.get("commit_hash") or delta["_id"]
+    return token
 
-    Counting only the folded deltas would read a healthy branch as half measured,
-    because same-commit retries and SBOM-less scans are dropped by design and
-    nothing is missing where they were. A delta the writer failed on is a real
-    hole, and so is everything before the window's anchor, which the fold could
-    not reach. A scan that names no commit stands for itself.
+
+@dataclass(frozen=True)
+class CommitCoverage:
+    """How much of a branch's window the ledger accounted for, in commits."""
+
+    accounted: int
+    coverable: int
+
+    @property
+    def status(self) -> Literal["ready", "partial"]:
+        return window_coverage_status(self.accounted, self.coverable)
+
+
+def commit_coverage(
+    deltas: Sequence[dict[str, Any]], window: Sequence[dict[str, Any]], scans_per_commit: Mapping[str, int]
+) -> CommitCoverage:
+    """What ``select_window(deltas)`` reached of the commits its branch window holds.
+
+    Both sides count commits rather than documents, or a CI retry storm would read as
+    missing data. A commit leaves both sides only when the ledger proves nobody could
+    measure it: every one of its scans in the window carries a delta, and every one of
+    those reports no dependencies and no writer failure. One scan of it still owing a
+    delta is a hole, a failure is a hole, and so is everything before the window's
+    anchor, which the fold could not reach.
+
+    Both sides are keyed on the same token set, the one the scan side counted. A delta
+    whose scan is no longer in the window -- an orphan the nightly reconcile has yet to
+    remove -- can therefore neither shrink the denominator nor pad the numerator.
     """
+    measured: dict[str, int] = {}
+    unmeasurable: dict[str, int] = {}
+    for delta in deltas:
+        token = _commit_token(delta)
+        if token not in scans_per_commit:
+            continue
+        bucket = measured if (delta.get("error") or int(delta.get("dep_count", 0))) else unmeasurable
+        bucket[token] = bucket.get(token, 0) + 1
+
+    skipped = {
+        token for token, seen in unmeasurable.items() if token not in measured and seen >= scans_per_commit[token]
+    }
+
     covered = dropwhile(lambda delta: delta["_id"] != window[0]["_id"], deltas)
-    return len({d.get("commit_hash") or d["_id"] for d in covered if not d.get("error")})
+    accounted = {
+        _commit_token(d) for d in covered if not d.get("error") and _commit_token(d) in scans_per_commit
+    } - skipped
+    return CommitCoverage(len(accounted), len(scans_per_commit) - len(skipped))
 
 
 def fold_window(
