@@ -57,7 +57,7 @@ function formatDays(days: number): string {
   return `${days.toFixed(days < 10 ? 1 : 0)}d`
 }
 
-function SummaryCards({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
+function SummaryCards({ data, windowDays }: Readonly<{ data: UpdateFrequencyMetrics; windowDays?: number }>) {
   const trend = TREND_CONFIG[data.trend_direction] ?? TREND_CONFIG.unknown
   const TrendIcon = trend.icon
   const coverageKnown = data.update_coverage_pct !== null
@@ -72,8 +72,11 @@ function SummaryCards({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
         <CardContent>
           <div className="text-2xl font-bold">{formatUpdatesPerMonth(data.updates_per_month)}</div>
           <p className="text-xs text-muted-foreground">
-            {data.total_updates} updates over {formatDays(data.time_range_days)}
-            {data.updates_per_month === null && ' · pick a time window for a rate'}
+            {/* The rate divides by the window, so naming the observed span here would
+                put two different denominators on one card. */}
+            {windowDays
+              ? `${data.total_updates} updates in the last ${windowDays}d`
+              : `${data.total_updates} updates over ${formatDays(data.time_range_days)} · pick a time window for a rate`}
           </p>
         </CardContent>
       </Card>
@@ -460,7 +463,7 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
             </div>
           )}
 
-          <SummaryCards data={data} />
+          <SummaryCards data={data} windowDays={windowDays} />
 
           <TimelineChart data={data} />
 

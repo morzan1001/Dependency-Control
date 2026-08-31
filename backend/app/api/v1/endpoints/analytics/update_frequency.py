@@ -51,6 +51,7 @@ from app.services.release_history import (
 )
 from app.services.update_frequency import (
     DEP_PROJECTION,
+    as_utc,
     compute_update_frequency,
     compute_update_frequency_comparison,
     fold_scan_deps,
@@ -316,6 +317,9 @@ class _ResolvedWindow:
     branch: str | None
     window: list[dict[str, Any]]
     status: UpdateDataStatus
+    # Set only when the cap truncated the branch: the rate then has to divide by the
+    # stretch actually read, not by a window whose older part was never looked at.
+    measured_days: int | None = None
 
 
 def _resolve_window(
@@ -352,7 +356,14 @@ def _fold_branch(branch: str, deltas: list[dict[str, Any]], activity: BranchWind
     status: UpdateDataStatus = (
         "ready" if capped else window_coverage_status(accounted_commits(deltas, window), activity.commit_count)
     )
-    return _ResolvedWindow(branch, window, status)
+    measured_days = _spanned_days(window) if capped else None
+    return _ResolvedWindow(branch, window, status, measured_days)
+
+
+def _spanned_days(window: list[dict[str, Any]]) -> int:
+    """Whole days the folded stretch covers, floored at one so a burst cannot inflate a rate."""
+    span = as_utc(window[-1]["scan_created_at"]) - as_utc(window[0]["scan_created_at"])
+    return max(1, round(span.total_seconds() / 86400))
 
 
 def _rollup_summary(
@@ -375,7 +386,7 @@ def _rollup_summary(
         )
 
     anchor_id = resolved.window[0]["_id"]
-    folded = fold_window(resolved.window, baselines.get(anchor_id), window_days)
+    folded = fold_window(resolved.window, baselines.get(anchor_id), resolved.measured_days or window_days)
     return folded.to_summary(
         project_id,
         project_name,
@@ -481,7 +492,7 @@ async def _rollup_project_metrics(
 
     anchor_id = resolved.window[0]["_id"]
     baselines = await ScanOutdatedSetRepository(db).names_by_scan([anchor_id])
-    folded = fold_window(resolved.window, baselines.get(anchor_id), window_days)
+    folded = fold_window(resolved.window, baselines.get(anchor_id), resolved.measured_days or window_days)
     return folded.to_metrics(
         project_id,
         project.get("name", "Unknown"),

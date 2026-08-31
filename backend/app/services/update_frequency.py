@@ -716,7 +716,7 @@ async def _load_completed_scans(
     max_scans: int,
     since: datetime | None,
     hard_limit: int,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], bool]:
     """Completed non-rescan scans of one branch, chronologically ordered.
 
     When ``since`` is set the calendar window dominates (capped by
@@ -751,7 +751,15 @@ async def _load_completed_scans(
     # Collapse first, THEN cap, so distinct commits fill the window even after a storm.
     if since is None and len(collapsed) > max_scans:
         collapsed = collapsed[-max_scans:]
-    return collapsed
+    # A full fetch means older scans of this branch went unread, so the window the caller
+    # asked for is wider than the stretch it is about to fold.
+    return collapsed, len(docs) >= fetch_limit
+
+
+def _spanned_days(scans: list[dict[str, Any]]) -> int:
+    """Whole days the retained stretch covers, floored at one so a burst cannot inflate a rate."""
+    span: timedelta = scans[-1]["created_at"] - scans[0]["created_at"]
+    return max(1, round(span.total_seconds() / 86400))
 
 
 async def compute_update_frequency(
@@ -788,7 +796,9 @@ async def compute_update_frequency(
     if analyzed_branch is None:
         return _empty_metrics(project_id, project_name, 0, "", branch=None)
 
-    completed_scans = await _load_completed_scans(scan_repo, project_id, analyzed_branch, max_scans, since, hard_limit)
+    completed_scans, truncated = await _load_completed_scans(
+        scan_repo, project_id, analyzed_branch, max_scans, since, hard_limit
+    )
 
     state = _AccumulatorState()
 
@@ -844,6 +854,10 @@ async def compute_update_frequency(
 
     upstream = await _maybe_fetch_upstream_cadence(release_fetcher, state.package_specs, state.first_seen_versions)
 
+    # Past the cap the walk never saw the older part of the window, so the rate divides by
+    # the stretch it did fold rather than by a window it only partly covered.
+    rate_days = _spanned_days(analysed) if truncated else window_days
+
     return _aggregate_metrics(
         analysed,
         state.ever_outdated,
@@ -860,7 +874,7 @@ async def compute_update_frequency(
         branch=analyzed_branch,
         latest_outdated=latest_outdated,
         final_versions=_final_versions_by_name(prev_deps),
-        window_days=window_days,
+        window_days=rate_days,
     )
 
 
