@@ -89,26 +89,41 @@ class TestGroupWindowByBranch:
         assert delta["outdated_added"] == ["flask"]
 
     @pytest.mark.asyncio
-    async def test_a_scope_larger_than_one_batch_is_read_in_batches_without_disk_spill(self):
+    async def test_a_scope_larger_than_one_batch_is_read_in_batches(self):
         db = FakeDatabase()
         project_ids = [f"p{i}" for i in range(_WINDOW_PROJECT_BATCH * 2 + 1)]
         for project_id in project_ids:
             await db.scan_update_deltas.insert_one(_delta(f"{project_id}-s1", project_id, "main", 0))
 
-        real_aggregate = db.scan_update_deltas.aggregate
-        calls: list[dict[str, Any]] = []
+        real_find = db.scan_update_deltas.find
+        batch_sizes: list[int] = []
 
-        def _spy(pipeline: list[dict[str, Any]], **kwargs: Any):
-            calls.append(kwargs)
-            return real_aggregate(pipeline, **kwargs)
+        def _spy(query: dict[str, Any], *args: Any, **kwargs: Any):
+            batch_sizes.append(len(query["project_id"]["$in"]))
+            return real_find(query, *args, **kwargs)
 
-        db.scan_update_deltas.aggregate = _spy  # type: ignore[method-assign]
+        db.scan_update_deltas.find = _spy  # type: ignore[method-assign]
         buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(project_ids, T0 - timedelta(days=1))
 
         assert len(buckets) == len(project_ids)
-        assert len(calls) == 3
-        # Outgrowing the batch sizing must fail loudly rather than spill to the mongod's disk.
-        assert all(call["allowDiskUse"] is False for call in calls)
+        assert batch_sizes == [_WINDOW_PROJECT_BATCH, _WINDOW_PROJECT_BATCH, 1]
+
+    @pytest.mark.asyncio
+    async def test_no_stage_accumulates_the_window_server_side(self):
+        # Deltas carry the outdated names their scan added; accumulating those arrays in a
+        # $group cost more than ten times the documents and blew the blocking-stage ceiling
+        # on real data. Nothing may put them back into one.
+        db = FakeDatabase()
+        for index in range(3):
+            await db.scan_update_deltas.insert_one(_delta(f"s{index}", "p1", "main", index))
+
+        def _refuse(*_args: Any, **_kwargs: Any):
+            raise AssertionError("the window must not be accumulated server-side")
+
+        db.scan_update_deltas.aggregate = _refuse  # type: ignore[method-assign]
+        buckets = await ScanUpdateDeltaRepository(db).group_window_by_branch(["p1"], T0 - timedelta(days=1))
+
+        assert [d["_id"] for d in buckets["p1", "main"]] == ["s0", "s1", "s2"]
 
     @pytest.mark.asyncio
     async def test_an_empty_scope_issues_no_query(self):
