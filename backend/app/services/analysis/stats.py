@@ -39,7 +39,11 @@ from app.services.analysis.types import (
     ReachabilitySummary,
     VulnerabilityInfo,
 )
-from app.services.reachability_enrichment import is_high_confidence_reachable, reachability_display_tier
+from app.services.reachability_enrichment import (
+    count_coverable_findings,
+    is_high_confidence_reachable,
+    reachability_display_tier,
+)
 
 
 def _format_datetime(value: Any | None) -> str | None:
@@ -778,6 +782,7 @@ async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
 
         stats.reachability = ReachabilityStats(
             analyzed_count=res.get("reachability_analyzed", 0),
+            coverable_count=await count_coverable_findings(db, scan_id),
             reachable_count=res.get("reachable_count", 0),
             confirmed_reachable_count=res.get("confirmed_reachable", 0),
             likely_reachable_count=res.get("likely_reachable", 0),

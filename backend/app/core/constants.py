@@ -874,6 +874,13 @@ REACHABILITY_EXTRACTION_CONFIDENCE = {
 # typically import-only matches without symbol-level corroboration.
 REACHABILITY_HIGH_CONFIDENCE_THRESHOLD = 0.6
 
+# Why a finding carries no reachability verdict. "unsupported_ecosystem" is terminal — OS
+# packages have no callgraph tooling — while the others name something a pipeline can fix.
+REACHABILITY_REASON_UNSUPPORTED_ECOSYSTEM = "unsupported_ecosystem"
+REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED = "language_not_analyzed"
+REACHABILITY_REASON_NO_COVERAGE_UNIVERSE = "no_coverage_universe"
+REACHABILITY_REASON_OUTSIDE_COVERAGE = "outside_coverage"
+
 # Upper bound on parsed imports + calls accepted from a single callgraph upload
 CALLGRAPH_MAX_ENTRIES = 200_000
 

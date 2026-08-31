@@ -20,6 +20,10 @@ from app.core.constants import (
     REACHABILITY_LEVEL_IMPORT,
     REACHABILITY_LEVEL_NONE,
     REACHABILITY_LEVEL_SYMBOL,
+    REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED,
+    REACHABILITY_REASON_NO_COVERAGE_UNIVERSE,
+    REACHABILITY_REASON_OUTSIDE_COVERAGE,
+    REACHABILITY_REASON_UNSUPPORTED_ECOSYSTEM,
 )
 from app.services.aggregation.components import build_component_index, canonical_module_key, lookup_component
 from app.services.analyzers.purl_utils import get_purl_type
@@ -89,6 +93,29 @@ async def _build_component_language_map(db: AsyncIOMotorDatabase, scan_id: str) 
             out[name] = out.get(name, frozenset()) | langs
     # Findings carry the qualified component while the inventory keeps the bare name.
     return build_component_index(out)
+
+
+async def count_coverable_findings(db: AsyncIOMotorDatabase, scan_id: str) -> int:
+    """Vulnerability findings whose ecosystem a callgraph could ever analyze.
+
+    Tells a team whether reachability is worth enabling at all. A container scan is almost
+    entirely OS packages, which no callgraph tool covers, so this stays zero however many
+    callgraph jobs the pipeline runs — a distinction the plain unknown count cannot make.
+    """
+    component_languages = await _build_component_language_map(db, scan_id)
+    if not component_languages:
+        return 0
+
+    coverable = 0
+    cursor = db.findings.find(
+        {"scan_id": scan_id, "type": "vulnerability", "waived": {"$ne": True}},
+        {"component": 1},
+    )
+    async for finding in cursor:
+        component = finding.get("component")
+        if component and lookup_component(component_languages, component):
+            coverable += 1
+    return coverable
 
 
 @dataclass(frozen=True)
@@ -283,29 +310,50 @@ def _is_package_in_callgraph(prepared: _PreparedCallgraph, component: str) -> bo
     return bool(_find_usage(prepared, component) or _find_import_locations(prepared, component))
 
 
-def _unknown_message(
+def _unknown_verdict(
     component: str,
     prepared_graphs: list[_PreparedCallgraph],
     component_languages: dict[str, frozenset] | None,
-) -> str:
-    """Explain why absence from the analyzed callgraphs yields no verdict."""
+) -> tuple[str, str]:
+    """Why absence from the analyzed callgraphs yields no verdict, as (reason, message).
+
+    The reason separates "no callgraph tooling can ever cover this package" — the case for
+    OS packages, which dominate container scans — from the cases a pipeline change would fix.
+    Readers must be able to tell those apart without parsing prose.
+    """
     langs = lookup_component(component_languages or {}, component) or frozenset()
-    covering = [p for p in prepared_graphs if p.language in langs]
-    analyzed = ", ".join(p.language for p in prepared_graphs) or "none"
-    if not covering:
+    if not langs:
         return (
-            f"Package '{component}' has no callgraph covering its ecosystem "
-            f"(analyzed: {analyzed}); reachability unknown."
+            REACHABILITY_REASON_UNSUPPORTED_ECOSYSTEM,
+            f"Package '{component}' is in an ecosystem no callgraph tool supports; reachability unknown.",
         )
+
+    covering = [p for p in prepared_graphs if p.language in langs]
+    if not covering:
+        analyzed = ", ".join(p.language for p in prepared_graphs) or "none"
+        return (
+            REACHABILITY_REASON_LANGUAGE_NOT_ANALYZED,
+            (
+                f"No {'/'.join(sorted(langs))} callgraph was uploaded for this scan "
+                f"(analyzed: {analyzed}); reachability unknown."
+            ),
+        )
+
     covering_langs = ", ".join(p.language for p in covering)
     if all(not p.analyzed_index for p in covering):
         return (
-            f"Package '{component}' is absent from the {covering_langs} callgraph(s), "
-            "which published no coverage universe; reachability unknown."
+            REACHABILITY_REASON_NO_COVERAGE_UNIVERSE,
+            (
+                f"Package '{component}' is absent from the {covering_langs} callgraph(s), "
+                "which published no coverage universe; reachability unknown."
+            ),
         )
     return (
-        f"Package '{component}' is outside the coverage universe resolved by the "
-        f"{covering_langs} callgraph(s); reachability unknown."
+        REACHABILITY_REASON_OUTSIDE_COVERAGE,
+        (
+            f"Package '{component}' is outside the coverage universe resolved by the "
+            f"{covering_langs} callgraph(s); reachability unknown."
+        ),
     )
 
 
@@ -342,13 +390,15 @@ def _enrich_finding_from_callgraphs(
             ),
         }
     else:
+        reason, message = _unknown_verdict(component, prepared_graphs, component_languages)
         reachability = {
             "is_reachable": None,
             "confidence_score": 0.0,
             "analysis_level": REACHABILITY_LEVEL_NONE,
             "matched_symbols": [],
             "import_locations": [],
-            "message": _unknown_message(component, prepared_graphs, component_languages),
+            "unknown_reason": reason,
+            "message": message,
         }
     store_reachability(finding, reachability)
     return True

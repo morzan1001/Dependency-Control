@@ -336,6 +336,9 @@ export interface ThreatIntelligenceStats {
 
 export interface ReachabilityStats {
   analyzed_count: number;
+  // Findings in an ecosystem a callgraph can analyse at all. Zero means no callgraph job
+  // would change anything here — OS packages from a container scan are never coverable.
+  coverable_count?: number;
   // Total = confirmed (symbol-level) + likely (import-level).
   reachable_count: number;
   confirmed_reachable_count: number;

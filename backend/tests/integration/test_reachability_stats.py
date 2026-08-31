@@ -197,3 +197,39 @@ async def test_a_second_language_supersedes_the_first_summary(db):
     results = await db.analysis_results.find({"scan_id": _SCAN_ID, "analyzer_name": "reachability"}).to_list(None)
     assert len(results) == 1, "a stale duplicate would render twice in the raw-data view"
     assert sorted(results[0]["result"]["languages"]) == ["javascript", "python"]
+
+
+@pytest.mark.asyncio
+async def test_coverable_count_excludes_os_packages(db):
+    """Container scans are almost all OS packages, which no callgraph tool can ever cover.
+
+    Without this figure a team cannot tell "reachability found nothing yet" from "reachability
+    can never say anything here", and enables callgraph jobs that cannot help them.
+    """
+    from app.services.reachability_enrichment import count_coverable_findings
+
+    await db.dependencies.insert_many(
+        [
+            {"scan_id": _SCAN_ID, "name": "libssl3", "type": "deb", "purl": "pkg:deb/debian/libssl3@3.5.5"},
+            {"scan_id": _SCAN_ID, "name": "sqlite-libs", "type": "apk", "purl": "pkg:apk/alpine/sqlite-libs@3.40"},
+            {"scan_id": _SCAN_ID, "name": "org.json:json", "type": "maven", "purl": "pkg:maven/org.json/json@2023"},
+            {"scan_id": _SCAN_ID, "name": "lodash", "type": "npm", "purl": "pkg:npm/lodash@4.17.21"},
+        ]
+    )
+    for finding_id, component in (
+        ("CVE-1", "libssl3"),
+        ("CVE-2", "sqlite-libs"),
+        ("CVE-3", "org.json:json"),
+        ("CVE-4", "lodash"),
+    ):
+        await db.findings.insert_one(_finding(finding_id, component))
+
+    assert await count_coverable_findings(db, _SCAN_ID) == 1
+
+
+@pytest.mark.asyncio
+async def test_coverable_count_is_zero_without_dependencies(db):
+    from app.services.reachability_enrichment import count_coverable_findings
+
+    await db.findings.insert_one(_finding("CVE-1", "libssl3"))
+    assert await count_coverable_findings(db, _SCAN_ID) == 0

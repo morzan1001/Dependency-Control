@@ -252,7 +252,7 @@ class TestReachabilityFailClosed:
         _enrich_finding_from_callgraphs(finding, [cg], {"requests": frozenset({"python"})})
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is None
-        assert "no callgraph covering its ecosystem" in reach["message"]
+        assert reach["unknown_reason"] == "language_not_analyzed"
         assert finding["details"]["adjusted_risk_score"] == 80.0  # identity, no x0.4
 
     def test_unknown_ecosystem_does_not_downweight(self):
@@ -266,6 +266,7 @@ class TestReachabilityFailClosed:
         _enrich_finding_from_callgraphs(finding, [cg])
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is None
+        assert reach["unknown_reason"] == "unsupported_ecosystem"
         assert finding["details"]["adjusted_risk_score"] == 80.0
 
     def test_empty_coverage_universe_cannot_falsify(self):
@@ -275,7 +276,7 @@ class TestReachabilityFailClosed:
         _enrich_finding_from_callgraphs(finding, [cg], {"requests": frozenset({"python"})})
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is None
-        assert "no coverage universe" in reach["message"]
+        assert reach["unknown_reason"] == "no_coverage_universe"
         assert finding["details"]["adjusted_risk_score"] == 80.0
 
     def test_package_outside_coverage_universe_cannot_falsify(self):
@@ -285,7 +286,7 @@ class TestReachabilityFailClosed:
         _enrich_finding_from_callgraphs(finding, [cg], {"requests": frozenset({"python"})})
         reach = finding["details"]["reachability"]
         assert reach["is_reachable"] is None
-        assert "outside the coverage universe" in reach["message"]
+        assert reach["unknown_reason"] == "outside_coverage"
         assert finding["details"]["adjusted_risk_score"] == 80.0
 
     def test_covering_language_still_downweights(self):

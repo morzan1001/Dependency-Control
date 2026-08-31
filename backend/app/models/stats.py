@@ -18,6 +18,13 @@ class ReachabilityStats(BaseModel):
     """Reachability analysis statistics; prefer the ``*_high_confidence`` fields for headline numbers."""
 
     analyzed_count: int = Field(0, description="Count of vulnerabilities analyzed for reachability")
+    coverable_count: int = Field(
+        0,
+        description=(
+            "Count of vulnerabilities in an ecosystem a callgraph could ever analyze "
+            "(npm/PyPI/Go); zero means reachability cannot help this project"
+        ),
+    )
     reachable_count: int = Field(
         0, description="Count of reachable vulnerabilities (total = confirmed symbol-level + likely import-level)"
     )
