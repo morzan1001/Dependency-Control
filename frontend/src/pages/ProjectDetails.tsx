@@ -110,21 +110,21 @@ export default function ProjectDetails() {
 
   return (
     <div className="container mx-auto py-10 space-y-8">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center space-x-4">
-          <Button variant="ghost" size="icon" asChild>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex items-center gap-4 min-w-0">
+          <Button variant="ghost" size="icon" asChild className="shrink-0">
             <Link to="/dashboard">
               <ArrowLeft className="h-4 w-4" />
             </Link>
           </Button>
-          <div>
-            <h1 className="text-3xl font-bold tracking-tight">{project.name}</h1>
-            <p className="text-muted-foreground">
+          <div className="min-w-0">
+            <h1 className="text-3xl font-bold tracking-tight break-words">{project.name}</h1>
+            <p className="text-muted-foreground truncate">
               Project ID: {project.id}
             </p>
           </div>
         </div>
-        <div className="flex items-center space-x-2">
+        <div className="flex flex-wrap items-center gap-2">
           <Button variant="outline" onClick={handleExportCsv}>
             <Download className="mr-2 h-4 w-4" />
             Export CSV

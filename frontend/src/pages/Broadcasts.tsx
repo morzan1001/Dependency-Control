@@ -302,7 +302,7 @@ export default function Broadcasts() {
               </div>
               
             </CardContent>
-            <CardFooter className="flex justify-between border-t p-6">
+            <CardFooter className="flex flex-wrap items-center gap-3 justify-between border-t p-6">
                 <div className="flex items-center gap-4">
                     <Button variant="secondary" onClick={calculateImpact} disabled={isCalculating || (announcementTarget === 'teams' && selectedTeams.length === 0)}>
                         {isCalculating ? <span className="animate-spin mr-2">⏳</span> : <Calculator className="h-4 w-4 mr-2" />}
@@ -421,7 +421,7 @@ export default function Broadcasts() {
               </div>
 
             </CardContent>
-            <CardFooter className="flex justify-between border-t p-6">
+            <CardFooter className="flex flex-wrap items-center gap-3 justify-between border-t p-6">
                 <div className="flex items-center gap-4">
                     <Button variant="secondary" onClick={calculateImpact} disabled={isCalculating || packages.every(p => !p.name)}>
                         {isCalculating ? <span className="animate-spin mr-2">⏳</span> : <Calculator className="h-4 w-4 mr-2" />}

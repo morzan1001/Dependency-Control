@@ -93,19 +93,19 @@ export default function TeamsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-3xl font-bold tracking-tight">Teams</h1>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <form onSubmit={(e) => e.preventDefault()} className="contents">
             <Input
               placeholder="Search teams..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="w-[250px]"
+              className="w-full sm:w-[250px]"
             />
           </form>
           <Select value={sortBy} onValueChange={setSortBy}>
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="w-full sm:w-[180px]">
               <SelectValue placeholder="Sort by" />
             </SelectTrigger>
             <SelectContent>

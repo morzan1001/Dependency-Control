@@ -138,7 +138,7 @@ export default function GlobalWaivers() {
 
     return (
         <div className="space-y-6">
-            <div className="flex justify-between items-start">
+            <div className="flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-start">
                 <div>
                     <h1 className="text-3xl font-bold tracking-tight">Global Waivers</h1>
                     <p className="text-muted-foreground">
@@ -152,12 +152,12 @@ export default function GlobalWaivers() {
             </div>
 
             <Card>
-                <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-4">
+                <CardHeader className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between space-y-0 pb-4">
                     <div className="space-y-1">
                         <CardTitle>Active Global Waivers</CardTitle>
                         <CardDescription>These waivers apply to all projects in the system.</CardDescription>
                     </div>
-                    <div className="flex items-center gap-3">
+                    <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
                         <Label htmlFor="global-orphaned-only" className="flex items-center gap-2 text-sm cursor-pointer whitespace-nowrap">
                             <Checkbox
                                 id="global-orphaned-only"
@@ -166,7 +166,7 @@ export default function GlobalWaivers() {
                             />
                             Only orphaned
                         </Label>
-                        <div className="w-[250px]">
+                        <div className="w-full sm:w-[250px]">
                             <Input
                                 placeholder="Search waivers..."
                                 value={searchInput}

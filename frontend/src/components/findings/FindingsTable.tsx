@@ -313,7 +313,7 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
     };
 
     return (
-        <div className="relative w-full">
+        <div className="relative w-full overflow-x-auto">
             {isLoading && (
                 <div className="relative">
                     <table className="w-full text-sm table-fixed">
