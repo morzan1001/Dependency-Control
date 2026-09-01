@@ -20,6 +20,7 @@ from app.core.constants import (
     EXPLOIT_MATURITY_ORDER,
     IMPACT_AGE_BOOST,
     IMPACT_FIX_AVAILABLE_BOOST,
+    IMPACT_MAX_SCORE_BOOST,
     IMPACT_REACH_MULTIPLIER_CAP,
     KEV_DEFAULT_BOOST,
     KEV_DUE_SOON_BOOST,
@@ -191,6 +192,45 @@ def _calculate_epss_boost(max_epss: float | None) -> float:
     return 1.0
 
 
+def impact_pre_score(severity_counts: dict[str, int], affected_projects: int) -> float:
+    """Un-boosted severity*reach base of the impact score. Every boost is >= 1.0, so this
+    is a provable lower bound on the final fix_impact_score (and base * IMPACT_MAX_SCORE_BOOST
+    its upper bound)."""
+    # severity_counts may use lowercase or original-case keys
+    severity_score = sum(
+        severity_counts.get(sev.lower(), severity_counts.get(sev, 0)) * weight
+        for sev, weight in SEVERITY_WEIGHTS.items()
+    )
+    reach_multiplier = min(affected_projects, IMPACT_REACH_MULTIPLIER_CAP)
+    return float(severity_score * reach_multiplier)
+
+
+_IMPACT_SEVERITY_BUCKETS = ("critical", "high", "medium", "low")
+
+
+def _row_pre_score(row: dict[str, Any]) -> float:
+    counts = {b: int(row.get(b) or 0) for b in _IMPACT_SEVERITY_BUCKETS}
+    return impact_pre_score(counts, int(row.get("affected_projects") or 0))
+
+
+def select_impact_candidates(rows: list[dict[str, Any]], limit: int) -> list[dict[str, Any]]:
+    """Group rows that can still reach the top `limit` by fix_impact_score.
+
+    Ranking is by the final boosted score, but the boosts (KEV/EPSS/maturity) come from
+    enrichment, not Mongo — so enriching every group is what made the old endpoint drop
+    severe-but-narrow fixes once a blast-radius $limit truncated the set first. Instead we
+    rank by the pre-score lower bound and keep every row whose boosted ceiling
+    (pre_score * IMPACT_MAX_SCORE_BOOST) could still beat the limit-th pre-score. Enrichment
+    then runs only on real contenders, and no true top-`limit` fix is ever excluded.
+    """
+    scored = sorted(((_row_pre_score(r), r) for r in rows), key=lambda t: t[0], reverse=True)
+    if len(scored) <= limit:
+        return [r for _, r in scored]
+    p_limit = scored[limit - 1][0]
+    threshold = p_limit / IMPACT_MAX_SCORE_BOOST
+    return [r for score, r in scored if score >= threshold]
+
+
 def calculate_impact_score(
     severity_counts: dict[str, int],
     affected_projects: int,
@@ -199,14 +239,7 @@ def calculate_impact_score(
     days_known: int | None,
 ) -> float:
     """Calculate fix impact score based on severity, reach, and threat intelligence."""
-    # severity_counts may use lowercase or original-case keys
-    severity_score = sum(
-        severity_counts.get(sev.lower(), severity_counts.get(sev, 0)) * weight
-        for sev, weight in SEVERITY_WEIGHTS.items()
-    )
-
-    reach_multiplier = min(affected_projects, IMPACT_REACH_MULTIPLIER_CAP)
-    base_impact = float(severity_score * reach_multiplier)
+    base_impact = impact_pre_score(severity_counts, affected_projects)
 
     base_impact *= _calculate_kev_boost(enrichment_data)
     base_impact *= _calculate_epss_boost(enrichment_data.max_epss)

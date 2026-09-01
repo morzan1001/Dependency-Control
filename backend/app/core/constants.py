@@ -435,6 +435,19 @@ DAYS_KNOWN_OVERDUE_THRESHOLD: int = 90  # Days a vuln is known before flagged as
 BLAST_RADIUS_THRESHOLD: int = 3  # Min affected projects for "high blast radius"
 KEV_DUE_SOON_DAYS: int = 30  # Days until KEV deadline to be "due soon"
 
+# Largest possible product of impact-score boosts. Every boost is >= 1.0, so the
+# un-boosted severity*reach base is a lower bound on fix_impact_score and this is
+# its upper bound: fix_impact_score in [base, base * IMPACT_MAX_SCORE_BOOST]. The
+# /impact candidate selection uses these bounds to enrich only the groups that can
+# reach the top, without dropping a low-reach-but-severe fix (see select_impact_candidates).
+IMPACT_MAX_SCORE_BOOST: float = (
+    KEV_RANSOMWARE_BOOST
+    * EPSS_VERY_HIGH_BOOST
+    * max(EXPLOIT_MATURITY_BOOST.values())
+    * IMPACT_FIX_AVAILABLE_BOOST
+    * IMPACT_AGE_BOOST
+)
+
 # Threat intelligence
 EPSS_API_URL = "https://api.first.org/data/v1/epss"
 KEV_CATALOG_URL = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json"

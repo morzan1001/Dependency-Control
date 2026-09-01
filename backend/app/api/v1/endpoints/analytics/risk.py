@@ -19,8 +19,10 @@ from app.api.v1.helpers.analytics import (
     get_user_project_ids,
     process_cve_enrichments,
     require_analytics_permission,
+    select_impact_candidates,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
 from app.core.permissions import Permissions
 from app.repositories import (
     DependencyRepository,
@@ -129,13 +131,19 @@ async def get_impact_analysis(
                 "affected_projects": {"$size": "$project_ids"},
             }
         },
+        # Rank/limit happen in Python: the true ranking key is fix_impact_score, whose
+        # KEV/EPSS/maturity boosts come from enrichment, not Mongo. A Mongo $limit here
+        # would cap by blast radius and drop severe-but-narrow fixes before scoring.
         {"$sort": {"affected_projects": -1, "total_findings": -1}},
-        {"$limit": limit},
+        {"$limit": ANALYTICS_MAX_QUERY_LIMIT},
     ]
 
     results = await finding_repo.aggregate(pipeline, allow_disk_use=True)
 
-    all_cves = [fid for r in results for fid in r.get("finding_ids", []) if fid and fid.startswith("CVE-")]
+    # Enrich only the groups that can still reach the top `limit` by boosted score.
+    candidates = select_impact_candidates(results, limit)
+
+    all_cves = [fid for r in candidates for fid in r.get("finding_ids", []) if fid and fid.startswith("CVE-")]
 
     enrichments = {}
     if all_cves:
@@ -145,7 +153,7 @@ async def get_impact_analysis(
             logger.warning(f"Failed to enrich CVEs: {e}")
 
     impact_results = []
-    for r in results:
+    for r in candidates:
         severity_counts = _severity_counts_from_row(r)
         fix_versions = extract_fix_versions(r.get("details_list", []))
         has_fix = len(fix_versions) > 0
@@ -205,7 +213,7 @@ async def get_impact_analysis(
 
     impact_results.sort(key=lambda x: x.fix_impact_score, reverse=True)
 
-    return impact_results
+    return impact_results[:limit]
 
 
 def _format_first_seen(first_seen: Any) -> str:

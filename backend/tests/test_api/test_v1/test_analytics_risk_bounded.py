@@ -5,9 +5,16 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.api.v1.helpers.analytics import count_severities
+from app.api.v1.helpers.analytics import (
+    calculate_impact_score,
+    count_severities,
+    impact_pre_score,
+    select_impact_candidates,
+)
+from app.core.constants import IMPACT_MAX_SCORE_BOOST
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
+from app.schemas.analytics import CVEEnrichmentResult
 from tests.mocks.fake_mongo import FakeCollection
 
 MODULE = "app.api.v1.endpoints.analytics.risk"
@@ -571,3 +578,98 @@ class TestFirstSeenUsesScanCreatedAt:
         item = response[0]
         assert item.first_seen != ""
         assert item.days_known is not None and item.days_known >= 119
+
+
+# fix_impact_score, not blast radius, decides the /impact ranking and the top-`limit` cut.
+# The KEV/EPSS/maturity boosts come from enrichment, so scoring happens in Python; a Mongo
+# blast-radius $limit used to drop severe-but-narrow fixes before they were ever scored.
+
+
+def _impact_row(
+    component: str, ap: int, *, critical: int = 0, high: int = 0, medium: int = 0, low: int = 0
+) -> dict[str, Any]:
+    return {
+        "_id": {"component": component, "version": "1.0.0"},
+        "component": component,
+        "version": "1.0.0",
+        "project_ids": [f"p{i}" for i in range(ap)],
+        "total_findings": critical + high + medium + low,
+        "critical": critical,
+        "high": high,
+        "medium": medium,
+        "low": low,
+        "finding_ids": [f"CVE-{component}"],
+        "first_seen": None,
+        "details_list": [],
+        "affected_projects": ap,
+    }
+
+
+class TestImpactPreScoreIsScoreBase:
+    def test_pre_score_equals_unboosted_impact_score(self):
+        counts = {"critical": 2, "high": 3, "medium": 1, "low": 4}
+        for ap in (0, 1, 5, 10, 50):
+            assert impact_pre_score(counts, ap) == calculate_impact_score(
+                counts, ap, CVEEnrichmentResult(), has_fix=False, days_known=None
+            ), f"pre-score must equal the un-boosted impact score (ap={ap})"
+
+    def test_reach_is_capped_like_the_score(self):
+        counts = {"critical": 1, "high": 0, "medium": 0, "low": 0}
+        assert impact_pre_score(counts, 10) == impact_pre_score(counts, 9999)
+        assert impact_pre_score(counts, 3) < impact_pre_score(counts, 10)
+
+
+class TestSelectImpactCandidates:
+    def test_returns_all_when_not_over_limit(self):
+        rows = [_impact_row("a", 5, low=1), _impact_row("b", 3, high=1)]
+        assert len(select_impact_candidates(rows, limit=20)) == 2
+
+    def test_keeps_narrow_but_severe_contender(self):
+        # 24 broad low-severity groups outrank a narrow critical on blast radius...
+        broad = [_impact_row(f"broad{i}", ap=50, low=1) for i in range(24)]  # pre = 1*10 = 10
+        narrow = _impact_row("narrow", ap=1, critical=3)  # pre = 30*1 = 30
+        cands = select_impact_candidates(broad + [narrow], limit=20)
+        assert any(r["component"] == "narrow" for r in cands), (
+            "narrow-but-severe fix must survive candidate selection; its boosted ceiling can top the list"
+        )
+
+    def test_drops_only_genuinely_unreachable_groups(self):
+        top = [_impact_row(f"t{i}", ap=10, critical=1) for i in range(5)]  # pre = 100 (limit-th)
+        reachable = _impact_row("reachable", ap=1, critical=2)  # pre 20; 20*B_MAX=166 > 100
+        unreachable = _impact_row("unreachable", ap=1, low=1)  # pre 1; 1*B_MAX=8.3 < 100
+        cands = select_impact_candidates(top + [reachable, unreachable], limit=5)
+        names = {r["component"] for r in cands}
+        assert "reachable" in names, "a group whose boosted ceiling clears the limit-th pre-score must be kept"
+        assert "unreachable" not in names, "a group that can never reach the top-limit must be dropped"
+
+    def test_threshold_is_limit_pre_score_over_boost_ceiling(self):
+        # Exactly at the boundary pre = P_limit / B_MAX must be kept (inclusive).
+        top = [_impact_row(f"t{i}", ap=10, critical=1) for i in range(5)]  # P_limit = 100
+        boundary_low = round(100 / IMPACT_MAX_SCORE_BOOST) + 1  # low count -> pre just above threshold
+        boundary = _impact_row("boundary", ap=1, low=boundary_low)
+        cands = select_impact_candidates(top + [boundary], limit=5)
+        assert any(r["component"] == "boundary" for r in cands)
+
+
+class TestImpactEndpointRanksByScoreNotBlastRadius:
+    def test_narrow_critical_beats_broad_low_severity(self):
+        # Old code $sorted+$limited by blast radius in Mongo: with 24 broad groups the narrow
+        # critical never entered the top-5 and was never scored. It must now rank first.
+        broad = [_impact_row(f"broad{i}", ap=50, low=1) for i in range(24)]  # pre 10, blast radius 50
+        narrow = _impact_row("narrow-critical", ap=2, critical=5)  # pre 50*2 = 100
+        response, _, _ = _run_impact(agg_results=broad + [narrow], limit=5)
+        names = [item.component for item in response]
+        assert "narrow-critical" in names, "narrow critical must surface by fix_impact_score, not blast radius"
+        assert response[0].component == "narrow-critical", "highest fix_impact_score must rank first"
+
+    def test_response_capped_at_limit(self):
+        rows = [_impact_row(f"c{i}", ap=i + 1, critical=1) for i in range(30)]
+        response, _, _ = _run_impact(agg_results=rows, limit=5)
+        assert len(response) == 5
+
+    def test_pipeline_does_not_mongo_limit_at_user_limit(self):
+        # A Mongo $limit at the page size caps by the blast-radius $sort before any scoring.
+        _, pipeline, _ = _run_impact(agg_results=[], limit=7)
+        limits = [stage["$limit"] for stage in pipeline if "$limit" in stage]
+        assert 7 not in limits, "Mongo must not $limit at the user limit; that caps by blast radius before scoring"
+        assert all(lim >= 1000 for lim in limits), "any Mongo $limit must be a large safety cap, not a page size"
