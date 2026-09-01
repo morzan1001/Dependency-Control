@@ -28,6 +28,17 @@ from tests.mocks.gitlab import make_gitlab_instance
 TEST_PURL_REQUESTS = "pkg:pypi/requests@2.31.0"
 
 
+@pytest.fixture(autouse=True)
+def _isolate_analytics_cache():
+    """The analytics endpoints share a process-level TTL cache; clear it around every test
+    so one test's memoized aggregation can't leak into the next."""
+    from app.services.analytics.cache import get_analytics_cache
+
+    get_analytics_cache().clear()
+    yield
+    get_analytics_cache().clear()
+
+
 @pytest.fixture
 def gitlab_instance_a():
     """Standard GitLab instance A for testing."""

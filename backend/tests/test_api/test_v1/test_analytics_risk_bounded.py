@@ -5,8 +5,6 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import pytest
-
 from app.api.v1.helpers.analytics import (
     calculate_impact_score,
     count_severities,
@@ -17,18 +15,9 @@ from app.core.constants import IMPACT_MAX_SCORE_BOOST
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
 from app.schemas.analytics import CVEEnrichmentResult
-from app.services.analytics.cache import get_analytics_cache
 from tests.mocks.fake_mongo import FakeCollection
 
 MODULE = "app.api.v1.endpoints.analytics.risk"
-
-
-@pytest.fixture(autouse=True)
-def _clear_analytics_cache():
-    """The endpoints memoize on a process-level cache; isolate each test from the last."""
-    get_analytics_cache().clear()
-    yield
-    get_analytics_cache().clear()
 
 
 def _admin_user() -> User:
