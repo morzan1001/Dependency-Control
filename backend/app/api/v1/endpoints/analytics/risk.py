@@ -59,10 +59,21 @@ def _scope_digest(project_ids: list[str], scan_ids: list[str]) -> str:
 _SEVERITY_BUCKETS = ("critical", "high", "medium", "low")
 
 
-def _severity_count_accumulators() -> dict[str, Any]:
-    """$group accumulators counting findings per severity (case-insensitive)."""
+def _severity_id_accumulators() -> dict[str, Any]:
+    """$group accumulators collecting the distinct finding_ids per severity (case-insensitive),
+    so severity counts are distinct vulnerabilities rather than per-project finding instances."""
     return {
-        bucket: {"$sum": {"$cond": [{"$eq": [{"$toLower": "$severity"}, bucket]}, 1, 0]}}
+        f"{bucket}_ids": {
+            "$addToSet": {"$cond": [{"$eq": [{"$toLower": "$severity"}, bucket]}, "$finding_id", None]}
+        }
+        for bucket in _SEVERITY_BUCKETS
+    }
+
+
+def _severity_count_projection() -> dict[str, Any]:
+    """$project/$addFields turning the per-severity id sets into distinct counts."""
+    return {
+        bucket: {"$size": {"$setDifference": [f"${bucket}_ids", [None]]}}
         for bucket in _SEVERITY_BUCKETS
     }
 
@@ -128,7 +139,7 @@ async def get_impact_analysis(
             "$group": {
                 "_id": {"component": "$component", "version": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
-                **_severity_count_accumulators(),
+                **_severity_id_accumulators(),
                 # $addToSet dedupes to distinct CVEs per (component, version).
                 "finding_ids": {"$addToSet": "$finding_id"},
                 "first_seen": {"$min": "$scan_created_at"},
@@ -141,9 +152,9 @@ async def get_impact_analysis(
                 "version": "$_id.version",
                 "project_ids": 1,
                 # Count distinct vulnerabilities, not finding instances: the same CVE in
-                # five projects is one vulnerability, not five.
+                # five projects is one vulnerability, not five (severity counts likewise).
                 "total_findings": {"$size": {"$setDifference": ["$finding_ids", [None]]}},
-                **{bucket: 1 for bucket in _SEVERITY_BUCKETS},
+                **_severity_count_projection(),
                 "finding_ids": 1,
                 "first_seen": 1,
                 "details_list": 1,
@@ -353,16 +364,21 @@ async def get_vulnerability_hotspots(
             "$group": {
                 "_id": {"component": "$component", "version": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
-                **_severity_count_accumulators(),
+                **_severity_id_accumulators(),
                 "first_seen": {"$min": "$scan_created_at"},
                 # $addToSet dedupes to distinct CVEs per (component, version).
                 "finding_ids": {"$addToSet": "$finding_id"},
                 "details_list": {"$addToSet": "$details"},
             }
         },
-        # Count distinct vulnerabilities, not finding instances: the same CVE in five
-        # projects is one vulnerability. Set before $sort so a finding_count sort agrees.
-        {"$addFields": {"finding_count": {"$size": {"$setDifference": ["$finding_ids", [None]]}}}},
+        # Count distinct vulnerabilities, not finding instances: the same CVE in five projects
+        # is one vulnerability (severity counts likewise). Set before $sort so finding_count agrees.
+        {
+            "$addFields": {
+                "finding_count": {"$size": {"$setDifference": ["$finding_ids", [None]]}},
+                **_severity_count_projection(),
+            }
+        },
         {"$sort": {mongo_sort_field: sort_direction}},
     ]
 

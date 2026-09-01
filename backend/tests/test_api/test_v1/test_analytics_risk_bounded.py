@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.api.v1.helpers.analytics import (
     calculate_impact_score,
-    count_severities,
     impact_pre_score,
     select_impact_candidates,
 )
@@ -56,6 +55,26 @@ def _group_stage(pipeline: list[dict[str, Any]]) -> dict[str, Any]:
         if "$group" in stage:
             return stage["$group"]
     raise AssertionError("pipeline has no $group stage")
+
+
+def _assert_distinct_severity_counts(pipeline: list[dict[str, Any]]) -> None:
+    """Each severity count must be the size of a distinct finding_id set per severity, not a
+    $sum:1 instance tally, so it reconciles with the distinct total_findings and the score."""
+    group = _group_stage(pipeline)
+    projected: dict[str, Any] = {}
+    for stage in pipeline:
+        for key in ("$project", "$addFields", "$set"):
+            projected.update(stage.get(key) or {})
+    for sev in ("critical", "high", "medium", "low"):
+        acc = group.get(f"{sev}_ids")
+        assert acc and "$addToSet" in acc, f"{sev} must collect distinct finding_ids via $addToSet"
+        assert sev not in group or "$sum" not in group[sev], f"{sev} must not be a $sum:1 instance count"
+        count = projected.get(sev)
+        size = count.get("$size") if isinstance(count, dict) else None
+        setdiff = size.get("$setDifference") if isinstance(size, dict) else None
+        assert isinstance(setdiff, list) and setdiff and setdiff[0] == f"${sev}_ids", (
+            f"{sev} count must be $size of its distinct id set"
+        )
 
 
 def _sliced_fields_after_group(pipeline: list[dict[str, Any]]) -> list[str]:
@@ -213,11 +232,9 @@ class TestImpactPipelineBounded:
         for _acc, push_expr in _iter_push_exprs(pipeline):
             assert push_expr != "$severity", "raw severity array must not be pushed; use scalar counts"
 
-    def test_severity_scalar_counts_present(self):
+    def test_severity_counts_are_distinct_per_cve(self):
         _, pipeline, _ = _run_impact(agg_results=[])
-        group = _group_stage(pipeline)
-        for sev in ("critical", "high", "medium", "low"):
-            assert sev in group, f"expected scalar severity accumulator '{sev}' in $group"
+        _assert_distinct_severity_counts(pipeline)
 
     def test_finding_ids_deduped_with_add_to_set(self):
         _, pipeline, _ = _run_impact(agg_results=[])
@@ -262,11 +279,9 @@ class TestHotspotsPipelineBounded:
         for _acc, push_expr in _iter_push_exprs(pipeline):
             assert push_expr != "$severity", "raw severity array must not be pushed; use scalar counts"
 
-    def test_severity_scalar_counts_present(self):
+    def test_severity_counts_are_distinct_per_cve(self):
         _, pipeline, _ = _run_hotspots(agg_results=[])
-        group = _group_stage(pipeline)
-        for sev in ("critical", "high", "medium", "low"):
-            assert sev in group, f"expected scalar severity accumulator '{sev}' in $group"
+        _assert_distinct_severity_counts(pipeline)
 
     def test_finding_ids_deduped_with_add_to_set(self):
         _, pipeline, _ = _run_hotspots(agg_results=[])
@@ -368,12 +383,13 @@ class TestHotspotsResponseShape:
         assert "CVE-2021-1" in item.top_cves
 
 
-# Run real $group accumulators through FakeCollection: scalar counts must equal count_severities() and $addToSet must dedupe CVEs.
+# Run the distinct-severity accumulators + projection through FakeCollection: a CVE repeated
+# across projects counts once per severity, and the per-severity counts reconcile with the total.
 
 
-class TestSeverityCountAccumulatorsExecuted:
+class TestDistinctSeverityCountsExecuted:
     def _findings(self) -> list[dict[str, Any]]:
-        # same CVE repeated across three projects so $addToSet must collapse it
+        # same CVE repeated across projects so it counts once, not once per project
         return [
             {
                 "_id": "f1",
@@ -417,43 +433,46 @@ class TestSeverityCountAccumulatorsExecuted:
             },  # non-CVE / no id
         ]
 
-    def _group_spec(self) -> dict[str, Any]:
-        # accumulators imported from the production module, not copied
-        from app.api.v1.endpoints.analytics.risk import _severity_count_accumulators
+    def _rows(self) -> list[dict[str, Any]]:
+        # accumulators + projection imported from the production module, not copied
+        from app.api.v1.endpoints.analytics.risk import (
+            _severity_count_projection,
+            _severity_id_accumulators,
+        )
 
-        return {
-            "_id": {"component": "$component", "version": "$version"},
-            "total_findings": {"$sum": 1},
-            **_severity_count_accumulators(),
-            "finding_ids": {"$addToSet": "$finding_id"},
-        }
-
-    def test_scalar_counts_equal_count_severities(self):
-        findings = self._findings()
         col = FakeCollection()
-        col._docs = {d["_id"]: d for d in findings}
+        col._docs = {d["_id"]: d for d in self._findings()}
+        pipeline = [
+            {
+                "$group": {
+                    "_id": {"component": "$component", "version": "$version"},
+                    **_severity_id_accumulators(),
+                    "finding_ids": {"$addToSet": "$finding_id"},
+                }
+            },
+            {
+                "$project": {
+                    "total_findings": {"$size": {"$setDifference": ["$finding_ids", [None]]}},
+                    **_severity_count_projection(),
+                }
+            },
+        ]
+        return asyncio.run(col.aggregate(pipeline).to_list())
 
-        rows = asyncio.run(col.aggregate([{"$group": self._group_spec()}]).to_list())
-        assert len(rows) == 1
-        row = rows[0]
+    def test_severity_counts_are_distinct_cves(self):
+        row = self._rows()[0]
+        # CVE-2021-1 is critical in two projects -> one distinct critical (instance count would be 2)
+        assert row["critical"] == 1
+        assert row["high"] == 1
+        assert row["medium"] == 1
+        # the only low finding has a null id, so it is not a distinct vulnerability
+        assert row["low"] == 0
 
-        expected = count_severities([f["severity"] for f in findings])
-        for sev in ("critical", "high", "medium", "low"):
-            assert row[sev] == expected[sev], f"{sev}: {row[sev]} != {expected[sev]}"
-
-        assert row["total_findings"] == len(findings)
-
-    def test_add_to_set_collapses_repeated_cves(self):
-        findings = self._findings()
-        col = FakeCollection()
-        col._docs = {d["_id"]: d for d in findings}
-
-        rows = asyncio.run(col.aggregate([{"$group": self._group_spec()}]).to_list())
-        finding_ids = rows[0]["finding_ids"]
-
-        # the CVE in three projects collapses to one entry; bounded by distinct ids
-        cve_ids = sorted(fid for fid in finding_ids if fid and fid.startswith("CVE-"))
-        assert cve_ids == ["CVE-2021-1", "CVE-2021-2", "CVE-2021-3"]
+    def test_severity_counts_reconcile_with_total(self):
+        row = self._rows()[0]
+        by_sev = row["critical"] + row["high"] + row["medium"] + row["low"]
+        assert row["total_findings"] == by_sev, "distinct total must equal the sum of distinct severities"
+        assert row["total_findings"] == 3
 
 
 # epss/risk come from enrichment, not Mongo, so the endpoint re-sorts in Python; the pipeline must not cap the fetch below skip+limit.
