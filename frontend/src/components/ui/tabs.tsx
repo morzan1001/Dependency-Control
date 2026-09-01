@@ -16,7 +16,14 @@ const TabsList = React.forwardRef<
       // since a centered flex row hides its leading overflow from the scroll range. The bar
       // still hugs its tabs when they fit. A thin scrollbar (only shown while overflowing) is the
       // affordance mouse-only users need — hiding it left them unable to reach off-screen tabs.
-      "inline-flex h-10 max-w-full items-center justify-start overflow-x-auto rounded-md bg-muted p-1 text-muted-foreground [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border",
+      // Styled from theme tokens (transparent track, subtle muted-foreground thumb) so it blends
+      // with the bar in both light and dark instead of showing the browser's default grey box.
+      // overflow-y-hidden: overflow-x-auto alone leaves overflow-y computing to auto, which can
+      // add a stray vertical scrollbar; the bar only ever scrolls horizontally.
+      "inline-flex h-10 max-w-full items-center justify-start overflow-x-auto overflow-y-hidden rounded-md bg-muted p-1 text-muted-foreground",
+      "[scrollbar-width:thin] [scrollbar-color:hsl(var(--muted-foreground)/0.3)_transparent]",
+      "[&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-track]:bg-transparent",
+      "[&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-[hsl(var(--muted-foreground)/0.3)]",
       className
     )}
     {...props}
