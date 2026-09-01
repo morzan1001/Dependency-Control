@@ -13,7 +13,36 @@ from app.services.recommendation.common import (
     extract_cve_id,
     get_attr,
     parse_version_tuple,
+    sort_key,
 )
+
+
+def _rec(priority: Priority, rtype: RecommendationType, impact: dict) -> Recommendation:
+    return Recommendation(
+        type=rtype,
+        priority=priority,
+        title="t",
+        description="d",
+        impact=impact,
+        affected_components=["c"],
+        action={},
+    )
+
+
+class TestSortKey:
+    def test_priority_tier_outranks_raw_volume(self):
+        # a medium item with a huge vuln count must NOT outrank a critical exploit fix
+        critical = _rec(Priority.CRITICAL, RecommendationType.KNOWN_EXPLOIT, {"total": 1, "critical": 1, "kev_count": 1})
+        medium = _rec(Priority.MEDIUM, RecommendationType.RECURRING_VULNERABILITY, {"total": 445, "critical": 200, "high": 245})
+        assert sort_key(critical) > sort_key(medium)
+        assert calculate_score(medium) > calculate_score(critical), "volume alone would have ranked medium first"
+        ordered = sorted([medium, critical], key=sort_key, reverse=True)
+        assert ordered[0] is critical
+
+    def test_within_tier_orders_by_score(self):
+        big = _rec(Priority.HIGH, RecommendationType.DIRECT_DEPENDENCY_UPDATE, {"total": 20, "critical": 10, "high": 10})
+        small = _rec(Priority.HIGH, RecommendationType.DIRECT_DEPENDENCY_UPDATE, {"total": 1, "low": 1})
+        assert sort_key(big) > sort_key(small)
 
 
 class _SampleModel(BaseModel):

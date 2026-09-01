@@ -197,3 +197,13 @@ def calculate_score(rec: Recommendation) -> int:
 
     total_score = base_score + impact_score + threat_intel_score + effort_bonus + type_bonus
     return int(total_score * reachability_modifier)
+
+
+_PRIORITY_RANK = {Priority.CRITICAL: 3, Priority.HIGH: 2, Priority.MEDIUM: 1, Priority.LOW: 0}
+
+
+def sort_key(rec: Recommendation) -> tuple[int, int]:
+    """Order recommendations by priority tier first, then by score. Priority must dominate so a
+    high-volume medium item (e.g. "445 recurring vulns") never outranks a critical KEV/exploit fix;
+    calculate_score alone let raw counts overwhelm the priority base."""
+    return (_PRIORITY_RANK.get(rec.priority, 0), calculate_score(rec))

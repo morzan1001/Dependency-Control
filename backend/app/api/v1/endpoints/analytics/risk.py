@@ -41,7 +41,7 @@ from app.services.aggregation.components import (
     lookup_component,
 )
 from app.services.analytics.cache import get_analytics_cache
-from app.services.enrichment import get_cve_enrichment
+from app.services.enrichment import canonical_cve, canonical_cves, get_cve_enrichment
 
 logger = logging.getLogger(__name__)
 
@@ -61,23 +61,6 @@ _SEVERITY_BUCKETS = ("critical", "high", "medium", "low")
 _SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 
 
-def _canonical_cve(vuln: dict[str, Any]) -> str | None:
-    """A vulnerability's CVE identity. finding_id is only "component:version"; the real advisories
-    live in details.vulnerabilities, each listed as both its GHSA and its CVE alias. Collapse to the
-    CVE (resolved_cve, a CVE id, or a CVE alias) so those two entries count once; fall back to the
-    raw id for GHSA-only advisories."""
-    resolved = vuln.get("resolved_cve")
-    if isinstance(resolved, str) and resolved.startswith("CVE-"):
-        return resolved
-    ident = vuln.get("id")
-    if isinstance(ident, str) and ident.startswith("CVE-"):
-        return ident
-    for alias in vuln.get("aliases") or []:
-        if isinstance(alias, str) and alias.startswith("CVE-"):
-            return alias
-    return ident if isinstance(ident, str) and ident else None
-
-
 def _worst_severity_by_cve(details_list: list[Any]) -> dict[str, str]:
     """Map each distinct canonical vulnerability to its worst ranked severity across the group."""
     worst: dict[str, str] = {}
@@ -87,7 +70,7 @@ def _worst_severity_by_cve(details_list: list[Any]) -> dict[str, str]:
         for vuln in details.get("vulnerabilities") or []:
             if not isinstance(vuln, dict):
                 continue
-            cve = _canonical_cve(vuln)
+            cve = canonical_cve(vuln)
             if not cve:
                 continue
             sev = str(vuln.get("severity") or "").lower()
@@ -105,20 +88,6 @@ def _severity_counts_from_details(details_list: list[Any]) -> dict[str, int]:
     for sev in _worst_severity_by_cve(details_list).values():
         counts[sev] += 1
     return counts
-
-
-def _canonical_cves(details_list: list[Any]) -> list[str]:
-    """Distinct canonical CVE ids in the group, for threat-intel enrichment and top-CVE display."""
-    seen: dict[str, None] = {}
-    for details in details_list:
-        if not isinstance(details, dict):
-            continue
-        for vuln in details.get("vulnerabilities") or []:
-            if isinstance(vuln, dict):
-                cve = _canonical_cve(vuln)
-                if cve:
-                    seen.setdefault(cve, None)
-    return list(seen)
 
 
 # Slim details before $group so the group never accumulates the raw analyzer payload: keep the
@@ -212,7 +181,7 @@ async def get_impact_analysis(
     # the top `limit` by boosted score.
     candidates = select_impact_candidates(results, limit)
 
-    all_cves = list({cve for r in candidates for cve in _canonical_cves(r.get("details_list", []))})
+    all_cves = list({cve for r in candidates for cve in canonical_cves(r.get("details_list", []))})
 
     enrichments = {}
     if all_cves:
@@ -230,7 +199,7 @@ async def get_impact_analysis(
         fix_versions = extract_fix_versions(r.get("details_list", []))
         has_fix = len(fix_versions) > 0
 
-        enrichment_data = process_cve_enrichments(_canonical_cves(r.get("details_list", [])), enrichments)
+        enrichment_data = process_cve_enrichments(canonical_cves(r.get("details_list", [])), enrichments)
 
         first_seen = first_seen_map.get((r["component"], r.get("version") or "unknown"), r.get("first_seen"))
         days_known = calculate_days_known(first_seen)
@@ -314,7 +283,7 @@ def _build_hotspot(
     first_seen_str = _format_first_seen(r.get("first_seen"))
     days_known = calculate_days_known(r.get("first_seen"))
 
-    cves = _canonical_cves(details_list)
+    cves = canonical_cves(details_list)
     top_cves = cves[:5]
 
     enrichment_data = process_cve_enrichments(cves, enrichments)
@@ -416,7 +385,7 @@ async def get_vulnerability_hotspots(
 
     results = await finding_repo.aggregate(pipeline, allow_disk_use=True)
 
-    all_cves = list({cve for r in results for cve in _canonical_cves(r.get("details_list", []))})
+    all_cves = list({cve for r in results for cve in canonical_cves(r.get("details_list", []))})
 
     enrichments = {}
     if all_cves:

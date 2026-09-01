@@ -340,8 +340,8 @@ class RecommendationEngine:
         if before_dedup != len(recommendations):
             logger.debug(f"Deduplicated {before_dedup - len(recommendations)} duplicate recommendations")
 
-        # Sort by priority and impact using common scoring logic
-        recommendations.sort(key=lambda r: common.calculate_score(r), reverse=True)
+        # Priority tier first, then score, so a high-volume medium never outranks a critical fix.
+        recommendations.sort(key=common.sort_key, reverse=True)
 
         logger.debug(f"Generated {len(recommendations)} total recommendations")
 
