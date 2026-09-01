@@ -543,6 +543,17 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["findings"].create_index([("project_id", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
     await database["findings"].create_index([("type", pymongo.ASCENDING), ("scan_created_at", pymongo.ASCENDING)])
 
+    # Serves historical_first_seen (days_known): (component, version, type) prefix locates a vuln's
+    # rows, trailing scan_created_at lets $group take the earliest with an index min ($first).
+    await database["findings"].create_index(
+        [
+            ("component", pymongo.ASCENDING),
+            ("version", pymongo.ASCENDING),
+            ("type", pymongo.ASCENDING),
+            ("scan_created_at", pymongo.ASCENDING),
+        ]
+    )
+
     logger.info("Database indexes created successfully.")
 
 

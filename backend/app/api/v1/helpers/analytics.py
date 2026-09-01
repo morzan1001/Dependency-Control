@@ -95,6 +95,36 @@ async def get_projects_with_scans(project_ids: list[str], db: AsyncIOMotorDataba
     return project_name_map, list(resolved.values())
 
 
+async def historical_first_seen(
+    finding_repo: Any, components: list[str]
+) -> dict[tuple[str, str], datetime]:
+    """Earliest scan_created_at per (component, version) across ALL scans — a vulnerability's true
+    first detection, not the current scan's age (which is all the active-scan pipelines can see).
+
+    Global (not project-scoped) so the (component, version, type, scan_created_at) index carries the
+    whole query: the $sort matches the index order, so $group takes the earliest as an index min
+    instead of scanning every historical finding. Version is normalized to "unknown" when absent,
+    matching how the endpoints key their rows.
+    """
+    if not components:
+        return {}
+    pipeline = [
+        {"$match": {"component": {"$in": components}, "type": "vulnerability"}},
+        {"$sort": {"component": 1, "version": 1, "scan_created_at": 1}},
+        {
+            "$group": {
+                "_id": {"component": "$component", "version": "$version"},
+                "first_seen": {"$first": "$scan_created_at"},
+            }
+        },
+    ]
+    rows = await finding_repo.aggregate(pipeline, allow_disk_use=True)
+    return {
+        (r["_id"].get("component"), r["_id"].get("version") or "unknown"): r.get("first_seen")
+        for r in rows
+    }
+
+
 def calculate_days_until_due(kev_due_date: str | None) -> int | None:
     """Calculate days until KEV due date (negative = overdue)."""
     if not kev_due_date:

@@ -706,8 +706,14 @@ class TestImpactEndpointRanksByScoreNotBlastRadius:
         assert all(lim >= 1000 for lim in limits), "any Mongo $limit must be a large safety cap, not a page size"
 
 
+def _is_main_group_pipeline(pipeline: list[dict[str, Any]]) -> bool:
+    """The main impact/hotspot aggregation, distinguished from the historical-first-seen one by
+    its details_list accumulator. Used to count only the cacheable recomputation."""
+    return any("details_list" in (stage.get("$group") or {}) for stage in pipeline)
+
+
 def _impact_aggregate_calls(*limits: int) -> int:
-    """Run /impact once per given limit (sharing the cache) and count aggregate() calls."""
+    """Run /impact once per given limit (sharing the cache) and count main-pipeline runs."""
     from app.api.v1.endpoints.analytics.risk import get_impact_analysis
 
     user = _admin_user()
@@ -720,8 +726,9 @@ def _impact_aggregate_calls(*limits: int) -> int:
     async def _fake_get_projects_with_scans(_p, _d):
         return {"proj-1": "P1"}, ["scan-latest"]
 
-    async def _fake_aggregate(_pipeline, **_kw):
-        calls["n"] += 1
+    async def _fake_aggregate(pipeline, **_kw):
+        if _is_main_group_pipeline(pipeline):
+            calls["n"] += 1
         return [_impact_row("a", 3, critical=1)]
 
     repo = MagicMock()
@@ -754,8 +761,9 @@ def _hotspots_aggregate_calls(*sort_bys: str) -> int:
     async def _fake_get_projects_with_scans(_p, _d):
         return {"proj-1": "P1"}, ["scan-latest"]
 
-    async def _fake_aggregate(_pipeline, **_kw):
-        calls["n"] += 1
+    async def _fake_aggregate(pipeline, **_kw):
+        if _is_main_group_pipeline(pipeline):
+            calls["n"] += 1
         return []
 
     repo = MagicMock()
@@ -907,3 +915,155 @@ class TestDistinctVulnCount:
         sort_idx = next((i for i, s in enumerate(pipeline) if "$sort" in s), None)
         assert set_idx is not None, "finding_count must be recomputed as a distinct count"
         assert sort_idx is not None and set_idx < sort_idx, "distinct finding_count must be set before the $sort"
+
+
+# days_known must be how long the vulnerability has been known, not the current scan's age. The
+# active-scan pipelines only see recent scans, so first_seen is re-derived from all scans globally.
+
+
+def _hotspot_group_row(component: str, version: str, first_seen: Any) -> dict[str, Any]:
+    return {
+        "_id": {"component": component, "version": version},
+        "project_ids": ["proj-1"],
+        "finding_count": 1,
+        "critical": 1,
+        "high": 0,
+        "medium": 0,
+        "low": 0,
+        "first_seen": first_seen,
+        "finding_ids": ["CVE-2021-1"],
+        "details_list": [],
+    }
+
+
+class TestHistoricalFirstSeen:
+    def test_pipeline_uses_indexable_first_over_scan_created_at(self):
+        # $first after an index-ordered $sort is an index min; a $min accumulator would scan all docs.
+        from app.api.v1.helpers.analytics import historical_first_seen  # noqa: F401
+
+        captured: list[list[dict[str, Any]]] = []
+
+        async def _agg(pipeline, **_kw):
+            captured.append(pipeline)
+            return []
+
+        repo = MagicMock()
+        repo.aggregate = _agg
+        from app.api.v1.helpers.analytics import historical_first_seen as hfs
+
+        asyncio.run(hfs(repo, ["curl"]))
+        pipeline = captured[0]
+        group = next(s["$group"] for s in pipeline if "$group" in s)
+        assert group["first_seen"] == {"$first": "$scan_created_at"}, "must take the index min via $first"
+        sort = next(s["$sort"] for s in pipeline if "$sort" in s)
+        assert list(sort) == ["component", "version", "scan_created_at"], "sort must match the index order"
+
+    def test_executed_returns_earliest_per_component_version(self):
+        from app.api.v1.helpers.analytics import historical_first_seen as hfs
+
+        old = datetime(2025, 1, 1, tzinfo=timezone.utc)
+        mid = datetime(2025, 6, 1, tzinfo=timezone.utc)
+        findings = [
+            {"_id": "a", "component": "curl", "version": "8.0", "type": "vulnerability", "scan_created_at": mid},
+            {"_id": "b", "component": "curl", "version": "8.0", "type": "vulnerability", "scan_created_at": old},
+            {"_id": "c", "component": "curl", "version": "8.0", "type": "vulnerability", "scan_created_at": datetime(2025, 9, 1, tzinfo=timezone.utc)},
+        ]
+        col = FakeCollection()
+        col._docs = {d["_id"]: d for d in findings}
+
+        class _Repo:
+            async def aggregate(self, pipeline, **_kw):
+                return await col.aggregate(pipeline).to_list()
+
+        result = asyncio.run(hfs(_Repo(), ["curl"]))
+        assert result[("curl", "8.0")] == old, "must return the earliest scan_created_at across all scans"
+
+    def test_no_components_skips_query(self):
+        from app.api.v1.helpers.analytics import historical_first_seen as hfs
+
+        repo = MagicMock()
+        repo.aggregate = AsyncMock(return_value=[])
+        assert asyncio.run(hfs(repo, [])) == {}
+        repo.aggregate.assert_not_called()
+
+    def test_impact_days_known_uses_historical_not_active_scan(self):
+        from app.api.v1.endpoints.analytics.risk import get_impact_analysis
+
+        user = _admin_user()
+        db = MagicMock()
+        recent = datetime.now(timezone.utc) - timedelta(days=2)
+        old = datetime.now(timezone.utc) - timedelta(days=200)
+        row = _impact_row("lodash", 3, critical=1)
+        row["first_seen"] = recent
+
+        async def _gupi(_u, _d):
+            return ["proj-1"]
+
+        async def _gpws(_p, _d):
+            return {"proj-1": "P1"}, ["scan-latest"]
+
+        async def _agg(pipeline, **_kw):
+            if _is_main_group_pipeline(pipeline):
+                return [row]
+            return [{"_id": {"component": "lodash", "version": "1.0.0"}, "first_seen": old}]
+
+        repo = MagicMock()
+        repo.aggregate = _agg
+
+        async def _enr(_c):
+            return {}
+
+        with (
+            patch(f"{MODULE}.get_user_project_ids", new=_gupi),
+            patch(f"{MODULE}.get_projects_with_scans", new=_gpws),
+            patch(f"{MODULE}.FindingRepository", return_value=repo),
+            patch(f"{MODULE}.get_cve_enrichment", new=_enr),
+        ):
+            resp = asyncio.run(get_impact_analysis(current_user=user, db=db, limit=20))
+
+        item = resp[0]
+        assert item.days_known is not None and item.days_known >= 199, "days_known must follow the historical first-seen (200d), not the active scan (2d)"
+        assert any(r.startswith("overdue:") for r in item.priority_reasons)
+
+    def test_hotspots_days_known_uses_historical_not_active_scan(self):
+        from app.api.v1.endpoints.analytics.risk import get_vulnerability_hotspots
+
+        user = _admin_user()
+        db = MagicMock()
+        recent = datetime.now(timezone.utc) - timedelta(days=2)
+        old = datetime.now(timezone.utc) - timedelta(days=200)
+
+        async def _gupi(_u, _d):
+            return ["proj-1"]
+
+        async def _gpws(_p, _d):
+            return {"proj-1": "P1"}, ["scan-latest"]
+
+        async def _agg(pipeline, **_kw):
+            if _is_main_group_pipeline(pipeline):
+                return [_hotspot_group_row("lodash", "1.0.0", recent)]
+            return [{"_id": {"component": "lodash", "version": "1.0.0"}, "first_seen": old}]
+
+        repo = MagicMock()
+        repo.aggregate = _agg
+        dep_repo = MagicMock()
+        dep_repo.aggregate = AsyncMock(return_value=[])
+
+        async def _enr(_c):
+            return {}
+
+        with (
+            patch(f"{MODULE}.get_user_project_ids", new=_gupi),
+            patch(f"{MODULE}.get_projects_with_scans", new=_gpws),
+            patch(f"{MODULE}.FindingRepository", return_value=repo),
+            patch(f"{MODULE}.DependencyRepository", return_value=dep_repo),
+            patch(f"{MODULE}.get_cve_enrichment", new=_enr),
+        ):
+            resp = asyncio.run(
+                get_vulnerability_hotspots(
+                    current_user=user, db=db, skip=0, limit=20, sort_by="finding_count", sort_order="desc"
+                )
+            )
+
+        item = resp[0]
+        assert item.days_known is not None and item.days_known >= 199, "days_known must follow the historical first-seen (200d), not the active scan (2d)"

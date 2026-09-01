@@ -18,6 +18,7 @@ from app.api.v1.helpers.analytics import (
     extract_fix_versions,
     get_projects_with_scans,
     get_user_project_ids,
+    historical_first_seen,
     process_cve_enrichments,
     require_analytics_permission,
     select_impact_candidates,
@@ -192,6 +193,8 @@ async def get_impact_analysis(
         except Exception as e:
             logger.warning(f"Failed to enrich CVEs: {e}")
 
+    first_seen_map = await historical_first_seen(finding_repo, [r["component"] for r in candidates])
+
     impact_results = []
     for r in candidates:
         severity_counts = _severity_counts_from_row(r)
@@ -201,7 +204,8 @@ async def get_impact_analysis(
         finding_ids = [fid for fid in r.get("finding_ids", []) if fid and fid.startswith("CVE-")]
         enrichment_data = process_cve_enrichments(finding_ids, enrichments)
 
-        days_known = calculate_days_known(r.get("first_seen"))
+        first_seen = first_seen_map.get((r["component"], r.get("version") or "unknown"), r.get("first_seen"))
+        days_known = calculate_days_known(first_seen)
         days_until_due = calculate_days_until_due(enrichment_data.kev_due_date)
         enrichment_data.days_until_due = days_until_due
 
@@ -431,6 +435,15 @@ async def get_vulnerability_hotspots(
     elif post_sort_by == "risk":
         hotspots.sort(key=lambda x: x.max_risk_score or 0, reverse=(sort_order == "desc"))
         hotspots = hotspots[skip : skip + limit]
+
+    # first_seen/days_known off the active scans is only the current scan's age; replace it on the
+    # displayed page with the vulnerability's true first detection across all scans.
+    first_seen_map = await historical_first_seen(finding_repo, [h.component for h in hotspots])
+    for h in hotspots:
+        hist = first_seen_map.get((h.component, h.version))
+        if hist is not None:
+            h.first_seen = _format_first_seen(hist)
+            h.days_known = calculate_days_known(hist)
 
     cache.set(cache_key, [h.model_dump() for h in hotspots])
     return hotspots
