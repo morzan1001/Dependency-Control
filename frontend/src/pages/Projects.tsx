@@ -78,19 +78,19 @@ export default function ProjectsPage() {
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <h1 className="text-3xl font-bold tracking-tight">Projects</h1>
-        
-        <div className="flex items-center gap-2">
+
+        <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <Input
             placeholder="Search projects..."
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="w-[250px]"
+            className="w-full sm:w-[250px]"
           />
           {teams.length > 1 && (
             <Select value={teamFilter || "all"} onValueChange={(v) => { setTeamFilter(v === "all" ? "" : v); setPage(1); }}>
-              <SelectTrigger className="w-[180px]">
+              <SelectTrigger className="w-full sm:w-[180px]">
                 <SelectValue placeholder="All Teams" />
               </SelectTrigger>
               <SelectContent>
@@ -102,7 +102,7 @@ export default function ProjectsPage() {
             </Select>
           )}
           <Select value={sortBy} onValueChange={setSortBy}>
-            <SelectTrigger className="w-[180px]">
+            <SelectTrigger className="w-full sm:w-[180px]">
               <SelectValue placeholder="Sort by" />
             </SelectTrigger>
             <SelectContent>
@@ -132,7 +132,7 @@ export default function ProjectsPage() {
 
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {projects?.map((project: Project) => (
-          <Link key={project.id} to={`/projects/${project.id}`}>
+          <Link key={project.id} to={`/projects/${project.id}`} className="block min-w-0">
             <Card className="hover:bg-muted/50 transition-colors cursor-pointer h-full">
               <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
                 <CardTitle className="text-sm font-medium truncate pr-4">
