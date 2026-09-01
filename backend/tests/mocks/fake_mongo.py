@@ -424,6 +424,14 @@ def _eval_expr(doc: dict, expr):
             if item not in b and item not in out:
                 out.append(item)
         return out
+    if "$setUnion" in expr:
+        union: list = []
+        for operand in expr["$setUnion"]:
+            vals = _eval_expr(doc, operand)
+            for item in vals if isinstance(vals, list) else []:
+                if item not in union:
+                    union.append(item)
+        return union
     if "$toLower" in expr:
         val = _eval_expr(doc, expr["$toLower"])
         return str(val).lower() if val is not None else None

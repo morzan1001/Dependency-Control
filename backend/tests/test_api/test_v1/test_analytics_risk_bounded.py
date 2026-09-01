@@ -433,15 +433,16 @@ class TestDistinctSeverityCountsExecuted:
             },  # non-CVE / no id
         ]
 
-    def _rows(self) -> list[dict[str, Any]]:
+    def _rows(self, findings: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
         # accumulators + projection imported from the production module, not copied
         from app.api.v1.endpoints.analytics.risk import (
+            _all_severity_ids_expr,
             _severity_count_projection,
             _severity_id_accumulators,
         )
 
         col = FakeCollection()
-        col._docs = {d["_id"]: d for d in self._findings()}
+        col._docs = {d["_id"]: d for d in (findings if findings is not None else self._findings())}
         pipeline = [
             {
                 "$group": {
@@ -452,7 +453,7 @@ class TestDistinctSeverityCountsExecuted:
             },
             {
                 "$project": {
-                    "total_findings": {"$size": {"$setDifference": ["$finding_ids", [None]]}},
+                    "total_findings": {"$size": {"$setDifference": [_all_severity_ids_expr(), [None]]}},
                     **_severity_count_projection(),
                 }
             },
@@ -467,6 +468,17 @@ class TestDistinctSeverityCountsExecuted:
         assert row["medium"] == 1
         # the only low finding has a null id, so it is not a distinct vulnerability
         assert row["low"] == 0
+
+    def test_multi_severity_cve_counts_once_at_worst(self):
+        # The same CVE seen as critical in one project and high in another is ONE critical vuln.
+        findings = [
+            {"_id": "a", "component": "curl", "version": "1", "severity": "CRITICAL", "finding_id": "CVE-9"},
+            {"_id": "b", "component": "curl", "version": "1", "severity": "high", "finding_id": "CVE-9"},
+        ]
+        row = self._rows(findings)[0]
+        assert row["critical"] == 1, "worst severity wins"
+        assert row["high"] == 0, "the CVE must not also be counted as high"
+        assert row["total_findings"] == 1, "one distinct vulnerability"
 
     def test_severity_counts_reconcile_with_total(self):
         row = self._rows()[0]
@@ -821,7 +833,8 @@ class TestAnalyticsResultCache:
 
 
 def _distinct_count_from_finding_ids(pipeline: list[dict[str, Any]], field: str) -> bool:
-    """True if `field` is computed as $size of a null-filtered finding_ids set (not $sum:1)."""
+    """True if `field` is computed as $size of a null-filtered distinct id set (not $sum:1). The
+    source may be finding_ids or a $setUnion of the per-severity id sets."""
     for stage in pipeline:
         for key in ("$project", "$addFields", "$set"):
             spec = stage.get(key)
@@ -830,7 +843,10 @@ def _distinct_count_from_finding_ids(pipeline: list[dict[str, Any]], field: str)
             expr = spec[field]
             size = expr.get("$size") if isinstance(expr, dict) else None
             setdiff = size.get("$setDifference") if isinstance(size, dict) else None
-            if isinstance(setdiff, list) and setdiff and setdiff[0] == "$finding_ids":
+            if not (isinstance(setdiff, list) and setdiff):
+                continue
+            source = setdiff[0]
+            if source == "$finding_ids" or (isinstance(source, dict) and "$setUnion" in source):
                 return True
     return False
 

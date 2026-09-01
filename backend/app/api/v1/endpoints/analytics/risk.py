@@ -70,12 +70,22 @@ def _severity_id_accumulators() -> dict[str, Any]:
     }
 
 
+def _all_severity_ids_expr() -> dict[str, Any]:
+    """Union of every per-severity id set: the distinct CVEs that carry a ranked severity."""
+    return {"$setUnion": [f"${bucket}_ids" for bucket in _SEVERITY_BUCKETS]}
+
+
 def _severity_count_projection() -> dict[str, Any]:
-    """$project/$addFields turning the per-severity id sets into distinct counts."""
-    return {
-        bucket: {"$size": {"$setDifference": [f"${bucket}_ids", [None]]}}
-        for bucket in _SEVERITY_BUCKETS
-    }
+    """Turn the per-severity id sets into DISJOINT distinct-CVE counts by worst severity: a CVE
+    seen as critical in one project and high in another counts once, as critical. The buckets then
+    sum exactly to the distinct total, and neither over- nor under-counts a multi-severity CVE."""
+    counts: dict[str, Any] = {}
+    higher: list[str] = []
+    for bucket in _SEVERITY_BUCKETS:  # critical, high, medium, low — worst first
+        subtract = {"$setUnion": [[None], *[f"${b}_ids" for b in higher]]}
+        counts[bucket] = {"$size": {"$setDifference": [f"${bucket}_ids", subtract]}}
+        higher.append(bucket)
+    return counts
 
 
 def _severity_counts_from_row(row: dict[str, Any]) -> dict[str, int]:
@@ -151,9 +161,9 @@ async def get_impact_analysis(
                 "component": "$_id.component",
                 "version": "$_id.version",
                 "project_ids": 1,
-                # Count distinct vulnerabilities, not finding instances: the same CVE in
-                # five projects is one vulnerability, not five (severity counts likewise).
-                "total_findings": {"$size": {"$setDifference": ["$finding_ids", [None]]}},
+                # Distinct vulnerabilities carrying a ranked severity, so the total equals the
+                # sum of the disjoint severity buckets below (one CVE counted once, worst severity).
+                "total_findings": {"$size": {"$setDifference": [_all_severity_ids_expr(), [None]]}},
                 **_severity_count_projection(),
                 "finding_ids": 1,
                 "first_seen": 1,
@@ -375,7 +385,7 @@ async def get_vulnerability_hotspots(
         # is one vulnerability (severity counts likewise). Set before $sort so finding_count agrees.
         {
             "$addFields": {
-                "finding_count": {"$size": {"$setDifference": ["$finding_ids", [None]]}},
+                "finding_count": {"$size": {"$setDifference": [_all_severity_ids_expr(), [None]]}},
                 **_severity_count_projection(),
             }
         },
