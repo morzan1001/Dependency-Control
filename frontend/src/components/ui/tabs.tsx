@@ -14,8 +14,9 @@ const TabsList = React.forwardRef<
       // max-w-full + overflow-x-auto so a bar with more tabs than fit scrolls instead of
       // spilling past its container; justify-start (not center) keeps the first tab reachable,
       // since a centered flex row hides its leading overflow from the scroll range. The bar
-      // still hugs its tabs when they fit. Scrollbar hidden so it does not eat the 40px height.
-      "inline-flex h-10 max-w-full items-center justify-start overflow-x-auto rounded-md bg-muted p-1 text-muted-foreground [scrollbar-width:none] [&::-webkit-scrollbar]:hidden",
+      // still hugs its tabs when they fit. A thin scrollbar (only shown while overflowing) is the
+      // affordance mouse-only users need — hiding it left them unable to reach off-screen tabs.
+      "inline-flex h-10 max-w-full items-center justify-start overflow-x-auto rounded-md bg-muted p-1 text-muted-foreground [scrollbar-width:thin] [&::-webkit-scrollbar]:h-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-border",
       className
     )}
     {...props}
