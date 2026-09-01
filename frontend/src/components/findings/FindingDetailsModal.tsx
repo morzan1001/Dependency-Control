@@ -231,7 +231,7 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                     <div className="col-span-2">
                                         <DetailSection label="Related Findings" compact>
                                             <div className="flex flex-wrap gap-2">
-                                            {finding.related_findings.map((relatedId) => {
+                                            {[...new Set(finding.related_findings)].map((relatedId) => {
                                                 let label = relatedId;
                                                 let badgeClass = "font-mono text-xs cursor-pointer ";
 
