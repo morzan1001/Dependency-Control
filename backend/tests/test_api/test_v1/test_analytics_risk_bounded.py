@@ -57,24 +57,24 @@ def _group_stage(pipeline: list[dict[str, Any]]) -> dict[str, Any]:
     raise AssertionError("pipeline has no $group stage")
 
 
-def _assert_distinct_severity_counts(pipeline: list[dict[str, Any]]) -> None:
-    """Each severity count must be the size of a distinct finding_id set per severity, not a
-    $sum:1 instance tally, so it reconciles with the distinct total_findings and the score."""
+def _assert_counts_come_from_advisories(pipeline: list[dict[str, Any]]) -> None:
+    """Severity/vuln counts must derive from details.vulnerabilities (the real CVEs) in Python, not
+    from Mongo severity accumulators keyed on finding_id (which is only component:version). So the
+    $group must not carry per-severity accumulators, and the slimmed details must keep id+severity."""
     group = _group_stage(pipeline)
-    projected: dict[str, Any] = {}
-    for stage in pipeline:
-        for key in ("$project", "$addFields", "$set"):
-            projected.update(stage.get(key) or {})
     for sev in ("critical", "high", "medium", "low"):
-        acc = group.get(f"{sev}_ids")
-        assert acc and "$addToSet" in acc, f"{sev} must collect distinct finding_ids via $addToSet"
-        assert sev not in group or "$sum" not in group[sev], f"{sev} must not be a $sum:1 instance count"
-        count = projected.get(sev)
-        size = count.get("$size") if isinstance(count, dict) else None
-        setdiff = size.get("$setDifference") if isinstance(size, dict) else None
-        assert isinstance(setdiff, list) and setdiff and setdiff[0] == f"${sev}_ids", (
-            f"{sev} count must be $size of its distinct id set"
-        )
+        assert sev not in group and f"{sev}_ids" not in group, f"{sev} must not be counted in Mongo"
+    # the pre-$group slim keeps the advisory fields the Python counter needs
+    slim = None
+    for stage in pipeline:
+        if "$group" in stage:
+            break
+        proj = stage.get("$project") or {}
+        if isinstance(proj.get("details"), dict):
+            slim = proj["details"]
+    assert slim is not None, "details must be slimmed before $group"
+    vmap = slim.get("vulnerabilities", {}).get("$map", {}).get("in", {})
+    assert "id" in vmap and "severity" in vmap, "slimmed advisories must keep id + severity"
 
 
 def _sliced_fields_after_group(pipeline: list[dict[str, Any]]) -> list[str]:
@@ -232,30 +232,21 @@ class TestImpactPipelineBounded:
         for _acc, push_expr in _iter_push_exprs(pipeline):
             assert push_expr != "$severity", "raw severity array must not be pushed; use scalar counts"
 
-    def test_severity_counts_are_distinct_per_cve(self):
+    def test_counts_come_from_advisories(self):
         _, pipeline, _ = _run_impact(agg_results=[])
-        _assert_distinct_severity_counts(pipeline)
+        _assert_counts_come_from_advisories(pipeline)
 
-    def test_finding_ids_deduped_with_add_to_set(self):
-        _, pipeline, _ = _run_impact(agg_results=[])
-        group = _group_stage(pipeline)
-        assert "finding_ids" in group, "expected finding_ids accumulator in $group"
-        assert "$addToSet" in group["finding_ids"], "finding_ids must use $addToSet (dedupe), not $push"
-        assert "$push" not in group["finding_ids"]
-        for _acc, push_expr in _iter_push_exprs(pipeline):
-            assert push_expr != "$finding_id", "finding_id must not be $push-ed; use $addToSet to dedupe"
-
-    def test_details_not_pushed_and_not_sliced(self):
+    def test_details_carry_advisories_via_add_to_set(self):
         _, pipeline, _ = _run_impact(agg_results=[])
         group = _group_stage(pipeline)
         assert "details_list" in group, "expected details_list accumulator in $group"
         assert "$addToSet" in group["details_list"], "details_list must use $addToSet, not $push"
+        assert "finding_ids" not in group, "finding_id is component:version, not a CVE; must not drive counts"
 
     def test_no_arbitrary_slice_on_enrichment_arrays(self):
         _, pipeline, _ = _run_impact(agg_results=[])
         sliced = _sliced_fields_after_group(pipeline)
-        assert "finding_ids" not in sliced, "finding_ids must NOT be $slice-truncated (drops CVEs in match order)"
-        assert "details_list" not in sliced, "details_list must NOT be $slice-truncated (drops fix versions)"
+        assert "details_list" not in sliced, "details_list must NOT be $slice-truncated (drops advisories)"
 
     def test_allow_disk_use_threaded(self):
         _, _, kwargs = _run_impact(agg_results=[])
@@ -279,30 +270,21 @@ class TestHotspotsPipelineBounded:
         for _acc, push_expr in _iter_push_exprs(pipeline):
             assert push_expr != "$severity", "raw severity array must not be pushed; use scalar counts"
 
-    def test_severity_counts_are_distinct_per_cve(self):
+    def test_counts_come_from_advisories(self):
         _, pipeline, _ = _run_hotspots(agg_results=[])
-        _assert_distinct_severity_counts(pipeline)
+        _assert_counts_come_from_advisories(pipeline)
 
-    def test_finding_ids_deduped_with_add_to_set(self):
-        _, pipeline, _ = _run_hotspots(agg_results=[])
-        group = _group_stage(pipeline)
-        assert "finding_ids" in group, "expected finding_ids accumulator in $group"
-        assert "$addToSet" in group["finding_ids"], "finding_ids must use $addToSet (dedupe), not $push"
-        assert "$push" not in group["finding_ids"]
-        for _acc, push_expr in _iter_push_exprs(pipeline):
-            assert push_expr != "$finding_id", "finding_id must not be $push-ed; use $addToSet to dedupe"
-
-    def test_details_not_pushed_and_not_sliced(self):
+    def test_details_carry_advisories_via_add_to_set(self):
         _, pipeline, _ = _run_hotspots(agg_results=[])
         group = _group_stage(pipeline)
         assert "details_list" in group, "expected details_list accumulator in $group"
         assert "$addToSet" in group["details_list"], "details_list must use $addToSet, not $push"
+        assert "finding_ids" not in group, "finding_id is component:version, not a CVE; must not drive counts"
 
     def test_no_arbitrary_slice_on_enrichment_arrays(self):
         _, pipeline, _ = _run_hotspots(agg_results=[])
         sliced = _sliced_fields_after_group(pipeline)
-        assert "finding_ids" not in sliced, "finding_ids must NOT be $slice-truncated (drops CVEs in match order)"
-        assert "details_list" not in sliced, "details_list must NOT be $slice-truncated (drops fix versions)"
+        assert "details_list" not in sliced, "details_list must NOT be $slice-truncated (drops advisories)"
 
     def test_allow_disk_use_threaded(self):
         _, _, kwargs = _run_hotspots(agg_results=[])
@@ -314,6 +296,16 @@ class TestHotspotsPipelineBounded:
 # ---------------------------------------------------------------------------
 
 
+_LODASH_DETAILS = {
+    "fixed_version": "4.17.21",
+    "vulnerabilities": [
+        {"id": "CVE-2021-1", "resolved_cve": "CVE-2021-1", "aliases": [], "severity": "CRITICAL", "fixed_version": "4.17.21"},
+        {"id": "CVE-2021-2", "resolved_cve": "CVE-2021-2", "aliases": [], "severity": "HIGH", "fixed_version": "4.17.21"},
+        {"id": "CVE-2021-3", "resolved_cve": "CVE-2021-3", "aliases": [], "severity": "HIGH", "fixed_version": "4.17.21"},
+    ],
+}
+
+
 class TestImpactResponseShape:
     def _group_row(self) -> dict[str, Any]:
         """A group row matching the bounded pipeline output shape."""
@@ -322,24 +314,18 @@ class TestImpactResponseShape:
             "component": "lodash",
             "version": "4.17.11",
             "project_ids": ["proj-1"],
-            "total_findings": 2,  # distinct CVEs, computed in the pipeline from finding_ids
-            "critical": 1,
-            "high": 2,
-            "medium": 0,
-            "low": 0,
-            "finding_ids": ["CVE-2021-1", "CVE-2021-2"],
             "first_seen": None,
-            "details_list": [{"fixed_version": "4.17.21", "vulnerabilities": []}],
+            "details_list": [_LODASH_DETAILS],
             "affected_projects": 1,
         }
 
-    def test_response_fields_from_scalar_counts(self):
+    def test_response_fields_from_advisories(self):
         response, _, _ = _run_impact(agg_results=[self._group_row()])
         assert len(response) == 1
         item = response[0]
         assert item.component == "lodash"
         assert item.version == "4.17.11"
-        assert item.total_findings == 2
+        assert item.total_findings == 3  # 1 critical + 2 high distinct CVEs
         assert item.affected_projects == 1
         assert item.findings_by_severity.critical == 1
         assert item.findings_by_severity.high == 2
@@ -359,23 +345,17 @@ class TestHotspotsResponseShape:
         return {
             "_id": {"component": "lodash", "version": "4.17.11"},
             "project_ids": ["proj-1"],
-            "finding_count": 2,  # distinct CVEs, computed in the pipeline from finding_ids
-            "critical": 1,
-            "high": 2,
-            "medium": 0,
-            "low": 0,
             "first_seen": None,
-            "finding_ids": ["CVE-2021-1", "CVE-2021-2"],
-            "details_list": [{"fixed_version": "4.17.21", "vulnerabilities": []}],
+            "details_list": [_LODASH_DETAILS],
         }
 
-    def test_response_fields_from_scalar_counts(self):
+    def test_response_fields_from_advisories(self):
         response, _, _ = _run_hotspots(agg_results=[self._group_row()])
         assert len(response) == 1
         item = response[0]
         assert item.component == "lodash"
         assert item.version == "4.17.11"
-        assert item.finding_count == 2
+        assert item.finding_count == 3  # 1 critical + 2 high distinct CVEs
         assert item.severity_breakdown.critical == 1
         assert item.severity_breakdown.high == 2
         assert item.has_fix is True
@@ -383,108 +363,61 @@ class TestHotspotsResponseShape:
         assert "CVE-2021-1" in item.top_cves
 
 
-# Run the distinct-severity accumulators + projection through FakeCollection: a CVE repeated
-# across projects counts once per severity, and the per-severity counts reconcile with the total.
+# Severity/vuln counts derive from details.vulnerabilities (the real CVEs), deduped to a canonical
+# CVE so a GHSA + its CVE alias count once, and placed in the worst severity so buckets sum to total.
 
 
-class TestDistinctSeverityCountsExecuted:
-    def _findings(self) -> list[dict[str, Any]]:
-        # same CVE repeated across projects so it counts once, not once per project
-        return [
-            {
-                "_id": "f1",
-                "component": "lodash",
-                "version": "4.17.11",
-                "project_id": "p1",
-                "severity": "CRITICAL",
-                "finding_id": "CVE-2021-1",
-            },
-            {
-                "_id": "f2",
-                "component": "lodash",
-                "version": "4.17.11",
-                "project_id": "p2",
-                "severity": "critical",
-                "finding_id": "CVE-2021-1",
-            },  # dup CVE, diff project
-            {
-                "_id": "f3",
-                "component": "lodash",
-                "version": "4.17.11",
-                "project_id": "p3",
-                "severity": "High",
-                "finding_id": "CVE-2021-2",
-            },
-            {
-                "_id": "f4",
-                "component": "lodash",
-                "version": "4.17.11",
-                "project_id": "p1",
-                "severity": "medium",
-                "finding_id": "CVE-2021-3",
-            },
-            {
-                "_id": "f5",
-                "component": "lodash",
-                "version": "4.17.11",
-                "project_id": "p1",
-                "severity": "low",
-                "finding_id": None,
-            },  # non-CVE / no id
-        ]
+class TestDistinctSeverityCounts:
+    def _details(self, *vulns: dict[str, Any]) -> list[dict[str, Any]]:
+        return [{"fixed_version": None, "vulnerabilities": list(vulns)}]
 
-    def _rows(self, findings: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
-        # accumulators + projection imported from the production module, not copied
-        from app.api.v1.endpoints.analytics.risk import (
-            _all_severity_ids_expr,
-            _severity_count_projection,
-            _severity_id_accumulators,
+    def test_canonical_cve_prefers_cve_over_ghsa(self):
+        from app.api.v1.endpoints.analytics.risk import _canonical_cve
+
+        assert _canonical_cve({"id": "GHSA-x", "resolved_cve": "CVE-1"}) == "CVE-1"
+        assert _canonical_cve({"id": "GHSA-x", "aliases": ["CVE-2"]}) == "CVE-2"
+        assert _canonical_cve({"id": "CVE-3"}) == "CVE-3"
+        assert _canonical_cve({"id": "GHSA-only"}) == "GHSA-only"  # GHSA with no CVE mapping
+
+    def test_ghsa_and_cve_alias_count_once(self):
+        from app.api.v1.endpoints.analytics.risk import _severity_counts_from_details
+
+        # the same vuln listed as its GHSA and its CVE alias (as prod does) is one critical
+        details = self._details(
+            {"id": "GHSA-a", "aliases": ["CVE-1"], "severity": "CRITICAL"},
+            {"id": "CVE-1", "resolved_cve": "CVE-1", "severity": "CRITICAL"},
         )
-
-        col = FakeCollection()
-        col._docs = {d["_id"]: d for d in (findings if findings is not None else self._findings())}
-        pipeline = [
-            {
-                "$group": {
-                    "_id": {"component": "$component", "version": "$version"},
-                    **_severity_id_accumulators(),
-                    "finding_ids": {"$addToSet": "$finding_id"},
-                }
-            },
-            {
-                "$project": {
-                    "total_findings": {"$size": {"$setDifference": [_all_severity_ids_expr(), [None]]}},
-                    **_severity_count_projection(),
-                }
-            },
-        ]
-        return asyncio.run(col.aggregate(pipeline).to_list())
-
-    def test_severity_counts_are_distinct_cves(self):
-        row = self._rows()[0]
-        # CVE-2021-1 is critical in two projects -> one distinct critical (instance count would be 2)
-        assert row["critical"] == 1
-        assert row["high"] == 1
-        assert row["medium"] == 1
-        # the only low finding has a null id, so it is not a distinct vulnerability
-        assert row["low"] == 0
+        counts = _severity_counts_from_details(details)
+        assert counts == {"critical": 1, "high": 0, "medium": 0, "low": 0}
 
     def test_multi_severity_cve_counts_once_at_worst(self):
-        # The same CVE seen as critical in one project and high in another is ONE critical vuln.
-        findings = [
-            {"_id": "a", "component": "curl", "version": "1", "severity": "CRITICAL", "finding_id": "CVE-9"},
-            {"_id": "b", "component": "curl", "version": "1", "severity": "high", "finding_id": "CVE-9"},
-        ]
-        row = self._rows(findings)[0]
-        assert row["critical"] == 1, "worst severity wins"
-        assert row["high"] == 0, "the CVE must not also be counted as high"
-        assert row["total_findings"] == 1, "one distinct vulnerability"
+        from app.api.v1.endpoints.analytics.risk import _severity_counts_from_details
 
-    def test_severity_counts_reconcile_with_total(self):
-        row = self._rows()[0]
-        by_sev = row["critical"] + row["high"] + row["medium"] + row["low"]
-        assert row["total_findings"] == by_sev, "distinct total must equal the sum of distinct severities"
-        assert row["total_findings"] == 3
+        # Both orderings must resolve to critical, so the test catches a last-wins bug regardless
+        # of iteration order: CVE-A is high-then-critical, CVE-B is critical-then-high.
+        details = self._details(
+            {"id": "CVE-A", "resolved_cve": "CVE-A", "severity": "HIGH"},
+            {"id": "CVE-A", "resolved_cve": "CVE-A", "severity": "CRITICAL"},
+            {"id": "CVE-B", "resolved_cve": "CVE-B", "severity": "CRITICAL"},
+            {"id": "CVE-B", "resolved_cve": "CVE-B", "severity": "HIGH"},
+        )
+        counts = _severity_counts_from_details(details)
+        assert counts["critical"] == 2, "each CVE counts once at its worst severity"
+        assert counts["high"] == 0, "a CVE must not also be counted at a lower severity"
+
+    def test_counts_reconcile_with_total_and_ignore_unranked(self):
+        from app.api.v1.endpoints.analytics.risk import _canonical_cves, _severity_counts_from_details
+
+        details = self._details(
+            {"id": "CVE-1", "resolved_cve": "CVE-1", "severity": "CRITICAL"},
+            {"id": "CVE-2", "resolved_cve": "CVE-2", "severity": "HIGH"},
+            {"id": "CVE-3", "resolved_cve": "CVE-3", "severity": "MEDIUM"},
+            {"id": "CVE-4", "resolved_cve": "CVE-4", "severity": "UNKNOWN"},  # unranked -> excluded
+        )
+        counts = _severity_counts_from_details(details)
+        assert counts == {"critical": 1, "high": 1, "medium": 1, "low": 0}
+        assert sum(counts.values()) == 3, "unranked severity is not counted as a bucket"
+        assert set(_canonical_cves(details)) == {"CVE-1", "CVE-2", "CVE-3", "CVE-4"}
 
 
 # epss/risk come from enrichment, not Mongo, so the endpoint re-sorts in Python; the pipeline must not cap the fetch below skip+limit.
@@ -527,9 +460,16 @@ class TestHotspotsPostSortPagination:
             "post-sort pipeline must not $skip in Mongo; pagination is applied in Python after the epss/risk re-sort"
         )
 
-    def test_finding_count_sort_still_paginates_in_mongo(self):
-        # the finding_count path is globally ordered in Mongo, so $skip/$limit stay in the pipeline
+    def test_finding_count_sort_paginates_in_python(self):
+        # finding_count is a distinct-CVE count derived in Python from advisories, so it cannot be
+        # ordered in Mongo; the fetch must not $skip/$limit before the Python re-sort.
         _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="finding_count", skip=40, limit=20)
+        assert not any("$skip" in stage for stage in pipeline), "finding_count must not $skip in Mongo"
+        assert not any("$limit" in stage for stage in pipeline), "finding_count must not $limit in Mongo"
+
+    def test_component_sort_paginates_in_mongo(self):
+        # component is a stored field, so it can be globally ordered and paged in Mongo.
+        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="component", skip=40, limit=20)
         assert any(stage.get("$skip") == 40 for stage in pipeline), "expected $skip in Mongo pipeline"
         assert any(stage.get("$limit") == 20 for stage in pipeline), "expected $limit in Mongo pipeline"
 
@@ -616,6 +556,16 @@ class TestFirstSeenUsesScanCreatedAt:
 # blast-radius $limit used to drop severe-but-narrow fixes before they were ever scored.
 
 
+def _details_from_counts(component: str, critical: int, high: int, medium: int, low: int) -> dict[str, Any]:
+    """A slimmed details doc whose advisory list yields the given distinct-CVE severity counts."""
+    vulns = []
+    for sev, n in (("critical", critical), ("high", high), ("medium", medium), ("low", low)):
+        for i in range(n):
+            cid = f"CVE-{component}-{sev}-{i}"
+            vulns.append({"id": cid, "resolved_cve": cid, "aliases": [], "severity": sev.upper(), "fixed_version": None})
+    return {"fixed_version": None, "vulnerabilities": vulns}
+
+
 def _impact_row(
     component: str, ap: int, *, critical: int = 0, high: int = 0, medium: int = 0, low: int = 0
 ) -> dict[str, Any]:
@@ -624,15 +574,11 @@ def _impact_row(
         "component": component,
         "version": "1.0.0",
         "project_ids": [f"p{i}" for i in range(ap)],
-        "total_findings": 1,  # one distinct CVE (finding_ids below), as the pipeline would report
-        "critical": critical,
-        "high": high,
-        "medium": medium,
-        "low": low,
-        "finding_ids": [f"CVE-{component}"],
         "first_seen": None,
-        "details_list": [],
+        "details_list": [_details_from_counts(component, critical, high, medium, low)],
         "affected_projects": ap,
+        # The endpoint recomputes this from details_list; set it too for direct helper tests.
+        "_severity_counts": {"critical": critical, "high": high, "medium": medium, "low": low},
     }
 
 
@@ -836,85 +782,50 @@ class TestAnalyticsResultCache:
         assert [r.model_dump() for r in fresh] == [r.model_dump() for r in cached]
 
 
-# The "Vulns" count is distinct vulnerabilities, not finding instances: the same CVE across
-# five projects is one vulnerability. The count is derived from the deduped finding_ids set.
+# The "Vulns" count is distinct vulnerabilities from details.vulnerabilities, deduped to canonical
+# CVEs — not finding documents (finding_id is only component:version) and not the raw advisory rows.
 
 
-def _distinct_count_from_finding_ids(pipeline: list[dict[str, Any]], field: str) -> bool:
-    """True if `field` is computed as $size of a null-filtered distinct id set (not $sum:1). The
-    source may be finding_ids or a $setUnion of the per-severity id sets."""
-    for stage in pipeline:
-        for key in ("$project", "$addFields", "$set"):
-            spec = stage.get(key)
-            if not spec or field not in spec:
-                continue
-            expr = spec[field]
-            size = expr.get("$size") if isinstance(expr, dict) else None
-            setdiff = size.get("$setDifference") if isinstance(size, dict) else None
-            if not (isinstance(setdiff, list) and setdiff):
-                continue
-            source = setdiff[0]
-            if source == "$finding_ids" or (isinstance(source, dict) and "$setUnion" in source):
-                return True
-    return False
+def _row_with_advisories(component: str, vulns: list[dict[str, Any]], ap: int = 1) -> dict[str, Any]:
+    return {
+        "_id": {"component": component, "version": "1.0.0"},
+        "component": component,
+        "version": "1.0.0",
+        "project_ids": [f"p{i}" for i in range(ap)],
+        "first_seen": None,
+        "details_list": [{"fixed_version": None, "vulnerabilities": vulns}],
+        "affected_projects": ap,
+    }
 
 
-def _sum_one_accumulators(pipeline: list[dict[str, Any]]) -> list[str]:
-    names = []
-    for stage in pipeline:
-        group = stage.get("$group")
-        if not group:
-            continue
-        for acc, expr in group.items():
-            if isinstance(expr, dict) and expr.get("$sum") == 1:
-                names.append(acc)
-    return names
+# 3 distinct vulns: CVE-1 (critical, listed as GHSA + its CVE alias), CVE-2 & CVE-3 (high).
+_MIXED_VULNS = [
+    {"id": "GHSA-a", "aliases": ["CVE-1"], "severity": "CRITICAL"},
+    {"id": "CVE-1", "resolved_cve": "CVE-1", "severity": "CRITICAL"},
+    {"id": "CVE-2", "resolved_cve": "CVE-2", "severity": "HIGH"},
+    {"id": "CVE-3", "resolved_cve": "CVE-3", "severity": "HIGH"},
+]
 
 
 class TestDistinctVulnCount:
-    def test_impact_total_findings_from_finding_ids(self):
-        _, pipeline, _ = _run_impact(agg_results=[])
-        assert _distinct_count_from_finding_ids(pipeline, "total_findings"), (
-            "total_findings must count distinct vulnerabilities via finding_ids, not instances"
-        )
-        assert "total_findings" not in _sum_one_accumulators(pipeline), "total_findings must not be a $sum:1 instance count"
+    def test_impact_total_findings_is_distinct_cves(self):
+        response, _, _ = _run_impact(agg_results=[_row_with_advisories("lodash", _MIXED_VULNS)])
+        item = response[0]
+        assert item.total_findings == 3, "GHSA+CVE alias collapse; 3 distinct CVEs, not 4 rows"
+        assert item.findings_by_severity.critical == 1
+        assert item.findings_by_severity.high == 2
 
-    def test_hotspots_finding_count_from_finding_ids(self):
-        _, pipeline, _ = _run_hotspots(agg_results=[])
-        assert _distinct_count_from_finding_ids(pipeline, "finding_count"), (
-            "finding_count must count distinct vulnerabilities via finding_ids, not instances"
-        )
-        assert "finding_count" not in _sum_one_accumulators(pipeline), "finding_count must not be a $sum:1 instance count"
+    def test_hotspots_finding_count_is_distinct_cves(self):
+        response, _, _ = _run_hotspots(agg_results=[_row_with_advisories("lodash", _MIXED_VULNS)])
+        item = response[0]
+        assert item.finding_count == 3
+        assert item.severity_breakdown.critical == 1
+        assert item.severity_breakdown.high == 2
 
-    def test_distinct_count_collapses_repeated_cves_executed(self):
-        # CVE-1 appears in three projects (one vulnerability), CVE-2 once, plus a null id.
-        findings = [
-            {"_id": "f1", "component": "lodash", "version": "1", "finding_id": "CVE-1"},
-            {"_id": "f2", "component": "lodash", "version": "1", "finding_id": "CVE-1"},
-            {"_id": "f3", "component": "lodash", "version": "1", "finding_id": "CVE-1"},
-            {"_id": "f4", "component": "lodash", "version": "1", "finding_id": "CVE-2"},
-            {"_id": "f5", "component": "lodash", "version": "1", "finding_id": None},
-        ]
-        col = FakeCollection()
-        col._docs = {d["_id"]: d for d in findings}
-        pipeline = [
-            {"$group": {"_id": "$component", "finding_ids": {"$addToSet": "$finding_id"}}},
-            {"$project": {"count": {"$size": {"$setDifference": ["$finding_ids", [None]]}}}},
-        ]
-        rows = asyncio.run(col.aggregate(pipeline).to_list())
-        assert rows[0]["count"] == 2, "three rows of CVE-1 + one CVE-2 = 2 distinct vulnerabilities"
-
-    def test_finding_count_sort_orders_by_distinct_count(self):
-        # The finding_count $sort must run after finding_count is set to the distinct value,
-        # or the default sort orders by an instance count the UI never shows.
-        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="finding_count")
-        set_idx = next(
-            (i for i, s in enumerate(pipeline) if "finding_count" in (s.get("$addFields") or s.get("$set") or {})),
-            None,
-        )
-        sort_idx = next((i for i, s in enumerate(pipeline) if "$sort" in s), None)
-        assert set_idx is not None, "finding_count must be recomputed as a distinct count"
-        assert sort_idx is not None and set_idx < sort_idx, "distinct finding_count must be set before the $sort"
+    def test_finding_count_reconciles_with_severity_breakdown(self):
+        response, _, _ = _run_hotspots(agg_results=[_row_with_advisories("lodash", _MIXED_VULNS)])
+        b = response[0].severity_breakdown
+        assert response[0].finding_count == b.critical + b.high + b.medium + b.low
 
 
 # days_known must be how long the vulnerability has been known, not the current scan's age. The

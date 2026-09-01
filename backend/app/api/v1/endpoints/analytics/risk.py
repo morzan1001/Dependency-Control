@@ -58,51 +58,84 @@ def _scope_digest(project_ids: list[str], scan_ids: list[str]) -> str:
     return h.hexdigest()[:16]
 
 _SEVERITY_BUCKETS = ("critical", "high", "medium", "low")
+_SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
 
 
-def _severity_id_accumulators() -> dict[str, Any]:
-    """$group accumulators collecting the distinct finding_ids per severity (case-insensitive),
-    so severity counts are distinct vulnerabilities rather than per-project finding instances."""
-    return {
-        f"{bucket}_ids": {
-            "$addToSet": {"$cond": [{"$eq": [{"$toLower": "$severity"}, bucket]}, "$finding_id", None]}
-        }
-        for bucket in _SEVERITY_BUCKETS
-    }
+def _canonical_cve(vuln: dict[str, Any]) -> str | None:
+    """A vulnerability's CVE identity. finding_id is only "component:version"; the real advisories
+    live in details.vulnerabilities, each listed as both its GHSA and its CVE alias. Collapse to the
+    CVE (resolved_cve, a CVE id, or a CVE alias) so those two entries count once; fall back to the
+    raw id for GHSA-only advisories."""
+    resolved = vuln.get("resolved_cve")
+    if isinstance(resolved, str) and resolved.startswith("CVE-"):
+        return resolved
+    ident = vuln.get("id")
+    if isinstance(ident, str) and ident.startswith("CVE-"):
+        return ident
+    for alias in vuln.get("aliases") or []:
+        if isinstance(alias, str) and alias.startswith("CVE-"):
+            return alias
+    return ident if isinstance(ident, str) and ident else None
 
 
-def _all_severity_ids_expr() -> dict[str, Any]:
-    """Union of every per-severity id set: the distinct CVEs that carry a ranked severity."""
-    return {"$setUnion": [f"${bucket}_ids" for bucket in _SEVERITY_BUCKETS]}
+def _worst_severity_by_cve(details_list: list[Any]) -> dict[str, str]:
+    """Map each distinct canonical vulnerability to its worst ranked severity across the group."""
+    worst: dict[str, str] = {}
+    for details in details_list:
+        if not isinstance(details, dict):
+            continue
+        for vuln in details.get("vulnerabilities") or []:
+            if not isinstance(vuln, dict):
+                continue
+            cve = _canonical_cve(vuln)
+            if not cve:
+                continue
+            sev = str(vuln.get("severity") or "").lower()
+            if sev not in _SEVERITY_RANK:
+                continue
+            if cve not in worst or _SEVERITY_RANK[sev] > _SEVERITY_RANK[worst[cve]]:
+                worst[cve] = sev
+    return worst
 
 
-def _severity_count_projection() -> dict[str, Any]:
-    """Turn the per-severity id sets into DISJOINT distinct-CVE counts by worst severity: a CVE
-    seen as critical in one project and high in another counts once, as critical. The buckets then
-    sum exactly to the distinct total, and neither over- nor under-counts a multi-severity CVE."""
-    counts: dict[str, Any] = {}
-    higher: list[str] = []
-    for bucket in _SEVERITY_BUCKETS:  # critical, high, medium, low — worst first
-        subtract = {"$setUnion": [[None], *[f"${b}_ids" for b in higher]]}
-        counts[bucket] = {"$size": {"$setDifference": [f"${bucket}_ids", subtract]}}
-        higher.append(bucket)
+def _severity_counts_from_details(details_list: list[Any]) -> dict[str, int]:
+    """Distinct vulnerabilities per worst severity. Buckets are disjoint (one CVE, one bucket) and
+    sum to the distinct total, so the breakdown reconciles with the vuln count and the score."""
+    counts = dict.fromkeys(_SEVERITY_BUCKETS, 0)
+    for sev in _worst_severity_by_cve(details_list).values():
+        counts[sev] += 1
     return counts
 
 
-def _severity_counts_from_row(row: dict[str, Any]) -> dict[str, int]:
-    """Read the scalar severity counts back out of an aggregation row."""
-    return {bucket: int(row.get(bucket) or 0) for bucket in _SEVERITY_BUCKETS}
+def _canonical_cves(details_list: list[Any]) -> list[str]:
+    """Distinct canonical CVE ids in the group, for threat-intel enrichment and top-CVE display."""
+    seen: dict[str, None] = {}
+    for details in details_list:
+        if not isinstance(details, dict):
+            continue
+        for vuln in details.get("vulnerabilities") or []:
+            if isinstance(vuln, dict):
+                cve = _canonical_cve(vuln)
+                if cve:
+                    seen.setdefault(cve, None)
+    return list(seen)
 
 
-# Project $details down to fix-version fields before $group so the group never
-# accumulates the raw analyzer payload; only extract_fix_versions reads these.
+# Slim details before $group so the group never accumulates the raw analyzer payload: keep the
+# per-advisory id/alias/severity (for distinct-CVE counts, severity, and enrichment) and fix versions.
 _SLIM_DETAILS_EXPR: dict[str, Any] = {
     "fixed_version": "$details.fixed_version",
     "vulnerabilities": {
         "$map": {
             "input": {"$ifNull": ["$details.vulnerabilities", []]},
             "as": "v",
-            "in": {"fixed_version": "$$v.fixed_version"},
+            "in": {
+                "id": "$$v.id",
+                "resolved_cve": "$$v.resolved_cve",
+                "aliases": "$$v.aliases",
+                "severity": "$$v.severity",
+                "fixed_version": "$$v.fixed_version",
+            },
         }
     },
 }
@@ -150,10 +183,9 @@ async def get_impact_analysis(
             "$group": {
                 "_id": {"component": "$component", "version": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
-                **_severity_id_accumulators(),
-                # $addToSet dedupes to distinct CVEs per (component, version).
-                "finding_ids": {"$addToSet": "$finding_id"},
                 "first_seen": {"$min": "$scan_created_at"},
+                # $addToSet collapses the (usually identical) per-project advisory lists to the
+                # distinct variants; distinct-CVE counts, severity and enrichment derive from these.
                 "details_list": {"$addToSet": "$details"},
             }
         },
@@ -162,29 +194,25 @@ async def get_impact_analysis(
                 "component": "$_id.component",
                 "version": "$_id.version",
                 "project_ids": 1,
-                # Distinct vulnerabilities carrying a ranked severity, so the total equals the
-                # sum of the disjoint severity buckets below (one CVE counted once, worst severity).
-                "total_findings": {"$size": {"$setDifference": [_all_severity_ids_expr(), [None]]}},
-                **_severity_count_projection(),
-                "finding_ids": 1,
                 "first_seen": 1,
                 "details_list": 1,
                 "affected_projects": {"$size": "$project_ids"},
             }
         },
-        # Rank/limit happen in Python: the true ranking key is fix_impact_score, whose
-        # KEV/EPSS/maturity boosts come from enrichment, not Mongo. A Mongo $limit here
-        # would cap by blast radius and drop severe-but-narrow fixes before scoring.
-        {"$sort": {"affected_projects": -1, "total_findings": -1}},
         {"$limit": ANALYTICS_MAX_QUERY_LIMIT},
     ]
 
     results = await finding_repo.aggregate(pipeline, allow_disk_use=True)
 
-    # Enrich only the groups that can still reach the top `limit` by boosted score.
+    # Severity/vuln counts come from the advisory lists (finding_id is only component:version).
+    for r in results:
+        r["_severity_counts"] = _severity_counts_from_details(r.get("details_list", []))
+
+    # Rank/limit happen in Python on fix_impact_score; enrich only the groups that can still reach
+    # the top `limit` by boosted score.
     candidates = select_impact_candidates(results, limit)
 
-    all_cves = [fid for r in candidates for fid in r.get("finding_ids", []) if fid and fid.startswith("CVE-")]
+    all_cves = list({cve for r in candidates for cve in _canonical_cves(r.get("details_list", []))})
 
     enrichments = {}
     if all_cves:
@@ -197,12 +225,12 @@ async def get_impact_analysis(
 
     impact_results = []
     for r in candidates:
-        severity_counts = _severity_counts_from_row(r)
+        severity_counts = r["_severity_counts"]
+        total_findings = sum(severity_counts.values())
         fix_versions = extract_fix_versions(r.get("details_list", []))
         has_fix = len(fix_versions) > 0
 
-        finding_ids = [fid for fid in r.get("finding_ids", []) if fid and fid.startswith("CVE-")]
-        enrichment_data = process_cve_enrichments(finding_ids, enrichments)
+        enrichment_data = process_cve_enrichments(_canonical_cves(r.get("details_list", [])), enrichments)
 
         first_seen = first_seen_map.get((r["component"], r.get("version") or "unknown"), r.get("first_seen"))
         days_known = calculate_days_known(first_seen)
@@ -233,7 +261,7 @@ async def get_impact_analysis(
                 component=r["component"],
                 version=r.get("version") or "unknown",
                 affected_projects=len(accessible_impact_project_ids),
-                total_findings=r["total_findings"],
+                total_findings=total_findings,
                 findings_by_severity=SeverityBreakdown(**severity_counts),
                 fix_impact_score=base_impact,
                 affected_project_names=[
@@ -277,19 +305,19 @@ def _build_hotspot(
     project_name_map: dict[str, str],
     project_ids: list[str],
 ) -> VulnerabilityHotspot:
-    severity_counts = _severity_counts_from_row(r)
-    fix_versions = extract_fix_versions(r.get("details_list", []))
+    details_list = r.get("details_list", [])
+    severity_counts = _severity_counts_from_details(details_list)
+    fix_versions = extract_fix_versions(details_list)
     has_fix = len(fix_versions) > 0
     dep_type = lookup_component(dep_type_map, r["_id"]["component"], "unknown")
 
     first_seen_str = _format_first_seen(r.get("first_seen"))
     days_known = calculate_days_known(r.get("first_seen"))
 
-    finding_ids = r.get("finding_ids", [])
-    top_cves = list(dict.fromkeys(fid for fid in finding_ids if fid and fid.startswith("CVE-")))[:5]
+    cves = _canonical_cves(details_list)
+    top_cves = cves[:5]
 
-    cve_finding_ids = [fid for fid in finding_ids if fid and fid.startswith("CVE-")]
-    enrichment_data = process_cve_enrichments(cve_finding_ids, enrichments)
+    enrichment_data = process_cve_enrichments(cves, enrichments)
     days_until_due = calculate_days_until_due(enrichment_data.kev_due_date)
     priority_reasons = build_hotspot_priority_reasons(enrichment_data, severity_counts, has_fix, days_until_due)
 
@@ -299,7 +327,7 @@ def _build_hotspot(
         component=r["_id"]["component"],
         version=r["_id"].get("version") or "unknown",
         type=dep_type,
-        finding_count=r["finding_count"],
+        finding_count=sum(severity_counts.values()),
         severity_breakdown=SeverityBreakdown(**severity_counts),
         affected_projects=[project_name_map.get(pid, "Unknown") for pid in accessible_affected_projects[:10]],
         first_seen=first_seen_str,
@@ -353,13 +381,10 @@ async def get_vulnerability_hotspots(
         return [VulnerabilityHotspot.model_validate(r) for r in cached]
 
     sort_direction = -1 if sort_order == "desc" else 1
-    sort_field_map = {
-        "finding_count": "finding_count",
-        "component": "_id.component",
-        "first_seen": "first_seen",
-    }
-    mongo_sort_field = sort_field_map.get(sort_by, "finding_count")
-    post_sort_by = sort_by if sort_by in ["epss", "risk"] else None
+    # finding_count/epss/risk are derived in Python (from advisories / enrichment), so they are
+    # sorted and paginated in Python; only component/first_seen can be ordered in Mongo.
+    mongo_sort_field = {"component": "_id.component", "first_seen": "first_seen"}.get(sort_by)
+    post_sort_by = sort_by if sort_by in ("finding_count", "epss", "risk") else None
 
     pipeline: list[dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability", "waived": {"$ne": True}}},
@@ -368,8 +393,6 @@ async def get_vulnerability_hotspots(
                 "component": 1,
                 "version": 1,
                 "project_id": 1,
-                "severity": 1,
-                "finding_id": 1,
                 "scan_created_at": 1,
                 "details": _SLIM_DETAILS_EXPR,
             }
@@ -378,35 +401,22 @@ async def get_vulnerability_hotspots(
             "$group": {
                 "_id": {"component": "$component", "version": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
-                **_severity_id_accumulators(),
                 "first_seen": {"$min": "$scan_created_at"},
-                # $addToSet dedupes to distinct CVEs per (component, version).
-                "finding_ids": {"$addToSet": "$finding_id"},
+                # $addToSet collapses the (usually identical) per-project advisory lists; counts,
+                # severity and enrichment derive from these in Python.
                 "details_list": {"$addToSet": "$details"},
             }
         },
-        # Count distinct vulnerabilities, not finding instances: the same CVE in five projects
-        # is one vulnerability (severity counts likewise). Set before $sort so finding_count agrees.
-        {
-            "$addFields": {
-                "finding_count": {"$size": {"$setDifference": [_all_severity_ids_expr(), [None]]}},
-                **_severity_count_projection(),
-            }
-        },
-        {"$sort": {mongo_sort_field: sort_direction}},
     ]
 
-    if post_sort_by:
-        # epss/risk come from enrichment, not Mongo, so every group must be
-        # enriched before ordering; skip/limit is applied in Python below.
-        pass
-    else:
+    if mongo_sort_field:
+        pipeline.append({"$sort": {mongo_sort_field: sort_direction}})
         pipeline.append({"$skip": skip})
         pipeline.append({"$limit": limit})
 
     results = await finding_repo.aggregate(pipeline, allow_disk_use=True)
 
-    all_cves = list({fid for r in results for fid in r.get("finding_ids", []) if fid and fid.startswith("CVE-")})
+    all_cves = list({cve for r in results for cve in _canonical_cves(r.get("details_list", []))})
 
     enrichments = {}
     if all_cves:
@@ -429,11 +439,13 @@ async def get_vulnerability_hotspots(
 
     hotspots = [_build_hotspot(r, enrichments, dep_type_map, project_name_map, project_ids) for r in results]
 
-    if post_sort_by == "epss":
-        hotspots.sort(key=lambda x: x.max_epss_score or 0, reverse=(sort_order == "desc"))
-        hotspots = hotspots[skip : skip + limit]
-    elif post_sort_by == "risk":
-        hotspots.sort(key=lambda x: x.max_risk_score or 0, reverse=(sort_order == "desc"))
+    _post_sort_keys = {
+        "finding_count": lambda x: x.finding_count,
+        "epss": lambda x: x.max_epss_score or 0,
+        "risk": lambda x: x.max_risk_score or 0,
+    }
+    if post_sort_by:
+        hotspots.sort(key=_post_sort_keys[post_sort_by], reverse=(sort_order == "desc"))
         hotspots = hotspots[skip : skip + limit]
 
     # first_seen/days_known off the active scans is only the current scan's age; replace it on the

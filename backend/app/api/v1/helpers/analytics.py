@@ -235,11 +235,8 @@ def impact_pre_score(severity_counts: dict[str, int], affected_projects: int) ->
     return float(severity_score * reach_multiplier)
 
 
-_IMPACT_SEVERITY_BUCKETS = ("critical", "high", "medium", "low")
-
-
 def _row_pre_score(row: dict[str, Any]) -> float:
-    counts = {b: int(row.get(b) or 0) for b in _IMPACT_SEVERITY_BUCKETS}
+    counts = row.get("_severity_counts") or {}
     return impact_pre_score(counts, int(row.get("affected_projects") or 0))
 
 
