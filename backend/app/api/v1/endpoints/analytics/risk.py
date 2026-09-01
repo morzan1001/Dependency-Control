@@ -128,7 +128,6 @@ async def get_impact_analysis(
             "$group": {
                 "_id": {"component": "$component", "version": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
-                "total_findings": {"$sum": 1},
                 **_severity_count_accumulators(),
                 # $addToSet dedupes to distinct CVEs per (component, version).
                 "finding_ids": {"$addToSet": "$finding_id"},
@@ -141,7 +140,9 @@ async def get_impact_analysis(
                 "component": "$_id.component",
                 "version": "$_id.version",
                 "project_ids": 1,
-                "total_findings": 1,
+                # Count distinct vulnerabilities, not finding instances: the same CVE in
+                # five projects is one vulnerability, not five.
+                "total_findings": {"$size": {"$setDifference": ["$finding_ids", [None]]}},
                 **{bucket: 1 for bucket in _SEVERITY_BUCKETS},
                 "finding_ids": 1,
                 "first_seen": 1,
@@ -352,7 +353,6 @@ async def get_vulnerability_hotspots(
             "$group": {
                 "_id": {"component": "$component", "version": "$version"},
                 "project_ids": {"$addToSet": "$project_id"},
-                "finding_count": {"$sum": 1},
                 **_severity_count_accumulators(),
                 "first_seen": {"$min": "$scan_created_at"},
                 # $addToSet dedupes to distinct CVEs per (component, version).
@@ -360,6 +360,9 @@ async def get_vulnerability_hotspots(
                 "details_list": {"$addToSet": "$details"},
             }
         },
+        # Count distinct vulnerabilities, not finding instances: the same CVE in five
+        # projects is one vulnerability. Set before $sort so a finding_count sort agrees.
+        {"$addFields": {"finding_count": {"$size": {"$setDifference": ["$finding_ids", [None]]}}}},
         {"$sort": {mongo_sort_field: sort_direction}},
     ]
 

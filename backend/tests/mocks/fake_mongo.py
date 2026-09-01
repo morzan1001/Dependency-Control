@@ -415,6 +415,15 @@ def _eval_expr(doc: dict, expr):
             # forgot an $ifNull must not read as a zero-length array.
             raise TypeError(f"$size requires an array, got {val!r}")
         return len(val)
+    if "$setDifference" in expr:
+        a, b = (_eval_expr(doc, e) for e in expr["$setDifference"])
+        a = a if isinstance(a, list) else []
+        b = b if isinstance(b, list) else []
+        out: list = []
+        for item in a:
+            if item not in b and item not in out:
+                out.append(item)
+        return out
     if "$toLower" in expr:
         val = _eval_expr(doc, expr["$toLower"])
         return str(val).lower() if val is not None else None

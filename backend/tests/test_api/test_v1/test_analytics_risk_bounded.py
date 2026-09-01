@@ -307,7 +307,7 @@ class TestImpactResponseShape:
             "component": "lodash",
             "version": "4.17.11",
             "project_ids": ["proj-1"],
-            "total_findings": 3,
+            "total_findings": 2,  # distinct CVEs, computed in the pipeline from finding_ids
             "critical": 1,
             "high": 2,
             "medium": 0,
@@ -324,7 +324,7 @@ class TestImpactResponseShape:
         item = response[0]
         assert item.component == "lodash"
         assert item.version == "4.17.11"
-        assert item.total_findings == 3
+        assert item.total_findings == 2
         assert item.affected_projects == 1
         assert item.findings_by_severity.critical == 1
         assert item.findings_by_severity.high == 2
@@ -344,7 +344,7 @@ class TestHotspotsResponseShape:
         return {
             "_id": {"component": "lodash", "version": "4.17.11"},
             "project_ids": ["proj-1"],
-            "finding_count": 3,
+            "finding_count": 2,  # distinct CVEs, computed in the pipeline from finding_ids
             "critical": 1,
             "high": 2,
             "medium": 0,
@@ -360,7 +360,7 @@ class TestHotspotsResponseShape:
         item = response[0]
         assert item.component == "lodash"
         assert item.version == "4.17.11"
-        assert item.finding_count == 3
+        assert item.finding_count == 2
         assert item.severity_breakdown.critical == 1
         assert item.severity_breakdown.high == 2
         assert item.has_fix is True
@@ -593,7 +593,7 @@ def _impact_row(
         "component": component,
         "version": "1.0.0",
         "project_ids": [f"p{i}" for i in range(ap)],
-        "total_findings": critical + high + medium + low,
+        "total_findings": 1,  # one distinct CVE (finding_ids below), as the pipeline would report
         "critical": critical,
         "high": high,
         "medium": medium,
@@ -795,3 +795,80 @@ class TestAnalyticsResultCache:
             cached = asyncio.run(get_impact_analysis(current_user=user, db=db, limit=20))
 
         assert [r.model_dump() for r in fresh] == [r.model_dump() for r in cached]
+
+
+# The "Vulns" count is distinct vulnerabilities, not finding instances: the same CVE across
+# five projects is one vulnerability. The count is derived from the deduped finding_ids set.
+
+
+def _distinct_count_from_finding_ids(pipeline: list[dict[str, Any]], field: str) -> bool:
+    """True if `field` is computed as $size of a null-filtered finding_ids set (not $sum:1)."""
+    for stage in pipeline:
+        for key in ("$project", "$addFields", "$set"):
+            spec = stage.get(key)
+            if not spec or field not in spec:
+                continue
+            expr = spec[field]
+            size = expr.get("$size") if isinstance(expr, dict) else None
+            setdiff = size.get("$setDifference") if isinstance(size, dict) else None
+            if isinstance(setdiff, list) and setdiff and setdiff[0] == "$finding_ids":
+                return True
+    return False
+
+
+def _sum_one_accumulators(pipeline: list[dict[str, Any]]) -> list[str]:
+    names = []
+    for stage in pipeline:
+        group = stage.get("$group")
+        if not group:
+            continue
+        for acc, expr in group.items():
+            if isinstance(expr, dict) and expr.get("$sum") == 1:
+                names.append(acc)
+    return names
+
+
+class TestDistinctVulnCount:
+    def test_impact_total_findings_from_finding_ids(self):
+        _, pipeline, _ = _run_impact(agg_results=[])
+        assert _distinct_count_from_finding_ids(pipeline, "total_findings"), (
+            "total_findings must count distinct vulnerabilities via finding_ids, not instances"
+        )
+        assert "total_findings" not in _sum_one_accumulators(pipeline), "total_findings must not be a $sum:1 instance count"
+
+    def test_hotspots_finding_count_from_finding_ids(self):
+        _, pipeline, _ = _run_hotspots(agg_results=[])
+        assert _distinct_count_from_finding_ids(pipeline, "finding_count"), (
+            "finding_count must count distinct vulnerabilities via finding_ids, not instances"
+        )
+        assert "finding_count" not in _sum_one_accumulators(pipeline), "finding_count must not be a $sum:1 instance count"
+
+    def test_distinct_count_collapses_repeated_cves_executed(self):
+        # CVE-1 appears in three projects (one vulnerability), CVE-2 once, plus a null id.
+        findings = [
+            {"_id": "f1", "component": "lodash", "version": "1", "finding_id": "CVE-1"},
+            {"_id": "f2", "component": "lodash", "version": "1", "finding_id": "CVE-1"},
+            {"_id": "f3", "component": "lodash", "version": "1", "finding_id": "CVE-1"},
+            {"_id": "f4", "component": "lodash", "version": "1", "finding_id": "CVE-2"},
+            {"_id": "f5", "component": "lodash", "version": "1", "finding_id": None},
+        ]
+        col = FakeCollection()
+        col._docs = {d["_id"]: d for d in findings}
+        pipeline = [
+            {"$group": {"_id": "$component", "finding_ids": {"$addToSet": "$finding_id"}}},
+            {"$project": {"count": {"$size": {"$setDifference": ["$finding_ids", [None]]}}}},
+        ]
+        rows = asyncio.run(col.aggregate(pipeline).to_list())
+        assert rows[0]["count"] == 2, "three rows of CVE-1 + one CVE-2 = 2 distinct vulnerabilities"
+
+    def test_finding_count_sort_orders_by_distinct_count(self):
+        # The finding_count $sort must run after finding_count is set to the distinct value,
+        # or the default sort orders by an instance count the UI never shows.
+        _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="finding_count")
+        set_idx = next(
+            (i for i, s in enumerate(pipeline) if "finding_count" in (s.get("$addFields") or s.get("$set") or {})),
+            None,
+        )
+        sort_idx = next((i for i, s in enumerate(pipeline) if "$sort" in s), None)
+        assert set_idx is not None, "finding_count must be recomputed as a distinct count"
+        assert sort_idx is not None and set_idx < sort_idx, "distinct finding_count must be set before the $sort"
