@@ -1,5 +1,6 @@
 """Analytics risk endpoints: /impact and /hotspots."""
 
+import hashlib
 import logging
 from datetime import datetime
 from typing import Annotated, Any
@@ -38,11 +39,22 @@ from app.services.aggregation.components import (
     build_component_index,
     lookup_component,
 )
+from app.services.analytics.cache import get_analytics_cache
 from app.services.enrichment import get_cve_enrichment
 
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
+
+
+def _scope_digest(project_ids: list[str], scan_ids: list[str]) -> str:
+    """Stable key over the caller's accessible projects and their active scans. Keying on the
+    scan set auto-invalidates on a new scan; waiver mutations flush the whole cache separately."""
+    h = hashlib.sha256()
+    h.update(",".join(sorted(project_ids)).encode())
+    h.update(b"|")
+    h.update(",".join(sorted(scan_ids)).encode())
+    return h.hexdigest()[:16]
 
 _SEVERITY_BUCKETS = ("critical", "high", "medium", "low")
 
@@ -92,6 +104,12 @@ async def get_impact_analysis(
     project_name_map, scan_ids = await get_projects_with_scans(project_ids, db)
     if not scan_ids:
         return []
+
+    cache = get_analytics_cache()
+    cache_key = ("impact", _scope_digest(project_ids, scan_ids), limit)
+    hit, cached = cache.get(cache_key)
+    if hit:
+        return [ImpactAnalysisResult.model_validate(r) for r in cached]
 
     pipeline: list[dict[str, Any]] = [
         {"$match": {"scan_id": {"$in": scan_ids}, "type": "vulnerability", "waived": {"$ne": True}}},
@@ -213,7 +231,9 @@ async def get_impact_analysis(
 
     impact_results.sort(key=lambda x: x.fix_impact_score, reverse=True)
 
-    return impact_results[:limit]
+    top = impact_results[:limit]
+    cache.set(cache_key, [r.model_dump() for r in top])
+    return top
 
 
 def _format_first_seen(first_seen: Any) -> str:
@@ -300,6 +320,12 @@ async def get_vulnerability_hotspots(
     if not scan_ids:
         return []
 
+    cache = get_analytics_cache()
+    cache_key = ("hotspots", _scope_digest(project_ids, scan_ids), sort_by, sort_order, skip, limit)
+    hit, cached = cache.get(cache_key)
+    if hit:
+        return [VulnerabilityHotspot.model_validate(r) for r in cached]
+
     sort_direction = -1 if sort_order == "desc" else 1
     sort_field_map = {
         "finding_count": "finding_count",
@@ -377,4 +403,5 @@ async def get_vulnerability_hotspots(
         hotspots.sort(key=lambda x: x.max_risk_score or 0, reverse=(sort_order == "desc"))
         hotspots = hotspots[skip : skip + limit]
 
+    cache.set(cache_key, [h.model_dump() for h in hotspots])
     return hotspots

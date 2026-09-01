@@ -5,6 +5,8 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from app.api.v1.helpers.analytics import (
     calculate_impact_score,
     count_severities,
@@ -15,9 +17,18 @@ from app.core.constants import IMPACT_MAX_SCORE_BOOST
 from app.core.permissions import ALL_PERMISSIONS
 from app.models.user import User
 from app.schemas.analytics import CVEEnrichmentResult
+from app.services.analytics.cache import get_analytics_cache
 from tests.mocks.fake_mongo import FakeCollection
 
 MODULE = "app.api.v1.endpoints.analytics.risk"
+
+
+@pytest.fixture(autouse=True)
+def _clear_analytics_cache():
+    """The endpoints memoize on a process-level cache; isolate each test from the last."""
+    get_analytics_cache().clear()
+    yield
+    get_analytics_cache().clear()
 
 
 def _admin_user() -> User:
@@ -673,3 +684,125 @@ class TestImpactEndpointRanksByScoreNotBlastRadius:
         limits = [stage["$limit"] for stage in pipeline if "$limit" in stage]
         assert 7 not in limits, "Mongo must not $limit at the user limit; that caps by blast radius before scoring"
         assert all(lim >= 1000 for lim in limits), "any Mongo $limit must be a large safety cap, not a page size"
+
+
+def _impact_aggregate_calls(*limits: int) -> int:
+    """Run /impact once per given limit (sharing the cache) and count aggregate() calls."""
+    from app.api.v1.endpoints.analytics.risk import get_impact_analysis
+
+    user = _admin_user()
+    db = MagicMock()
+    calls = {"n": 0}
+
+    async def _fake_get_user_project_ids(_u, _d):
+        return ["proj-1"]
+
+    async def _fake_get_projects_with_scans(_p, _d):
+        return {"proj-1": "P1"}, ["scan-latest"]
+
+    async def _fake_aggregate(_pipeline, **_kw):
+        calls["n"] += 1
+        return [_impact_row("a", 3, critical=1)]
+
+    repo = MagicMock()
+    repo.aggregate = _fake_aggregate
+
+    async def _fake_enrich(_c):
+        return {}
+
+    with (
+        patch(f"{MODULE}.get_user_project_ids", new=_fake_get_user_project_ids),
+        patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
+        patch(f"{MODULE}.FindingRepository", return_value=repo),
+        patch(f"{MODULE}.get_cve_enrichment", new=_fake_enrich),
+    ):
+        for lim in limits:
+            asyncio.run(get_impact_analysis(current_user=user, db=db, limit=lim))
+    return calls["n"]
+
+
+def _hotspots_aggregate_calls(*sort_bys: str) -> int:
+    from app.api.v1.endpoints.analytics.risk import get_vulnerability_hotspots
+
+    user = _admin_user()
+    db = MagicMock()
+    calls = {"n": 0}
+
+    async def _fake_get_user_project_ids(_u, _d):
+        return ["proj-1"]
+
+    async def _fake_get_projects_with_scans(_p, _d):
+        return {"proj-1": "P1"}, ["scan-latest"]
+
+    async def _fake_aggregate(_pipeline, **_kw):
+        calls["n"] += 1
+        return []
+
+    repo = MagicMock()
+    repo.aggregate = _fake_aggregate
+    dep_repo = MagicMock()
+    dep_repo.aggregate = AsyncMock(return_value=[])
+
+    async def _fake_enrich(_c):
+        return {}
+
+    with (
+        patch(f"{MODULE}.get_user_project_ids", new=_fake_get_user_project_ids),
+        patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
+        patch(f"{MODULE}.FindingRepository", return_value=repo),
+        patch(f"{MODULE}.DependencyRepository", return_value=dep_repo),
+        patch(f"{MODULE}.get_cve_enrichment", new=_fake_enrich),
+    ):
+        for sb in sort_bys:
+            asyncio.run(
+                get_vulnerability_hotspots(
+                    current_user=user, db=db, skip=0, limit=20, sort_by=sb, sort_order="desc"
+                )
+            )
+    return calls["n"]
+
+
+class TestAnalyticsResultCache:
+    def test_impact_repeat_call_hits_cache(self):
+        assert _impact_aggregate_calls(20, 20) == 1, "identical /impact request must be served from cache"
+
+    def test_impact_distinct_limit_misses_cache(self):
+        assert _impact_aggregate_calls(20, 10) == 2, "a different limit must not reuse a cached result"
+
+    def test_hotspots_repeat_call_hits_cache(self):
+        assert _hotspots_aggregate_calls("finding_count", "finding_count") == 1
+
+    def test_hotspots_distinct_sort_misses_cache(self):
+        assert _hotspots_aggregate_calls("finding_count", "epss") == 2
+
+    def test_impact_cached_response_matches_fresh(self):
+        from app.api.v1.endpoints.analytics.risk import get_impact_analysis
+
+        user = _admin_user()
+        db = MagicMock()
+
+        async def _fake_get_user_project_ids(_u, _d):
+            return ["proj-1"]
+
+        async def _fake_get_projects_with_scans(_p, _d):
+            return {"proj-1": "P1"}, ["scan-latest"]
+
+        async def _fake_aggregate(_pipeline, **_kw):
+            return [_impact_row("lodash", 3, critical=2, high=1)]
+
+        repo = MagicMock()
+        repo.aggregate = _fake_aggregate
+
+        async def _fake_enrich(_c):
+            return {}
+
+        with (
+            patch(f"{MODULE}.get_user_project_ids", new=_fake_get_user_project_ids),
+            patch(f"{MODULE}.get_projects_with_scans", new=_fake_get_projects_with_scans),
+            patch(f"{MODULE}.FindingRepository", return_value=repo),
+            patch(f"{MODULE}.get_cve_enrichment", new=_fake_enrich),
+        ):
+            fresh = asyncio.run(get_impact_analysis(current_user=user, db=db, limit=20))
+            cached = asyncio.run(get_impact_analysis(current_user=user, db=db, limit=20))
+
+        assert [r.model_dump() for r in fresh] == [r.model_dump() for r in cached]
