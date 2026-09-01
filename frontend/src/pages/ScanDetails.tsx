@@ -268,7 +268,7 @@ export default function ScanDetails() {
                         <div className="flex flex-col space-y-1">
                             <span className="text-sm text-muted-foreground">Status</span>
                             <div>
-                                <ScanStatusBadge status={scan.status} />
+                                <ScanStatusBadge status={scan.status} failedAnalyzers={scan.failed_analyzers} />
                             </div>
                             {scan.status === SCAN_STATUS_COMPLETED_WITH_ERRORS && scan.error && (
                                 <p className="text-xs text-amber-600">{scan.error}</p>

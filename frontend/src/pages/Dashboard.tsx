@@ -241,7 +241,7 @@ export default function Dashboard() {
                                         <p className="text-sm font-medium leading-none">{scan.project_name}</p>
                                         <div className="flex items-center gap-2 text-sm text-muted-foreground">
                                             <span>{scan.pipeline_iid ? `Pipeline #${scan.pipeline_iid}` : 'Scan'} on {scan.branch}</span>
-                                            <ScanStatusBadge status={scan.status} />
+                                            <ScanStatusBadge status={scan.status} failedAnalyzers={scan.failed_analyzers} />
                                         </div>
                                     </div>
                                     <div className="ml-auto font-medium text-sm text-muted-foreground">

@@ -332,7 +332,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <ScanStatusBadge status={getEffectiveScanData(scan).status} />
+                    <ScanStatusBadge status={getEffectiveScanData(scan).status} failedAnalyzers={scan.failed_analyzers} />
                   </TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     {prevScan && (
