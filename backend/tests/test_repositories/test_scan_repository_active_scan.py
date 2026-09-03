@@ -205,23 +205,6 @@ class TestGetLatestActiveScanIds:
         assert result == {"p_clean": "clean-scan", "p_deleted": "active-scan"}
 
 
-class TestAnalyticsDelegation:
-    """analytics helper delegates to the canonical repo method."""
-
-    def test_resolve_active_scan_ids_delegates(self):
-        from app.api.v1.helpers import analytics
-
-        coll = create_mock_collection(aggregate=[{"_id": "p2", "scan_id": "active"}])
-        db = create_mock_db({"scans": coll})
-
-        clean = MagicMock(id="p1", deleted_branches=[], latest_scan_id="scan-1")
-        deleted = MagicMock(id="p2", deleted_branches=["dead"], latest_scan_id="scan-dead")
-
-        result = asyncio.run(analytics._resolve_active_scan_ids([clean, deleted], db))
-
-        assert result == {"p1": "scan-1", "p2": "active"}
-
-
 class TestStatsDelegation:
     """stats._resolve_active_scan_id keeps its short-circuits and delegates the fallback lookup."""
 

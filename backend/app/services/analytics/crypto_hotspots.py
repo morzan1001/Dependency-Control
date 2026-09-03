@@ -8,7 +8,6 @@ from typing import Any, Literal
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import SCAN_USABLE_STATUSES
 from app.schemas.analytics import HotspotEntry, HotspotResponse
 from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ResolvedScope
@@ -67,15 +66,9 @@ class CryptoHotspotService:
     ) -> list[str]:
         if override:
             return [override]
-        match: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}}
-        if resolved.project_ids is not None:
-            match["project_id"] = {"$in": resolved.project_ids}
-        pipeline = [
-            {"$match": match},
-            {"$sort": {"created_at": -1}},
-            {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
-        ]
-        return [row["scan_id"] async for row in self.db.scans.aggregate(pipeline)]
+        from app.services.releases import resolve_scan_ids
+
+        return list((await resolve_scan_ids(self.db, resolved.project_ids)).values())
 
     async def _aggregate(
         self,

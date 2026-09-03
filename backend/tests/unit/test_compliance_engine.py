@@ -13,6 +13,18 @@ from app.services.compliance.frameworks.license_audit import LicenseAuditFramewo
 from app.services.compliance.frameworks.nist_sp_800_131a import NistSp800_131aFramework
 
 
+@pytest.fixture(autouse=True)
+def _resolver_reads_the_mocked_aggregate():
+    """These tests hand-build db.scans.aggregate; the resolver now owns that query, and
+    test_releases_resolver.py proves the delegation against a real fake database."""
+
+    async def _fake(db, project_ids, *, release_environment=None):
+        return {row["_id"]: row["scan_id"] async for row in db.scans.aggregate([])}
+
+    with patch("app.services.releases.resolve_scan_ids", new=_fake):
+        yield
+
+
 def _report(**overrides):
     base = {
         "scope": "user",

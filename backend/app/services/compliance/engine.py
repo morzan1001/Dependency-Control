@@ -7,7 +7,6 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
 from app.core.config import settings
-from app.core.constants import SCAN_USABLE_STATUSES
 from app.core.metrics import compliance_reports_total
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
@@ -128,16 +127,10 @@ class ComplianceReportEngine:
         )
 
     async def _pick_scan_ids(self, db: AsyncIOMotorDatabase, resolved: ResolvedScope) -> list[tuple[str, str]]:
-        match: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}}
-        if resolved.project_ids is not None:
-            match["project_id"] = {"$in": resolved.project_ids}
-        pipeline: list[dict[str, Any]] = [
-            {"$match": match},
-            {"$sort": {"created_at": -1}},
-            {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
-        ]
-        # Return (project_id, scan_id) pairs so callers avoid re-querying each scan's project.
-        return [(row["_id"], row["scan_id"]) async for row in db.scans.aggregate(pipeline)]
+        """(project_id, scan_id) pairs so callers avoid re-querying each scan's project."""
+        from app.services.releases import resolve_scan_ids
+
+        return list((await resolve_scan_ids(db, resolved.project_ids)).items())
 
     async def _collect_crypto_assets(self, db: AsyncIOMotorDatabase, scan_pairs: list[tuple[str, str]]) -> list[Any]:
         repo = CryptoAssetRepository(db)

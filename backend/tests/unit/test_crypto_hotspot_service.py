@@ -31,6 +31,7 @@ async def test_hotspots_group_by_name(db):
             _asset("a3", "SHA-256", CryptoPrimitive.HASH),
         ],
     )
+    await db.projects.insert_one({"_id": "p1", "name": "p1", "latest_scan_id": "s1"})
     await db.scans.insert_one(
         {
             "_id": "s1",
@@ -54,6 +55,7 @@ async def test_hotspots_group_by_name(db):
 async def test_hotspots_respects_limit(db):
     assets = [_asset(f"a{i}", f"algo-{i}", project_id="p2", scan_id="s2") for i in range(20)]
     await CryptoAssetRepository(db).bulk_upsert("p2", "s2", assets)
+    await db.projects.insert_one({"_id": "p2", "name": "p2", "latest_scan_id": "s2"})
     await db.scans.insert_one(
         {
             "_id": "s2",
@@ -83,6 +85,7 @@ async def test_hotspots_group_by_primitive(db):
             _asset("a3", "AES", CryptoPrimitive.BLOCK_CIPHER, project_id="p3", scan_id="s3"),
         ],
     )
+    await db.projects.insert_one({"_id": "p3", "name": "p3", "latest_scan_id": "s3"})
     await db.scans.insert_one(
         {
             "_id": "s3",
@@ -139,6 +142,7 @@ async def test_group_by_name_enrichment_joins_on_bare_name_despite_variants(db):
             _variant_asset("a2", "RSA", "RSA-PSS", project_id="pv", scan_id="sv"),
         ],
     )
+    await db.projects.insert_one({"_id": "pv", "name": "pv", "latest_scan_id": "sv"})
     await db.scans.insert_one(
         {"_id": "sv", "project_id": "pv", "status": "completed", "created_at": datetime.now(timezone.utc)}
     )
@@ -167,6 +171,7 @@ async def test_group_by_name_enrichment_excludes_waived_findings(db):
         "sw",
         [_variant_asset("a1", "MD5", None, project_id="pw", scan_id="sw")],
     )
+    await db.projects.insert_one({"_id": "pw", "name": "pw", "latest_scan_id": "sw"})
     await db.scans.insert_one(
         {"_id": "sw", "project_id": "pw", "status": "completed", "created_at": datetime.now(timezone.utc)}
     )
@@ -193,10 +198,10 @@ async def test_group_by_severity_excludes_waived_findings(db):
         _crypto_finding("f3", asset_name="MD5", project_id="ps", scan_id="ss", severity="LOW"),
     ]:
         await db.findings.insert_one(f)
+    await db.projects.insert_one({"_id": "ps", "name": "ps", "latest_scan_id": "ss"})
     await db.scans.insert_one(
         {"_id": "ss", "project_id": "ps", "status": "completed", "created_at": datetime.now(timezone.utc)}
     )
-    # Seed a completed scan so _pick_scan_ids selects "ss".
     resolved = ResolvedScope(scope="project", scope_id="ps", project_ids=["ps"])
     result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="severity", limit=10)
 
@@ -213,7 +218,8 @@ async def test_no_completed_scans_returns_empty_not_all_history(db):
         "srun",
         [_variant_asset("a1", "AES", "AES-256", project_id="pn", scan_id="srun")],
     )
-    # Only scan is still running → not eligible for _pick_scan_ids.
+    # The pointer is unset, so the resolver falls back to the query and still finds nothing usable.
+    await db.projects.insert_one({"_id": "pn", "name": "pn", "latest_scan_id": None})
     await db.scans.insert_one(
         {"_id": "srun", "project_id": "pn", "status": "running", "created_at": datetime.now(timezone.utc)}
     )

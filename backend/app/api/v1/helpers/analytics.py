@@ -1,5 +1,6 @@
 """Helper functions for analytics endpoints."""
 
+from collections.abc import Sequence
 from datetime import datetime, timezone
 from typing import Any
 
@@ -31,7 +32,7 @@ from app.core.constants import (
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
-from app.repositories import ProjectRepository, ScanRepository
+from app.repositories import ProjectRepository
 from app.schemas.analytics import CVEEnrichmentResult
 from app.services.aggregation.components import build_component_index
 from app.services.recommendation.common import get_attr
@@ -61,38 +62,43 @@ async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> list[str
     return resolved.project_ids or []
 
 
-async def _resolve_active_scan_ids(
-    projects: list[Any],
+async def get_latest_scan_ids(
+    project_ids: list[str],
     db: AsyncIOMotorDatabase,
-) -> dict[str, str]:
-    """Resolve latest scan ID per project, excluding scans from deleted branches."""
-    return await ScanRepository(db).get_latest_active_scan_ids(projects)
+    *,
+    release_environment: str | None = None,
+) -> list[str]:
+    """Scan IDs representing the given projects; the branch tip, or their release when asked."""
+    from app.services.releases import resolve_scan_ids
 
-
-async def get_latest_scan_ids(project_ids: list[str], db: AsyncIOMotorDatabase) -> list[str]:
-    """Get latest scan IDs for given projects, excluding scans from deleted branches."""
-    project_repo = ProjectRepository(db)
-    projects = await project_repo.find_many_with_scan_id(
-        {"_id": {"$in": project_ids}},
-        limit=ANALYTICS_MAX_QUERY_LIMIT,
-    )
-
-    resolved = await _resolve_active_scan_ids(projects, db)
+    resolved = await resolve_scan_ids(db, project_ids, release_environment=release_environment)
     return list(resolved.values())
 
 
-async def get_projects_with_scans(project_ids: list[str], db: AsyncIOMotorDatabase) -> tuple[dict[str, str], list[str]]:
-    """Return (project_name_map, scan_ids), excluding scans from deleted branches."""
-    project_repo = ProjectRepository(db)
-    projects = await project_repo.find_many_with_scan_id(
+async def get_projects_with_scans(
+    project_ids: list[str],
+    db: AsyncIOMotorDatabase,
+    *,
+    release_environment: str | None = None,
+) -> tuple[dict[str, str], list[str]]:
+    """Return (project_name_map, scan_ids) for the given projects."""
+    from app.services.releases import resolve_scan_ids
+
+    projects = await ProjectRepository(db).find_many_minimal(
         {"_id": {"$in": project_ids}},
         limit=ANALYTICS_MAX_QUERY_LIMIT,
     )
-
     project_name_map = {p.id: p.name for p in projects}
-    resolved = await _resolve_active_scan_ids(projects, db)
+    resolved = await resolve_scan_ids(db, project_ids, release_environment=release_environment)
 
     return project_name_map, list(resolved.values())
+
+
+def scope_resolution_counts(project_ids: Sequence[str], scan_ids: Sequence[str]) -> tuple[int, int]:
+    """(projects that contributed, projects in scope with no resolvable scan). The resolver
+    returns one scan per project, so the scan count is the contributing-project count."""
+    resolved = len(scan_ids)
+    return resolved, max(len(project_ids) - resolved, 0)
 
 
 async def historical_first_seen(
@@ -453,7 +459,7 @@ async def gather_cross_project_data(
     )
     project_info_map = {p.id: p for p in other_projects}
 
-    resolved_scans = await _resolve_active_scan_ids(other_projects, db)
+    resolved_scans = await scan_repo.get_latest_active_scan_ids(other_projects)
 
     scan_id_to_project: dict[str, str] = {}
     for proj_id, scan_id in resolved_scans.items():

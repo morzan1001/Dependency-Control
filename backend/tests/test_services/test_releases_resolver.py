@@ -28,6 +28,7 @@ _COMPLETED = "completed"
 _COMPLETED_WITH_ERRORS = "completed_with_errors"
 _FAILED = "failed"
 _PENDING = "pending"
+_PROCESSING = "processing"
 _UNUSABLE_STATUSES = [_PENDING, _FAILED]
 _MAIN = "main"
 _GONE_BRANCH = "gone"
@@ -505,3 +506,114 @@ async def test_resolve_scan_ids_head_skips_the_scan_read_when_every_pointer_is_s
     await resolve_scan_ids(db, [_PROJECT_A])
 
     assert dict(counts) == _HEAD_QUERIES_POINTERS_ONLY
+
+
+@pytest.mark.asyncio
+async def test_crypto_hotspots_pick_scan_ids_uses_the_resolver(db):
+    from app.services.analytics.crypto_hotspots import CryptoHotspotService
+    from app.services.analytics.scopes import ResolvedScope
+
+    await db.projects.insert_one({"_id": "p1", "name": "one", "latest_scan_id": "head-1"})
+    await db.scans.insert_one(_scan("head-1", "p1"))
+    await db.scans.insert_one(_scan("on-dead-branch", "p1", branch=_GONE_BRANCH, created_delta=5))
+
+    scope = ResolvedScope(scope="user", scope_id=None, project_ids=["p1"])
+    picked = await CryptoHotspotService(db)._pick_scan_ids(scope, None)
+
+    assert picked == ["head-1"]
+
+
+@pytest.mark.asyncio
+async def test_crypto_hotspots_override_still_short_circuits(db):
+    from app.services.analytics.crypto_hotspots import CryptoHotspotService
+    from app.services.analytics.scopes import ResolvedScope
+
+    scope = ResolvedScope(scope="user", scope_id=None, project_ids=["p1"])
+    assert await CryptoHotspotService(db)._pick_scan_ids(scope, "explicit") == ["explicit"]
+
+
+@pytest.mark.asyncio
+async def test_compliance_pick_scan_ids_returns_project_scan_pairs(db):
+    from app.services.analytics.scopes import ResolvedScope
+    from app.services.compliance.engine import ComplianceReportEngine
+
+    await db.projects.insert_one({"_id": "p1", "name": "one", "latest_scan_id": "head-1"})
+    await db.scans.insert_one(_scan("head-1", "p1"))
+
+    scope = ResolvedScope(scope="user", scope_id=None, project_ids=["p1"])
+    pairs = await ComplianceReportEngine()._pick_scan_ids(db, scope)
+
+    assert pairs == [("p1", "head-1")]
+
+
+@pytest.mark.asyncio
+async def test_chat_registry_skips_unusable_scans(db):
+    from app.services.chat.tools.registry import ChatToolRegistry
+
+    await db.projects.insert_one({"_id": "p1", "name": "one", "latest_scan_id": None})
+    await db.scans.insert_one(_scan("running", "p1", status=_PROCESSING, created_delta=5))
+    await db.scans.insert_one(_scan("done", "p1"))
+
+    resolved = await ChatToolRegistry()._latest_scan_ids_for_user({"_id": {"$in": ["p1"]}}, None, db)
+
+    assert resolved == {"p1": "done"}
+
+
+@pytest.mark.asyncio
+async def test_analytics_get_latest_scan_ids_uses_the_resolver(db):
+    from app.api.v1.helpers.analytics import get_latest_scan_ids
+
+    await db.projects.insert_one(
+        {
+            "_id": _PROJECT_A,
+            "name": _PROJECT_A,
+            "latest_scan_id": "on-a-dead-branch",
+            "deleted_branches": [_GONE_BRANCH],
+        }
+    )
+    await db.scans.insert_one({**_scan("on-a-dead-branch", _PROJECT_A, created_delta=5), "branch": _GONE_BRANCH})
+    await db.scans.insert_one(_scan("still-alive", _PROJECT_A))
+
+    assert await get_latest_scan_ids([_PROJECT_A], db) == ["still-alive"]
+
+
+@pytest.mark.asyncio
+async def test_analytics_get_projects_with_scans_names_every_project_in_scope(db):
+    """The name map covers the scope; the scan list only the projects that resolved to one."""
+    from app.api.v1.helpers.analytics import get_projects_with_scans
+
+    await db.projects.insert_one({"_id": _PROJECT_A, "name": "alpha", "latest_scan_id": "head-a"})
+    await db.projects.insert_one({"_id": _PROJECT_B, "name": "beta"})
+    await db.scans.insert_one(_scan("head-a", _PROJECT_A))
+
+    names, scan_ids = await get_projects_with_scans([_PROJECT_A, _PROJECT_B], db)
+
+    assert names == {_PROJECT_A: "alpha", _PROJECT_B: "beta"}
+    assert scan_ids == ["head-a"]
+
+
+@pytest.mark.asyncio
+async def test_analytics_helpers_select_the_release_when_asked(db):
+    from app.api.v1.helpers.analytics import get_latest_scan_ids, get_projects_with_scans
+
+    await db.projects.insert_one({"_id": _PROJECT_A, "name": "alpha", "latest_scan_id": "head-a"})
+    await db.scans.insert_one(_scan("head-a", _PROJECT_A, created_delta=9))
+    await db.scans.insert_one(_scan("released-a", _PROJECT_A))
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released-a"))
+
+    assert await get_latest_scan_ids([_PROJECT_A], db, release_environment=_PRODUCTION) == ["released-a"]
+    _, scan_ids = await get_projects_with_scans([_PROJECT_A], db, release_environment=_PRODUCTION)
+    assert scan_ids == ["released-a"]
+
+
+def test_scope_resolution_counts_reports_the_projects_that_never_resolved():
+    from app.api.v1.helpers.analytics import scope_resolution_counts
+
+    assert scope_resolution_counts([_PROJECT_A, _PROJECT_B, _OTHER_PROJECT], ["head-a"]) == (1, 2)
+
+
+def test_scope_resolution_counts_never_reports_a_negative_shortfall():
+    """A caller may pass a wider scan list than its project list; the shortfall floors at zero."""
+    from app.api.v1.helpers.analytics import scope_resolution_counts
+
+    assert scope_resolution_counts([_PROJECT_A], ["head-a", "head-b"]) == (2, 0)

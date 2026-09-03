@@ -1536,13 +1536,9 @@ class ChatToolRegistry:
         project_ids = await self._get_authorized_project_ids(user_project_query, db)
         if not project_ids:
             return {}
-        pipeline: list[dict[str, Any]] = [
-            {"$match": {"project_id": {"$in": project_ids}}},
-            {"$sort": {"created_at": -1}},
-            {"$group": {"_id": "$project_id", "latest_scan_id": {"$first": "$_id"}}},
-        ]
-        rows = await db["scans"].aggregate(pipeline).to_list(length=len(project_ids))
-        return {row["_id"]: row["latest_scan_id"] for row in rows if row.get("latest_scan_id")}
+        from app.services.releases import resolve_scan_ids
+
+        return await resolve_scan_ids(db, project_ids)
 
     @staticmethod
     async def _project_names(db: AsyncIOMotorDatabase, project_ids: list[str]) -> dict[str, str]:
