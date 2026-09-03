@@ -856,7 +856,11 @@ async def sync_project_branches(project_data: dict, db: Any) -> None:
         if not vcs_branches:
             return
 
-        our_branches = await db.scans.distinct("branch", {"project_id": project_id})
+        # A scan whose branch is its own commit tag came off a tag pipeline and names no branch,
+        # so counting it would file the tag as a branch the VCS has deleted.
+        our_branches = await db.scans.distinct(
+            "branch", {"project_id": project_id, "$expr": {"$ne": ["$branch", "$commit_tag"]}}
+        )
         vcs_set = set(vcs_branches)
         deleted = sorted(b for b in our_branches if b not in vcs_set)
 
