@@ -160,6 +160,22 @@ _FETCH_PROJECTION: dict[str, int] = {
 }
 
 
+def _side_query(
+    project_id: str,
+    scan_id: str,
+    finding_type: Iterable[str] | None,
+    severity: Iterable[str] | None,
+) -> dict:
+    """The item set of one side before the waiver filter splits it."""
+    query: dict = {"project_id": project_id, "scan_id": scan_id}
+    if finding_type:
+        query["type"] = {"$in": list(finding_type)}
+    if severity:
+        # Severity is stored UPPERCASE; normalise case-insensitive caller input for $in.
+        query["severity"] = {"$in": [s.upper() for s in severity]}
+    return query
+
+
 async def _fetch_scan_findings(
     db: AsyncIOMotorDatabase,
     project_id: str,
@@ -169,14 +185,23 @@ async def _fetch_scan_findings(
 ) -> list[dict]:
     # Waived risk is excluded from every other metric in the product; the delta answers what is
     # delivered, so it has to agree. Documents predating the flag carry no key and are not waived.
-    query: dict = {"project_id": project_id, "scan_id": scan_id, "waived": {"$ne": True}}
-    if finding_type:
-        query["type"] = {"$in": list(finding_type)}
-    if severity:
-        # Severity is stored UPPERCASE; normalise case-insensitive caller input for $in.
-        query["severity"] = {"$in": [s.upper() for s in severity]}
+    query = _side_query(project_id, scan_id, finding_type, severity) | {"waived": {"$ne": True}}
     cursor = db["findings"].find(query, projection=_FETCH_PROJECTION).limit(MAX_FETCH)
     return [doc async for doc in cursor]
+
+
+async def _count_waived_out(
+    db: AsyncIOMotorDatabase,
+    project_id: str,
+    scan_id: str,
+    finding_type: Iterable[str] | None,
+    severity: Iterable[str] | None,
+) -> int:
+    """Complement of the fetch: counted rather than fetched so waived documents cannot consume
+    the MAX_FETCH budget and push live findings out of the delta."""
+    query = _side_query(project_id, scan_id, finding_type, severity) | {"waived": True}
+    count: int = await db["findings"].count_documents(query)
+    return count
 
 
 def _doc_severity(doc: dict) -> str:
@@ -285,4 +310,6 @@ async def compute_findings_delta(
         items=paged,
         from_reachability=await side_reachability(db, from_scan),
         to_reachability=await side_reachability(db, to_scan),
+        from_waived_excluded=await _count_waived_out(db, project_id, from_scan, finding_type, severity),
+        to_waived_excluded=await _count_waived_out(db, project_id, to_scan, finding_type, severity),
     )

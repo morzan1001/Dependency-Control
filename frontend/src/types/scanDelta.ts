@@ -67,4 +67,8 @@ export interface ScanDeltaResponse {
   // Null means the scan reports no reachability at all, which is distinct from zero coverage.
   from_reachability?: ScanDeltaReachability | null;
   to_reachability?: ScanDeltaReachability | null;
+  // Findings the waiver filter took out of each side. Waivers are re-evaluated only for the latest
+  // scan, so a waiver that lapsed since the older side makes a pre-existing finding read as added.
+  from_waived_excluded: number;
+  to_waived_excluded: number;
 }

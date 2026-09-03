@@ -52,6 +52,22 @@ def test_components_changed_total_present():
     assert DeltaCategory.COMPONENTS.value == "components"
 
 
+def test_waived_excluded_defaults_to_zero_on_a_payload_that_omits_it():
+    """Zero, not null: a category that excludes no findings still makes a countable statement."""
+    parsed = ScanDeltaResponse.model_validate(
+        {
+            "from_scan_id": "s1",
+            "to_scan_id": "s2",
+            "project_id": "p1",
+            "category": "components",
+            "totals": {"added": 0, "removed": 0, "unchanged": 0},
+            "items": [],
+        }
+    )
+    assert parsed.from_waived_excluded == 0
+    assert parsed.to_waived_excluded == 0
+
+
 def test_invalid_category_rejected():
     with pytest.raises(ValidationError):
         ScanDeltaResponse.model_validate(
