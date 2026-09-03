@@ -166,7 +166,9 @@ async def _fetch_scan_findings(
     finding_type: Iterable[str] | None,
     severity: Iterable[str] | None,
 ) -> list[dict]:
-    query: dict = {"project_id": project_id, "scan_id": scan_id}
+    # Waived risk is excluded from every other metric in the product; the delta answers what is
+    # delivered, so it has to agree. Documents predating the flag carry no key and are not waived.
+    query: dict = {"project_id": project_id, "scan_id": scan_id, "waived": {"$ne": True}}
     if finding_type:
         query["type"] = {"$in": list(finding_type)}
     if severity:
