@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.constants import PROJECT_ROLE_VIEWER, PROJECT_ROLES
+from app.core.constants import PROJECT_ROLE_VIEWER, PROJECT_ROLES, validate_release_environment
 from app.core.notification_prefs import sanitize_notification_preferences
 from app.models.base import CreatedAtModel
 from app.models.finding import Finding
@@ -142,6 +142,16 @@ class Scan(MongoDocument, CreatedAtModel):
 
     # Pinned scans are exempt from retention cleanup (housekeeping filters "pinned": {"$ne": True}).
     pinned: bool = False
+
+    is_release: bool = False
+    release_version: str | None = None
+    release_environment: str | None = None
+    released_at: datetime | None = None
+
+    @field_validator("release_environment")
+    @classmethod
+    def validate_environment(cls, v: str | None) -> str | None:
+        return validate_release_environment(v)
 
     # Re-scan metadata
     is_rescan: bool = False

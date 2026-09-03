@@ -1,5 +1,6 @@
 """Shared constants used across the application."""
 
+import re
 from typing import Any
 
 # Canonical keys for KEV (CISA Known Exploited Vulnerabilities) state persisted in a
@@ -1015,3 +1016,15 @@ MAX_CONCURRENT_COMPLIANCE_REPORTS: int = 10
 POLICY_AUDIT_DEFAULT_MIN_PRUNE_DAYS: int = 90
 CRYPTO_ASSET_BULK_CHUNK_SIZE: int = 500
 CRYPTO_ASSET_MAX_LIST_LIMIT: int = 10_000
+
+# Environments are used as index and query keys, so the slug shape is enforced, not normalised.
+RELEASE_ENVIRONMENT_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,31}$"
+DEFAULT_RELEASE_ENVIRONMENT = "production"
+
+
+def validate_release_environment(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not re.match(RELEASE_ENVIRONMENT_PATTERN, value):
+        raise ValueError(f"release_environment must match {RELEASE_ENVIRONMENT_PATTERN}")
+    return value
