@@ -97,29 +97,6 @@ async def build_component_language_map(db: AsyncIOMotorDatabase, scan_id: str) -
     return component_language_map(deps)
 
 
-async def count_coverable_findings(db: AsyncIOMotorDatabase, scan_id: str) -> int:
-    """Vulnerability findings whose ecosystem a callgraph could ever analyze.
-
-    Tells a team whether reachability is worth enabling at all. A container scan is almost
-    entirely OS packages, which no callgraph tool covers, so this stays zero however many
-    callgraph jobs the pipeline runs — a distinction the plain unknown count cannot make.
-    """
-    component_languages = await build_component_language_map(db, scan_id)
-    if not component_languages:
-        return 0
-
-    coverable = 0
-    cursor = db.findings.find(
-        {"scan_id": scan_id, "type": "vulnerability", "waived": {"$ne": True}},
-        {"component": 1},
-    )
-    async for finding in cursor:
-        component = finding.get("component")
-        if component and lookup_component(component_languages, component):
-            coverable += 1
-    return coverable
-
-
 @dataclass(frozen=True)
 class _PreparedCallgraph:
     """One callgraph's lookup structures, built once per enrichment run."""
