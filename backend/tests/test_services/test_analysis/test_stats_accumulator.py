@@ -1,5 +1,7 @@
 """Permanent pins for StatsAccumulator rules a differential corpus cannot express."""
 
+from unittest.mock import ANY
+
 import pytest
 
 from app.core.constants import (
@@ -8,8 +10,9 @@ from app.core.constants import (
     REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
     REACHABILITY_LEVEL_SYMBOL,
 )
-from app.services.analysis.stats import compute_stats
+from app.services.analysis.stats import _stats_projection, calculate_comprehensive_stats, compute_stats
 from app.services.reachability_enrichment import component_language_map
+from tests.mocks.fake_mongo import FakeDatabase
 
 
 def _finding(ftype="vulnerability", severity="HIGH", **details):
@@ -275,3 +278,50 @@ class TestComponentLanguageMap:
     def test_a_name_listed_twice_unions_its_languages(self):
         m = component_language_map([{"name": "x", "type": "npm"}, {"name": "x", "type": "pypi"}])
         assert m["x"] == frozenset({"javascript", "typescript", "python"})
+
+
+class TestDriverReadsOneCursor:
+    @pytest.mark.asyncio
+    async def test_driver_hints_the_scan_id_type_index_and_does_not_prefilter_waived(self):
+        """The waived rule lives in add(); severity and waived are mutated after insert, so the
+        hint must sit on (scan_id, type), the only pair that is immutable post-insert."""
+        db = FakeDatabase()
+        captured: list[tuple] = []
+        original = db.findings.find
+
+        def _spy(query=None, projection=None, **kwargs):
+            captured.append((query, projection, kwargs.get("hint")))
+            return original(query, projection, **kwargs)
+
+        db.findings.find = _spy  # type: ignore[method-assign]
+        await db.findings.insert_one({"_id": "f1", "scan_id": "s1", "type": "vulnerability", "severity": "HIGH"})
+
+        await calculate_comprehensive_stats(db, "s1")
+
+        stats_call = next(c for c in captured if c[0] == {"scan_id": "s1"})
+        assert "waived" not in stats_call[0]
+        assert stats_call[1] == _stats_projection()
+        assert stats_call[2] == [("scan_id", 1), ("type", 1)]
+
+    @pytest.mark.asyncio
+    async def test_driver_still_excludes_waived_findings(self):
+        db = FakeDatabase()
+        await db.findings.insert_one(
+            {"_id": "f1", "scan_id": "s1", "type": "vulnerability", "severity": "CRITICAL", "waived": True}
+        )
+        await db.findings.insert_one(
+            {"_id": "f2", "scan_id": "s1", "type": "vulnerability", "severity": "CRITICAL", "waived": False}
+        )
+        stats = await calculate_comprehensive_stats(db, "s1")
+        assert stats.critical == 1
+
+    @pytest.mark.asyncio
+    async def test_driver_resolves_coverable_from_the_scans_dependencies(self):
+        db = FakeDatabase()
+        await db.dependencies.insert_one({"_id": "d1", "scan_id": "s1", "name": "lodash", "type": "npm"})
+        await db.findings.insert_one(
+            {"_id": "f1", "scan_id": "s1", "type": "vulnerability", "severity": "HIGH", "component": "lodash"}
+        )
+        stats = await calculate_comprehensive_stats(db, "s1")
+        assert stats.reachability.coverable_count == 1
+        assert stats.reachability.analyzed_count == ANY

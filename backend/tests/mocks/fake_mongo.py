@@ -745,7 +745,7 @@ class _AsyncIter:
 
 
 class _FakeCursor:
-    """Chainable cursor for ``find()``. Supports skip/limit/sort/projection."""
+    """Chainable cursor for ``find()``. Supports skip/limit/sort/projection and close()."""
 
     def __init__(self, docs: dict, query: dict, sort=None, limit: int = 0, skip: int = 0, projection=None):
         self._docs = docs
@@ -792,6 +792,9 @@ class _FakeCursor:
             return next(self._iter)  # type: ignore[arg-type]
         except StopIteration:
             raise StopAsyncIteration
+
+    async def close(self) -> None:
+        self._iter = None
 
 
 # ---------------------------------------------------------------------------
