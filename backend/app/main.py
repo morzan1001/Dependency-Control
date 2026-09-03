@@ -30,6 +30,7 @@ from app.api.v1.endpoints import (
     policy_audit,
     pqc_migration,
     projects,
+    releases,
     scripts,
     system,
     teams,
@@ -189,6 +190,7 @@ app.include_router(
 app.include_router(analytics.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"])
 app.include_router(archives.router, prefix=f"{settings.API_V1_STR}/projects", tags=["archives"])
 app.include_router(archives.admin_router, prefix=f"{settings.API_V1_STR}/archives", tags=["archives-admin"])
+app.include_router(releases.router, prefix=f"{settings.API_V1_STR}/projects", tags=["releases"])
 app.include_router(callgraph.router, prefix=f"{settings.API_V1_STR}/projects", tags=["callgraph"])
 app.include_router(crypto_assets.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-assets"])
 app.include_router(inventory.router, prefix=f"{settings.API_V1_STR}", tags=["inventory"])

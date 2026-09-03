@@ -20,7 +20,7 @@ def _created_at(doc: dict[str, Any]) -> datetime:
     return ensure_utc(doc.get("created_at")) or _UNDATED
 
 
-async def _effective_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Iterable[str]) -> dict[str, str]:
+async def effective_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Iterable[str]) -> dict[str, str]:
     """The freshest readable analysis of each released artefact.
 
     Rescans chain — each is created from the project's newest usable scan, so the released scan's
@@ -61,7 +61,7 @@ async def latest_release_scan(db: AsyncIOMotorDatabase, project_id: str, environ
     )
     if row is None:
         return None
-    return (await _effective_scan_ids(db, [row["scan_id"]])).get(row["scan_id"])
+    return (await effective_scan_ids(db, [row["scan_id"]])).get(row["scan_id"])
 
 
 async def release_environments(db: AsyncIOMotorDatabase, project_id: str) -> list[str]:
@@ -83,7 +83,7 @@ async def _release_scan_ids(
     released = {row["_id"]: row["scan_id"] async for row in db.releases.aggregate(pipeline)}
     if not released:
         return {}
-    effective = await _effective_scan_ids(db, set(released.values()))
+    effective = await effective_scan_ids(db, set(released.values()))
     return {project_id: effective[scan_id] for project_id, scan_id in released.items() if scan_id in effective}
 
 
