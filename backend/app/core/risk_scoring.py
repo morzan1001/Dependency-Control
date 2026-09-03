@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from app.core.constants import EPSS_HIGH_THRESHOLD, EPSS_MEDIUM_THRESHOLD
+
 # Relative weight per finding: 1 CRITICAL = 5 HIGH = 20 MEDIUM = 80 LOW; INFO/UNKNOWN/NEGLIGIBLE carry none.
 RISK_SEVERITY_WEIGHTS: dict[str, float] = {
     "CRITICAL": 20.0,
@@ -54,3 +56,21 @@ def risk_score_expr(count_paths: dict[str, str]) -> dict[str, Any]:
             1,
         ]
     }
+
+
+def is_actionable_vulnerability(*, epss_score: float | None, is_kev: bool, reachable: bool | None) -> bool:
+    """Exploitable (KEV or high EPSS) and not ruled out by a reachability verdict."""
+    exploitable = is_kev or (epss_score is not None and epss_score >= EPSS_HIGH_THRESHOLD)
+    return exploitable and (reachable is True or reachable is None)
+
+
+def is_deprioritized_vulnerability(*, epss_score: float | None, is_kev: bool, reachable: bool | None) -> bool:
+    """Proven unreachable, or too unlikely to be exploited to compete for attention."""
+    if reachable is False:
+        return True
+    return not is_kev and (epss_score is None or epss_score < EPSS_MEDIUM_THRESHOLD)
+
+
+def is_deprioritized_secret(verified: bool | None, in_current_tree: bool | None) -> bool:
+    """Unverified and no longer present in the scanned tree."""
+    return verified is not True and in_current_tree is False

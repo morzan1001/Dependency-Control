@@ -6,6 +6,8 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from app.core.risk_scoring import is_actionable_vulnerability, is_deprioritized_vulnerability
+
 
 class RecommendationType(str, Enum):
     """Types of remediation recommendations."""
@@ -135,17 +137,13 @@ class VulnerabilityInfo:
 
     @property
     def is_actionable(self) -> bool:
-        """Returns True if this vulnerability should be prioritized for action."""
-        is_exploitable = self.is_kev or (self.epss_score is not None and self.epss_score >= 0.1)
-        is_reachable_or_unknown = self.is_reachable is None or self.is_reachable is True
-        return bool(is_exploitable and is_reachable_or_unknown)
+        return is_actionable_vulnerability(epss_score=self.epss_score, is_kev=self.is_kev, reachable=self.is_reachable)
 
     @property
     def is_deprioritized(self) -> bool:
-        """Returns True if this vulnerability can be safely deprioritized."""
-        if self.is_reachable is False:
-            return True
-        return bool(not self.is_kev and (self.epss_score is None or self.epss_score < 0.01))
+        return is_deprioritized_vulnerability(
+            epss_score=self.epss_score, is_kev=self.is_kev, reachable=self.is_reachable
+        )
 
 
 class PackageHotspot(BaseModel):

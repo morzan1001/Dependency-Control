@@ -335,6 +335,7 @@ CROSS_PROJECT_MIN_OCCURRENCES: int = 2  # Min projects for cross-project pattern
 
 # EPSS very high threshold (for immediate action recommendations)
 EPSS_VERY_HIGH_THRESHOLD: float = 0.5  # >= 50% - Extremely likely to be exploited
+EPSS_ACTIVE_EXPLOITATION_THRESHOLD: float = 0.7  # >= 70% - treated as under active exploitation
 
 # OpenSSF Scorecard thresholds
 SCORECARD_LOW_THRESHOLD: float = 4.0  # Packages below this are flagged as low quality
