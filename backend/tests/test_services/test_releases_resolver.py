@@ -48,6 +48,8 @@ _CHAIN_BEYOND_THE_BOUND = _MAX_RESCAN_HOPS + 5
 _NO_RELEASES: dict[str, str] = {}
 _CYCLE_QUERIES = {"releases.find_one": 1, "scans.find": 2}
 _NO_QUERIES: dict[str, int] = {}
+_NAMES_AND_HEAD_QUERIES = {"projects.find": 1, "scans.distinct": 1}
+_NAMES_AND_RELEASE_QUERIES = {"projects.find": 1, "releases.aggregate": 1, "scans.find": 1}
 _RETENTION_DELETED = "head-deleted-by-retention"
 _EXEMPTED_RELEASE = "exempted-release"
 _SURVIVOR_AGE_HOURS = -100
@@ -674,6 +676,35 @@ async def test_analytics_helpers_select_the_release_when_asked(db):
     assert await get_latest_scan_ids([_PROJECT_A], db, release_environment=_PRODUCTION) == ["released-a"]
     _, scan_ids = await get_projects_with_scans([_PROJECT_A], db, release_environment=_PRODUCTION)
     assert scan_ids == ["released-a"]
+
+
+@pytest.mark.parametrize("project_count", [_ONE_PROJECT, _MANY_PROJECTS])
+@pytest.mark.asyncio
+async def test_get_projects_with_scans_reads_the_projects_once(db, project_count):
+    """The name map and the resolver's scope are the same read, not one each."""
+    from app.api.v1.helpers.analytics import get_projects_with_scans
+
+    project_ids = await _seed_one_scan_each(db, project_count)
+    for index, project_id in enumerate(project_ids):
+        await db.projects.update_one({"_id": project_id}, {"$set": {"latest_scan_id": f"scan-{index}"}})
+    counts = _count_queries(db)
+
+    await get_projects_with_scans(project_ids, db)
+
+    assert dict(counts) == _NAMES_AND_HEAD_QUERIES
+
+
+@pytest.mark.parametrize("project_count", [_ONE_PROJECT, _MANY_PROJECTS])
+@pytest.mark.asyncio
+async def test_get_projects_with_scans_release_mode_reads_the_projects_once(db, project_count):
+    from app.api.v1.helpers.analytics import get_projects_with_scans
+
+    project_ids = await _seed_one_scan_each(db, project_count)
+    counts = _count_queries(db)
+
+    await get_projects_with_scans(project_ids, db, release_environment=_PRODUCTION)
+
+    assert dict(counts) == _NAMES_AND_RELEASE_QUERIES
 
 
 def test_scope_resolution_counts_reports_the_projects_that_never_resolved():

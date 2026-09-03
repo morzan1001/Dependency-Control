@@ -84,12 +84,12 @@ async def get_projects_with_scans(
     """Return (project_name_map, scan_ids) for the given projects."""
     from app.services.releases import resolve_scan_ids
 
-    projects = await ProjectRepository(db).find_many_minimal(
+    projects = await ProjectRepository(db).find_many_with_scan_id(
         {"_id": {"$in": project_ids}},
         limit=ANALYTICS_MAX_QUERY_LIMIT,
     )
     project_name_map = {p.id: p.name for p in projects}
-    resolved = await resolve_scan_ids(db, project_ids, release_environment=release_environment)
+    resolved = await resolve_scan_ids(db, project_ids, release_environment=release_environment, projects=projects)
 
     return project_name_map, list(resolved.values())
 

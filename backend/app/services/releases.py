@@ -9,6 +9,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core import ensure_utc
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, SCAN_USABLE_STATUSES
 from app.repositories import ProjectRepository, ScanRepository
+from app.schemas.projections import ProjectWithScanId
 
 _MAX_RESCAN_HOPS = 10
 _CHAIN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1, "created_at": 1}
@@ -100,15 +101,19 @@ async def resolve_scan_ids(
     project_ids: Sequence[str] | None,
     *,
     release_environment: str | None = None,
+    projects: Sequence[ProjectWithScanId] | None = None,
 ) -> dict[str, str]:
     """project_id -> the scan that represents it; None project_ids means every project.
-    Projects that resolve to no scan are omitted, so callers reporting a scope size must count elsewhere."""
+    Projects that resolve to no scan are omitted, so callers reporting a scope size must count
+    elsewhere. A caller that already read the scope passes it as projects to spare the head path
+    its own read; the release path ignores it."""
     if project_ids is not None and not project_ids:
         return {}
 
     if release_environment is not None:
         return await _release_scan_ids(db, project_ids, release_environment)
 
-    query: dict[str, Any] = {} if project_ids is None else {"_id": {"$in": list(project_ids)}}
-    projects = await ProjectRepository(db).find_many_with_scan_id(query, limit=ANALYTICS_MAX_QUERY_LIMIT)
-    return await ScanRepository(db).get_latest_active_scan_ids(projects)
+    if projects is None:
+        query: dict[str, Any] = {} if project_ids is None else {"_id": {"$in": list(project_ids)}}
+        projects = await ProjectRepository(db).find_many_with_scan_id(query, limit=ANALYTICS_MAX_QUERY_LIMIT)
+    return await ScanRepository(db).get_latest_active_scan_ids(list(projects))
