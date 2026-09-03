@@ -6,6 +6,8 @@ from pydantic import ValidationError
 from app.models.project import Scan
 from app.schemas.ingest import SBOMIngest
 
+_MAX_ENVIRONMENT_LENGTH = 32
+
 
 def _minimal_payload(**extra):
     return {"pipeline_id": 1, "commit_hash": "a" * 40, "branch": "main", **extra}
@@ -25,7 +27,13 @@ def test_release_payload_keeps_its_values():
     assert data.release_environment == "staging"
 
 
-@pytest.mark.parametrize("bad", ["Production", "prod.eu", "-prod", "", "x" * 33])
+@pytest.mark.parametrize("good", ["staging", "prod_eu", "prod-eu", "1prod", "a", "z" * _MAX_ENVIRONMENT_LENGTH])
+def test_environment_slug_accepts_valid_values(good):
+    data = SBOMIngest(**_minimal_payload(release_environment=good))
+    assert data.release_environment == good
+
+
+@pytest.mark.parametrize("bad", ["Production", "prod.eu", "-prod", "", "x" * (_MAX_ENVIRONMENT_LENGTH + 1), "prod\n"])
 def test_environment_slug_is_enforced_on_ingest(bad):
     with pytest.raises(ValidationError):
         SBOMIngest(**_minimal_payload(release_environment=bad))
@@ -42,6 +50,14 @@ def test_scan_defaults_carry_no_release():
     assert dumped["release_version"] is None
     assert dumped["release_environment"] is None
     assert dumped["released_at"] is None
+
+
+def test_ingest_schema_rejects_caller_supplied_released_at():
+    now = datetime.now(timezone.utc)
+    past = datetime(2020, 1, 1, tzinfo=timezone.utc)
+    data = SBOMIngest(**_minimal_payload(released_at=past, is_release=True))
+    assert not hasattr(data, "released_at")
+    assert data.release_fields(now)["released_at"] == now
 
 
 def test_release_fields_are_empty_when_not_a_release():

@@ -1018,13 +1018,13 @@ CRYPTO_ASSET_BULK_CHUNK_SIZE: int = 500
 CRYPTO_ASSET_MAX_LIST_LIMIT: int = 10_000
 
 # Environments are used as index and query keys, so the slug shape is enforced, not normalised.
-RELEASE_ENVIRONMENT_PATTERN = r"^[a-z0-9][a-z0-9_-]{0,31}$"
-DEFAULT_RELEASE_ENVIRONMENT = "production"
+RELEASE_ENVIRONMENT_PATTERN: str = r"^[a-z0-9][a-z0-9_-]{0,31}$"
+DEFAULT_RELEASE_ENVIRONMENT: str = "production"
 
 
 def validate_release_environment(value: str | None) -> str | None:
     if value is None:
         return None
-    if not re.match(RELEASE_ENVIRONMENT_PATTERN, value):
+    if not re.fullmatch(RELEASE_ENVIRONMENT_PATTERN, value):
         raise ValueError(f"release_environment must match {RELEASE_ENVIRONMENT_PATTERN}")
     return value
