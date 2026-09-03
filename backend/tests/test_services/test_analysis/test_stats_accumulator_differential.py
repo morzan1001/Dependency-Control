@@ -163,6 +163,14 @@ async def test_adjusted_risk_score_matches():
 
 
 @pytest.mark.asyncio
+async def test_prioritized_matches():
+    pipeline, fold = await both()
+    assert fold.prioritized == pipeline.prioritized
+    assert pipeline.prioritized.actionable_total > 0
+    assert pipeline.prioritized.deprioritized_count > 0
+
+
+@pytest.mark.asyncio
 async def test_full_stats_match():
     pipeline, fold = await both()
     assert fold.model_dump() == pipeline.model_dump()

@@ -18,6 +18,8 @@ from app.core.risk_scoring import (
     CONFIRMED_REACHABLE_RISK_MODIFIER,
     RISK_SEVERITY_WEIGHTS,
     UNREACHABLE_RISK_MODIFIER,
+    is_actionable_vulnerability,
+    is_deprioritized_vulnerability,
     saturating_risk_score,
     severity_exposure,
 )
@@ -335,6 +337,8 @@ class StatsAccumulator:
             "type",
             "reachable",
             "reachability_level",
+            "details.epss_score",
+            f"details.{DETAILS_KEY_IN_KEV}",
         }
     )
 
@@ -343,6 +347,12 @@ class StatsAccumulator:
         self._counted = 0
         self._severity: dict[str, int] = {sev: 0 for sev in (*_BUCKETED_SEVERITIES, _UNKNOWN_SEVERITY)}
         self._adjusted_exposure = 0.0
+        self._vuln_severity: dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+        self._vuln_total = 0
+        self._actionable_critical = 0
+        self._actionable_high = 0
+        self._actionable_total = 0
+        self._deprioritized = 0
 
     def add(self, finding: Mapping[str, Any]) -> None:
         if finding.get("waived") is True:
@@ -353,12 +363,30 @@ class StatsAccumulator:
         bucket = severity if severity in _BUCKETED_SEVERITIES else _UNKNOWN_SEVERITY
         self._severity[bucket] += 1
 
+        raw_details = finding.get("details")
+        details: Mapping[str, Any] = raw_details if isinstance(raw_details, Mapping) else {}
         reachable = finding.get("reachable")
         level = finding.get("reachability_level")
+        epss = _numeric(details.get("epss_score"))
+        in_kev = details.get(DETAILS_KEY_IN_KEV) is True
+
         # Lookup keys on bucket (derived from severity), which coincides safely with the
         # severity values in RISK_SEVERITY_WEIGHTS; adding a new weight key requires
         # ensuring it is also in _BUCKETED_SEVERITIES, or the fold will diverge from the pipeline.
         self._adjusted_exposure += RISK_SEVERITY_WEIGHTS.get(bucket, 0.0) * _reach_modifier(reachable, level)
+
+        if finding.get("type") == "vulnerability":
+            self._vuln_total += 1
+            if bucket in self._vuln_severity:
+                self._vuln_severity[bucket] += 1
+            if is_actionable_vulnerability(epss_score=epss, is_kev=in_kev, reachable=reachable):
+                self._actionable_total += 1
+                if bucket == "CRITICAL":
+                    self._actionable_critical += 1
+                elif bucket == "HIGH":
+                    self._actionable_high += 1
+            if is_deprioritized_vulnerability(epss_score=epss, is_kev=in_kev, reachable=reachable):
+                self._deprioritized += 1
 
     def result(self) -> Stats:
         # An empty or fully waived scan produced no $group row, leaving the four sub-models
@@ -380,6 +408,17 @@ class StatsAccumulator:
             unknown=self._severity[_UNKNOWN_SEVERITY],
             risk_score=saturating_risk_score(severity_exposure(critical, high, medium, low)),
             adjusted_risk_score=saturating_risk_score(self._adjusted_exposure),
+            prioritized=PrioritizedCounts(
+                total=self._vuln_total,
+                critical=self._vuln_severity["CRITICAL"],
+                high=self._vuln_severity["HIGH"],
+                medium=self._vuln_severity["MEDIUM"],
+                low=self._vuln_severity["LOW"],
+                actionable_critical=self._actionable_critical,
+                actionable_high=self._actionable_high,
+                actionable_total=self._actionable_total,
+                deprioritized_count=self._deprioritized,
+            ),
         )
 
 
