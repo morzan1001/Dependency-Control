@@ -383,6 +383,21 @@ def _enrich_finding_from_callgraphs(
     return True
 
 
+def enrich_findings_from_callgraphs(
+    findings: list[dict[str, Any]],
+    prepared_graphs: list[_PreparedCallgraph],
+    component_languages: dict[str, frozenset] | None = None,
+) -> int:
+    """Enrich vulnerability findings in place from prepared callgraphs; return how many were enriched."""
+    enriched_count = 0
+    for finding in findings:
+        if finding.get("type") != "vulnerability":
+            continue
+        if _enrich_finding_from_callgraphs(finding, prepared_graphs, component_languages):
+            enriched_count += 1
+    return enriched_count
+
+
 async def enrich_findings_with_reachability(
     findings: list[dict[str, Any]],
     project_id: str,
@@ -415,15 +430,7 @@ async def enrich_findings_with_reachability(
     # Per-finding ecosystem gates the unreachable down-weight to the analyzed languages.
     component_languages = await build_component_language_map(db, scan_id)
 
-    enriched_count = 0
-
-    for finding in findings:
-        if finding.get("type") != "vulnerability":
-            continue
-        if _enrich_finding_from_callgraphs(finding, prepared_graphs, component_languages):
-            enriched_count += 1
-
-    return enriched_count
+    return enrich_findings_from_callgraphs(findings, prepared_graphs, component_languages)
 
 
 def _analyze_reachability(

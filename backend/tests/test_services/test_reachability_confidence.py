@@ -353,6 +353,34 @@ class TestReachabilityFailClosed:
         assert finding["details"]["adjusted_risk_score"] == finding["details"]["risk_score"]
 
 
+class TestPureEnrichmentEntryPoint:
+    """The reachability loop must run without a database, callgraph repository or scan id."""
+
+    def test_enriches_only_vulnerability_findings_and_returns_the_count(self):
+        from app.services.reachability_enrichment import enrich_findings_from_callgraphs
+
+        vuln = _vuln_finding(component="requests", risk_score=80.0)
+        secret = {"type": "secret", "component": "config/aws.env", "details": {}}
+        cg = _prepared(module_usage=_usage("requests", "app/client.py"), language="python")
+
+        enriched = enrich_findings_from_callgraphs([vuln, secret], [cg], {"requests": frozenset({"python"})})
+
+        assert enriched == 1
+        assert vuln["reachable"] is True
+        assert "reachability" not in secret["details"]
+
+    def test_mirrors_the_verdict_to_the_top_level_fields(self):
+        from app.services.reachability_enrichment import enrich_findings_from_callgraphs
+
+        vuln = _vuln_finding(component="requests", risk_score=80.0)
+        cg = _prepared(module_usage=_usage("requests", "app/client.py"), language="python")
+
+        enrich_findings_from_callgraphs([vuln], [cg], {"requests": frozenset({"python"})})
+
+        assert vuln["reachability_level"] == vuln["details"]["reachability"]["analysis_level"]
+        assert vuln["reachable"] == vuln["details"]["reachability"]["is_reachable"]
+
+
 class TestRunPendingBulkPersist:
     """run_pending_reachability_for_scan must persist via a chunked bulk_write, not one sequential update per finding."""
 
