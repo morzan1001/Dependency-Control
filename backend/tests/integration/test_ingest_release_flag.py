@@ -116,3 +116,48 @@ async def test_findings_ingest_can_promote_a_scan_created_by_the_sbom_job(client
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["is_release"] is True
     assert scan["release_environment"] == "canary"
+
+
+@pytest.mark.asyncio
+async def test_sbom_ingest_can_promote_an_existing_scan_with_release(client, db, api_key_headers):
+    with (
+        patch("app.api.v1.endpoints.ingest._process_sboms", side_effect=_fake_process_sboms),
+        patch("app.api.v1.endpoints.ingest.AsyncIOMotorGridFSBucket"),
+    ):
+        first = await client.post("/api/v1/ingest", json=_sbom_payload(), headers=api_key_headers)
+        assert first.status_code == 202, first.text
+
+        second = await client.post(
+            "/api/v1/ingest",
+            json=_sbom_payload(is_release=True, release_environment="canary"),
+            headers=api_key_headers,
+        )
+        assert second.status_code == 202, second.text
+
+    scan_id = first.json()["scan_id"]
+    assert second.json()["scan_id"] == scan_id
+    scan = await db.scans.find_one({"_id": scan_id})
+    assert scan["is_release"] is True
+    assert scan["release_environment"] == "canary"
+
+
+@pytest.mark.asyncio
+async def test_findings_ingest_creates_scan_with_release_mark(client, db, api_key_headers):
+    resp = await client.post(
+        "/api/v1/ingest/opengrep",
+        json={
+            "pipeline_id": 4242,
+            "commit_hash": _COMMIT,
+            "branch": "main",
+            "findings": [],
+            "is_release": True,
+            "release_environment": "prod",
+        },
+        headers=api_key_headers,
+    )
+    assert resp.status_code == 200, resp.text
+
+    scan_id = resp.json()["scan_id"]
+    scan = await db.scans.find_one({"_id": scan_id})
+    assert scan["is_release"] is True
+    assert scan["release_environment"] == "prod"

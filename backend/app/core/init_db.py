@@ -328,7 +328,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         ],
         name="scans_release_lookup",
         partialFilterExpression={"is_release": True},
-    )
+    )  # Partial so only released scans are indexed; serves per-environment latest-release lookup.
 
     await database["findings"].create_index([("created_at", pymongo.DESCENDING)])
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)])
