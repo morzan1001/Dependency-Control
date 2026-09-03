@@ -10,6 +10,7 @@ from fastapi import Query
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
+    ReleaseEnvironmentQuery,
     build_hotspot_priority_reasons,
     build_priority_reasons,
     calculate_days_known,
@@ -115,6 +116,7 @@ async def get_impact_analysis(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    release_environment: ReleaseEnvironmentQuery = None,
 ) -> list[ImpactAnalysisResult]:
     """Analyze which dependency fixes would have the highest impact across projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_IMPACT)
@@ -125,7 +127,9 @@ async def get_impact_analysis(
     if not project_ids:
         return []
 
-    project_name_map, scan_ids = await get_projects_with_scans(project_ids, db)
+    project_name_map, scan_ids = await get_projects_with_scans(
+        project_ids, db, release_environment=release_environment
+    )
     if not scan_ids:
         return []
 
@@ -328,6 +332,7 @@ async def get_vulnerability_hotspots(
         Query(description="Sort field: finding_count, component, first_seen, epss, risk"),
     ] = "finding_count",
     sort_order: Annotated[str, Query(description="Sort order: asc, desc")] = "desc",
+    release_environment: ReleaseEnvironmentQuery = None,
 ) -> list[VulnerabilityHotspot]:
     """Get dependencies with the most vulnerabilities (hotspots)."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_HOTSPOTS)
@@ -339,7 +344,9 @@ async def get_vulnerability_hotspots(
     if not project_ids:
         return []
 
-    project_name_map, scan_ids = await get_projects_with_scans(project_ids, db)
+    project_name_map, scan_ids = await get_projects_with_scans(
+        project_ids, db, release_environment=release_environment
+    )
     if not scan_ids:
         return []
 

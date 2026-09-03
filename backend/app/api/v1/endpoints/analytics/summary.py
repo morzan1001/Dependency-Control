@@ -119,6 +119,7 @@ async def get_top_dependencies(
     db: DatabaseDep,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
     type: Annotated[str | None, Query(description="Filter by dependency type (npm, pypi, maven, etc.)")] = None,
+    release_environment: ReleaseEnvironmentQuery = None,
 ) -> list[DependencyUsage]:
     """Get most frequently used dependencies across all accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_DEPENDENCIES)
@@ -128,7 +129,7 @@ async def get_top_dependencies(
     if not project_ids:
         return []
 
-    scan_ids = await get_latest_scan_ids(project_ids, db)
+    scan_ids = await get_latest_scan_ids(project_ids, db, release_environment=release_environment)
 
     if not scan_ids:
         return []
@@ -190,6 +191,7 @@ async def get_top_dependencies(
 async def get_dependency_types(
     current_user: CurrentUserDep,
     db: DatabaseDep,
+    release_environment: ReleaseEnvironmentQuery = None,
 ) -> list[str]:
     """Get list of all dependency types used across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
@@ -199,7 +201,7 @@ async def get_dependency_types(
     if not project_ids:
         return []
 
-    _, scan_ids = await get_projects_with_scans(project_ids, db)
+    _, scan_ids = await get_projects_with_scans(project_ids, db, release_environment=release_environment)
 
     if not scan_ids:
         return []

@@ -133,7 +133,7 @@ def _run_impact(
     async def _fake_get_user_project_ids(_u, _d):
         return ["proj-1"]
 
-    async def _fake_get_projects_with_scans(_pids, _d):
+    async def _fake_get_projects_with_scans(_pids, _d, **_kw):
         return {"proj-1": "Project 1"}, ["scan-latest"]
 
     async def _fake_aggregate(pipeline, **kwargs):
@@ -176,7 +176,7 @@ def _run_hotspots(
     async def _fake_get_user_project_ids(_u, _d):
         return ["proj-1"]
 
-    async def _fake_get_projects_with_scans(_pids, _d):
+    async def _fake_get_projects_with_scans(_pids, _d, **_kw):
         return {"proj-1": "Project 1"}, ["scan-latest"]
 
     async def _fake_finding_aggregate(pipeline, **kwargs):
@@ -670,7 +670,7 @@ def _impact_aggregate_calls(*limits: int) -> int:
     async def _fake_get_user_project_ids(_u, _d):
         return ["proj-1"]
 
-    async def _fake_get_projects_with_scans(_p, _d):
+    async def _fake_get_projects_with_scans(_p, _d, **_kw):
         return {"proj-1": "P1"}, ["scan-latest"]
 
     async def _fake_aggregate(pipeline, **_kw):
@@ -705,7 +705,7 @@ def _hotspots_aggregate_calls(*sort_bys: str) -> int:
     async def _fake_get_user_project_ids(_u, _d):
         return ["proj-1"]
 
-    async def _fake_get_projects_with_scans(_p, _d):
+    async def _fake_get_projects_with_scans(_p, _d, **_kw):
         return {"proj-1": "P1"}, ["scan-latest"]
 
     async def _fake_aggregate(pipeline, **_kw):
@@ -759,7 +759,7 @@ class TestAnalyticsResultCache:
         async def _fake_get_user_project_ids(_u, _d):
             return ["proj-1"]
 
-        async def _fake_get_projects_with_scans(_p, _d):
+        async def _fake_get_projects_with_scans(_p, _d, **_kw):
             return {"proj-1": "P1"}, ["scan-latest"]
 
         async def _fake_aggregate(_pipeline, **_kw):
@@ -911,7 +911,7 @@ class TestHistoricalFirstSeen:
         async def _gupi(_u, _d):
             return ["proj-1"]
 
-        async def _gpws(_p, _d):
+        async def _gpws(_p, _d, **_kw):
             return {"proj-1": "P1"}, ["scan-latest"]
 
         async def _agg(pipeline, **_kw):
@@ -948,7 +948,7 @@ class TestHistoricalFirstSeen:
         async def _gupi(_u, _d):
             return ["proj-1"]
 
-        async def _gpws(_p, _d):
+        async def _gpws(_p, _d, **_kw):
             return {"proj-1": "P1"}, ["scan-latest"]
 
         async def _agg(pipeline, **_kw):
