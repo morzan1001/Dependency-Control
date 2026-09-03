@@ -7,6 +7,10 @@ from typing import Any, ClassVar, cast
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
+    EPSS_ACTIVE_EXPLOITATION_THRESHOLD,
+    EPSS_HIGH_THRESHOLD,
+    EPSS_MEDIUM_THRESHOLD,
+    EPSS_VERY_HIGH_THRESHOLD,
     HIGH_RISK_SCORE_THRESHOLD,
     REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
     REACHABILITY_LEVEL_IMPORT,
@@ -311,7 +315,8 @@ _UNKNOWN_SEVERITY = "UNKNOWN"
 
 
 def _numeric(raw: Any) -> float | None:
-    """A real number, or None; bool is excluded because Mongo sorts bool above every numeric type."""
+    """A real number, or None. Bool and strings are treated as absent — an accepted divergence from the
+    pipeline for malformed input, where they would rank above all numerics and cause aggregation failure."""
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
         return None
     return float(raw)
@@ -340,6 +345,7 @@ class StatsAccumulator:
             "reachability_level",
             "details.epss_score",
             f"details.{DETAILS_KEY_IN_KEV}",
+            f"details.{DETAILS_KEY_KEV_RANSOMWARE}",
             "details.verified",
             "details.in_current_tree",
         }
@@ -363,6 +369,15 @@ class StatsAccumulator:
         self._secret_unknown_tree = 0
         self._secret_actionable = 0
         self._secret_deprioritized = 0
+        self._kev = 0
+        self._kev_ransomware = 0
+        self._high_epss = 0
+        self._medium_epss = 0
+        self._weaponized = 0
+        self._active_exploitation = 0
+        self._epss_sum = 0.0
+        self._epss_n = 0
+        self._epss_max: float | None = None
 
     def add(self, finding: Mapping[str, Any]) -> None:
         if finding.get("waived") is True:
@@ -415,6 +430,24 @@ class StatsAccumulator:
             if is_deprioritized_secret(verified, in_current_tree):
                 self._secret_deprioritized += 1
 
+        kev_ransomware = details.get(DETAILS_KEY_KEV_RANSOMWARE) is True
+        if in_kev:
+            self._kev += 1
+        if kev_ransomware:
+            self._kev_ransomware += 1
+        if epss is not None:
+            self._epss_sum += epss
+            self._epss_n += 1
+            self._epss_max = epss if self._epss_max is None else max(self._epss_max, epss)
+            if epss >= EPSS_HIGH_THRESHOLD:
+                self._high_epss += 1
+            elif epss >= EPSS_MEDIUM_THRESHOLD:
+                self._medium_epss += 1
+        if kev_ransomware or (in_kev and epss is not None and epss >= EPSS_VERY_HIGH_THRESHOLD):
+            self._weaponized += 1
+        if in_kev or (epss is not None and epss >= EPSS_ACTIVE_EXPLOITATION_THRESHOLD):
+            self._active_exploitation += 1
+
     def result(self) -> Stats:
         # An empty or fully waived scan produced no $group row, leaving the four sub-models
         # None; the frontend's threat-intelligence view distinguishes that from all-zero.
@@ -435,6 +468,16 @@ class StatsAccumulator:
             unknown=self._severity[_UNKNOWN_SEVERITY],
             risk_score=saturating_risk_score(severity_exposure(critical, high, medium, low)),
             adjusted_risk_score=saturating_risk_score(self._adjusted_exposure),
+            threat_intel=ThreatIntelligenceStats(
+                kev_count=self._kev,
+                kev_ransomware_count=self._kev_ransomware,
+                high_epss_count=self._high_epss,
+                medium_epss_count=self._medium_epss,
+                avg_epss_score=round(self._epss_sum / self._epss_n, 4) if self._epss_n else None,
+                max_epss_score=round(self._epss_max, 4) if self._epss_max is not None else None,
+                weaponized_count=self._weaponized,
+                active_exploitation_count=self._active_exploitation,
+            ),
             prioritized=PrioritizedCounts(
                 total=self._vuln_total,
                 critical=self._vuln_severity["CRITICAL"],

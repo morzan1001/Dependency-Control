@@ -182,3 +182,15 @@ async def test_secret_priority_matches():
     assert fold.secret_priority == pipeline.secret_priority
     assert pipeline.secret_priority.total > 0
     assert pipeline.secret_priority.unknown_tree_count > 0
+
+
+@pytest.mark.asyncio
+async def test_threat_intel_matches():
+    pipeline, fold = await both()
+    assert fold.threat_intel == pipeline.threat_intel
+    assert pipeline.threat_intel.kev_count > 0
+    assert pipeline.threat_intel.high_epss_count > 0
+    assert pipeline.threat_intel.medium_epss_count > 0
+    assert pipeline.threat_intel.active_exploitation_count > 0
+    assert pipeline.threat_intel.weaponized_count > 0
+    assert pipeline.threat_intel.avg_epss_score is not None

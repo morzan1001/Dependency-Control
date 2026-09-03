@@ -1,6 +1,8 @@
 """Permanent pins for StatsAccumulator rules a differential corpus cannot express."""
 
-from app.core.constants import DETAILS_KEY_IN_KEV
+import pytest
+
+from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE
 from app.services.analysis.stats import compute_stats
 
 
@@ -64,3 +66,71 @@ class TestSecretGate:
     def test_vulnerabilities_never_enter_the_secret_counters(self):
         s = compute_stats([_finding(verified=True, in_current_tree=True)], {}).secret_priority
         assert s.total == 0
+
+
+class TestEpssTyping:
+    """Every persisted shape of epss_score: missing, null, 0.0, int, float, bool, string, list, dict.
+    A non-numeric one is treated as absent — decided, not inherited: the replaced pipeline ranked
+    bool and string above every number and then died at sum(epss_scores)."""
+
+    @pytest.mark.parametrize("junk", ["0.9", True, False, [], {}, "n/a"])
+    def test_non_numeric_epss_is_treated_as_missing(self, junk):
+        t = compute_stats([_finding(epss_score=junk)], {}).threat_intel
+        assert t.high_epss_count == 0
+        assert t.medium_epss_count == 0
+        assert t.avg_epss_score is None
+        assert t.max_epss_score is None
+        assert t.active_exploitation_count == 0
+
+    def test_non_numeric_epss_leaves_the_finding_deprioritized(self):
+        p = compute_stats([_finding(epss_score="0.9")], {}).prioritized
+        assert p.deprioritized_count == 1
+        assert p.actionable_total == 0
+
+    @pytest.mark.parametrize("details", [{"epss_score": None}, {}])
+    def test_an_explicit_null_epss_is_indistinguishable_from_an_absent_key(self, details):
+        """Both shapes persist today; Mongo's $gte: [null, 0.1] is false, so neither may score."""
+        stats = compute_stats([_finding(**details)], {})
+        assert stats.threat_intel.avg_epss_score is None
+        assert stats.threat_intel.max_epss_score is None
+        assert (stats.threat_intel.high_epss_count, stats.threat_intel.medium_epss_count) == (0, 0)
+        assert stats.threat_intel.active_exploitation_count == 0
+        assert stats.prioritized.deprioritized_count == 1
+
+    def test_zero_epss_is_a_real_value_not_a_missing_one(self):
+        t = compute_stats([_finding(epss_score=0.0)], {}).threat_intel
+        assert t.avg_epss_score == 0.0
+        assert t.max_epss_score == 0.0
+
+    def test_integer_epss_is_accepted(self):
+        t = compute_stats([_finding(epss_score=1)], {}).threat_intel
+        assert t.max_epss_score == 1.0
+        assert t.high_epss_count == 1
+
+
+class TestThreatIntelBoundaries:
+    def test_epss_buckets_are_exclusive_at_the_high_edge(self):
+        t = compute_stats([_finding(epss_score=0.1)], {}).threat_intel
+        assert (t.high_epss_count, t.medium_epss_count) == (1, 0)
+
+    def test_weaponized_needs_kev_alongside_very_high_epss(self):
+        assert compute_stats([_finding(epss_score=0.9)], {}).threat_intel.weaponized_count == 0
+        assert (
+            compute_stats([_finding(epss_score=0.9, **{DETAILS_KEY_IN_KEV: True})], {}).threat_intel.weaponized_count
+            == 1
+        )
+
+    def test_ransomware_alone_is_weaponized(self):
+        t = compute_stats([_finding(**{DETAILS_KEY_KEV_RANSOMWARE: True})], {}).threat_intel
+        assert t.weaponized_count == 1
+
+    def test_kev_and_epss_counters_ignore_the_finding_type(self):
+        t = compute_stats([_finding(ftype="secret", **{DETAILS_KEY_IN_KEV: True})], {}).threat_intel
+        assert t.kev_count == 1
+        assert t.active_exploitation_count == 1
+
+    def test_in_kev_truthy_non_true_does_not_count(self):
+        """in_kev must be True (not just truthy); matches Mongo where $eq [1, true] is false."""
+        t = compute_stats([_finding(**{DETAILS_KEY_IN_KEV: 1})], {}).threat_intel
+        assert t.kev_count == 0
+        assert t.active_exploitation_count == 0
