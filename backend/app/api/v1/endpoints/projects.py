@@ -717,6 +717,7 @@ async def read_project_scans(
     branch: str | None = None,
     exclude_deleted_branches: bool = False,
     exclude_rescans: bool = False,
+    is_release: bool | None = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
 ) -> list[Scan]:
@@ -736,6 +737,10 @@ async def read_project_scans(
 
     if exclude_rescans:
         query["is_rescan"] = {"$ne": True}
+
+    if is_release is not None:
+        # Tri-state: scans predating the mark carry no field and are not releases.
+        query["is_release"] = True if is_release else {"$ne": True}
 
     direction = parse_sort_direction(sort_order)
     sort_field = get_sort_field("project_scans", sort_by)
