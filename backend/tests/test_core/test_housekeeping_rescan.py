@@ -328,11 +328,6 @@ class TestBuildRescan:
     def test_the_pipeline_user_is_not_inherited(self) -> None:
         assert _build_rescan(_project(), _scan_doc(pipeline_user=_PIPELINE_USER)).pipeline_user is None
 
-    def test_the_lineage_points_at_the_direct_parent_rather_than_the_root_of_the_chain(self) -> None:
-        source = _scan_doc(_PREVIOUS_RESCAN_ID, is_rescan=True, original_scan_id=_ROOT_SCAN_ID)
-
-        assert _build_rescan(_project(), source).original_scan_id == _PREVIOUS_RESCAN_ID
-
     def test_the_rescan_clock_is_not_inherited_so_the_fresh_scan_starts_from_its_own_creation(self) -> None:
         assert _build_rescan(_project(), _scan_doc(last_rescanned_at=_NOW)).last_rescanned_at is None
 
@@ -543,9 +538,11 @@ class TestProcessProjectRescan:
         worker.add_job.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_a_previous_rescan_becomes_the_next_source_so_lineage_forms_a_chain(
+    async def test_the_original_stays_the_source_so_the_lineage_never_grows_past_one_link(
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
+        """A rescan is this loop's own output; sourcing from it would deepen the chain every
+        interval and hand the tip to whichever rescan ran last."""
         await _seed_scan(db, _ROOT_SCAN_ID, created_at=_NOW - _OLDER, latest_rescan_id=_PREVIOUS_RESCAN_ID)
         await _seed_scan(
             db,
@@ -559,11 +556,30 @@ class TestProcessProjectRescan:
 
         created = [r for r in await _rescans(db) if r["_id"] != _PREVIOUS_RESCAN_ID]
         assert len(created) == 1
-        assert created[0]["original_scan_id"] == _PREVIOUS_RESCAN_ID
+        assert created[0]["original_scan_id"] == _ROOT_SCAN_ID
         root = await db.scans.find_one({"_id": _ROOT_SCAN_ID})
-        assert root["latest_rescan_id"] == _PREVIOUS_RESCAN_ID
+        assert root["latest_rescan_id"] == created[0]["_id"]
         previous = await db.scans.find_one({"_id": _PREVIOUS_RESCAN_ID})
-        assert previous["latest_rescan_id"] == created[0]["_id"]
+        assert previous.get("latest_rescan_id") is None
+
+    @pytest.mark.asyncio
+    async def test_the_tip_is_the_newest_original_even_when_a_rescan_is_newer(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        """Tri-state: the flag is absent on scans predating it, so only an explicit True is skipped."""
+        await _seed_scan(db, _OLD_SCAN_ID, created_at=_NOW - _OLDER)
+        await _seed_scan(db, _SOURCE_SCAN_ID, created_at=_NOW - _RECENT, is_rescan=False)
+        await _seed_scan(
+            db,
+            _PREVIOUS_RESCAN_ID,
+            created_at=_NOW,
+            is_rescan=True,
+            original_scan_id=_SOURCE_SCAN_ID,
+        )
+
+        targets = await _rescan_targets(_project(), db)
+
+        assert [t["_id"] for t in targets] == [_SOURCE_SCAN_ID]
 
     @pytest.mark.asyncio
     async def test_the_newest_scan_wins_even_when_it_is_not_on_the_default_branch(
@@ -727,13 +743,14 @@ class TestReleaseRescanTargets:
         )
         await _seed_release(db, _PRODUCTION_ENVIRONMENT, _RELEASED_SCAN_ID)
 
+        targets = await _rescan_targets(_project(), db)
         await _process_project_rescan(_project_doc(), _system_settings(), db, worker)
 
+        assert [t["_id"] for t in targets] == [_RELEASED_SCAN_ID]
         created = [r for r in await _rescans(db) if r["_id"] != _PREVIOUS_RESCAN_ID]
-        assert {r["original_scan_id"] for r in created} == {_PREVIOUS_RESCAN_ID, _RELEASED_SCAN_ID}
-        rescan_of_marked = next(r for r in created if r["original_scan_id"] == _RELEASED_SCAN_ID)
+        assert [r["original_scan_id"] for r in created] == [_RELEASED_SCAN_ID]
         marked = await db.scans.find_one({"_id": _RELEASED_SCAN_ID})
-        assert marked["latest_rescan_id"] == rescan_of_marked["_id"], "the chain stays one link deep"
+        assert marked["latest_rescan_id"] == created[0]["_id"], "the chain stays one link deep"
 
 
 class TestRescanClockIsIndependentOfCiTraffic:

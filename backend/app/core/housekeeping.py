@@ -253,7 +253,12 @@ async def _create_rescan_for_project(
 
 async def _rescan_targets(project: Project, db: Any) -> list[dict]:
     """The branch tip plus the newest release per environment. A release is a second identity that
-    has to keep being re-evaluated, not just the tip of its branch."""
+    has to keep being re-evaluated, not just the tip of its branch.
+
+    Every target is an original, never a rescan: rescans are this loop's own output, and taking one
+    back in would deepen the lineage chain by a link per interval and hand the tip slot to whichever
+    rescan ran last.
+    """
     from app.services.releases import released_scan_ids
 
     usable_source = {
@@ -262,10 +267,13 @@ async def _rescan_targets(project: Project, db: Any) -> list[dict]:
         "sbom_refs": {"$exists": True, "$ne": []},
     }
 
+    # Tri-state: scans predating the flag carry no is_rescan field and are originals.
+    tip_source = {**usable_source, "is_rescan": {"$ne": True}}
+
     targets: list[dict] = []
     targeted_ids: set[str] = set()
 
-    tip = await db.scans.find_one(usable_source, sort=[("created_at", -1)])
+    tip = await db.scans.find_one(tip_source, sort=[("created_at", -1)])
     if tip:
         targets.append(tip)
         targeted_ids.add(str(tip["_id"]))
