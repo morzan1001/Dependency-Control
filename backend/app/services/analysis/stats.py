@@ -349,6 +349,7 @@ class StatsAccumulator:
             f"details.{DETAILS_KEY_KEV_RANSOMWARE}",
             "details.verified",
             "details.in_current_tree",
+            "details.reachability.confidence_score",
         }
     )
 
@@ -379,6 +380,16 @@ class StatsAccumulator:
         self._epss_sum = 0.0
         self._epss_n = 0
         self._epss_max: float | None = None
+        self._analyzed = 0
+        self._reachable = 0
+        self._unreachable = 0
+        self._confirmed = 0
+        self._likely = 0
+        self._reachable_critical = 0
+        self._reachable_high = 0
+        self._reachable_hc = 0
+        self._reachable_critical_hc = 0
+        self._reachable_high_hc = 0
 
     def add(self, finding: Mapping[str, Any]) -> None:
         if finding.get("waived") is True:
@@ -449,6 +460,29 @@ class StatsAccumulator:
         if in_kev or (epss is not None and epss >= EPSS_ACTIVE_EXPLOITATION_THRESHOLD):
             self._active_exploitation += 1
 
+        if reachable is not None:
+            self._analyzed += 1
+        if reachable is True:
+            self._reachable += 1
+            if level == REACHABILITY_LEVEL_SYMBOL:
+                self._confirmed += 1
+            elif level == REACHABILITY_LEVEL_IMPORT:
+                self._likely += 1
+            if bucket == "CRITICAL":
+                self._reachable_critical += 1
+            elif bucket == "HIGH":
+                self._reachable_high += 1
+            raw_reach = details.get("reachability")
+            confidence = _numeric(raw_reach.get("confidence_score")) if isinstance(raw_reach, Mapping) else None
+            if confidence is not None and confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD:
+                self._reachable_hc += 1
+                if bucket == "CRITICAL":
+                    self._reachable_critical_hc += 1
+                elif bucket == "HIGH":
+                    self._reachable_high_hc += 1
+        elif reachable is False:
+            self._unreachable += 1
+
     def result(self) -> Stats:
         # An empty or fully waived scan produced no $group row, leaving the four sub-models
         # None; the frontend's threat-intelligence view distinguishes that from all-zero.
@@ -498,6 +532,20 @@ class StatsAccumulator:
                 unknown_tree_count=self._secret_unknown_tree,
                 actionable_count=self._secret_actionable,
                 deprioritized_count=self._secret_deprioritized,
+            ),
+            reachability=ReachabilityStats(
+                analyzed_count=self._analyzed,
+                coverable_count=0,
+                reachable_count=self._reachable,
+                confirmed_reachable_count=self._confirmed,
+                likely_reachable_count=self._likely,
+                unreachable_count=self._unreachable,
+                unknown_count=self._vuln_total - self._analyzed,
+                reachable_critical=self._reachable_critical,
+                reachable_high=self._reachable_high,
+                reachable_count_high_confidence=self._reachable_hc,
+                reachable_critical_high_confidence=self._reachable_critical_hc,
+                reachable_high_high_confidence=self._reachable_high_hc,
             ),
         )
 

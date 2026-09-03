@@ -195,3 +195,16 @@ async def test_threat_intel_matches():
     assert pipeline.threat_intel.active_exploitation_count > 0
     assert pipeline.threat_intel.weaponized_count > 0
     assert pipeline.threat_intel.avg_epss_score is not None
+
+
+@pytest.mark.asyncio
+async def test_reachability_matches_except_coverable():
+    pipeline, fold = await both()
+    got = fold.reachability.model_dump()
+    want = pipeline.reachability.model_dump()
+    # coverable_count is the last group to land; it gets its own differential in the next task.
+    got.pop("coverable_count")
+    want.pop("coverable_count")
+    assert got == want
+    assert want["reachable_count"] > want["confirmed_reachable_count"] + want["likely_reachable_count"]
+    assert want["reachable_count_high_confidence"] > 0

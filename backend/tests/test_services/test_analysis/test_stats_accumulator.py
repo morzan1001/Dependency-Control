@@ -150,3 +150,69 @@ class TestThreatIntelBoundaries:
         """EPSS_ACTIVE_EXPLOITATION_THRESHOLD = 0.7 is inclusive."""
         t = compute_stats([_finding(epss_score=0.7)], {}).threat_intel
         assert t.active_exploitation_count == 1
+
+
+class TestReachabilityTriState:
+    def test_unanalysed_finding_counts_as_neither_reachable_nor_unreachable(self):
+        r = compute_stats([_finding(), {**_finding(), "reachable": None}], {}).reachability
+        assert (r.reachable_count, r.unreachable_count, r.analyzed_count) == (0, 0, 0)
+        assert r.unknown_count == 2
+
+    def test_reachable_without_a_level_is_reachable_but_in_no_tier(self):
+        """reachable_count != confirmed + likely, and that is correct."""
+        r = compute_stats([{**_finding(), "reachable": True}], {}).reachability
+        assert r.reachable_count == 1
+        assert r.confirmed_reachable_count == 0
+        assert r.likely_reachable_count == 0
+
+    def test_truthy_non_boolean_reachable_is_analysed_but_not_reachable(self):
+        r = compute_stats([{**_finding(), "reachable": 1}], {}).reachability
+        assert r.analyzed_count == 1
+        assert (r.reachable_count, r.unreachable_count) == (0, 0)
+
+    def test_level_alone_never_produces_a_tier(self):
+        r = compute_stats([{**_finding(), "reachability_level": "symbol"}], {}).reachability
+        assert r.confirmed_reachable_count == 0
+
+    def test_unknown_count_is_measured_against_vulnerabilities_only(self):
+        findings = [_finding(ftype="license") for _ in range(5)] + [_finding(), _finding()]
+        assert compute_stats(findings, {}).reachability.unknown_count == 2
+
+
+class TestHighConfidenceGate:
+    @staticmethod
+    def _with_confidence(confidence, reachable=True, severity="CRITICAL"):
+        doc = _finding(severity=severity)
+        doc["reachable"] = reachable
+        doc["reachability_level"] = "symbol"
+        doc["details"]["reachability"] = {"confidence_score": confidence}
+        return doc
+
+    def test_threshold_is_inclusive(self):
+        r = compute_stats([self._with_confidence(0.6)], {}).reachability
+        assert r.reachable_count_high_confidence == 1
+        assert r.reachable_critical_high_confidence == 1
+
+    def test_just_below_the_threshold_is_excluded(self):
+        r = compute_stats([self._with_confidence(0.59)], {}).reachability
+        assert r.reachable_count_high_confidence == 0
+
+    def test_missing_confidence_is_not_high_confidence(self):
+        doc = _finding()
+        doc["reachable"] = True
+        assert compute_stats([doc], {}).reachability.reachable_count_high_confidence == 0
+
+    def test_non_numeric_confidence_is_not_high_confidence(self):
+        r = compute_stats([self._with_confidence("0.9")], {}).reachability
+        assert r.reachable_count_high_confidence == 0
+
+    def test_a_non_dict_reachability_block_does_not_raise(self):
+        doc = _finding()
+        doc["reachable"] = True
+        doc["details"]["reachability"] = "unavailable"
+        assert compute_stats([doc], {}).reachability.reachable_count_high_confidence == 0
+
+    def test_unreachable_finding_is_never_high_confidence(self):
+        r = compute_stats([self._with_confidence(0.9, reachable=False)], {}).reachability
+        assert r.reachable_count_high_confidence == 0
+        assert r.unreachable_count == 1
