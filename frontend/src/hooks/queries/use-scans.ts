@@ -10,6 +10,9 @@ interface ScanListFilters {
     sortOrder: 'asc' | 'desc';
     excludeRescans: boolean;
     excludeDeletedBranches: boolean;
+    // Tri-state, and part of the query key: leaving it out means "every scan", false means
+    // "not a release" — which on the backend includes scans predating the flag.
+    isRelease?: boolean;
 }
 
 export const scanKeys = {
@@ -38,12 +41,12 @@ export const useProjectScans = (
     projectId: string,
     filters: Partial<ScanListFilters> = {}
 ) => {
-    const { page = 1, limit = 20, branch, sortBy = 'created_at', sortOrder = 'desc', excludeRescans = false, excludeDeletedBranches = false } = filters;
-    const resolvedFilters: ScanListFilters = { page, limit, branch, sortBy, sortOrder, excludeRescans, excludeDeletedBranches };
+    const { page = 1, limit = 20, branch, sortBy = 'created_at', sortOrder = 'desc', excludeRescans = false, excludeDeletedBranches = false, isRelease } = filters;
+    const resolvedFilters: ScanListFilters = { page, limit, branch, sortBy, sortOrder, excludeRescans, excludeDeletedBranches, isRelease };
     return useQuery({
         queryKey: scanKeys.list(projectId, resolvedFilters),
         queryFn: () => scanApi.getProjectScans(projectId, {
-            skip: (page - 1) * limit, limit, branch, sortBy, sortOrder, excludeRescans, excludeDeletedBranches
+            skip: (page - 1) * limit, limit, branch, sortBy, sortOrder, excludeRescans, excludeDeletedBranches, isRelease
         }),
         enabled: !!projectId,
         placeholderData: keepPreviousData

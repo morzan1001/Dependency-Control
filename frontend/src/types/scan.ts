@@ -545,6 +545,8 @@ export interface Scan {
   is_rescan?: boolean;
   original_scan_id?: string;
   latest_rescan_id?: string;
+  // Only that the scan has a release record; which environments and versions live in ReleaseItem.
+  is_release?: boolean;
   job_started_at?: string;
   latest_run?: {
     scan_id: string;

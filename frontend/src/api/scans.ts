@@ -10,10 +10,12 @@ export const scanApi = {
     getProjectScans: async (id: string, params: {
         skip?: number; limit?: number; branch?: string; sortBy?: string;
         sortOrder?: 'asc' | 'desc'; excludeRescans?: boolean; excludeDeletedBranches?: boolean;
+        isRelease?: boolean;
     } = {}): Promise<Scan[]> => {
-        const { skip = 0, limit = 20, branch, sortBy = 'created_at', sortOrder = 'desc', excludeRescans = false, excludeDeletedBranches = false } = params;
+        // isRelease is tri-state: undefined is no filter, false selects the scans that are not releases.
+        const { skip = 0, limit = 20, branch, sortBy = 'created_at', sortOrder = 'desc', excludeRescans = false, excludeDeletedBranches = false, isRelease } = params;
         const response = await api.get<Scan[]>(`/projects/${id}/scans`, {
-          params: { skip, limit, branch, sort_by: sortBy, sort_order: sortOrder, exclude_rescans: excludeRescans, exclude_deleted_branches: excludeDeletedBranches }
+          params: { skip, limit, branch, sort_by: sortBy, sort_order: sortOrder, exclude_rescans: excludeRescans, exclude_deleted_branches: excludeDeletedBranches, is_release: isRelease }
         });
         return response.data;
     },
