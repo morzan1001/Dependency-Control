@@ -2,7 +2,7 @@
 
 import logging
 import uuid
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, TypedDict
@@ -74,17 +74,14 @@ def _ecosystem_languages(ecosystem: str | None, purl: str | None) -> frozenset:
     return frozenset()
 
 
-async def _build_component_language_map(db: AsyncIOMotorDatabase, scan_id: str) -> dict[str, frozenset]:
-    """Map component name -> callgraph language(s) that could analyze it, derived
-    from the scan's dependencies (their ``type``/``purl``).
+def component_language_map(deps: Iterable[Mapping[str, Any]]) -> dict[str, frozenset[str]]:
+    """Map component name -> callgraph language(s) that could analyze it, from dependency ``type``/``purl``.
 
-    This is the reliable ecosystem signal: vulnerability findings themselves do
-    NOT carry a purl (the OSV/Trivy/Grype normalizers don't persist one), so the
-    fail-closed gate must look the package up in the dependency inventory instead.
+    This is the reliable ecosystem signal: vulnerability findings carry no purl (the OSV/Trivy/Grype
+    normalizers do not persist one), so the fail-closed gate looks the package up in the inventory.
     """
-    out: dict[str, frozenset] = {}
-    cursor = db.dependencies.find({"scan_id": scan_id}, {"name": 1, "type": 1, "purl": 1})
-    async for dep in cursor:
+    out: dict[str, frozenset[str]] = {}
+    for dep in deps:
         name = dep.get("name")
         if not name:
             continue
@@ -95,6 +92,11 @@ async def _build_component_language_map(db: AsyncIOMotorDatabase, scan_id: str) 
     return build_component_index(out)
 
 
+async def build_component_language_map(db: AsyncIOMotorDatabase, scan_id: str) -> dict[str, frozenset[str]]:
+    deps = await db.dependencies.find({"scan_id": scan_id}, {"name": 1, "type": 1, "purl": 1}).to_list(None)
+    return component_language_map(deps)
+
+
 async def count_coverable_findings(db: AsyncIOMotorDatabase, scan_id: str) -> int:
     """Vulnerability findings whose ecosystem a callgraph could ever analyze.
 
@@ -102,7 +104,7 @@ async def count_coverable_findings(db: AsyncIOMotorDatabase, scan_id: str) -> in
     entirely OS packages, which no callgraph tool covers, so this stays zero however many
     callgraph jobs the pipeline runs — a distinction the plain unknown count cannot make.
     """
-    component_languages = await _build_component_language_map(db, scan_id)
+    component_languages = await build_component_language_map(db, scan_id)
     if not component_languages:
         return 0
 
@@ -434,7 +436,7 @@ async def enrich_findings_with_reachability(
     logger.debug(f"Found {len(callgraphs)} callgraph(s) for scan {scan_id}: {[p.language for p in prepared_graphs]}")
 
     # Per-finding ecosystem gates the unreachable down-weight to the analyzed languages.
-    component_languages = await _build_component_language_map(db, scan_id)
+    component_languages = await build_component_language_map(db, scan_id)
 
     enriched_count = 0
 

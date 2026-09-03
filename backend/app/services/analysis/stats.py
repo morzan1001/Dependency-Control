@@ -28,6 +28,7 @@ from app.core.risk_scoring import (
     saturating_risk_score,
     severity_exposure,
 )
+from app.services.aggregation.components import lookup_component
 from app.models.stats import (
     PrioritizedCounts,
     ReachabilityStats,
@@ -344,6 +345,7 @@ class StatsAccumulator:
             "type",
             "reachable",
             "reachability_level",
+            "component",
             "details.epss_score",
             f"details.{DETAILS_KEY_IN_KEV}",
             f"details.{DETAILS_KEY_KEV_RANSOMWARE}",
@@ -390,6 +392,7 @@ class StatsAccumulator:
         self._reachable_hc = 0
         self._reachable_critical_hc = 0
         self._reachable_high_hc = 0
+        self._coverable = 0
 
     def add(self, finding: Mapping[str, Any]) -> None:
         if finding.get("waived") is True:
@@ -424,6 +427,9 @@ class StatsAccumulator:
                     self._actionable_high += 1
             if is_deprioritized_vulnerability(epss_score=epss, is_kev=in_kev, reachable=reachable):
                 self._deprioritized += 1
+            component = finding.get("component")
+            if self._component_languages and component and lookup_component(self._component_languages, component):
+                self._coverable += 1
 
         if finding.get("type") == "secret":
             verified = details.get("verified")
@@ -535,7 +541,7 @@ class StatsAccumulator:
             ),
             reachability=ReachabilityStats(
                 analyzed_count=self._analyzed,
-                coverable_count=0,
+                coverable_count=self._coverable,
                 reachable_count=self._reachable,
                 confirmed_reachable_count=self._confirmed,
                 likely_reachable_count=self._likely,

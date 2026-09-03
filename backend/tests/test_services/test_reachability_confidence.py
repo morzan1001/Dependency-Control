@@ -6,7 +6,7 @@ from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD
 from app.schemas.projections import CallgraphMinimal
 from app.services.analysis.stats import build_reachability_summary
 from app.services.reachability_enrichment import (
-    _build_component_language_map,
+    build_component_language_map,
     _check_package_in_imports,
     _enrich_finding_from_callgraphs,
     _enrich_single_finding,
@@ -154,7 +154,7 @@ class TestEcosystemFromDependencyMap:
         await db.dependencies.insert_one({"scan_id": "s1", "name": "mymod", "type": "go-module"})
         await db.dependencies.insert_one({"scan_id": "s1", "name": "viapurl", "purl": "pkg:pypi/viapurl@1.0"})
         await db.dependencies.insert_one({"scan_id": "s1", "name": "rpmpkg", "type": "rpm"})  # no callgraph lang
-        m = await _build_component_language_map(db, "s1")
+        m = await build_component_language_map(db, "s1")
         assert m["requests"] == frozenset({"python"})
         assert m["left-pad"] == frozenset({"javascript", "typescript"})
         assert m["mymod"] == frozenset({"go"})

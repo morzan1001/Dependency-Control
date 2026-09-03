@@ -17,7 +17,7 @@ from app.core.constants import (
 )
 from app.models.stats import Stats
 from app.services.analysis.stats import calculate_comprehensive_stats, compute_stats
-from app.services.reachability_enrichment import _build_component_language_map
+from app.services.reachability_enrichment import build_component_language_map
 from tests.mocks.fake_mongo import FakeDatabase
 
 _SCAN = "scan-differential"
@@ -147,7 +147,7 @@ def test_corpus_covers_every_persisted_shape():
 async def test_seeded_language_map_matches_the_db_derived_one():
     """The literal map handed to the fold must equal what the pipeline side derives from Mongo."""
     db = await seeded_db(build_corpus())
-    assert await _build_component_language_map(db, _SCAN) == _LANGS
+    assert await build_component_language_map(db, _SCAN) == _LANGS
 
 
 @pytest.mark.asyncio

@@ -9,6 +9,7 @@ from app.core.constants import (
     REACHABILITY_LEVEL_SYMBOL,
 )
 from app.services.analysis.stats import compute_stats
+from app.services.reachability_enrichment import component_language_map
 
 
 def _finding(ftype="vulnerability", severity="HIGH", **details):
@@ -221,3 +222,52 @@ class TestHighConfidenceGate:
         r = compute_stats([self._with_confidence(0.9, reachable=False)], {}).reachability
         assert r.reachable_count_high_confidence == 0
         assert r.unreachable_count == 1
+
+
+class TestCoverableCount:
+    _LANGS = {"lodash": frozenset({"javascript"}), "requests": frozenset({"python"})}
+
+    def test_counts_only_components_a_callgraph_could_analyse(self):
+        findings = [
+            {**_finding(), "component": "lodash"},
+            {**_finding(), "component": "libssl3"},
+            {**_finding(), "component": "requests"},
+        ]
+        assert compute_stats(findings, self._LANGS).reachability.coverable_count == 2
+
+    def test_non_vulnerability_findings_are_not_coverable(self):
+        findings = [{**_finding(ftype="secret"), "component": "lodash"}]
+        assert compute_stats(findings, self._LANGS).reachability.coverable_count == 0
+
+    def test_waived_findings_are_not_coverable(self):
+        findings = [{**_finding(), "component": "lodash", "waived": True}, {**_finding(), "component": "requests"}]
+        assert compute_stats(findings, self._LANGS).reachability.coverable_count == 1
+
+    def test_an_empty_language_map_short_circuits_to_zero(self):
+        findings = [{**_finding(), "component": "lodash"}]
+        assert compute_stats(findings, {}).reachability.coverable_count == 0
+
+    def test_a_findings_qualified_component_resolves_to_the_bare_inventory_name(self):
+        langs = component_language_map([{"name": "json", "type": "npm"}])
+        findings = [{**_finding(), "component": "org.acme:json"}]
+        assert compute_stats(findings, langs).reachability.coverable_count == 1
+
+
+class TestComponentLanguageMap:
+    def test_derives_languages_from_type_then_purl(self):
+        deps = [
+            {"name": "requests", "type": "pypi"},
+            {"name": "left-pad", "type": "npm"},
+            {"name": "viapurl", "purl": "pkg:pypi/viapurl@1.0"},
+            {"name": "rpmpkg", "type": "rpm"},
+            {"type": "npm"},
+        ]
+        m = component_language_map(deps)
+        assert m["requests"] == frozenset({"python"})
+        assert m["left-pad"] == frozenset({"javascript", "typescript"})
+        assert m["viapurl"] == frozenset({"python"})
+        assert "rpmpkg" not in m
+
+    def test_a_name_listed_twice_unions_its_languages(self):
+        m = component_language_map([{"name": "x", "type": "npm"}, {"name": "x", "type": "pypi"}])
+        assert m["x"] == frozenset({"javascript", "typescript", "python"})
