@@ -49,8 +49,10 @@ _ABSENT_SBOM_SCAN_ID = "src-sbom-field-missing"
 _FAILED_SCAN_ID = "src-failed"
 _ACTIVE_SCAN_ID = "src-active"
 _FOREIGN_SCAN_ID = "src-foreign"
+_OTHER_SOURCE_SCAN_ID = "src-other"
 _ROOT_SCAN_ID = "root"
 _PREVIOUS_RESCAN_ID = "prev-rescan"
+_INFLIGHT_RESCAN_ID = "inflight-rescan"
 
 _COMMIT_HASH = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
 _COMMIT_TAG = "v1.0.0"
@@ -88,8 +90,8 @@ _OLDER = timedelta(days=9)
 _ANCIENT = timedelta(days=30)
 
 
-def _lock_name(project_id: str) -> str:
-    return f"{_RESCAN_LOCK_PREFIX}{project_id}"
+def _lock_name(project_id: str, source_scan_id: str) -> str:
+    return f"{_RESCAN_LOCK_PREFIX}{project_id}:{source_scan_id}"
 
 
 def _sbom_refs() -> list[dict[str, str]]:
@@ -154,10 +156,24 @@ async def _seed_system_settings(db: FakeDatabase, **overrides: Any) -> None:
     await db.system_settings.insert_one(document)
 
 
+async def _seed_inflight_rescan(db: FakeDatabase, original_scan_id: str = _SOURCE_SCAN_ID) -> None:
+    await db.scans.insert_one(
+        _scan_doc(
+            _INFLIGHT_RESCAN_ID,
+            status=SCAN_STATUS_PROCESSING,
+            created_at=_NOW,
+            is_rescan=True,
+            original_scan_id=original_scan_id,
+        )
+    )
+
+
 async def _seed_expired_lock(db: FakeDatabase) -> DistributedLocksRepository:
-    """A stale entry under the project's lock name: only a take-over of that exact name clears it."""
+    """A stale entry under the source's lock name: only a take-over of that exact name clears it."""
     locks = DistributedLocksRepository(db)
-    await locks.acquire_lock(_lock_name(_PROJECT_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_EXPIRED_LOCK_TTL_SECONDS)
+    await locks.acquire_lock(
+        _lock_name(_PROJECT_ID, _SOURCE_SCAN_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_EXPIRED_LOCK_TTL_SECONDS
+    )
     return locks
 
 
@@ -330,12 +346,12 @@ class TestCreateRescanForProject:
         assert stored_source.get("latest_run") is None
 
     @pytest.mark.asyncio
-    async def test_a_lock_held_for_this_project_stops_the_creation(
+    async def test_a_lock_held_for_this_source_stops_the_creation(
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
         source = await _seed_scan(db)
         await DistributedLocksRepository(db).acquire_lock(
-            _lock_name(_PROJECT_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_LOCK_TTL_SECONDS
+            _lock_name(_PROJECT_ID, _SOURCE_SCAN_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_LOCK_TTL_SECONDS
         )
 
         await _create_rescan_for_project(_project(), source, db, worker)
@@ -349,12 +365,26 @@ class TestCreateRescanForProject:
     ) -> None:
         source = await _seed_scan(db)
         await DistributedLocksRepository(db).acquire_lock(
-            _lock_name(_OTHER_PROJECT_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_LOCK_TTL_SECONDS
+            _lock_name(_OTHER_PROJECT_ID, _SOURCE_SCAN_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_LOCK_TTL_SECONDS
         )
 
         await _create_rescan_for_project(_project(), source, db, worker)
 
         assert len(await _rescans(db)) == 1
+
+    @pytest.mark.asyncio
+    async def test_a_lock_held_for_another_source_of_the_same_project_does_not_stop_the_creation(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        source = await _seed_scan(db)
+        await DistributedLocksRepository(db).acquire_lock(
+            _lock_name(_PROJECT_ID, _OTHER_SOURCE_SCAN_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_LOCK_TTL_SECONDS
+        )
+
+        await _create_rescan_for_project(_project(), source, db, worker)
+
+        assert len(await _rescans(db)) == 1
+        worker.add_job.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_the_lock_is_released_once_the_rescan_is_created(
@@ -365,22 +395,34 @@ class TestCreateRescanForProject:
 
         await _create_rescan_for_project(_project(), source, db, worker)
 
-        assert await locks.get_lock_info(_lock_name(_PROJECT_ID)) is None
+        assert await locks.get_lock_info(_lock_name(_PROJECT_ID, _SOURCE_SCAN_ID)) is None
 
     @pytest.mark.asyncio
-    async def test_the_lock_is_released_when_an_active_scan_aborts_the_creation(
+    async def test_the_lock_is_released_when_an_active_rescan_aborts_the_creation(
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
         source = await _seed_scan(db)
-        await _seed_scan(db, _ACTIVE_SCAN_ID, status=SCAN_STATUS_PROCESSING, created_at=_NOW)
+        await _seed_inflight_rescan(db)
         locks = await _seed_expired_lock(db)
 
         await _create_rescan_for_project(_project(), source, db, worker)
 
-        assert await locks.get_lock_info(_lock_name(_PROJECT_ID)) is None
+        assert await locks.get_lock_info(_lock_name(_PROJECT_ID, _SOURCE_SCAN_ID)) is None
 
     @pytest.mark.asyncio
-    async def test_an_active_scan_on_any_branch_of_the_project_stops_the_creation(
+    async def test_an_active_rescan_of_this_source_stops_the_creation(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        source = await _seed_scan(db)
+        await _seed_inflight_rescan(db)
+
+        await _create_rescan_for_project(_project(), source, db, worker)
+
+        assert [r["_id"] for r in await _rescans(db)] == [_INFLIGHT_RESCAN_ID]
+        worker.add_job.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_an_active_scan_on_another_branch_of_the_project_does_not_stop_the_creation(
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
         source = await _seed_scan(db)
@@ -390,8 +432,21 @@ class TestCreateRescanForProject:
 
         await _create_rescan_for_project(_project(), source, db, worker)
 
-        assert await _rescans(db) == []
-        worker.add_job.assert_not_awaited()
+        assert len(await _rescans(db)) == 1
+        worker.add_job.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_an_active_rescan_of_another_source_does_not_stop_the_creation(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        source = await _seed_scan(db)
+        await _seed_inflight_rescan(db, original_scan_id=_OTHER_SOURCE_SCAN_ID)
+
+        await _create_rescan_for_project(_project(), source, db, worker)
+
+        created = [r for r in await _rescans(db) if r["_id"] != _INFLIGHT_RESCAN_ID]
+        assert len(created) == 1
+        worker.add_job.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_a_pending_scan_of_a_different_project_does_not_stop_the_creation(

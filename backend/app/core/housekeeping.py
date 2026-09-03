@@ -14,12 +14,15 @@ from app.core.constants import (
     HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS,
     HOUSEKEEPING_MAIN_LOOP_INTERVAL_SECONDS,
     HOUSEKEEPING_MAX_SCAN_RETRIES,
+    HOUSEKEEPING_RESCAN_LOCK_TTL_SECONDS,
     HOUSEKEEPING_RETENTION_CHECK_INTERVAL_HOURS,
     HOUSEKEEPING_STALE_SCAN_INTERVAL_SECONDS,
     HOUSEKEEPING_STALE_SCAN_THRESHOLD_SECONDS,
     HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC,
     RETENTION_ACTION_ARCHIVE,
     RETENTION_ACTION_DELETE,
+    SCAN_STATUS_PENDING,
+    SCAN_STATUS_PROCESSING,
     SCAN_USABLE_STATUSES,
 )
 from app.core.metrics import (
@@ -203,22 +206,28 @@ async def _create_rescan_for_project(
 
     from app.repositories import DistributedLocksRepository
 
+    source_scan_id = str(source_scan["_id"])
     lock_repo = DistributedLocksRepository(db)
-    lock_name = f"rescan_create:{project.id}"
+    lock_name = f"rescan_create:{project.id}:{source_scan_id}"
     holder_id = f"housekeeping-{os.getenv('HOSTNAME', 'unknown')}"
 
-    if not await lock_repo.acquire_lock(lock_name, holder_id, ttl_seconds=60):
-        logger.debug(f"Could not acquire lock for rescanning {project.name}. Another pod is creating rescan.")
+    if not await lock_repo.acquire_lock(lock_name, holder_id, ttl_seconds=HOUSEKEEPING_RESCAN_LOCK_TTL_SECONDS):
+        logger.debug(f"Could not acquire lock for rescanning {project.name}/{source_scan_id}.")
         return
 
     try:
-        # TOCTOU re-check inside lock — strong read.
+        # TOCTOU re-check inside lock — strong read. Scoped to this source so unrelated CI
+        # traffic on the project cannot cancel a rescan that is genuinely due.
         scans_primary = db.scans.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-        active_scan = await scans_primary.find_one(
-            {"project_id": project.id, "status": {"$in": ["pending", "processing"]}}
+        active_rescan = await scans_primary.find_one(
+            {
+                "project_id": project.id,
+                "original_scan_id": source_scan_id,
+                "status": {"$in": [SCAN_STATUS_PENDING, SCAN_STATUS_PROCESSING]},
+            }
         )
-        if active_scan:
-            logger.debug(f"Project {project.name} already has active scan")
+        if active_rescan:
+            logger.debug(f"Project {project.name} already has an active rescan of {source_scan_id}")
             return
 
         logger.info(f"Triggering re-scan for project {project.name} (Last scan: {project.last_scan_at})")
@@ -226,7 +235,7 @@ async def _create_rescan_for_project(
 
         await db.scans.insert_one(new_scan.model_dump(by_alias=True))
         await db.scans.update_one(
-            {"_id": str(source_scan["_id"])},
+            {"_id": source_scan_id},
             {"$set": {"latest_rescan_id": new_scan.id, "last_rescanned_at": datetime.now(timezone.utc)}},
         )
         await worker_manager.add_job(new_scan.id)
