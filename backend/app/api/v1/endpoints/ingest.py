@@ -19,7 +19,8 @@ from app.api.v1.helpers.ingest import process_findings_ingest
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from app.core.constants import SCAN_USABLE_STATUSES, WEBHOOK_EVENT_SBOM_INGESTED
 from app.models.project import Project
-from app.repositories import DependencyRepository, DistributedLocksRepository
+from app.models.release import Release
+from app.repositories import DependencyRepository, DistributedLocksRepository, ReleaseRepository
 from app.schemas.bearer import BearerIngest
 from app.schemas.ingest import (
     FindingsIngestResponse,
@@ -325,7 +326,9 @@ async def ingest_sbom(
             },
         }
 
-        scan_update["$set"].update(data.release_fields(now))
+        release = data.release_fields(now)
+        if release:
+            scan_update["$set"]["is_release"] = True
 
         # Replace (never append) so a CI retry cannot pile up duplicate SBOMs that get
         # stored and re-analysed forever; superseded GridFS uploads are deleted below.
@@ -345,6 +348,10 @@ async def ingest_sbom(
             ]
             if superseded:
                 await cleanup_gridfs_files(db, superseded)
+
+        if release:
+            release_repo = ReleaseRepository(db)
+            await release_repo.record(Release(project_id=str(project.id), scan_id=scan_id, **release))
 
         # Reset a finished scan to pending so re-ingest re-analyses it.
         await db.scans.update_one(

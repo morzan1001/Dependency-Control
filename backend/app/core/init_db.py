@@ -323,12 +323,22 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["scans"].create_index(
         [
             ("project_id", pymongo.ASCENDING),
-            ("release_environment", pymongo.ASCENDING),
-            ("released_at", pymongo.DESCENDING),
+            ("is_release", pymongo.ASCENDING),
+            ("created_at", pymongo.DESCENDING),
         ],
         name="scans_release_lookup",
         partialFilterExpression={"is_release": True},
-    )  # Partial so only released scans are indexed; serves per-environment latest-release lookup.
+    )  # Partial so only released scans are indexed; serves the released-only scan list.
+
+    await database["releases"].create_index(
+        [
+            ("project_id", pymongo.ASCENDING),
+            ("environment", pymongo.ASCENDING),
+            ("released_at", pymongo.DESCENDING),
+        ],
+        name="releases_latest_lookup",
+    )  # Serves the latest release of a (project, environment) as a single sorted find_one.
+    await database["releases"].create_index("scan_id")
 
     await database["findings"].create_index([("created_at", pymongo.DESCENDING)])
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)])

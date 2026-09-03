@@ -37,14 +37,13 @@ class BaseIngest(BaseModel):
         return validate_release_environment(v)
 
     def release_fields(self, released_at: datetime) -> dict[str, Any]:
-        """Emitted only for a release payload: every job of one pipeline writes the same scan
-        document, so an unconditional $set would let a later job clear the deploy job's mark."""
+        """Release-document fields, or empty for a payload that marks nothing: every job of one CI
+        pipeline writes the same scan, so only an empty result keeps the mark promote-only."""
         if not self.is_release:
             return {}
         return {
-            "is_release": True,
-            "release_version": self.release_version or self.commit_tag,
-            "release_environment": self.release_environment or DEFAULT_RELEASE_ENVIRONMENT,
+            "environment": self.release_environment or DEFAULT_RELEASE_ENVIRONMENT,
+            "version": self.release_version or self.commit_tag,
             "released_at": released_at,
         }
 

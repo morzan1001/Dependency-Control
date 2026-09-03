@@ -11,6 +11,7 @@ from app.core.constants import SCAN_USABLE_STATUSES
 from app.core.worker import worker_manager
 from app.models.finding import Finding
 from app.models.project import Project
+from app.models.release import Release
 from app.models.waiver import Waiver
 from app.schemas.ingest import BaseIngest, ScanContext
 
@@ -83,15 +84,21 @@ class ScanManager:
             },
         }
 
-        scan_update["$set"].update(data.release_fields(now))
+        release = data.release_fields(now)
+        if release:
+            scan_update["$set"]["is_release"] = True
 
         # Capture the raw result so is_new reflects insert (upserted_id set) vs update.
         from app.core.metrics import track_db_operation
-        from app.repositories import ScanRepository
+        from app.repositories import ReleaseRepository, ScanRepository
 
         scan_repo = ScanRepository(self.db)
         with track_db_operation("scans", "update_one"):
             upsert_result = await scan_repo.collection.update_one({"_id": scan_id}, scan_update, upsert=True)
+
+        if release:
+            release_repo = ReleaseRepository(self.db)
+            await release_repo.record(Release(project_id=str(self.project.id), scan_id=scan_id, **release))
 
         is_new = upsert_result.upserted_id is not None
 
