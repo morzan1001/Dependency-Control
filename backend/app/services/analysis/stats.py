@@ -19,6 +19,7 @@ from app.core.risk_scoring import (
     RISK_SEVERITY_WEIGHTS,
     UNREACHABLE_RISK_MODIFIER,
     is_actionable_vulnerability,
+    is_deprioritized_secret,
     is_deprioritized_vulnerability,
     saturating_risk_score,
     severity_exposure,
@@ -339,6 +340,8 @@ class StatsAccumulator:
             "reachability_level",
             "details.epss_score",
             f"details.{DETAILS_KEY_IN_KEV}",
+            "details.verified",
+            "details.in_current_tree",
         }
     )
 
@@ -353,6 +356,13 @@ class StatsAccumulator:
         self._actionable_high = 0
         self._actionable_total = 0
         self._deprioritized = 0
+        self._secret_total = 0
+        self._secret_verified = 0
+        self._secret_in_tree = 0
+        self._secret_historical = 0
+        self._secret_unknown_tree = 0
+        self._secret_actionable = 0
+        self._secret_deprioritized = 0
 
     def add(self, finding: Mapping[str, Any]) -> None:
         if finding.get("waived") is True:
@@ -388,6 +398,23 @@ class StatsAccumulator:
             if is_deprioritized_vulnerability(epss_score=epss, is_kev=in_kev, reachable=reachable):
                 self._deprioritized += 1
 
+        if finding.get("type") == "secret":
+            verified = details.get("verified")
+            in_current_tree = details.get("in_current_tree")
+            self._secret_total += 1
+            if verified is True:
+                self._secret_verified += 1
+            if in_current_tree is True:
+                self._secret_in_tree += 1
+            elif in_current_tree is False:
+                self._secret_historical += 1
+            elif in_current_tree is None:
+                self._secret_unknown_tree += 1
+            if verified is True and in_current_tree is True:
+                self._secret_actionable += 1
+            if is_deprioritized_secret(verified, in_current_tree):
+                self._secret_deprioritized += 1
+
     def result(self) -> Stats:
         # An empty or fully waived scan produced no $group row, leaving the four sub-models
         # None; the frontend's threat-intelligence view distinguishes that from all-zero.
@@ -418,6 +445,15 @@ class StatsAccumulator:
                 actionable_high=self._actionable_high,
                 actionable_total=self._actionable_total,
                 deprioritized_count=self._deprioritized,
+            ),
+            secret_priority=SecretPrioritizedCounts(
+                total=self._secret_total,
+                verified_count=self._secret_verified,
+                in_current_tree_count=self._secret_in_tree,
+                historical_only_count=self._secret_historical,
+                unknown_tree_count=self._secret_unknown_tree,
+                actionable_count=self._secret_actionable,
+                deprioritized_count=self._secret_deprioritized,
             ),
         )
 

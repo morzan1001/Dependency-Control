@@ -38,3 +38,29 @@ class TestVulnerabilityGate:
         stats = compute_stats(findings, {})
         assert stats.critical == 1
         assert stats.prioritized.total == 1
+
+
+class TestSecretGate:
+    def test_tree_state_buckets_are_mutually_exclusive(self):
+        findings = [
+            _finding(ftype="secret", verified=True, in_current_tree=True),
+            _finding(ftype="secret", verified=False, in_current_tree=False),
+            _finding(ftype="secret", verified=None, in_current_tree=None),
+        ]
+        s = compute_stats(findings, {}).secret_priority
+        assert (s.in_current_tree_count, s.historical_only_count, s.unknown_tree_count) == (1, 1, 1)
+        assert s.in_current_tree_count + s.historical_only_count + s.unknown_tree_count == s.total
+
+    def test_absent_tree_key_counts_as_unknown_not_historical(self):
+        s = compute_stats([_finding(ftype="secret", verified=True)], {}).secret_priority
+        assert (s.unknown_tree_count, s.historical_only_count) == (1, 0)
+
+    def test_a_junk_tree_value_lands_in_no_bucket(self):
+        """Mongo's three $eq branches all miss a non-boolean; the fold must miss it too."""
+        s = compute_stats([_finding(ftype="secret", verified=True, in_current_tree="maybe")], {}).secret_priority
+        assert (s.in_current_tree_count, s.historical_only_count, s.unknown_tree_count) == (0, 0, 0)
+        assert s.total == 1
+
+    def test_vulnerabilities_never_enter_the_secret_counters(self):
+        s = compute_stats([_finding(verified=True, in_current_tree=True)], {}).secret_priority
+        assert s.total == 0

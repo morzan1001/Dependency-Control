@@ -174,3 +174,11 @@ async def test_prioritized_matches():
 async def test_full_stats_match():
     pipeline, fold = await both()
     assert fold.model_dump() == pipeline.model_dump()
+
+
+@pytest.mark.asyncio
+async def test_secret_priority_matches():
+    pipeline, fold = await both()
+    assert fold.secret_priority == pipeline.secret_priority
+    assert pipeline.secret_priority.total > 0
+    assert pipeline.secret_priority.unknown_tree_count > 0
