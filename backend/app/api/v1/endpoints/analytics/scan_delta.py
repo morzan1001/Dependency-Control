@@ -1,26 +1,30 @@
 """Unified scan-delta endpoint dispatching across findings, components, and crypto."""
 
+from typing import Literal
+
 from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.analytics import ReleaseEnvironmentQuery
 from app.api.v1.helpers.responses import RESP_400_403_404
-from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT
+from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, RELEASE_ENVIRONMENT_PATTERN
 from app.schemas.scan_delta import ScanDeltaResponse
 from app.services.analytics.scan_delta import (
     InvalidDeltaQuery,
     compute_scan_delta_dispatch,
 )
 from app.services.analytics.scopes import ScopeResolver
-from app.services.releases import latest_release_scan, resolve_scan_ids
+from app.services.releases import latest_release_scan, released_scan_ids, resolve_scan_ids
 
 router = CustomAPIRouter()
 
-_REF_RELEASE = "release"
-_REF_HEAD = "head"
+_DeltaRef = Literal["release", "head"]
+
+_REF_RELEASE: _DeltaRef = "release"
+_REF_HEAD: _DeltaRef = "head"
 _REF_DESCRIPTION = f'Resolve this side server-side: "{_REF_RELEASE}" or "{_REF_HEAD}"'
+_ENVIRONMENT_DESCRIPTION = f'Environment whose release the "{_REF_RELEASE}" side resolves to'
 _SIDE_FROM = "from"
 _SIDE_TO = "to"
 
@@ -32,7 +36,7 @@ def _csv_to_list(value: str | None) -> list[str] | None:
 
 
 async def _resolve_delta_ref(
-    db: AsyncIOMotorDatabase, project_id: str, ref: str, environment: str
+    db: AsyncIOMotorDatabase, project_id: str, ref: _DeltaRef, environment: str
 ) -> str | None:
     """Turn a symbolic side of the comparison into a scan id.
 
@@ -41,9 +45,19 @@ async def _resolve_delta_ref(
     """
     if ref == _REF_RELEASE:
         return await latest_release_scan(db, project_id, environment)
+    return (await resolve_scan_ids(db, [project_id])).get(project_id)
+
+
+async def _unresolved_ref_detail(
+    db: AsyncIOMotorDatabase, project_id: str, ref: _DeltaRef, environment: str
+) -> str:
+    """A marked release that resolves to nothing is retention or a broken rescan chain — an
+    operational condition, unlike an environment nothing was ever released to."""
     if ref == _REF_HEAD:
-        return (await resolve_scan_ids(db, [project_id])).get(project_id)
-    raise HTTPException(status_code=400, detail=f"unknown scan reference: {ref}")
+        return f"{project_id} has no analysed {_REF_HEAD} scan"
+    if environment in await released_scan_ids(db, project_id):
+        return f"the {environment} release of {project_id} resolves to no analysed scan"
+    return f"{project_id} has no analysed {_REF_RELEASE} scan in {environment}"
 
 
 async def _resolve_side(
@@ -51,7 +65,7 @@ async def _resolve_side(
     project_id: str,
     side: str,
     scan_id: str | None,
-    ref: str | None,
+    ref: _DeltaRef | None,
     environment: str,
 ) -> str:
     """One end of the comparison. A reference naming nothing is an absent record, so 404; an id and
@@ -65,8 +79,7 @@ async def _resolve_side(
 
     resolved = await _resolve_delta_ref(db, project_id, ref, environment)
     if resolved is None:
-        located = f" in {environment}" if ref == _REF_RELEASE else ""
-        raise HTTPException(status_code=404, detail=f"{project_id} has no analysed {ref} scan{located}")
+        raise HTTPException(status_code=404, detail=await _unresolved_ref_detail(db, project_id, ref, environment))
     return resolved
 
 
@@ -77,9 +90,11 @@ async def get_scan_delta(
     project_id: str = Query(...),
     from_scan_id: str | None = Query(None),
     to_scan_id: str | None = Query(None),
-    from_ref: str | None = Query(None, alias=_SIDE_FROM, description=_REF_DESCRIPTION),
-    to_ref: str | None = Query(None, alias=_SIDE_TO, description=_REF_DESCRIPTION),
-    environment: ReleaseEnvironmentQuery = None,
+    from_ref: _DeltaRef | None = Query(None, alias=_SIDE_FROM, description=_REF_DESCRIPTION),
+    to_ref: _DeltaRef | None = Query(None, alias=_SIDE_TO, description=_REF_DESCRIPTION),
+    release_environment: str | None = Query(
+        None, pattern=RELEASE_ENVIRONMENT_PATTERN, description=_ENVIRONMENT_DESCRIPTION
+    ),
     category: str = Query(...),  # str not enum: invalid values 400 via InvalidDeltaQuery, not 422
     page: int = Query(1),
     page_size: int = Query(50),
@@ -92,13 +107,13 @@ async def get_scan_delta(
         scope_id=project_id,
     )
 
-    if environment is not None and _REF_RELEASE not in (from_ref, to_ref):
+    if release_environment is not None and _REF_RELEASE not in (from_ref, to_ref):
         raise HTTPException(
             status_code=400,
-            detail=f"environment is only valid with {_SIDE_FROM}={_REF_RELEASE} or {_SIDE_TO}={_REF_RELEASE}",
+            detail=f"release_environment is only valid with {_SIDE_FROM}={_REF_RELEASE} or {_SIDE_TO}={_REF_RELEASE}",
         )
 
-    resolve_in = DEFAULT_RELEASE_ENVIRONMENT if environment is None else environment
+    resolve_in = DEFAULT_RELEASE_ENVIRONMENT if release_environment is None else release_environment
     from_scan = await _resolve_side(db, project_id, _SIDE_FROM, from_scan_id, from_ref, resolve_in)
     to_scan = await _resolve_side(db, project_id, _SIDE_TO, to_scan_id, to_ref, resolve_in)
 

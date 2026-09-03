@@ -30,11 +30,13 @@ _RESCAN = "rescan-of-released"
 _CANARY_SCAN = "canary-scan"
 _PENDING_SCAN = "pending-scan"
 _ONLY_SCAN = "only-scan"
+_RETIRED_SCAN = "retention-deleted-scan"
 
 _CANARY = "canary"
 _EMPTY_ENVIRONMENT = "nowhere"
 _INVALID_ENVIRONMENT = "Prod.EU"
-_ENVIRONMENT_PARAM = "environment"
+_ENVIRONMENT_PARAM = "release_environment"
+_UNRESOLVED_RELEASE_DETAIL = "resolves to no analysed scan"
 
 _RELEASE_REF = "release"
 _HEAD_REF = "head"
@@ -185,7 +187,9 @@ async def test_a_named_environment_is_honoured(client, db, member_auth_headers):
     await _seed_scan(db, _CANARY_SCAN, created_at=_NOW - _ONE_DAY)
     await _seed_release(db, _CANARY_SCAN, released_at=_NOW - _ONE_DAY, environment=_CANARY)
 
-    resp = await _delta(client, member_auth_headers, environment=_CANARY, **{"from": _RELEASE_REF, "to": _HEAD_REF})
+    resp = await _delta(
+        client, member_auth_headers, release_environment=_CANARY, **{"from": _RELEASE_REF, "to": _HEAD_REF}
+    )
 
     assert resp.status_code == 200, resp.text
     assert resp.json()["from_scan_id"] == _CANARY_SCAN
@@ -209,11 +213,25 @@ async def test_no_release_in_that_environment_is_a_404(client, db, member_auth_h
     await _seed(db)
 
     resp = await _delta(
-        client, member_auth_headers, environment=_EMPTY_ENVIRONMENT, **{"from": _RELEASE_REF, "to": _HEAD_REF}
+        client, member_auth_headers, release_environment=_EMPTY_ENVIRONMENT, **{"from": _RELEASE_REF, "to": _HEAD_REF}
     )
 
     assert resp.status_code == 404, resp.text
     assert _EMPTY_ENVIRONMENT in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_a_release_that_resolves_to_nothing_reads_apart_from_an_absent_release(client, db, member_auth_headers):
+    """Retention or an unusable rescan chain is an operational condition an operator can act on."""
+    await _seed(db)
+    await _seed_release(db, _RETIRED_SCAN, released_at=_NOW, environment=_CANARY)
+
+    resp = await _delta(
+        client, member_auth_headers, release_environment=_CANARY, **{"from": _RELEASE_REF, "to": _HEAD_REF}
+    )
+
+    assert resp.status_code == 404, resp.text
+    assert _UNRESOLVED_RELEASE_DETAIL in resp.json()["detail"]
 
 
 @pytest.mark.asyncio
@@ -247,6 +265,18 @@ async def test_one_side_may_be_explicit_while_the_other_is_a_reference(client, d
 
 
 @pytest.mark.asyncio
+async def test_a_reference_from_side_pairs_with_an_explicit_to_side(client, db, member_auth_headers):
+    await _seed(db)
+
+    resp = await _delta(client, member_auth_headers, to_scan_id=_HEAD_SCAN, **{"from": _RELEASE_REF})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["from_scan_id"] == _RELEASED_SCAN
+    assert body["to_scan_id"] == _HEAD_SCAN
+
+
+@pytest.mark.asyncio
 async def test_a_request_with_neither_pair_is_a_400(client, db, member_auth_headers):
     await _seed(db)
 
@@ -270,13 +300,24 @@ async def test_a_scan_id_and_a_reference_for_one_side_is_a_400(client, db, membe
 
 
 @pytest.mark.asyncio
-async def test_an_unknown_reference_is_a_400(client, db, member_auth_headers):
+async def test_a_scan_id_and_a_reference_for_the_to_side_is_a_400(client, db, member_auth_headers):
+    await _seed(db)
+
+    resp = await _delta(client, member_auth_headers, from_scan_id=_RELEASED_SCAN, to_scan_id=_HEAD_SCAN, to=_HEAD_REF)
+
+    assert resp.status_code == 400, resp.text
+    assert "to_scan_id" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_an_unknown_reference_is_a_422(client, db, member_auth_headers):
+    """The legal refs are in the schema, so a generated client sees them before it sends."""
     await _seed(db)
 
     resp = await _delta(client, member_auth_headers, **{"from": _UNKNOWN_REF, "to": _HEAD_REF})
 
-    assert resp.status_code == 400, resp.text
-    assert _UNKNOWN_REF in resp.json()["detail"]
+    assert resp.status_code == 422, resp.text
+    assert _UNKNOWN_REF in resp.text
 
 
 @pytest.mark.asyncio
@@ -291,7 +332,7 @@ async def test_an_environment_without_a_release_side_is_a_400(client, db, member
     """A caller who names an environment believes it scopes the comparison; nothing here would read it."""
     await _seed(db)
 
-    resp = await _delta(client, member_auth_headers, environment=_CANARY, **pair)
+    resp = await _delta(client, member_auth_headers, release_environment=_CANARY, **pair)
 
     assert resp.status_code == 400, resp.text
     assert _ENVIRONMENT_PARAM in resp.json()["detail"]
@@ -302,7 +343,7 @@ async def test_an_invalid_environment_slug_is_rejected(client, db, member_auth_h
     await _seed(db)
 
     resp = await _delta(
-        client, member_auth_headers, environment=_INVALID_ENVIRONMENT, **{"from": _RELEASE_REF, "to": _HEAD_REF}
+        client, member_auth_headers, release_environment=_INVALID_ENVIRONMENT, **{"from": _RELEASE_REF, "to": _HEAD_REF}
     )
 
     assert resp.status_code == 422, resp.text
