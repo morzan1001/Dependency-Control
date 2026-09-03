@@ -80,7 +80,9 @@ _FAILURE_MESSAGE = "kaboom"
 _NOW = datetime.now(timezone.utc)
 _WITHIN_INTERVAL = timedelta(hours=1)
 _PAST_INTERVAL = timedelta(hours=30)
-_RECENT = timedelta(days=1)
+# _RECENT and everything older must clear _DEFAULT_INTERVAL_HOURS: a source-selection test only
+# reaches the selection once the source it expects is due.
+_RECENT = timedelta(days=2)
 _STALE = timedelta(days=3)
 _OLDER = timedelta(days=9)
 _ANCIENT = timedelta(days=30)
@@ -211,21 +213,34 @@ class TestResolveRescanInterval:
 
 
 class TestIsRescanDue:
-    """The clock is the project's own last_scan_at, which every completed scan and findings ingest resets."""
+    """The clock is the source scan's own, so CI traffic on the project cannot postpone it."""
 
-    def test_due_once_the_interval_has_elapsed_since_the_projects_last_scan(self) -> None:
-        assert _is_rescan_due(_project(last_scan_at=_NOW - _PAST_INTERVAL), _DEFAULT_INTERVAL_HOURS) is True
+    def test_due_once_the_interval_has_elapsed_since_the_source_was_created(self) -> None:
+        assert _is_rescan_due(_scan_doc(created_at=_NOW - _PAST_INTERVAL), _DEFAULT_INTERVAL_HOURS) is True
 
     def test_not_due_while_the_interval_is_still_running(self) -> None:
-        assert _is_rescan_due(_project(last_scan_at=_NOW - _WITHIN_INTERVAL), _DEFAULT_INTERVAL_HOURS) is False
+        assert _is_rescan_due(_scan_doc(created_at=_NOW - _WITHIN_INTERVAL), _DEFAULT_INTERVAL_HOURS) is False
 
-    def test_never_due_for_a_project_that_has_no_last_scan(self) -> None:
-        assert _is_rescan_due(_project(last_scan_at=None), _DEFAULT_INTERVAL_HOURS) is False
+    def test_a_source_rescanned_inside_the_interval_is_not_due_however_old_it_is(self) -> None:
+        source = _scan_doc(created_at=_NOW - _ANCIENT, last_rescanned_at=_NOW - _WITHIN_INTERVAL)
+
+        assert _is_rescan_due(source, _DEFAULT_INTERVAL_HOURS) is False
+
+    def test_due_again_once_the_interval_has_elapsed_since_the_last_rescan(self) -> None:
+        source = _scan_doc(created_at=_NOW - _ANCIENT, last_rescanned_at=_NOW - _PAST_INTERVAL)
+
+        assert _is_rescan_due(source, _DEFAULT_INTERVAL_HOURS) is True
+
+    def test_a_source_carrying_no_timestamp_at_all_is_never_due(self) -> None:
+        source = _scan_doc()
+        del source["created_at"]
+
+        assert _is_rescan_due(source, _DEFAULT_INTERVAL_HOURS) is False
 
     def test_a_naive_timestamp_as_mongo_returns_it_is_read_as_utc(self) -> None:
         naive = (_NOW - _PAST_INTERVAL).replace(tzinfo=None)
 
-        assert _is_rescan_due(_project(last_scan_at=naive), _DEFAULT_INTERVAL_HOURS) is True
+        assert _is_rescan_due(_scan_doc(created_at=naive), _DEFAULT_INTERVAL_HOURS) is True
 
 
 class TestBuildRescan:
@@ -272,6 +287,9 @@ class TestBuildRescan:
 
         assert _build_rescan(_project(), source).original_scan_id == _PREVIOUS_RESCAN_ID
 
+    def test_the_rescan_clock_is_not_inherited_so_the_fresh_scan_starts_from_its_own_creation(self) -> None:
+        assert _build_rescan(_project(), _scan_doc(last_rescanned_at=_NOW)).last_rescanned_at is None
+
 
 class TestCreateRescanForProject:
     @pytest.mark.asyncio
@@ -288,6 +306,17 @@ class TestCreateRescanForProject:
         stored_source = await db.scans.find_one({"_id": _SOURCE_SCAN_ID})
         assert stored_source["latest_rescan_id"] == rescans[0]["_id"]
         worker.add_job.assert_awaited_once_with(rescans[0]["_id"])
+
+    @pytest.mark.asyncio
+    async def test_creating_a_rescan_stamps_the_clock_on_the_source(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        source = await _seed_scan(db)
+
+        await _create_rescan_for_project(_project(), source, db, worker)
+
+        stored_source = await db.scans.find_one({"_id": _SOURCE_SCAN_ID})
+        assert stored_source["last_rescanned_at"] is not None
 
     @pytest.mark.asyncio
     async def test_the_source_scan_is_not_given_a_latest_run_summary(
@@ -489,23 +518,33 @@ class TestProcessProjectRescan:
         assert [r["original_scan_id"] for r in await _rescans(db)] == [_SOURCE_SCAN_ID]
 
     @pytest.mark.asyncio
-    async def test_a_recently_scanned_project_is_skipped_even_when_its_only_scan_is_ancient(
-        self, db: FakeDatabase, worker: AsyncMock
-    ) -> None:
-        await _seed_scan(db, created_at=_NOW - _ANCIENT)
-
-        await _process_project_rescan(
-            _project_doc(last_scan_at=_NOW - _WITHIN_INTERVAL), _system_settings(), db, worker
-        )
-
-        assert await _rescans(db) == []
-        worker.add_job.assert_not_awaited()
-
-    @pytest.mark.asyncio
     async def test_disabled_rescans_create_nothing(self, db: FakeDatabase, worker: AsyncMock) -> None:
         await _seed_scan(db)
 
         await _process_project_rescan(_project_doc(), _system_settings(global_rescan_enabled=False), db, worker)
+
+        assert await _rescans(db) == []
+        worker.add_job.assert_not_awaited()
+
+
+class TestRescanClockIsIndependentOfCiTraffic:
+    @pytest.mark.asyncio
+    async def test_an_ancient_source_is_due_even_when_the_project_was_just_touched_by_ci(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        await _seed_scan(db, created_at=_NOW - _ANCIENT)
+
+        await _process_project_rescan(_project_doc(last_scan_at=_NOW), _system_settings(), db, worker)
+
+        assert [r["original_scan_id"] for r in await _rescans(db)] == [_SOURCE_SCAN_ID]
+
+    @pytest.mark.asyncio
+    async def test_a_freshly_rescanned_source_is_skipped_even_when_it_is_ancient(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        await _seed_scan(db, created_at=_NOW - _ANCIENT, last_rescanned_at=_NOW - _WITHIN_INTERVAL)
+
+        await _process_project_rescan(_project_doc(), _system_settings(), db, worker)
 
         assert await _rescans(db) == []
         worker.add_job.assert_not_awaited()

@@ -161,15 +161,16 @@ def _resolve_rescan_interval(project: Project, system_settings: Any) -> int | No
     return interval_hours
 
 
-def _is_rescan_due(project: Project, interval_hours: int) -> bool:
-    """Whether the project's last scan is older than interval_hours."""
-    if not project.last_scan_at:
+def _is_rescan_due(source_scan: dict, interval_hours: int) -> bool:
+    """Whether this source scan has gone interval_hours without a rescan.
+
+    A source that was never rescanned falls back to its own creation time.
+    """
+    last_rescan_aware = ensure_utc(source_scan.get("last_rescanned_at") or source_scan.get("created_at"))
+    if not last_rescan_aware:
         return False
-    last_scan_aware = ensure_utc(project.last_scan_at)
-    if not last_scan_aware:
-        return False
-    next_scan_due = last_scan_aware + timedelta(hours=interval_hours)
-    return datetime.now(timezone.utc) >= next_scan_due
+    next_rescan_due = last_rescan_aware + timedelta(hours=interval_hours)
+    return datetime.now(timezone.utc) >= next_rescan_due
 
 
 def _build_rescan(project: Project, source_scan: dict) -> Scan:
@@ -226,7 +227,7 @@ async def _create_rescan_for_project(
         await db.scans.insert_one(new_scan.model_dump(by_alias=True))
         await db.scans.update_one(
             {"_id": str(source_scan["_id"])},
-            {"$set": {"latest_rescan_id": new_scan.id}},
+            {"$set": {"latest_rescan_id": new_scan.id, "last_rescanned_at": datetime.now(timezone.utc)}},
         )
         await worker_manager.add_job(new_scan.id)
         logger.info(f"Rescan {new_scan.id} created for project {project.name}")
@@ -242,8 +243,6 @@ async def _process_project_rescan(
     interval_hours = _resolve_rescan_interval(project, system_settings)
     if interval_hours is None:
         return
-    if not _is_rescan_due(project, interval_hours):
-        return
 
     latest_valid_scan = await db.scans.find_one(
         {
@@ -254,7 +253,10 @@ async def _process_project_rescan(
         sort=[("created_at", -1)],
     )
     if not latest_valid_scan:
-        logger.info(f"Project {project.name} due for re-scan, but no valid previous scan with SBOMs found.")
+        logger.info(f"Project {project.name} has no valid previous scan with SBOMs; nothing to re-scan.")
+        return
+
+    if not _is_rescan_due(latest_valid_scan, interval_hours):
         return
 
     await _create_rescan_for_project(project, latest_valid_scan, db, worker_manager)

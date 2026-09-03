@@ -150,6 +150,9 @@ class Scan(MongoDocument, CreatedAtModel):
     is_rescan: bool = False
     original_scan_id: str | None = None
     latest_rescan_id: str | None = None
+    # The scheduled-rescan clock. Lives here because project.last_scan_at is bumped by every
+    # scanner post, so a project-wide clock never expires while CI is active.
+    last_rescanned_at: datetime | None = None
 
     # Summary of the latest run (either this scan itself, or the latest re-scan if this is the original)
     latest_run: dict[str, Any] | None = None
