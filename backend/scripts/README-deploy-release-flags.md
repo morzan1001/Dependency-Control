@@ -104,11 +104,21 @@ db.projects.countDocuments({ last_scan_at: null })   // never scanned; housekeep
 
 2. Deploy (section 3) and run the backfill (sections 4–5).
 
-3. Seed `last_rescanned_at` in tranches. One tranche is the newest usable source of N projects;
-   raise N once a tranche has drained. Repeat until the aggregation above counts zero:
+3. Seed `last_rescanned_at`, one tranche per **cohort day**. The seed is not a delay switch: it
+   backdates the clock, and cohort `k` is stamped so that it comes due `k` days from now. You are
+   choosing the day each cohort fires. Stamping every tranche at `$$NOW` instead — the obvious
+   thing — moves the whole fleet's due date to one moment 730 h out and hands the unattended burst
+   to whoever is on duty then.
+
+   Run this once per cohort, raising `COHORT_DAY` by one each time, and keep going while the
+   `$match` still finds unstamped sources. Nothing fires yet: the scheduler is still off.
 
    ```js
-   const TRANCHE = 100;
+   const INTERVAL_MS = 730 * 60 * 60 * 1000;   // global_rescan_interval, as read in this section
+   const ONE_DAY_MS  = 24 * 60 * 60 * 1000;
+   const TRANCHE     = 100;
+   const COHORT_DAY  = 1;                      // this cohort becomes due in COHORT_DAY days
+
    const tips = db.scans.aggregate([
      { $match: { status: { $in: ["completed", "completed_with_errors"] },
                  is_rescan: { $ne: true },
@@ -118,26 +128,57 @@ db.projects.countDocuments({ last_scan_at: null })   // never scanned; housekeep
      { $group: { _id: "$project_id", tip_id: { $first: "$_id" } } },
      { $limit: TRANCHE }
    ]).map(r => r.tip_id);
-   db.scans.updateMany({ _id: { $in: tips } }, [{ $set: { last_rescanned_at: "$$NOW" } }]);
+
+   db.scans.updateMany({ _id: { $in: tips } }, [
+     { $set: { last_rescanned_at: { $subtract: ["$$NOW", INTERVAL_MS - COHORT_DAY * ONE_DAY_MS] } } }
+   ]);
    ```
 
-   A seeded source stays quiet for the full 730 h, i.e. about 30 days — long enough to spread the
-   remaining tranches over as many days as you want.
+   With `TRANCHE = 100` and 730 projects that is eight cohorts over eight days. Every cohort then
+   repeats on its own day, 730 h apart, so the fleet stays spread for good instead of re-converging.
+
+   Sanity-check the spread before re-enabling the scheduler — one row per day, none in the past:
+
+   ```js
+   const INTERVAL_MS = 730 * 60 * 60 * 1000;
+   db.scans.aggregate([
+     { $match: { last_rescanned_at: { $ne: null } } },
+     { $project: { due: { $add: ["$last_rescanned_at", INTERVAL_MS] } } },
+     { $group: { _id: { $dateToString: { format: "%Y-%m-%d", date: "$due" } }, n: { $sum: 1 } } },
+     { $sort: { _id: 1 } }
+   ])
+   ```
 
 4. The backfill adds a second rescan target per project: a marked release is re-evaluated in its
-   own right, and the tag builds it marks are old and unstamped, so they are due immediately.
-   Seed them the same way:
+   own right, and the tag builds it marks are old and unstamped, so they are due immediately. Seed
+   them the same way, and give them their own cohort days after the ones used in step 3 so the two
+   populations do not land together:
 
    ```js
-   db.scans.updateMany({ is_release: true, last_rescanned_at: null },
-                       [{ $set: { last_rescanned_at: "$$NOW" } }]);
+   const INTERVAL_MS = 730 * 60 * 60 * 1000;
+   const ONE_DAY_MS  = 24 * 60 * 60 * 1000;
+   const COHORT_DAY  = 9;
+
+   db.scans.updateMany({ is_release: true, last_rescanned_at: null }, [
+     { $set: { last_rescanned_at: { $subtract: ["$$NOW", INTERVAL_MS - COHORT_DAY * ONE_DAY_MS] } } }
+   ]);
    ```
 
-5. Switch the scheduler back on:
+   That stamps the whole release population onto one day. If `releases to record` from section 5 is
+   more than a day's worth of work, split it across successive cohort days the same way step 3
+   does — select a `$limit`ed batch of ids first, then update only those.
+
+5. Confirm the due count is zero — every source is now stamped for a future day — and switch the
+   scheduler back on:
 
    ```js
+   // "Count the real population" above must return no due_projects, and this must return 0
+   db.scans.countDocuments({ is_release: true, last_rescanned_at: null })
    db.system_settings.updateOne({}, { $set: { global_rescan_enabled: true } })
    ```
+
+   From here the first cohort fires on day 1 and the rest follow one per day. Watch the first
+   cohort land before trusting the rest.
 
 ### Option B — take the burst deliberately
 
@@ -151,6 +192,25 @@ for the worker pool and the window is quiet.
 * Backend logs for `Recovery limit (1000) reached` on a pod restart: the backlog outgrew what a
   restarting pod will re-queue, and the remainder waits for housekeeping's stuck-scan sweep.
 * `db.scans.countDocuments({ status: "pending" })` before and an hour after the first cycle.
+* **Branch census query cost.** The census `distinct` now carries `$expr: { $ne: ["$branch",
+  "$commit_tag"] }`, which no index can serve, so the per-project scan on `project_id` is followed
+  by a filter over its matches. It runs once per project every 6 h. Measure it on prod once — pick
+  the project with the most scans and time the `distinct` — rather than assuming either way:
+
+  ```js
+  const worst = db.scans.aggregate([{ $sortByCount: "$project_id" }, { $limit: 1 }]).toArray()[0];
+  db.scans.explain("executionStats").distinct(
+    "branch", { project_id: worst._id, $expr: { $ne: ["$branch", "$commit_tag"] } })
+  ```
+* **Scans on branch `unknown`.** When a tag pipeline runs and neither provider yields a default
+  branch, the scanner falls back to the literal branch `unknown`. Its `commit_tag` differs from it,
+  so the census counts `unknown`, the VCS has no such branch, and it is filed as deleted — hiding
+  that scan behind the same filters the tag names used to hide behind. It fails visibly and only
+  where the provider gave nothing back. Check for it after the first tag pipelines land:
+
+  ```js
+  db.scans.countDocuments({ branch: "unknown", commit_tag: { $nin: [null, ""] } })
+  ```
 
 ---
 
@@ -170,9 +230,40 @@ Two other behaviour changes ship with this deploy and are visible without any re
   waiver applies. That is the delta agreeing with stats, impact, hotspots and crypto trends.
 * **The branch census skips scans whose branch is their own commit tag.** The 6-hourly branch sync
   rebuilds `deleted_branches` from the distinct branches in `db.scans`, so without this the sync
-  would put every historical tag name straight back after the backfill pruned it. Projects will
-  therefore show fewer deleted branches from the first sync onwards, whether or not the backfill
-  has run.
+  would put every historical tag name straight back after the backfill pruned it.
+
+  This lands on **every project with a VCS connection at its first sync after the deploy**, whether
+  or not the backfill has run, and `deleted_branches` shrinking has four visible consequences:
+
+  1. Projects show fewer deleted branches.
+  2. **Historical tag names flip from deleted to active in the branch selector.** The selector's
+     list comes from an unfiltered `distinct` over `scans.branch`, so the tag names stay in it; only
+     their status changes. They disappear from the list only if their scans are deleted.
+  3. **A tag name can win the branch view's default.** `resolve_default_branch` keeps the
+     configured default only while it is *active*, and otherwise picks the active branch with the
+     newest usable scan. For a project whose configured default was never itself scanned, the tag
+     names are now candidates and a recent one can win. This moves which branch the project view
+     opens on; the stored `Project.default_branch` is untouched.
+  4. **A project's representative scan for all analytics can switch to a tag build.**
+     `get_latest_active_scan_ids` takes the stored `latest_scan_id` fast path as soon as
+     `deleted_branches` is empty, instead of recomputing with `$nin`. Ingest points
+     `latest_scan_id` at every scan it writes, tag builds included, so the pointer itself does not
+     move — what changes is that it is now believed.
+
+  Consequences 3 and 4 both resolve to a real, usable scan: they change *which* scan a project
+  speaks for, not whether it has one. Before the deploy, list the projects where 4 will bite —
+  those whose stored pointer already names a tag build and whose `$nin` recompute was hiding it:
+
+  ```js
+  const suspect = db.projects.find({ deleted_branches: { $exists: true, $ne: [] } },
+                                   { name: 1, latest_scan_id: 1 }).toArray();
+  db.scans.find({ _id: { $in: suspect.map(p => p.latest_scan_id).filter(Boolean) },
+                  $expr: { $eq: ["$branch", "$commit_tag"] } },
+                { project_id: 1, branch: 1, created_at: 1 })
+  ```
+
+  For 3, call `GET /api/v1/projects/{project_id}/branches` on a couple of those projects before and
+  after the first sync and compare which entry carries `is_default`.
 
 ---
 
@@ -183,8 +274,8 @@ python -m scripts.backfill_release_flags
 ```
 
 Read the report. `releases to record` is the number of historical tag builds; `projects to prune`
-is how many projects carry one of those tag names in `deleted_branches`. The dry run computes the
-plan and stops; `--execute` applies that same plan, so the report is the change list.
+is how many projects carry the tag name of a released tag build in `deleted_branches`. The dry run
+computes the plan and stops; `--execute` applies that same plan, so the report is the change list.
 
 Cross-check the population independently:
 
@@ -211,9 +302,14 @@ python -m scripts.backfill_release_flags --execute
 
 `--batch-size` and `--sleep-ms` throttle both the walk and the writes. Defaults are 500 and 50 ms.
 
-Re-running is safe. A scan that already has a release row is skipped rather than marked again, and
-one left holding only its row — a run killed between its two writes — has just its flag set. The
-report counts those on the `of those, flags to repair` line.
+Re-running is safe, from any point a run can be killed at. A scan that already has a release row is
+skipped rather than marked again; one left holding only its row — a run killed between its two
+writes — has just its flag set, counted on the `of those, flags to repair` line; and a run killed
+before its prunes leaves tag names in `deleted_branches` that the next run plans and drops, because
+the prune is planned from every released tag build the walk sees, not only from this run's.
+
+A consequence of that: the run also drops the tag name of a tag build released through the API
+before the backfill, which is the same name the branch census would drop on its next pass anyway.
 
 ---
 
@@ -233,8 +329,15 @@ flag is missing from the `scans_released_list` index the released-only scan list
 db.releases.find({}, { project_id: 1, scan_id: 1, version: 1, released_at: 1 }).limit(5)
 ```
 
-Every row must name a `version` equal to the scan's `commit_tag` and a `released_at` equal to that
-scan's `created_at`. Then confirm no project still hides a marked tag name:
+Every row the backfill wrote must name a `version` equal to the scan's `commit_tag` and a
+`released_at` equal to that scan's `created_at`. A row marked through the API can legitimately have
+no `version` at all — a deploy job that named neither a version nor a tag — but never a blank one:
+
+```js
+db.releases.countDocuments({ version: "" })   // must be 0
+```
+
+Then confirm no project still hides a marked tag name:
 
 ```js
 db.projects.find({ deleted_branches: { $exists: true, $ne: [] } }, { name: 1, deleted_branches: 1 })
@@ -246,6 +349,23 @@ Pipelines table's release filter returns the same scan.
 ---
 
 ## 7. After the backfill
+
+**No new release will be marked until consumer pipelines act.** The backend accepts the mark, but
+nothing sends one: a pipeline has to pin scanner **1.2.0 or newer** *and* set
+`DEP_CONTROL_IS_RELEASE=true` on its deploy job. Until both are true for a project, its release list
+stops at whatever the backfill wrote and looks frozen. This is the single most likely reason
+someone reports the feature as broken. `ci-cd/gitlab-ci.example.yaml` and
+`ci-cd/github-workflow.example.yaml` show the variables; `scanner.sh help` lists all three.
+
+The same applies to the tag-versus-branch fix: only a pipeline running 1.2.0 stops recording the
+tag as the scan's branch. Older pinned scanners keep producing tag builds that look like the ones
+the backfill just cleaned up.
+
+Watch the first project that adopts it:
+
+```js
+db.releases.find({ released_at: { $gt: new Date(Date.now() - 24*60*60*1000) } })
+```
 
 Release scans are exempt from retention and refuse to archive. A release that should age out has
 to be withdrawn first: `DELETE /api/v1/projects/{project_id}/scans/{scan_id}/release`.

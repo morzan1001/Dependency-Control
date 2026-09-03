@@ -760,11 +760,16 @@ Commands:
   all         Run all enabled scans (CBOM upload runs only when CBOM_FILE is set)
 
 Environment Variables:
-  DEP_CONTROL_URL            URL of the Dependency Control instance (required)
-  DEP_CONTROL_API_KEY        API Key for authentication
-  DEP_CONTROL_TOKEN          OIDC Token for authentication (GitLab/GitHub)
-  DEP_CONTROL_OIDC_AUDIENCE  OIDC audience claim (default: "dependency-control")
-  CBOM_FILE                  Path to a pre-built CBOM JSON (used by 'cbom' / 'all')
+  DEP_CONTROL_URL                  URL of the Dependency Control instance (required)
+  DEP_CONTROL_API_KEY              API Key for authentication
+  DEP_CONTROL_TOKEN                OIDC Token for authentication (GitLab/GitHub)
+  DEP_CONTROL_OIDC_AUDIENCE        OIDC audience claim (default: "dependency-control")
+  CBOM_FILE                        Path to a pre-built CBOM JSON (used by 'cbom' / 'all')
+
+Release marking (set these in the job that deploys, not in every scan job):
+  DEP_CONTROL_IS_RELEASE           "true" marks this scan as the deployed artefact (default: false)
+  DEP_CONTROL_RELEASE_VERSION      Name of the release (default: the commit tag)
+  DEP_CONTROL_RELEASE_ENVIRONMENT  Environment slug, ${RELEASE_ENVIRONMENT_PATTERN} (default: production)
 
 Authentication (checked in order):
   1. DEP_CONTROL_API_KEY          - Project API key (any CI provider)
@@ -778,6 +783,9 @@ Examples:
 
   # Run all scans in GitHub Actions
   $0 all
+
+  # Mark the scanned artefact as the one now running in production
+  DEP_CONTROL_IS_RELEASE=true DEP_CONTROL_RELEASE_VERSION=v1.4.2 $0 sbom
 
   # Pipe from backend, pinned to a frozen release (recommended)
   SCANNER_VERSION="${SCRIPT_VERSION}"

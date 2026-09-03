@@ -38,6 +38,7 @@ from app.repositories import ReleaseRepository
 DEFAULT_BATCH_SIZE = 500
 DEFAULT_SLEEP_MS = 50
 NO_LIMIT = 0
+_REPORT_LABEL_WIDTH = 30
 
 _SCAN_PROJECTION = {
     "_id": 1,
@@ -243,15 +244,18 @@ async def run_backfill(db: Any, *, batch_size: int, sleep_ms: int, limit: int, e
 
 
 def _report(plan: BackfillPlan, mode: str) -> None:
-    pruned_names = sum(len(prune.removed) for prune in plan.prunes)
+    counts = (
+        ("tag builds inspected", plan.inspected),
+        ("releases to record", len(plan.releases)),
+        ("already released", plan.skipped_already_released),
+        ("of those, flags to repair", len(plan.flag_repairs)),
+        ("skipped, no created_at", plan.skipped_undated),
+        ("projects to prune", len(plan.prunes)),
+        ("deleted-branch names to drop", sum(len(prune.removed) for prune in plan.prunes)),
+    )
     print()
-    print(f"[{mode}] tag builds inspected:        {plan.inspected}")
-    print(f"[{mode}] releases to record:          {len(plan.releases)}")
-    print(f"[{mode}] already released:            {plan.skipped_already_released}")
-    print(f"[{mode}] of those, flags to repair:   {len(plan.flag_repairs)}")
-    print(f"[{mode}] skipped, no created_at:      {plan.skipped_undated}")
-    print(f"[{mode}] projects to prune:           {len(plan.prunes)}")
-    print(f"[{mode}] deleted-branch names to drop: {pruned_names}")
+    for label, value in counts:
+        print(f"[{mode}] {label + ':':<{_REPORT_LABEL_WIDTH}}{value}")
 
 
 async def run(args: argparse.Namespace) -> int:
