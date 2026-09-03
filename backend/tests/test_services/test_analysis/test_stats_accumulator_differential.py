@@ -46,7 +46,7 @@ def build_corpus() -> list[dict]:
         # itertools.product varies the rightmost axis fastest, so a selector keyed on a modulus
         # sharing a factor with the axis sizes collapses onto one axis: i % 2 and i % 3 would
         # just re-read _VERIFIED_TREE. 11, 13 and 19 are coprime with the 15120-element product,
-        # so every combination of these choices occurs against every axis value.
+        # so each of these choices takes every value against every axis value.
         spin, alt, waiver = i % 11, i % 13, i % 19
 
         details: dict = {}
@@ -152,6 +152,14 @@ async def test_severity_buckets_match():
     pipeline, fold = await both()
     fields = ("critical", "high", "medium", "low", "negligible", "info", "unknown", "risk_score")
     assert [getattr(fold, f) for f in fields] == [getattr(pipeline, f) for f in fields]
+
+
+@pytest.mark.asyncio
+async def test_adjusted_risk_score_matches():
+    pipeline, fold = await both()
+    assert fold.adjusted_risk_score == pipeline.adjusted_risk_score
+    # A corpus that never exercises a modifier would pass vacuously.
+    assert fold.adjusted_risk_score != fold.risk_score
 
 
 @pytest.mark.asyncio

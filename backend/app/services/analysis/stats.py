@@ -314,16 +314,27 @@ def _numeric(raw: Any) -> float | None:
     return float(raw)
 
 
+def _reach_modifier(reachable: Any, level: Any) -> float:
+    """Per-finding weight multiplier, in the branch order of the replaced $switch."""
+    if reachable is False:
+        return UNREACHABLE_RISK_MODIFIER
+    if reachable is True and level == REACHABILITY_LEVEL_SYMBOL:
+        return CONFIRMED_REACHABLE_RISK_MODIFIER
+    return 1.0
+
+
 class StatsAccumulator:
     """Severity buckets and ``risk_score``, folded over a stream of findings."""
 
-    # Every finding field the fold reads, as a top-level key or a dotted path into the
-    # document; each counter group added here registers the paths it needs.
+    # Contract: these finding fields are available to downstream counter groups.
+    # As each group is added, it registers the paths it will read.
     REQUIRED_PATHS: ClassVar[frozenset[str]] = frozenset(
         {
             "waived",
             "severity",
             "type",
+            "reachable",
+            "reachability_level",
         }
     )
 
@@ -331,6 +342,7 @@ class StatsAccumulator:
         self._component_languages = component_languages
         self._counted = 0
         self._severity: dict[str, int] = {sev: 0 for sev in (*_BUCKETED_SEVERITIES, _UNKNOWN_SEVERITY)}
+        self._adjusted_exposure = 0.0
 
     def add(self, finding: Mapping[str, Any]) -> None:
         if finding.get("waived") is True:
@@ -340,6 +352,10 @@ class StatsAccumulator:
         severity = finding.get("severity")
         bucket = severity if severity in _BUCKETED_SEVERITIES else _UNKNOWN_SEVERITY
         self._severity[bucket] += 1
+
+        reachable = finding.get("reachable")
+        level = finding.get("reachability_level")
+        self._adjusted_exposure += RISK_SEVERITY_WEIGHTS.get(bucket, 0.0) * _reach_modifier(reachable, level)
 
     def result(self) -> Stats:
         # An empty or fully waived scan produced no $group row, leaving the four sub-models
@@ -360,6 +376,7 @@ class StatsAccumulator:
             info=self._severity["INFO"],
             unknown=self._severity[_UNKNOWN_SEVERITY],
             risk_score=saturating_risk_score(severity_exposure(critical, high, medium, low)),
+            adjusted_risk_score=saturating_risk_score(self._adjusted_exposure),
         )
 
 
