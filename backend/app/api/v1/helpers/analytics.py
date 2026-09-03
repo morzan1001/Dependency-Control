@@ -98,7 +98,7 @@ def scope_resolution_counts(project_ids: Sequence[str], scan_ids: Sequence[str])
     """(projects that contributed, projects in scope with no resolvable scan). The resolver
     returns one scan per project, so the scan count is the contributing-project count."""
     resolved = len(scan_ids)
-    return resolved, max(len(project_ids) - resolved, 0)
+    return resolved, len(project_ids) - resolved
 
 
 async def historical_first_seen(

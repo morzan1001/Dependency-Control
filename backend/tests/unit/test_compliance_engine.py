@@ -15,8 +15,8 @@ from app.services.compliance.frameworks.nist_sp_800_131a import NistSp800_131aFr
 
 @pytest.fixture(autouse=True)
 def _resolver_reads_the_mocked_aggregate():
-    """These tests hand-build db.scans.aggregate; the resolver now owns that query, and
-    test_releases_resolver.py proves the delegation against a real fake database."""
+    """These tests hand-build db.scans.aggregate; the query belongs to the resolver, whose
+    delegation test_releases_resolver.py proves against a fake database."""
 
     async def _fake(db, project_ids, *, release_environment=None):
         return {row["_id"]: row["scan_id"] async for row in db.scans.aggregate([])}

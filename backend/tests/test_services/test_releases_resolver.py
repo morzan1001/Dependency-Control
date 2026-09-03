@@ -536,14 +536,14 @@ async def test_crypto_hotspots_pick_scan_ids_uses_the_resolver(db):
     from app.services.analytics.crypto_hotspots import CryptoHotspotService
     from app.services.analytics.scopes import ResolvedScope
 
-    await db.projects.insert_one({"_id": "p1", "name": "one", "latest_scan_id": "head-1"})
-    await db.scans.insert_one(_scan("head-1", "p1"))
-    await db.scans.insert_one(_scan("on-dead-branch", "p1", branch=_GONE_BRANCH, created_delta=5))
+    await db.projects.insert_one({"_id": _PROJECT_A, "name": _PROJECT_A, "latest_scan_id": "head-a"})
+    await db.scans.insert_one(_scan("head-a", _PROJECT_A))
+    await db.scans.insert_one(_scan("on-dead-branch", _PROJECT_A, branch=_GONE_BRANCH, created_delta=5))
 
-    scope = ResolvedScope(scope="user", scope_id=None, project_ids=["p1"])
+    scope = ResolvedScope(scope="user", scope_id=None, project_ids=[_PROJECT_A])
     picked = await CryptoHotspotService(db)._pick_scan_ids(scope, None)
 
-    assert picked == ["head-1"]
+    assert picked == ["head-a"]
 
 
 @pytest.mark.asyncio
@@ -551,7 +551,7 @@ async def test_crypto_hotspots_override_still_short_circuits(db):
     from app.services.analytics.crypto_hotspots import CryptoHotspotService
     from app.services.analytics.scopes import ResolvedScope
 
-    scope = ResolvedScope(scope="user", scope_id=None, project_ids=["p1"])
+    scope = ResolvedScope(scope="user", scope_id=None, project_ids=[_PROJECT_A])
     assert await CryptoHotspotService(db)._pick_scan_ids(scope, "explicit") == ["explicit"]
 
 
@@ -560,26 +560,26 @@ async def test_compliance_pick_scan_ids_returns_project_scan_pairs(db):
     from app.services.analytics.scopes import ResolvedScope
     from app.services.compliance.engine import ComplianceReportEngine
 
-    await db.projects.insert_one({"_id": "p1", "name": "one", "latest_scan_id": "head-1"})
-    await db.scans.insert_one(_scan("head-1", "p1"))
+    await db.projects.insert_one({"_id": _PROJECT_A, "name": _PROJECT_A, "latest_scan_id": "head-a"})
+    await db.scans.insert_one(_scan("head-a", _PROJECT_A))
 
-    scope = ResolvedScope(scope="user", scope_id=None, project_ids=["p1"])
+    scope = ResolvedScope(scope="user", scope_id=None, project_ids=[_PROJECT_A])
     pairs = await ComplianceReportEngine()._pick_scan_ids(db, scope)
 
-    assert pairs == [("p1", "head-1")]
+    assert pairs == [(_PROJECT_A, "head-a")]
 
 
 @pytest.mark.asyncio
 async def test_chat_registry_skips_unusable_scans(db):
     from app.services.chat.tools.registry import ChatToolRegistry
 
-    await db.projects.insert_one({"_id": "p1", "name": "one", "latest_scan_id": None})
-    await db.scans.insert_one(_scan("running", "p1", status=_PROCESSING, created_delta=5))
-    await db.scans.insert_one(_scan("done", "p1"))
+    await db.projects.insert_one({"_id": _PROJECT_A, "name": _PROJECT_A, "latest_scan_id": None})
+    await db.scans.insert_one(_scan("running", _PROJECT_A, status=_PROCESSING, created_delta=5))
+    await db.scans.insert_one(_scan("done", _PROJECT_A))
 
-    resolved = await ChatToolRegistry()._latest_scan_ids_for_user({"_id": {"$in": ["p1"]}}, None, db)
+    resolved = await ChatToolRegistry()._latest_scan_ids_for_user({"_id": {"$in": [_PROJECT_A]}}, None, db)
 
-    assert resolved == {"p1": "done"}
+    assert resolved == {_PROJECT_A: "done"}
 
 
 @pytest.mark.asyncio
@@ -711,10 +711,3 @@ def test_scope_resolution_counts_reports_the_projects_that_never_resolved():
     from app.api.v1.helpers.analytics import scope_resolution_counts
 
     assert scope_resolution_counts([_PROJECT_A, _PROJECT_B, _OTHER_PROJECT], ["head-a"]) == (1, 2)
-
-
-def test_scope_resolution_counts_never_reports_a_negative_shortfall():
-    """A caller may pass a wider scan list than its project list; the shortfall floors at zero."""
-    from app.api.v1.helpers.analytics import scope_resolution_counts
-
-    assert scope_resolution_counts([_PROJECT_A], ["head-a", "head-b"]) == (2, 0)
