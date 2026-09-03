@@ -64,9 +64,15 @@ async def latest_release_scan(db: AsyncIOMotorDatabase, project_id: str, environ
     return (await effective_scan_ids(db, [row["scan_id"]])).get(row["scan_id"])
 
 
-async def release_environments(db: AsyncIOMotorDatabase, project_id: str) -> list[str]:
-    environments: list[str] = await db.releases.distinct("environment", {"project_id": project_id})
-    return sorted(environments)
+async def released_scan_ids(db: AsyncIOMotorDatabase, project_id: str) -> dict[str, str]:
+    """environment -> the scan that was marked for it, before any rescan chain."""
+    pipeline: list[dict[str, Any]] = [
+        {"$match": {"project_id": project_id}},
+        {"$sort": {"released_at": -1}},
+        {"$group": {"_id": "$environment", "scan_id": {"$first": "$scan_id"}}},
+    ]
+    marked = {row["_id"]: row["scan_id"] async for row in db.releases.aggregate(pipeline)}
+    return {environment: marked[environment] for environment in sorted(marked)}
 
 
 async def _release_scan_ids(

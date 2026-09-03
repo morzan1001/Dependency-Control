@@ -164,12 +164,16 @@ def _resolve_rescan_interval(project: Project, system_settings: Any) -> int | No
     return interval_hours
 
 
-def _is_rescan_due(source_scan: dict, interval_hours: int) -> bool:
-    """Whether this source scan has gone interval_hours without a rescan.
+def _rescan_clock(source_scan: dict) -> datetime | None:
+    """The instant the due decision measures from; a source never rescanned falls back to its own
+    creation time."""
+    clock: datetime | None = source_scan.get("last_rescanned_at") or source_scan.get("created_at")
+    return clock
 
-    A source that was never rescanned falls back to its own creation time.
-    """
-    last_rescan_aware = ensure_utc(source_scan.get("last_rescanned_at") or source_scan.get("created_at"))
+
+def _is_rescan_due(source_scan: dict, interval_hours: int) -> bool:
+    """Whether this source scan has gone interval_hours without a rescan."""
+    last_rescan_aware = ensure_utc(_rescan_clock(source_scan))
     if not last_rescan_aware:
         return False
     next_rescan_due = last_rescan_aware + timedelta(hours=interval_hours)
@@ -232,7 +236,7 @@ async def _create_rescan_for_project(
 
         logger.info(
             f"Triggering re-scan for project {project.name} from source scan {source_scan_id} "
-            f"(rescan clock: {source_scan.get('last_rescanned_at') or source_scan.get('created_at')})"
+            f"(rescan clock: {_rescan_clock(source_scan)})"
         )
         new_scan = _build_rescan(project, source_scan)
 
@@ -247,32 +251,55 @@ async def _create_rescan_for_project(
         await lock_repo.release_lock(lock_name, holder_id)
 
 
+async def _rescan_targets(project: Project, db: Any) -> list[dict]:
+    """The branch tip plus the newest release per environment. A release is a second identity that
+    has to keep being re-evaluated, not just the tip of its branch."""
+    from app.services.releases import released_scan_ids
+
+    usable_source = {
+        "project_id": project.id,
+        "status": {"$in": SCAN_USABLE_STATUSES},
+        "sbom_refs": {"$exists": True, "$ne": []},
+    }
+
+    targets: list[dict] = []
+    targeted_ids: set[str] = set()
+
+    tip = await db.scans.find_one(usable_source, sort=[("created_at", -1)])
+    if tip:
+        targets.append(tip)
+        targeted_ids.add(str(tip["_id"]))
+
+    # The marked scan itself, never its rescan: rescanning the rescan would grow the chain past
+    # the bound effective_scan_ids walks.
+    for marked_id in (await released_scan_ids(db, project.id)).values():
+        marked = await db.scans.find_one({**usable_source, "_id": marked_id})
+        if not marked or str(marked["_id"]) in targeted_ids:
+            continue
+        targets.append(marked)
+        targeted_ids.add(str(marked["_id"]))
+
+    return targets
+
+
 async def _process_project_rescan(
     project_data: dict, system_settings: Any, db: Any, worker_manager: "WorkerManager"
 ) -> None:
-    """Evaluate a single project and create a rescan if due."""
+    """Evaluate a single project and create a rescan for every source that is due."""
     project = Project(**project_data)
     interval_hours = _resolve_rescan_interval(project, system_settings)
     if interval_hours is None:
         return
 
-    latest_valid_scan = await db.scans.find_one(
-        {
-            "project_id": project.id,
-            "status": {"$in": SCAN_USABLE_STATUSES},
-            "sbom_refs": {"$exists": True, "$ne": []},
-        },
-        sort=[("created_at", -1)],
-    )
-    if not latest_valid_scan:
+    targets = await _rescan_targets(project, db)
+    if not targets:
         # Fires on every main-loop pass for such a project, so it must not be info.
         logger.debug(f"Project {project.name} has no valid previous scan with SBOMs; nothing to re-scan.")
         return
 
-    if not _is_rescan_due(latest_valid_scan, interval_hours):
-        return
-
-    await _create_rescan_for_project(project, latest_valid_scan, db, worker_manager)
+    for source_scan in targets:
+        if _is_rescan_due(source_scan, interval_hours):
+            await _create_rescan_for_project(project, source_scan, db, worker_manager)
 
 
 async def check_scheduled_rescans(worker_manager: Optional["WorkerManager"]) -> None:

@@ -11,7 +11,7 @@ from app.repositories.scans import ScanRepository
 from app.services.releases import (
     _MAX_RESCAN_HOPS,
     latest_release_scan,
-    release_environments,
+    released_scan_ids,
     resolve_scan_ids,
 )
 from tests.mocks.fake_mongo import FakeDatabase
@@ -43,7 +43,7 @@ _RELEASE_QUERIES_WITH_RESCANS = {"releases.aggregate": 1, "scans.find": 2}
 _RELEASE_QUERIES_WITH_A_CHAIN = {"releases.aggregate": 1, "scans.find": 4}
 _CHAIN_DEPTH = 3
 _CHAIN_BEYOND_THE_BOUND = _MAX_RESCAN_HOPS + 5
-_NO_ENVIRONMENTS: list[str] = []
+_NO_RELEASES: dict[str, str] = {}
 _CYCLE_QUERIES = {"releases.find_one": 1, "scans.find": 2}
 _NO_QUERIES: dict[str, int] = {}
 
@@ -246,30 +246,53 @@ async def test_latest_release_scan_of_a_deleted_scan_is_none(db):
 
 
 @pytest.mark.asyncio
-async def test_release_environments_are_sorted_and_deduplicated(db):
-    for index, environment in enumerate([_STAGING, _PRODUCTION, _STAGING, _CANARY]):
+async def test_released_scan_ids_hold_one_sorted_entry_per_environment(db):
+    for index, environment in enumerate([_STAGING, _PRODUCTION, _CANARY]):
         await db.releases.insert_one(_release(_PROJECT_A, environment, f"scan-{index}"))
     await db.releases.insert_one(_release(_OTHER_PROJECT, _ANOTHER_PROJECTS_ENVIRONMENT, "scan-elsewhere"))
 
-    assert await release_environments(db, _PROJECT_A) == [_CANARY, _PRODUCTION, _STAGING]
+    released = await released_scan_ids(db, _PROJECT_A)
+
+    assert released == {_STAGING: "scan-0", _PRODUCTION: "scan-1", _CANARY: "scan-2"}
+    assert list(released) == [_CANARY, _PRODUCTION, _STAGING], "sorted, so callers rescan in a fixed order"
 
 
 @pytest.mark.asyncio
-async def test_release_environments_of_a_project_without_releases_is_empty(db):
+async def test_released_scan_ids_take_the_newest_release_of_an_environment(db):
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "new-build"))
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "rolled-back-to", released_delta=1))
+
+    assert await released_scan_ids(db, _PROJECT_A) == {_PRODUCTION: "rolled-back-to"}
+
+
+@pytest.mark.asyncio
+async def test_released_scan_ids_of_a_project_without_releases_is_empty(db):
     await db.releases.insert_one(_release(_OTHER_PROJECT, _PRODUCTION, "someone-elses"))
 
-    assert await release_environments(db, _PROJECT_A) == _NO_ENVIRONMENTS
+    assert await released_scan_ids(db, _PROJECT_A) == _NO_RELEASES
 
 
 @pytest.mark.asyncio
-async def test_release_environments_lists_an_environment_that_resolves_to_nothing(db):
+async def test_released_scan_ids_list_an_environment_that_resolves_to_nothing(db):
     """Intended asymmetry: the environment was released to, so it stays selectable even while its
     release has no readable analysis. Hiding it would need a deliberate change here."""
     await db.scans.insert_one(_scan("unanalysed", _PROJECT_A, status=_PENDING))
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "unanalysed"))
 
-    assert await release_environments(db, _PROJECT_A) == [_PRODUCTION]
+    assert await released_scan_ids(db, _PROJECT_A) == {_PRODUCTION: "unanalysed"}
     assert await resolve_scan_ids(db, [_PROJECT_A], release_environment=_PRODUCTION) == _NO_SCANS
+
+
+@pytest.mark.asyncio
+async def test_released_scan_ids_stay_on_the_marked_scan_rather_than_its_rescan(db):
+    """The marked scan is what a rescan must be created from: rescanning its rescan instead would
+    lengthen the chain by one link per interval until it outruns the bound the walk stops at."""
+    await db.scans.insert_one(_scan("released", _PROJECT_A, latest_rescan_id="rescan"))
+    await db.scans.insert_one(_scan("rescan", _PROJECT_A, created_delta=9))
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
+
+    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) == "rescan"
+    assert await released_scan_ids(db, _PROJECT_A) == {_PRODUCTION: "released"}
 
 
 @pytest.mark.asyncio

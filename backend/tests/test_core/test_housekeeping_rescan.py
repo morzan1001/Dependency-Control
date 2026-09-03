@@ -19,10 +19,12 @@ from app.core.housekeeping import (
     _create_rescan_for_project,
     _is_rescan_due,
     _process_project_rescan,
+    _rescan_targets,
     _resolve_rescan_interval,
     check_scheduled_rescans,
 )
 from app.models.project import Project
+from app.models.release import Release
 from app.models.system import SystemSettings
 from app.repositories import DistributedLocksRepository
 from app.repositories.system_settings import SystemSettingsRepository
@@ -53,6 +55,13 @@ _OTHER_SOURCE_SCAN_ID = "src-other"
 _ROOT_SCAN_ID = "root"
 _PREVIOUS_RESCAN_ID = "prev-rescan"
 _INFLIGHT_RESCAN_ID = "inflight-rescan"
+_RELEASED_SCAN_ID = "src-released"
+_ROLLED_BACK_SCAN_ID = "src-rolled-back"
+_STAGED_SCAN_ID = "src-staged"
+
+_PRODUCTION_ENVIRONMENT = "production"
+_STAGING_ENVIRONMENT = "staging"
+_RELEASE_ROW_PREFIX = "release:"
 
 _COMMIT_HASH = "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d7e8f9a0b"
 _COMMIT_TAG = "v1.0.0"
@@ -148,6 +157,19 @@ async def _seed_scan(db: FakeDatabase, scan_id: str = _SOURCE_SCAN_ID, **overrid
     await db.scans.insert_one(_scan_doc(scan_id, **overrides))
     stored: dict[str, Any] = await db.scans.find_one({"_id": scan_id})
     return stored
+
+
+async def _seed_release(
+    db: FakeDatabase, environment: str, scan_id: str, released_at: datetime = _NOW
+) -> None:
+    release = Release(
+        id=f"{_RELEASE_ROW_PREFIX}{environment}:{scan_id}",
+        project_id=_PROJECT_ID,
+        environment=environment,
+        scan_id=scan_id,
+        released_at=released_at,
+    )
+    await db.releases.insert_one(release.model_dump(by_alias=True))
 
 
 async def _seed_system_settings(db: FakeDatabase, **overrides: Any) -> None:
@@ -588,6 +610,112 @@ class TestProcessProjectRescan:
 
         assert await _rescans(db) == []
         worker.add_job.assert_not_awaited()
+
+
+class TestReleaseRescanTargets:
+    """What runs in an environment is a second identity of the project, and the tip of a branch is
+    no evidence about it, so both are re-evaluated."""
+
+    @pytest.mark.asyncio
+    async def test_a_release_past_the_interval_is_rescanned_alongside_a_due_tip(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        await _seed_scan(db, _SOURCE_SCAN_ID, created_at=_NOW - _RECENT)
+        await _seed_scan(db, _RELEASED_SCAN_ID, created_at=_NOW - _OLDER)
+        await _seed_release(db, _PRODUCTION_ENVIRONMENT, _RELEASED_SCAN_ID)
+
+        await _process_project_rescan(_project_doc(), _system_settings(), db, worker)
+
+        rescans = await _rescans(db)
+        assert {r["original_scan_id"] for r in rescans} == {_SOURCE_SCAN_ID, _RELEASED_SCAN_ID}
+        assert len(rescans) == 2
+        assert worker.add_job.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_an_environment_contributes_only_its_newest_release(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        await _seed_scan(db, _SOURCE_SCAN_ID, created_at=_NOW - _RECENT)
+        await _seed_scan(db, _RELEASED_SCAN_ID, created_at=_NOW - _OLDER)
+        await _seed_scan(db, _ROLLED_BACK_SCAN_ID, created_at=_NOW - _ANCIENT)
+        await _seed_scan(db, _STAGED_SCAN_ID, created_at=_NOW - _STALE)
+        await _seed_release(db, _PRODUCTION_ENVIRONMENT, _ROLLED_BACK_SCAN_ID, released_at=_NOW - _OLDER)
+        await _seed_release(db, _PRODUCTION_ENVIRONMENT, _RELEASED_SCAN_ID)
+        await _seed_release(db, _STAGING_ENVIRONMENT, _STAGED_SCAN_ID)
+
+        await _process_project_rescan(_project_doc(), _system_settings(), db, worker)
+
+        assert {r["original_scan_id"] for r in await _rescans(db)} == {
+            _SOURCE_SCAN_ID,
+            _RELEASED_SCAN_ID,
+            _STAGED_SCAN_ID,
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_scan_that_is_both_the_tip_and_a_release_is_rescanned_once(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        await _seed_scan(db)
+        await _seed_release(db, _PRODUCTION_ENVIRONMENT, _SOURCE_SCAN_ID)
+
+        targets = await _rescan_targets(_project(), db)
+        await _process_project_rescan(_project_doc(), _system_settings(), db, worker)
+
+        # The in-lock guard would swallow a duplicate target, so the de-duplication is pinned here.
+        assert [t["_id"] for t in targets] == [_SOURCE_SCAN_ID]
+        assert len(await _rescans(db)) == 1
+        assert worker.add_job.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_marked_scan_carrying_no_sboms_is_not_a_target(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        await _seed_scan(db, _SOURCE_SCAN_ID, created_at=_NOW - _RECENT)
+        await _seed_scan(db, _EMPTY_SBOM_SCAN_ID, created_at=_NOW - _OLDER, sbom_refs=[])
+        await _seed_release(db, _PRODUCTION_ENVIRONMENT, _EMPTY_SBOM_SCAN_ID)
+
+        await _process_project_rescan(_project_doc(), _system_settings(), db, worker)
+
+        assert [r["original_scan_id"] for r in await _rescans(db)] == [_SOURCE_SCAN_ID]
+        worker.add_job.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_a_due_release_is_rescanned_while_the_tip_is_still_fresh(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        await _seed_scan(db, _SOURCE_SCAN_ID, created_at=_NOW - _WITHIN_INTERVAL)
+        await _seed_scan(db, _RELEASED_SCAN_ID, created_at=_NOW - _OLDER)
+        await _seed_release(db, _PRODUCTION_ENVIRONMENT, _RELEASED_SCAN_ID)
+
+        await _process_project_rescan(_project_doc(), _system_settings(), db, worker)
+
+        assert [r["original_scan_id"] for r in await _rescans(db)] == [_RELEASED_SCAN_ID]
+        worker.add_job.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_the_target_is_the_marked_scan_rather_than_the_rescan_it_points_at(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        """Sourcing from the rescan would add a link per interval until the chain outruns the bound
+        the release resolver walks, and the resolver would then answer with a mid-chain scan."""
+        await _seed_scan(
+            db, _RELEASED_SCAN_ID, created_at=_NOW - _OLDER, latest_rescan_id=_PREVIOUS_RESCAN_ID
+        )
+        await _seed_scan(
+            db,
+            _PREVIOUS_RESCAN_ID,
+            created_at=_NOW - _RECENT,
+            is_rescan=True,
+            original_scan_id=_RELEASED_SCAN_ID,
+        )
+        await _seed_release(db, _PRODUCTION_ENVIRONMENT, _RELEASED_SCAN_ID)
+
+        await _process_project_rescan(_project_doc(), _system_settings(), db, worker)
+
+        created = [r for r in await _rescans(db) if r["_id"] != _PREVIOUS_RESCAN_ID]
+        assert {r["original_scan_id"] for r in created} == {_PREVIOUS_RESCAN_ID, _RELEASED_SCAN_ID}
+        marked = await db.scans.find_one({"_id": _RELEASED_SCAN_ID})
+        assert marked["latest_rescan_id"] not in (_PREVIOUS_RESCAN_ID, None), "the chain stays one link deep"
 
 
 class TestRescanClockIsIndependentOfCiTraffic:
