@@ -192,8 +192,14 @@ class TestThreatIntelBoundaries:
         ).threat_intel
         assert t.active_exploitation_count == 1
 
+    def test_very_high_epss_with_kev_below_threshold_does_not_weaponize(self):
+        """Constant swap guard: KEV + EPSS between HIGH and VERY_HIGH thresholds must not weaponize."""
+        kev = {DETAILS_KEY_IN_KEV: True}
+        t = compute_stats([_finding(epss_score=EPSS_HIGH_THRESHOLD, **kev)], {}).threat_intel
+        assert t.weaponized_count == 0
+
     def test_very_high_epss_threshold_without_kev_does_not_weaponize(self):
-        """Below weaponized: EPSS_VERY_HIGH_THRESHOLD without KEV does not count."""
+        """Conjunct guard: EPSS_VERY_HIGH_THRESHOLD without KEV does not count."""
         t = compute_stats([_finding(epss_score=EPSS_VERY_HIGH_THRESHOLD)], {}).threat_intel
         assert t.weaponized_count == 0
 
