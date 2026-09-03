@@ -86,6 +86,23 @@ class TestSecretGate:
         s = compute_stats([_finding(verified=True, in_current_tree=True)], {}).secret_priority
         assert s.total == 0
 
+    def test_unverified_historical_secret_counts_in_both_buckets(self):
+        """(verified=False, in_current_tree=False) overlaps: historical_only and deprioritized both claim it."""
+        findings = [_finding(ftype="secret", verified=False, in_current_tree=False)]
+        s = compute_stats(findings, {}).secret_priority
+        assert s.historical_only_count == 1
+        assert s.deprioritized_count == 1
+        assert s.actionable_count == 0
+
+    def test_verified_historical_secret_is_neither_actionable_nor_deprioritized(self):
+        """(verified=True, in_current_tree=False) is historical only; not actionable, not deprioritized."""
+        findings = [_finding(ftype="secret", verified=True, in_current_tree=False)]
+        s = compute_stats(findings, {}).secret_priority
+        assert s.verified_count == 1
+        assert s.historical_only_count == 1
+        assert s.actionable_count == 0
+        assert s.deprioritized_count == 0
+
 
 class TestEpssTyping:
     """Every persisted shape of epss_score: missing, null, 0.0, int, float, bool, string, list, dict.
@@ -155,19 +172,19 @@ class TestThreatIntelBoundaries:
         assert t.active_exploitation_count == 0
 
     def test_medium_epss_threshold_exactly_0_01_counts(self):
-        """EPSS_MEDIUM_THRESHOLD = 0.01 is inclusive on the lower bound."""
-        t = compute_stats([_finding(epss_score=0.01)], {}).threat_intel
+        """Boundary: EPSS_MEDIUM_THRESHOLD is inclusive on the lower bound."""
+        t = compute_stats([_finding(epss_score=EPSS_MEDIUM_THRESHOLD)], {}).threat_intel
         assert t.medium_epss_count == 1
         assert t.high_epss_count == 0
 
     def test_very_high_epss_threshold_exactly_0_5_counts_as_weaponized(self):
-        """EPSS_VERY_HIGH_THRESHOLD = 0.5 is inclusive for weaponized (with KEV)."""
-        t = compute_stats([_finding(epss_score=0.5, **{DETAILS_KEY_IN_KEV: True})], {}).threat_intel
+        """Boundary: EPSS_VERY_HIGH_THRESHOLD is inclusive for weaponized (with KEV)."""
+        t = compute_stats([_finding(epss_score=EPSS_VERY_HIGH_THRESHOLD, **{DETAILS_KEY_IN_KEV: True})], {}).threat_intel
         assert t.weaponized_count == 1
 
     def test_active_exploitation_threshold_exactly_0_7_counts(self):
-        """EPSS_ACTIVE_EXPLOITATION_THRESHOLD = 0.7 is inclusive."""
-        t = compute_stats([_finding(epss_score=0.7)], {}).threat_intel
+        """Boundary: EPSS_ACTIVE_EXPLOITATION_THRESHOLD is inclusive."""
+        t = compute_stats([_finding(epss_score=EPSS_ACTIVE_EXPLOITATION_THRESHOLD)], {}).threat_intel
         assert t.active_exploitation_count == 1
 
 
@@ -261,8 +278,9 @@ class TestCoverableCount:
 
         findings = [{**_finding(), "component": "lodash"}]
         with patch("app.services.analysis.stats.lookup_component") as mock_lookup:
-            compute_stats(findings, {})
+            stats = compute_stats(findings, {})
             mock_lookup.assert_not_called()
+            assert stats.reachability.coverable_count == 0
 
     def test_a_findings_qualified_component_resolves_to_the_bare_inventory_name(self):
         langs = component_language_map([{"name": "json", "type": "npm"}])

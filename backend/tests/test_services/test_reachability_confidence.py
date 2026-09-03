@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD
+from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD, REACHABILITY_LEVEL_IMPORT
 from app.schemas.projections import CallgraphMinimal
 from app.services.analysis.stats import build_reachability_summary
 from app.services.reachability_enrichment import (
@@ -377,8 +377,8 @@ class TestPureEnrichmentEntryPoint:
 
         enrich_findings_from_callgraphs([vuln], [cg], {"requests": frozenset({"python"})})
 
-        assert vuln["reachability_level"] == vuln["details"]["reachability"]["analysis_level"]
-        assert vuln["reachable"] == vuln["details"]["reachability"]["is_reachable"]
+        assert vuln["reachability_level"] == REACHABILITY_LEVEL_IMPORT
+        assert vuln["reachable"] is True
 
 
 class TestRunPendingBulkPersist:
