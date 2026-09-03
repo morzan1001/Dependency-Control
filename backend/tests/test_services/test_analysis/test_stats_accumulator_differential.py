@@ -201,13 +201,10 @@ async def test_threat_intel_matches():
 
 
 @pytest.mark.asyncio
-async def test_reachability_matches_except_coverable():
+async def test_reachability_matches():
     pipeline, fold = await both()
     got = fold.reachability.model_dump()
     want = pipeline.reachability.model_dump()
-    # coverable_count is not folded yet.
-    got.pop("coverable_count")
-    want.pop("coverable_count")
     assert got == want
     assert want["analyzed_count"] > 0
     assert want["reachable_count"] > 0
@@ -216,6 +213,7 @@ async def test_reachability_matches_except_coverable():
     assert want["likely_reachable_count"] > 0
     assert want["reachable_critical"] > 0
     assert want["reachable_high"] > 0
+    assert want["coverable_count"] > 0
     assert want["reachable_count"] > want["confirmed_reachable_count"] + want["likely_reachable_count"]
     assert want["reachable_count_high_confidence"] > 0
     assert want["reachable_critical_high_confidence"] > 0

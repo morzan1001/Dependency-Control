@@ -244,8 +244,12 @@ class TestCoverableCount:
         assert compute_stats(findings, self._LANGS).reachability.coverable_count == 1
 
     def test_an_empty_language_map_short_circuits_to_zero(self):
+        from unittest.mock import patch
+
         findings = [{**_finding(), "component": "lodash"}]
-        assert compute_stats(findings, {}).reachability.coverable_count == 0
+        with patch("app.services.analysis.stats.lookup_component") as mock_lookup:
+            compute_stats(findings, {})
+            mock_lookup.assert_not_called()
 
     def test_a_findings_qualified_component_resolves_to_the_bare_inventory_name(self):
         langs = component_language_map([{"name": "json", "type": "npm"}])
