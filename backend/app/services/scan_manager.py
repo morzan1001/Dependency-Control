@@ -11,7 +11,6 @@ from app.core.constants import SCAN_USABLE_STATUSES
 from app.core.worker import worker_manager
 from app.models.finding import Finding
 from app.models.project import Project
-from app.models.stats import Stats
 from app.models.waiver import Waiver
 from app.schemas.ingest import BaseIngest, ScanContext
 
@@ -230,23 +229,3 @@ class ScanManager:
 
         project_repo = ProjectRepository(self.db)
         await project_repo.update_raw(str(self.project.id), {"$set": {"last_scan_at": datetime.now(timezone.utc)}})
-
-    @staticmethod
-    def compute_stats(findings: list[Finding]) -> Stats:
-        """Compute severity statistics from findings."""
-        stats = Stats()
-        for f in findings:
-            sev = f.severity.lower() if f.severity else "unknown"
-            if sev == "critical":
-                stats.critical += 1
-            elif sev == "high":
-                stats.high += 1
-            elif sev == "medium":
-                stats.medium += 1
-            elif sev == "low":
-                stats.low += 1
-            elif sev == "info":
-                stats.info += 1
-            else:
-                stats.unknown += 1
-        return stats

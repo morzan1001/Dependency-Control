@@ -3,6 +3,7 @@
 from typing import Any
 
 from app.services.aggregation import ResultAggregator
+from app.services.analysis.stats import compute_stats
 from app.services.scan_manager import ScanManager
 
 
@@ -26,7 +27,7 @@ async def process_findings_ingest(
 
     await manager.store_results(analyzer_name, result_dict, scan_id)
 
-    stats = ScanManager.compute_stats(final_findings)
+    stats = compute_stats((f.model_dump() for f in final_findings), {})
 
     await manager.register_result(scan_id, analyzer_name, trigger_analysis=False)
 
