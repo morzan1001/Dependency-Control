@@ -43,7 +43,9 @@ class BaseIngest(BaseModel):
             return {}
         return {
             "environment": self.release_environment or DEFAULT_RELEASE_ENVIRONMENT,
-            "version": self.release_version or self.commit_tag,
+            # A CI producer sends an unset tag as "", and ReleaseRepository.record only skips a
+            # None version, so an empty one would be stored as the release's name.
+            "version": self.release_version or self.commit_tag or None,
             "released_at": released_at,
         }
 

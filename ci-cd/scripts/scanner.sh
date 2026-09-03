@@ -10,6 +10,8 @@ readonly MSG_BUILDING_PAYLOAD="Building payload..."
 # Mirrors the cap enforced by /api/v1/ingest/cbom; warn before the server
 # rejects the upload with 413.
 readonly CBOM_MAX_BYTES=$((25 * 1024 * 1024))
+# Mirrors RELEASE_ENVIRONMENT_PATTERN in the backend, which 422s the whole ingest on a mismatch.
+readonly RELEASE_ENVIRONMENT_PATTERN='^[a-z0-9][a-z0-9_-]{0,31}$'
 
 # Colors for output (disabled if not a terminal)
 if [[ -t 1 ]]; then
@@ -116,7 +118,13 @@ detect_ci_environment() {
         IS_RELEASE="false"
     fi
     RELEASE_VERSION="${DEP_CONTROL_RELEASE_VERSION:-}"
-    RELEASE_ENVIRONMENT="${DEP_CONTROL_RELEASE_ENVIRONMENT:-}"
+    RELEASE_ENVIRONMENT="$(printf '%s' "${DEP_CONTROL_RELEASE_ENVIRONMENT:-}" | tr '[:upper:]' '[:lower:]')"
+    if [[ -n "$RELEASE_ENVIRONMENT" && ! "$RELEASE_ENVIRONMENT" =~ $RELEASE_ENVIRONMENT_PATTERN ]]; then
+        # Dropping the mark costs one release row; sending it costs the whole scan.
+        log_warn "Ignoring DEP_CONTROL_RELEASE_ENVIRONMENT='${DEP_CONTROL_RELEASE_ENVIRONMENT}':" \
+                 "not ${RELEASE_ENVIRONMENT_PATTERN}"
+        RELEASE_ENVIRONMENT=""
+    fi
 
     log_info "Detected CI provider: $CI_PROVIDER"
     log_info "Project: $PROJECT_NAME | Branch: $BRANCH"

@@ -17,6 +17,7 @@ _SCAN_ID = "s1"
 _STAGING = "staging"
 _VERSION = "v1.2.3"
 _COMMIT_TAG = "v9"
+_UNSET = ""
 _FIELDS_A_SCAN_MUST_NOT_CARRY = ("release_version", "release_environment", "released_at")
 
 
@@ -78,6 +79,27 @@ def test_release_fields_fall_back_to_commit_tag_and_production():
         "version": _COMMIT_TAG,
         "released_at": now,
     }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"commit_tag": _UNSET},
+        {"commit_tag": _UNSET, "release_version": _UNSET},
+        {"release_version": _UNSET},
+        {},
+    ],
+    ids=["blank tag", "both blank", "blank version", "neither sent"],
+)
+def test_a_release_off_a_branch_pipeline_is_unnamed_rather_than_named_blank(payload):
+    """ReleaseRepository.record skips a None version but stores an empty one as the release's name."""
+    data = SBOMIngest(**_minimal_payload(is_release=True, **payload))
+    assert data.release_fields(datetime.now(timezone.utc))["version"] is None
+
+
+def test_a_blank_release_version_still_falls_back_to_the_commit_tag():
+    data = SBOMIngest(**_minimal_payload(is_release=True, release_version=_UNSET, commit_tag=_COMMIT_TAG))
+    assert data.release_fields(datetime.now(timezone.utc))["version"] == _COMMIT_TAG
 
 
 def test_release_fields_name_the_keys_of_a_release_document():
