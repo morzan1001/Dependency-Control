@@ -108,6 +108,16 @@ async def test_a_fresh_ingest_wins_the_slot_even_when_it_carries_a_lineage_field
 
 
 @pytest.mark.asyncio
+async def test_a_rescan_of_another_lineage_wins_the_slot_when_latest_scan_id_dangles(db):
+    """A latest_scan_id pointing at a deleted scan names no lineage the guard could protect,
+    so re-anchoring on a live scan beats holding a pointer into nothing."""
+    await _seed(db, _MISSING_SCAN_ID)
+    scan_doc = _ScanDoc(_NOW + _LATER, is_rescan=True, original_scan_id=_RELEASE_SCAN_ID)
+
+    assert await _decide(db, _INCOMING_RESCAN_ID, scan_doc) is True
+
+
+@pytest.mark.asyncio
 async def test_a_rescan_is_still_accepted_when_the_project_has_no_latest_scan(db):
     await db.projects.insert_one({"_id": _PROJECT_ID, "name": _PROJECT_NAME, "latest_scan_id": None})
     scan_doc = _ScanDoc(_NOW, is_rescan=True, original_scan_id=_MISSING_SCAN_ID)
