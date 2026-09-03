@@ -105,7 +105,9 @@ async def get_projects_with_scans(
 
 def scope_resolution_counts(project_ids: Sequence[str], scan_ids: Sequence[str]) -> tuple[int, int]:
     """(projects that contributed, projects in scope with no resolvable scan). The resolver
-    returns one scan per project, so the scan count is the contributing-project count."""
+    returns one scan per project, so the scan count is the contributing-project count.
+    Without a release filter the second value counts projects with no usable scan at all, so the
+    projects_without_release field it feeds reads as "no scan" on a head-mode request."""
     resolved = len(scan_ids)
     return resolved, len(project_ids) - resolved
 
