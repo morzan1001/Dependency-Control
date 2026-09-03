@@ -2,21 +2,37 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.schemas.scan_delta import DeltaCategory, ScanDeltaResponse, ScanDeltaTotals
 from app.services.analytics.scan_delta import InvalidDeltaQuery, compute_scan_delta_dispatch
 
+_PROJECT = "p1"
+_FROM_SCAN = "a"
+_TO_SCAN = "b"
+
+
+def _envelope(category: DeltaCategory) -> ScanDeltaResponse:
+    """A per-category sentinel the dispatcher must hand back untouched apart from the labels."""
+    return ScanDeltaResponse(
+        from_scan_id=_FROM_SCAN,
+        to_scan_id=_TO_SCAN,
+        project_id=_PROJECT,
+        category=category,
+        totals=ScanDeltaTotals(),
+    )
+
 
 @pytest.mark.asyncio
-async def test_dispatch_findings():
+async def test_dispatch_findings(db):
     with patch(
         "app.services.analytics.scan_delta.compute_findings_delta",
-        new=AsyncMock(return_value="findings-result"),
+        new=AsyncMock(return_value=_envelope(DeltaCategory.FINDINGS)),
     ) as mock:
         result = await compute_scan_delta_dispatch(
-            db=None,
-            project_id="p1",
+            db=db,
+            project_id=_PROJECT,
             category="findings",
-            from_scan="a",
-            to_scan="b",
+            from_scan=_FROM_SCAN,
+            to_scan=_TO_SCAN,
             page=1,
             page_size=50,
             change=None,
@@ -24,22 +40,22 @@ async def test_dispatch_findings():
             finding_type=None,
             allow_same_scan=False,
         )
-        assert result == "findings-result"
+        assert result.category == DeltaCategory.FINDINGS
         mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_dispatch_components():
+async def test_dispatch_components(db):
     with patch(
         "app.services.analytics.scan_delta.compute_components_delta",
-        new=AsyncMock(return_value="components-result"),
+        new=AsyncMock(return_value=_envelope(DeltaCategory.COMPONENTS)),
     ) as mock:
         result = await compute_scan_delta_dispatch(
-            db=None,
-            project_id="p1",
+            db=db,
+            project_id=_PROJECT,
             category="components",
-            from_scan="a",
-            to_scan="b",
+            from_scan=_FROM_SCAN,
+            to_scan=_TO_SCAN,
             page=1,
             page_size=50,
             change=None,
@@ -47,22 +63,22 @@ async def test_dispatch_components():
             finding_type=None,
             allow_same_scan=False,
         )
-        assert result == "components-result"
+        assert result.category == DeltaCategory.COMPONENTS
         mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_dispatch_crypto():
+async def test_dispatch_crypto(db):
     with patch(
         "app.services.analytics.scan_delta.compute_crypto_delta_envelope",
-        new=AsyncMock(return_value="crypto-result"),
+        new=AsyncMock(return_value=_envelope(DeltaCategory.CRYPTO)),
     ) as mock:
         result = await compute_scan_delta_dispatch(
-            db=None,
-            project_id="p1",
+            db=db,
+            project_id=_PROJECT,
             category="crypto",
-            from_scan="a",
-            to_scan="b",
+            from_scan=_FROM_SCAN,
+            to_scan=_TO_SCAN,
             page=1,
             page_size=50,
             change=None,
@@ -70,19 +86,19 @@ async def test_dispatch_crypto():
             finding_type=None,
             allow_same_scan=False,
         )
-        assert result == "crypto-result"
+        assert result.category == DeltaCategory.CRYPTO
         mock.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_dispatch_rejects_severity_for_non_findings():
+async def test_dispatch_rejects_severity_for_non_findings(db):
     with pytest.raises(InvalidDeltaQuery):
         await compute_scan_delta_dispatch(
-            db=None,
-            project_id="p1",
+            db=db,
+            project_id=_PROJECT,
             category="components",
-            from_scan="a",
-            to_scan="b",
+            from_scan=_FROM_SCAN,
+            to_scan=_TO_SCAN,
             page=1,
             page_size=50,
             change=None,
@@ -93,14 +109,14 @@ async def test_dispatch_rejects_severity_for_non_findings():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_rejects_finding_type_for_non_findings():
+async def test_dispatch_rejects_finding_type_for_non_findings(db):
     with pytest.raises(InvalidDeltaQuery):
         await compute_scan_delta_dispatch(
-            db=None,
-            project_id="p1",
+            db=db,
+            project_id=_PROJECT,
             category="crypto",
-            from_scan="a",
-            to_scan="b",
+            from_scan=_FROM_SCAN,
+            to_scan=_TO_SCAN,
             page=1,
             page_size=50,
             change=None,
@@ -111,14 +127,14 @@ async def test_dispatch_rejects_finding_type_for_non_findings():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_rejects_change_changed_for_non_components():
+async def test_dispatch_rejects_change_changed_for_non_components(db):
     with pytest.raises(InvalidDeltaQuery):
         await compute_scan_delta_dispatch(
-            db=None,
-            project_id="p1",
+            db=db,
+            project_id=_PROJECT,
             category="findings",
-            from_scan="a",
-            to_scan="b",
+            from_scan=_FROM_SCAN,
+            to_scan=_TO_SCAN,
             page=1,
             page_size=50,
             change="changed",
@@ -129,11 +145,11 @@ async def test_dispatch_rejects_change_changed_for_non_components():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_rejects_same_scan_ids():
+async def test_dispatch_rejects_same_scan_ids(db):
     with pytest.raises(InvalidDeltaQuery):
         await compute_scan_delta_dispatch(
-            db=None,
-            project_id="p1",
+            db=db,
+            project_id=_PROJECT,
             category="findings",
             from_scan="same",
             to_scan="same",
@@ -147,14 +163,14 @@ async def test_dispatch_rejects_same_scan_ids():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_rejects_unknown_severity():
+async def test_dispatch_rejects_unknown_severity(db):
     with pytest.raises(InvalidDeltaQuery, match="unknown severity"):
         await compute_scan_delta_dispatch(
-            db=None,
-            project_id="p1",
+            db=db,
+            project_id=_PROJECT,
             category="findings",
-            from_scan="a",
-            to_scan="b",
+            from_scan=_FROM_SCAN,
+            to_scan=_TO_SCAN,
             page=1,
             page_size=50,
             change=None,
@@ -165,15 +181,15 @@ async def test_dispatch_rejects_unknown_severity():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_rejects_unknown_severity_preserves_user_casing():
+async def test_dispatch_rejects_unknown_severity_preserves_user_casing(db):
     """Error echoes the user-typed value, not the lowercased canonical form, so typos round-trip readably."""
     with pytest.raises(InvalidDeltaQuery, match="CRITICLA"):
         await compute_scan_delta_dispatch(
-            db=None,
-            project_id="p1",
+            db=db,
+            project_id=_PROJECT,
             category="findings",
-            from_scan="a",
-            to_scan="b",
+            from_scan=_FROM_SCAN,
+            to_scan=_TO_SCAN,
             page=1,
             page_size=50,
             change=None,
@@ -184,17 +200,17 @@ async def test_dispatch_rejects_unknown_severity_preserves_user_casing():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_accepts_uppercase_severity():
+async def test_dispatch_accepts_uppercase_severity(db):
     with patch(
         "app.services.analytics.scan_delta.compute_findings_delta",
-        new=AsyncMock(return_value="findings-result"),
+        new=AsyncMock(return_value=_envelope(DeltaCategory.FINDINGS)),
     ):
         result = await compute_scan_delta_dispatch(
-            db=None,
-            project_id="p1",
+            db=db,
+            project_id=_PROJECT,
             category="findings",
-            from_scan="a",
-            to_scan="b",
+            from_scan=_FROM_SCAN,
+            to_scan=_TO_SCAN,
             page=1,
             page_size=50,
             change=None,
@@ -202,18 +218,18 @@ async def test_dispatch_accepts_uppercase_severity():
             finding_type=None,
             allow_same_scan=False,
         )
-        assert result == "findings-result"
+        assert result.category == DeltaCategory.FINDINGS
 
 
 @pytest.mark.asyncio
-async def test_dispatch_rejects_unknown_finding_type():
+async def test_dispatch_rejects_unknown_finding_type(db):
     with pytest.raises(InvalidDeltaQuery, match="unknown finding_type"):
         await compute_scan_delta_dispatch(
-            db=None,
-            project_id="p1",
+            db=db,
+            project_id=_PROJECT,
             category="findings",
-            from_scan="a",
-            to_scan="b",
+            from_scan=_FROM_SCAN,
+            to_scan=_TO_SCAN,
             page=1,
             page_size=50,
             change=None,
@@ -224,14 +240,14 @@ async def test_dispatch_rejects_unknown_finding_type():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_rejects_unknown_change_for_findings():
+async def test_dispatch_rejects_unknown_change_for_findings(db):
     with pytest.raises(InvalidDeltaQuery, match="change=garbage"):
         await compute_scan_delta_dispatch(
-            db=None,
-            project_id="p1",
+            db=db,
+            project_id=_PROJECT,
             category="findings",
-            from_scan="a",
-            to_scan="b",
+            from_scan=_FROM_SCAN,
+            to_scan=_TO_SCAN,
             page=1,
             page_size=50,
             change="garbage",
@@ -242,14 +258,14 @@ async def test_dispatch_rejects_unknown_change_for_findings():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_rejects_page_below_one():
+async def test_dispatch_rejects_page_below_one(db):
     with pytest.raises(InvalidDeltaQuery, match="page must be"):
         await compute_scan_delta_dispatch(
-            db=None,
-            project_id="p1",
+            db=db,
+            project_id=_PROJECT,
             category="findings",
-            from_scan="a",
-            to_scan="b",
+            from_scan=_FROM_SCAN,
+            to_scan=_TO_SCAN,
             page=0,
             page_size=50,
             change=None,
@@ -260,14 +276,14 @@ async def test_dispatch_rejects_page_below_one():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_rejects_page_size_above_max():
+async def test_dispatch_rejects_page_size_above_max(db):
     with pytest.raises(InvalidDeltaQuery, match="page_size must be"):
         await compute_scan_delta_dispatch(
-            db=None,
-            project_id="p1",
+            db=db,
+            project_id=_PROJECT,
             category="findings",
-            from_scan="a",
-            to_scan="b",
+            from_scan=_FROM_SCAN,
+            to_scan=_TO_SCAN,
             page=1,
             page_size=500,
             change=None,
@@ -278,17 +294,17 @@ async def test_dispatch_rejects_page_size_above_max():
 
 
 @pytest.mark.asyncio
-async def test_dispatch_accepts_change_changed_for_components():
+async def test_dispatch_accepts_change_changed_for_components(db):
     with patch(
         "app.services.analytics.scan_delta.compute_components_delta",
-        new=AsyncMock(return_value="components-result"),
+        new=AsyncMock(return_value=_envelope(DeltaCategory.COMPONENTS)),
     ):
         result = await compute_scan_delta_dispatch(
-            db=None,
-            project_id="p1",
+            db=db,
+            project_id=_PROJECT,
             category="components",
-            from_scan="a",
-            to_scan="b",
+            from_scan=_FROM_SCAN,
+            to_scan=_TO_SCAN,
             page=1,
             page_size=50,
             change="changed",
@@ -296,4 +312,4 @@ async def test_dispatch_accepts_change_changed_for_components():
             finding_type=None,
             allow_same_scan=False,
         )
-        assert result == "components-result"
+        assert result.category == DeltaCategory.COMPONENTS

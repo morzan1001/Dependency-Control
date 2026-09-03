@@ -11,7 +11,7 @@ from __future__ import annotations
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.finding import FindingType, Severity
-from app.schemas.scan_delta import ScanDeltaResponse
+from app.schemas.scan_delta import ScanDeltaReachability, ScanDeltaResponse
 from app.services.analytics.components_delta import compute_components_delta
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import compute_findings_delta
@@ -32,6 +32,8 @@ _VALID_CHANGES_BY_CATEGORY = {
 _MIN_PAGE = 1
 _MIN_PAGE_SIZE = 1
 _MAX_PAGE_SIZE = 200
+_REACHABILITY_PATH = "stats.reachability"
+_UNREPORTED_COUNT = 0
 
 
 def _reject_unknown(
@@ -83,6 +85,18 @@ def _validate_query(
         raise InvalidDeltaQuery(f"change={change} is not valid for category={category} (valid: {valid})")
 
 
+async def _side_reachability(db: AsyncIOMotorDatabase, scan_id: str) -> ScanDeltaReachability | None:
+    """Coverage of one side, or None when that scan reports no reachability at all."""
+    doc = await db["scans"].find_one({"_id": scan_id}, {_REACHABILITY_PATH: 1})
+    reach = ((doc or {}).get("stats") or {}).get("reachability")
+    if not reach:
+        return None
+    return ScanDeltaReachability(
+        coverable_count=reach.get("coverable_count", _UNREPORTED_COUNT),
+        analyzed_count=reach.get("analyzed_count", _UNREPORTED_COUNT),
+    )
+
+
 async def compute_scan_delta_dispatch(
     *,
     db: AsyncIOMotorDatabase,
@@ -110,7 +124,7 @@ async def compute_scan_delta_dispatch(
     )
 
     if category == "findings":
-        return await compute_findings_delta(
+        response = await compute_findings_delta(
             db,
             project_id=project_id,
             from_scan=from_scan,
@@ -121,8 +135,8 @@ async def compute_scan_delta_dispatch(
             severity=severity,
             finding_type=finding_type,
         )
-    if category == "components":
-        return await compute_components_delta(
+    elif category == "components":
+        response = await compute_components_delta(
             db,
             project_id=project_id,
             from_scan=from_scan,
@@ -131,12 +145,19 @@ async def compute_scan_delta_dispatch(
             page_size=page_size,
             change=change,
         )
-    return await compute_crypto_delta_envelope(
-        db,
-        project_id=project_id,
-        from_scan=from_scan,
-        to_scan=to_scan,
-        page=page,
-        page_size=page_size,
-        change=change,
-    )
+    else:
+        response = await compute_crypto_delta_envelope(
+            db,
+            project_id=project_id,
+            from_scan=from_scan,
+            to_scan=to_scan,
+            page=page,
+            page_size=page_size,
+            change=change,
+        )
+
+    # Every category is scored against the same reachability, so every category has to carry the
+    # label; without it a reachability-empty side reads as comparable to an enriched one.
+    response.from_reachability = await _side_reachability(db, from_scan)
+    response.to_reachability = await _side_reachability(db, to_scan)
+    return response

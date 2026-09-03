@@ -89,6 +89,16 @@ class CryptoDeltaItem(BaseModel):
 DeltaItem = FindingDeltaItem | ComponentDeltaItem | CryptoDeltaItem
 
 
+class ScanDeltaReachability(BaseModel):
+    """Reachability coverage of one side of a delta. A rescan has no callgraph, so one side can be
+    coverable-but-unanalysed while the other is enriched, and their risk scores are then not comparable."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    coverable_count: int = 0
+    analyzed_count: int = 0
+
+
 class ScanDeltaResponse(BaseModel):
     """Unified response envelope for the scan-delta endpoint."""
 
@@ -103,3 +113,6 @@ class ScanDeltaResponse(BaseModel):
     page_size: int = 50
     total_pages: int = 1
     items: list[DeltaItem] = Field(default_factory=list)
+    # None means the scan reports no reachability at all, which is distinct from zero coverage.
+    from_reachability: ScanDeltaReachability | None = None
+    to_reachability: ScanDeltaReachability | None = None

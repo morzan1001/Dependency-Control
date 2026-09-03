@@ -49,6 +49,11 @@ export interface CryptoDeltaItem {
 
 export type DeltaItem = FindingDeltaItem | ComponentDeltaItem | CryptoDeltaItem;
 
+export interface ScanDeltaReachability {
+  coverable_count: number;
+  analyzed_count: number;
+}
+
 export interface ScanDeltaResponse {
   from_scan_id: string;
   to_scan_id: string;
@@ -59,4 +64,7 @@ export interface ScanDeltaResponse {
   page_size: number;
   total_pages: number;
   items: DeltaItem[];
+  // Null means the scan reports no reachability at all, which is distinct from zero coverage.
+  from_reachability?: ScanDeltaReachability | null;
+  to_reachability?: ScanDeltaReachability | null;
 }
