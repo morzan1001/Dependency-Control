@@ -4,7 +4,7 @@ from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from typing import Any, ClassVar, cast
 
-from pymongo import ReadPreference
+from pymongo import ASCENDING, ReadPreference
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
@@ -309,16 +309,14 @@ _UNKNOWN_SEVERITY = "UNKNOWN"
 
 
 def _numeric(raw: Any) -> float | None:
-    """A real number, or None. Non-numeric values are treated as absent — an accepted divergence from the
-    pipeline for malformed input: the pipeline ranks bool and strings above all numbers (so bool scores as
-    high-EPSS but strings break sum()), while the fold rejects all non-int/float as missing."""
+    """A real number, or None. bool is rejected despite subclassing int: True would score as a perfect 1.0."""
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
         return None
     return float(raw)
 
 
 def _reach_modifier(reachable: Any, level: Any) -> float:
-    """Per-finding weight multiplier, in the branch order of the pipeline's $switch."""
+    """Per-finding weight multiplier. Unreachable is tested first, so it wins over confirmed-reachable."""
     if reachable is False:
         return UNREACHABLE_RISK_MODIFIER
     if reachable is True and level == REACHABILITY_LEVEL_SYMBOL:
@@ -403,9 +401,8 @@ class StatsAccumulator:
         epss = _numeric(details.get("epss_score"))
         in_kev = details.get(DETAILS_KEY_IN_KEV) is True
 
-        # Lookup keys on bucket (derived from severity), which coincides safely with the
-        # severity values in RISK_SEVERITY_WEIGHTS; adding a new weight key requires
-        # ensuring it is also in _BUCKETED_SEVERITIES, or the fold will diverge from the pipeline.
+        # Weights are keyed on bucket, not on raw severity: a new RISK_SEVERITY_WEIGHTS key that is
+        # not also in _BUCKETED_SEVERITIES collapses to UNKNOWN and silently contributes 0.
         self._adjusted_exposure += RISK_SEVERITY_WEIGHTS.get(bucket, 0.0) * _reach_modifier(reachable, level)
 
         if finding.get("type") == "vulnerability":
@@ -483,8 +480,8 @@ class StatsAccumulator:
             self._unreachable += 1
 
     def result(self) -> Stats:
-        # An empty or fully waived scan produced no $group row, leaving the four sub-models
-        # None; the frontend's threat-intelligence view distinguishes that from all-zero.
+        # The four sub-models stay None on an empty or fully waived scan: the frontend's
+        # threat-intelligence view distinguishes no-data from all-zero.
         if self._counted == 0:
             return Stats()
 
@@ -572,15 +569,17 @@ def _stats_projection() -> dict[str, int]:
 # failure class a differential test cannot see — a typo zeroes a counter on both sides.
 assert StatsAccumulator.REQUIRED_PATHS <= _stats_projection().keys(), "stats projection drops a required path"
 
+# scan_id + type is the only index pair immutable after insert; severity and waived are rewritten by
+# _rollup_vulnerability_waivers and _apply_waivers, so hinting either opens a skip window mid-cursor.
+_STATS_CURSOR_HINT = [("scan_id", ASCENDING), ("type", ASCENDING)]
+
 
 async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
     """Comprehensive statistics for a scan, folded from a single projected cursor."""
     acc = StatsAccumulator(await build_component_language_map(db, scan_id))
     # PRIMARY: with secondaryPreferred the read can miss findings written milliseconds earlier.
     findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-    # scan_id + type is the only index pair immutable after insert; severity and waived are
-    # rewritten by _rollup_vulnerability_waivers and _apply_waivers while the cursor runs.
-    cursor = findings_primary.find({"scan_id": scan_id}, _stats_projection(), hint=[("scan_id", 1), ("type", 1)])
+    cursor = findings_primary.find({"scan_id": scan_id}, _stats_projection(), hint=_STATS_CURSOR_HINT)
     try:
         async for doc in cursor:
             acc.add(doc)

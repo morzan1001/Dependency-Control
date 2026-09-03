@@ -1,16 +1,26 @@
 """Permanent pins for StatsAccumulator rules a differential corpus cannot express."""
 
-from unittest.mock import ANY
+import copy
+from typing import Any
 
 import pytest
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
+    EPSS_ACTIVE_EXPLOITATION_THRESHOLD,
+    EPSS_MEDIUM_THRESHOLD,
+    EPSS_VERY_HIGH_THRESHOLD,
     REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
+    REACHABILITY_LEVEL_IMPORT,
     REACHABILITY_LEVEL_SYMBOL,
 )
-from app.services.analysis.stats import _stats_projection, calculate_comprehensive_stats, compute_stats
+from app.services.analysis.stats import (
+    StatsAccumulator,
+    _stats_projection,
+    calculate_comprehensive_stats,
+    compute_stats,
+)
 from app.services.reachability_enrichment import component_language_map
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -324,4 +334,188 @@ class TestDriverReadsOneCursor:
         )
         stats = await calculate_comprehensive_stats(db, "s1")
         assert stats.reachability.coverable_count == 1
-        assert stats.reachability.analyzed_count == ANY
+        # The seeded finding carries no ``reachable`` key, so coverable is independent of analysis.
+        assert stats.reachability.analyzed_count == 0
+
+
+_ORACLE_SCAN_ID = "oracle-scan"
+_ORACLE_NPM_COMPONENT = "lodash"
+_ORACLE_PYPI_COMPONENT = "requests"
+_ORACLE_OS_COMPONENT = "openssl"
+_ORACLE_DEPENDENCIES: list[dict[str, Any]] = [
+    {"scan_id": _ORACLE_SCAN_ID, "name": _ORACLE_NPM_COMPONENT, "type": "npm"},
+    {"scan_id": _ORACLE_SCAN_ID, "name": _ORACLE_PYPI_COMPONENT, "type": "pypi"},
+    {"scan_id": _ORACLE_SCAN_ID, "name": _ORACLE_OS_COMPONENT, "type": "rpm"},
+]
+_LOW_CONFIDENCE = REACHABILITY_HIGH_CONFIDENCE_THRESHOLD / 2
+# No counter reads these; they make a projection that fails to trim distinguishable from one that does.
+_UNREAD_FIELDS: dict[str, Any] = {"finding_id": "unread", "title": "unread", "details_extra": {"nested": "unread"}}
+_EXPECTED_HIGH_CONFIDENCE = 2
+_EXPECTED_HIGH_CONFIDENCE_CRITICAL = 1
+_EXPECTED_HIGH_CONFIDENCE_HIGH = 1
+
+
+def _oracle_documents() -> list[dict[str, Any]]:
+    """One document per shape the fold branches on, so that every REQUIRED_PATH moves a counter."""
+    shapes: list[dict[str, Any]] = [
+        {
+            "_id": "o1",
+            "type": "vulnerability",
+            "severity": "CRITICAL",
+            "component": _ORACLE_NPM_COMPONENT,
+            "waived": False,
+            "reachable": True,
+            "reachability_level": REACHABILITY_LEVEL_SYMBOL,
+            "details": {
+                "epss_score": EPSS_VERY_HIGH_THRESHOLD,
+                DETAILS_KEY_IN_KEV: True,
+                DETAILS_KEY_KEV_RANSOMWARE: True,
+                "reachability": {"confidence_score": REACHABILITY_HIGH_CONFIDENCE_THRESHOLD},
+            },
+        },
+        {
+            "_id": "o2",
+            "type": "vulnerability",
+            "severity": "HIGH",
+            "component": _ORACLE_PYPI_COMPONENT,
+            "waived": False,
+            "reachable": True,
+            "reachability_level": REACHABILITY_LEVEL_IMPORT,
+            "details": {
+                "epss_score": EPSS_ACTIVE_EXPLOITATION_THRESHOLD,
+                DETAILS_KEY_IN_KEV: True,
+                DETAILS_KEY_KEV_RANSOMWARE: False,
+                "reachability": {"confidence_score": REACHABILITY_HIGH_CONFIDENCE_THRESHOLD},
+            },
+        },
+        {
+            # Reachable below the confidence bar: separates reachable_* from the *_high_confidence trio.
+            "_id": "o3",
+            "type": "vulnerability",
+            "severity": "CRITICAL",
+            "component": _ORACLE_NPM_COMPONENT,
+            "waived": False,
+            "reachable": True,
+            "reachability_level": REACHABILITY_LEVEL_SYMBOL,
+            "details": {
+                "epss_score": EPSS_MEDIUM_THRESHOLD,
+                "reachability": {"confidence_score": _LOW_CONFIDENCE},
+            },
+        },
+        {
+            "_id": "o4",
+            "type": "vulnerability",
+            "severity": "HIGH",
+            "component": _ORACLE_OS_COMPONENT,
+            "waived": False,
+            "reachable": False,
+            "reachability_level": REACHABILITY_LEVEL_SYMBOL,
+            "details": {DETAILS_KEY_IN_KEV: True},
+        },
+        {
+            # Unanalysed: no reachable key at all, so the tri-state None branch is folded.
+            "_id": "o5",
+            "type": "vulnerability",
+            "severity": "MEDIUM",
+            "component": _ORACLE_PYPI_COMPONENT,
+            "waived": False,
+            "details": {},
+        },
+        {
+            "_id": "o6",
+            "type": "vulnerability",
+            "severity": "CRITICAL",
+            "component": _ORACLE_NPM_COMPONENT,
+            "waived": True,
+            "reachable": True,
+            "reachability_level": REACHABILITY_LEVEL_SYMBOL,
+            "details": {
+                DETAILS_KEY_IN_KEV: True,
+                "reachability": {"confidence_score": REACHABILITY_HIGH_CONFIDENCE_THRESHOLD},
+            },
+        },
+        {
+            "_id": "o7",
+            "type": "secret",
+            "severity": "LOW",
+            "waived": False,
+            "details": {"verified": True, "in_current_tree": True},
+        },
+        {
+            "_id": "o8",
+            "type": "secret",
+            "severity": "NEGLIGIBLE",
+            "waived": False,
+            "details": {"verified": False, "in_current_tree": False},
+        },
+        {"_id": "o9", "type": "secret", "severity": "INFO", "waived": False, "details": {}},
+        {
+            # Unbucketed severity on a non-vulnerability type carrying reachability.
+            "_id": "o10",
+            "type": "sast",
+            "severity": "BLOCKER",
+            "waived": False,
+            "reachable": True,
+            "reachability_level": REACHABILITY_LEVEL_IMPORT,
+            "details": {},
+        },
+    ]
+    return [{**shape, **_UNREAD_FIELDS, "scan_id": _ORACLE_SCAN_ID} for shape in shapes]
+
+
+def _without_path(doc: dict[str, Any], path: str) -> dict[str, Any]:
+    """``doc`` with one dotted path removed, standing in for a projection that forgot it."""
+    stripped = copy.deepcopy(doc)
+    parent: Any = stripped
+    head, _, rest = path.partition(".")
+    while rest:
+        parent = parent.get(head)
+        if not isinstance(parent, dict):
+            return stripped
+        head, _, rest = rest.partition(".")
+    parent.pop(head, None)
+    return stripped
+
+
+async def _seeded_oracle_db() -> tuple[FakeDatabase, list[dict[str, Any]]]:
+    db = FakeDatabase()
+    for dependency in _ORACLE_DEPENDENCIES:
+        await db.dependencies.insert_one(copy.deepcopy(dependency))
+    documents = _oracle_documents()
+    for document in documents:
+        await db.findings.insert_one(copy.deepcopy(document))
+    return db, documents
+
+
+class TestProjectionOracle:
+    """The projected read and the unprojected fold must agree.
+
+    The derived-projection assertions all compare REQUIRED_PATHS against a dict built from
+    REQUIRED_PATHS; none of them can see a path the accumulator reads but the set omits.
+    """
+
+    @pytest.mark.asyncio
+    async def test_the_projected_driver_matches_the_unprojected_fold(self):
+        db, documents = await _seeded_oracle_db()
+        languages = component_language_map(_ORACLE_DEPENDENCIES)
+        projected = await calculate_comprehensive_stats(db, _ORACLE_SCAN_ID)
+        assert projected.model_dump() == compute_stats(documents, languages).model_dump()
+
+    @pytest.mark.asyncio
+    async def test_the_corpus_reaches_the_two_level_confidence_path_through_the_projection(self):
+        """Nothing else in the suite folds details.reachability.confidence_score through a projection,
+        so a zero here would leave the comparison above blind to the only nested path."""
+        db, _ = await _seeded_oracle_db()
+        reachability = (await calculate_comprehensive_stats(db, _ORACLE_SCAN_ID)).reachability
+        assert reachability.reachable_count_high_confidence == _EXPECTED_HIGH_CONFIDENCE
+        assert reachability.reachable_critical_high_confidence == _EXPECTED_HIGH_CONFIDENCE_CRITICAL
+        assert reachability.reachable_high_high_confidence == _EXPECTED_HIGH_CONFIDENCE_HIGH
+
+    @pytest.mark.parametrize("path", sorted(StatsAccumulator.REQUIRED_PATHS))
+    def test_every_required_path_moves_a_counter_in_this_corpus(self, path):
+        """Coverage guard for the comparison above: a path the corpus never exercises could be
+        dropped from the projection without the oracle noticing."""
+        documents = _oracle_documents()
+        languages = component_language_map(_ORACLE_DEPENDENCIES)
+        stripped = [_without_path(document, path) for document in documents]
+        assert compute_stats(stripped, languages).model_dump() != compute_stats(documents, languages).model_dump()
