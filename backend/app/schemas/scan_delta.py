@@ -118,7 +118,8 @@ class ScanDeltaResponse(BaseModel):
     # was scored with, so it counts every vulnerability in the scan whatever the delta asked for.
     from_reachability: ScanDeltaReachability | None = None
     to_reachability: ScanDeltaReachability | None = None
-    # Findings the waiver filter took out of each side. Waivers are re-evaluated only for the latest
-    # scan, so a waiver that lapsed since the older side makes a pre-existing finding read as added.
+    # Findings the waiver filter took out of each side, counted within the delta's own filters.
+    # Waivers are re-evaluated only for the latest scan, so a waiver that lapsed since the older
+    # side makes a pre-existing finding read as added.
     from_waived_excluded: int = 0
     to_waived_excluded: int = 0

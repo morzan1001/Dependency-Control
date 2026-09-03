@@ -26,6 +26,7 @@ _LIVE_FINDING = "f-live"
 _SHARED_FINDING = "f-shared"
 _SECOND_WAIVED_FINDING = "f-waived-2"
 _SECRET_FINDING = "f-secret"
+_LOW_FINDING = "f-low"
 _WAIVED_COMPONENT = "left-pad"
 _LIVE_COMPONENT = "right-pad"
 _SECOND_COMPONENT = "mid-pad"
@@ -174,7 +175,14 @@ async def test_a_side_with_no_waivers_reports_nothing_excluded(db):
 
 
 @pytest.mark.asyncio
-async def test_the_counts_cover_the_same_item_set_as_the_delta(db):
+@pytest.mark.parametrize(
+    "filters",
+    [
+        {"finding_type": [FindingType.SECRET.value]},
+        {"severity": [Severity.LOW.value]},
+    ],
+)
+async def test_the_counts_cover_the_same_item_set_as_the_delta(db, filters):
     """Counting outside the caller's filters would describe findings the delta never looked at."""
     await db.findings.insert_one(_finding(_WAIVED_FINDING, _FROM_SCAN, component=_WAIVED_COMPONENT, waived=True))
     await db.findings.insert_one(
@@ -186,7 +194,16 @@ async def test_the_counts_cover_the_same_item_set_as_the_delta(db):
             finding_type=FindingType.SECRET.value,
         )
     )
+    await db.findings.insert_one(
+        _finding(
+            _LOW_FINDING,
+            _FROM_SCAN,
+            component=_LIVE_COMPONENT,
+            waived=True,
+            severity=Severity.LOW.value,
+        )
+    )
 
-    result = await _delta(db, finding_type=[FindingType.SECRET.value])
+    result = await _delta(db, **filters)
 
     assert result.from_waived_excluded == _ONE
