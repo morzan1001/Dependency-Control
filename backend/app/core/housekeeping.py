@@ -230,7 +230,10 @@ async def _create_rescan_for_project(
             logger.debug(f"Project {project.name} already has an active rescan of {source_scan_id}")
             return
 
-        logger.info(f"Triggering re-scan for project {project.name} (Last scan: {project.last_scan_at})")
+        logger.info(
+            f"Triggering re-scan for project {project.name} from source scan {source_scan_id} "
+            f"(rescan clock: {source_scan.get('last_rescanned_at') or source_scan.get('created_at')})"
+        )
         new_scan = _build_rescan(project, source_scan)
 
         await db.scans.insert_one(new_scan.model_dump(by_alias=True))
@@ -262,7 +265,8 @@ async def _process_project_rescan(
         sort=[("created_at", -1)],
     )
     if not latest_valid_scan:
-        logger.info(f"Project {project.name} has no valid previous scan with SBOMs; nothing to re-scan.")
+        # Fires on every main-loop pass for such a project, so it must not be info.
+        logger.debug(f"Project {project.name} has no valid previous scan with SBOMs; nothing to re-scan.")
         return
 
     if not _is_rescan_due(latest_valid_scan, interval_hours):

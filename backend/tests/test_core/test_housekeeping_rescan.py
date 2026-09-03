@@ -600,6 +600,7 @@ class TestRescanClockIsIndependentOfCiTraffic:
         await _process_project_rescan(_project_doc(last_scan_at=_NOW), _system_settings(), db, worker)
 
         assert [r["original_scan_id"] for r in await _rescans(db)] == [_SOURCE_SCAN_ID]
+        worker.add_job.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_a_freshly_rescanned_source_is_skipped_even_when_it_is_ancient(
