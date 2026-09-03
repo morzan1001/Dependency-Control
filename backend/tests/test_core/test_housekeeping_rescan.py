@@ -72,6 +72,7 @@ _ZERO_INTERVAL_HOURS = 0
 _NEGATIVE_INTERVAL_HOURS = -1
 
 _LOCK_TTL_SECONDS = 60
+_EXPIRED_LOCK_TTL_SECONDS = -_LOCK_TTL_SECONDS
 _RESCAN_LOCK_PREFIX = "rescan_create:"
 _FOREIGN_LOCK_HOLDER = "another-pod"
 _FAILURE_MESSAGE = "kaboom"
@@ -149,6 +150,13 @@ async def _seed_system_settings(db: FakeDatabase, **overrides: Any) -> None:
     document = _system_settings(**overrides).model_dump(by_alias=True)
     document["_id"] = SystemSettingsRepository.SETTINGS_ID
     await db.system_settings.insert_one(document)
+
+
+async def _seed_expired_lock(db: FakeDatabase) -> DistributedLocksRepository:
+    """A stale entry under the project's lock name: only a take-over of that exact name clears it."""
+    locks = DistributedLocksRepository(db)
+    await locks.acquire_lock(_lock_name(_PROJECT_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_EXPIRED_LOCK_TTL_SECONDS)
+    return locks
 
 
 async def _rescans(db: FakeDatabase) -> list[dict[str, Any]]:
@@ -324,10 +332,11 @@ class TestCreateRescanForProject:
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
         source = await _seed_scan(db)
+        locks = await _seed_expired_lock(db)
 
         await _create_rescan_for_project(_project(), source, db, worker)
 
-        assert await DistributedLocksRepository(db).is_locked(_lock_name(_PROJECT_ID)) is False
+        assert await locks.get_lock_info(_lock_name(_PROJECT_ID)) is None
 
     @pytest.mark.asyncio
     async def test_the_lock_is_released_when_an_active_scan_aborts_the_creation(
@@ -335,10 +344,11 @@ class TestCreateRescanForProject:
     ) -> None:
         source = await _seed_scan(db)
         await _seed_scan(db, _ACTIVE_SCAN_ID, status=SCAN_STATUS_PROCESSING, created_at=_NOW)
+        locks = await _seed_expired_lock(db)
 
         await _create_rescan_for_project(_project(), source, db, worker)
 
-        assert await DistributedLocksRepository(db).is_locked(_lock_name(_PROJECT_ID)) is False
+        assert await locks.get_lock_info(_lock_name(_PROJECT_ID)) is None
 
     @pytest.mark.asyncio
     async def test_an_active_scan_on_any_branch_of_the_project_stops_the_creation(

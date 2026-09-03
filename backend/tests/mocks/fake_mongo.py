@@ -28,6 +28,8 @@ Server-side behaviour that tests rely on
   brackets to its bound's type and skips the other types outright.
 - ``$group`` drops a grouping key the document does not carry rather than
   binding it to null.
+- ``$ne`` against an array compares the array as a whole as well as element by
+  element, so ``$ne: []`` excludes the empty array.
 - Only false, null and zero are false to ``$cond``/``$switch``; ``""`` and
   ``[]`` are true.
 
