@@ -45,12 +45,18 @@ _OTHER_VERSION = "v3.0.0"
 _BRANCH = "main"
 _INVALID_ENVIRONMENT = "Prod.EU"
 
+_PAST = _NOW - timedelta(days=1)
+# BSON has no offsets, so an aware datetime reads back as naive UTC.
+_PAST_NAIVE = _PAST.replace(tzinfo=None)
+
 _NO_RECORDS = 0
 _ONE_RECORD = 1
 _TWO_RECORDS = 2
 _THREE_RECORDS = 3
 _FIRST_PAGE = 1
+_SECOND_PAGE = 2
 _DEFAULT_PAGE_SIZE = 20
+_MAX_PAGE_SIZE = 100
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -126,10 +132,9 @@ async def _unmark(client, headers, scan_id, environment=None):
 
 
 @pytest.mark.asyncio
-async def test_mark_resolves_the_commit_to_its_newest_usable_scan(client, db, api_key_headers):
+async def test_mark_resolves_the_commit_to_its_newest_build_scan(client, db, api_key_headers):
     await _seed_scan(db, "older", created_delta=-2, commit_tag=_VERSION)
     await _seed_scan(db, "newest", created_delta=0, commit_tag=_VERSION)
-    await _seed_scan(db, "queued", created_delta=3, status=SCAN_STATUS_PENDING)
 
     resp = await _mark(client, api_key_headers, commit_hash=_COMMIT)
 
@@ -157,13 +162,43 @@ async def test_mark_of_an_unknown_commit_is_404_naming_it(client, db, api_key_he
 
 
 @pytest.mark.asyncio
-async def test_mark_ignores_a_commit_whose_only_scan_is_unusable(client, db, api_key_headers):
-    await _seed_scan(db, "still-running", status=SCAN_STATUS_PROCESSING)
+async def test_mark_accepts_a_scan_that_has_not_finished_analysing(client, db, api_key_headers):
+    """A deploy can precede the analysis; the mark states where the artefact runs, not what we know."""
+    await _seed_scan(db, "analysed", created_delta=-1)
+    await _seed_scan(db, "deploying", status=SCAN_STATUS_PENDING)
 
     resp = await _mark(client, api_key_headers, commit_hash=_COMMIT)
 
-    assert resp.status_code == 404
-    assert await db.releases.count_documents({}) == _NO_RECORDS
+    assert resp.status_code == 201, resp.text
+    body = resp.json()
+    assert body["scan_id"] == "deploying"
+    assert body["scan_status"] == SCAN_STATUS_PENDING
+    assert body["analysis_scan_id"] is None
+    # The resolver still refuses to report a number for it, which is the point of the split.
+    assert await latest_release_scan(db, _PROJECT, DEFAULT_RELEASE_ENVIRONMENT) is None
+
+
+@pytest.mark.asyncio
+async def test_re_marking_an_already_rescanned_commit_keeps_one_record(client, db, api_key_headers):
+    """A re-scan copies the commit with a fresh created_at, so without excluding re-scans a CD retry
+    would resolve to a different scan and open a second record for the same deployment."""
+    await _seed_scan(db, "build-1")
+    assert (await _mark(client, api_key_headers, commit_hash=_COMMIT)).status_code == 201
+
+    await _seed_scan(db, "rescan-1", created_delta=1, is_rescan=True, original_scan_id="build-1")
+    await db.scans.update_one({"_id": "build-1"}, {"$set": {"latest_rescan_id": "rescan-1"}})
+
+    redeploy = await _mark(client, api_key_headers, commit_hash=_COMMIT)
+
+    assert redeploy.status_code == 201, redeploy.text
+    assert redeploy.json()["scan_id"] == "build-1"
+    records = await db.releases.find({"project_id": _PROJECT}).to_list(None)
+    assert len(records) == _ONE_RECORD
+    assert records[0]["scan_id"] == "build-1"
+    rescan = await db.scans.find_one({"_id": "rescan-1"})
+    assert rescan.get("is_release", False) is False
+    # Naming the build scan keeps the chain walkable: latest_rescan_id lives on build-1, not rescan-1.
+    assert redeploy.json()["analysis_scan_id"] == "rescan-1"
 
 
 @pytest.mark.asyncio
@@ -222,6 +257,28 @@ async def test_re_marking_an_older_scan_rolls_the_environment_back(client, db, a
     assert rollback.status_code == 201, rollback.text
     assert await latest_release_scan(db, _PROJECT, _STAGING) == "first"
     assert await db.releases.count_documents({"environment": _STAGING}) == _TWO_RECORDS
+
+
+@pytest.mark.asyncio
+async def test_a_supplied_released_at_drives_the_ordering(client, db, api_key_headers):
+    """A CD job may report its own deploy time; released_at is what rollback ordering reads."""
+    await _seed_scan(db, "current", commit=_COMMIT)
+    await _seed_scan(db, "backfilled", commit=_OTHER_COMMIT, created_delta=1)
+
+    await _mark(client, api_key_headers, commit_hash=_COMMIT, environment=_STAGING)
+    late = await _mark(
+        client,
+        api_key_headers,
+        commit_hash=_OTHER_COMMIT,
+        environment=_STAGING,
+        released_at=_PAST.isoformat(),
+    )
+
+    assert late.status_code == 201, late.text
+    row = await db.releases.find_one({"scan_id": "backfilled"})
+    assert row["released_at"] == _PAST_NAIVE
+    # Recorded in the past, so it does not take the environment over from the live release.
+    assert await latest_release_scan(db, _PROJECT, _STAGING) == "current"
 
 
 @pytest.mark.asyncio
@@ -387,6 +444,73 @@ async def test_a_release_still_being_analysed_is_listed_and_named(client, db, me
 
 
 @pytest.mark.asyncio
+async def test_a_release_whose_scan_was_pruned_still_lists(client, db, member_auth_headers):
+    """Retention deletes scans without cascading to releases, so an orphan row is a steady state."""
+    await ReleaseRepository(db).record(
+        Release(
+            project_id=_PROJECT,
+            environment=DEFAULT_RELEASE_ENVIRONMENT,
+            version=_VERSION,
+            scan_id="pruned",
+            released_at=_NOW,
+        )
+    )
+
+    resp = await client.get(f"/api/v1/projects/{_PROJECT}/releases", headers=member_auth_headers)
+
+    assert resp.status_code == 200, resp.text
+    item = resp.json()["items"][0]
+    assert item["scan_id"] == "pruned"
+    assert item["version"] == _VERSION
+    # A null scan_status is what separates "scan pruned" from "still analysing".
+    assert item["scan_status"] is None
+    assert item["commit_hash"] is None
+    assert item["branch"] is None
+    assert item["analysis_scan_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_list_pages_through_the_records(client, db, member_auth_headers, api_key_headers):
+    await _seed_scan(db, "rel")
+    for hours, environment in enumerate((DEFAULT_RELEASE_ENVIRONMENT, _STAGING, _CANARY)):
+        await _mark(
+            client,
+            api_key_headers,
+            commit_hash=_COMMIT,
+            environment=environment,
+            released_at=(_NOW + timedelta(hours=hours)).isoformat(),
+        )
+
+    resp = await client.get(
+        f"/api/v1/projects/{_PROJECT}/releases",
+        headers=member_auth_headers,
+        params={"skip": _ONE_RECORD, "limit": _ONE_RECORD},
+    )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["total"] == _THREE_RECORDS
+    assert len(body["items"]) == _ONE_RECORD
+    assert body["page"] == _SECOND_PAGE
+    assert body["size"] == _ONE_RECORD
+    # skip lands on the second-newest, which is the staging mark.
+    assert body["items"][0]["environment"] == _STAGING
+
+
+@pytest.mark.asyncio
+async def test_list_rejects_out_of_range_pagination(client, db, member_auth_headers):
+    async def _get(params):
+        return await client.get(
+            f"/api/v1/projects/{_PROJECT}/releases", headers=member_auth_headers, params=params
+        )
+
+    assert (await _get({"limit": _MAX_PAGE_SIZE + 1})).status_code == 422
+    assert (await _get({"limit": 0})).status_code == 422
+    assert (await _get({"skip": -1})).status_code == 422
+    assert (await _get({"limit": _MAX_PAGE_SIZE})).status_code == 200
+
+
+@pytest.mark.asyncio
 async def test_list_of_a_project_without_releases_is_empty(client, db, member_auth_headers):
     await _seed_scan(db, "plain")
 
@@ -403,11 +527,10 @@ async def test_list_of_a_project_without_releases_is_empty(client, db, member_au
 
 @pytest.mark.asyncio
 async def test_a_rescan_of_the_released_scan_becomes_its_analysis(client, db, member_auth_headers, api_key_headers):
-    await _seed_scan(db, "released")
-    assert (await _mark(client, api_key_headers, commit_hash=_COMMIT)).status_code == 201
-
+    await _seed_scan(db, "released", latest_rescan_id="rescan")
     await _seed_scan(db, "rescan", created_delta=5, is_rescan=True, original_scan_id="released")
-    await db.scans.update_one({"_id": "released"}, {"$set": {"latest_rescan_id": "rescan"}})
+
+    assert (await _mark(client, api_key_headers, commit_hash=_COMMIT)).status_code == 201
 
     resp = await client.get(f"/api/v1/projects/{_PROJECT}/releases", headers=member_auth_headers)
 

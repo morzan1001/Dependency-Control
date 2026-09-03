@@ -13,12 +13,7 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_409
 from app.core import ensure_utc
-from app.core.constants import (
-    DEFAULT_RELEASE_ENVIRONMENT,
-    PROJECT_ROLE_VIEWER,
-    RELEASE_ENVIRONMENT_PATTERN,
-    SCAN_USABLE_STATUSES,
-)
+from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, PROJECT_ROLE_VIEWER, RELEASE_ENVIRONMENT_PATTERN
 from app.models.release import Release
 from app.repositories import ReleaseRepository
 from app.schemas.release import ReleaseItem, ReleaseListResponse, ReleaseMarkRequest, ReleaseUnmarkResponse
@@ -72,21 +67,24 @@ async def mark_release(
     payload: ReleaseMarkRequest,
     db: DatabaseDep,
 ) -> ReleaseItem:
-    """Mark the newest usable scan of a commit as running in an environment.
+    """Mark the newest build scan of a commit as running in an environment.
 
-    The CD stage knows the commit it deployed, not our scan id. Re-marking is the rollback path:
-    the older scan's own record wins on a fresher released_at.
+    The CD stage knows the commit it deployed, not our scan id, and may deploy before analysis
+    finishes — a mark states where an artefact runs, not what we know about it. Re-scans are excluded
+    because they copy the commit verbatim with a fresh created_at, so re-marking an already-rescanned
+    commit would otherwise resolve to a different scan and open a second record for one deployment.
+    Re-marking is the rollback path: the older scan's own record wins on a fresher released_at.
     """
     scan = await db.scans.find_one(
         {
             "project_id": project_id,
             "commit_hash": payload.commit_hash,
-            "status": {"$in": SCAN_USABLE_STATUSES},
+            "is_rescan": {"$ne": True},
         },
         sort=[("created_at", pymongo.DESCENDING)],
     )
     if not scan:
-        raise HTTPException(status_code=404, detail=f"No analysed scan found for commit {payload.commit_hash}")
+        raise HTTPException(status_code=404, detail=f"No scan found for commit {payload.commit_hash}")
 
     scan_id = str(scan["_id"])
     environment = payload.environment or DEFAULT_RELEASE_ENVIRONMENT
@@ -133,9 +131,9 @@ async def unmark_release(
 
     scan_key = {"project_id": project_id, "scan_id": scan_id}
     remaining: list[str] = sorted(await db.releases.distinct("environment", scan_key))
-    # is_release denormalises "this scan has a release record", so it is recomputed rather than
-    # cleared: a scan still running elsewhere keeps its badge, its retention exemption and its
-    # rescan targeting. Ingest never demotes; this is the only path that does.
+    # is_release denormalises "this scan has a release record" for the scans_released_list partial
+    # index, so it is recomputed rather than cleared: a scan still released to another environment
+    # has to stay indexed. Ingest never demotes; this is the only path that does.
     if not remaining:
         await db.scans.update_one({"_id": scan_id, "project_id": project_id}, {"$set": {"is_release": False}})
 
