@@ -1,7 +1,8 @@
 """Statistics calculation for SBOM analysis (EPSS/KEV and reachability)."""
 
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any, ClassVar, cast
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
@@ -302,6 +303,76 @@ _REACHABILITY_ANALYZED: dict[str, Any] = {"$ne": ["$reachable", None]}
 
 # Severities with a dedicated bucket; anything else is counted as unknown so buckets always sum to total.
 _BUCKETED_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO")
+
+_UNKNOWN_SEVERITY = "UNKNOWN"
+
+
+def _numeric(raw: Any) -> float | None:
+    """A real number, or None for everything else.
+
+    bool is rejected on purpose: Mongo ranks bool above every number, so the replaced
+    pipeline scored ``epss_score=False`` as a >10% exploitation probability.
+    """
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    return float(raw)
+
+
+class StatsAccumulator:
+    """Every counting rule behind ``Stats``, folded over a stream of findings."""
+
+    REQUIRED_PATHS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "waived",
+            "severity",
+            "type",
+        }
+    )
+
+    def __init__(self, component_languages: Mapping[str, frozenset[str]]) -> None:
+        self._component_languages = component_languages
+        self._counted = 0
+        self._severity: dict[str, int] = {sev: 0 for sev in (*_BUCKETED_SEVERITIES, _UNKNOWN_SEVERITY)}
+
+    def add(self, finding: Mapping[str, Any]) -> None:
+        if finding.get("waived") is True:
+            return
+        self._counted += 1
+
+        severity = finding.get("severity")
+        bucket = severity if severity in _BUCKETED_SEVERITIES else _UNKNOWN_SEVERITY
+        self._severity[bucket] += 1
+
+    def result(self) -> Stats:
+        # An empty or fully waived scan produced no $group row, leaving the four sub-models
+        # None; the frontend's threat-intelligence view distinguishes that from all-zero.
+        if self._counted == 0:
+            return Stats()
+
+        critical = self._severity["CRITICAL"]
+        high = self._severity["HIGH"]
+        medium = self._severity["MEDIUM"]
+        low = self._severity["LOW"]
+        return Stats(
+            critical=critical,
+            high=high,
+            medium=medium,
+            low=low,
+            negligible=self._severity["NEGLIGIBLE"],
+            info=self._severity["INFO"],
+            unknown=self._severity[_UNKNOWN_SEVERITY],
+            risk_score=saturating_risk_score(severity_exposure(critical, high, medium, low)),
+        )
+
+
+def compute_stats(
+    findings: Iterable[Mapping[str, Any]],
+    component_languages: Mapping[str, frozenset[str]],
+) -> Stats:
+    acc = StatsAccumulator(component_languages)
+    for finding in findings:
+        acc.add(finding)
+    return acc.result()
 
 
 async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
