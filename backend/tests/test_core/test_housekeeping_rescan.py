@@ -667,6 +667,23 @@ class TestReleaseRescanTargets:
         assert worker.add_job.await_count == 1
 
     @pytest.mark.asyncio
+    async def test_a_scan_released_to_two_environments_is_a_single_target(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        await _seed_scan(db, _SOURCE_SCAN_ID, created_at=_NOW - _RECENT)
+        await _seed_scan(db, _RELEASED_SCAN_ID, created_at=_NOW - _OLDER)
+        await _seed_release(db, _PRODUCTION_ENVIRONMENT, _RELEASED_SCAN_ID)
+        await _seed_release(db, _STAGING_ENVIRONMENT, _RELEASED_SCAN_ID)
+
+        targets = await _rescan_targets(_project(), db)
+        await _process_project_rescan(_project_doc(), _system_settings(), db, worker)
+
+        # The in-lock guard would swallow the second environment, so the de-duplication is pinned here.
+        assert [t["_id"] for t in targets] == [_SOURCE_SCAN_ID, _RELEASED_SCAN_ID]
+        assert [r["original_scan_id"] for r in await _rescans(db)] == [_SOURCE_SCAN_ID, _RELEASED_SCAN_ID]
+        assert worker.add_job.await_count == 2
+
+    @pytest.mark.asyncio
     async def test_a_marked_scan_carrying_no_sboms_is_not_a_target(
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
@@ -714,8 +731,9 @@ class TestReleaseRescanTargets:
 
         created = [r for r in await _rescans(db) if r["_id"] != _PREVIOUS_RESCAN_ID]
         assert {r["original_scan_id"] for r in created} == {_PREVIOUS_RESCAN_ID, _RELEASED_SCAN_ID}
+        rescan_of_marked = next(r for r in created if r["original_scan_id"] == _RELEASED_SCAN_ID)
         marked = await db.scans.find_one({"_id": _RELEASED_SCAN_ID})
-        assert marked["latest_rescan_id"] not in (_PREVIOUS_RESCAN_ID, None), "the chain stays one link deep"
+        assert marked["latest_rescan_id"] == rescan_of_marked["_id"], "the chain stays one link deep"
 
 
 class TestRescanClockIsIndependentOfCiTraffic:
