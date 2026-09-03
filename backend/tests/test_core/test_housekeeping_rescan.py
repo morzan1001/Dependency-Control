@@ -234,6 +234,14 @@ class TestIsRescanDue:
     def test_due_once_the_interval_has_elapsed_since_the_source_was_created(self) -> None:
         assert _is_rescan_due(_scan_doc(created_at=_NOW - _PAST_INTERVAL), _DEFAULT_INTERVAL_HOURS) is True
 
+    # Every scan persisted through the model carries this key with a null value, so a
+    # never-rescanned source reaches the fallback with the key present, not absent.
+    def test_due_when_the_rescan_clock_is_present_but_null_and_the_source_is_old(self) -> None:
+        source = _scan_doc(created_at=_NOW - _PAST_INTERVAL, last_rescanned_at=None)
+
+        assert "last_rescanned_at" in source
+        assert _is_rescan_due(source, _DEFAULT_INTERVAL_HOURS) is True
+
     def test_not_due_while_the_interval_is_still_running(self) -> None:
         assert _is_rescan_due(_scan_doc(created_at=_NOW - _WITHIN_INTERVAL), _DEFAULT_INTERVAL_HOURS) is False
 
