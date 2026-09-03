@@ -5,18 +5,36 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, SCAN_USABLE_STATUSES
 from app.repositories import ProjectRepository, ScanRepository
 
-_EFFECTIVE_SCAN_PROJECTION = {"_id": 1, "latest_rescan_id": 1}
+_RELEASED_SCAN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1}
+_SCAN_ID_ONLY_PROJECTION = {"_id": 1}
 
 
 async def _effective_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Iterable[str]) -> dict[str, str]:
-    """A rescan re-analyses the released artefact against newer intelligence while the release keeps
-    pointing at the original, so the freshest answer for a released scan is its latest rescan.
-    A scan that retention has already deleted is absent from the result rather than a dangling id."""
-    cursor = db.scans.find({"_id": {"$in": list(scan_ids)}}, _EFFECTIVE_SCAN_PROJECTION)
-    return {doc["_id"]: doc.get("latest_rescan_id") or doc["_id"] async for doc in cursor}
+    """The freshest scan of the released artefact whose analysis can be read: its latest rescan when
+    that rescan is usable, else the released scan itself when it is. latest_rescan_id is written when
+    the rescan is created, so following it unconditionally would report a running rescan's empty
+    stats as zero findings in the environment. A scan with no usable analysis at all, and one that
+    retention has already deleted, are both absent from the result rather than a misleading id."""
+    released = {
+        doc["_id"]: doc async for doc in db.scans.find({"_id": {"$in": list(scan_ids)}}, _RELEASED_SCAN_PROJECTION)
+    }
+    rescan_ids = {doc["latest_rescan_id"] for doc in released.values() if doc.get("latest_rescan_id")}
+    usable_rescans: set[str] = set()
+    if rescan_ids:
+        usable = {"_id": {"$in": list(rescan_ids)}, "status": {"$in": SCAN_USABLE_STATUSES}}
+        usable_rescans = {doc["_id"] async for doc in db.scans.find(usable, _SCAN_ID_ONLY_PROJECTION)}
+
+    effective: dict[str, str] = {}
+    for scan_id, doc in released.items():
+        rescan_id = doc.get("latest_rescan_id")
+        if rescan_id in usable_rescans:
+            effective[scan_id] = rescan_id
+        elif doc.get("status") in SCAN_USABLE_STATUSES:
+            effective[scan_id] = scan_id
+    return effective
 
 
 async def latest_release_scan(db: AsyncIOMotorDatabase, project_id: str, environment: str) -> str | None:

@@ -62,6 +62,8 @@ def _lose_the_insert_race(db: FakeDatabase) -> None:
 
 @pytest.mark.asyncio
 async def test_a_lost_insert_race_updates_the_row_the_winner_wrote(db):
+    """The in-process collection is single-threaded and its upsert filter is the unique key, so a real
+    race cannot happen here: the conflict is injected, and what is proven is the handler, not the race."""
     _lose_the_insert_race(db)
 
     await ReleaseRepository(db).record(
