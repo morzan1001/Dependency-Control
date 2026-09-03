@@ -195,6 +195,8 @@ def _build_rescan(project: Project, source_scan: dict) -> Scan:
         commit_message=source_scan.get("commit_message"),
         commit_tag=source_scan.get("commit_tag"),
         sbom_refs=source_scan.get("sbom_refs", []),
+        # Drives the analysis engine's analyzer selection, so the rescan must run under it too.
+        scan_type=source_scan.get("scan_type"),
         status="pending",
         created_at=datetime.now(timezone.utc),
         is_rescan=True,

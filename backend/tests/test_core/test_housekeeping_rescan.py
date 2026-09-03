@@ -322,8 +322,11 @@ class TestBuildRescan:
     def test_the_release_flag_is_not_inherited(self) -> None:
         assert _build_rescan(_project(), _scan_doc(is_release=True)).is_release is False
 
-    def test_the_cbom_scan_type_is_not_inherited(self) -> None:
-        assert _build_rescan(_project(), _scan_doc(scan_type=_CBOM_SCAN_TYPE)).scan_type is None
+    def test_the_cbom_scan_type_is_carried_so_the_rescan_selects_the_same_analyzers(self) -> None:
+        assert _build_rescan(_project(), _scan_doc(scan_type=_CBOM_SCAN_TYPE)).scan_type == _CBOM_SCAN_TYPE
+
+    def test_a_source_carrying_no_scan_type_produces_a_rescan_without_one(self) -> None:
+        assert _build_rescan(_project(), _scan_doc()).scan_type is None
 
     def test_the_pipeline_user_is_not_inherited(self) -> None:
         assert _build_rescan(_project(), _scan_doc(pipeline_user=_PIPELINE_USER)).pipeline_user is None

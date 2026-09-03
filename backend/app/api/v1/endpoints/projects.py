@@ -790,6 +790,8 @@ async def trigger_rescan(
         commit_message=scan.get("commit_message"),
         commit_tag=scan.get("commit_tag"),
         sbom_refs=scan.get("sbom_refs", []),
+        # Drives the analysis engine's analyzer selection, so the rescan must run under it too.
+        scan_type=scan.get("scan_type"),
         status="pending",
         created_at=datetime.now(timezone.utc),
         is_rescan=True,
