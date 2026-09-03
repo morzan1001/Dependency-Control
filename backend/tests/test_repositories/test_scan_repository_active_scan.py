@@ -136,9 +136,9 @@ class TestGetLatestActiveScanIds:
         result = asyncio.run(repo.get_latest_active_scan_ids([p]))
 
         assert result == {"p3": "found-by-query"}
-        # No deleted branches -> no branch filter, or the $nin: [] would match nothing useful.
+        # Mirrors get_latest_active_scan: no branch filter when no deleted branches.
         match = coll.aggregate.call_args.args[0][0]["$match"]["$or"][0]
-        assert match == {"project_id": "p3", "status": {"$in": ["completed", "completed_with_errors"]}}
+        assert match == {"project_id": {"$in": ["p3"]}, "status": {"$in": ["completed", "completed_with_errors"]}}
 
     def test_omits_a_project_with_neither_pointer_nor_usable_scan(self):
         coll = create_mock_collection(aggregate=[])
@@ -150,6 +150,48 @@ class TestGetLatestActiveScanIds:
         p.latest_scan_id = None
 
         assert asyncio.run(repo.get_latest_active_scan_ids([p])) == {}
+
+    def test_collapses_multiple_pointer_less_projects_into_one_query(self):
+        coll = create_mock_collection(aggregate=[{"_id": "p5", "scan_id": "scan-a"}, {"_id": "p6", "scan_id": "scan-b"}])
+        repo = ScanRepository(create_mock_db({"scans": coll}))
+
+        p5 = MagicMock(id="p5", deleted_branches=[], latest_scan_id=None)
+        p6 = MagicMock(id="p6", deleted_branches=[], latest_scan_id=None)
+
+        result = asyncio.run(repo.get_latest_active_scan_ids([p5, p6]))
+
+        assert result == {"p5": "scan-a", "p6": "scan-b"}
+        assert coll.aggregate.call_count == 1
+        match = coll.aggregate.call_args.args[0][0]["$match"]["$or"][0]
+        assert match == {"project_id": {"$in": ["p5", "p6"]}, "status": {"$in": ["completed", "completed_with_errors"]}}
+
+    def test_resolves_pointer_less_project_with_deleted_branches_separately(self):
+        coll = create_mock_collection(aggregate=[{"_id": "p7", "scan_id": "active-scan"}])
+        repo = ScanRepository(create_mock_db({"scans": coll}))
+
+        p = MagicMock(id="p7", deleted_branches=["dead"], latest_scan_id=None)
+
+        result = asyncio.run(repo.get_latest_active_scan_ids([p]))
+
+        assert result == {"p7": "active-scan"}
+        pipeline = coll.aggregate.call_args.args[0]
+        match_or = pipeline[0]["$match"]["$or"][0]
+        assert match_or == {"project_id": "p7", "branch": {"$nin": ["dead"]}, "status": {"$in": ["completed", "completed_with_errors"]}}
+
+    def test_skips_projects_with_falsy_id(self):
+        coll = create_mock_collection(aggregate=[])
+        repo = ScanRepository(create_mock_db({"scans": coll}))
+
+        p = MagicMock()
+        p.id = None
+        p._id = None
+        p.deleted_branches = []
+        p.latest_scan_id = None
+
+        result = asyncio.run(repo.get_latest_active_scan_ids([p]))
+
+        assert result == {}
+        coll.aggregate.assert_not_called()
 
     def test_mixed_projects(self):
         coll = create_mock_collection(aggregate=[{"_id": "p_deleted", "scan_id": "active-scan"}])

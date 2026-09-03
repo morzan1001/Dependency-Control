@@ -175,28 +175,33 @@ class ScanRepository:
         return Scan(**data) if data else None
 
     async def get_latest_active_scan_ids(self, projects: list[Any]) -> dict[str, str]:
-        """Maps project_id -> latest active scan_id: the stored latest_scan_id when it is set and the project has no deleted branches, else the most recent completed scan on a non-deleted branch; projects resolving to no scan are omitted. Each project may be a model or dict exposing id, deleted_branches, latest_scan_id."""
+        """Maps project_id -> latest active scan_id: the stored latest_scan_id when it is set
+        and the project has no deleted branches, else the most recent completed scan on a
+        non-deleted branch; projects resolving to no scan are omitted."""
         result: dict[str, str] = {}
-        needing: list[tuple] = []
+        needing_no_deleted: list[str] = []
+        needing_with_deleted: list[tuple[str, list[str]]] = []
         for p in projects:
             pid, deleted = _project_id_and_deleted(p)
             latest_scan_id = p.get("latest_scan_id") if isinstance(p, dict) else getattr(p, "latest_scan_id", None)
             if not pid:
                 continue
             if deleted or not latest_scan_id:
-                needing.append((pid, deleted))
+                if deleted:
+                    needing_with_deleted.append((pid, deleted))
+                else:
+                    needing_no_deleted.append(pid)
             else:
                 result[pid] = latest_scan_id
 
-        if not needing:
+        if not needing_no_deleted and not needing_with_deleted:
             return result
 
         or_conditions: list[dict[str, Any]] = []
-        for pid, deleted in needing:
-            condition: dict[str, Any] = {"project_id": pid, "status": {"$in": SCAN_USABLE_STATUSES}}
-            if deleted:
-                condition["branch"] = {"$nin": deleted}
-            or_conditions.append(condition)
+        if needing_no_deleted:
+            or_conditions.append({"project_id": {"$in": needing_no_deleted}, "status": {"$in": SCAN_USABLE_STATUSES}})
+        for pid, deleted in needing_with_deleted:
+            or_conditions.append({"project_id": pid, "branch": {"$nin": deleted}, "status": {"$in": SCAN_USABLE_STATUSES}})
 
         pipeline: list[dict[str, Any]] = [
             {"$match": {"$or": or_conditions}},
