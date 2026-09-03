@@ -124,12 +124,28 @@ class TestGetLatestActiveScanIds:
         assert pipeline[1]["$sort"] == {"created_at": -1}
         assert pipeline[2]["$group"] == {"_id": "$project_id", "scan_id": {"$first": "$_id"}}
 
-    def test_skips_projects_without_latest_scan_id(self):
-        coll = create_mock_collection()
+    def test_resolves_projects_without_latest_scan_id_by_query(self):
+        coll = create_mock_collection(aggregate=[{"_id": "p3", "scan_id": "found-by-query"}])
         repo = ScanRepository(create_mock_db({"scans": coll}))
 
         p = MagicMock()
         p.id = "p3"
+        p.deleted_branches = []
+        p.latest_scan_id = None
+
+        result = asyncio.run(repo.get_latest_active_scan_ids([p]))
+
+        assert result == {"p3": "found-by-query"}
+        # No deleted branches -> no branch filter, or the $nin: [] would match nothing useful.
+        match = coll.aggregate.call_args.args[0][0]["$match"]["$or"][0]
+        assert match == {"project_id": "p3", "status": {"$in": ["completed", "completed_with_errors"]}}
+
+    def test_omits_a_project_with_neither_pointer_nor_usable_scan(self):
+        coll = create_mock_collection(aggregate=[])
+        repo = ScanRepository(create_mock_db({"scans": coll}))
+
+        p = MagicMock()
+        p.id = "p4"
         p.deleted_branches = []
         p.latest_scan_id = None
 
