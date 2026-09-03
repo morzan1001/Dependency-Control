@@ -10,7 +10,7 @@ from tests.mocks.fake_mongo import FakeDatabase
 
 _SCANS = "scans"
 _RELEASES = "releases"
-_SCANS_INDEX_NAME = "scans_release_lookup"
+_SCANS_INDEX_NAME = "scans_released_list"
 _RELEASES_INDEX_NAME = "releases_latest_lookup"
 _RELEASED_SCANS_ONLY = {"is_release": True}
 _EXPECTED_MATCHES = 1
@@ -30,7 +30,7 @@ def _named(calls: list, name: str) -> list:
 
 def test_released_scans_filter_index_is_partial_and_ordered():
     calls = _named(_create_index_calls(_SCANS), _SCANS_INDEX_NAME)
-    assert len(calls) == _EXPECTED_MATCHES, "exactly one scans_release_lookup index expected"
+    assert len(calls) == _EXPECTED_MATCHES, f"exactly one {_SCANS_INDEX_NAME} index expected"
     assert calls[0].args[0] == [
         ("project_id", pymongo.ASCENDING),
         ("is_release", pymongo.ASCENDING),
@@ -41,7 +41,7 @@ def test_released_scans_filter_index_is_partial_and_ordered():
 
 def test_latest_release_per_environment_is_indexed():
     calls = _named(_create_index_calls(_RELEASES), _RELEASES_INDEX_NAME)
-    assert len(calls) == _EXPECTED_MATCHES, "exactly one releases_latest_lookup index expected"
+    assert len(calls) == _EXPECTED_MATCHES, f"exactly one {_RELEASES_INDEX_NAME} index expected"
     assert calls[0].args[0] == [
         ("project_id", pymongo.ASCENDING),
         ("environment", pymongo.ASCENDING),

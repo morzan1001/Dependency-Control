@@ -326,7 +326,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             ("is_release", pymongo.ASCENDING),
             ("created_at", pymongo.DESCENDING),
         ],
-        name="scans_release_lookup",
+        name="scans_released_list",
         partialFilterExpression={"is_release": True},
     )  # Partial so only released scans are indexed; serves the released-only scan list.
 

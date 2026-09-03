@@ -17,7 +17,7 @@ _SCAN_ID = "s1"
 _STAGING = "staging"
 _VERSION = "v1.2.3"
 _COMMIT_TAG = "v9"
-_SCAN_FIELDS_THAT_MOVED_TO_THE_RELEASE = ("release_version", "release_environment", "released_at")
+_FIELDS_A_SCAN_MUST_NOT_CARRY = ("release_version", "release_environment", "released_at")
 
 
 def _minimal_payload(**extra):
@@ -50,10 +50,10 @@ def test_environment_slug_is_enforced_on_ingest(bad):
         SBOMIngest(**_minimal_payload(release_environment=bad))
 
 
-def test_the_scan_carries_the_flag_and_nothing_else():
+def test_the_scan_carries_the_flag_and_no_deploy_target():
     dumped = Scan(project_id=_PROJECT_ID, branch=_BRANCH).model_dump()
     assert dumped["is_release"] is False
-    for field in _SCAN_FIELDS_THAT_MOVED_TO_THE_RELEASE:
+    for field in _FIELDS_A_SCAN_MUST_NOT_CARRY:
         assert field not in dumped
 
 

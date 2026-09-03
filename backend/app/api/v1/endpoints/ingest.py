@@ -341,6 +341,10 @@ async def ingest_sbom(
             {"_id": scan_id}, scan_update, upsert=True, return_document=ReturnDocument.BEFORE
         )
 
+        if release:
+            release_repo = ReleaseRepository(db)
+            await release_repo.record(Release(project_id=str(project.id), scan_id=scan_id, **release))
+
         if previous and sbom_refs:
             new_ids = {ref["gridfs_id"] for ref in sbom_refs}
             superseded = [
@@ -348,10 +352,6 @@ async def ingest_sbom(
             ]
             if superseded:
                 await cleanup_gridfs_files(db, superseded)
-
-        if release:
-            release_repo = ReleaseRepository(db)
-            await release_repo.record(Release(project_id=str(project.id), scan_id=scan_id, **release))
 
         # Reset a finished scan to pending so re-ingest re-analyses it.
         await db.scans.update_one(
