@@ -2,6 +2,8 @@
 
 from typing import Any
 
+from pymongo.errors import DuplicateKeyError
+
 from app.core.metrics import track_db_operation
 from app.models.release import Release
 from app.repositories.base import BaseRepository
@@ -25,8 +27,13 @@ class ReleaseRepository(BaseRepository[Release]):
         if release.version is not None:
             changes["version"] = release.version
         with track_db_operation(self.collection_name, "update_one"):
-            await self.collection.update_one(
-                key,
-                {"$set": changes, "$setOnInsert": {"_id": release.id}},
-                upsert=True,
-            )
+            try:
+                await self.collection.update_one(
+                    key,
+                    {"$set": changes, "$setOnInsert": {"_id": release.id}},
+                    upsert=True,
+                )
+            except DuplicateKeyError:
+                # A concurrent mark inserted the row between this filter miss and its insert;
+                # the update cannot insert, so it cannot race again.
+                await self.collection.update_one(key, {"$set": changes})

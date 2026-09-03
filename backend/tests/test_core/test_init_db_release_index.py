@@ -12,6 +12,7 @@ _SCANS = "scans"
 _RELEASES = "releases"
 _SCANS_INDEX_NAME = "scans_released_list"
 _RELEASES_INDEX_NAME = "releases_latest_lookup"
+_RELEASES_UNIQUE_INDEX_NAME = "releases_upsert_key"
 _RELEASED_SCANS_ONLY = {"is_release": True}
 _EXPECTED_MATCHES = 1
 
@@ -47,6 +48,18 @@ def test_latest_release_per_environment_is_indexed():
         ("environment", pymongo.ASCENDING),
         ("released_at", pymongo.DESCENDING),
     ]
+
+
+def test_the_upsert_key_is_unique():
+    """Without it two concurrent marks of one (project, environment, scan) both insert."""
+    calls = _named(_create_index_calls(_RELEASES), _RELEASES_UNIQUE_INDEX_NAME)
+    assert len(calls) == _EXPECTED_MATCHES, f"exactly one {_RELEASES_UNIQUE_INDEX_NAME} index expected"
+    assert calls[0].args[0] == [
+        ("project_id", pymongo.ASCENDING),
+        ("environment", pymongo.ASCENDING),
+        ("scan_id", pymongo.ASCENDING),
+    ]
+    assert calls[0].kwargs["unique"] is True
 
 
 def test_releases_are_indexed_by_scan():

@@ -338,6 +338,15 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         ],
         name="releases_latest_lookup",
     )  # Serves the latest release of a (project, environment) as a single sorted find_one.
+    await database["releases"].create_index(
+        [
+            ("project_id", pymongo.ASCENDING),
+            ("environment", pymongo.ASCENDING),
+            ("scan_id", pymongo.ASCENDING),
+        ],
+        name="releases_upsert_key",
+        unique=True,
+    )  # The upsert key: without uniqueness two concurrent marks of one scan both insert.
     await database["releases"].create_index("scan_id")
 
     await database["findings"].create_index([("created_at", pymongo.DESCENDING)])
