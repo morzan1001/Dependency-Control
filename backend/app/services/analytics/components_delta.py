@@ -16,6 +16,7 @@ from app.schemas.scan_delta import (
     ScanDeltaTotals,
 )
 from app.services.analytics._delta_pagination import MAX_FETCH, paginate
+from app.services.analytics._delta_reachability import side_reachability
 
 
 def component_identity_key(comp: dict) -> tuple[str, str]:
@@ -144,4 +145,6 @@ async def compute_components_delta(
         page_size=page_size,
         total_pages=total_pages,
         items=paged,
+        from_reachability=await side_reachability(db, from_scan),
+        to_reachability=await side_reachability(db, to_scan),
     )

@@ -13,6 +13,7 @@ from app.schemas.scan_delta import (
     ScanDeltaTotals,
 )
 from app.services.analytics._delta_pagination import MAX_FETCH, paginate
+from app.services.analytics._delta_reachability import side_reachability
 
 
 def _primitive_str(asset: CryptoAsset) -> str | None:
@@ -90,4 +91,6 @@ async def compute_crypto_delta_envelope(
         page_size=page_size,
         total_pages=total_pages,
         items=paged,
+        from_reachability=await side_reachability(db, from_scan),
+        to_reachability=await side_reachability(db, to_scan),
     )

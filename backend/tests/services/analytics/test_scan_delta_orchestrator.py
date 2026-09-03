@@ -11,7 +11,7 @@ _TO_SCAN = "b"
 
 
 def _envelope(category: DeltaCategory) -> ScanDeltaResponse:
-    """A per-category sentinel the dispatcher must hand back untouched apart from the labels."""
+    """A per-category sentinel the dispatcher must hand back untouched."""
     return ScanDeltaResponse(
         from_scan_id=_FROM_SCAN,
         to_scan_id=_TO_SCAN,

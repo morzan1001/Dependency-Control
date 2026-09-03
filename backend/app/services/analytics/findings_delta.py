@@ -20,6 +20,7 @@ from app.schemas.scan_delta import (
 )
 from app.services.aggregation.components import extract_artifact_name
 from app.services.analytics._delta_pagination import MAX_FETCH, paginate
+from app.services.analytics._delta_reachability import side_reachability
 
 _SEVERITY_RANK = {
     "critical": 0,
@@ -282,4 +283,6 @@ async def compute_findings_delta(
         page_size=page_size,
         total_pages=total_pages,
         items=paged,
+        from_reachability=await side_reachability(db, from_scan),
+        to_reachability=await side_reachability(db, to_scan),
     )
