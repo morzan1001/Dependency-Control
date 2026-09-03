@@ -93,6 +93,14 @@ async def _seed_one_scan_each(db: FakeDatabase, project_count: int) -> list[str]
     return project_ids
 
 
+async def _seed_one_pointed_scan_each(db: FakeDatabase, project_count: int) -> list[str]:
+    """Every pointer set and readable, so the head path can answer from the projects read alone."""
+    project_ids = await _seed_one_scan_each(db, project_count)
+    for index, project_id in enumerate(project_ids):
+        await db.projects.update_one({"_id": project_id}, {"$set": {"latest_scan_id": f"scan-{index}"}})
+    return project_ids
+
+
 async def _seed_rescan_chain(db: FakeDatabase, project_id: str, released: str, statuses: list[str]) -> list[str]:
     """released -> rescan-1 -> ... : housekeeping rescans the project's newest usable scan, so each
     rescan carries the next pointer and the released scan's own pointer never advances past the first."""
@@ -520,13 +528,14 @@ async def test_release_query_count_with_a_chain_does_not_grow_with_the_scope(db,
     assert dict(counts) == _RELEASE_QUERIES_WITH_A_CHAIN
 
 
+@pytest.mark.parametrize("project_count", [_ONE_PROJECT, _MANY_PROJECTS])
 @pytest.mark.asyncio
-async def test_resolve_scan_ids_head_skips_the_scan_read_when_every_pointer_is_set(db):
-    await db.projects.insert_one({"_id": _PROJECT_A, "name": _PROJECT_A, "latest_scan_id": "head-a"})
-    await db.scans.insert_one(_scan("head-a", _PROJECT_A))
+async def test_resolve_scan_ids_head_skips_the_scan_read_when_every_pointer_is_set(db, project_count):
+    """One distinct validates every pointer in the scope, never one read per pointer."""
+    project_ids = await _seed_one_pointed_scan_each(db, project_count)
     counts = _count_queries(db)
 
-    await resolve_scan_ids(db, [_PROJECT_A])
+    await resolve_scan_ids(db, project_ids)
 
     assert dict(counts) == _HEAD_QUERIES_POINTERS_ONLY
 
@@ -583,6 +592,18 @@ async def test_chat_registry_skips_unusable_scans(db):
 
 
 @pytest.mark.asyncio
+async def test_chat_registry_resolves_nothing_for_a_project_outside_the_user_scope(db):
+    from app.services.chat.tools.registry import ChatToolRegistry
+
+    await db.projects.insert_one({"_id": _PROJECT_A, "name": _PROJECT_A, "latest_scan_id": "head-a"})
+    await db.scans.insert_one(_scan("head-a", _PROJECT_A))
+
+    resolved = await ChatToolRegistry()._latest_scan_ids_for_user({"_id": {"$in": [_OTHER_PROJECT]}}, _PROJECT_A, db)
+
+    assert resolved == _NO_SCANS
+
+
+@pytest.mark.asyncio
 async def test_every_consumer_falls_back_when_the_pointer_names_a_deleted_scan(db):
     """A dangling pointer answers with a scan that holds no assets and no findings, so the framework
     would read a project as clean; every consumer must land on the scan that outlived the head."""
@@ -602,6 +623,7 @@ async def test_every_consumer_falls_back_when_the_pointer_names_a_deleted_scan(d
     assert await ChatToolRegistry()._latest_scan_ids_for_user({"_id": {"$in": [_PROJECT_A]}}, None, db) == {
         _PROJECT_A: _EXEMPTED_RELEASE
     }
+    assert await ChatToolRegistry()._latest_scan_ids_for_user({}, _PROJECT_A, db) == {_PROJECT_A: _EXEMPTED_RELEASE}
 
 
 @pytest.mark.asyncio
@@ -696,9 +718,7 @@ async def test_get_projects_with_scans_reads_the_projects_once(db, project_count
     """The name map and the resolver's scope are the same read, not one each."""
     from app.api.v1.helpers.analytics import get_projects_with_scans
 
-    project_ids = await _seed_one_scan_each(db, project_count)
-    for index, project_id in enumerate(project_ids):
-        await db.projects.update_one({"_id": project_id}, {"$set": {"latest_scan_id": f"scan-{index}"}})
+    project_ids = await _seed_one_pointed_scan_each(db, project_count)
     counts = _count_queries(db)
 
     await get_projects_with_scans(project_ids, db)

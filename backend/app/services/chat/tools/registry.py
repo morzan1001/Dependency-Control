@@ -1527,16 +1527,16 @@ class ChatToolRegistry:
     ) -> dict[str, str]:
         """Return {project_id: latest_scan_id} for authorised projects, validated against
         `restrict_to_project_id` when provided (returns {} on access denial)."""
+        from app.services.releases import resolve_scan_ids
+
         if restrict_to_project_id:
-            proj = await self._get_authorized_project(restrict_to_project_id, user_project_query, db)
-            if not proj or not proj.get("latest_scan_id"):
+            if not await self._get_authorized_project(restrict_to_project_id, user_project_query, db):
                 return {}
-            return {restrict_to_project_id: proj["latest_scan_id"]}
+            return await resolve_scan_ids(db, [restrict_to_project_id])
 
         project_ids = await self._get_authorized_project_ids(user_project_query, db)
         if not project_ids:
             return {}
-        from app.services.releases import resolve_scan_ids
 
         return await resolve_scan_ids(db, project_ids)
 

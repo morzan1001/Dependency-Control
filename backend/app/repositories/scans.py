@@ -204,7 +204,8 @@ class ScanRepository:
 
         if result:
             # Retention deletes a scan without clearing the pointer, so a pointer can name a scan
-            # that is gone while an older one it exempted survives.
+            # that is gone while an older one it exempted survives. Re-ingest and a late analyzer
+            # result send a completed scan back to pending, so it can also name an unreadable one.
             live = await self._readable_scan_ids(list(result.values()))
             dangling = [pid for pid, sid in result.items() if sid not in live]
             for pid in dangling:

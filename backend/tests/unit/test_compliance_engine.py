@@ -18,7 +18,7 @@ def _resolver_reads_the_mocked_aggregate():
     """These tests hand-build db.scans.aggregate; the query belongs to the resolver, whose
     delegation test_releases_resolver.py proves against a fake database."""
 
-    async def _fake(db, project_ids, *, release_environment=None):
+    async def _fake(db, project_ids, *, release_environment=None, projects=None):
         return {row["_id"]: row["scan_id"] async for row in db.scans.aggregate([])}
 
     with patch("app.services.releases.resolve_scan_ids", new=_fake):
