@@ -621,6 +621,18 @@ async def test_cross_project_data_falls_back_when_the_pointer_names_a_deleted_sc
     ]
 
 
+@pytest.mark.parametrize("pointer_status", _UNUSABLE_STATUSES)
+@pytest.mark.asyncio
+async def test_a_pointer_at_an_unreadable_scan_falls_back_to_the_last_usable_one(db, pointer_status):
+    """The pointer is only as good as the analysis behind it: a scan that carries no results is the
+    same dead end as one retention removed."""
+    await db.projects.insert_one({"_id": _PROJECT_A, "name": _PROJECT_A, "latest_scan_id": "head-a"})
+    await db.scans.insert_one(_scan("head-a", _PROJECT_A, created_delta=5, status=pointer_status))
+    await db.scans.insert_one(_scan("last-good", _PROJECT_A))
+
+    assert await resolve_scan_ids(db, [_PROJECT_A]) == {_PROJECT_A: "last-good"}
+
+
 @pytest.mark.asyncio
 async def test_a_dangling_pointer_costs_one_extra_read_for_the_whole_scope(db):
     await _seed_a_dangling_pointer(db)
