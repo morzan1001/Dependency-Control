@@ -110,8 +110,8 @@ db.projects.countDocuments({ last_scan_at: null })   // never scanned; housekeep
    thing — moves the whole fleet's due date to one moment 730 h out and hands the unattended burst
    to whoever is on duty then.
 
-   Run this once per cohort, raising `COHORT_DAY` by one each time, and keep going while the
-   `$match` still finds unstamped sources. Nothing fires yet: the scheduler is still off.
+   Run this once per cohort, raising `COHORT_DAY` by one each time, until a run selects nothing.
+   Nothing fires yet: the scheduler is still off.
 
    ```js
    const INTERVAL_MS = 730 * 60 * 60 * 1000;   // global_rescan_interval, as read in this section
@@ -122,19 +122,27 @@ db.projects.countDocuments({ last_scan_at: null })   // never scanned; housekeep
    const tips = db.scans.aggregate([
      { $match: { status: { $in: ["completed", "completed_with_errors"] },
                  is_rescan: { $ne: true },
-                 sbom_refs: { $exists: true, $ne: [] },
-                 last_rescanned_at: null } },
+                 sbom_refs: { $exists: true, $ne: [] } } },
      { $sort: { project_id: 1, created_at: -1 } },
-     { $group: { _id: "$project_id", tip_id: { $first: "$_id" } } },
+     { $group: { _id: "$project_id", tip_id: { $first: "$_id" },
+                 tip_stamp: { $first: "$last_rescanned_at" } } },
+     { $match: { tip_stamp: null } },
      { $limit: TRANCHE }
-   ]).map(r => r.tip_id);
+   ]).toArray().map(r => r.tip_id);
 
    db.scans.updateMany({ _id: { $in: tips } }, [
      { $set: { last_rescanned_at: { $subtract: ["$$NOW", INTERVAL_MS - COHORT_DAY * ONE_DAY_MS] } } }
    ]);
    ```
 
-   With `TRANCHE = 100` and 730 projects that is eight cohorts over eight days. Every cohort then
+   The stamp filter sits after the `$group` because only the group's `$first` — the newest usable
+   original — is a document the scheduler reads. Filtering unstamped scans before the group would
+   re-select a project already seeded by an earlier cohort and stamp its next-newest scan instead,
+   leaving the project itself due immediately.
+
+   Each cohort therefore takes `TRANCHE` projects that no cohort has touched: with `TRANCHE = 100`
+   and 730 projects, at most eight cohorts over eight days, the last of them short. The run after
+   the last one selects nothing, which is how you know the fleet is seeded. Every cohort then
    repeats on its own day, 730 h apart, so the fleet stays spread for good instead of re-converging.
 
    Sanity-check the spread before re-enabling the scheduler — one row per day, none in the past:
@@ -233,7 +241,7 @@ Two other behaviour changes ship with this deploy and are visible without any re
   would put every historical tag name straight back after the backfill pruned it.
 
   This lands on **every project with a VCS connection at its first sync after the deploy**, whether
-  or not the backfill has run, and `deleted_branches` shrinking has four visible consequences:
+  or not the backfill has run, and `deleted_branches` shrinking has five visible consequences:
 
   1. Projects show fewer deleted branches.
   2. **Historical tag names flip from deleted to active in the branch selector.** The selector's
@@ -244,23 +252,64 @@ Two other behaviour changes ship with this deploy and are visible without any re
      newest usable scan. For a project whose configured default was never itself scanned, the tag
      names are now candidates and a recent one can win. This moves which branch the project view
      opens on; the stored `Project.default_branch` is untouched.
-  4. **A project's representative scan for all analytics can switch to a tag build.**
-     `get_latest_active_scan_ids` takes the stored `latest_scan_id` fast path as soon as
-     `deleted_branches` is empty, instead of recomputing with `$nin`. Ingest points
-     `latest_scan_id` at every scan it writes, tag builds included, so the pointer itself does not
-     move — what changes is that it is now believed.
+  4. **A project's representative scan for all analytics can settle on a tag build.** Two writers
+     of `latest_scan_id` meet here. `get_latest_active_scan_ids` takes the stored pointer as its
+     fast path as soon as `deleted_branches` is empty, instead of recomputing with `$nin`. And
+     `sync_project_branches` repoints a pointer whose scan sits on a branch it has just filed as
+     deleted — a tag name is no longer such a branch, so the 6-hourly sync leaves a tag build in
+     the slot rather than moving the project onto its newest non-tag scan within a sync window.
+  5. **`Project.stats` and `Project.last_scan_at` follow the pointer.** That same repoint writes
+     all three fields together, so wherever it no longer fires these two keep the tag build's
+     numbers and date. Project lists, tiles and dashboards read them straight off the project
+     document without going through `get_latest_active_scan_ids`, so they follow a tag build even
+     where consequence 4's fast path is not involved.
 
-  Consequences 3 and 4 both resolve to a real, usable scan: they change *which* scan a project
-  speaks for, not whether it has one. Before the deploy, list the projects where 4 will bite —
-  those whose stored pointer already names a tag build and whose `$nin` recompute was hiding it:
+  Measured against `sync_project_branches` on one project with a tag build as its newest scan and
+  its stored pointer, plus an older `main` scan, varying only whether the census counts the tag as
+  a branch:
+
+  ```
+  census counts the tag: deleted_branches=['v1.2.3'] latest_scan_id=mainbuild last_scan_at=2026-07-01
+  census skips the tag : deleted_branches=[]         latest_scan_id=tagbuild  last_scan_at=2026-08-01
+  ```
+
+  `stats` moves with `last_scan_at` in both rows.
+
+  Consequences 3 to 5 all resolve to a real, usable scan: they change *which* scan a project speaks
+  for, not whether it has one, and a tag build holds the slot only while it is the genuinely newest
+  ingested scan.
+
+  Before the deploy, list the projects where 4 and 5 will bite. Do not ask which pointers name a
+  tag build today: while the sync still repoints, a settled project's pointer names the branch scan
+  it was moved to, so that question only returns tag builds ingested inside the last 6 h. Ask
+  instead which projects have a tag build as their newest usable scan:
 
   ```js
-  const suspect = db.projects.find({ deleted_branches: { $exists: true, $ne: [] } },
-                                   { name: 1, latest_scan_id: 1 }).toArray();
-  db.scans.find({ _id: { $in: suspect.map(p => p.latest_scan_id).filter(Boolean) },
-                  $expr: { $eq: ["$branch", "$commit_tag"] } },
-                { project_id: 1, branch: 1, created_at: 1 })
+  db.projects.aggregate([
+    { $match: { $or: [ { gitlab_instance_id: { $exists: true, $ne: null } },
+                       { github_instance_id: { $exists: true, $ne: null } } ] } },
+    { $lookup: {
+        from: "scans",
+        let: { pid: "$_id" },
+        pipeline: [
+          { $match: { $expr: { $eq: ["$project_id", "$$pid"] },
+                      status: { $in: ["completed", "completed_with_errors"] } } },
+          { $sort: { created_at: -1 } },
+          { $limit: 1 },
+          { $project: { branch: 1, commit_tag: 1, created_at: 1 } } ],
+        as: "newest" } },
+    { $set: { newest: { $first: "$newest" } } },
+    { $match: { "newest.commit_tag": { $nin: [null, ""] },
+                $expr: { $eq: ["$newest.branch", "$newest.commit_tag"] } } },
+    { $project: { name: 1, pointer: "$latest_scan_id", newest_scan_id: "$newest._id",
+                  tag: "$newest.branch", newest_at: "$newest.created_at" } }
+  ])
   ```
+
+  Where `pointer` already equals `newest_scan_id`, the project reports the tag build from its first
+  sync after the deploy. Where they differ, the pointer is sitting on the older branch scan the
+  sync moved it to and stays there until the project's next ingest repoints it. The VCS filter is
+  the sync's own: a project without one has nothing recomputing its census either way.
 
   For 3, call `GET /api/v1/projects/{project_id}/branches` on a couple of those projects before and
   after the first sync and compare which entry carries `is_default`.
