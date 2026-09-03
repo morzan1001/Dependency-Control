@@ -94,7 +94,9 @@ async def mark_release(
         Release(
             project_id=project_id,
             environment=environment,
-            version=payload.version or scan.get("commit_tag"),
+            # A CI producer sends an unset tag as "", and ReleaseRepository.record only skips a
+            # None version, so an empty one would be stored as the release's name.
+            version=payload.version or scan.get("commit_tag") or None,
             scan_id=scan_id,
             released_at=released_at,
         )

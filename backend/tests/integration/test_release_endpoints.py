@@ -42,6 +42,7 @@ _STAGING = "staging"
 _CANARY = "canary"
 _VERSION = "v2.1.0"
 _OTHER_VERSION = "v3.0.0"
+_BLANK_TAG = ""
 _BRANCH = "main"
 _INVALID_ENVIRONMENT = "Prod.EU"
 
@@ -151,6 +152,19 @@ async def test_mark_resolves_the_commit_to_its_newest_build_scan(client, db, api
     scan = await db.scans.find_one({"_id": "newest"})
     assert scan["is_release"] is True
     assert await latest_release_scan(db, _PROJECT, DEFAULT_RELEASE_ENVIRONMENT) == "newest"
+
+
+@pytest.mark.asyncio
+async def test_mark_of_a_branch_build_records_no_version_rather_than_a_blank_one(client, db, api_key_headers):
+    """Every scanner sends an unset tag as "", so a branch build's mark must name no version at all."""
+    await _seed_scan(db, "branch-build", commit_tag=_BLANK_TAG)
+
+    resp = await _mark(client, api_key_headers, commit_hash=_COMMIT)
+
+    assert resp.status_code == 201, resp.text
+    assert resp.json()["version"] is None
+    row = await db.releases.find_one({"scan_id": "branch-build"})
+    assert row.get("version") is None
 
 
 @pytest.mark.asyncio
