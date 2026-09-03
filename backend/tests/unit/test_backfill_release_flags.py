@@ -16,7 +16,7 @@ from app.core.constants import (
 )
 from app.models.release import Release
 from app.repositories import ReleaseRepository
-from scripts.backfill_release_flags import NO_LIMIT, apply_plan, plan_backfill, run_backfill
+from scripts.backfill_release_flags import NO_LIMIT, BackfillPlan, apply_plan, plan_backfill, run_backfill
 from tests.mocks.fake_mongo import FakeDatabase
 
 _NOW = datetime(2026, 8, 1, tzinfo=timezone.utc)
@@ -282,13 +282,27 @@ async def test_an_undated_tag_build_is_reported_rather_than_dated_by_guess() -> 
 
 
 @pytest.mark.asyncio
-async def test_only_the_tag_names_this_run_recorded_leave_deleted_branches() -> None:
+async def test_only_the_tag_names_of_released_tag_builds_leave_deleted_branches() -> None:
     db = await _seeded_db()
 
     await _run(db, execute=True)
 
     assert (await db.projects.find_one({"_id": _PROJECT}))["deleted_branches"] == [_KEPT_DELETED_BRANCH]
-    assert (await db.projects.find_one({"_id": _OTHER_PROJECT}))["deleted_branches"] == [_ALREADY_TAG]
+    assert (await db.projects.find_one({"_id": _OTHER_PROJECT}))["deleted_branches"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_run_interrupted_before_its_prunes_prunes_on_the_next_pass() -> None:
+    """The second pass sees the scans as already released, so the prune must be planned from those too."""
+    db = await _seeded_db()
+    plan = await plan_backfill(db, batch_size=_BATCH_SIZE, sleep_ms=_NO_SLEEP_MS, limit=NO_LIMIT)
+    interrupted = BackfillPlan(releases=plan.releases)
+    await apply_plan(db, interrupted, batch_size=_BATCH_SIZE, sleep_ms=_NO_SLEEP_MS)
+    assert (await db.projects.find_one({"_id": _PROJECT}))["deleted_branches"] == [_TAG, _KEPT_DELETED_BRANCH]
+
+    await _run(db, execute=True)
+
+    assert (await db.projects.find_one({"_id": _PROJECT}))["deleted_branches"] == [_KEPT_DELETED_BRANCH]
 
 
 @pytest.mark.asyncio

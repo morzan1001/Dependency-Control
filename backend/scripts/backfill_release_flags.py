@@ -1,9 +1,9 @@
 """One-off backfill of release records onto historical tag builds.
 
 Scans whose ``branch`` equals their ``commit_tag`` came out of a tag pipeline whose ref name was
-the tag. Each becomes a production release dated at its ``created_at``, and exactly those tag names
-are dropped from ``Project.deleted_branches``, where several branch filters read them and hide the
-scan.
+the tag. Each becomes a production release dated at its ``created_at``, and the tag name of every
+tag build that ends the run released — this run's and any earlier one's — is dropped from
+``Project.deleted_branches``, where several branch filters read them and hide the scan.
 
 A release is a document in ``db.releases``; ``Scan.is_release`` is the denormalised boolean the
 ``scans_released_list`` partial index is keyed on. Both are written, in the order the mark endpoint
@@ -179,6 +179,9 @@ async def plan_backfill(db: Any, *, batch_size: int, sleep_ms: int, limit: int) 
                 skipped_already_released += 1
                 if not doc.get("is_release"):
                     flag_repairs.append(scan_id)
+                # A run killed before its prunes leaves the tag hidden, and on the next pass the
+                # scan reaches only this branch, so the prune has to be planned from here as well.
+                tag_names_by_project.setdefault(doc["project_id"], set()).add(doc["commit_tag"])
                 continue
             planned = _plan_release(doc, scan_id)
             if planned is None:
