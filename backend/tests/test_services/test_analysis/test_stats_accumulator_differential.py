@@ -189,6 +189,7 @@ async def test_threat_intel_matches():
     pipeline, fold = await both()
     assert fold.threat_intel == pipeline.threat_intel
     assert pipeline.threat_intel.kev_count > 0
+    assert pipeline.threat_intel.kev_ransomware_count > 0
     assert pipeline.threat_intel.high_epss_count > 0
     assert pipeline.threat_intel.medium_epss_count > 0
     assert pipeline.threat_intel.active_exploitation_count > 0

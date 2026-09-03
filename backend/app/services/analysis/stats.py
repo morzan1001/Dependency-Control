@@ -315,8 +315,9 @@ _UNKNOWN_SEVERITY = "UNKNOWN"
 
 
 def _numeric(raw: Any) -> float | None:
-    """A real number, or None. Bool and strings are treated as absent — an accepted divergence from the
-    pipeline for malformed input, where they would rank above all numerics and cause aggregation failure."""
+    """A real number, or None. Non-numeric values are treated as absent — an accepted divergence from the
+    pipeline for malformed input: the pipeline ranks bool and strings above all numbers (so bool scores as
+    high-EPSS but strings break sum()), while the fold rejects all non-int/float as missing."""
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
         return None
     return float(raw)

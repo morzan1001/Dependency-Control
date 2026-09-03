@@ -70,8 +70,8 @@ class TestSecretGate:
 
 class TestEpssTyping:
     """Every persisted shape of epss_score: missing, null, 0.0, int, float, bool, string, list, dict.
-    A non-numeric one is treated as absent — decided, not inherited: the replaced pipeline ranked
-    bool and string above every number and then died at sum(epss_scores)."""
+    A non-numeric one is treated as absent — decided, not inherited: the pipeline ranks
+    bool and string above every number and then dies at sum(epss_scores)."""
 
     @pytest.mark.parametrize("junk", ["0.9", True, False, [], {}, "n/a"])
     def test_non_numeric_epss_is_treated_as_missing(self, junk):
@@ -134,3 +134,19 @@ class TestThreatIntelBoundaries:
         t = compute_stats([_finding(**{DETAILS_KEY_IN_KEV: 1})], {}).threat_intel
         assert t.kev_count == 0
         assert t.active_exploitation_count == 0
+
+    def test_medium_epss_threshold_exactly_0_01_counts(self):
+        """EPSS_MEDIUM_THRESHOLD = 0.01 is inclusive on the lower bound."""
+        t = compute_stats([_finding(epss_score=0.01)], {}).threat_intel
+        assert t.medium_epss_count == 1
+        assert t.high_epss_count == 0
+
+    def test_very_high_epss_threshold_exactly_0_5_counts_as_weaponized(self):
+        """EPSS_VERY_HIGH_THRESHOLD = 0.5 is inclusive for weaponized (with KEV)."""
+        t = compute_stats([_finding(epss_score=0.5, **{DETAILS_KEY_IN_KEV: True})], {}).threat_intel
+        assert t.weaponized_count == 1
+
+    def test_active_exploitation_threshold_exactly_0_7_counts(self):
+        """EPSS_ACTIVE_EXPLOITATION_THRESHOLD = 0.7 is inclusive."""
+        t = compute_stats([_finding(epss_score=0.7)], {}).threat_intel
+        assert t.active_exploitation_count == 1
