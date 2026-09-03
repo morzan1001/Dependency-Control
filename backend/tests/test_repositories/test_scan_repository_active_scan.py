@@ -88,7 +88,7 @@ class TestGetLatestActiveScan:
 
 class TestGetLatestActiveScanIds:
     def test_uses_latest_scan_id_when_no_deleted_branches(self):
-        coll = create_mock_collection()
+        coll = create_mock_collection(distinct=["scan-latest"])
         repo = ScanRepository(create_mock_db({"scans": coll}))
 
         p = MagicMock()
@@ -99,8 +99,12 @@ class TestGetLatestActiveScanIds:
         result = asyncio.run(repo.get_latest_active_scan_ids([p]))
 
         assert result == {"p1": "scan-latest"}
-        # No deleted branches -> no aggregation needed.
+        # No deleted branches and a readable pointer -> no aggregation needed.
         coll.aggregate.assert_not_called()
+        assert coll.distinct.call_args.args == (
+            "_id",
+            {"_id": {"$in": ["scan-latest"]}, "status": {"$in": ["completed", "completed_with_errors"]}},
+        )
 
     def test_aggregates_for_projects_with_deleted_branches(self):
         coll = create_mock_collection(aggregate=[{"_id": "p2", "scan_id": "scan-active"}])
@@ -178,6 +182,42 @@ class TestGetLatestActiveScanIds:
         match_or = pipeline[0]["$match"]["$or"][0]
         assert match_or == {"project_id": "p7", "branch": {"$nin": ["dead"]}, "status": {"$in": ["completed", "completed_with_errors"]}}
 
+    def test_falls_back_when_the_pointer_names_an_unreadable_scan(self):
+        """Retention removes the scan document and leaves latest_scan_id behind, so a project whose
+        head was deleted must resolve to the older scan retention exempted, not to the dead id."""
+        coll = create_mock_collection(aggregate=[{"_id": "p8", "scan_id": "exempted-release"}], distinct=[])
+        repo = ScanRepository(create_mock_db({"scans": coll}))
+
+        p = MagicMock(id="p8", deleted_branches=[], latest_scan_id="retention-deleted")
+
+        result = asyncio.run(repo.get_latest_active_scan_ids([p]))
+
+        assert result == {"p8": "exempted-release"}
+        match = coll.aggregate.call_args.args[0][0]["$match"]["$or"][0]
+        assert match == {"project_id": {"$in": ["p8"]}, "status": {"$in": ["completed", "completed_with_errors"]}}
+
+    def test_validates_every_pointer_in_one_read(self):
+        coll = create_mock_collection(aggregate=[], distinct=["live-a", "live-b"])
+        repo = ScanRepository(create_mock_db({"scans": coll}))
+
+        pa = MagicMock(id="pa", deleted_branches=[], latest_scan_id="live-a")
+        pb = MagicMock(id="pb", deleted_branches=[], latest_scan_id="live-b")
+
+        result = asyncio.run(repo.get_latest_active_scan_ids([pa, pb]))
+
+        assert result == {"pa": "live-a", "pb": "live-b"}
+        assert coll.distinct.call_count == 1
+        assert coll.distinct.call_args.args[1]["_id"] == {"$in": ["live-a", "live-b"]}
+
+    def test_reads_nothing_when_no_project_carries_a_pointer(self):
+        coll = create_mock_collection(aggregate=[{"_id": "p9", "scan_id": "found-by-query"}])
+        repo = ScanRepository(create_mock_db({"scans": coll}))
+
+        p = MagicMock(id="p9", deleted_branches=[], latest_scan_id=None)
+
+        assert asyncio.run(repo.get_latest_active_scan_ids([p])) == {"p9": "found-by-query"}
+        coll.distinct.assert_not_called()
+
     def test_skips_projects_with_falsy_id(self):
         coll = create_mock_collection(aggregate=[])
         repo = ScanRepository(create_mock_db({"scans": coll}))
@@ -194,7 +234,9 @@ class TestGetLatestActiveScanIds:
         coll.aggregate.assert_not_called()
 
     def test_mixed_projects(self):
-        coll = create_mock_collection(aggregate=[{"_id": "p_deleted", "scan_id": "active-scan"}])
+        coll = create_mock_collection(
+            aggregate=[{"_id": "p_deleted", "scan_id": "active-scan"}], distinct=["clean-scan"]
+        )
         repo = ScanRepository(create_mock_db({"scans": coll}))
 
         clean = MagicMock(id="p_clean", deleted_branches=[], latest_scan_id="clean-scan")

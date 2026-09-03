@@ -38,7 +38,8 @@ _MANY_PROJECTS = 50
 _COUNTED_COLLECTIONS = ("projects", "scans", "releases")
 _COUNTED_OPERATIONS = ("find", "find_one", "aggregate", "distinct")
 _HEAD_QUERIES = {"projects.find": 1, "scans.aggregate": 1}
-_HEAD_QUERIES_POINTERS_ONLY = {"projects.find": 1}
+_HEAD_QUERIES_POINTERS_ONLY = {"projects.find": 1, "scans.distinct": 1}
+_HEAD_QUERIES_WITH_A_DANGLING_POINTER = {"projects.find": 1, "scans.distinct": 1, "scans.aggregate": 1}
 _RELEASE_QUERIES = {"releases.aggregate": 1, "scans.find": 1}
 _RELEASE_QUERIES_WITH_RESCANS = {"releases.aggregate": 1, "scans.find": 2}
 _RELEASE_QUERIES_WITH_A_CHAIN = {"releases.aggregate": 1, "scans.find": 4}
@@ -47,6 +48,11 @@ _CHAIN_BEYOND_THE_BOUND = _MAX_RESCAN_HOPS + 5
 _NO_RELEASES: dict[str, str] = {}
 _CYCLE_QUERIES = {"releases.find_one": 1, "scans.find": 2}
 _NO_QUERIES: dict[str, int] = {}
+_RETENTION_DELETED = "head-deleted-by-retention"
+_EXEMPTED_RELEASE = "exempted-release"
+_SURVIVOR_AGE_HOURS = -100
+_CRITICALS_ON_THE_SURVIVOR = 7
+_CURRENT_PROJECT = "pc"
 
 
 @pytest.fixture
@@ -94,6 +100,21 @@ async def _seed_rescan_chain(db: FakeDatabase, project_id: str, released: str, s
     for source, target in zip([released, *chain], chain, strict=False):
         await db.scans.update_one({"_id": source}, {"$set": {"latest_rescan_id": target}})
     return chain
+
+
+async def _seed_a_dangling_pointer(db: FakeDatabase) -> None:
+    """Retention deletes the scan document without clearing latest_scan_id, and exempts release
+    scans, so the pointer names nothing while an older usable scan is still there to be found."""
+    await db.projects.insert_one({"_id": _PROJECT_A, "name": _PROJECT_A, "latest_scan_id": _RETENTION_DELETED})
+    await db.scans.insert_one(
+        _scan(
+            _EXEMPTED_RELEASE,
+            _PROJECT_A,
+            created_delta=_SURVIVOR_AGE_HOURS,
+            is_release=True,
+            stats={"critical": _CRITICALS_ON_THE_SURVIVOR},
+        )
+    )
 
 
 def _count_queries(db: FakeDatabase) -> Counter:
@@ -557,6 +578,55 @@ async def test_chat_registry_skips_unusable_scans(db):
     resolved = await ChatToolRegistry()._latest_scan_ids_for_user({"_id": {"$in": ["p1"]}}, None, db)
 
     assert resolved == {"p1": "done"}
+
+
+@pytest.mark.asyncio
+async def test_every_consumer_falls_back_when_the_pointer_names_a_deleted_scan(db):
+    """A dangling pointer answers with a scan that holds no assets and no findings, so the framework
+    would read a project as clean; every consumer must land on the scan that outlived the head."""
+    from app.api.v1.helpers.analytics import get_latest_scan_ids
+    from app.services.analytics.crypto_hotspots import CryptoHotspotService
+    from app.services.analytics.scopes import ResolvedScope
+    from app.services.chat.tools.registry import ChatToolRegistry
+    from app.services.compliance.engine import ComplianceReportEngine
+
+    await _seed_a_dangling_pointer(db)
+    scope = ResolvedScope(scope="user", scope_id=None, project_ids=[_PROJECT_A])
+
+    assert await resolve_scan_ids(db, [_PROJECT_A]) == {_PROJECT_A: _EXEMPTED_RELEASE}
+    assert await get_latest_scan_ids([_PROJECT_A], db) == [_EXEMPTED_RELEASE]
+    assert await CryptoHotspotService(db)._pick_scan_ids(scope, None) == [_EXEMPTED_RELEASE]
+    assert await ComplianceReportEngine()._pick_scan_ids(db, scope) == [(_PROJECT_A, _EXEMPTED_RELEASE)]
+    assert await ChatToolRegistry()._latest_scan_ids_for_user({"_id": {"$in": [_PROJECT_A]}}, None, db) == {
+        _PROJECT_A: _EXEMPTED_RELEASE
+    }
+
+
+@pytest.mark.asyncio
+async def test_cross_project_data_falls_back_when_the_pointer_names_a_deleted_scan(db):
+    """gather_cross_project_data reads the repository rather than the resolver, so the fallback has
+    to live in the repository; the survivor's stats are what proves the scan it landed on."""
+    from app.api.v1.helpers.analytics import gather_cross_project_data
+
+    await _seed_a_dangling_pointer(db)
+    await db.projects.insert_one({"_id": _CURRENT_PROJECT, "name": _CURRENT_PROJECT})
+
+    data = await gather_cross_project_data([_PROJECT_A, _CURRENT_PROJECT], _CURRENT_PROJECT, db)
+
+    assert data is not None
+    assert [(row["project_id"], row["total_critical"]) for row in data["projects"]] == [
+        (_PROJECT_A, _CRITICALS_ON_THE_SURVIVOR)
+    ]
+
+
+@pytest.mark.asyncio
+async def test_a_dangling_pointer_costs_one_extra_read_for_the_whole_scope(db):
+    await _seed_a_dangling_pointer(db)
+    counts = _count_queries(db)
+
+    await resolve_scan_ids(db, [_PROJECT_A])
+
+    assert dict(counts) == _HEAD_QUERIES_WITH_A_DANGLING_POINTER
 
 
 @pytest.mark.asyncio

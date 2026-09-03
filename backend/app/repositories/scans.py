@@ -174,9 +174,17 @@ class ScanRepository:
             data = await self.collection.find_one(query, sort=[("created_at", -1)])
         return Scan(**data) if data else None
 
+    async def _readable_scan_ids(self, scan_ids: list[str]) -> set[str]:
+        """The subset that still exists with a usable status."""
+        with track_db_operation(_COL, "distinct"):
+            found = await self.collection.distinct(
+                "_id", {"_id": {"$in": scan_ids}, "status": {"$in": SCAN_USABLE_STATUSES}}
+            )
+        return set(found)
+
     async def get_latest_active_scan_ids(self, projects: list[Any]) -> dict[str, str]:
-        """Maps project_id -> latest active scan_id: the stored latest_scan_id when it is set
-        and the project has no deleted branches, else the most recent completed scan on a
+        """Maps project_id -> latest active scan_id: the stored latest_scan_id when it is set, still
+        readable and the project has no deleted branches, else the most recent completed scan on a
         non-deleted branch; projects resolving to no scan are omitted."""
         result: dict[str, str] = {}
         needing_no_deleted: list[str] = []
@@ -193,6 +201,15 @@ class ScanRepository:
                     needing_no_deleted.append(pid)
             else:
                 result[pid] = latest_scan_id
+
+        if result:
+            # Retention deletes a scan without clearing the pointer, so a pointer can name a scan
+            # that is gone while an older one it exempted survives.
+            live = await self._readable_scan_ids(list(result.values()))
+            dangling = [pid for pid, sid in result.items() if sid not in live]
+            for pid in dangling:
+                del result[pid]
+            needing_no_deleted.extend(dangling)
 
         if not needing_no_deleted and not needing_with_deleted:
             return result
