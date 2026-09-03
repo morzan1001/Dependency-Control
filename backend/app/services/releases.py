@@ -23,11 +23,11 @@ def _created_at(doc: dict[str, Any]) -> datetime:
 async def effective_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Iterable[str]) -> dict[str, str]:
     """The freshest readable analysis of each released artefact.
 
-    Rescans chain — each is created from the project's newest usable scan, so the released scan's
-    latest_rescan_id never advances past the first link — and the walk follows unusable links too,
-    or a failed rescan would hide the good one behind it. Bounded, so a cyclic pointer cannot hang a
-    request. A release with no usable scan in its chain, like one whose scan retention deleted, is
-    absent rather than a misleading id.
+    Rescans chain — a rescan of a release is created from the marked scan (_rescan_targets), so the
+    released scan's latest_rescan_id is overwritten rather than extended and never advances past the
+    first link — and the walk follows unusable links too, or a failed rescan would hide the good one
+    behind it. Bounded, so a cyclic pointer cannot hang a request. A release with no usable scan in
+    its chain, like one whose scan retention deleted, is absent rather than a misleading id.
     """
     frontier: dict[str, str] = {scan_id: scan_id for scan_id in scan_ids}
     visited: set[str] = set()
@@ -68,7 +68,9 @@ async def released_scan_ids(db: AsyncIOMotorDatabase, project_id: str) -> dict[s
     """environment -> the scan that was marked for it, before any rescan chain."""
     pipeline: list[dict[str, Any]] = [
         {"$match": {"project_id": project_id}},
-        {"$sort": {"released_at": -1}},
+        # Matches the residual releases_latest_lookup order after the project_id equality, so the
+        # sort is index-served instead of ranking every release row the project ever had.
+        {"$sort": {"environment": 1, "released_at": -1}},
         {"$group": {"_id": "$environment", "scan_id": {"$first": "$scan_id"}}},
     ]
     marked = {row["_id"]: row["scan_id"] async for row in db.releases.aggregate(pipeline)}
