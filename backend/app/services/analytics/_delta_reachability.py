@@ -1,8 +1,5 @@
-"""Per-side reachability label shared by the scan-delta services.
-
-Every service that builds a ScanDeltaResponse labels its own sides, so a path that bypasses
-the orchestrator (chat tools, MCP) cannot emit an unlabelled envelope.
-"""
+"""Per-side reachability label shared by the scan-delta services; each labels its own sides, so an
+envelope built without going through the orchestrator still carries the label."""
 
 from __future__ import annotations
 
