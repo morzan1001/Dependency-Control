@@ -2,9 +2,9 @@
 
 from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import (
@@ -28,6 +28,7 @@ from app.core.constants import (
     KEV_DUE_SOON_DAYS,
     KEV_OVERDUE_BOOST,
     KEV_RANSOMWARE_BOOST,
+    RELEASE_ENVIRONMENT_PATTERN,
     SEVERITY_WEIGHTS,
 )
 from app.core.permissions import Permissions, has_permission
@@ -39,6 +40,14 @@ from app.services.recommendation.common import get_attr
 
 MONGO_MATCH = "$match"
 MONGO_GROUP = "$group"
+
+ReleaseEnvironmentQuery = Annotated[
+    str | None,
+    Query(
+        pattern=RELEASE_ENVIRONMENT_PATTERN,
+        description="Report the release of this environment instead of the branch tip",
+    ),
+]
 
 
 def require_analytics_permission(user: User, permission: str) -> None:

@@ -141,6 +141,8 @@ class AnalyticsSummary(BaseModel):
     unique_packages: int
     dependency_types: list[DependencyTypeStats]
     severity_distribution: SeverityBreakdown
+    resolved_projects: int
+    projects_without_release: int
 
 
 class DependencyMetadata(BaseModel):
@@ -213,6 +215,8 @@ class VulnerabilitySearchResponse(BaseModel):
     total: int
     page: int
     size: int
+    resolved_projects: int
+    projects_without_release: int
 
 
 class DependencySearchResult(BaseModel):
@@ -251,6 +255,8 @@ class DependencySearchResponse(BaseModel):
     total: int
     page: int
     size: int
+    resolved_projects: int
+    projects_without_release: int
 
 
 class RecommendationResponse(BaseModel):

@@ -7,10 +7,12 @@ from fastapi import Query
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
+    ReleaseEnvironmentQuery,
     get_latest_scan_ids,
     get_projects_with_scans,
     get_user_project_ids,
     require_analytics_permission,
+    scope_resolution_counts,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.permissions import Permissions
@@ -33,6 +35,7 @@ router = CustomAPIRouter()
 async def get_analytics_summary(
     current_user: CurrentUserDep,
     db: DatabaseDep,
+    release_environment: ReleaseEnvironmentQuery = None,
 ) -> AnalyticsSummary:
     """Get analytics summary across all accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SUMMARY)
@@ -46,9 +49,12 @@ async def get_analytics_summary(
             unique_packages=0,
             dependency_types=[],
             severity_distribution=SeverityBreakdown(),
+            resolved_projects=0,
+            projects_without_release=0,
         )
 
-    scan_ids = await get_latest_scan_ids(project_ids, db)
+    scan_ids = await get_latest_scan_ids(project_ids, db, release_environment=release_environment)
+    resolved_projects, projects_without_release = scope_resolution_counts(project_ids, scan_ids)
 
     if not scan_ids:
         return AnalyticsSummary(
@@ -57,6 +63,8 @@ async def get_analytics_summary(
             unique_packages=0,
             dependency_types=[],
             severity_distribution=SeverityBreakdown(),
+            resolved_projects=resolved_projects,
+            projects_without_release=projects_without_release,
         )
 
     dep_repo = DependencyRepository(db)
@@ -100,6 +108,8 @@ async def get_analytics_summary(
         unique_packages=unique_packages,
         dependency_types=dependency_types,
         severity_distribution=severity_dist,
+        resolved_projects=resolved_projects,
+        projects_without_release=projects_without_release,
     )
 
 

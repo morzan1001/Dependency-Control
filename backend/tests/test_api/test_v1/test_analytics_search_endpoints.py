@@ -67,7 +67,7 @@ class TestSearchDependenciesVulnScanScope:
         async def _fake_get_user_project_ids(_u, _d):
             return ["proj-1"]
 
-        async def _fake_get_projects_with_scans(_project_ids, _d):
+        async def _fake_get_projects_with_scans(_project_ids, _d, **_kw):
             return {"proj-1": "Project 1"}, ["scan-latest"]
 
         mock_dep_repo = MagicMock()
