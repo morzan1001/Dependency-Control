@@ -917,6 +917,8 @@ async def _should_update_project_latest_scan(
     """True unless a strictly-newer scan (by created_at) is already the project's latest.
 
     Guards against a late/out-of-order scan clobbering latest_scan_id/stats with stale data.
+    A rescan always carries created_at = now, so it only keeps the slot when its original still
+    holds it — a release or old-scan rescan must not swing the project onto its numbers.
     A non-authoritative scan (no SBOM ever received) may only become latest when the project
     has none yet, so a SAST-only pipeline run cannot wipe the SBOM-derived picture.
     """
@@ -926,6 +928,10 @@ async def _should_update_project_latest_scan(
         return False
     if not current_latest_id or current_latest_id == scan_id:
         return True
+    if getattr(scan_doc, "is_rescan", False):
+        original_scan_id = getattr(scan_doc, "original_scan_id", None)
+        if original_scan_id and original_scan_id != current_latest_id:
+            return False
 
     current_latest = await scan_repo.get_by_id_strong(current_latest_id)
     if not current_latest:
