@@ -315,7 +315,7 @@ def _numeric(raw: Any) -> float | None:
 
 
 def _reach_modifier(reachable: Any, level: Any) -> float:
-    """Per-finding weight multiplier, in the branch order of the replaced $switch."""
+    """Per-finding weight multiplier, in the branch order of the pipeline's $switch."""
     if reachable is False:
         return UNREACHABLE_RISK_MODIFIER
     if reachable is True and level == REACHABILITY_LEVEL_SYMBOL:
@@ -324,7 +324,7 @@ def _reach_modifier(reachable: Any, level: Any) -> float:
 
 
 class StatsAccumulator:
-    """Severity buckets and ``risk_score``, folded over a stream of findings."""
+    """Scan statistics, folded over a stream of findings."""
 
     # Contract: these finding fields are available to downstream counter groups.
     # As each group is added, it registers the paths it will read.
@@ -355,6 +355,9 @@ class StatsAccumulator:
 
         reachable = finding.get("reachable")
         level = finding.get("reachability_level")
+        # Lookup keys on bucket (derived from severity), which coincides safely with the
+        # severity values in RISK_SEVERITY_WEIGHTS; adding a new weight key requires
+        # ensuring it is also in _BUCKETED_SEVERITIES, or the fold will diverge from the pipeline.
         self._adjusted_exposure += RISK_SEVERITY_WEIGHTS.get(bucket, 0.0) * _reach_modifier(reachable, level)
 
     def result(self) -> Stats:

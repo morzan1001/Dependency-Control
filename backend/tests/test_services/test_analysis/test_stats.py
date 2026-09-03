@@ -4,10 +4,13 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.core.constants import REACHABILITY_LEVEL_IMPORT, REACHABILITY_LEVEL_SYMBOL
+from app.core.risk_scoring import CONFIRMED_REACHABLE_RISK_MODIFIER, UNREACHABLE_RISK_MODIFIER
 from app.models.stats import Stats
 from app.services.analysis.stats import (
     _format_datetime,
     _numeric,
+    _reach_modifier,
     build_epss_kev_summary,
     build_reachability_summary,
     calculate_comprehensive_stats,
@@ -1110,6 +1113,29 @@ class TestNumeric:
 
     def test_missing_value_is_none(self):
         assert _numeric(None) is None
+
+
+# ---------------------------------------------------------------------------
+# _reach_modifier
+# ---------------------------------------------------------------------------
+
+
+class TestReachModifier:
+    def test_unreachable_applies_unreachable_modifier(self):
+        assert _reach_modifier(False, "any_level") == UNREACHABLE_RISK_MODIFIER
+        assert _reach_modifier(False, None) == UNREACHABLE_RISK_MODIFIER
+
+    def test_confirmed_reachable_applies_confirmed_modifier(self):
+        assert _reach_modifier(True, REACHABILITY_LEVEL_SYMBOL) == CONFIRMED_REACHABLE_RISK_MODIFIER
+
+    def test_likely_reachable_defaults_to_one(self):
+        assert _reach_modifier(True, REACHABILITY_LEVEL_IMPORT) == 1.0
+
+    def test_untiered_reachable_defaults_to_one(self):
+        assert _reach_modifier(True, None) == 1.0
+
+    def test_unanalyzed_defaults_to_one(self):
+        assert _reach_modifier(None, REACHABILITY_LEVEL_SYMBOL) == 1.0
 
 
 # ---------------------------------------------------------------------------
