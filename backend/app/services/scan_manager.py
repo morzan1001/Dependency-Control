@@ -58,7 +58,7 @@ class ScanManager:
         # Atomic upsert to avoid races between concurrent scanners.
         now = datetime.now(timezone.utc)
 
-        scan_update = {
+        scan_update: dict[str, Any] = {
             "$set": {
                 "branch": data.branch or "unknown",
                 "commit_hash": data.commit_hash,
@@ -82,6 +82,8 @@ class ScanManager:
                 "sbom_refs": [],
             },
         }
+
+        scan_update["$set"].update(data.release_fields(now))
 
         # Capture the raw result so is_new reflects insert (upserted_id set) vs update.
         from app.core.metrics import track_db_operation

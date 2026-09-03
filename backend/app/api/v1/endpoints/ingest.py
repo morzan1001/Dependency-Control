@@ -325,6 +325,8 @@ async def ingest_sbom(
             },
         }
 
+        scan_update["$set"].update(data.release_fields(now))
+
         # Replace (never append) so a CI retry cannot pile up duplicate SBOMs that get
         # stored and re-analysed forever; superseded GridFS uploads are deleted below.
         if sbom_refs:
