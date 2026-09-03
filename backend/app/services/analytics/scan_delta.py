@@ -60,8 +60,11 @@ def _validate_query(
     change: str | None,
     severity: list[str] | None,
     finding_type: list[str] | None,
+    allow_same_scan: bool,
 ) -> None:
-    if from_scan == to_scan:
+    # A pair the server resolved onto one scan is a real question with an empty answer; a caller
+    # naming the same id twice made a mistake.
+    if from_scan == to_scan and not allow_same_scan:
         raise InvalidDeltaQuery("from_scan_id and to_scan_id must differ")
     if category not in _VALID_CHANGES_BY_CATEGORY:
         raise InvalidDeltaQuery(f"unknown category: {category}")
@@ -92,6 +95,7 @@ async def compute_scan_delta_dispatch(
     change: str | None,
     severity: list[str] | None,
     finding_type: list[str] | None,
+    allow_same_scan: bool = False,
 ) -> ScanDeltaResponse:
     _validate_query(
         category=category,
@@ -102,6 +106,7 @@ async def compute_scan_delta_dispatch(
         change=change,
         severity=severity,
         finding_type=finding_type,
+        allow_same_scan=allow_same_scan,
     )
 
     if category == "findings":

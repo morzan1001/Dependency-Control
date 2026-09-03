@@ -92,6 +92,12 @@ async def get_scan_delta(
         scope_id=project_id,
     )
 
+    if environment is not None and _REF_RELEASE not in (from_ref, to_ref):
+        raise HTTPException(
+            status_code=400,
+            detail=f"environment is only valid with {_SIDE_FROM}={_REF_RELEASE} or {_SIDE_TO}={_REF_RELEASE}",
+        )
+
     resolve_in = DEFAULT_RELEASE_ENVIRONMENT if environment is None else environment
     from_scan = await _resolve_side(db, project_id, _SIDE_FROM, from_scan_id, from_ref, resolve_in)
     to_scan = await _resolve_side(db, project_id, _SIDE_TO, to_scan_id, to_ref, resolve_in)
@@ -117,6 +123,7 @@ async def get_scan_delta(
             change=change,
             severity=_csv_to_list(severity),
             finding_type=_csv_to_list(finding_type),
+            allow_same_scan=(from_ref is not None or to_ref is not None),
         )
     except InvalidDeltaQuery as e:
         raise HTTPException(status_code=400, detail=str(e))

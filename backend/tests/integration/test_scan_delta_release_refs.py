@@ -9,8 +9,12 @@ from app.core.constants import (
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_PENDING,
 )
+from app.models.crypto_asset import CryptoAsset
+from app.models.finding import FindingType, Severity
 from app.models.release import Release
+from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.releases import ReleaseRepository
+from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 
 BASE = "/api/v1/analytics/scan-delta"
 
@@ -25,15 +29,34 @@ _RELEASED_SCAN = "released-scan"
 _RESCAN = "rescan-of-released"
 _CANARY_SCAN = "canary-scan"
 _PENDING_SCAN = "pending-scan"
+_ONLY_SCAN = "only-scan"
 
 _CANARY = "canary"
 _EMPTY_ENVIRONMENT = "nowhere"
 _INVALID_ENVIRONMENT = "Prod.EU"
+_ENVIRONMENT_PARAM = "environment"
 
 _RELEASE_REF = "release"
 _HEAD_REF = "head"
 _UNKNOWN_REF = "trunk"
 _FINDINGS = "findings"
+_COMPONENTS = "components"
+_CRYPTO = "crypto"
+
+_NOTHING = 0
+_ONE_SEEDED = 1
+_NO_ITEMS: list[dict] = []
+
+_SEEDED_FINDING = "seeded-finding"
+_SEEDED_DEPENDENCY = "seeded-dependency"
+_SEEDED_CVE = "CVE-2026-0001"
+_SEEDED_COMPONENT = "left-pad"
+_SEEDED_VERSION = "1.0.0"
+_SEEDED_PURL = "pkg:npm/left-pad@1.0.0"
+_SEEDED_LICENSE = "MIT"
+_SEEDED_PACKAGE_TYPE = "npm"
+_SEEDED_ALGORITHM = "MD5"
+_SEEDED_BOM_REF = "seeded-crypto-asset"
 
 
 async def _seed_scan(db, scan_id: str, *, created_at: datetime, status: str = SCAN_STATUS_COMPLETED, **extra) -> None:
@@ -64,6 +87,53 @@ async def _seed(db) -> None:
     await _seed_release(db, _RELEASED_SCAN, released_at=_NOW - _TEN_DAYS)
 
 
+async def _seed_one_scan_that_is_head_and_release(db) -> None:
+    """The healthiest state: the only scan is both the branch tip and what production runs.
+    Seeded with one row per category so an empty delta is provably "all unchanged", not "both sides empty"."""
+    await _seed_scan(db, _ONLY_SCAN, created_at=_NOW)
+    await _seed_release(db, _ONLY_SCAN, released_at=_NOW)
+    await db.findings.insert_one(
+        {
+            "_id": _SEEDED_FINDING,
+            "project_id": _PROJECT,
+            "scan_id": _ONLY_SCAN,
+            "finding_id": _SEEDED_FINDING,
+            "type": FindingType.VULNERABILITY.value,
+            "severity": Severity.CRITICAL.value,
+            "component": _SEEDED_COMPONENT,
+            "version": _SEEDED_VERSION,
+            "description": _SEEDED_CVE,
+            "details": {"vulnerabilities": [{"id": _SEEDED_CVE}]},
+        }
+    )
+    await db.dependencies.insert_one(
+        {
+            "_id": _SEEDED_DEPENDENCY,
+            "project_id": _PROJECT,
+            "scan_id": _ONLY_SCAN,
+            "name": _SEEDED_COMPONENT,
+            "version": _SEEDED_VERSION,
+            "purl": _SEEDED_PURL,
+            "license": _SEEDED_LICENSE,
+            "type": _SEEDED_PACKAGE_TYPE,
+        }
+    )
+    await CryptoAssetRepository(db).bulk_upsert(
+        _PROJECT,
+        _ONLY_SCAN,
+        [
+            CryptoAsset(
+                project_id=_PROJECT,
+                scan_id=_ONLY_SCAN,
+                bom_ref=_SEEDED_BOM_REF,
+                name=_SEEDED_ALGORITHM,
+                asset_type=CryptoAssetType.ALGORITHM,
+                primitive=CryptoPrimitive.HASH,
+            )
+        ],
+    )
+
+
 async def _delta(client, headers, **params):
     return await client.get(BASE, params={"project_id": _PROJECT, "category": _FINDINGS, **params}, headers=headers)
 
@@ -78,6 +148,35 @@ async def test_release_to_head_resolves_both_sides(client, db, member_auth_heade
     body = resp.json()
     assert body["from_scan_id"] == _RELEASED_SCAN
     assert body["to_scan_id"] == _HEAD_SCAN
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("category", [_FINDINGS, _COMPONENTS, _CRYPTO])
+async def test_a_release_that_is_also_head_reports_an_empty_delta(client, db, member_auth_headers, category):
+    """Nothing shipped since the last deploy is an answer, not a bad request."""
+    await _seed_one_scan_that_is_head_and_release(db)
+
+    resp = await _delta(client, member_auth_headers, category=category, **{"from": _RELEASE_REF, "to": _HEAD_REF})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["from_scan_id"] == _ONLY_SCAN
+    assert body["to_scan_id"] == _ONLY_SCAN
+    assert body["totals"]["added"] == _NOTHING
+    assert body["totals"]["removed"] == _NOTHING
+    assert body["totals"]["changed"] == _NOTHING
+    assert body["totals"]["unchanged"] == _ONE_SEEDED
+    assert body["items"] == _NO_ITEMS
+
+
+@pytest.mark.asyncio
+async def test_head_against_head_reports_an_empty_delta(client, db, member_auth_headers):
+    await _seed_one_scan_that_is_head_and_release(db)
+
+    resp = await _delta(client, member_auth_headers, **{"from": _HEAD_REF, "to": _HEAD_REF})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["totals"]["unchanged"] == _ONE_SEEDED
 
 
 @pytest.mark.asyncio
@@ -178,6 +277,24 @@ async def test_an_unknown_reference_is_a_400(client, db, member_auth_headers):
 
     assert resp.status_code == 400, resp.text
     assert _UNKNOWN_REF in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "pair",
+    [
+        {"from_scan_id": _RELEASED_SCAN, "to_scan_id": _HEAD_SCAN},
+        {"from": _HEAD_REF, "to": _HEAD_REF},
+    ],
+)
+async def test_an_environment_without_a_release_side_is_a_400(client, db, member_auth_headers, pair):
+    """A caller who names an environment believes it scopes the comparison; nothing here would read it."""
+    await _seed(db)
+
+    resp = await _delta(client, member_auth_headers, environment=_CANARY, **pair)
+
+    assert resp.status_code == 400, resp.text
+    assert _ENVIRONMENT_PARAM in resp.json()["detail"]
 
 
 @pytest.mark.asyncio
