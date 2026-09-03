@@ -95,7 +95,7 @@ async def compute_scan_delta_dispatch(
     change: str | None,
     severity: list[str] | None,
     finding_type: list[str] | None,
-    allow_same_scan: bool = False,
+    allow_same_scan: bool,
 ) -> ScanDeltaResponse:
     _validate_query(
         category=category,

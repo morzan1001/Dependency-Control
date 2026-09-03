@@ -217,7 +217,11 @@ async def test_no_release_in_that_environment_is_a_404(client, db, member_auth_h
     )
 
     assert resp.status_code == 404, resp.text
-    assert _EMPTY_ENVIRONMENT in resp.json()["detail"]
+    detail = resp.json()["detail"]
+    assert _EMPTY_ENVIRONMENT in detail
+    # Both release-side 404s name the environment; only the wording tells "never released here"
+    # apart from "released, but the chain resolves to nothing".
+    assert _UNRESOLVED_RELEASE_DETAIL not in detail
 
 
 @pytest.mark.asyncio

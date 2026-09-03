@@ -22,6 +22,7 @@ async def test_dispatch_findings():
             change=None,
             severity=None,
             finding_type=None,
+            allow_same_scan=False,
         )
         assert result == "findings-result"
         mock.assert_awaited_once()
@@ -44,6 +45,7 @@ async def test_dispatch_components():
             change=None,
             severity=None,
             finding_type=None,
+            allow_same_scan=False,
         )
         assert result == "components-result"
         mock.assert_awaited_once()
@@ -66,6 +68,7 @@ async def test_dispatch_crypto():
             change=None,
             severity=None,
             finding_type=None,
+            allow_same_scan=False,
         )
         assert result == "crypto-result"
         mock.assert_awaited_once()
@@ -85,6 +88,7 @@ async def test_dispatch_rejects_severity_for_non_findings():
             change=None,
             severity=["critical"],
             finding_type=None,
+            allow_same_scan=False,
         )
 
 
@@ -102,6 +106,7 @@ async def test_dispatch_rejects_finding_type_for_non_findings():
             change=None,
             severity=None,
             finding_type=["secret"],
+            allow_same_scan=False,
         )
 
 
@@ -119,6 +124,7 @@ async def test_dispatch_rejects_change_changed_for_non_components():
             change="changed",
             severity=None,
             finding_type=None,
+            allow_same_scan=False,
         )
 
 
@@ -136,6 +142,7 @@ async def test_dispatch_rejects_same_scan_ids():
             change=None,
             severity=None,
             finding_type=None,
+            allow_same_scan=False,
         )
 
 
@@ -153,6 +160,7 @@ async def test_dispatch_rejects_unknown_severity():
             change=None,
             severity=["criticla"],
             finding_type=None,
+            allow_same_scan=False,
         )
 
 
@@ -171,6 +179,7 @@ async def test_dispatch_rejects_unknown_severity_preserves_user_casing():
             change=None,
             severity=["CRITICLA"],
             finding_type=None,
+            allow_same_scan=False,
         )
 
 
@@ -191,6 +200,7 @@ async def test_dispatch_accepts_uppercase_severity():
             change=None,
             severity=["CRITICAL"],
             finding_type=None,
+            allow_same_scan=False,
         )
         assert result == "findings-result"
 
@@ -209,6 +219,7 @@ async def test_dispatch_rejects_unknown_finding_type():
             change=None,
             severity=None,
             finding_type=["bogus"],
+            allow_same_scan=False,
         )
 
 
@@ -226,6 +237,7 @@ async def test_dispatch_rejects_unknown_change_for_findings():
             change="garbage",
             severity=None,
             finding_type=None,
+            allow_same_scan=False,
         )
 
 
@@ -243,6 +255,7 @@ async def test_dispatch_rejects_page_below_one():
             change=None,
             severity=None,
             finding_type=None,
+            allow_same_scan=False,
         )
 
 
@@ -260,6 +273,7 @@ async def test_dispatch_rejects_page_size_above_max():
             change=None,
             severity=None,
             finding_type=None,
+            allow_same_scan=False,
         )
 
 
@@ -280,5 +294,6 @@ async def test_dispatch_accepts_change_changed_for_components():
             change="changed",
             severity=None,
             finding_type=None,
+            allow_same_scan=False,
         )
         assert result == "components-result"
