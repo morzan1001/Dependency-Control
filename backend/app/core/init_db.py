@@ -320,6 +320,16 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await database["scans"].create_index("original_scan_id")
     await database["scans"].create_index("latest_rescan_id")
 
+    await database["scans"].create_index(
+        [
+            ("project_id", pymongo.ASCENDING),
+            ("release_environment", pymongo.ASCENDING),
+            ("released_at", pymongo.DESCENDING),
+        ],
+        name="scans_release_lookup",
+        partialFilterExpression={"is_release": True},
+    )
+
     await database["findings"].create_index([("created_at", pymongo.DESCENDING)])
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)])
     # _STATS_CURSOR_HINT hints this exact key pattern; an unsatisfiable hint errors, so without
