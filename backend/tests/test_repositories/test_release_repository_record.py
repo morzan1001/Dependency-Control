@@ -77,7 +77,9 @@ async def test_a_lost_insert_race_updates_the_row_the_winner_wrote(db):
 
 
 @pytest.mark.asyncio
-async def test_the_upsert_key_is_the_unique_key(db):
+async def test_the_upsert_filter_is_the_key_triple(db):
+    """The in-process upsert skips its duplicate check once the filter matches, so what a single
+    surviving row shows is that the filter selects on the triple — not that uniqueness is enforced."""
     await ReleaseRepository(db).record(
         Release(project_id=_PROJECT, environment=_ENVIRONMENT, version=_VERSION, scan_id=_SCAN, released_at=_NOW)
     )

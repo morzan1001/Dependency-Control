@@ -1,40 +1,55 @@
 """Release lookup and the single resolver for 'which scan counts for this project'."""
 
 from collections.abc import Iterable, Sequence
+from datetime import datetime, timezone
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core import ensure_utc
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, SCAN_USABLE_STATUSES
 from app.repositories import ProjectRepository, ScanRepository
 
-_RELEASED_SCAN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1}
-_SCAN_ID_ONLY_PROJECTION = {"_id": 1}
+_MAX_RESCAN_HOPS = 10
+_CHAIN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1, "created_at": 1}
+_UNDATED = datetime.min.replace(tzinfo=timezone.utc)
+
+
+def _created_at(doc: dict[str, Any]) -> datetime:
+    # A scan with no created_at sorts oldest, so it wins only when its chain holds nothing else.
+    return ensure_utc(doc.get("created_at")) or _UNDATED
 
 
 async def _effective_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Iterable[str]) -> dict[str, str]:
-    """The freshest scan of the released artefact whose analysis can be read: its latest rescan when
-    that rescan is usable, else the released scan itself when it is. latest_rescan_id is written when
-    the rescan is created, so following it unconditionally would report a running rescan's empty
-    stats as zero findings in the environment. A scan with no usable analysis at all, and one that
-    retention has already deleted, are both absent from the result rather than a misleading id."""
-    released = {
-        doc["_id"]: doc async for doc in db.scans.find({"_id": {"$in": list(scan_ids)}}, _RELEASED_SCAN_PROJECTION)
-    }
-    rescan_ids = {doc["latest_rescan_id"] for doc in released.values() if doc.get("latest_rescan_id")}
-    usable_rescans: set[str] = set()
-    if rescan_ids:
-        usable = {"_id": {"$in": list(rescan_ids)}, "status": {"$in": SCAN_USABLE_STATUSES}}
-        usable_rescans = {doc["_id"] async for doc in db.scans.find(usable, _SCAN_ID_ONLY_PROJECTION)}
+    """The freshest readable analysis of each released artefact.
 
-    effective: dict[str, str] = {}
-    for scan_id, doc in released.items():
-        rescan_id = doc.get("latest_rescan_id")
-        if rescan_id in usable_rescans:
-            effective[scan_id] = rescan_id
-        elif doc.get("status") in SCAN_USABLE_STATUSES:
-            effective[scan_id] = scan_id
-    return effective
+    Rescans chain — each is created from the project's newest usable scan, so the released scan's
+    latest_rescan_id never advances past the first link — and the walk follows unusable links too,
+    or a failed rescan would hide the good one behind it. Bounded, so a cyclic pointer cannot hang a
+    request. A release with no usable scan in its chain, like one whose scan retention deleted, is
+    absent rather than a misleading id.
+    """
+    frontier: dict[str, str] = {scan_id: scan_id for scan_id in scan_ids}
+    visited: set[str] = set()
+    freshest: dict[str, dict[str, Any]] = {}
+
+    for _hop in range(_MAX_RESCAN_HOPS + 1):
+        if not frontier:
+            break
+        visited.update(frontier)
+        next_frontier: dict[str, str] = {}
+        async for doc in db.scans.find({"_id": {"$in": list(frontier)}}, _CHAIN_PROJECTION):
+            released_id = frontier[doc["_id"]]
+            if doc.get("status") in SCAN_USABLE_STATUSES:
+                incumbent = freshest.get(released_id)
+                if incumbent is None or _created_at(doc) > _created_at(incumbent):
+                    freshest[released_id] = doc
+            rescan_id = doc.get("latest_rescan_id")
+            if rescan_id and rescan_id not in visited:
+                next_frontier[rescan_id] = released_id
+        frontier = next_frontier
+
+    return {released_id: doc["_id"] for released_id, doc in freshest.items()}
 
 
 async def latest_release_scan(db: AsyncIOMotorDatabase, project_id: str, environment: str) -> str | None:

@@ -8,7 +8,12 @@ import pytest
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
-from app.services.releases import latest_release_scan, release_environments, resolve_scan_ids
+from app.services.releases import (
+    _MAX_RESCAN_HOPS,
+    latest_release_scan,
+    release_environments,
+    resolve_scan_ids,
+)
 from tests.mocks.fake_mongo import FakeDatabase
 
 _NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
@@ -35,6 +40,11 @@ _HEAD_QUERIES = {"projects.find": 1, "scans.aggregate": 1}
 _HEAD_QUERIES_POINTERS_ONLY = {"projects.find": 1}
 _RELEASE_QUERIES = {"releases.aggregate": 1, "scans.find": 1}
 _RELEASE_QUERIES_WITH_RESCANS = {"releases.aggregate": 1, "scans.find": 2}
+_RELEASE_QUERIES_WITH_A_CHAIN = {"releases.aggregate": 1, "scans.find": 4}
+_CHAIN_DEPTH = 3
+_CHAIN_BEYOND_THE_BOUND = _MAX_RESCAN_HOPS + 5
+_NO_ENVIRONMENTS: list[str] = []
+_CYCLE_QUERIES = {"releases.find_one": 1, "scans.find": 2}
 _NO_QUERIES: dict[str, int] = {}
 
 
@@ -72,6 +82,17 @@ async def _seed_one_scan_each(db: FakeDatabase, project_count: int) -> list[str]
         await db.scans.insert_one(_scan(f"scan-{index}", project_id))
         await db.releases.insert_one(_release(project_id, _PRODUCTION, f"scan-{index}"))
     return project_ids
+
+
+async def _seed_rescan_chain(db: FakeDatabase, project_id: str, released: str, statuses: list[str]) -> list[str]:
+    """released -> rescan-1 -> ... : housekeeping rescans the project's newest usable scan, so each
+    rescan carries the next pointer and the released scan's own pointer never advances past the first."""
+    chain = [f"{released}-rescan-{depth}" for depth in range(1, len(statuses) + 1)]
+    for depth, (scan_id, status) in enumerate(zip(chain, statuses, strict=True), start=1):
+        await db.scans.insert_one(_scan(scan_id, project_id, created_delta=depth, status=status))
+    for source, target in zip([released, *chain], chain, strict=False):
+        await db.scans.update_one({"_id": source}, {"$set": {"latest_rescan_id": target}})
+    return chain
 
 
 def _count_queries(db: FakeDatabase) -> Counter:
@@ -167,6 +188,57 @@ async def test_latest_release_scan_of_an_unanalysed_release_is_none(db):
 
 
 @pytest.mark.asyncio
+async def test_latest_release_scan_walks_the_whole_rescan_chain(db):
+    await db.scans.insert_one(_scan("released", _PROJECT_A))
+    chain = await _seed_rescan_chain(db, _PROJECT_A, "released", [_COMPLETED] * _CHAIN_DEPTH)
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
+
+    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) == chain[-1]
+
+
+@pytest.mark.asyncio
+async def test_latest_release_scan_walks_through_a_failed_link_of_the_chain(db):
+    """Stopping at the first unusable hop would answer with the released scan and ignore a fresher
+    analysis of the same artefact that is sitting one link further along."""
+    await db.scans.insert_one(_scan("released", _PROJECT_A))
+    chain = await _seed_rescan_chain(db, _PROJECT_A, "released", [_FAILED, _COMPLETED])
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
+
+    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) == chain[-1]
+
+
+@pytest.mark.asyncio
+async def test_latest_release_scan_keeps_the_freshest_usable_when_the_chain_ends_unusable(db):
+    await db.scans.insert_one(_scan("released", _PROJECT_A))
+    chain = await _seed_rescan_chain(db, _PROJECT_A, "released", [_COMPLETED, _PENDING, _FAILED])
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
+
+    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) == chain[0]
+
+
+@pytest.mark.asyncio
+async def test_a_chain_longer_than_the_bound_stops_at_the_bound(db):
+    await db.scans.insert_one(_scan("released", _PROJECT_A))
+    chain = await _seed_rescan_chain(db, _PROJECT_A, "released", [_COMPLETED] * _CHAIN_BEYOND_THE_BOUND)
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
+
+    resolved = await latest_release_scan(db, _PROJECT_A, _PRODUCTION)
+
+    assert resolved == chain[_MAX_RESCAN_HOPS - 1], "the walk stops at the bound instead of running the chain out"
+
+
+@pytest.mark.asyncio
+async def test_a_cyclic_rescan_pointer_is_walked_once(db):
+    await db.scans.insert_one(_scan("released", _PROJECT_A, latest_rescan_id="rescan"))
+    await db.scans.insert_one(_scan("rescan", _PROJECT_A, created_delta=1, latest_rescan_id="released"))
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released"))
+    counts = _count_queries(db)
+
+    assert await latest_release_scan(db, _PROJECT_A, _PRODUCTION) == "rescan"
+    assert dict(counts) == _CYCLE_QUERIES, "a scan already walked is not read again, so the cycle ends itself"
+
+
+@pytest.mark.asyncio
 async def test_latest_release_scan_of_a_deleted_scan_is_none(db):
     await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "retained-nowhere"))
 
@@ -183,6 +255,24 @@ async def test_release_environments_are_sorted_and_deduplicated(db):
 
 
 @pytest.mark.asyncio
+async def test_release_environments_of_a_project_without_releases_is_empty(db):
+    await db.releases.insert_one(_release(_OTHER_PROJECT, _PRODUCTION, "someone-elses"))
+
+    assert await release_environments(db, _PROJECT_A) == _NO_ENVIRONMENTS
+
+
+@pytest.mark.asyncio
+async def test_release_environments_lists_an_environment_that_resolves_to_nothing(db):
+    """Intended asymmetry: the environment was released to, so it stays selectable even while its
+    release has no readable analysis. Hiding it would need a deliberate change here."""
+    await db.scans.insert_one(_scan("unanalysed", _PROJECT_A, status=_PENDING))
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "unanalysed"))
+
+    assert await release_environments(db, _PROJECT_A) == [_PRODUCTION]
+    assert await resolve_scan_ids(db, [_PROJECT_A], release_environment=_PRODUCTION) == _NO_SCANS
+
+
+@pytest.mark.asyncio
 async def test_resolve_scan_ids_head_uses_the_project_pointer(db):
     await db.projects.insert_one({"_id": _PROJECT_A, "name": _PROJECT_A, "latest_scan_id": "head-a"})
     await db.scans.insert_one(_scan("head-a", _PROJECT_A))
@@ -191,8 +281,19 @@ async def test_resolve_scan_ids_head_uses_the_project_pointer(db):
 
 
 @pytest.mark.asyncio
+async def test_resolve_scan_ids_head_without_a_project_filter(db):
+    await db.projects.insert_one({"_id": _PROJECT_A, "name": _PROJECT_A, "latest_scan_id": "head-a"})
+    await db.projects.insert_one({"_id": _PROJECT_B, "name": _PROJECT_B, "latest_scan_id": "head-b"})
+    await db.scans.insert_one(_scan("head-a", _PROJECT_A))
+    await db.scans.insert_one(_scan("head-b", _PROJECT_B))
+
+    assert await resolve_scan_ids(db, None) == {_PROJECT_A: "head-a", _PROJECT_B: "head-b"}
+
+
+@pytest.mark.asyncio
 async def test_resolve_scan_ids_head_matches_the_repository(db):
-    """The head path must stay the repository's answer, or the dashboards move when callers switch."""
+    """The head path must stay the repository's answer, or the dashboards move when callers switch.
+    A completed rescan becomes the project's own pointer, so the head path never hops to one itself."""
     await db.projects.insert_one({"_id": "with-pointer", "name": "one", "latest_scan_id": "pointed-at"})
     await db.projects.insert_one({"_id": "no-pointer", "name": "two"})
     await db.projects.insert_one(
@@ -204,7 +305,8 @@ async def test_resolve_scan_ids_head_matches_the_repository(db):
         }
     )
     await db.projects.insert_one({"_id": "no-scans", "name": "four"})
-    await db.scans.insert_one(_scan("pointed-at", "with-pointer"))
+    await db.scans.insert_one(_scan("pointed-at", "with-pointer", latest_rescan_id="a-usable-rescan"))
+    await db.scans.insert_one(_scan("a-usable-rescan", "with-pointer", created_delta=4))
     await db.scans.insert_one(_scan("older", "no-pointer", created_delta=-1))
     await db.scans.insert_one(_scan("newest", "no-pointer", created_delta=1))
     await db.scans.insert_one(_scan("failed", "no-pointer", created_delta=2, status=_FAILED))
@@ -269,6 +371,21 @@ async def test_resolve_scan_ids_release_mode_omits_a_release_without_usable_anal
 
     assert await resolve_scan_ids(db, [_PROJECT_A, _PROJECT_B], release_environment=_PRODUCTION) == {
         _PROJECT_B: "released-b"
+    }
+
+
+@pytest.mark.asyncio
+async def test_resolve_scan_ids_release_mode_walks_the_chain_per_project(db):
+    await db.scans.insert_one(_scan("released-a", _PROJECT_A))
+    await db.scans.insert_one(_scan("released-b", _PROJECT_B))
+    chain_a = await _seed_rescan_chain(db, _PROJECT_A, "released-a", [_FAILED, _COMPLETED])
+    chain_b = await _seed_rescan_chain(db, _PROJECT_B, "released-b", [_COMPLETED] * _CHAIN_DEPTH)
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, "released-a"))
+    await db.releases.insert_one(_release(_PROJECT_B, _PRODUCTION, "released-b"))
+
+    assert await resolve_scan_ids(db, [_PROJECT_A, _PROJECT_B], release_environment=_PRODUCTION) == {
+        _PROJECT_A: chain_a[-1],
+        _PROJECT_B: chain_b[-1],
     }
 
 
@@ -340,6 +457,20 @@ async def test_release_query_count_with_rescans_does_not_grow_with_the_scope(db,
     await resolve_scan_ids(db, project_ids, release_environment=_PRODUCTION)
 
     assert dict(counts) == _RELEASE_QUERIES_WITH_RESCANS
+
+
+@pytest.mark.parametrize("project_count", [_ONE_PROJECT, _MANY_PROJECTS])
+@pytest.mark.asyncio
+async def test_release_query_count_with_a_chain_does_not_grow_with_the_scope(db, project_count):
+    """One read per depth of the deepest chain, shared by the whole scope — never one per project."""
+    project_ids = await _seed_one_scan_each(db, project_count)
+    for index, project_id in enumerate(project_ids):
+        await _seed_rescan_chain(db, project_id, f"scan-{index}", [_COMPLETED] * _CHAIN_DEPTH)
+    counts = _count_queries(db)
+
+    await resolve_scan_ids(db, project_ids, release_environment=_PRODUCTION)
+
+    assert dict(counts) == _RELEASE_QUERIES_WITH_A_CHAIN
 
 
 @pytest.mark.asyncio
