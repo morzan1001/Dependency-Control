@@ -56,7 +56,9 @@ def build_corpus() -> list[dict]:
             details[DETAILS_KEY_IN_KEV] = True
             details[DETAILS_KEY_KEV_RANSOMWARE] = spin % 2 == 0
         # Straddles REACHABILITY_HIGH_CONFIDENCE_THRESHOLD (0.6) from below, on, and above.
-        details["reachability"] = {"confidence_score": (0.4, 0.6, 0.9)[spin % 3]}
+        # Some documents have no reachability enrichment: reachable findings without confidence scores.
+        if alt % 7 != 0:
+            details["reachability"] = {"confidence_score": (0.4, 0.6, 0.9)[spin % 3]}
         # Both persisted shapes of "no value": an explicit null and an absent key.
         if verified is not None or alt % 2 == 0:
             details["verified"] = verified
@@ -130,12 +132,13 @@ def test_corpus_covers_every_persisted_shape():
     assert any("reachable" not in doc for doc in docs), "reachable is never absent"
     assert any("reachable" in doc and doc["reachable"] is None for doc in docs), "reachable is never an explicit null"
     assert any("reachability_level" not in doc for doc in docs), "the untiered-reachable case is never built"
+    assert any("reachability" not in d for d in details), "details.reachability is never absent"
     assert {doc.get("waived", "absent") for doc in docs} == {True, False, "absent"}
 
     ransomware_confidences = {
         doc["details"]["reachability"]["confidence_score"]
         for doc in docs
-        if doc["details"].get(DETAILS_KEY_KEV_RANSOMWARE) is True
+        if doc["details"].get(DETAILS_KEY_KEV_RANSOMWARE) is True and "reachability" in doc["details"]
     }
     assert ransomware_confidences == {0.4, 0.6, 0.9}, "KEV ransomware is pinned to one confidence value"
 
@@ -202,9 +205,19 @@ async def test_reachability_matches_except_coverable():
     pipeline, fold = await both()
     got = fold.reachability.model_dump()
     want = pipeline.reachability.model_dump()
-    # coverable_count is the last group to land; it gets its own differential in the next task.
+    # coverable_count is not folded yet.
     got.pop("coverable_count")
     want.pop("coverable_count")
     assert got == want
+    assert want["analyzed_count"] > 0
+    assert want["reachable_count"] > 0
+    assert want["unreachable_count"] > 0
+    assert want["confirmed_reachable_count"] > 0
+    assert want["likely_reachable_count"] > 0
+    assert want["reachable_critical"] > 0
+    assert want["reachable_high"] > 0
     assert want["reachable_count"] > want["confirmed_reachable_count"] + want["likely_reachable_count"]
     assert want["reachable_count_high_confidence"] > 0
+    assert want["reachable_critical_high_confidence"] > 0
+    assert want["reachable_high_high_confidence"] > 0
+    assert want["unknown_count"] < 0

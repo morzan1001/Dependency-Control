@@ -2,7 +2,12 @@
 
 import pytest
 
-from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE
+from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
+    DETAILS_KEY_KEV_RANSOMWARE,
+    REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
+    REACHABILITY_LEVEL_SYMBOL,
+)
 from app.services.analysis.stats import compute_stats
 
 
@@ -171,7 +176,7 @@ class TestReachabilityTriState:
         assert (r.reachable_count, r.unreachable_count) == (0, 0)
 
     def test_level_alone_never_produces_a_tier(self):
-        r = compute_stats([{**_finding(), "reachability_level": "symbol"}], {}).reachability
+        r = compute_stats([{**_finding(), "reachability_level": REACHABILITY_LEVEL_SYMBOL}], {}).reachability
         assert r.confirmed_reachable_count == 0
 
     def test_unknown_count_is_measured_against_vulnerabilities_only(self):
@@ -184,17 +189,17 @@ class TestHighConfidenceGate:
     def _with_confidence(confidence, reachable=True, severity="CRITICAL"):
         doc = _finding(severity=severity)
         doc["reachable"] = reachable
-        doc["reachability_level"] = "symbol"
+        doc["reachability_level"] = REACHABILITY_LEVEL_SYMBOL
         doc["details"]["reachability"] = {"confidence_score": confidence}
         return doc
 
     def test_threshold_is_inclusive(self):
-        r = compute_stats([self._with_confidence(0.6)], {}).reachability
+        r = compute_stats([self._with_confidence(REACHABILITY_HIGH_CONFIDENCE_THRESHOLD)], {}).reachability
         assert r.reachable_count_high_confidence == 1
         assert r.reachable_critical_high_confidence == 1
 
     def test_just_below_the_threshold_is_excluded(self):
-        r = compute_stats([self._with_confidence(0.59)], {}).reachability
+        r = compute_stats([self._with_confidence(REACHABILITY_HIGH_CONFIDENCE_THRESHOLD - 0.01)], {}).reachability
         assert r.reachable_count_high_confidence == 0
 
     def test_missing_confidence_is_not_high_confidence(self):

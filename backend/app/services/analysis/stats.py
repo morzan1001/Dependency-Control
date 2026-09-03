@@ -540,6 +540,7 @@ class StatsAccumulator:
                 confirmed_reachable_count=self._confirmed,
                 likely_reachable_count=self._likely,
                 unreachable_count=self._unreachable,
+                # vuln_total is type-gated; _analyzed is ungated. Non-vulnerabilities carrying reachable drive this negative.
                 unknown_count=self._vuln_total - self._analyzed,
                 reachable_critical=self._reachable_critical,
                 reachable_high=self._reachable_high,
