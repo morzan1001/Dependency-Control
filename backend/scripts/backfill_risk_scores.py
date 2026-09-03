@@ -94,31 +94,34 @@ async def backfill_scans(db: Any, batch_size: int, sleep_ms: int, limit: int, ex
             computed = await calculate_comprehensive_stats(db, scan_id)
 
             counters["processed"] += 1
-            field_diff = stats_field_diff(stored, computed)
-            if field_diff:
-                counters["stats_differ"] += 1
-                diff_fields.update(field_diff.keys())
-
             if _bucket_total(computed.model_dump()) == 0 and _bucket_total(stored) > 0:
                 # Findings for this scan are gone (pruned/never persisted); zeroing the
                 # stored score would fabricate a clean bill of health.
                 counters["skipped_no_findings"] += 1
-            elif _scores_differ(stored, computed):
-                counters["would_update"] += 1
-                new_scores[scan_id] = (computed.risk_score, computed.adjusted_risk_score)
-                if execute:
-                    await db.scans.update_one(
-                        {"_id": scan_id},
-                        {
-                            "$set": {
-                                "stats.risk_score": computed.risk_score,
-                                "stats.adjusted_risk_score": computed.adjusted_risk_score,
-                            }
-                        },
-                    )
-                    counters["updated"] += 1
             else:
-                counters["unchanged"] += 1
+                # Only a scan that recomputed against live findings can evidence an arithmetic
+                # disagreement; one whose findings are gone diverges on whatever it happened to store.
+                field_diff = stats_field_diff(stored, computed)
+                if field_diff:
+                    counters["stats_differ"] += 1
+                    diff_fields.update(field_diff.keys())
+
+                if _scores_differ(stored, computed):
+                    counters["would_update"] += 1
+                    new_scores[scan_id] = (computed.risk_score, computed.adjusted_risk_score)
+                    if execute:
+                        await db.scans.update_one(
+                            {"_id": scan_id},
+                            {
+                                "$set": {
+                                    "stats.risk_score": computed.risk_score,
+                                    "stats.adjusted_risk_score": computed.adjusted_risk_score,
+                                }
+                            },
+                        )
+                        counters["updated"] += 1
+                else:
+                    counters["unchanged"] += 1
 
             if limit and counters["processed"] >= limit:
                 print(f"Reached --limit {limit}.")

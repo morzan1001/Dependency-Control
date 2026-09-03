@@ -7,6 +7,8 @@ runbook exists to prove that before the rollout and to confirm it after.
 There is no feature flag. The only rollback is an image rollback, and an image rollback does not
 repair data — see section 5.
 
+Scope: this runbook covers the engine change. The ingest response swap ships in its own release.
+
 Prod context: `gke_rd-itsecurity-sboms-prod_europe-west1_prod-1`, namespace `dependency-control`.
 
 Run the script invocations below as a Kubernetes **Job**, never via `kubectl exec`: the autoscaler
@@ -22,10 +24,12 @@ index` instead of falling back to a collection scan, so on a database without th
 stats read fails — the analysis engine, the waiver recalculation and the script below alike.
 
 `create_indexes` in `app/core/init_db.py` creates it unconditionally, so any cluster that has
-booted this application already has it. Confirm rather than assume, in `mongosh`:
+booted this application already has it. Confirm rather than assume, in `mongosh`. **Match on the
+key pattern, not the name** — the hint is a key pattern, so an index with these two keys in this
+order satisfies it whatever it is called:
 
 ```
-db.findings.getIndexes().filter(i => i.name === "scan_id_1_type_1")
+db.findings.getIndexes().filter(i => JSON.stringify(i.key) === '{"scan_id":1,"type":1}')
 ```
 
 An empty result means stop. Create it and wait for the build to finish before deploying — a large
@@ -33,6 +37,14 @@ index build does not belong in a rollout's startup path:
 
 ```
 db.findings.createIndex({ scan_id: 1, type: 1 }, { name: "scan_id_1_type_1" })
+```
+
+An `IndexOptionsConflict` here means these keys are already indexed under a different name, which
+the hint accepts — you are done with this step. Otherwise watch the build drain before continuing;
+it has finished when `inprog` comes back empty:
+
+```
+db.currentOp({ "command.createIndexes": { $exists: true } })
 ```
 
 Check the same on the restored replica used in section 2, not only on production. A restore that
@@ -80,18 +92,22 @@ three field lines.
 The stored block is normalised through the `Stats` model before the comparison, so a scalar an
 older writer never emitted defaults to `0` rather than reading as drift.
 
+Scans counted by `scans skipped (no findings for non-zero stats)` are left out of the report
+entirely. Their findings are gone, so the recomputation folds nothing and the all-zero result
+would diverge on whatever the stored block happened to hold — retention, not arithmetic. They
+are still counted on their own line, so nothing is hidden.
+
 **A non-zero total after the accounted-for classes below have been subtracted is translation
 drift. Stop and investigate — do not re-run it.** The comparison is deterministic over the same
 data; a second run produces the same answer. A field that disagrees disagrees because the backend
 now counts it differently from the numbers already in the database, and shipping that silently
 changes every dashboard, ranking and alert threshold built on it.
 
-Three classes are accounted for and must be netted out before reading the total:
+Two classes are accounted for and must be netted out before reading the total:
 
 | Line in the breakdown | Accounted for when | Why |
 |---|---|---|
-| `risk_score`, `adjusted_risk_score` | the count tracks `scans needing new scores` | these two are exactly what this script exists to repair; a stored score written before the current scale differs without any engine disagreement. A count *above* `scans needing new scores` means those stored scores carry more than one decimal, which no current writer produces |
-| any field, on a scan counted by `scans skipped (no findings for non-zero stats)` | | the scan's findings are gone, so the recomputation reads nothing and every counter reads zero against a non-zero stored block — that is retention, not arithmetic |
+| `risk_score`, `adjusted_risk_score` | the count is at most `scans needing new scores` | these two are exactly what this script exists to repair; a stored score written before the current scale differs without any engine disagreement. A count *above* `scans needing new scores` means those stored scores carry more than one decimal, which no current writer produces |
 | `threat_intel`, `reachability`, `prioritized`, `secret_priority` | the count matches the number of stored blocks that omit the key | these four default to absent, so a block written before the sub-block existed reads as differing on it wholesale |
 
 Everything else — `critical`, `high`, `medium`, `low`, `negligible`, `info`, `unknown`, or one of
@@ -103,6 +119,10 @@ scan's stored block against a recomputation by hand.
 all. That is a corrupt document, not a counter disagreement; find it before reading anything else.
 
 ## 4. Measure the read volume — do not assume it
+
+Measure this **on the restored replica from section 2, with nothing else running against it**.
+`serverStatus()` counters are per-process and estate-wide, so a target serving anything else
+turns the deltas below into noise. Do not take these numbers from production.
 
 The engine's per-scan read shape changed, and the size of the change depends on the data, so
 measure it here instead of predicting it.
@@ -117,8 +137,10 @@ tail is set by the largest single scan, because one stats read streams one whole
 The numbers to look at:
 
 1. **Seconds per scan.** Time the `--limit 500` run and divide by the `scans processed` it prints.
-   That is the per-scan cost of a stats read on this data, and it multiplies by the estate size
-   the script prints on its first line (`N scan(s) with a stats block`).
+   At the default `--batch-size` of 500 that is a single batch, so no `--sleep-ms` pause lands
+   inside it and the wall clock is read time. That is the per-scan cost of a stats read on this
+   data, and it multiplies by the estate size the script prints on its first line
+   (`N scan(s) with a stats block`).
 2. **The largest scans**, because they set the worst-case latency of a single stats read in the
    live path:
 
@@ -147,19 +169,25 @@ kubectl get pods -n dependency-control     # no old ReplicaSet pods left
 ```
 
 **Re-run the dry run immediately afterwards, against production this time.** This is
-reconciliation, not a repeat of section 2, and it is mandatory:
+reconciliation, not a repeat of section 2, and it is mandatory. During a rolling deploy both
+versions serve at once and both write the same `scan.stats` and `project.stats` fields, so a scan
+that completes mid-rollout carries whichever version's pod finished it. Rolling the image back
+leaves those blocks exactly as they were written — the image is the code, not the data. This run
+is what says whether any of them disagree.
+
+**Throttle it**, because unlike section 2 it reads the live cluster — and it reads the PRIMARY.
+The stats cursor sets `ReadPreference.PRIMARY` so it cannot miss findings written milliseconds
+earlier, which also means none of this load can be pushed onto a secondary: it lands on the same
+node serving ingest.
+
+`--sleep-ms` (default 50) sleeps only *between* batches, so at the default `--batch-size` of 500
+you still get 500 scan-wide reads back to back before anything pauses. **`--batch-size` is the
+knob that matters**: lower it to make the pause frequent, then raise `--sleep-ms` to make it
+longer. On a busy cluster, start here and back further off if p99 latency moves:
 
 ```
-python -m scripts.backfill_risk_scores
+python -m scripts.backfill_risk_scores --batch-size 25 --sleep-ms 250
 ```
-
-During a rolling deploy both versions serve at once and both write the same `scan.stats` and
-`project.stats` fields, so a scan that completes mid-rollout carries whichever version's pod
-finished it. Rolling the image back leaves those blocks exactly as they were written — the image
-is the code, not the data. This run is what says whether any of them disagree.
-
-Throttle this one: unlike section 2 it reads the live cluster. `--sleep-ms` (default 50) is the
-gap between batches of `--batch-size` (default 500) scans; raise it if p99 latency moves.
 
 **Compare the field names against section 2, not the totals.** The restore is a point-in-time
 copy and production has moved on, so the totals will not match. A field name that appears here
