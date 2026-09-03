@@ -258,8 +258,8 @@ async def _fetch_callgraphs(
 def store_reachability(finding: dict[str, Any], reachability: Mapping[str, Any]) -> None:
     """Persist a verdict under ``details.reachability`` and mirror it to the top level.
 
-    The stats pipeline and the recommendation readers query the top-level fields; writing
-    only the nested block leaves every reachability counter at zero.
+    The stats fold and the recommendation readers read the top-level fields; writing only
+    the nested block leaves every reachability counter at zero.
     """
     details = finding.setdefault("details", {})
     details["reachability"] = reachability

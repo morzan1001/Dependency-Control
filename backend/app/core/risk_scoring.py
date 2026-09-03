@@ -1,4 +1,5 @@
-"""Saturating severity-weighted risk score shared by scan stats and the projects dashboard fallback."""
+"""Saturating severity-weighted risk score for scan stats and the projects dashboard fallback, plus
+the actionable/deprioritized predicates scan stats, recommendations and secret scoring must agree on."""
 
 from typing import Any
 

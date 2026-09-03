@@ -41,6 +41,8 @@ async def test_opengrep_ingest_stats_block_shape(client, db, api_key_headers):
     assert body["stats"]["medium"] == _EXPECTED_PER_BUCKET["medium"]
     assert body["stats"]["low"] == _EXPECTED_PER_BUCKET["low"]
     assert body["stats"]["info"] == _EXPECTED_PER_BUCKET["info"]
+    # Known defect, pinned not blessed: Stats carries no total, so ScanStatsResponse.total always
+    # falls back to its default and every findings-ingest response reports zero.
     assert body["stats"]["total"] == 0
     # NEGLIGIBLE is the only unexposed bucket; the exposed counts sum to 5.
     assert sum(body["stats"][k] for k in ("critical", "high", "medium", "low", "info")) == 5

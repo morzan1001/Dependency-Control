@@ -80,6 +80,7 @@ Keep the full output. The last block is:
 ...
 [DRY-RUN] scans whose full Stats differ: <n>
 [DRY-RUN]   <field>: <scans>
+[DRY-RUN]     scans (up to 5): <scan_id>, <scan_id>, ...
 ```
 
 ## 3. Reading the divergence report
@@ -87,7 +88,8 @@ Keep the full output. The last block is:
 `scans whose full Stats differ` counts scans, once each, whose stored block disagrees with the
 recomputation in **any** top-level `Stats` field. The lines under it name the fields and count the
 scans per field, so one scan with three drifted fields adds one to the total and one to each of
-three field lines.
+three field lines. Each field line is followed by up to five of the scan ids behind it — the
+starting point for every investigation below.
 
 The stored block is normalised through the `Stats` model before the comparison, so a scalar an
 older writer never emitted defaults to `0` rather than reading as drift.
@@ -110,13 +112,30 @@ Two classes are accounted for and must be netted out before reading the total:
 | `risk_score`, `adjusted_risk_score` | the count is at most `scans needing new scores` | these two are exactly what this script exists to repair; a stored score written before the current scale differs without any engine disagreement. A count *above* `scans needing new scores` means those stored scores carry more than one decimal, which no current writer produces |
 | `threat_intel`, `reachability`, `prioritized`, `secret_priority` | the count matches the number of stored blocks that omit the key | these four default to absent, so a block written before the sub-block existed reads as differing on it wholesale |
 
+The script does not know how many stored blocks omit each sub-block, so count them yourself, in
+`mongosh` against the same database the run read:
+
+```
+["threat_intel","reachability","prioritized","secret_priority"].forEach(k =>
+  print(k, db.scans.countDocuments({stats:{$exists:true}, ["stats."+k]:{$exists:false}})))
+```
+
+A field's count above the number printed here is drift on scans that *do* carry the sub-block —
+subtract, do not dismiss the line.
+
 Everything else — `critical`, `high`, `medium`, `low`, `negligible`, `info`, `unknown`, or one of
-the four sub-blocks on scans that *do* carry it — is drift with no accounted-for cause. To see the
-scans behind a field, re-run with a small `--limit` against the same restore and diff a named
-scan's stored block against a recomputation by hand.
+the four sub-blocks in excess of the count above — is drift with no accounted-for cause. The scan
+ids printed under the field line are where to start: pull the stored side with
+
+```
+db.scans.findOne({ _id: "<scan_id>" }, { stats: 1 })
+```
+
+and compare it against what the new engine computes for that same scan.
 
 `<unparseable>` is its own line: the stored block did not validate against the `Stats` model at
-all. That is a corrupt document, not a counter disagreement; find it before reading anything else.
+all. That is a corrupt document, not a counter disagreement; its scan ids are printed the same
+way, and they come before anything else you read.
 
 ## 4. Measure the read volume — do not assume it
 

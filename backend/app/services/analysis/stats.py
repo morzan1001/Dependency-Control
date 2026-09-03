@@ -69,14 +69,14 @@ def _format_datetime(value: Any | None) -> str | None:
 
 
 def _process_finding_epss(details: dict[str, Any], summary: EPSSKEVSummary, epss_scores: list[float]) -> float | None:
-    """Process EPSS data for a single finding. Returns the epss_score if present."""
-    epss_score = details.get("epss_score")
+    """Process EPSS data for a single finding. Returns the epss_score if present and numeric."""
+    epss_score = _numeric(details.get("epss_score"))
     if epss_score is None:
         return None
     summary["epss_enriched"] += 1
-    epss_scores.append(float(epss_score))
-    summary["epss_scores"][bucket_epss(float(epss_score))] += 1
-    return float(epss_score)
+    epss_scores.append(epss_score)
+    summary["epss_scores"][bucket_epss(epss_score)] += 1
+    return epss_score
 
 
 def vulnerability_entry_cve(entry: dict[str, Any]) -> str | None:
@@ -536,7 +536,8 @@ class StatsAccumulator:
                 confirmed_reachable_count=self._confirmed,
                 likely_reachable_count=self._likely,
                 unreachable_count=self._unreachable,
-                # vuln_total is type-gated; _analyzed is ungated. Non-vulnerabilities carrying reachable drive this negative.
+                # vuln_total is type-gated; _analyzed is ungated. Non-vulnerabilities carrying
+                # reachable drive this negative.
                 unknown_count=self._vuln_total - self._analyzed,
                 reachable_critical=self._reachable_critical,
                 reachable_high=self._reachable_high,

@@ -322,6 +322,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     await database["findings"].create_index([("created_at", pymongo.DESCENDING)])
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("waived", pymongo.ASCENDING)])
+    # _STATS_CURSOR_HINT hints this exact key pattern; an unsatisfiable hint errors, so without
+    # this index every stats read fails rather than falling back to a scan.
     await database["findings"].create_index([("scan_id", pymongo.ASCENDING), ("type", pymongo.ASCENDING)])
     await database["findings"].create_index(
         [

@@ -26,7 +26,10 @@ class ReachabilityStats(BaseModel):
         ),
     )
     reachable_count: int = Field(
-        0, description="Count of reachable vulnerabilities (may include untiered findings, so total >= confirmed + likely)"
+        0,
+        description=(
+            "Count of reachable vulnerabilities (may include untiered findings, so total >= confirmed + likely)"
+        ),
     )
     confirmed_reachable_count: int = Field(
         0,

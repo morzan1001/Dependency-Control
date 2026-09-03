@@ -81,6 +81,10 @@ def _make_finding(
 # build_epss_kev_summary
 # ---------------------------------------------------------------------------
 
+# What a corrupt enrichment leaves in details.epss_score; True passes isinstance(int) and would
+# otherwise be reported as a certainty of 1.0.
+_NON_NUMERIC_EPSS_VALUES = (True, [0.5], "0.5")
+
 
 class TestBuildEpssKevSummaryEmpty:
     def test_empty_list_returns_zero_totals(self):
@@ -160,6 +164,14 @@ class TestBuildEpssKevSummaryEpss:
         findings = [_make_finding(epss_score=None)]
         result = build_epss_kev_summary(findings)
         assert result["epss_enriched"] == 0
+        assert result["avg_epss_score"] is None
+
+    @pytest.mark.parametrize("raw_epss", _NON_NUMERIC_EPSS_VALUES)
+    def test_non_numeric_epss_is_dropped(self, raw_epss):
+        """The raw-data view must agree with the Stats block, which drops these through the same guard."""
+        result = build_epss_kev_summary([_make_finding(epss_score=raw_epss)])
+        assert result["epss_enriched"] == 0
+        assert result["max_epss_score"] is None
         assert result["avg_epss_score"] is None
 
 

@@ -1,9 +1,18 @@
 """backfill_risk_scores must rewrite only the two score fields, skip scans whose findings are gone, and mirror projects."""
 
+from unittest.mock import patch
+
 import pytest
 
 from app.models.stats import Stats
-from scripts.backfill_risk_scores import UNPARSEABLE_FIELD, backfill_scans, mirror_projects, stats_field_diff
+from scripts.backfill_risk_scores import (
+    DIFF_SAMPLE_CAP,
+    UNPARSEABLE_FIELD,
+    ScanProcessingError,
+    backfill_scans,
+    mirror_projects,
+    stats_field_diff,
+)
 from tests.mocks.fake_mongo import FakeDatabase
 
 BATCH_SIZE = 10
@@ -18,6 +27,12 @@ STALE_STORED_RISK_SCORE = 13.5
 GONE_FINDINGS_STORED_RISK_SCORE = 12.1
 GONE_FINDINGS_STORED_CRITICAL = 3
 OLD_STATS_PRIORITIZED_TOTAL = 99
+DRIFTED_SCAN_COUNT = DIFF_SAMPLE_CAP + 1
+CORRUPT_BUCKET_VALUE = ["not", "a", "number"]
+UNPARSEABLE_BUCKET_VALUE = "not-a-number"
+SURVIVING_BUCKET_HIGH = 2
+BROKEN_SCAN_ID = "scan-broken"
+UNRELATED_FAILURE = "motor exploded"
 
 
 def _finding(_id, scan_id, severity="CRITICAL"):
@@ -167,6 +182,50 @@ class TestFullStatsDivergenceReport:
         assert counters["stats_diff_fields"] == {"prioritized": 2}
 
     @pytest.mark.asyncio
+    async def test_the_breakdown_names_the_scans_behind_each_field(self, seeded_db):
+        """A bare field count is a dead end: --limit walks _id order, which need not reach the divergent scans."""
+        from app.services.analysis.stats import calculate_comprehensive_stats
+
+        await seeded_db.findings.insert_one(_finding("f1", "scan-c"))
+        computed = await calculate_comprehensive_stats(seeded_db, "scan-c")
+        stored = computed.model_dump()
+        stored["prioritized"]["actionable_total"] = DRIFTED_ACTIONABLE_TOTAL
+        await seeded_db.scans.insert_one({"_id": "scan-c", "stats": stored})
+
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False
+        )
+        assert counters["stats_diff_samples"]["prioritized"] == ["scan-c"]
+
+    @pytest.mark.asyncio
+    async def test_the_named_scans_are_capped_while_the_count_is_not(self, seeded_db):
+        from app.services.analysis.stats import calculate_comprehensive_stats
+
+        for index in range(DRIFTED_SCAN_COUNT):
+            scan_id = f"scan-{index}"
+            await seeded_db.findings.insert_one(_finding(f"f-{scan_id}", scan_id))
+            computed = await calculate_comprehensive_stats(seeded_db, scan_id)
+            stored = computed.model_dump()
+            stored["prioritized"]["actionable_total"] = DRIFTED_ACTIONABLE_TOTAL
+            await seeded_db.scans.insert_one({"_id": scan_id, "stats": stored})
+
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False
+        )
+        assert counters["stats_diff_fields"]["prioritized"] == DRIFTED_SCAN_COUNT
+        assert len(counters["stats_diff_samples"]["prioritized"]) == DIFF_SAMPLE_CAP
+
+    @pytest.mark.asyncio
+    async def test_an_unparseable_block_is_named_by_scan_id(self, seeded_db):
+        await seeded_db.findings.insert_one(_finding("f1", "scan-c"))
+        await seeded_db.scans.insert_one({"_id": "scan-c", "stats": {"critical": UNPARSEABLE_BUCKET_VALUE}})
+
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False
+        )
+        assert counters["stats_diff_samples"][UNPARSEABLE_FIELD] == ["scan-c"]
+
+    @pytest.mark.asyncio
     async def test_a_scan_whose_findings_are_gone_is_not_reported_as_divergent(self, seeded_db):
         """Nothing was folded, so the all-zero result is retention, not an arithmetic disagreement."""
         await _seed(seeded_db)
@@ -192,7 +251,7 @@ class TestFullStatsDivergenceReport:
         assert stats_field_diff(stored, computed) == {}
 
     def test_an_unparseable_stats_block_is_reported_rather_than_raising(self):
-        assert list(stats_field_diff({"critical": "not-a-number"}, Stats())) == [UNPARSEABLE_FIELD]
+        assert list(stats_field_diff({"critical": UNPARSEABLE_BUCKET_VALUE}, Stats())) == [UNPARSEABLE_FIELD]
 
     @pytest.mark.asyncio
     async def test_divergence_reporting_never_writes(self, seeded_db):
@@ -233,3 +292,34 @@ class TestFullStatsDivergenceReport:
         assert scan["stats"]["critical"] == SENTINEL_STORED_CRITICAL
         assert scan["stats"]["legacy_key_no_writer_emits_today"] == SENTINEL_STORED_CRITICAL
         assert "prioritized" not in scan["stats"]
+
+
+class TestOneBadDocumentDoesNotDiscardThePass:
+    @pytest.mark.asyncio
+    async def test_a_non_numeric_bucket_is_skipped_not_fatal(self, seeded_db):
+        await seeded_db.scans.insert_one(
+            {"_id": BROKEN_SCAN_ID, "stats": {"critical": CORRUPT_BUCKET_VALUE, "high": SURVIVING_BUCKET_HIGH}}
+        )
+
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False
+        )
+        assert counters["processed"] == 1
+        # The parseable buckets still claim findings the collection no longer holds.
+        assert counters["skipped_no_findings"] == 1
+
+    @pytest.mark.asyncio
+    async def test_a_per_scan_failure_names_the_scan(self, seeded_db):
+        await seeded_db.scans.insert_one({"_id": BROKEN_SCAN_ID, "stats": {}})
+
+        with patch(
+            "scripts.backfill_risk_scores.calculate_comprehensive_stats",
+            side_effect=RuntimeError(UNRELATED_FAILURE),
+        ):
+            with pytest.raises(ScanProcessingError) as excinfo:
+                await backfill_scans(
+                    seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False
+                )
+
+        assert BROKEN_SCAN_ID in str(excinfo.value)
+        assert UNRELATED_FAILURE in str(excinfo.value)

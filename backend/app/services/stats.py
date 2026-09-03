@@ -420,8 +420,8 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         await _apply_waivers(finding_repo, scan_id, vuln_waivers + legacy, waiver_repo)
         await _apply_waivers_signature(finding_repo, waiver_repo, scan_id, loc_waivers)
 
-        # 3. Compute the authoritative full Stats from the single canonical pipeline.
-        #    calculate_comprehensive_stats reads from PRIMARY for read-after-write consistency.
+        # 3. Recompute the authoritative full Stats; it reads from PRIMARY so it sees the waiver
+        #    writes above.
         stats = await calculate_comprehensive_stats(db, scan_id)
 
         # 4. Calculate ignored count (read from PRIMARY after waiver writes)
