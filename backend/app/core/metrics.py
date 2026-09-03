@@ -32,6 +32,7 @@ class ArchiveFailureReason:
     ENCRYPTION = "encryption"
     NOT_FOUND = "not_found"
     LOCK_HELD = "lock_held"
+    RELEASE_PROTECTED = "release_protected"
     ALREADY_EXISTS = "already_exists"
     VERSION_MISMATCH = "version_mismatch"
     INTEGRITY = "integrity"

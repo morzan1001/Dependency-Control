@@ -530,6 +530,9 @@ async def run_housekeeping() -> None:
                         "created_at": {"$lt": cutoff_date},
                         "_id": {"$nin": referenced_scan_ids},
                         "pinned": {"$ne": True},
+                        # A release answers "what is in production"; dropping it would take its
+                        # findings, dependencies and SBOMs with it and orphan the resolver.
+                        "is_release": {"$ne": True},
                         "status": {"$nin": ["pending", "processing"]},
                     },
                     {"_id": 1},
@@ -581,6 +584,7 @@ async def run_housekeeping() -> None:
                         "created_at": {"$lt": cutoff_date},
                         "_id": {"$nin": referenced_scan_ids},
                         "pinned": {"$ne": True},
+                        "is_release": {"$ne": True},
                         "status": {"$nin": ["pending", "processing"]},
                     },
                     {"_id": 1},

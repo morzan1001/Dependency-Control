@@ -368,6 +368,16 @@ async def archive_scan(
         if scan_doc is None:
             return None
 
+        # Archival removes the scan document, which would orphan release resolution.
+        if scan_doc.get("is_release"):
+            logger.info(
+                "Archive of release scan refused",
+                extra={"scan_id": _sanitize_for_log(scan_id)},
+            )
+            archive_failures_total.labels(operation="archive", reason=ArchiveFailureReason.RELEASE_PROTECTED).inc()
+            archive_operations_total.labels(operation="archive", status="failure").inc()
+            return None
+
         project_id = scan_doc["project_id"]
         archived_at_unix = int(datetime.now(timezone.utc).timestamp())
         s3_key = ARCHIVE_PATH_TEMPLATE.format(project_id=project_id, scan_id=scan_id, archived_at_unix=archived_at_unix)
