@@ -305,10 +305,8 @@ def _match_doc(doc: dict, query: dict) -> bool:
                     return False
             if "$ne" in condition:
                 ne_val = condition["$ne"]
-                if isinstance(value, list):
-                    if ne_val in value:
-                        return False
-                elif value == ne_val:
+                # An array field is also compared as a whole, so ``$ne: []`` excludes the empty array.
+                if value == ne_val or (isinstance(value, list) and ne_val in value):
                     return False
             if "$regex" in condition:
                 flags = _re.IGNORECASE if condition.get("$options") == "i" else 0
