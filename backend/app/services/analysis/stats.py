@@ -308,19 +308,17 @@ _UNKNOWN_SEVERITY = "UNKNOWN"
 
 
 def _numeric(raw: Any) -> float | None:
-    """A real number, or None for everything else.
-
-    bool is rejected on purpose: Mongo ranks bool above every number, so the replaced
-    pipeline scored ``epss_score=False`` as a >10% exploitation probability.
-    """
+    """A real number, or None; bool is excluded because Mongo sorts bool above every numeric type."""
     if isinstance(raw, bool) or not isinstance(raw, (int, float)):
         return None
     return float(raw)
 
 
 class StatsAccumulator:
-    """Every counting rule behind ``Stats``, folded over a stream of findings."""
+    """Severity buckets and ``risk_score``, folded over a stream of findings."""
 
+    # Every finding field the fold reads, as a top-level key or a dotted path into the
+    # document; each counter group added here registers the paths it needs.
     REQUIRED_PATHS: ClassVar[frozenset[str]] = frozenset(
         {
             "waived",

@@ -4,11 +4,14 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.models.stats import Stats
 from app.services.analysis.stats import (
     _format_datetime,
+    _numeric,
     build_epss_kev_summary,
     build_reachability_summary,
     calculate_comprehensive_stats,
+    compute_stats,
 )
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -1085,3 +1088,48 @@ class TestComprehensiveStatsSecretPriority:
         stats = await calculate_comprehensive_stats(db, _W5_SCAN)
         assert stats.secret_priority is not None
         assert stats.secret_priority.total == 0
+
+
+# ---------------------------------------------------------------------------
+# _numeric
+# ---------------------------------------------------------------------------
+
+
+class TestNumeric:
+    def test_bool_is_not_a_number(self):
+        # The reason the helper exists: Mongo sorts bool above every numeric type, so a
+        # persisted `epss_score: False` would otherwise outrank the highest threshold.
+        assert _numeric(True) is None
+        assert _numeric(False) is None
+
+    def test_int_becomes_float(self):
+        assert _numeric(1) == 1.0
+
+    def test_numeric_string_is_rejected(self):
+        assert _numeric("0.5") is None
+
+    def test_missing_value_is_none(self):
+        assert _numeric(None) is None
+
+
+# ---------------------------------------------------------------------------
+# compute_stats  –  waiver and empty-scan branches
+# ---------------------------------------------------------------------------
+
+
+class TestComputeStatsWaiverAndEmptyScan:
+    def test_no_findings_yields_the_bare_default(self):
+        assert compute_stats([], {}) == Stats()
+
+    def test_fully_waived_scan_is_indistinguishable_from_an_empty_one(self):
+        findings = [{"severity": "CRITICAL", "type": "vulnerability", "waived": True}]
+        assert compute_stats(findings, {}) == Stats()
+
+    def test_absent_and_false_waived_flags_both_count(self):
+        findings = [
+            {"severity": "CRITICAL", "type": "vulnerability", "waived": False},
+            {"severity": "CRITICAL", "type": "vulnerability"},
+            {"severity": "HIGH", "type": "vulnerability", "waived": True},
+        ]
+        stats = compute_stats(findings, {})
+        assert (stats.critical, stats.high) == (2, 0)
