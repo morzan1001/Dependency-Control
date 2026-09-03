@@ -23,7 +23,7 @@ from app.core.housekeeping import (
     _resolve_rescan_interval,
     check_scheduled_rescans,
 )
-from app.models.project import Project
+from app.models.project import Project, Scan
 from app.models.release import Release
 from app.models.system import SystemSettings
 from app.repositories import DistributedLocksRepository
@@ -75,6 +75,78 @@ _PIPELINE_IID = 7
 _JOB_ID = 5
 _PIPELINE_USER = "ci-bot"
 _CBOM_SCAN_TYPE = "cbom"
+_RETRY_COUNT = 3
+_WORKER_ID = "worker-1"
+_SCAN_ERROR = "analyzer crashed"
+_FAILED_ANALYZER = "trivy"
+_ENRICHMENT_FAILURE = "epss"
+_FINDINGS_COUNT = 12
+_FINDINGS_SUMMARY = [{"severity": "high"}]
+_STATS = {"total": _FINDINGS_COUNT}
+_LATEST_RUN = {"scan_id": _PREVIOUS_RESCAN_ID}
+_RECEIVED_RESULTS = ["sbom"]
+
+_SCAN_MODEL_FIELDS = frozenset(
+    {
+        "id",
+        "created_at",
+        "project_id",
+        "branch",
+        "commit_hash",
+        "pipeline_id",
+        "pipeline_iid",
+        "project_url",
+        "pipeline_url",
+        "job_id",
+        "job_started_at",
+        "project_name",
+        "commit_message",
+        "commit_tag",
+        "pipeline_user",
+        "sbom_refs",
+        "scan_type",
+        "status",
+        "retry_count",
+        "worker_id",
+        "analysis_started_at",
+        "error",
+        "failed_analyzers",
+        "enrichment_failures",
+        "findings_summary",
+        "findings_count",
+        "stats",
+        "completed_at",
+        "reachability_pending",
+        "reachability_pending_since",
+        "pinned",
+        "is_release",
+        "is_rescan",
+        "original_scan_id",
+        "latest_rescan_id",
+        "last_rescanned_at",
+        "latest_run",
+        "last_result_at",
+        "received_results",
+    }
+)
+
+_CARRIED_FROM_SOURCE = frozenset(
+    {
+        "project_id",
+        "branch",
+        "commit_hash",
+        "pipeline_iid",
+        "project_url",
+        "pipeline_url",
+        "job_id",
+        "job_started_at",
+        "project_name",
+        "commit_message",
+        "commit_tag",
+        "sbom_refs",
+        "scan_type",
+    }
+)
 
 _DEFAULT_INTERVAL_HOURS = 24
 _PROJECT_INTERVAL_HOURS = 6
@@ -151,6 +223,40 @@ def _scan_doc(scan_id: str = _SOURCE_SCAN_ID, **overrides: Any) -> dict[str, Any
     }
     doc.update(overrides)
     return doc
+
+
+def _saturated_scan_doc() -> dict[str, Any]:
+    """A source holding every Scan field at a value a freshly built rescan does not hold, so a field
+    whose value survives into the rescan is exactly a field the builder copied."""
+    return _scan_doc(
+        pipeline_user=_PIPELINE_USER,
+        scan_type=_CBOM_SCAN_TYPE,
+        retry_count=_RETRY_COUNT,
+        worker_id=_WORKER_ID,
+        analysis_started_at=_NOW - _STALE,
+        error=_SCAN_ERROR,
+        failed_analyzers=[_FAILED_ANALYZER],
+        enrichment_failures=[_ENRICHMENT_FAILURE],
+        findings_summary=_FINDINGS_SUMMARY,
+        findings_count=_FINDINGS_COUNT,
+        stats=_STATS,
+        completed_at=_NOW - _RECENT,
+        reachability_pending=True,
+        reachability_pending_since=_NOW - _RECENT,
+        pinned=True,
+        is_release=True,
+        is_rescan=False,
+        original_scan_id=None,
+        latest_rescan_id=_PREVIOUS_RESCAN_ID,
+        last_rescanned_at=_NOW - _RECENT,
+        latest_run=_LATEST_RUN,
+        last_result_at=_NOW - _RECENT,
+        received_results=_RECEIVED_RESULTS,
+    )
+
+
+def _carried_fields(source: dict[str, Any], rescan: Scan) -> set[str]:
+    return {name for name in Scan.model_fields if getattr(rescan, name) == source.get(name)}
 
 
 async def _seed_scan(db: FakeDatabase, scan_id: str = _SOURCE_SCAN_ID, **overrides: Any) -> dict[str, Any]:
@@ -333,6 +439,15 @@ class TestBuildRescan:
 
     def test_the_rescan_clock_is_not_inherited_so_the_fresh_scan_starts_from_its_own_creation(self) -> None:
         assert _build_rescan(_project(), _scan_doc(last_rescanned_at=_NOW)).last_rescanned_at is None
+
+    def test_the_scan_model_holds_exactly_the_pinned_fields(self) -> None:
+        """Widening Scan is a decision about what a rescan inherits, so it has to be made here."""
+        assert set(Scan.model_fields) == _SCAN_MODEL_FIELDS
+
+    def test_a_rescan_carries_exactly_the_pinned_fields_and_nothing_else(self) -> None:
+        source = _saturated_scan_doc()
+
+        assert _carried_fields(source, _build_rescan(_project(), source)) == _CARRIED_FROM_SOURCE
 
 
 class TestCreateRescanForProject:
