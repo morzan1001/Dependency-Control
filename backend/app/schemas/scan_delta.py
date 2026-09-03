@@ -114,6 +114,8 @@ class ScanDeltaResponse(BaseModel):
     total_pages: int = 1
     items: list[DeltaItem] = Field(default_factory=list)
     # None means the scan reports no reachability at all, which is distinct from zero coverage.
+    # Coverage is the whole scan's, not the filtered item set's: it describes the enrichment a side
+    # was scored with, so it counts every vulnerability in the scan whatever the delta asked for.
     from_reachability: ScanDeltaReachability | None = None
     to_reachability: ScanDeltaReachability | None = None
     # Findings the waiver filter took out of each side. Waivers are re-evaluated only for the latest
