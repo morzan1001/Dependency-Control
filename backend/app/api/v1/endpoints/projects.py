@@ -51,6 +51,7 @@ from app.repositories import (
     FindingRepository,
     InvitationRepository,
     ProjectRepository,
+    ReleaseRepository,
     ScanRepository,
     TeamRepository,
     UserRepository,
@@ -1571,6 +1572,7 @@ async def delete_project(
     callgraph_repo = CallgraphRepository(db)
     delta_repo = ScanUpdateDeltaRepository(db)
     outdated_set_repo = ScanOutdatedSetRepository(db)
+    release_repo = ReleaseRepository(db)
 
     # Stream scans to collect IDs and GridFS files without loading them all at once.
     scan_ids = []
@@ -1593,6 +1595,7 @@ async def delete_project(
     await scan_repo.delete_many({"project_id": project_id})
     await delete_gridfs_files(db, gridfs_ids)
     await waiver_repo.delete_many({"project_id": project_id})
+    await release_repo.delete_many({"project_id": project_id})
     await invitation_repo.delete_project_invitations_by_project(project_id)
     await callgraph_repo.delete_by_project(project_id)
     await project_repo.delete(project_id)

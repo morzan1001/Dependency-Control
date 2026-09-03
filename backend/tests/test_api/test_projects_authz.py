@@ -178,6 +178,7 @@ class TestDeleteProjectRoutesThroughGate:
             "FindingRepository": MagicMock(),
             "DependencyRepository": MagicMock(),
             "WaiverRepository": MagicMock(),
+            "ReleaseRepository": MagicMock(),
             "InvitationRepository": MagicMock(),
             "CallgraphRepository": MagicMock(),
         }
@@ -193,6 +194,7 @@ class TestDeleteProjectRoutesThroughGate:
         repos["FindingRepository"].delete_many = AsyncMock(return_value=None)
         repos["DependencyRepository"].delete_many = AsyncMock(return_value=None)
         repos["WaiverRepository"].delete_many = AsyncMock(return_value=None)
+        repos["ReleaseRepository"].delete_many = AsyncMock(return_value=None)
         repos["InvitationRepository"].delete_project_invitations_by_project = AsyncMock(return_value=None)
         repos["CallgraphRepository"].delete_by_project = AsyncMock(return_value=None)
         repos["ProjectRepository"].delete = AsyncMock(return_value=None)

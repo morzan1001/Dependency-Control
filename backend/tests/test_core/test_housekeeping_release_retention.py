@@ -1,7 +1,6 @@
 """A release must survive retention: the delete path drops nine collections plus GridFS, and the
 archive path removes the scan document, either of which would break release resolution."""
 
-from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -14,8 +13,6 @@ _RETENTION_ACTION = "delete"
 _PROJECT_ID = "p1"
 _RELEASE_SCAN_ID = "rel"
 _PLAIN_SCAN_ID = "plain"
-_PLAIN_SCAN_AGE = timedelta(days=200)
-_NOW = datetime.now(timezone.utc)
 
 
 class _EmptyCursor:
@@ -75,8 +72,6 @@ async def test_project_retention_cursor_excludes_releases(monkeypatch):
 
     class _Settings:
         retention_mode = "project"
-        global_retention_days = 0
-        global_retention_action = "none"
 
     _patch_common(monkeypatch, db, _Settings())
 
@@ -120,9 +115,7 @@ async def test_archive_still_accepts_a_scan_with_no_release_flag(monkeypatch):
     _patch_archive_deps(monkeypatch, archive_module)
 
     db = MagicMock()
-    db.scans.find_one = AsyncMock(
-        return_value={"_id": _PLAIN_SCAN_ID, "project_id": _PROJECT_ID, "created_at": _NOW - _PLAIN_SCAN_AGE}
-    )
+    db.scans.find_one = AsyncMock(return_value={"_id": _PLAIN_SCAN_ID, "project_id": _PROJECT_ID})
     upload = AsyncMock(return_value=None)
     monkeypatch.setattr(archive_module, "_upload_archive_bundle", upload)
 
