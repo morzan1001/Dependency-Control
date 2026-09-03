@@ -9,6 +9,7 @@ from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
     EPSS_ACTIVE_EXPLOITATION_THRESHOLD,
+    EPSS_HIGH_THRESHOLD,
     EPSS_MEDIUM_THRESHOLD,
     EPSS_VERY_HIGH_THRESHOLD,
     REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
@@ -71,6 +72,7 @@ class TestSecretGate:
         s = compute_stats(findings, {}).secret_priority
         assert (s.in_current_tree_count, s.historical_only_count, s.unknown_tree_count) == (1, 1, 1)
         assert s.in_current_tree_count + s.historical_only_count + s.unknown_tree_count == s.total
+        assert s.actionable_count == 1
 
     def test_absent_tree_key_counts_as_unknown_not_historical(self):
         s = compute_stats([_finding(ftype="secret", verified=True)], {}).secret_priority
@@ -146,7 +148,7 @@ class TestEpssTyping:
 
 class TestThreatIntelBoundaries:
     def test_epss_buckets_are_exclusive_at_the_high_edge(self):
-        t = compute_stats([_finding(epss_score=0.1)], {}).threat_intel
+        t = compute_stats([_finding(epss_score=EPSS_HIGH_THRESHOLD)], {}).threat_intel
         assert (t.high_epss_count, t.medium_epss_count) == (1, 0)
 
     def test_weaponized_needs_kev_alongside_very_high_epss(self):
@@ -171,21 +173,35 @@ class TestThreatIntelBoundaries:
         assert t.kev_count == 0
         assert t.active_exploitation_count == 0
 
-    def test_medium_epss_threshold_exactly_0_01_counts(self):
+    def test_medium_epss_threshold_is_inclusive_at_the_boundary(self):
         """Boundary: EPSS_MEDIUM_THRESHOLD is inclusive on the lower bound."""
         t = compute_stats([_finding(epss_score=EPSS_MEDIUM_THRESHOLD)], {}).threat_intel
         assert t.medium_epss_count == 1
         assert t.high_epss_count == 0
 
-    def test_very_high_epss_threshold_exactly_0_5_counts_as_weaponized(self):
+    def test_very_high_epss_threshold_is_inclusive_for_weaponized(self):
         """Boundary: EPSS_VERY_HIGH_THRESHOLD is inclusive for weaponized (with KEV)."""
-        t = compute_stats([_finding(epss_score=EPSS_VERY_HIGH_THRESHOLD, **{DETAILS_KEY_IN_KEV: True})], {}).threat_intel
+        kev = {DETAILS_KEY_IN_KEV: True}
+        t = compute_stats([_finding(epss_score=EPSS_VERY_HIGH_THRESHOLD, **kev)], {}).threat_intel
         assert t.weaponized_count == 1
 
-    def test_active_exploitation_threshold_exactly_0_7_counts(self):
+    def test_active_exploitation_threshold_is_inclusive_at_the_boundary(self):
         """Boundary: EPSS_ACTIVE_EXPLOITATION_THRESHOLD is inclusive."""
-        t = compute_stats([_finding(epss_score=EPSS_ACTIVE_EXPLOITATION_THRESHOLD)], {}).threat_intel
+        t = compute_stats(
+            [_finding(epss_score=EPSS_ACTIVE_EXPLOITATION_THRESHOLD)], {}
+        ).threat_intel
         assert t.active_exploitation_count == 1
+
+    def test_very_high_epss_threshold_without_kev_does_not_weaponize(self):
+        """Below weaponized: EPSS_VERY_HIGH_THRESHOLD without KEV does not count."""
+        t = compute_stats([_finding(epss_score=EPSS_VERY_HIGH_THRESHOLD)], {}).threat_intel
+        assert t.weaponized_count == 0
+
+    def test_below_active_exploitation_threshold_does_not_activate(self):
+        """Below active: EPSS just below EPSS_ACTIVE_EXPLOITATION_THRESHOLD does not count."""
+        below = EPSS_ACTIVE_EXPLOITATION_THRESHOLD - 0.01
+        t = compute_stats([_finding(epss_score=below)], {}).threat_intel
+        assert t.active_exploitation_count == 0
 
 
 class TestReachabilityTriState:

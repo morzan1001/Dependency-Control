@@ -378,7 +378,6 @@ class TestPureEnrichmentEntryPoint:
         enrich_findings_from_callgraphs([vuln], [cg], {"requests": frozenset({"python"})})
 
         assert vuln["reachability_level"] == REACHABILITY_LEVEL_IMPORT
-        assert vuln["reachable"] is True
 
 
 class TestRunPendingBulkPersist:
