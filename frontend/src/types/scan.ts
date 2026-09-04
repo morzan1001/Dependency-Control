@@ -551,8 +551,9 @@ export interface Scan {
   latest_run?: {
     scan_id: string;
     status: string;
-    findings_count: number;
-    stats: EnhancedStats | null;
+    // A rescan announces itself here the moment it is queued, with nothing analysed yet.
+    findings_count?: number;
+    stats?: EnhancedStats | null;
     completed_at?: string;
     created_at?: string;
   };
