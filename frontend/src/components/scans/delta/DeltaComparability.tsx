@@ -7,10 +7,10 @@ const NO_REACHABILITY = 'no reachability'
 const RISK_SCORES_INCOMPARABLE =
   'Only one side carries a callgraph, so only its risk scores are reachability-adjusted. '
   + 'Read the counts below; a risk-score change between these two scans measures the enrichment, not the code.'
-const WAIVERS_DIVERGED =
-  'The sides hide different numbers of waived findings, and waivers are re-evaluated only for the newest '
-  + 'scan. Check the waiver list before treating an added finding as newly introduced — a waiver that '
-  + 'lapsed since the older side makes a pre-existing finding read as added.'
+const waiversDiverged = (count: number) =>
+  `${count} of these changes are a waiver difference rather than a code difference: the finding is on `
+  + 'both sides, waived on one. Waivers are re-evaluated only for the newest scan, so check the waiver '
+  + 'list before treating an added finding as newly introduced.'
 const WAIVERS_HIDDEN =
   'Waived findings are hidden on both sides, so these totals sit below what the two scans themselves report.'
 
@@ -42,6 +42,8 @@ export function DeltaComparability({ delta }: DeltaComparabilityProps) {
   const to = delta.to_reachability
   const fromWaived = delta.from_waived_excluded
   const toWaived = delta.to_waived_excluded
+  // Equal counts hide unequal sets, so the warning keys on the changes a waiver actually explains.
+  const waiverOnly = delta.waiver_only_changes
 
   // Two scans that both report nothing have nothing to explain; the labels only earn their space
   // where one of the two channels actually differs from the plain reading of the counts.
@@ -51,7 +53,8 @@ export function DeltaComparability({ delta }: DeltaComparabilityProps) {
 
   const reachabilityDiverged = ((from?.analyzed_count ?? NONE) > NONE) !== ((to?.analyzed_count ?? NONE) > NONE)
   let waivedNote: string | null = null
-  if (showWaived) waivedNote = fromWaived === toWaived ? WAIVERS_HIDDEN : WAIVERS_DIVERGED
+  if (waiverOnly > NONE) waivedNote = waiversDiverged(waiverOnly)
+  else if (showWaived) waivedNote = WAIVERS_HIDDEN
 
   return (
     <div className="flex flex-col gap-1 rounded-md border border-dashed bg-muted/30 p-2 text-xs text-muted-foreground">

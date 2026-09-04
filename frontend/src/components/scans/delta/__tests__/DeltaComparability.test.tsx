@@ -17,6 +17,9 @@ const FROM_WAIVED = 12
 const TO_WAIVED = 9
 const SAME_WAIVED = 4
 const NO_WAIVERS = 0
+const WAIVER_ONLY = 2
+const ONE_WAIVER_ONLY = 1
+const NO_WAIVER_ONLY = 0
 const RISK_SCORE_WARNING = /only its risk scores are reachability-adjusted/i
 const LAPSED_WAIVER_WARNING = /before treating an added finding as newly introduced/i
 const BOTH_SIDES_HIDE = /sit below what the two scans themselves report/i
@@ -35,6 +38,7 @@ function delta(overrides: Partial<ScanDeltaResponse> = {}): ScanDeltaResponse {
     items: [],
     from_waived_excluded: NO_WAIVERS,
     to_waived_excluded: NO_WAIVERS,
+    waiver_only_changes: NO_WAIVER_ONLY,
     ...overrides,
   }
 }
@@ -93,22 +97,41 @@ describe('DeltaComparability', () => {
     expect(screen.queryByText(RISK_SCORE_WARNING)).not.toBeInTheDocument()
   })
 
-  it('counts the waived findings hidden per side and warns that a lapsed waiver reads as added', () => {
+  it('counts the waived findings hidden per side and says how many changes a waiver explains', () => {
     render(
       <DeltaComparability
-        delta={delta({ from_waived_excluded: FROM_WAIVED, to_waived_excluded: TO_WAIVED })}
+        delta={delta({
+          from_waived_excluded: FROM_WAIVED,
+          to_waived_excluded: TO_WAIVED,
+          waiver_only_changes: WAIVER_ONLY,
+        })}
       />,
     )
 
     expect(screen.getByText(new RegExp(`${FROM_WAIVED} waived hidden`))).toBeInTheDocument()
     expect(screen.getByText(new RegExp(`${TO_WAIVED} waived hidden`))).toBeInTheDocument()
     expect(screen.getByText(LAPSED_WAIVER_WARNING)).toBeInTheDocument()
+    expect(screen.getByText(new RegExp(`^${WAIVER_ONLY} of these changes`))).toBeInTheDocument()
   })
 
-  it('explains the shortfall without the lapsed-waiver warning when both sides hide the same count', () => {
+  it('warns about a lapsed waiver even when both sides hide the same number of findings', () => {
     render(
       <DeltaComparability
-        delta={delta({ from_waived_excluded: SAME_WAIVED, to_waived_excluded: SAME_WAIVED })}
+        delta={delta({
+          from_waived_excluded: SAME_WAIVED,
+          to_waived_excluded: SAME_WAIVED,
+          waiver_only_changes: ONE_WAIVER_ONLY,
+        })}
+      />,
+    )
+
+    expect(screen.getByText(LAPSED_WAIVER_WARNING)).toBeInTheDocument()
+  })
+
+  it('explains the shortfall without the lapsed-waiver warning when no change is a waiver difference', () => {
+    render(
+      <DeltaComparability
+        delta={delta({ from_waived_excluded: FROM_WAIVED, to_waived_excluded: TO_WAIVED })}
       />,
     )
 

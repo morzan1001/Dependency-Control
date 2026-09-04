@@ -31,6 +31,8 @@ const ANALYSED = 118
 const NOT_ANALYSED = 0
 const FROM_WAIVED = 12
 const TO_WAIVED = 9
+const WAIVER_ONLY = 3
+const NO_WAIVER_ONLY = 0
 const RISK_SCORE_WARNING = /only its risk scores are reachability-adjusted/i
 const LAPSED_WAIVER_WARNING = /before treating an added finding as newly introduced/i
 
@@ -42,7 +44,7 @@ const emptyDelta = (
   category, from_scan_id: FROM_SCAN_ID, to_scan_id: TO_SCAN_ID, project_id: PROJECT_ID,
   totals: { added: 2, removed: 1, unchanged: 5, changed: 0, by_severity: {}, by_type: {} },
   page: FIRST_PAGE, page_size: 50, total_pages: 1, items: [],
-  from_waived_excluded: 0, to_waived_excluded: 0,
+  from_waived_excluded: 0, to_waived_excluded: 0, waiver_only_changes: NO_WAIVER_ONLY,
   ...overrides,
 })
 
@@ -107,6 +109,7 @@ describe('ScanDelta page', () => {
         to_reachability: { coverable_count: COVERABLE, analyzed_count: ANALYSED },
         from_waived_excluded: FROM_WAIVED,
         to_waived_excluded: TO_WAIVED,
+        waiver_only_changes: WAIVER_ONLY,
       }),
     )
     vi.mocked(scansApi.scanApi.getOne).mockImplementation((id: string) => Promise.resolve(scan(id)))

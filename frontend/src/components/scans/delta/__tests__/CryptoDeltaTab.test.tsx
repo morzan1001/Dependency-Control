@@ -61,7 +61,7 @@ describe("CryptoDeltaTab", () => {
       category: "crypto", from_scan_id: "a", to_scan_id: "b", project_id: "p1",
       totals: { added: 3, removed: 2, unchanged: 7, changed: 0, by_severity: {}, by_type: {} },
       page: 1, page_size: 50, total_pages: 1, items: [],
-      from_waived_excluded: 0, to_waived_excluded: 0,
+      from_waived_excluded: 0, to_waived_excluded: 0, waiver_only_changes: 0,
     };
     (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(loaded);
     const onLoaded = vi.fn();
