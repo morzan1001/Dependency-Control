@@ -5,9 +5,10 @@ from datetime import datetime, timezone
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from fastapi import HTTPException
 
 from app.api.v1.endpoints.analytics.search import search_dependencies_advanced, search_vulnerabilities
-from app.api.v1.endpoints.analytics.summary import get_analytics_summary
+from app.api.v1.endpoints.analytics.summary import get_analytics_scope, get_analytics_summary
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, SCAN_STATUS_COMPLETED
 from app.core.permissions import Permissions
 from app.models.release import Release
@@ -37,13 +38,21 @@ _EXPECTED_WITHOUT_RELEASE = 1
 _RELEASED_AT = datetime(2026, 9, 1, tzinfo=timezone.utc)
 _SUPERSEDED_AT = datetime(2026, 8, 1, tzinfo=timezone.utc)
 
+_CANARY = "canary"
+_STAGING = "staging"
+_ENVIRONMENTS_IN_SCOPE = [_CANARY, DEFAULT_RELEASE_ENVIRONMENT, _STAGING]
+_UNREACHABLE_PROJECT = "p9"
+_UNREACHABLE_ENVIRONMENT = "elsewhere"
+_NO_ENVIRONMENTS: list[str] = []
+_FORBIDDEN = 403
 
-def _user():
+
+def _user(permissions: list[str] | None = None) -> User:
     return User(
         id="u1",
         username="u1",
         email="u1@test.com",
-        permissions=[Permissions.ANALYTICS_READ],
+        permissions=permissions if permissions is not None else [Permissions.ANALYTICS_READ],
         is_active=True,
     )
 
@@ -75,11 +84,17 @@ async def _seed_scan(db: FakeDatabase, scan_id: str, project_id: str) -> None:
     )
 
 
-async def _seed_release(db: FakeDatabase, project_id: str, scan_id: str, released_at: datetime) -> None:
+async def _seed_release(
+    db: FakeDatabase,
+    project_id: str,
+    scan_id: str,
+    released_at: datetime,
+    environment: str = DEFAULT_RELEASE_ENVIRONMENT,
+) -> None:
     await ReleaseRepository(db).record(
         Release(
             project_id=project_id,
-            environment=DEFAULT_RELEASE_ENVIRONMENT,
+            environment=environment,
             scan_id=scan_id,
             released_at=released_at,
         )
@@ -265,3 +280,87 @@ async def test_both_searches_default_to_the_branch_tip():
             await endpoint(current_user=_user(), db=db, q=_SEARCH_TERM)
 
         assert resolve.await_args.kwargs["release_environment"] is None
+
+
+async def _seed_environments(db: FakeDatabase) -> None:
+    """Two in-scope projects between them covering three environments, plus one the caller cannot
+    reach: a scope endpoint that queried the whole collection would offer its environment too."""
+    await _seed_release(db, "p1", "scan-p1", _RELEASED_AT, DEFAULT_RELEASE_ENVIRONMENT)
+    await _seed_release(db, "p1", "scan-p1", _RELEASED_AT, _STAGING)
+    await _seed_release(db, "p2", "scan-p2", _RELEASED_AT, _CANARY)
+    await _seed_release(db, "p2", "scan-p2", _RELEASED_AT, DEFAULT_RELEASE_ENVIRONMENT)
+    await _seed_release(db, _UNREACHABLE_PROJECT, "scan-p9", _RELEASED_AT, _UNREACHABLE_ENVIRONMENT)
+
+
+@pytest.mark.asyncio
+async def test_scope_offers_the_environments_of_the_accessible_projects_only():
+    db = FakeDatabase()
+    await _seed_environments(db)
+
+    with patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_TWO_PROJECTS)):
+        result = await get_analytics_scope(current_user=_user(), db=db)
+
+    assert result.release_environments == _ENVIRONMENTS_IN_SCOPE
+
+
+@pytest.mark.asyncio
+async def test_scope_counts_the_projects_the_requested_mode_resolved():
+    db = FakeDatabase()
+    await _seed_mixed_release_scope(db)
+
+    with patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_THREE_PROJECTS)):
+        result = await get_analytics_scope(
+            current_user=_user(), db=db, release_environment=DEFAULT_RELEASE_ENVIRONMENT
+        )
+
+    assert result.resolved_projects == _EXPECTED_RESOLVED
+    assert result.projects_without_release == _EXPECTED_WITHOUT_RELEASE
+
+
+@pytest.mark.asyncio
+async def test_scope_defaults_to_the_branch_tip():
+    db = FakeDatabase()
+    with (
+        patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_TWO_PROJECTS)),
+        patch(f"{_SUMMARY}.get_latest_scan_ids", new=AsyncMock(return_value=_TWO_SCANS)) as scan_ids,
+    ):
+        result = await get_analytics_scope(current_user=_user(), db=db)
+
+    assert scan_ids.await_args.kwargs["release_environment"] is None
+    assert result.resolved_projects == len(_TWO_PROJECTS)
+
+
+@pytest.mark.asyncio
+async def test_scope_with_no_accessible_projects_offers_nothing():
+    db = FakeDatabase()
+    await _seed_environments(db)
+
+    with patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_NO_PROJECTS)):
+        result = await get_analytics_scope(current_user=_user(), db=db)
+
+    assert result.release_environments == _NO_ENVIRONMENTS
+    assert result.resolved_projects == 0
+    assert result.projects_without_release == 0
+
+
+@pytest.mark.asyncio
+async def test_scope_answers_a_role_that_holds_no_summary_permission():
+    """The counters caption the bare-list tabs too, so a role that only sees one of them still needs
+    them — the summary endpoint they used to come from is behind analytics:read or analytics:summary."""
+    db = FakeDatabase()
+    await _seed_environments(db)
+
+    with patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_TWO_PROJECTS)):
+        result = await get_analytics_scope(current_user=_user([Permissions.ANALYTICS_HOTSPOTS]), db=db)
+
+    assert result.release_environments == _ENVIRONMENTS_IN_SCOPE
+
+
+@pytest.mark.asyncio
+async def test_scope_rejects_a_caller_without_any_analytics_permission():
+    db = FakeDatabase()
+
+    with pytest.raises(HTTPException) as raised:
+        await get_analytics_scope(current_user=_user([Permissions.PROJECT_READ]), db=db)
+
+    assert raised.value.status_code == _FORBIDDEN

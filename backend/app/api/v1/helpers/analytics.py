@@ -50,6 +50,27 @@ ReleaseEnvironmentQuery = Annotated[
 ]
 
 
+_ANALYTICS_FEATURE_PERMISSIONS = [
+    Permissions.ANALYTICS_READ,
+    Permissions.ANALYTICS_SUMMARY,
+    Permissions.ANALYTICS_DEPENDENCIES,
+    Permissions.ANALYTICS_TREE,
+    Permissions.ANALYTICS_IMPACT,
+    Permissions.ANALYTICS_HOTSPOTS,
+    Permissions.ANALYTICS_SEARCH,
+    Permissions.ANALYTICS_RECOMMENDATIONS,
+]
+
+
+def require_any_analytics_permission(user: User) -> None:
+    """Raise 403 unless the user holds a permission that opens some analytics feature."""
+    if not has_permission(user.permissions, _ANALYTICS_FEATURE_PERMISSIONS):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Analytics permission required: one of {', '.join(_ANALYTICS_FEATURE_PERMISSIONS)}.",
+        )
+
+
 def require_analytics_permission(user: User, permission: str) -> None:
     """Raise 403 if user doesn't have the required analytics permission."""
     if not has_permission(user.permissions, [Permissions.ANALYTICS_READ, permission]):

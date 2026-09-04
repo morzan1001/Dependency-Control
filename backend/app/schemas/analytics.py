@@ -145,6 +145,15 @@ class AnalyticsSummary(BaseModel):
     projects_without_release: int
 
 
+class AnalyticsScope(BaseModel):
+    """What the caller's analytics scope offers: the release environments it can be narrowed to,
+    and how much of it the current mode resolved."""
+
+    release_environments: list[str]
+    resolved_projects: int
+    projects_without_release: int
+
+
 class DependencyMetadata(BaseModel):
     """Aggregated metadata for a dependency across all projects."""
 

@@ -1,4 +1,4 @@
-"""Analytics summary endpoints: /summary, /dependencies/top, /dependency-types."""
+"""Analytics summary endpoints: /scope, /summary, /dependencies/top, /dependency-types."""
 
 from typing import Annotated, Any
 
@@ -12,6 +12,7 @@ from app.api.v1.helpers.analytics import (
     get_projects_with_scans,
     get_user_project_ids,
     require_analytics_permission,
+    require_any_analytics_permission,
     scope_resolution_counts,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
@@ -21,6 +22,7 @@ from app.repositories import (
     FindingRepository,
 )
 from app.schemas.analytics import (
+    AnalyticsScope,
     AnalyticsSummary,
     DependencyTypeStats,
     DependencyUsage,
@@ -29,6 +31,36 @@ from app.schemas.analytics import (
 from app.services.aggregation.components import lookup_component
 
 router = CustomAPIRouter()
+
+
+@router.get("/scope", responses=RESP_AUTH)
+async def get_analytics_scope(
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+    release_environment: ReleaseEnvironmentQuery = None,
+) -> AnalyticsScope:
+    """The release environments the caller's projects deploy to, and how much of the scope the
+    requested mode resolved.
+
+    Gated on any analytics feature permission rather than one of them: the coverage counters caption
+    every analytics tab, and the environments drive the mode switch that every tab obeys.
+    """
+    require_any_analytics_permission(current_user)
+
+    project_ids = await get_user_project_ids(current_user, db)
+
+    if not project_ids:
+        return AnalyticsScope(release_environments=[], resolved_projects=0, projects_without_release=0)
+
+    environments: list[str] = sorted(await db.releases.distinct("environment", {"project_id": {"$in": project_ids}}))
+    scan_ids = await get_latest_scan_ids(project_ids, db, release_environment=release_environment)
+    resolved_projects, projects_without_release = scope_resolution_counts(project_ids, scan_ids)
+
+    return AnalyticsScope(
+        release_environments=environments,
+        resolved_projects=resolved_projects,
+        projects_without_release=projects_without_release,
+    )
 
 
 @router.get("/summary", responses=RESP_AUTH)

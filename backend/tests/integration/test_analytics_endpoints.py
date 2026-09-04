@@ -4,8 +4,14 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from app.models.crypto_asset import CryptoAsset
+from app.models.release import Release
 from app.repositories.crypto_asset import CryptoAssetRepository
+from app.repositories.releases import ReleaseRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+
+_SCOPE_PATH = "/api/v1/analytics/scope"
+_STAGING = "staging"
+_OFF_SHAPE_ENVIRONMENT = "Prod.EU"
 
 
 @pytest.mark.asyncio
@@ -230,3 +236,35 @@ async def test_recommendations_cached_on_second_call(client, db, owner_auth_head
     assert r2.status_code == 200, r2.text
     assert r1.json() == r2.json()
     assert calls["n"] == 1
+
+
+@pytest.mark.asyncio
+async def test_scope_denied_unauth(client, db):
+    resp = await client.get(_SCOPE_PATH)
+    assert resp.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+async def test_scope_denied_without_any_analytics_permission(client, db, member_auth_headers):
+    resp = await client.get(_SCOPE_PATH, headers=member_auth_headers)
+    assert resp.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_scope_rejects_an_off_shape_environment(client, db, owner_auth_headers_proj):
+    resp = await client.get(
+        _SCOPE_PATH, params={"release_environment": _OFF_SHAPE_ENVIRONMENT}, headers=owner_auth_headers_proj
+    )
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_scope_lists_the_environments_the_callers_projects_deploy_to(client, db, owner_auth_headers_proj):
+    await ReleaseRepository(db).record(
+        Release(project_id="p", environment=_STAGING, scan_id="s", released_at=datetime.now(timezone.utc))
+    )
+
+    resp = await client.get(_SCOPE_PATH, headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["release_environments"] == [_STAGING]
