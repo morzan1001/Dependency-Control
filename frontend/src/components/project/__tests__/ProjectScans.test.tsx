@@ -10,6 +10,7 @@ const RELEASE_VERSION = 'v1.2.3'
 const STAGING_VERSION = 'v1.3.0-rc1'
 const RELEASED_AT = '2026-07-01T00:00:00Z'
 const RELEASES_ONLY_BUTTON = 'Releases only'
+const GENERIC_RELEASE_LABEL = 'Release'
 
 const mockUseProjectScans = vi.fn()
 const mockUseProjectBranches = vi.fn()
@@ -140,7 +141,7 @@ describe('ProjectScans - release', () => {
   it('still marks a scan whose release record has not landed yet', () => {
     renderScans([makeScan({ id: 'rel', is_release: true })])
 
-    expect(screen.getByLabelText('Release in release')).toBeInTheDocument()
+    expect(screen.getByLabelText(GENERIC_RELEASE_LABEL)).toBeInTheDocument()
   })
 
   it('renders no badge for a plain scan', () => {

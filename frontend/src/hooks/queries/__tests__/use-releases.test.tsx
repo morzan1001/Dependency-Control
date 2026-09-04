@@ -70,7 +70,7 @@ describe("useProjectReleases", () => {
           environment: PRODUCTION,
           version: null,
           released_at: RELEASED_AT,
-          commit_hash: COMMIT_HASH,
+          commit_hash: null,
           branch: null,
           scan_status: null,
           analysis_scan_id: null,

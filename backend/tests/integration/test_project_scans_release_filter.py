@@ -20,8 +20,10 @@ _UNMARKED_SCAN = "unmarked"
 _PLAIN_SCAN = "plain"
 _SATURATED_SCAN = "saturated"
 _STRAY_KEY_SCAN = "stray"
+_DELETED_BRANCH_SCAN = "rel-on-deleted-branch"
 
 _BRANCH = "main"
+_DELETED_BRANCH = "release/1.0"
 _PRODUCTION = "production"
 _STAGING = "staging"
 _STAGING_VERSION = "v1.3.0-rc1"
@@ -235,6 +237,38 @@ async def _rescan(client, headers, scan_id: str = _RELEASE_SCAN):
 )
 async def test_the_scan_list_filters_on_the_release_mark(client, db, member_auth_headers, params, expected):
     await _seed(db)
+
+    resp = await client.get(f"/api/v1/projects/{_PROJECT}/scans", params=params, headers=member_auth_headers)
+
+    assert resp.status_code == 200, resp.text
+    assert [s["id"] for s in resp.json()] == expected
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("params", "expected"),
+    [
+        ({"is_release": True}, [_DELETED_BRANCH_SCAN, _RELEASE_SCAN]),
+        ({"is_release": True, "exclude_deleted_branches": True}, [_RELEASE_SCAN]),
+    ],
+)
+async def test_the_release_filter_reaches_a_release_whose_branch_is_gone(
+    client, db, member_auth_headers, params, expected
+):
+    """A branch deleted after its release is what the mark is for, so the Pipelines table drops the
+    deleted-branch exclusion while the filter is on — keeping both would hide the release again."""
+    await _seed(db)
+    await db.projects.update_one({"_id": _PROJECT}, {"$set": {"deleted_branches": [_DELETED_BRANCH]}})
+    await db.scans.insert_one(
+        {
+            "_id": _DELETED_BRANCH_SCAN,
+            "project_id": _PROJECT,
+            "branch": _DELETED_BRANCH,
+            "status": _SCAN_STATUS,
+            "created_at": _NOW + _AN_HOUR,
+            "is_release": True,
+        }
+    )
 
     resp = await client.get(f"/api/v1/projects/{_PROJECT}/scans", params=params, headers=member_auth_headers)
 

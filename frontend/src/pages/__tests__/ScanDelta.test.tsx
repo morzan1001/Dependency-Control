@@ -5,19 +5,21 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import ScanDelta from '../ScanDelta'
 import * as deltaApi from '@/api/scanDelta'
 import * as scansApi from '@/api/scans'
-import type { DeltaCategory } from '@/types/scanDelta'
+import type { DeltaCategory, ScanDeltaResponse } from '@/types/scanDelta'
+import type { Scan } from '@/types/scan'
 
 vi.mock('@/api/scanDelta')
 vi.mock('@/api/scans')
 
-const emptyDelta = (category: DeltaCategory) => ({
+// Annotated, not inferred: an inferred fixture drops a field from the response type silently.
+const emptyDelta = (category: DeltaCategory): ScanDeltaResponse => ({
   category, from_scan_id: 'a', to_scan_id: 'b', project_id: 'p1',
   totals: { added: 2, removed: 1, unchanged: 5, changed: 0, by_severity: {}, by_type: {} },
   page: 1, page_size: 50, total_pages: 1, items: [],
   from_waived_excluded: 0, to_waived_excluded: 0,
 })
 
-const scan = (id: string) => ({
+const scan = (id: string): Scan => ({
   id, project_id: 'p1', branch: 'main', status: 'completed',
   created_at: '2026-08-10T12:00:00Z', commit_hash: `c-${id}`,
 })
