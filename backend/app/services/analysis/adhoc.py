@@ -5,7 +5,10 @@ from dataclasses import dataclass
 from typing import Any
 
 from app.core.cache import suppress_cache_writes
+from app.core.constants import get_severity_value
+from app.models.match_signature import MatchSignature
 from app.models.system import SystemSettings
+from app.models.waiver import Waiver
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport
 from app.schemas.projections import CallgraphMinimal
 from app.schemas.sbom import ParsedSBOM
@@ -85,6 +88,25 @@ _MADGE_FORMAT = "madge"
 _MADGE_LANGUAGE = "javascript"
 # Identifies the graph within this request only; nothing here is stored or looked up by it.
 _POSTED_CALLGRAPH_ID = "posted"
+
+_WAIVERS_GLOBAL = "global"
+_WAIVERS_NONE = "none"
+# Only instance-precise waivers are honoured: file and rule scope expand through a Mongo
+# regex over ``finding_id`` that has no in-memory counterpart.
+_SCOPE_FINDING = "finding"
+# The waiver UI stores this in place of a field the user left unset.
+_UNCONSTRAINED_WAIVER_VALUE = "Unknown"
+
+# Waiver field -> record field, mirroring the query the scan-backed path builds.
+_WAIVER_FIELD_MAP: tuple[tuple[str, str], ...] = (
+    ("finding_id", "finding_id"),
+    ("package_name", "component"),
+    ("package_version", "version"),
+    ("finding_type", "type"),
+)
+# A vulnerability waiver narrows documents but never by type: the advisory it names only
+# ever lives in a vulnerability document, whatever ``finding_type`` the waiver carries.
+_VULNERABILITY_SCOPE_FIELDS = tuple(pair for pair in _WAIVER_FIELD_MAP if pair[0] != "finding_type")
 
 
 @dataclass(frozen=True)
@@ -350,6 +372,102 @@ def _run_reachability(
     return dict(build_reachability_summary(vulnerabilities, [callgraph_dict], enriched))
 
 
+def _waiver_criteria(waiver: Waiver, fields: tuple[tuple[str, str], ...]) -> dict[str, Any]:
+    """The record fields a waiver actually constrains, keyed as they appear on a record."""
+    criteria: dict[str, Any] = {}
+    for waiver_field, record_field in fields:
+        value = getattr(waiver, waiver_field, None)
+        if value and value != _UNCONSTRAINED_WAIVER_VALUE:
+            criteria[record_field] = value
+    return criteria
+
+
+def _matches(record: dict[str, Any], criteria: dict[str, Any]) -> bool:
+    return all(record.get(field) == value for field, value in criteria.items())
+
+
+def _waive_matching_advisories(record: dict[str, Any], waiver: Waiver) -> None:
+    """Waive the matching nested advisories, then roll the document level up from them."""
+    entries = (record.get("details") or {}).get("vulnerabilities") or []
+    hit = False
+    for entry in entries:
+        known_as = {entry.get("id"), entry.get("resolved_cve")} | set(entry.get("aliases") or [])
+        if waiver.vulnerability_id in known_as:
+            entry["waived"] = True
+            entry["waiver_reason"] = waiver.reason
+            hit = True
+    if not hit:
+        return
+    # A fully waived document keeps the severity of its entries, so dropping the waiver
+    # restores it; a partly waived one drops to the highest entry still live.
+    live = [entry for entry in entries if not entry.get("waived")] or entries
+    severity = max((entry.get("severity") for entry in live), key=get_severity_value)
+    if severity:
+        record["severity"] = severity
+    if all(entry.get("waived") for entry in entries):
+        record["waived"] = True
+        record["waiver_reason"] = waiver.reason
+
+
+def _apply_vulnerability_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:
+    scope = _waiver_criteria(waiver, _VULNERABILITY_SCOPE_FIELDS)
+    for record in records:
+        if record.get("type") == _VULNERABILITY and _matches(record, scope):
+            _waive_matching_advisories(record, waiver)
+
+
+def _apply_field_waiver(records: list[dict[str, Any]], waiver: Waiver) -> None:
+    criteria = _waiver_criteria(waiver, _WAIVER_FIELD_MAP)
+    # A waiver that constrains nothing would blanket every finding the caller posted.
+    if not criteria:
+        return
+    for record in records:
+        if _matches(record, criteria):
+            record["waived"] = True
+            record["waiver_reason"] = waiver.reason
+
+
+def _apply_signature_waivers(records: list[dict[str, Any]], waivers: list[Waiver]) -> None:
+    """Bind location waivers to the findings they were taken from, re-anchoring across line drift."""
+    from app.services.waivers.matching import MatchFinding, apply_waivers_to_findings
+
+    # Keyed by position: a record's own id is not guaranteed unique across posted inputs.
+    by_key = {str(index): record for index, record in enumerate(records)}
+    located = [
+        MatchFinding(id=key, sig=MatchSignature(**record["match"]))
+        for key, record in by_key.items()
+        if record.get("match")
+    ]
+    if not located:
+        return
+
+    reasons = {waiver.id: waiver.reason for waiver in waivers}
+    application = apply_waivers_to_findings(located, waivers)
+    for key, waiver_id in application.waived.items():
+        by_key[key]["waived"] = True
+        by_key[key]["waiver_reason"] = reasons.get(waiver_id)
+    for key, waiver_id in application.lapsed.items():
+        by_key[key]["waiver_lapsed"] = True
+        by_key[key]["lapsed_waiver_id"] = waiver_id
+
+
+def apply_global_waivers_in_memory(records: list[dict[str, Any]], waivers: list[Waiver]) -> int:
+    """Apply global waivers to in-memory records; returns how many records end up waived."""
+    signature_waivers: list[Waiver] = []
+    for waiver in waivers:
+        if (waiver.scope or _SCOPE_FINDING) != _SCOPE_FINDING:
+            continue
+        if waiver.match is not None:
+            signature_waivers.append(waiver)
+        elif waiver.vulnerability_id:
+            _apply_vulnerability_waiver(records, waiver)
+        else:
+            _apply_field_waiver(records, waiver)
+
+    _apply_signature_waivers(records, signature_waivers)
+    return sum(1 for record in records if record.get("waived") is True)
+
+
 async def run_adhoc_analysis(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeResponse:
     """Analyze the posted SBOMs and scanner results in memory. Writes nothing.
 
@@ -398,9 +516,19 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     languages = component_language_map([component for pi in parsed_inputs for component in pi.components])
     reachability_summary = _run_reachability(records, request.callgraph, languages, report)
 
+    waived_count = 0
+    waivers_applied = _WAIVERS_NONE
+    if request.apply_global_waivers:
+        from app.repositories import WaiverRepository
+
+        waived_count = apply_global_waivers_in_memory(records, await WaiverRepository(db).find_active_global())
+        waivers_applied = _WAIVERS_GLOBAL
+
     return AdhocAnalyzeResponse(
         findings=records,
         epss_kev_summary=epss_kev_summary,
         reachability_summary=reachability_summary,
         analyzers=report,
+        waivers_applied=waivers_applied,
+        waived_count=waived_count,
     )
