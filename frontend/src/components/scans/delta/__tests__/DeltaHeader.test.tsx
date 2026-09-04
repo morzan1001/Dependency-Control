@@ -21,11 +21,14 @@ const LATEST_RELEASE_LIMIT = 1
 const NO_ENVIRONMENT_FILTER = undefined
 const PROJECT_ID = 'p1'
 const PRODUCTION = 'production'
+const STAGING = 'staging'
 const RELEASE_VERSION = 'v1.2.3'
 const RELEASE_SCAN_ID = 'rel-outside-window'
 const RELEASE_RESCAN_ID = 'rel-rescan'
 const COMMIT_HASH = 'a'.repeat(40)
-const QUICK_PICK_LABEL = 'Latest release'
+const QUICK_PICK_LABEL = `Latest ${PRODUCTION} release`
+const STAGING_QUICK_PICK_LABEL = `Latest ${STAGING} release`
+const ANY_QUICK_PICK_LABEL = /^Latest .+ release$/
 const RELEASE_MARKER_LABEL = 'Release'
 
 // 'rescan-1' is a rescan the project-scans hook excludes from its option list.
@@ -115,7 +118,18 @@ describe('DeltaHeader - release quick pick', () => {
 
     renderHeader()
 
-    expect(screen.queryByRole('button', { name: new RegExp(QUICK_PICK_LABEL) })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: ANY_QUICK_PICK_LABEL })).not.toBeInTheDocument()
+  })
+
+  // An unqualified fetch returns the newest release of any environment, so a project that deploys
+  // to staging on every merge would otherwise offer a staging scan under a production-sounding name.
+  it('names the environment it resolved, which need not be production', () => {
+    mockScanSources()
+
+    renderHeader(vi.fn(), [{ ...release, environment: STAGING }])
+
+    expect(screen.getByRole('button', { name: STAGING_QUICK_PICK_LABEL })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: QUICK_PICK_LABEL })).not.toBeInTheDocument()
   })
 
   it('compares the release against the current To side', () => {

@@ -89,6 +89,8 @@ export function DeltaHeader({ projectId, fromScanId, toScanId, onChange }: Delta
   const options = (scans || []).filter((s) => isScanUsable(s.status))
   // The endpoint sorts releases newest first, so a single row is the newest one and no page
   // size can hide it — the quick pick never needs the rest of the project's release history.
+  // Unqualified by environment so a project that only deploys to staging still gets a quick pick;
+  // the button names whichever environment won, since "the release" elsewhere means production.
   const { data: releases } = useProjectReleases(projectId, undefined, LATEST_RELEASE_LIMIT)
   const latestRelease = releases?.items[0]
   // A rescan moves a release's analysis onto a newer scan and the backend's own `from=release`
@@ -112,7 +114,7 @@ export function DeltaHeader({ projectId, fromScanId, toScanId, onChange }: Delta
                 onClick={() => onChange(releaseScanId, toScanId)}
               >
                 <Rocket className="mr-2 h-3 w-3" />
-                Latest release
+                {`Latest ${latestRelease.environment} release`}
               </Button>
             )}
             <span className="text-xs text-muted-foreground">
