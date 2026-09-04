@@ -1,5 +1,6 @@
-"""Request and response models for the stateless ad-hoc analysis endpoint."""
+"""Request and response models for the stateless ad-hoc analysis endpoint and its API keys."""
 
+from datetime import datetime
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -67,3 +68,38 @@ class AdhocAnalyzeResponse(BaseModel):
     waivers_applied: Literal["global", "none"] = "none"
     waived_count: int = 0
     truncated: bool = False
+
+
+# ── Ad-hoc analysis API key management ──────────────────────────────────
+
+
+class AdhocKeyCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=80)
+    expires_in_days: int = Field(90, ge=1, le=365)
+
+
+class AdhocKeyResponse(BaseModel):
+    id: str
+    name: str
+    prefix: str
+    created_at: datetime
+    expires_at: datetime
+    revoked_at: datetime | None = None
+
+    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+
+
+class AdhocKeyCreateResponse(AdhocKeyResponse):
+    """Returned only at creation — contains the plaintext token."""
+
+    token: str = Field(
+        ...,
+        description=(
+            "The plaintext API key. Shown exactly once — the server only keeps a "
+            "SHA-256 hash. If you lose it, revoke this key and create a new one."
+        ),
+    )
+
+
+class AdhocKeyListResponse(BaseModel):
+    keys: list[AdhocKeyResponse]

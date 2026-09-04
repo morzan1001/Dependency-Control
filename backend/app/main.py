@@ -8,6 +8,7 @@ from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
 from app.api import health
 from app.api.v1.endpoints import (
+    adhoc_keys,
     analytics,
     archives,
     auth,
@@ -203,6 +204,7 @@ app.include_router(scripts.router, prefix=f"{settings.API_V1_STR}", tags=["scrip
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
 app.include_router(mcp_keys.router, prefix=f"{settings.API_V1_STR}/mcp-keys", tags=["mcp-keys"])
 app.include_router(mcp.router, prefix=f"{settings.API_V1_STR}/mcp", tags=["mcp"])
+app.include_router(adhoc_keys.router, prefix=f"{settings.API_V1_STR}/analyze-keys", tags=["adhoc-keys"])
 
 
 @app.get("/")
