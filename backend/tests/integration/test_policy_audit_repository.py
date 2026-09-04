@@ -6,6 +6,10 @@ from app.models.policy_audit_entry import PolicyAuditEntry
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.schemas.policy_audit import PolicyAuditAction
 
+_OLDER_VERSION = 4
+_NEWER_VERSION = 5
+_LIST_LIMIT = 10
+
 
 def _entry(version=1, policy_scope="system", project_id=None, ts=None, action=PolicyAuditAction.UPDATE):
     return PolicyAuditEntry(
@@ -51,6 +55,19 @@ async def test_get_by_version(db):
 
     miss = await repo.get_by_version(policy_scope="system", project_id=None, version=99)
     assert miss is None
+
+
+@pytest.mark.asyncio
+async def test_entries_saved_in_one_millisecond_are_listed_newest_version_first(db):
+    """Two saves can share a stored timestamp, and the revert view reads the head of this list."""
+    same_instant = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+    repo = PolicyAuditRepository(db)
+    await repo.insert(_entry(version=_OLDER_VERSION, ts=same_instant))
+    await repo.insert(_entry(version=_NEWER_VERSION, ts=same_instant, action=PolicyAuditAction.REVERT))
+
+    entries = await repo.list(policy_scope="system", limit=_LIST_LIMIT)
+
+    assert [e.version for e in entries] == [_NEWER_VERSION, _OLDER_VERSION]
 
 
 @pytest.mark.asyncio

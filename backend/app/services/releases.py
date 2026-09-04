@@ -20,6 +20,15 @@ def _created_at(doc: dict[str, Any]) -> datetime:
     return ensure_utc(doc.get("created_at")) or _UNDATED
 
 
+def _is_fresher(doc: dict[str, Any], incumbent: dict[str, Any]) -> bool:
+    """Newer wins; on a tie the lower _id does, because BSON dates are milliseconds and two links
+    stamped inside one cannot be told apart by their date alone."""
+    doc_at, incumbent_at = _created_at(doc), _created_at(incumbent)
+    if doc_at != incumbent_at:
+        return doc_at > incumbent_at
+    return str(doc["_id"]) < str(incumbent["_id"])
+
+
 async def effective_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Iterable[str]) -> dict[str, str]:
     """The freshest readable analysis of each released artefact.
 
@@ -42,7 +51,7 @@ async def effective_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Iterable[str]) 
             released_id = frontier[doc["_id"]]
             if doc.get("status") in SCAN_USABLE_STATUSES:
                 incumbent = freshest.get(released_id)
-                if incumbent is None or _created_at(doc) > _created_at(incumbent):
+                if incumbent is None or _is_fresher(doc, incumbent):
                     freshest[released_id] = doc
             rescan_id = doc.get("latest_rescan_id")
             if rescan_id and rescan_id not in visited:
@@ -57,7 +66,9 @@ async def latest_release_scan(db: AsyncIOMotorDatabase, project_id: str, environ
     the rollback path and needs no extra flag."""
     row = await db.releases.find_one(
         {"project_id": project_id, "environment": environment},
-        sort=[("released_at", -1)],
+        # Same tie-break as the analytics path, or two marks landing in one millisecond answer
+        # "what is in production" differently depending on which endpoint is asked.
+        sort=[("released_at", -1), ("_id", 1)],
     )
     if row is None:
         return None

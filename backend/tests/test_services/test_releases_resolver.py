@@ -9,6 +9,7 @@ from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, MAX_RESCAN_HOPS
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.services.releases import (
+    effective_scan_ids,
     latest_release_scan,
     released_scan_ids,
     resolve_scan_ids,
@@ -483,6 +484,33 @@ async def test_resolve_scan_ids_release_mode_breaks_a_released_at_tie_on_the_row
     assert await resolve_scan_ids(db, [_PROJECT_A], release_environment=_PRODUCTION) == {
         _PROJECT_A: _TIED_SCAN_LOW_ROW_ID
     }
+
+
+@pytest.mark.asyncio
+async def test_latest_release_scan_breaks_the_tie_the_way_the_analytics_path_does(db):
+    """BSON dates are milliseconds, so two marks of one environment can share a released_at. Two
+    resolvers answering "what is in production" differently is worse than either answer."""
+    await db.scans.insert_one(_scan(_TIED_SCAN_HIGH_ROW_ID, _PROJECT_A))
+    await db.scans.insert_one(_scan(_TIED_SCAN_LOW_ROW_ID, _PROJECT_A))
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, _TIED_SCAN_HIGH_ROW_ID))
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, _TIED_SCAN_LOW_ROW_ID))
+
+    resolved = await latest_release_scan(db, _PROJECT_A, _PRODUCTION)
+
+    assert resolved == _TIED_SCAN_LOW_ROW_ID
+    assert await resolve_scan_ids(db, [_PROJECT_A], release_environment=_PRODUCTION) == {_PROJECT_A: resolved}
+
+
+@pytest.mark.asyncio
+async def test_effective_scan_ids_breaks_a_created_at_tie_on_the_scan_id(db):
+    """A rescan stamped in the same millisecond as its source leaves the walk with two candidates
+    of equal date; whichever the server hands over first must not decide the answer."""
+    await db.scans.insert_one(_scan(_TIED_SCAN_HIGH_ROW_ID, _PROJECT_A, latest_rescan_id=_TIED_SCAN_LOW_ROW_ID))
+    await db.scans.insert_one(_scan(_TIED_SCAN_LOW_ROW_ID, _PROJECT_A))
+
+    resolved = await effective_scan_ids(db, [_TIED_SCAN_HIGH_ROW_ID])
+
+    assert resolved == {_TIED_SCAN_HIGH_ROW_ID: _TIED_SCAN_LOW_ROW_ID}
 
 
 @pytest.mark.asyncio

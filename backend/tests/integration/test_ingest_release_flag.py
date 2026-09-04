@@ -1,6 +1,7 @@
 """Release marks survive the other jobs of the same CI pipeline (promote-only) and are kept per environment."""
 
 import uuid
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 import pymongo
@@ -24,6 +25,8 @@ _SBOM = {"bomFormat": "CycloneDX", "specVersion": "1.6", "version": 1, "componen
 _SBOM_ROUTE = "/api/v1/ingest"
 _FINDINGS_ROUTE = "/api/v1/ingest/opengrep"
 _RECORD_FAILED = "release write failed"
+_FIRST_DEPLOY_AT = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+_CLOCK_STEP = timedelta(seconds=1)
 
 
 def _sbom_payload(**extra):
@@ -44,6 +47,22 @@ async def _fake_process_sboms(*_args, **_kwargs):
     return ([{"gridfs_id": "fake-1", "filename": "fake.json"}], [], 1, 0, 0)
 
 
+class _AdvancingClock:
+    """Stands in for the ingest wall clock, one step per call.
+
+    BSON stores milliseconds, so two posts of the same payload inside one millisecond stamp the
+    same released_at and a refresh cannot be told from no write at all.
+    """
+
+    def __init__(self, start: datetime):
+        self._next = start
+
+    def now(self, _tz=None) -> datetime:
+        current = self._next
+        self._next = current + _CLOCK_STEP
+        return current
+
+
 def _patched_sbom_ingest():
     return (
         patch("app.api.v1.endpoints.ingest._process_sboms", side_effect=_fake_process_sboms),
@@ -58,7 +77,7 @@ def latest_release(db, _project):
     async def _lookup(environment: str):
         return await db.releases.find_one(
             {"project_id": str(_project.id), "environment": environment},
-            sort=[("released_at", pymongo.DESCENDING)],
+            sort=[("released_at", pymongo.DESCENDING), ("_id", pymongo.ASCENDING)],
         )
 
     return _lookup
@@ -116,7 +135,8 @@ async def test_one_scan_marked_into_two_environments_keeps_both(client, db, api_
 @pytest.mark.asyncio
 async def test_a_rollback_is_a_separate_record_that_wins_on_released_at(client, db, api_key_headers, latest_release):
     process_sboms, gridfs = _patched_sbom_ingest()
-    with process_sboms, gridfs:
+    clock = patch("app.api.v1.endpoints.ingest.datetime", _AdvancingClock(_FIRST_DEPLOY_AT))
+    with process_sboms, gridfs, clock:
         rolled_back_to = await client.post(
             "/api/v1/ingest",
             json=_sbom_payload(pipeline_id=_ROLLED_BACK_TO_PIPELINE_ID, is_release=True, release_version=_VERSION),
@@ -141,7 +161,7 @@ async def test_a_rollback_is_a_separate_record_that_wins_on_released_at(client, 
 
     # Rolling back re-marks the older scan, so its own record wins on a fresh released_at.
     process_sboms, gridfs = _patched_sbom_ingest()
-    with process_sboms, gridfs:
+    with process_sboms, gridfs, clock:
         rollback = await client.post(
             "/api/v1/ingest",
             json=_sbom_payload(pipeline_id=_ROLLED_BACK_TO_PIPELINE_ID, is_release=True, release_version=_VERSION),
@@ -157,7 +177,8 @@ async def test_a_rollback_is_a_separate_record_that_wins_on_released_at(client, 
 @pytest.mark.asyncio
 async def test_redeploying_the_same_scan_refreshes_one_record(client, db, api_key_headers, latest_release):
     process_sboms, gridfs = _patched_sbom_ingest()
-    with process_sboms, gridfs:
+    clock = patch("app.api.v1.endpoints.ingest.datetime", _AdvancingClock(_FIRST_DEPLOY_AT))
+    with process_sboms, gridfs, clock:
         payload = _sbom_payload(is_release=True, release_environment=_STAGING, release_version=_VERSION)
         first = await client.post("/api/v1/ingest", json=payload, headers=api_key_headers)
         assert first.status_code == 202, first.text

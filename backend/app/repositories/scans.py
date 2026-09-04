@@ -223,7 +223,9 @@ class ScanRepository:
 
         pipeline: list[dict[str, Any]] = [
             {"$match": {"$or": or_conditions}},
-            {"$sort": {"created_at": -1}},
+            # BSON dates are milliseconds: without _id, two scans stamped inside one leave the
+            # project's representative scan up to the server and it can change between requests.
+            {"$sort": {"created_at": -1, "_id": 1}},
             {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
         ]
         with track_db_operation(_COL, "aggregate"):

@@ -54,6 +54,9 @@ _FOREIGN_SCAN_ID = "src-foreign"
 _OTHER_SOURCE_SCAN_ID = "src-other"
 _ROOT_SCAN_ID = "root"
 _PREVIOUS_RESCAN_ID = "prev-rescan"
+# Seeded high-id first, so insertion order alone would hand it the tip.
+_TIED_TIP_HIGH_ID = "src-tie-z"
+_TIED_TIP_LOW_ID = "src-tie-a"
 _INFLIGHT_RESCAN_ID = "inflight-rescan"
 _RELEASED_SCAN_ID = "src-released"
 _ROLLED_BACK_SCAN_ID = "src-rolled-back"
@@ -686,6 +689,21 @@ class TestProcessProjectRescan:
         targets = await _rescan_targets(_project(), db)
 
         assert [t["_id"] for t in targets] == [_SOURCE_SCAN_ID]
+
+    @pytest.mark.asyncio
+    async def test_the_tip_of_two_scans_sharing_a_created_at_is_the_lower_id(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        """Dates are stored to the millisecond, so parallel CI can land two scans on the same one.
+        A tip that alternates between passes hands each alternate a clock it was never rescanned on,
+        so the pair rescans every pass instead of once per interval."""
+        tied_at = _NOW - _RECENT
+        await _seed_scan(db, _TIED_TIP_HIGH_ID, created_at=tied_at)
+        await _seed_scan(db, _TIED_TIP_LOW_ID, created_at=tied_at)
+
+        targets = await _rescan_targets(_project(), db)
+
+        assert [t["_id"] for t in targets] == [_TIED_TIP_LOW_ID]
 
     @pytest.mark.asyncio
     async def test_the_newest_scan_wins_even_when_it_is_not_on_the_default_branch(

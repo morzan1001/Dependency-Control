@@ -125,7 +125,7 @@ class TestGetLatestActiveScanIds:
             "branch": {"$nin": ["dead"]},
             "status": {"$in": ["completed", "completed_with_errors"]},
         }
-        assert pipeline[1]["$sort"] == {"created_at": -1}
+        assert pipeline[1]["$sort"] == {"created_at": -1, "_id": 1}
         assert pipeline[2]["$group"] == {"_id": "$project_id", "scan_id": {"$first": "$_id"}}
 
     def test_resolves_projects_without_latest_scan_id_by_query(self):
