@@ -254,6 +254,28 @@ async def _create_rescan_for_project(
         await lock_repo.release_lock(lock_name, holder_id)
 
 
+async def _branch_tip(project: Project, tip_source: dict[str, Any], db: Any) -> dict | None:
+    """The newest build that stands for the project's branch tip, resolved the way analytics
+    resolves head: the default branch while the VCS still has one, else any branch it has not
+    deleted.
+
+    A tag pipeline names its tag as its branch, so it can hold a release slot but never the tip
+    slot — otherwise a project that tags every release stops having its default branch
+    re-evaluated, and where the tag build is also the release the two targets collapse to one.
+    """
+    deleted = project.deleted_branches or []
+    if project.default_branch and project.default_branch not in deleted:
+        on_default = await db.scans.find_one({**tip_source, "branch": project.default_branch}, sort=SCANS_TIP_SORT)
+        if on_default:
+            return on_default
+
+    any_branch: dict[str, Any] = {**tip_source, "$expr": {"$ne": ["$branch", "$commit_tag"]}}
+    if deleted:
+        any_branch["branch"] = {"$nin": deleted}
+    tip: dict | None = await db.scans.find_one(any_branch, sort=SCANS_TIP_SORT)
+    return tip
+
+
 async def _rescan_targets(project: Project, db: Any) -> list[dict]:
     """The branch tip plus the newest release per environment. A release is a second identity that
     has to keep being re-evaluated, not just the tip of its branch.
@@ -278,7 +300,7 @@ async def _rescan_targets(project: Project, db: Any) -> list[dict]:
 
     # BSON dates are milliseconds, so two scans of one project can share a created_at; _id decides
     # between them, or the tip alternates between passes and each alternate falls due immediately.
-    tip = await db.scans.find_one(tip_source, sort=SCANS_TIP_SORT)
+    tip = await _branch_tip(project, tip_source, db)
     if tip:
         targets.append(tip)
         targeted_ids.add(str(tip["_id"]))

@@ -57,6 +57,7 @@ _PREVIOUS_RESCAN_ID = "prev-rescan"
 # Seeded high-id first, so insertion order alone would hand it the tip.
 _TIED_TIP_HIGH_ID = "src-tie-z"
 _TIED_TIP_LOW_ID = "src-tie-a"
+_TAG_BUILD_SCAN_ID = "src-tag-build"
 _INFLIGHT_RESCAN_ID = "inflight-rescan"
 _RELEASED_SCAN_ID = "src-released"
 _ROLLED_BACK_SCAN_ID = "src-rolled-back"
@@ -706,17 +707,62 @@ class TestProcessProjectRescan:
         assert [t["_id"] for t in targets] == [_TIED_TIP_LOW_ID]
 
     @pytest.mark.asyncio
-    async def test_the_newest_scan_wins_even_when_it_is_not_on_the_default_branch(
+    async def test_the_tip_is_the_default_branch_even_when_another_branch_is_newer(
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
+        """The same head the analytics resolver reports: a feature-branch pipeline finishing later
+        answers a different question than "what is on main"."""
         await _seed_scan(db, _SOURCE_SCAN_ID, branch=_MAIN_BRANCH, created_at=_NOW - _OLDER)
         await _seed_scan(db, _FEATURE_SCAN_ID, branch=_FEATURE_BRANCH, created_at=_NOW - _RECENT)
 
         await _process_project_rescan(_project_doc(default_branch=_MAIN_BRANCH), _system_settings(), db, worker)
 
         rescans = await _rescans(db)
+        assert [r["original_scan_id"] for r in rescans] == [_SOURCE_SCAN_ID]
+        assert rescans[0]["branch"] == _MAIN_BRANCH
+
+    @pytest.mark.asyncio
+    async def test_the_newest_branch_wins_when_the_vcs_names_no_default(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        await _seed_scan(db, _SOURCE_SCAN_ID, branch=_MAIN_BRANCH, created_at=_NOW - _OLDER)
+        await _seed_scan(db, _FEATURE_SCAN_ID, branch=_FEATURE_BRANCH, created_at=_NOW - _RECENT)
+
+        await _process_project_rescan(_project_doc(), _system_settings(), db, worker)
+
+        rescans = await _rescans(db)
         assert [r["original_scan_id"] for r in rescans] == [_FEATURE_SCAN_ID]
         assert rescans[0]["branch"] == _FEATURE_BRANCH
+
+    @pytest.mark.asyncio
+    async def test_a_default_branch_this_instance_never_scanned_still_yields_a_tip(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        """CI wired to another branch must leave the project in the rotation, not drop it."""
+        await _seed_scan(db, _FEATURE_SCAN_ID, branch=_FEATURE_BRANCH, created_at=_NOW - _RECENT)
+
+        targets = await _rescan_targets(_project(default_branch=_MAIN_BRANCH), db)
+
+        assert [t["_id"] for t in targets] == [_FEATURE_SCAN_ID]
+
+    @pytest.mark.asyncio
+    async def test_a_branch_the_vcs_deleted_cannot_hold_the_tip(self, db: FakeDatabase, worker: AsyncMock) -> None:
+        await _seed_scan(db, _SOURCE_SCAN_ID, branch=_MAIN_BRANCH, created_at=_NOW - _OLDER)
+        await _seed_scan(db, _FEATURE_SCAN_ID, branch=_FEATURE_BRANCH, created_at=_NOW - _RECENT)
+
+        targets = await _rescan_targets(_project(deleted_branches=[_FEATURE_BRANCH]), db)
+
+        assert [t["_id"] for t in targets] == [_SOURCE_SCAN_ID]
+
+    @pytest.mark.asyncio
+    async def test_a_tag_build_does_not_take_the_tip_slot(self, db: FakeDatabase, worker: AsyncMock) -> None:
+        """A tag pipeline reports its tag as its branch, so it names no branch to be the tip of."""
+        await _seed_scan(db, _SOURCE_SCAN_ID, branch=_MAIN_BRANCH, created_at=_NOW - _OLDER)
+        await _seed_scan(db, _TAG_BUILD_SCAN_ID, branch=_COMMIT_TAG, created_at=_NOW - _RECENT)
+
+        targets = await _rescan_targets(_project(), db)
+
+        assert [t["_id"] for t in targets] == [_SOURCE_SCAN_ID]
 
     @pytest.mark.asyncio
     async def test_a_project_gets_exactly_one_rescan_however_many_branches_are_usable(
@@ -805,6 +851,20 @@ class TestReleaseRescanTargets:
         assert [t["_id"] for t in targets] == [_SOURCE_SCAN_ID]
         assert len(await _rescans(db)) == 1
         assert worker.add_job.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_project_that_tags_its_release_still_has_its_branch_tip_rescanned(
+        self, db: FakeDatabase, worker: AsyncMock
+    ) -> None:
+        """The tag build held both slots, so the two targets collapsed to one and the branch that
+        accrues new CVEs was the one that stopped being re-evaluated."""
+        await _seed_scan(db, _SOURCE_SCAN_ID, branch=_MAIN_BRANCH, created_at=_NOW - _OLDER)
+        await _seed_scan(db, _TAG_BUILD_SCAN_ID, branch=_COMMIT_TAG, created_at=_NOW - _RECENT)
+        await _seed_release(db, _PRODUCTION_ENVIRONMENT, _TAG_BUILD_SCAN_ID)
+
+        targets = await _rescan_targets(_project(default_branch=_MAIN_BRANCH), db)
+
+        assert [t["_id"] for t in targets] == [_SOURCE_SCAN_ID, _TAG_BUILD_SCAN_ID]
 
     @pytest.mark.asyncio
     async def test_a_scan_released_to_two_environments_is_a_single_target(
