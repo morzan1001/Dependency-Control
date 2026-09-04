@@ -4,9 +4,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.permission_presets import PRESET_ADMIN
+
+_BRANCH = "main"
 
 
 @pytest.fixture
@@ -24,6 +27,24 @@ def _seed_project(db, project_id: str = "proj-1") -> None:
         "_id": project_id,
         "name": "test-project",
         "team_id": None,
+    }
+
+
+def _seed_scanned_project(db, project_id: str, scan_id: str) -> None:
+    db.projects._docs[project_id] = {
+        "_id": project_id,
+        "name": "test",
+        "team_id": None,
+        "default_branch": _BRANCH,
+        "deleted_branches": [],
+        "latest_scan_id": scan_id,
+    }
+    db.scans._docs[scan_id] = {
+        "_id": scan_id,
+        "project_id": project_id,
+        "branch": _BRANCH,
+        "status": SCAN_STATUS_COMPLETED,
+        "created_at": datetime.now(timezone.utc),
     }
 
 
@@ -140,7 +161,7 @@ class TestGetWaiverStatusFindingFlags:
                 "waiver_reason": "fp",
             }
         )
-        db.projects._docs["p1"] = {"_id": "p1", "name": "test", "team_id": None, "latest_scan_id": "scan1"}
+        _seed_scanned_project(db, "p1", "scan1")
 
         result = await ChatToolRegistry()._dispatch(
             "get_waiver_status",
@@ -165,7 +186,7 @@ class TestGetWaiverStatusFindingFlags:
                 "lapsed_waiver_id": "w1",
             }
         )
-        db.projects._docs["p1"] = {"_id": "p1", "name": "test", "team_id": None, "latest_scan_id": "scan1"}
+        _seed_scanned_project(db, "p1", "scan1")
 
         result = await ChatToolRegistry()._dispatch(
             "get_waiver_status",

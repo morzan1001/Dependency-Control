@@ -1,12 +1,19 @@
 """Tests for chat tool registry: numeric severity ranking, the system-scope gate on list_policy_audit_entries, and the visibility filter on list_compliance_reports."""
 
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.permission_presets import PRESET_ADMIN, PRESET_USER
+
+_NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+_PROJECT = "proj-1"
+_BRANCH = "main"
+_SCAN = "scan-1"
 
 
 @pytest.fixture
@@ -29,13 +36,30 @@ def plain_user():
     )
 
 
-def _seed_project(db, project_id="proj-1", **overrides):
-    doc = {"_id": project_id, "name": "P", "team_id": None, "latest_scan_id": "scan-1"}
+def _seed_project(db, project_id=_PROJECT, **overrides):
+    doc = {
+        "_id": project_id,
+        "name": "P",
+        "team_id": None,
+        "default_branch": _BRANCH,
+        "deleted_branches": [],
+        "latest_scan_id": _SCAN,
+    }
     doc.update(overrides)
     db.projects._docs[project_id] = doc
+    db.scans._docs.setdefault(
+        _SCAN,
+        {
+            "_id": _SCAN,
+            "project_id": project_id,
+            "branch": _BRANCH,
+            "status": SCAN_STATUS_COMPLETED,
+            "created_at": _NOW,
+        },
+    )
 
 
-def _seed_finding(db, fid, severity, scan_id="scan-1", project_id="proj-1", **details):
+def _seed_finding(db, fid, severity, scan_id=_SCAN, project_id=_PROJECT, **details):
     db.findings._docs[fid] = {
         "_id": fid,
         "finding_id": fid,
@@ -69,7 +93,6 @@ class TestSeverityRanking:
     @pytest.mark.asyncio
     async def test_scan_findings_ranked_numerically(self, db, admin_user):
         _seed_project(db)
-        db.scans._docs["scan-1"] = {"_id": "scan-1", "project_id": "proj-1"}
         _seed_finding(db, "low-1", "LOW")
         _seed_finding(db, "high-1", "HIGH")
         _seed_finding(db, "crit-1", "CRITICAL")

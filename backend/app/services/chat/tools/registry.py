@@ -12,6 +12,7 @@ from app.api.v1.helpers.projects import build_user_project_query
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
+from app.repositories.scans import ScanRepository
 from app.repositories.teams import TeamRepository
 from app.services.aggregation.components import artifact_segment, build_component_index, lookup_component
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
@@ -56,6 +57,7 @@ _ERR_FINDING_NOT_FOUND = "Finding not found"
 _ERR_TEAM_NOT_FOUND = "Team not found"
 _ERR_ACCESS_DENIED = "Access denied"
 _ERR_NO_SCAN_DATA = "No scan data available"
+_ERR_NEED_TWO_SCANS = "Need at least two builds on the head branch to compare"
 _FIELD_VULN_ID = "details.vulnerabilities.id"
 _FIELD_EPSS_SCORE = "details.epss_score"
 
@@ -63,6 +65,10 @@ _FIELD_EPSS_SCORE = "details.epss_score"
 # lexicographically and drops the highest severities; pull a bounded candidate
 # set and rank in-process against `_SEVERITY_RANK` before slicing to the limit.
 _FINDING_RANK_FETCH_CAP = 1000
+
+# How many projects the summary names as the worst; projects tie on their critical count often
+# enough that the id has to break it, or the same estate ranks differently request to request.
+_TOP_RISKY = 3
 
 # A callgraph's `imports`/`calls` arrays run into the megabytes; the tool answers from the
 # aggregates only.
@@ -77,6 +83,14 @@ _CALLGRAPH_SUMMARY_PROJECTION = {
     "total_imports": 1,
     "total_calls": 1,
 }
+
+
+def _stat(stats: dict[str, Any] | None, severity: str) -> int:
+    """A severity count off a scan's stats block; a scan carrying none counts as zero."""
+    try:
+        return int((stats or {}).get(severity, 0) or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def _finding_detail_number(finding: dict[str, Any], field: str) -> float:
@@ -259,10 +273,10 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
-            latest_scan_id = project.get("latest_scan_id")
-            if not latest_scan_id:
+            head_scan_id = await self._head_scan_id(project, db)
+            if not head_scan_id:
                 return {"findings": [], "count": 0, "message": "No scans found for this project"}
-            query = {"scan_id": latest_scan_id}
+            query = {"scan_id": head_scan_id}
             if args.get("severity"):
                 query["severity"] = args["severity"].upper()
             if args.get("type"):
@@ -336,11 +350,11 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
-            latest_scan_id = project.get("latest_scan_id")
-            if not latest_scan_id:
+            head_scan_id = await self._head_scan_id(project, db)
+            if not head_scan_id:
                 return {"breakdown": {}}
             pipeline: list[dict[str, Any]] = [
-                {"$match": {"scan_id": latest_scan_id}},
+                {"$match": {"scan_id": head_scan_id}},
                 {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
             ]
             results = await db["findings"].aggregate(pipeline).to_list(length=10)
@@ -350,11 +364,11 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
-            latest_scan_id = project.get("latest_scan_id")
-            if not latest_scan_id:
+            head_scan_id = await self._head_scan_id(project, db)
+            if not head_scan_id:
                 return {"breakdown": {}}
             pipeline = [
-                {"$match": {"scan_id": latest_scan_id}},
+                {"$match": {"scan_id": head_scan_id}},
                 {"$group": {"_id": "$type", "count": {"$sum": 1}}},
             ]
             results = await db["findings"].aggregate(pipeline).to_list(length=20)
@@ -364,38 +378,23 @@ class ChatToolRegistry:
             project_ids = await self._get_authorized_project_ids(user_project_query, db)
             if not project_ids:
                 return {"total_projects": 0, "total_findings": 0, "severity_breakdown": {}}
-            pipeline = [
-                {"$match": {"project_id": {"$in": project_ids}}},
-                {"$sort": {"created_at": -1}},
-                {
-                    "$group": {
-                        "_id": "$project_id",
-                        "latest_scan_id": {"$first": "$_id"},
-                        "stats": {"$first": "$stats"},
-                    }
-                },
-            ]
-            latest_scans = await db["scans"].aggregate(pipeline).to_list(length=len(project_ids))
-            scan_ids = [s["latest_scan_id"] for s in latest_scans]
+            head = await self._latest_scan_ids_for_user(user_project_query, None, db)
+            stats_by_project = await self._head_scan_stats(db, head)
             sev_pipeline: list[dict[str, Any]] = [
-                {"$match": {"scan_id": {"$in": scan_ids}}},
+                {"$match": {"scan_id": {"$in": list(head.values())}}},
                 {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
             ]
             sev_results = await db["findings"].aggregate(sev_pipeline).to_list(length=10)
-            ranked = sorted(
-                latest_scans,
-                key=lambda s: (s.get("stats") or {}).get("critical", 0),
-                reverse=True,
-            )[:3]
-            project_names_map = await self._project_names(db, [s["_id"] for s in ranked])
+            ranked = sorted(head, key=lambda pid: (-_stat(stats_by_project.get(pid), "critical"), pid))[:_TOP_RISKY]
+            project_names_map = await self._project_names(db, ranked)
             top3 = [
                 {
-                    "project_id": s["_id"],
-                    "project_name": project_names_map.get(s["_id"], ""),
-                    "critical": (s.get("stats") or {}).get("critical", 0),
-                    "high": (s.get("stats") or {}).get("high", 0),
+                    "project_id": pid,
+                    "project_name": project_names_map.get(pid, ""),
+                    "critical": _stat(stats_by_project.get(pid), "critical"),
+                    "high": _stat(stats_by_project.get(pid), "high"),
                 }
-                for s in ranked
+                for pid in ranked
             ]
             return {
                 "total_projects": len(project_ids),
@@ -430,38 +429,28 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
-            latest_scan_id = project.get("latest_scan_id")
-            if not latest_scan_id:
+            head_scan_id = await self._head_scan_id(project, db)
+            if not head_scan_id:
                 return {"dependencies": []}
-            cursor = db["dependencies"].find({"scan_id": latest_scan_id}, limit=200)
+            cursor = db["dependencies"].find({"scan_id": head_scan_id}, limit=200)
             deps = await cursor.to_list(length=200)
             return {"dependencies": [_serialize_doc(d) for d in deps]}
 
         if tool_name == "get_hotspots":
-            project_ids = await self._get_authorized_project_ids(user_project_query, db)
             limit = _clamp_limit(args.get("limit"), 10)
-            hotspots_pipeline: list[dict[str, Any]] = [
-                {"$match": {"project_id": {"$in": project_ids}}},
-                {"$sort": {"created_at": -1}},
-                {"$group": {"_id": "$project_id", "latest_scan_id": {"$first": "$_id"}, "stats": {"$first": "$stats"}}},
-                {"$sort": {"stats.critical": -1}},
-                {"$limit": limit},
+            head = await self._latest_scan_ids_for_user(user_project_query, None, db)
+            stats_by_project = await self._head_scan_stats(db, head)
+            ranked = sorted(head, key=lambda pid: (-_stat(stats_by_project.get(pid), "critical"), pid))[:limit]
+            names = await self._project_names(db, ranked)
+            hotspots = [
+                {
+                    "project_id": pid,
+                    "project_name": names.get(pid, ""),
+                    "latest_scan_id": head[pid],
+                    "stats": stats_by_project.get(pid),
+                }
+                for pid in ranked
             ]
-            results = await db["scans"].aggregate(hotspots_pipeline).to_list(length=limit)
-            project_ids_hit = [r["_id"] for r in results if r.get("_id")]
-            names = {}
-            async for p in db["projects"].find({"_id": {"$in": project_ids_hit}}, {"name": 1}):
-                names[p["_id"]] = p.get("name", "")
-            hotspots = []
-            for r in results:
-                hotspots.append(
-                    {
-                        "project_id": r.get("_id"),
-                        "project_name": names.get(r.get("_id"), ""),
-                        "latest_scan_id": r.get("latest_scan_id"),
-                        "stats": r.get("stats"),
-                    }
-                )
             return {"hotspots": hotspots}
 
         if tool_name == "get_dependency_details":
@@ -512,11 +501,11 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
-            latest_scan_id = project.get("latest_scan_id")
+            head_scan_id = await self._head_scan_id(project, db)
             finding = None
-            if latest_scan_id:
+            if head_scan_id:
                 finding = await db["findings"].find_one(
-                    {"scan_id": latest_scan_id, "finding_id": args["finding_id"]},
+                    {"scan_id": head_scan_id, "finding_id": args["finding_id"]},
                     {"waived": 1, "waiver_reason": 1, "waiver_lapsed": 1, "lapsed_waiver_id": 1},
                 )
             if finding is not None:
@@ -567,26 +556,20 @@ class ChatToolRegistry:
                 proj = await self._get_authorized_project(args["project_id"], user_project_query, db)
                 if not proj:
                     return {"error": _ERR_PROJECT_NOT_FOUND}
-                latest_scan_id = proj.get("latest_scan_id")
-                if not latest_scan_id:
+                head_scan_id = await self._head_scan_id(proj, db)
+                if not head_scan_id:
                     return {"findings": [], "message": "No scan data available for this project"}
-                match["scan_id"] = latest_scan_id
+                match["scan_id"] = head_scan_id
                 match["project_id"] = args["project_id"]
             else:
-                # Use latest scan per project to look at current state, not history.
+                # Each project's head, to look at current state rather than history.
                 project_ids = await self._get_authorized_project_ids(user_project_query, db)
                 if not project_ids:
                     return {"findings": [], "message": "No accessible projects"}
-                latest_scans_pipe: list[dict[str, Any]] = [
-                    {"$match": {"project_id": {"$in": project_ids}}},
-                    {"$sort": {"created_at": -1}},
-                    {"$group": {"_id": "$project_id", "latest_scan_id": {"$first": "$_id"}}},
-                ]
-                latest_rows = await db["scans"].aggregate(latest_scans_pipe).to_list(length=len(project_ids))
-                scan_ids = [row["latest_scan_id"] for row in latest_rows if row.get("latest_scan_id")]
-                if not scan_ids:
+                head = await self._latest_scan_ids_for_user(user_project_query, None, db)
+                if not head:
                     return {"findings": [], "message": "No scans found"}
-                match["scan_id"] = {"$in": scan_ids}
+                match["scan_id"] = {"$in": list(head.values())}
             match.setdefault("severity", {"$in": ["CRITICAL", "HIGH"]})
             cursor = db["findings"].find(match, limit=_FINDING_RANK_FETCH_CAP)
             findings = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
@@ -620,8 +603,8 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
-            latest_scan_id = project.get("latest_scan_id")
-            if not latest_scan_id:
+            head_scan_id = await self._head_scan_id(project, db)
+            if not head_scan_id:
                 return {"plan": [], "message": _ERR_NO_SCAN_DATA}
 
             max_steps = _clamp_limit(args.get("max_steps"), 10, maximum=25)
@@ -629,7 +612,7 @@ class ChatToolRegistry:
             # 500 is plenty — plans collapse to a handful of steps after grouping by component.
             cursor = db["findings"].find(
                 {
-                    "scan_id": latest_scan_id,
+                    "scan_id": head_scan_id,
                     "severity": {"$in": ["CRITICAL", "HIGH"]},
                     "waived": {"$ne": True},
                 },
@@ -646,7 +629,7 @@ class ChatToolRegistry:
             # but findings don't consistently carry it.
             dep_index: dict[str, dict[str, Any]] = {}
             async for dep in db["dependencies"].find(
-                {"scan_id": latest_scan_id},
+                {"scan_id": head_scan_id},
                 {"name": 1, "version": 1, "direct": 1, "direct_inferred": 1, "type": 1, "purl": 1},
             ):
                 key = (dep.get("name") or "").lower()
@@ -869,19 +852,12 @@ class ChatToolRegistry:
             scan_a_id = args.get("scan_id_a")
             scan_b_id = args.get("scan_id_b")
             if not scan_a_id or not scan_b_id:
-                recent = (
-                    await db["scans"]
-                    .find(
-                        {"project_id": args["project_id"]},
-                        sort=[("created_at", -1)],
-                        limit=2,
-                    )
-                    .to_list(length=2)
-                )
-                if len(recent) < 2:
-                    return {"error": "Need at least two scans to compare"}
-                scan_b_id = recent[0]["_id"]
-                scan_a_id = recent[1]["_id"]
+                head_scan_id = await self._head_scan_id(project, db)
+                preceding = await ScanRepository(db).get_preceding_scan(head_scan_id) if head_scan_id else None
+                if not head_scan_id or not preceding:
+                    return {"error": _ERR_NEED_TWO_SCANS}
+                scan_b_id = head_scan_id
+                scan_a_id = preceding.id
 
             scan_a = await db["scans"].find_one({"_id": scan_a_id, "project_id": args["project_id"]})
             scan_b = await db["scans"].find_one({"_id": scan_b_id, "project_id": args["project_id"]})
@@ -1233,6 +1209,9 @@ class ChatToolRegistry:
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
             if tool_name == "get_callgraph":
+                # The newest graph the project has, not head's: uploading one is a separate opt-in
+                # CI step, so scoping to head would blank the tool out for most projects. The
+                # response carries scan_id and created_at so the answer can say which build it is.
                 doc = await db["callgraphs"].find_one(
                     {"project_id": args["project_id"]},
                     _CALLGRAPH_SUMMARY_PROJECTION,
@@ -1519,20 +1498,38 @@ class ChatToolRegistry:
         projects = await cursor.to_list(length=1000)
         return [p["_id"] for p in projects]
 
+    async def _head_scan_id(self, project: dict[str, Any], db: AsyncIOMotorDatabase) -> str | None:
+        """The scan representing the head of a project the caller already read and authorised."""
+        project_id: str = project["_id"]
+        return (await ScanRepository(db).get_latest_active_scan_ids([project])).get(project_id)
+
+    async def _head_scan_stats(self, db: AsyncIOMotorDatabase, head: dict[str, str]) -> dict[str, dict[str, Any]]:
+        """project_id -> the stats block of that project's head scan."""
+        if not head:
+            return {}
+        stats: dict[str, dict[str, Any]] = {}
+        async for scan in db["scans"].find({"_id": {"$in": list(head.values())}}, {"project_id": 1, "stats": 1}):
+            project_id = scan.get("project_id")
+            if project_id:
+                stats[project_id] = scan.get("stats") or {}
+        return stats
+
     async def _latest_scan_ids_for_user(
         self,
         user_project_query: dict[str, Any],
         restrict_to_project_id: str | None,
         db: AsyncIOMotorDatabase,
     ) -> dict[str, str]:
-        """Return {project_id: latest_scan_id} for authorised projects, validated against
+        """Return {project_id: head scan id} for authorised projects, validated against
         `restrict_to_project_id` when provided (returns {} on access denial)."""
         from app.services.releases import resolve_scan_ids
 
         if restrict_to_project_id:
-            if not await self._get_authorized_project(restrict_to_project_id, user_project_query, db):
+            project = await self._get_authorized_project(restrict_to_project_id, user_project_query, db)
+            if not project:
                 return {}
-            return await resolve_scan_ids(db, [restrict_to_project_id])
+            scan_id = await self._head_scan_id(project, db)
+            return {restrict_to_project_id: scan_id} if scan_id else {}
 
         project_ids = await self._get_authorized_project_ids(user_project_query, db)
         if not project_ids:

@@ -482,8 +482,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                 "'severity' and 'finding_type' filters to narrow the items. Use when "
                 "the user asks 'what changed since my last deploy?', 'did the last "
                 "scan introduce new vulns?' or 'which findings did we resolve?'. "
-                "Without explicit scan ids, compares the two most recent scans of "
-                "the project."
+                "Without explicit scan ids, compares the project's current build "
+                "against the build before it on the same branch."
             ),
             "parameters": {
                 "type": "object",
