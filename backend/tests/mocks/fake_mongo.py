@@ -21,8 +21,10 @@ Server-side behaviour that tests rely on
 - Projections in ``find``/``find_one``, inclusion and exclusion, dotted paths
   included, so a too-narrow projection surfaces here instead of in production.
 - BSON datetimes: a written aware datetime is stored (and read back) as naive
-  UTC, and an aware query value is normalised before comparison, matching what
-  the driver puts on the wire.
+  UTC truncated to the millisecond, and a query value is normalised the same way
+  before comparison, matching what the driver puts on the wire.
+- BSON compares by type before value, so a bool never equals the number Python
+  would call it equal to: ``{"$ne": True}`` keeps a document holding ``1``.
 - Cross-type BSON ordering: sorts, ``$min`` and ``$max`` rank a mixed column
   (missing < number < string < date) instead of raising, while a range query
   brackets to its bound's type and skips the other types outright.
@@ -62,6 +64,8 @@ from datetime import timezone as _timezone
 from typing import Any
 from unittest.mock import MagicMock
 
+from app.core.init_db import RELEASES_UPSERT_KEY_FIELDS
+
 
 def _truncate_date(value: Any, unit: str) -> Any:
     """Best-effort $dateTrunc: round a datetime down to the start of the unit
@@ -81,6 +85,7 @@ def _truncate_date(value: Any, unit: str) -> Any:
 
 _SET_ON_INSERT = "$setOnInsert"
 _CMP = {"$lt": _op.lt, "$lte": _op.le, "$gt": _op.gt, "$gte": _op.ge}
+_MICROSECONDS_PER_MILLISECOND = 1000
 
 
 # ---------------------------------------------------------------------------
@@ -89,10 +94,20 @@ _CMP = {"$lt": _op.lt, "$lte": _op.le, "$gt": _op.gt, "$gte": _op.ge}
 
 
 def _naive_utc(value: Any) -> Any:
-    """BSON has no offsets: an aware datetime is stored (and read back) as naive UTC."""
-    if isinstance(value, _datetime) and value.tzinfo is not None:
-        return value.astimezone(_timezone.utc).replace(tzinfo=None)
-    return value
+    """BSON has no offsets and dates are int64 milliseconds: an aware datetime is stored (and read
+    back) as naive UTC, and every datetime loses the sub-millisecond digits the wire cannot carry."""
+    if not isinstance(value, _datetime):
+        return value
+    if value.tzinfo is not None:
+        value = value.astimezone(_timezone.utc).replace(tzinfo=None)
+    return value.replace(microsecond=value.microsecond // _MICROSECONDS_PER_MILLISECOND * _MICROSECONDS_PER_MILLISECOND)
+
+
+def _bson_equal(left: Any, right: Any) -> bool:
+    """Equality with BSON's type ranking: bool is its own type, so ``1`` never equals ``True``."""
+    if isinstance(left, bool) != isinstance(right, bool):
+        return False
+    return bool(_naive_utc(left) == _naive_utc(right))
 
 
 def _bsonify(value: Any) -> Any:
@@ -254,7 +269,7 @@ def _in_allowed(value: Any, allowed: list) -> bool:
         if isinstance(candidate, _re.Pattern):
             if isinstance(value, str) and candidate.search(value):
                 return True
-        elif value == candidate:
+        elif _bson_equal(value, candidate):
             return True
     return False
 
@@ -280,7 +295,7 @@ def _match_doc(doc: dict, query: dict) -> bool:
         # Dotted path landed on a list (e.g. members.user_id): any element matching
         # equality/$in counts as a hit (mirrors real Mongo semantics).
         if isinstance(value, list) and not isinstance(condition, dict):
-            if condition in value:
+            if any(_bson_equal(element, condition) for element in value):
                 continue
             return False
         if isinstance(condition, dict):
@@ -301,14 +316,16 @@ def _match_doc(doc: dict, query: dict) -> bool:
             if "$nin" in condition:
                 disallowed = condition["$nin"]
                 if isinstance(value, list):
-                    if any(v in disallowed for v in value):
+                    if any(_in_allowed(v, disallowed) for v in value):
                         return False
-                elif value in disallowed:
+                elif _in_allowed(value, disallowed):
                     return False
             if "$ne" in condition:
                 ne_val = condition["$ne"]
                 # An array field is also compared as a whole, so ``$ne: []`` excludes the empty array.
-                if value == ne_val or (isinstance(value, list) and ne_val in value):
+                if _bson_equal(value, ne_val) or (
+                    isinstance(value, list) and any(_bson_equal(element, ne_val) for element in value)
+                ):
                     return False
             if "$regex" in condition:
                 flags = _re.IGNORECASE if condition.get("$options") == "i" else 0
@@ -317,7 +334,7 @@ def _match_doc(doc: dict, query: dict) -> bool:
             if not _match_range_ops(value, condition):
                 return False
         else:
-            if _naive_utc(value) != _naive_utc(condition):
+            if not _bson_equal(value, condition):
                 return False
     return True
 
@@ -873,12 +890,12 @@ def _matched_key(docs: dict, query: dict) -> Any:
 class FakeCollection:
     """In-process collection covering the Motor API surface that the app uses."""
 
-    def __init__(self, db: Any = None):
+    def __init__(self, db: Any = None, unique_keys: list[tuple[str, ...]] | None = None):
         self._docs: dict = {}
         # $lookup needs to reach sibling collections.
         self._db = db
-        # Unique-index field tuples declared via create_index(..., unique=True).
-        self._unique_keys: list[tuple[str, ...]] = []
+        # Unique-index field tuples, declared up front or via create_index(..., unique=True).
+        self._unique_keys: list[tuple[str, ...]] = list(unique_keys or [])
 
     # -- writes -----------------------------------------------------------
 
@@ -1212,6 +1229,9 @@ class FakeDatabase:
             "users",
         ):
             object.__setattr__(self, name, FakeCollection(self))
+        # Every release write runs against the constraint production runs against, so a test
+        # cannot prove idempotence on a filter the server would never have needed.
+        object.__setattr__(self, "releases", FakeCollection(self, unique_keys=[RELEASES_UPSERT_KEY_FIELDS]))
 
     def __getattr__(self, name: str) -> FakeCollection:
         # Auto-vivify collections so repositories that touch unexpected ones

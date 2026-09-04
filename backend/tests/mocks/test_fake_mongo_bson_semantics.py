@@ -12,6 +12,10 @@ from tests.mocks.fake_mongo import FakeDatabase
 
 _EARLY = datetime(2026, 1, 1, tzinfo=timezone.utc)
 _LATE = datetime(2026, 6, 1, tzinfo=timezone.utc)
+_INTEGER_TRUE = 1
+_SUB_MILLISECOND = datetime(2026, 3, 1, 12, 0, 0, 123456, tzinfo=timezone.utc)
+_SAME_MILLISECOND = datetime(2026, 3, 1, 12, 0, 0, 123999, tzinfo=timezone.utc)
+_TRUNCATED_MICROSECONDS = 123000
 
 
 async def _seed_mixed(db):
@@ -230,3 +234,63 @@ async def test_in_with_null_matches_both_a_null_and_a_missing_field():
     matched = {doc["_id"] for doc in await db.scans.find({"error": {"$in": [None]}}).to_list(None)}
 
     assert matched == {"null", "missing"}
+
+
+@pytest.mark.asyncio
+async def test_ne_true_keeps_a_document_whose_flag_is_the_integer_one():
+    """Python calls 1 and True equal; BSON int32 and bool are different types, and the server
+    selects the integer-flagged document — which on the retention cursor means deleting it."""
+    db = FakeDatabase()
+    await db.scans.insert_one({"_id": "int-flag", "is_release": _INTEGER_TRUE})
+    await db.scans.insert_one({"_id": "bool-flag", "is_release": True})
+
+    selected = {doc["_id"] for doc in await db.scans.find({"is_release": {"$ne": True}}).to_list(None)}
+
+    assert selected == {"int-flag"}
+
+
+@pytest.mark.asyncio
+async def test_nin_naming_both_spellings_excludes_both():
+    db = FakeDatabase()
+    await db.scans.insert_one({"_id": "int-flag", "is_release": _INTEGER_TRUE})
+    await db.scans.insert_one({"_id": "bool-flag", "is_release": True})
+    await db.scans.insert_one({"_id": "unflagged"})
+
+    selected = {doc["_id"] for doc in await db.scans.find({"is_release": {"$nin": [True, 1]}}).to_list(None)}
+
+    assert selected == {"unflagged"}
+
+
+@pytest.mark.asyncio
+async def test_equality_on_a_boolean_does_not_match_the_integer_one():
+    db = FakeDatabase()
+    await db.scans.insert_one({"_id": "int-flag", "is_release": _INTEGER_TRUE})
+    await db.scans.insert_one({"_id": "bool-flag", "is_release": True})
+
+    selected = {doc["_id"] for doc in await db.scans.find({"is_release": True}).to_list(None)}
+
+    assert selected == {"bool-flag"}
+
+
+@pytest.mark.asyncio
+async def test_a_stored_datetime_loses_its_sub_millisecond_digits():
+    """Dates go on the wire as int64 milliseconds, so a test seeding two instants from two clock
+    reads gets a total order here and a coin flip in production."""
+    db = FakeDatabase()
+    await db.scans.insert_one({"_id": "s1", "created_at": _SUB_MILLISECOND})
+    await db.scans.insert_one({"_id": "s2", "created_at": _SAME_MILLISECOND})
+
+    stored = {doc["_id"]: doc["created_at"] for doc in await db.scans.find({}).to_list(None)}
+
+    assert stored["s1"] == _SUB_MILLISECOND.replace(tzinfo=None, microsecond=_TRUNCATED_MICROSECONDS)
+    assert stored["s1"] == stored["s2"]
+
+
+@pytest.mark.asyncio
+async def test_a_query_bound_is_truncated_the_way_the_stored_value_was():
+    db = FakeDatabase()
+    await db.scans.insert_one({"_id": "s1", "created_at": _SUB_MILLISECOND})
+
+    matched = {doc["_id"] for doc in await db.scans.find({"created_at": {"$gt": _SAME_MILLISECOND}}).to_list(None)}
+
+    assert matched == set()
