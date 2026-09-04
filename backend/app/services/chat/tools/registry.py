@@ -3,6 +3,7 @@
 import logging
 import re
 import time
+from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -64,10 +65,20 @@ _FIELD_EPSS_SCORE = "details.epss_score"
 # Everything an answer needs to name the build it describes.
 _BUILD_PROJECTION = {"branch": 1, "commit_hash": 1, "created_at": 1, "status": 1}
 
-# `severity` is stored as a string, so a server-side sort orders it
-# lexicographically and drops the highest severities; pull a bounded candidate
-# set and rank in-process against `_SEVERITY_RANK` before slicing to the limit.
+# Candidate set pulled per severity tier and ranked in-process on the numeric tiebreakers, which
+# `severity` being a string cannot express in a server-side sort. Bounding a tier rather than the
+# whole match is what keeps the highest severities in the sample.
 _FINDING_RANK_FETCH_CAP = 1000
+
+# Highest severity first; the trailing clause catches values outside the known set so no finding
+# is unreachable to the walk.
+_SEVERITY_TIERS: tuple[str, ...] = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO", "UNKNOWN")
+
+_RANKING_SAMPLED = (
+    "State this caveat in your answer: the {tier} tier holds {total} findings and only "
+    "{cap} were read, so these are {tier} findings but not necessarily the worst {tier} ones. "
+    "Narrow the question — a single project, or a finding type — for an exact answer."
+)
 
 # How many projects the summary names as the worst; projects tie on their critical count often
 # enough that the id has to break it, or the same estate ranks differently request to request.
@@ -101,6 +112,11 @@ def _stat(stats: dict[str, Any] | None, severity: str) -> int:
         return 0
 
 
+def _row_project_id(row: dict[str, Any]) -> str:
+    """A row's project id as a name-lookup key; the empty string for a row carrying none."""
+    return str(row.get("project_id") or "")
+
+
 def _finding_detail_number(finding: dict[str, Any], field: str) -> float:
     """Return a numeric `details.<field>` for tiebreak sorting; missing/non-numeric -> -1.0."""
     details = finding.get("details") or {}
@@ -129,6 +145,54 @@ def _rank_findings(findings: list[dict[str, Any]]) -> None:
         ),
         reverse=True,
     )
+
+
+def _severity_tiers(requested: Any) -> list[Any]:
+    """The `severity` clauses to walk, worst first. A caller's own clause narrows the walk instead
+    of being overwritten, so a tool asking for CRITICAL still only ever sees CRITICAL."""
+    if isinstance(requested, str):
+        return [requested.upper()]
+    if isinstance(requested, dict) and isinstance(requested.get("$in"), list):
+        wanted = [str(s).upper() for s in requested["$in"]]
+        known = [s for s in _SEVERITY_TIERS if s in wanted]
+        return known + [s for s in wanted if s not in _SEVERITY_TIERS]
+    return [*_SEVERITY_TIERS, {"$nin": list(_SEVERITY_TIERS)}]
+
+
+async def _ranked_findings(
+    db: AsyncIOMotorDatabase,
+    query: dict[str, Any],
+    limit: int,
+    *,
+    keep: Callable[[dict[str, Any]], bool] | None = None,
+) -> tuple[list[dict[str, Any]], str | None]:
+    """The `limit` worst findings for `query`, filled one severity tier at a time so a scan whose
+    natural order opens with thousands of LOW findings cannot hide its criticals. Also returns the
+    caveat to relay when a tier that fed the answer held more candidates than the cap."""
+    out: list[dict[str, Any]] = []
+    note: str | None = None
+    for tier in _severity_tiers(query.get("severity")):
+        if len(out) >= limit:
+            break
+        tier_query = {**query, "severity": tier}
+        cursor = db["findings"].find(tier_query, limit=_FINDING_RANK_FETCH_CAP)
+        candidates = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
+        if not candidates:
+            continue
+        if note is None and len(candidates) >= _FINDING_RANK_FETCH_CAP:
+            note = _RANKING_SAMPLED.format(
+                tier=tier if isinstance(tier, str) else "lowest-severity",
+                total=await db["findings"].count_documents(tier_query),
+                cap=_FINDING_RANK_FETCH_CAP,
+            )
+        _rank_findings(candidates)
+        for finding in candidates:
+            if keep is not None and not keep(finding):
+                continue
+            out.append(finding)
+            if len(out) >= limit:
+                break
+    return out, note
 
 
 class ChatToolRegistry:
@@ -284,14 +348,12 @@ class ChatToolRegistry:
             if args.get("type"):
                 query["type"] = args["type"]
             limit = _clamp_limit(args.get("limit"), 10, maximum=25)
-            cursor = db["findings"].find(query, limit=_FINDING_RANK_FETCH_CAP)
-            findings = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
-            _rank_findings(findings)
-            findings = findings[:limit]
+            findings, ranking_note = await _ranked_findings(db, query, limit)
             return {
                 "findings": [_serialize_finding_for_llm(f) for f in findings],
                 "count": len(findings),
                 "scan": build,
+                **({"ranking_note": ranking_note} if ranking_note else {}),
             }
 
         if tool_name == "get_project_findings":
@@ -307,14 +369,12 @@ class ChatToolRegistry:
             if args.get("type"):
                 query["type"] = args["type"]
             limit = _clamp_limit(args.get("limit"), 10, maximum=25)
-            cursor = db["findings"].find(query, limit=_FINDING_RANK_FETCH_CAP)
-            findings = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
-            _rank_findings(findings)
-            findings = findings[:limit]
+            findings, ranking_note = await _ranked_findings(db, query, limit)
             return {
                 "findings": [_serialize_finding_for_llm(f) for f in findings],
                 "count": len(findings),
                 "project_name": project.get("name"),
+                **({"ranking_note": ranking_note} if ranking_note else {}),
             }
 
         if tool_name == "get_vulnerability_details":
@@ -363,11 +423,11 @@ class ChatToolRegistry:
             limit = _clamp_limit(args.get("limit"), 10, maximum=25)
             cursor = db["findings"].find(query, limit=limit)
             findings = await cursor.to_list(length=limit)
-            names = await self._project_names(db, list({f.get("project_id") for f in findings}))
+            names = await self._project_names(db, list({_row_project_id(f) for f in findings}))
             out = []
             for f in findings:
                 slim = _serialize_finding_for_llm(f)
-                slim["project_name"] = names.get(f.get("project_id"), "")
+                slim["project_name"] = names.get(_row_project_id(f), "")
                 out.append(slim)
             return {"findings": out, "count": len(out)}
 
@@ -596,10 +656,7 @@ class ChatToolRegistry:
                     return {"findings": [], "message": "No scans found"}
                 match["scan_id"] = {"$in": list(head.values())}
             match.setdefault("severity", {"$in": ["CRITICAL", "HIGH"]})
-            cursor = db["findings"].find(match, limit=_FINDING_RANK_FETCH_CAP)
-            findings = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
-            _rank_findings(findings)
-            findings = findings[:limit]
+            findings, ranking_note = await _ranked_findings(db, match, limit)
 
             project_ids_hit = list({f.get("project_id") for f in findings if f.get("project_id")})
             project_names: dict[str, str] = {}
@@ -610,7 +667,7 @@ class ChatToolRegistry:
             trimmed = []
             for f in findings:
                 slim = _serialize_finding_for_llm(f)
-                pid = f.get("project_id")
+                pid = _row_project_id(f)
                 if pid and pid in project_names:
                     slim["project_name"] = project_names[pid]
                 trimmed.append(slim)
@@ -622,6 +679,7 @@ class ChatToolRegistry:
                     "include project_name, CVE, component@version, severity, and the "
                     "fix_version if present. Do not call further tools unless asked."
                 ),
+                **({"ranking_note": ranking_note} if ranking_note else {}),
             }
 
         if tool_name == "generate_remediation_plan":
@@ -793,28 +851,27 @@ class ChatToolRegistry:
             if not latest:
                 return {"findings": [], "message": _ERR_NO_SCAN_DATA}
             limit = _clamp_limit(args.get("limit"), 10, maximum=25)
-            cursor = db["findings"].find(
+            rows, ranking_note = await _ranked_findings(
+                db,
                 {
                     "scan_id": {"$in": list(latest.values())},
                     "severity": {"$in": ["CRITICAL", "HIGH"]},
                     "details.fixed_version": {"$exists": True, "$ne": None},
                     "waived": {"$ne": True},
                 },
-                limit=_FINDING_RANK_FETCH_CAP,
+                limit,
             )
-            rows = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
-            _rank_findings(rows)
-            rows = rows[:limit]
-            names = await self._project_names(db, list({f.get("project_id") for f in rows}))
+            names = await self._project_names(db, list({_row_project_id(f) for f in rows}))
             out = []
             for f in rows:
                 slim = _serialize_finding_for_llm(f)
-                slim["project_name"] = names.get(f.get("project_id"), "")
+                slim["project_name"] = names.get(_row_project_id(f), "")
                 out.append(slim)
             return {
                 "findings": out,
                 "count": len(out),
                 "hint": "These already have a fix_version — recommend the upgrade directly.",
+                **({"ranking_note": ranking_note} if ranking_note else {}),
             }
 
         if tool_name == "suggest_waiver_for_finding":
@@ -907,27 +964,26 @@ class ChatToolRegistry:
             if not latest:
                 return {"findings": [], "message": _ERR_NO_SCAN_DATA}
             limit = _clamp_limit(args.get("limit"), 10, maximum=25)
-            cursor = db["findings"].find(
+            rows, ranking_note = await _ranked_findings(
+                db,
                 {
                     "scan_id": {"$in": list(latest.values())},
                     "details.exploit_maturity": {"$in": list(KEV_EQUIVALENT_MATURITY)},
                     "waived": {"$ne": True},
                 },
-                limit=_FINDING_RANK_FETCH_CAP,
+                limit,
             )
-            rows = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
-            _rank_findings(rows)
-            rows = rows[:limit]
-            names = await self._project_names(db, list({f.get("project_id") for f in rows}))
+            names = await self._project_names(db, list({_row_project_id(f) for f in rows}))
             out = []
             for f in rows:
                 slim = _serialize_finding_for_llm(f)
-                slim["project_name"] = names.get(f.get("project_id"), "")
+                slim["project_name"] = names.get(_row_project_id(f), "")
                 out.append(slim)
             return {
                 "findings": out,
                 "count": len(out),
                 "hint": ("All of these have real-world exploits. Prioritise above plain CVSS-only critical findings."),
+                **({"ranking_note": ranking_note} if ranking_note else {}),
             }
 
         if tool_name == "find_component_usage":
@@ -960,13 +1016,13 @@ class ChatToolRegistry:
                 limit=100,
             )
             rows = await cursor.to_list(length=100)
-            names = await self._project_names(db, list({r.get("project_id") for r in rows}))
+            names = await self._project_names(db, list({_row_project_id(r) for r in rows}))
             matches = []
             for r in rows:
                 matches.append(
                     {
                         "project_id": r.get("project_id"),
-                        "project_name": names.get(r.get("project_id"), ""),
+                        "project_name": names.get(_row_project_id(r), ""),
                         "component": r.get("name"),
                         "version": r.get("version"),
                         "direct_dependency": bool(r.get("direct")),
@@ -990,10 +1046,10 @@ class ChatToolRegistry:
                 limit=25,
             )
             rows = await cursor.to_list(length=25)
-            names = await self._project_names(db, list({f.get("project_id") for f in rows}))
+            names = await self._project_names(db, list({_row_project_id(f) for f in rows}))
             by_project: dict[str, dict[str, Any]] = {}
             for f in rows:
-                pid = f.get("project_id")
+                pid = _row_project_id(f)
                 slot = by_project.setdefault(
                     pid,
                     {
@@ -1069,27 +1125,17 @@ class ChatToolRegistry:
                     old_keys.add((f["project_id"], f["finding_id"]))
             if not old_keys:
                 return {"findings": [], "message": f"No findings older than {days} days"}
-            candidates = (
-                await db["findings"]
-                .find(
-                    {"scan_id": {"$in": list(latest.values())}, "severity": {"$in": allowed_sev}},
-                    limit=_FINDING_RANK_FETCH_CAP,
-                )
-                .to_list(length=_FINDING_RANK_FETCH_CAP)
+            stale, ranking_note = await _ranked_findings(
+                db,
+                {"scan_id": {"$in": list(latest.values())}, "severity": {"$in": allowed_sev}},
+                limit,
+                keep=lambda f: (f.get("project_id"), f.get("finding_id")) in old_keys,
             )
-            _rank_findings(candidates)
-            stale = []
-            for f in candidates:
-                key = (f.get("project_id"), f.get("finding_id"))
-                if key in old_keys:
-                    stale.append(f)
-                    if len(stale) >= limit:
-                        break
-            names = await self._project_names(db, list({f.get("project_id") for f in stale}))
+            names = await self._project_names(db, list({_row_project_id(f) for f in stale}))
             out = []
             for f in stale:
                 slim = _serialize_finding_for_llm(f)
-                slim["project_name"] = names.get(f.get("project_id"), "")
+                slim["project_name"] = names.get(_row_project_id(f), "")
                 out.append(slim)
             return {
                 "findings": out,
@@ -1099,6 +1145,7 @@ class ChatToolRegistry:
                     "These findings have lingered for more than the threshold. "
                     "Suggest either fixing, waiving with justification, or escalating."
                 ),
+                **({"ranking_note": ranking_note} if ranking_note else {}),
             }
 
         if tool_name == "get_license_violations":
@@ -1106,20 +1153,22 @@ class ChatToolRegistry:
             if not latest:
                 return {"findings": [], "message": _ERR_NO_SCAN_DATA}
             limit = _clamp_limit(args.get("limit"), 10, maximum=25)
-            cursor = db["findings"].find(
+            rows, ranking_note = await _ranked_findings(
+                db,
                 {"scan_id": {"$in": list(latest.values())}, "type": "license"},
-                limit=_FINDING_RANK_FETCH_CAP,
+                limit,
             )
-            rows = await cursor.to_list(length=_FINDING_RANK_FETCH_CAP)
-            _rank_findings(rows)
-            rows = rows[:limit]
-            names = await self._project_names(db, list({f.get("project_id") for f in rows}))
+            names = await self._project_names(db, list({_row_project_id(f) for f in rows}))
             out = []
             for f in rows:
                 slim = _serialize_finding_for_llm(f)
-                slim["project_name"] = names.get(f.get("project_id"), "")
+                slim["project_name"] = names.get(_row_project_id(f), "")
                 out.append(slim)
-            return {"findings": out, "count": len(out)}
+            return {
+                "findings": out,
+                "count": len(out),
+                **({"ranking_note": ranking_note} if ranking_note else {}),
+            }
 
         if tool_name == "get_expiring_waivers":
             from datetime import datetime as _dt
@@ -1142,18 +1191,18 @@ class ChatToolRegistry:
                 limit=25,
             )
             rows = await cursor.to_list(length=25)
-            names = await self._project_names(db, list({r.get("project_id") for r in rows}))
+            names = await self._project_names(db, list({_row_project_id(r) for r in rows}))
             out = []
             for w in rows:
                 expires = w.get("expiration_date")
                 out.append(
                     {
                         "project_id": w.get("project_id"),
-                        "project_name": names.get(w.get("project_id"), ""),
+                        "project_name": names.get(_row_project_id(w), ""),
                         "finding_id": w.get("finding_id"),
                         "vulnerability_id": w.get("vulnerability_id"),
                         "reason": _clip_value(w.get("reason") or ""),
-                        "expires_at": expires.isoformat() if hasattr(expires, "isoformat") else expires,
+                        "expires_at": _clip_value(expires),
                         "package": f"{w.get('package_name', '')}@{w.get('package_version', '')}",
                     }
                 )
@@ -1223,7 +1272,7 @@ class ChatToolRegistry:
                     {
                         "project_id": p.get("_id"),
                         "project_name": p.get("name", ""),
-                        "last_scan_at": last.isoformat() if hasattr(last, "isoformat") else last,
+                        "last_scan_at": _clip_value(last),
                         "never_scanned": last is None,
                     }
                 )
