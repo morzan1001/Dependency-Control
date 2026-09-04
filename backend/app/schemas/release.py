@@ -8,7 +8,7 @@ from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, validate_release_env
 
 
 class ReleaseMarkRequest(BaseModel):
-    commit_hash: str = Field(..., min_length=1, description="Commit whose newest usable scan becomes the release")
+    commit_hash: str = Field(..., min_length=1, description="Commit whose newest scan becomes the release")
     version: str | None = Field(None, description="Release name; falls back to the scan's commit_tag")
     environment: str | None = Field(None, description=f"Slug; falls back to {DEFAULT_RELEASE_ENVIRONMENT}")
     released_at: datetime | None = Field(None, description="Release time; falls back to server time")
