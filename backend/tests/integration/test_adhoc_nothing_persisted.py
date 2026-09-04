@@ -103,6 +103,8 @@ _FAILING_ANALYZER = "license_compliance"
 _CACHING_ANALYZER = "typosquatting"
 _ENRICHMENT = "epss_kev"
 _REACHABILITY = "reachability"
+# The SBOM below carries a cryptographic-asset component, so the crypto stage evaluates it.
+_CRYPTO_RULES = "crypto_rules"
 
 # A deliberately misspelled dependency. No upstream reference list can legitimately contain it,
 # so finding it inside a shared cache value means caller data leaked in under a permitted key.
@@ -210,7 +212,9 @@ _ANALYZERS = ["license_compliance", "typosquatting"]
 
 # Every net below is only as wide as the run that exercises it, so the run's own reach is
 # asserted by equality rather than by truthiness.
-_EXPECTED_RAN = frozenset(_ANALYZERS) | frozenset(_SCANNER_PAYLOADS) | {_ENRICHMENT, _REACHABILITY}
+_EXPECTED_RAN = (
+    frozenset(_ANALYZERS) | frozenset(_SCANNER_PAYLOADS) | {_ENRICHMENT, _REACHABILITY, _CRYPTO_RULES}
+)
 _EXPECTED_SKIPPED = frozenset(analyzers) - frozenset(_ANALYZERS)
 
 

@@ -21,6 +21,12 @@ _UNCACHED_FANOUT_MARKER = "publishes nothing to the shared cache"
 _TYPOSQUATTING_MARKER = "top-packages list"
 _CRYPTO_STAGE = "crypto_rules"
 _CRYPTO_STORED_ASSETS = "stored crypto assets"
+# The two crypto analyzers that grade against the wall clock and the IANA catalog rather than
+# against a policy rule, so the stage covers neither of them.
+_CERT_LIFECYCLE = "crypto_certificate_lifecycle"
+_PROTOCOL_CIPHER = "crypto_protocol_cipher"
+_NO_EQUIVALENT = "no ad-hoc equivalent"
+_REPLACEMENT_CLAIM = "replaced ad-hoc"
 _FANOUT_ANALYZERS = (
     "deps_dev",
     "outdated_packages",
@@ -90,6 +96,17 @@ def test_crypto_analyzers_cannot_be_requested_and_name_their_replacement():
     # the reason has to point at the stage that evaluates the same rules on the posted CBOM.
     assert _CRYPTO_STORED_ASSETS in reason
     assert _CRYPTO_STAGE in reason
+
+
+def test_a_crypto_analyzer_the_stage_does_not_cover_says_so_instead_of_claiming_a_replacement():
+    report = AnalyzerReport()
+
+    selected = resolve_adhoc_analyzers([_CERT_LIFECYCLE, _PROTOCOL_CIPHER], report)
+
+    assert selected == []
+    for name in (_CERT_LIFECYCLE, _PROTOCOL_CIPHER):
+        assert _NO_EQUIVALENT in report.skipped[name], name
+        assert _REPLACEMENT_CLAIM not in report.skipped[name], name
 
 
 def test_a_post_processor_name_is_not_reported_as_an_unknown_analyzer():

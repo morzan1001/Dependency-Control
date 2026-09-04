@@ -22,6 +22,9 @@ _UNKNOWN_NAME = "not_a_scanner"
 _UNKNOWN_ANALYZER = "unknown analyzer"
 _TRUFFLEHOG_NAME = "trufflehog"
 _CRYPTO_ANALYZER = "crypto_weak_algorithm"
+# The stage that evaluates the crypto rules; it reports itself as skipped for an SBOM
+# carrying no cryptographic-asset components.
+_CRYPTO_RULES = "crypto_rules"
 # The enrichment stage runs on every request and is reported last.
 _ENRICHMENT = "epss_kev"
 # Reachability needs a callgraph none of these requests posts, so it reports itself as skipped.
@@ -224,7 +227,7 @@ async def test_unknown_analyzer_name_is_reported_not_silently_dropped():
 
     assert response.analyzers.skipped[_UNKNOWN_NAME] == _UNKNOWN_ANALYZER
     # Every registered analyzer the request left out is accounted for alongside it.
-    assert set(response.analyzers.skipped) == set(analyzers) | {_UNKNOWN_NAME, _REACHABILITY}
+    assert set(response.analyzers.skipped) == set(analyzers) | {_UNKNOWN_NAME, _REACHABILITY, _CRYPTO_RULES}
     assert response.analyzers.ran == [_ENRICHMENT]
 
 
@@ -281,7 +284,7 @@ async def test_unparseable_sbom_is_reported_without_aborting_the_run():
 
     assert _SBOM_LABEL in response.analyzers.skipped_inputs
     # ``skipped`` is keyed by analyzer name; an input label in there is unreadable for consumers.
-    assert set(response.analyzers.skipped) == set(analyzers) | {_REACHABILITY}
+    assert set(response.analyzers.skipped) == set(analyzers) | {_REACHABILITY, _CRYPTO_RULES}
     assert len(_findings_of_type(response, _TYPE_SECRET)) == _EXPECTED_SECRET_FINDINGS
 
 
@@ -345,7 +348,7 @@ async def test_empty_posted_payload_is_skipped_rather_than_reported_as_ran():
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     assert response.analyzers.skipped[_TRUFFLEHOG_NAME] == _EMPTY_PAYLOAD
-    assert set(response.analyzers.skipped) == set(analyzers) | {_TRUFFLEHOG_NAME, _REACHABILITY}
+    assert set(response.analyzers.skipped) == set(analyzers) | {_TRUFFLEHOG_NAME, _REACHABILITY, _CRYPTO_RULES}
     assert response.analyzers.ran == [_ENRICHMENT]
 
 
@@ -482,7 +485,8 @@ async def test_a_component_routed_to_crypto_assets_is_not_reported_as_dropped():
     # An empty ``skipped_inputs`` is what proves the asset was read: an SBOM the parser got
     # nothing out of is reported there instead.
     assert response.analyzers.skipped_inputs == {}
-    assert response.analyzers.ran == [_ENRICHMENT]
+    # The routed asset is what the crypto stage evaluates, so it reports itself as having run.
+    assert response.analyzers.ran == [_CRYPTO_RULES, _ENRICHMENT]
 
 
 @pytest.mark.asyncio

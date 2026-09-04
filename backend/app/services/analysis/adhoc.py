@@ -6,6 +6,7 @@ from typing import Any
 
 from app.core.cache import suppress_cache_writes
 from app.core.constants import get_severity_value
+from app.models.crypto_asset import CryptoAsset
 from app.models.match_signature import MatchSignature
 from app.models.system import SystemSettings
 from app.models.waiver import Waiver
@@ -18,6 +19,8 @@ from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzers, post_pro
 from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary, compute_stats
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
+from app.services.analyzers.crypto.base import CryptoRuleAnalyzer, crypto_findings_for_assets
+from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import VulnerabilityEnrichmentService
 from app.services.reachability_enrichment import (
     _PreparedCallgraph,
@@ -74,9 +77,41 @@ ADHOC_SKIP_REASONS: dict[str, str] = {
     "typosquatting": "off by default: downloads the PyPI top-packages list, which this path does not cache",
 }
 
+_SBOM_POSITION = "SBOM #{position}"
+
+_CRYPTO_RULES = "crypto_rules"
+_NO_CRYPTO_ASSETS = "no cryptographic-asset components in the SBOM"
+# ``normalize_crypto`` rebuilds each dict into a Finding carrying its own type, so one dispatch
+# key covers every crypto finding type the rules emit.
+_CRYPTO_DISPATCH_KEY = "crypto_weak_algorithm"
+# Names the assets within this request only; nothing here is stored or looked up by it.
+_ADHOC_SCOPE = "adhoc"
+
 _CRYPTO_ANALYZER_REPLACED = (
     "replaced ad-hoc by the 'crypto_rules' stage: the registered analyzer reads stored crypto "
-    "assets from the database, the stage evaluates the same rules against the posted CBOM"
+    "assets from the database, the stage evaluates the seeded rules against the posted CBOM"
+)
+# The two crypto analyzers that grade against an external reference rather than a policy rule.
+# Their coverage is genuinely absent here, so claiming the stage replaces them would be false.
+_CRYPTO_ANALYZER_NO_EQUIVALENT: dict[str, str] = {
+    "crypto_certificate_lifecycle": (
+        "no ad-hoc equivalent: certificate lifecycle is graded against the wall clock by an "
+        "analyzer reading stored assets, not by the rules the 'crypto_rules' stage evaluates"
+    ),
+    "crypto_protocol_cipher": (
+        "no ad-hoc equivalent: cipher suites are graded against the IANA catalog by an "
+        "analyzer reading stored assets, not by the rules the 'crypto_rules' stage evaluates"
+    ),
+}
+
+# The finding types the registered rule-driven analyzers own. A seeded rule outside them belongs
+# to an analyzer with its own grading logic: the certificate-lifecycle rule constrains nothing,
+# so the matcher alone would fire it on every asset in the CBOM.
+_RULE_DRIVEN_FINDING_TYPES: frozenset[str] = frozenset(
+    finding_type.value
+    for analyzer in analyzers.values()
+    if isinstance(analyzer, CryptoRuleAnalyzer)
+    for finding_type in analyzer.finding_types
 )
 
 _NO_CALLGRAPH = "no callgraph supplied"
@@ -120,6 +155,10 @@ class _ParsedInput:
     sbom: dict[str, Any]
     parsed: ParsedSBOM
     components: list[dict[str, Any]]
+
+
+def _input_label(parsed_input: _ParsedInput) -> str:
+    return _SBOM_POSITION.format(position=parsed_input.position)
 
 
 def _sbom_source(sbom: dict[str, Any], fallback: str) -> str:
@@ -277,7 +316,7 @@ def resolve_adhoc_analyzers(requested: list[str] | None, report: AnalyzerReport)
             # skip note here would contradict the same report.
             continue
         if name in CRYPTO_ANALYZERS:
-            report.skipped[name] = _CRYPTO_ANALYZER_REPLACED
+            report.skipped[name] = _CRYPTO_ANALYZER_NO_EQUIVALENT.get(name, _CRYPTO_ANALYZER_REPLACED)
         elif name not in analyzers:
             report.skipped[name] = _UNKNOWN_ANALYZER
         else:
@@ -287,11 +326,40 @@ def resolve_adhoc_analyzers(requested: list[str] | None, report: AnalyzerReport)
         if name in resolved or name in report.skipped:
             continue
         if name in CRYPTO_ANALYZERS:
-            report.skipped[name] = _CRYPTO_ANALYZER_REPLACED
+            report.skipped[name] = _CRYPTO_ANALYZER_NO_EQUIVALENT.get(name, _CRYPTO_ANALYZER_REPLACED)
         else:
             report.skipped[name] = ADHOC_SKIP_REASONS.get(name, _NOT_REQUESTED)
 
     return resolved
+
+
+def _aggregate_crypto_rules(
+    parsed_inputs: list[_ParsedInput], aggregator: ResultAggregator, report: AnalyzerReport
+) -> None:
+    """Evaluate the rule-driven crypto policy against each SBOM's embedded CBOM components.
+
+    The registered crypto analyzers read their assets back from ``crypto_assets``, which does not
+    exist here; the rules themselves are pure. The rules are the shipped defaults, for the same
+    reason the analyzers get a default ``SystemSettings``.
+    """
+    if not any(parsed_input.parsed.crypto_assets for parsed_input in parsed_inputs):
+        report.skipped[_CRYPTO_RULES] = _NO_CRYPTO_ASSETS
+        return
+
+    rules = [rule for rule in load_seed_rules() if rule.enabled and rule.finding_type in _RULE_DRIVEN_FINDING_TYPES]
+    for parsed_input in parsed_inputs:
+        assets = [
+            CryptoAsset(project_id=_ADHOC_SCOPE, scan_id=_ADHOC_SCOPE, **asset.model_dump())
+            for asset in parsed_input.parsed.crypto_assets
+        ]
+        findings = crypto_findings_for_assets(assets, rules)
+        if findings:
+            aggregator.aggregate(
+                _CRYPTO_DISPATCH_KEY,
+                {"findings": findings},
+                source=_sbom_source(parsed_input.sbom, _input_label(parsed_input)),
+            )
+    _record_ran(report, _CRYPTO_RULES)
 
 
 async def _enrich_vulnerabilities(records: list[dict[str, Any]], report: AnalyzerReport) -> dict[str, Any]:
@@ -502,9 +570,10 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
                 parsed_input.components or None,
                 aggregator,
                 report,
-                f"SBOM #{parsed_input.position}",
+                _input_label(parsed_input),
             )
 
+    _aggregate_crypto_rules(parsed_inputs, aggregator, report)
     _aggregate_posted_scanners(request, aggregator, report)
 
     records = [finding.model_dump() for finding in aggregator.get_findings()]
