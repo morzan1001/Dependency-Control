@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { releaseApi } from '@/api/releases';
+import { SMALL_PAGE_SIZE } from '@/lib/constants';
 import type { MarkReleasePayload } from '@/types/release';
 import { analyticsKeys } from './use-analytics';
 import { scanKeys } from './use-scans';
@@ -10,8 +11,8 @@ const RELEASES_STALE_TIME_MS = 30_000;
 export const releaseKeys = {
     all: ['releases'] as const,
     project: (projectId: string) => [...releaseKeys.all, 'project', projectId] as const,
-    list: (projectId: string, environment?: string) =>
-        [...releaseKeys.project(projectId), 'list', environment ?? null] as const,
+    list: (projectId: string, environment?: string, limit: number = SMALL_PAGE_SIZE) =>
+        [...releaseKeys.project(projectId), 'list', environment ?? null, limit] as const,
 };
 
 // Analytics in release mode and the scan list's release filter both read what a mark just changed.
@@ -22,10 +23,14 @@ const invalidateReleaseDependents = (queryClient: QueryClient, projectId: string
     queryClient.invalidateQueries({ queryKey: analyticsKeys.all });
 };
 
-export const useProjectReleases = (projectId: string, environment?: string) => {
+export const useProjectReleases = (
+    projectId: string,
+    environment?: string,
+    limit: number = SMALL_PAGE_SIZE,
+) => {
     return useQuery({
-        queryKey: releaseKeys.list(projectId, environment),
-        queryFn: () => releaseApi.list(projectId, { environment }),
+        queryKey: releaseKeys.list(projectId, environment, limit),
+        queryFn: () => releaseApi.list(projectId, { environment, limit }),
         enabled: !!projectId,
         staleTime: RELEASES_STALE_TIME_MS,
     });

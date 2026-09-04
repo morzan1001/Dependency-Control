@@ -19,6 +19,9 @@ const STAGING = "staging";
 const PRODUCTION = "production";
 const COMMIT_HASH = "abc";
 const DISTINCT_SCOPE_COUNT = 3;
+const DISTINCT_LIMIT_COUNT = 2;
+const LATEST_ONLY_LIMIT = 1;
+const NO_ENVIRONMENT_FILTER = undefined;
 const FIRST_PAGE = 1;
 const SINGLE_ITEM_TOTAL = 1;
 const RELEASED_AT = "2026-09-04T00:00:00Z";
@@ -59,6 +62,29 @@ describe("useProjectReleases", () => {
     await waitFor(() =>
       expect(client.getQueryCache().getAll()).toHaveLength(DISTINCT_SCOPE_COUNT),
     );
+  });
+
+  it("asks the endpoint for only as many releases as the caller needs", async () => {
+    const { result } = renderHook(
+      () => useProjectReleases(PROJECT_ID, NO_ENVIRONMENT_FILTER, LATEST_ONLY_LIMIT),
+      { wrapper: wrapperFor(makeClient()) },
+    );
+
+    await waitFor(() => expect(result.current.isSuccess).toBe(true));
+    expect(releaseApi.list).toHaveBeenCalledWith(PROJECT_ID, {
+      environment: NO_ENVIRONMENT_FILTER,
+      limit: LATEST_ONLY_LIMIT,
+    });
+  });
+
+  it("caches a narrowed page apart from the default one", async () => {
+    const client = makeClient();
+    const wrapper = wrapperFor(client);
+
+    renderHook(() => useProjectReleases(PROJECT_ID), { wrapper });
+    renderHook(() => useProjectReleases(PROJECT_ID, NO_ENVIRONMENT_FILTER, LATEST_ONLY_LIMIT), { wrapper });
+
+    await waitFor(() => expect(client.getQueryCache().getAll()).toHaveLength(DISTINCT_LIMIT_COUNT));
   });
 
   it("keeps a release whose scan retention removed", async () => {
