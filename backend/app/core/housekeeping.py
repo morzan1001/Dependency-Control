@@ -265,7 +265,9 @@ async def _branch_tip(project: Project, tip_source: dict[str, Any], db: Any) -> 
     """
     deleted = project.deleted_branches or []
     if project.default_branch and project.default_branch not in deleted:
-        on_default = await db.scans.find_one({**tip_source, "branch": project.default_branch}, sort=SCANS_TIP_SORT)
+        on_default: dict | None = await db.scans.find_one(
+            {**tip_source, "branch": project.default_branch}, sort=SCANS_TIP_SORT
+        )
         if on_default:
             return on_default
 
