@@ -8,6 +8,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.core.cache import CacheKeys, CacheService
 from app.core.config import settings
@@ -45,9 +46,11 @@ _COLLECTION_READS = frozenset(
     }
 )
 
-# Reaching MongoDB other than through the injected handle: the module-level accessor, a fresh
-# client, or a GridFS bucket built from either.
+# Reaching MongoDB other than through the injected handle: the module-level accessor or a
+# GridFS bucket built from it. A directly constructed driver client is tripped separately,
+# since that path never touches this module at all.
 _BYPASS_ENTRY_POINTS = ("get_database", "connect_to_mongo", "primary_gridfs_bucket")
+_DRIVER_CLIENT_LABEL = "motor.motor_asyncio.AsyncIOMotorClient"
 
 # Upstream reference lists shared by every caller: the key names the source, never the payload.
 _UPSTREAM_REFERENCE_CACHE_KEYS = frozenset(
@@ -58,10 +61,15 @@ _UPSTREAM_REFERENCE_CACHE_KEYS = frozenset(
     }
 )
 
+_UPSTREAM_NPM_KEY = f"{settings.CACHE_PREFIX}{CacheKeys.popular_packages('npm')}"
 _UNNAMED_COLLECTION = "a_collection_no_one_named"
 _LEAK_ID = "leak"
 _CALLER_DERIVED_CACHE_KEY = "osv2:0123456789abcdef"
 _SEEDED_POPULAR_PYPI = ["requests", "flask", "django"]
+
+# A deliberately misspelled dependency. No upstream reference list can legitimately contain it,
+# so finding it inside a shared cache value means caller data leaked in under a permitted key.
+_CALLER_ONLY_COMPONENT = "expresss"
 
 _SBOM = {
     "bomFormat": "CycloneDX",
@@ -80,10 +88,10 @@ _SBOM = {
         },
         {
             "type": "library",
-            "bom-ref": "pkg:npm/expresss@4.18.2",
-            "name": "expresss",
+            "bom-ref": f"pkg:npm/{_CALLER_ONLY_COMPONENT}@4.18.2",
+            "name": _CALLER_ONLY_COMPONENT,
             "version": "4.18.2",
-            "purl": "pkg:npm/expresss@4.18.2",
+            "purl": f"pkg:npm/{_CALLER_ONLY_COMPONENT}@4.18.2",
         },
         {
             "type": "cryptographic-asset",
@@ -96,8 +104,8 @@ _SBOM = {
         },
     ],
     "dependencies": [
-        {"ref": "pkg:pypi/requests@2.31.0", "dependsOn": ["pkg:npm/expresss@4.18.2"]},
-        {"ref": "pkg:npm/expresss@4.18.2", "dependsOn": []},
+        {"ref": "pkg:pypi/requests@2.31.0", "dependsOn": [f"pkg:npm/{_CALLER_ONLY_COMPONENT}@4.18.2"]},
+        {"ref": f"pkg:npm/{_CALLER_ONLY_COMPONENT}@4.18.2", "dependsOn": []},
     ],
 }
 
@@ -261,6 +269,7 @@ def bypass_attempts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     for name in _BYPASS_ENTRY_POINTS:
         label = f"app.db.mongodb.{name}"
         _rebind_everywhere(monkeypatch, getattr(mongodb, name), _BypassTripwire(label, touched))
+    _rebind_everywhere(monkeypatch, AsyncIOMotorClient, _BypassTripwire(_DRIVER_CLIENT_LABEL, touched))
     monkeypatch.setattr(mongodb.db, "client", _TripwireClient(touched))
     return touched
 
@@ -271,7 +280,7 @@ def bypass_attempts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 class _RecordingRedis:
     """Minimal Redis stand-in that serves what it holds and records every key it is asked to write."""
 
-    def __init__(self, store: dict[str, str], writes: list[str]) -> None:
+    def __init__(self, store: dict[str, str], writes: list[tuple[str, str]]) -> None:
         self._store = store
         self._writes = writes
 
@@ -291,7 +300,7 @@ class _RecordingRedis:
         return _RecordingPipeline(self)
 
     def record(self, key: str, value: str | None = None) -> None:
-        self._writes.append(key)
+        self._writes.append((key, value or ""))
         if value is not None:
             self._store[key] = value
 
@@ -331,15 +340,21 @@ def _unprefixed(key: str) -> str:
     return key[len(prefix) :] if key.startswith(prefix) else key
 
 
-def assert_no_caller_derived_cache_writes(written_keys: list[str]) -> None:
+def assert_no_caller_derived_cache_writes(writes: list[tuple[str, str]]) -> None:
     """Upstream reference data may be cached; anything keyed off the posted payload may not."""
-    leaked = [key for key in written_keys if _unprefixed(key) not in _UPSTREAM_REFERENCE_CACHE_KEYS]
+    leaked = [key for key, _ in writes if _unprefixed(key) not in _UPSTREAM_REFERENCE_CACHE_KEYS]
     assert leaked == [], f"ad-hoc analysis cached caller-derived keys: {leaked}"
 
 
+def assert_no_caller_data_in_shared_cache(writes: list[tuple[str, str]]) -> None:
+    """A permitted key name is not a licence for its value: poisoning an upstream list still leaks."""
+    poisoned = [key for key, value in writes if _CALLER_ONLY_COMPONENT in value]
+    assert poisoned == [], f"ad-hoc analysis wrote caller data into shared cache keys: {poisoned}"
+
+
 @pytest.fixture
-def cache_writes(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    writes: list[str] = []
+def cache_writes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
+    writes: list[tuple[str, str]] = []
     seeded = {f"{settings.CACHE_PREFIX}{CacheKeys.popular_packages('pypi')}": json.dumps(_SEEDED_POPULAR_PYPI)}
     client = _RecordingRedis(seeded, writes)
 
@@ -380,6 +395,7 @@ async def test_adhoc_analysis_persists_nothing(bypass_attempts, cache_writes):
     await assert_nothing_persisted(db)
     assert bypass_attempts == []
     assert_no_caller_derived_cache_writes(cache_writes)
+    assert_no_caller_data_in_shared_cache(cache_writes)
 
 
 @pytest.mark.asyncio
@@ -403,6 +419,7 @@ async def test_adhoc_analysis_persists_nothing_when_an_analyzer_fails(monkeypatc
     await assert_nothing_persisted(db)
     assert bypass_attempts == []
     assert_no_caller_derived_cache_writes(cache_writes)
+    assert_no_caller_data_in_shared_cache(cache_writes)
 
 
 # ── The proof's own detectors
@@ -441,7 +458,23 @@ def test_reaching_mongo_without_the_injected_handle_is_caught(bypass_attempts):
 
 
 def test_a_caller_derived_cache_key_is_caught():
-    assert_no_caller_derived_cache_writes([f"{settings.CACHE_PREFIX}{CacheKeys.popular_packages('npm')}"])
+    assert_no_caller_derived_cache_writes([(_UPSTREAM_NPM_KEY, "")])
 
     with pytest.raises(AssertionError, match=_CALLER_DERIVED_CACHE_KEY):
-        assert_no_caller_derived_cache_writes([f"{settings.CACHE_PREFIX}{_CALLER_DERIVED_CACHE_KEY}"])
+        assert_no_caller_derived_cache_writes([(f"{settings.CACHE_PREFIX}{_CALLER_DERIVED_CACHE_KEY}", "")])
+
+
+def test_caller_data_cached_under_a_permitted_upstream_key_is_caught():
+    assert_no_caller_data_in_shared_cache([(_UPSTREAM_NPM_KEY, json.dumps(_SEEDED_POPULAR_PYPI))])
+
+    with pytest.raises(AssertionError, match=_UPSTREAM_NPM_KEY):
+        assert_no_caller_data_in_shared_cache([(_UPSTREAM_NPM_KEY, json.dumps([_CALLER_ONLY_COMPONENT]))])
+
+
+def test_a_directly_constructed_driver_client_is_caught(bypass_attempts):
+    from motor.motor_asyncio import AsyncIOMotorClient as rebound
+
+    with pytest.raises(AssertionError):
+        rebound("mongodb://localhost:27017")
+
+    assert bypass_attempts == [_DRIVER_CLIENT_LABEL]
