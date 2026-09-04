@@ -61,6 +61,29 @@ async def effective_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Iterable[str]) 
     return {released_id: doc["_id"] for released_id, doc in freshest.items()}
 
 
+async def release_protected_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Sequence[str]) -> set[str]:
+    """Which of these scans a release cannot lose: the marked scan and the analysis it resolves to.
+
+    Keyed on db.releases rather than on the denormalised Scan.is_release, because every writer of
+    that flag is a two-step sequence whose second step can be lost, and a row without a flag is
+    then indistinguishable from a scan nothing ever released.
+    """
+    candidates = list(scan_ids)
+    if not candidates:
+        return set()
+    candidate_set = set(candidates)
+    # Both rescan creators re-root original_scan_id at the lineage root, so a release's chain is one
+    # link deep and one backward hop reaches every scan effective_scan_ids can answer with.
+    chain_parents = await db.scans.distinct("_id", {"latest_rescan_id": {"$in": candidates}})
+    marked = set(await db.releases.distinct("scan_id", {"scan_id": {"$in": candidates + chain_parents}}))
+    protected = candidate_set & marked
+    released_parents = sorted(marked & set(chain_parents))
+    if not released_parents:
+        return protected
+    current_analysis = await db.scans.distinct("latest_rescan_id", {"_id": {"$in": released_parents}})
+    return protected | (candidate_set & set(current_analysis))
+
+
 async def latest_release_scan(db: AsyncIOMotorDatabase, project_id: str, environment: str) -> str | None:
     """The scan running in one environment. Ordered by released_at, so re-marking an older scan is
     the rollback path and needs no extra flag."""

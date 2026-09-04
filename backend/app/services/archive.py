@@ -40,6 +40,7 @@ from app.repositories.archive_metadata import ArchiveMetadataRepository
 from app.repositories.distributed_locks import DistributedLocksRepository
 from app.schemas.archive import ArchiveRestoreResponse
 from app.services.archive_bundle import BundleFrames, BundleStats, read_bundle_frames
+from app.services.releases import release_protected_scan_ids
 from app.services.update_frequency_rollup import record_scan_update_delta
 
 logger = logging.getLogger(__name__)
@@ -369,7 +370,7 @@ async def archive_scan(
             return None
 
         # Archival removes the scan document, which would orphan release resolution.
-        if scan_doc.get("is_release"):
+        if await release_protected_scan_ids(db, [scan_id]):
             logger.info(
                 "Archive of release scan refused",
                 extra={"scan_id": _sanitize_for_log(scan_id)},

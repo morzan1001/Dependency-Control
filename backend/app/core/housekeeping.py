@@ -40,6 +40,7 @@ from app.repositories.system_settings import SystemSettingsRepository
 from app.services.audit.retention import prune_old_audit_entries
 from app.services.compliance.retention import sweep_expired_compliance_reports
 from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs, reap_orphan_gridfs_files
+from app.services.releases import release_protected_scan_ids
 from app.services.update_frequency_reconcile import run_update_frequency_reconcile
 
 if TYPE_CHECKING:
@@ -488,8 +489,11 @@ async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, la
 
 
 async def _unreferenced(db: Any, scan_ids: list[str]) -> list[str]:
-    referenced = await _referenced_scan_ids(db, scan_ids)
-    return [scan_id for scan_id in scan_ids if scan_id not in referenced]
+    """The batch minus every scan something still points at: a rescan's source, and either end of a
+    release's analysis chain."""
+    protected = await _referenced_scan_ids(db, scan_ids)
+    protected |= await release_protected_scan_ids(db, scan_ids)
+    return [scan_id for scan_id in scan_ids if scan_id not in protected]
 
 
 async def _process_scans_in_batches(
@@ -535,8 +539,8 @@ async def run_housekeeping() -> None:
                     {
                         "created_at": {"$lt": cutoff_date},
                         "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
-                        # A release answers "what is in production"; dropping it would take its
-                        # findings, dependencies and SBOMs with it and orphan the resolver.
+                        # Keeps flagged releases out of the candidate stream; the exemption that
+                        # decides is _unreferenced, which reads db.releases rather than this flag.
                         "is_release": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
                         "status": {"$nin": ["pending", "processing"]},
                     },

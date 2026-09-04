@@ -197,6 +197,7 @@ class TestRunHousekeepingArchive:
             patch(f"{MODULE}.get_database", new_callable=AsyncMock, return_value=mock_db),
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
             patch(f"{MODULE}._referenced_scan_ids", new_callable=AsyncMock, return_value=set()),
+            patch(f"{MODULE}.release_protected_scan_ids", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock) as mock_handle,
         ):
             asyncio.run(run_housekeeping())
@@ -251,6 +252,7 @@ class TestRunHousekeepingArchive:
             patch(f"{MODULE}.get_database", new_callable=AsyncMock, return_value=mock_db),
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
             patch(f"{MODULE}._referenced_scan_ids", new_callable=AsyncMock, return_value=set()),
+            patch(f"{MODULE}.release_protected_scan_ids", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock),
             patch(f"{MODULE}.reap_orphan_gridfs_files", new_callable=AsyncMock),
         ):
@@ -319,6 +321,7 @@ async def test_housekeeping_global_skips_in_progress_scans(monkeypatch):
 
     monkeypatch.setattr("app.core.housekeeping.SystemSettingsRepository", lambda _db: settings_repo)
     monkeypatch.setattr("app.core.housekeeping._referenced_scan_ids", AsyncMock(return_value=set()))
+    monkeypatch.setattr("app.core.housekeeping.release_protected_scan_ids", AsyncMock(return_value=set()))
     monkeypatch.setattr("app.core.housekeeping.get_database", AsyncMock(return_value=db))
     monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
 
@@ -371,6 +374,7 @@ async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch
 
     monkeypatch.setattr("app.core.housekeeping.SystemSettingsRepository", lambda _db: settings_repo)
     monkeypatch.setattr("app.core.housekeeping._referenced_scan_ids", AsyncMock(return_value=set()))
+    monkeypatch.setattr("app.core.housekeeping.release_protected_scan_ids", AsyncMock(return_value=set()))
     monkeypatch.setattr("app.core.housekeeping.get_database", AsyncMock(return_value=db))
     monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
 
