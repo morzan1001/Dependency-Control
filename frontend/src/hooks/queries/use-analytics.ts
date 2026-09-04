@@ -1,4 +1,4 @@
-import { useQuery } from '@tanstack/react-query';
+import { keepPreviousData, useQuery } from '@tanstack/react-query';
 import { analyticsApi } from '@/api/analytics';
 import type { ApiError } from '@/api/client';
 
@@ -6,17 +6,25 @@ export interface UpdateFrequencyOpts {
     windowDays?: number;
 }
 
+// Release mode reports a different scan per project, so every key of an endpoint that accepts the
+// environment carries it: a shared key would serve head-mode rows under a release heading.
+const modeOf = (releaseEnvironment?: string) => releaseEnvironment ?? null;
+
 export const analyticsKeys = {
     all: ['analytics'] as const,
     dashboardStats: () => [...analyticsKeys.all, 'dashboard-stats'] as const,
-    summary: () => [...analyticsKeys.all, 'summary'] as const,
-    topDependencies: (limit: number, type?: string) => [...analyticsKeys.all, 'top-dependencies', { limit, type }] as const,
+    scope: (releaseEnvironment?: string) => [...analyticsKeys.all, 'scope', modeOf(releaseEnvironment)] as const,
+    summary: (releaseEnvironment?: string) => [...analyticsKeys.all, 'summary', modeOf(releaseEnvironment)] as const,
+    topDependencies: (limit: number, type?: string, releaseEnvironment?: string) => [...analyticsKeys.all, 'top-dependencies', { limit, type }, modeOf(releaseEnvironment)] as const,
     dependencyTree: (projectId: string, scanId?: string) => [...analyticsKeys.all, 'dependency-tree', projectId, { scanId }] as const,
-    impactAnalysis: (limit: number) => [...analyticsKeys.all, 'impact-analysis', { limit }] as const,
+    impactAnalysis: (limit: number, releaseEnvironment?: string) => [...analyticsKeys.all, 'impact-analysis', { limit }, modeOf(releaseEnvironment)] as const,
+    hotspots: (sortBy: string, sortOrder: string, releaseEnvironment?: string) => [...analyticsKeys.all, 'hotspots', { sortBy, sortOrder }, modeOf(releaseEnvironment)] as const,
     search: (query: string, version?: string) => [...analyticsKeys.all, 'search', { query, version }] as const,
+    advancedSearch: (filters: Record<string, unknown>, releaseEnvironment?: string) => [...analyticsKeys.all, 'advanced-search', filters, modeOf(releaseEnvironment)] as const,
+    vulnerabilitySearch: (filters: Record<string, unknown>, releaseEnvironment?: string) => [...analyticsKeys.all, 'vulnerability-search', filters, modeOf(releaseEnvironment)] as const,
     componentFindings: (component: string, version?: string) => [...analyticsKeys.all, 'component-findings', { component, version }] as const,
     dependencyMetadata: (component: string, version?: string, type?: string) => [...analyticsKeys.all, 'dependency-metadata', { component, version, type }] as const,
-    dependencyTypes: () => [...analyticsKeys.all, 'dependency-types'] as const,
+    dependencyTypes: (releaseEnvironment?: string) => [...analyticsKeys.all, 'dependency-types', modeOf(releaseEnvironment)] as const,
     recommendations: (projectId: string, scanId?: string) => [...analyticsKeys.all, 'recommendations', projectId, { scanId }] as const,
     updateFrequency: (projectId: string, opts?: UpdateFrequencyOpts) => [...analyticsKeys.all, 'update-frequency', projectId, { ...opts }] as const,
     updateFrequencyComparison: (teamId?: string, opts?: UpdateFrequencyOpts) => [...analyticsKeys.all, 'update-frequency-comparison', { teamId, ...opts }] as const,
@@ -40,19 +48,31 @@ export const useSearchDependencies = (query: string, version?: string) => {
     })
 }
 
-export const useAnalyticsSummary = () => {
+export const useAnalyticsScope = (releaseEnvironment?: string) => {
     return useQuery({
-        queryKey: analyticsKeys.summary(),
-        queryFn: analyticsApi.getSummary,
+        queryKey: analyticsKeys.scope(releaseEnvironment),
+        queryFn: () => analyticsApi.getScope(releaseEnvironment),
+        // The mode switch is rendered from this data, so without the previous scope it unmounts
+        // itself for the duration of the request it just triggered.
+        placeholderData: keepPreviousData,
         staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: true,
     });
 }
 
-export const useTopDependencies = (limit: number = 20, type?: string) => {
+export const useAnalyticsSummary = (releaseEnvironment?: string) => {
     return useQuery({
-        queryKey: analyticsKeys.topDependencies(limit, type),
-        queryFn: () => analyticsApi.getTopDependencies(limit, type),
+        queryKey: analyticsKeys.summary(releaseEnvironment),
+        queryFn: () => analyticsApi.getSummary(releaseEnvironment),
+        staleTime: 5 * 60 * 1000,
+        refetchOnWindowFocus: true,
+    });
+}
+
+export const useTopDependencies = (limit: number = 20, type?: string, releaseEnvironment?: string) => {
+    return useQuery({
+        queryKey: analyticsKeys.topDependencies(limit, type, releaseEnvironment),
+        queryFn: () => analyticsApi.getTopDependencies(limit, type, releaseEnvironment),
         staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: true,
     });
@@ -68,10 +88,10 @@ export const useDependencyTree = (projectId: string, scanId?: string) => {
     });
 }
 
-export const useImpactAnalysis = (limit: number = 20) => {
+export const useImpactAnalysis = (limit: number = 20, releaseEnvironment?: string) => {
     return useQuery({
-        queryKey: analyticsKeys.impactAnalysis(limit),
-        queryFn: () => analyticsApi.getImpactAnalysis(limit),
+        queryKey: analyticsKeys.impactAnalysis(limit, releaseEnvironment),
+        queryFn: () => analyticsApi.getImpactAnalysis(limit, releaseEnvironment),
         staleTime: 5 * 60 * 1000,
         refetchOnWindowFocus: true,
     });
@@ -93,10 +113,10 @@ export const useDependencyMetadata = (component: string, version?: string, type?
     });
 }
 
-export const useDependencyTypes = () => {
+export const useDependencyTypes = (releaseEnvironment?: string) => {
     return useQuery({
-        queryKey: analyticsKeys.dependencyTypes(),
-        queryFn: analyticsApi.getDependencyTypes,
+        queryKey: analyticsKeys.dependencyTypes(releaseEnvironment),
+        queryFn: () => analyticsApi.getDependencyTypes(releaseEnvironment),
         staleTime: 30 * 60 * 1000, // types almost never change
         refetchOnWindowFocus: true,
     });

@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useDependencyTypes, useTopDependencies } from '@/hooks/queries/use-analytics'
+import { useAnalyticsMode } from '@/context/analytics-mode'
 import { DependencyUsage } from '@/types/analytics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -24,9 +25,11 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
   const [selectedType, setSelectedType] = useState<string | undefined>(undefined)
   const [limit, setLimit] = useState(20)
 
-  const { data: types } = useDependencyTypes()
+  const releaseEnvironment = useAnalyticsMode()
 
-  const { data: dependencies, isLoading } = useTopDependencies(limit, selectedType)
+  const { data: types } = useDependencyTypes(releaseEnvironment)
+
+  const { data: dependencies, isLoading } = useTopDependencies(limit, selectedType, releaseEnvironment)
 
   const handleRowClick = (dep: DependencyUsage) => {
     onSelectDependency?.(dep)

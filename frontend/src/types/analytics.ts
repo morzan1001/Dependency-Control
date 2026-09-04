@@ -129,6 +129,14 @@ export interface AnalyticsSummary {
   projects_without_release: number;
 }
 
+export interface AnalyticsScope {
+  // Every environment any project in scope was released to; empty means nothing was ever marked.
+  release_environments: string[];
+  resolved_projects: number;
+  // Counts projects with no usable scan at all unless a release environment was requested.
+  projects_without_release: number;
+}
+
 export interface AdvancedSearchResult {
   project_id: string;
   project_name: string;
@@ -196,6 +204,7 @@ export interface HotspotsQueryParams {
   limit?: number;
   sort_by?: 'finding_count' | 'component' | 'first_seen' | 'epss' | 'risk';
   sort_order?: 'asc' | 'desc';
+  release_environment?: string;
 }
 
 export interface AdvancedSearchResponse {
@@ -246,6 +255,7 @@ export interface VulnerabilitySearchOptions {
   sort_order?: 'asc' | 'desc';
   skip?: number;
   limit?: number;
+  release_environment?: string;
 }
 
 export type ComponentFinding = Finding & { project_id: string; project_name: string; scan_id?: string };
@@ -432,6 +442,7 @@ export interface AdvancedSearchOptions {
     sort_order?: 'asc' | 'desc';
     skip?: number;
     limit?: number;
+    release_environment?: string;
 }
 
 export type UpdateType = 'patch' | 'minor' | 'major' | 'unknown' | 'downgrade';

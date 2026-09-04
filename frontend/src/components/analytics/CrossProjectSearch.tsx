@@ -3,7 +3,8 @@ import { useInfiniteQuery } from '@tanstack/react-query'
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { analyticsApi } from '@/api/analytics'
 import { AdvancedSearchResult } from '@/types/analytics'
-import { useDependencyTypes } from '@/hooks/queries/use-analytics'
+import { analyticsKeys, useDependencyTypes } from '@/hooks/queries/use-analytics'
+import { useAnalyticsMode } from '@/context/analytics-mode'
 import { useProjectsDropdown } from '@/hooks/queries/use-projects'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -43,8 +44,18 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
   const { parentRef, scrollContainer, tableOffsetRef } = useScrollContainer()
   const debouncedQuery = useDebounce(query, 300)
 
-  const { data: types } = useDependencyTypes()
+  const releaseEnvironment = useAnalyticsMode()
+  const { data: types } = useDependencyTypes(releaseEnvironment)
   const { data: projectsData } = useProjectsDropdown()
+
+  const filters = {
+    query: debouncedQuery,
+    version,
+    type: selectedType,
+    sourceType: selectedSourceType,
+    hasVulnerabilities,
+    project: selectedProject,
+  }
 
   const {
     data,
@@ -53,7 +64,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
     isFetchingNextPage,
     isLoading
   } = useInfiniteQuery({
-    queryKey: ['advanced-search', debouncedQuery, version, selectedType, selectedSourceType, hasVulnerabilities, selectedProject],
+    queryKey: analyticsKeys.advancedSearch(filters, releaseEnvironment),
     queryFn: async ({ pageParam = 0 }) => {
       return analyticsApi.searchDependenciesAdvanced(debouncedQuery, {
         version: version || undefined,
@@ -63,6 +74,7 @@ export function CrossProjectSearch({ onSelectResult }: CrossProjectSearchProps) 
         project_ids: selectedProject === '__all__' ? undefined : [selectedProject],
         skip: pageParam,
         limit: DEFAULT_PAGE_SIZE,
+        release_environment: releaseEnvironment,
       })
     },
     initialPageParam: 0,

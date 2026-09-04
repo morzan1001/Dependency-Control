@@ -2,12 +2,13 @@ import { render, screen } from '@testing-library/react'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 
 import { AnalyticsSummaryCards } from '../AnalyticsSummary'
+import { AnalyticsModeContext } from '@/context/analytics-mode'
 import type { AnalyticsSummary } from '@/types/analytics'
 
 const mockUseAnalyticsSummary = vi.fn()
 
 vi.mock('@/hooks/queries/use-analytics', () => ({
-  useAnalyticsSummary: () => mockUseAnalyticsSummary(),
+  useAnalyticsSummary: (releaseEnvironment?: string) => mockUseAnalyticsSummary(releaseEnvironment),
 }))
 
 const DEPENDENCIES_TILE = 'Total Dependencies'
@@ -19,6 +20,8 @@ const RESOLVED_PROJECTS = 40
 const PROJECTS_WITHOUT_SCAN = 660
 const TOTAL_PROJECTS = 700
 const NONE_MISSING = 0
+const HEAD_MODE = undefined
+const PRODUCTION = 'production'
 
 // Annotated, not inferred: an inferred fixture drops a field from the response type silently.
 const base: AnalyticsSummary = {
@@ -36,10 +39,34 @@ const base: AnalyticsSummary = {
   projects_without_release: PROJECTS_WITHOUT_SCAN,
 }
 
-function renderCards(summary: AnalyticsSummary | undefined, isLoading = false) {
+function renderCards(
+  summary: AnalyticsSummary | undefined,
+  isLoading = false,
+  releaseEnvironment: string | undefined = HEAD_MODE,
+) {
   mockUseAnalyticsSummary.mockReturnValue({ data: summary, isLoading })
-  return render(<AnalyticsSummaryCards />)
+  return render(
+    <AnalyticsModeContext.Provider value={releaseEnvironment}>
+      <AnalyticsSummaryCards />
+    </AnalyticsModeContext.Provider>,
+  )
 }
+
+describe('AnalyticsSummaryCards release mode', () => {
+  afterEach(() => vi.clearAllMocks())
+
+  it('reports the branch tip while no environment is selected', () => {
+    renderCards(base)
+
+    expect(mockUseAnalyticsSummary).toHaveBeenCalledWith(HEAD_MODE)
+  })
+
+  it('reports the selected environment instead of the branch tip', () => {
+    renderCards(base, false, PRODUCTION)
+
+    expect(mockUseAnalyticsSummary).toHaveBeenCalledWith(PRODUCTION)
+  })
+})
 
 describe('AnalyticsSummaryCards scope caption', () => {
   afterEach(() => vi.clearAllMocks())

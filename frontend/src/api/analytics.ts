@@ -3,6 +3,7 @@ import { UPDATE_FREQUENCY_TIMEOUT_MS } from '@/lib/constants';
 import {
     DashboardStats,
     SearchResult,
+    AnalyticsScope,
     AnalyticsSummary,
     DependencyUsage,
     DependencyGraph,
@@ -33,13 +34,20 @@ export const analyticsApi = {
         return response.data.items;
     },
 
-    getSummary: async (): Promise<AnalyticsSummary> => {
-        const response = await api.get<AnalyticsSummary>('/analytics/summary');
+    getScope: async (releaseEnvironment?: string): Promise<AnalyticsScope> => {
+        const params = buildQueryParams({ release_environment: releaseEnvironment });
+        const response = await api.get<AnalyticsScope>('/analytics/scope', { params });
         return response.data;
     },
 
-    getTopDependencies: async (limit = 20, type?: string): Promise<DependencyUsage[]> => {
-        const params = buildQueryParams({ limit, type });
+    getSummary: async (releaseEnvironment?: string): Promise<AnalyticsSummary> => {
+        const params = buildQueryParams({ release_environment: releaseEnvironment });
+        const response = await api.get<AnalyticsSummary>('/analytics/summary', { params });
+        return response.data;
+    },
+
+    getTopDependencies: async (limit = 20, type?: string, releaseEnvironment?: string): Promise<DependencyUsage[]> => {
+        const params = buildQueryParams({ limit, type, release_environment: releaseEnvironment });
         const response = await api.get<DependencyUsage[]>('/analytics/dependencies/top', { params });
         return response.data;
     },
@@ -50,8 +58,8 @@ export const analyticsApi = {
         return response.data;
     },
 
-    getImpactAnalysis: async (limit = 20): Promise<ImpactAnalysisResult[]> => {
-        const params = buildQueryParams({ limit });
+    getImpactAnalysis: async (limit = 20, releaseEnvironment?: string): Promise<ImpactAnalysisResult[]> => {
+        const params = buildQueryParams({ limit, release_environment: releaseEnvironment });
         const response = await api.get<ImpactAnalysisResult[]>('/analytics/impact', { params });
         return response.data;
     },
@@ -62,6 +70,7 @@ export const analyticsApi = {
             limit: options.limit ?? 20,
             sort_by: options.sort_by,
             sort_order: options.sort_order,
+            release_environment: options.release_environment,
         });
         const response = await api.get<VulnerabilityHotspot[]>('/analytics/hotspots', { params });
         return response.data;
@@ -82,6 +91,7 @@ export const analyticsApi = {
             sort_order: options?.sort_order,
             skip: options?.skip,
             limit: options?.limit,
+            release_environment: options?.release_environment,
         });
         const response = await api.get<AdvancedSearchResponse>('/analytics/search', { params });
         return response.data;
@@ -103,6 +113,7 @@ export const analyticsApi = {
             sort_order: options?.sort_order,
             skip: options?.skip,
             limit: options?.limit,
+            release_environment: options?.release_environment,
         });
         const response = await api.get<VulnerabilitySearchResponse>('/analytics/vulnerability-search', { params });
         return response.data;
@@ -124,8 +135,9 @@ export const analyticsApi = {
         return response.data;
     },
 
-    getDependencyTypes: async (): Promise<string[]> => {
-        const response = await api.get<string[]>('/analytics/dependency-types');
+    getDependencyTypes: async (releaseEnvironment?: string): Promise<string[]> => {
+        const params = buildQueryParams({ release_environment: releaseEnvironment });
+        const response = await api.get<string[]>('/analytics/dependency-types', { params });
         return response.data;
     },
 
