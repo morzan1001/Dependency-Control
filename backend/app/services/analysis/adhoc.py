@@ -6,6 +6,7 @@ from typing import Any
 
 from app.models.system import SystemSettings
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport
+from app.schemas.sbom import ParsedSBOM
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _build_settings_resolver
 from app.services.analysis.registry import analyzers
@@ -17,6 +18,22 @@ logger = logging.getLogger(__name__)
 
 _UNKNOWN_ANALYZER = "unknown analyzer"
 _EMPTY_PAYLOAD = "empty payload"
+_NO_COMPONENTS = "no components could be parsed (detected format: {sbom_format})"
+_DROPPED_COMPONENTS = "{count} component(s) dropped by the parser ({reasons})"
+
+# Counted as skipped from the dependency graph by design: a crypto asset is routed into
+# ``crypto_assets`` and the rest are not dependencies. Nothing the caller posted was lost.
+_DELIBERATE_SKIP_REASONS = frozenset({"cryptographic-asset", "file", "non-dependency", "root-component"})
+_UNRECOGNISED_PAYLOAD = "unrecognised payload shape: expected {keys}"
+
+# The top-level key each normalizer reads. A payload carrying none of them is a shape the
+# pipeline cannot read, which must not be reported as coverage over zero findings.
+_SCANNER_RESULT_KEYS: dict[str, tuple[str, ...]] = {
+    "trufflehog": ("findings",),
+    "opengrep": ("findings", "results"),
+    "bearer": ("findings",),
+    "kics": ("queries",),
+}
 
 
 @dataclass(frozen=True)
@@ -49,7 +66,7 @@ def _record_ran(report: AnalyzerReport, name: str) -> None:
 
 def _record_errored(report: AnalyzerReport, name: str, reason: str) -> None:
     """A failure on one input shadows a success on another: partial coverage must not read as complete."""
-    report.errored[name] = reason
+    report.errored.setdefault(name, []).append(reason)
     if name in report.ran:
         report.ran.remove(name)
 
@@ -74,12 +91,13 @@ async def _run_one_analyzer(
         result = await analyzer.analyze(sbom, settings=settings, parsed_components=parsed_components)
         # The aggregator guards on membership, not truthiness, so ``{"error": ""}`` would reach it.
         if "error" in result:
-            _record_errored(report, name, str(result["error"]))
+            _record_errored(report, name, f"{fallback_source}: {result['error']}")
             return
         aggregator.aggregate(name, result, source=_sbom_source(sbom, fallback_source))
     except Exception as exc:
         logger.warning("adhoc: analyzer %s failed: %s", name, exc)
-        _record_errored(report, name, str(exc))
+        # Attributed to the input, so "failed on one of ten" is distinguishable from "failed on ten".
+        _record_errored(report, name, f"{fallback_source}: {exc}")
         return
 
     _record_ran(report, name)
@@ -105,6 +123,11 @@ def _aggregate_posted_scanners(
         if "error" in payload:
             _record_errored(report, name, str(payload["error"]))
             continue
+        expected_keys = _SCANNER_RESULT_KEYS[name]
+        if not any(key in payload for key in expected_keys):
+            quoted = " or ".join(f"'{key}'" for key in expected_keys)
+            _record_errored(report, name, _UNRECOGNISED_PAYLOAD.format(keys=quoted))
+            continue
         try:
             aggregator.aggregate(name, payload, source=f"posted:{name}")
         except Exception as exc:
@@ -114,16 +137,48 @@ def _aggregate_posted_scanners(
         _record_ran(report, name)
 
 
+def _yielded_nothing(parsed: ParsedSBOM) -> bool:
+    return not parsed.dependencies and not parsed.crypto_assets
+
+
+def _input_defects(parsed: ParsedSBOM) -> list[str]:
+    """What the caller needs to know about an input the parser only partly understood."""
+    defects: list[str] = []
+    if _yielded_nothing(parsed):
+        defects.append(_NO_COMPONENTS.format(sbom_format=parsed.format.value))
+    lost = {
+        reason: count
+        for reason, count in parsed.skipped_reasons.items()
+        if reason not in _DELIBERATE_SKIP_REASONS and count
+    }
+    if lost:
+        reasons = ", ".join(f"{reason}={count}" for reason, count in sorted(lost.items()))
+        defects.append(_DROPPED_COMPONENTS.format(count=sum(lost.values()), reasons=reasons))
+    return defects
+
+
 def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_ParsedInput]:
-    """Parse every SBOM; an unparseable one is reported and skipped, never fatal."""
+    """Parse every SBOM, reporting each defect the parser found.
+
+    A document-level failure rejects that whole input rather than analysing what survived: the
+    parser is shared with the scan pipeline, where a half-built dependency graph is worse than
+    none. The caller gets the parser's own message and can fix the document and retry.
+    """
     parsed_inputs: list[_ParsedInput] = []
     for index, sbom in enumerate(request.sboms):
         position = index + 1
+        label = f"sbom#{position}"
         try:
             parsed = parse_sbom(sbom)
         except Exception as exc:
-            logger.warning("adhoc: sbom#%d could not be parsed: %s", position, exc)
-            report.skipped_inputs[f"sbom#{position}"] = f"could not be parsed: {exc}"
+            logger.warning("adhoc: %s could not be parsed: %s", label, exc)
+            report.skipped_inputs[label] = f"could not be parsed: {exc}"
+            continue
+        defects = _input_defects(parsed)
+        if defects:
+            report.skipped_inputs[label] = "; ".join(defects)
+        # An input nothing could be read from must not be analysed into a clean bill of health.
+        if _yielded_nothing(parsed):
             continue
         parsed_inputs.append(
             _ParsedInput(position=position, sbom=sbom, components=[dep.to_dict() for dep in parsed.dependencies])

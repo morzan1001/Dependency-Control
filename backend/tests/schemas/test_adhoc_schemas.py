@@ -156,9 +156,9 @@ def test_response_defaults_are_a_complete_envelope():
 
 
 def test_analyzer_report_carries_reasons_not_bare_names():
-    report = AnalyzerReport(ran=["osv"], skipped={"grype": "CLI scanner"}, errored={"trivy": "boom"})
+    report = AnalyzerReport(ran=["osv"], skipped={"grype": "CLI scanner"}, errored={"trivy": ["boom", "boom again"]})
     assert report.skipped["grype"] == "CLI scanner"
-    assert report.errored["trivy"] == "boom"
+    assert report.errored["trivy"] == ["boom", "boom again"]
 
 
 def test_unusable_inputs_are_reported_apart_from_skipped_analyzers():

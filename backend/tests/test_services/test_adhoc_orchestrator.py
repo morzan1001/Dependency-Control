@@ -21,6 +21,11 @@ _UNKNOWN_NAME = "not_a_scanner"
 _EMPTY_PAYLOAD = "empty payload"
 _SERIAL_NUMBER = "urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79"
 _FIRST_SBOM_SOURCE = "SBOM #1"
+_THIRD_SBOM_SOURCE = "SBOM #3"
+_NO_COMPONENTS = "no components could be parsed"
+_DROPPED_COMPONENTS = "component(s) dropped by the parser"
+_UNRECOGNISED_PAYLOAD = "unrecognised payload shape"
+_HEALTHY_COMPONENTS = 201
 
 _SBOM = {
     "bomFormat": "CycloneDX",
@@ -70,6 +75,55 @@ _MALFORMED_SCANNER_PAYLOADS = [
     ("kics", {"queries": {"first": {}}}),
     ("kics", {"queries": [{"query_name": "q", "files": "deploy/pod.yaml"}]}),
 ]
+
+# Shapes a caller reaches this endpoint with by accident: an error body, a wrapper around the
+# real document, and the right format with the component list misspelled.
+_UNREADABLE_SBOMS = [
+    {"detail": "Not Found"},
+    {"hello": "world"},
+    {"sbom": _SBOM},
+    {"bomFormat": "CycloneDX", "specVersion": "1.5", "component": _SBOM["components"]},
+]
+
+# Scanner-native report shapes, one level inside the envelope the schema documents.
+_UNREADABLE_SCANNER_PAYLOADS = [
+    ("bearer", {"critical": [{"id": "x", "title": "t", "filename": "f.py", "line_number": 1}]}),
+    ("kics", {"total_counter": 7}),
+    ("trufflehog", {"results": [{"DetectorType": 8, "Raw": "AKIAIOSFODNN7EXAMPLE", "Verified": True}]}),
+]
+
+# The parser caps nesting; a component below the cap is dropped rather than analysed.
+_DEEPLY_NESTED_COMPONENT: dict = {"type": "library", "name": "deep", "version": "1.0.0"}
+_LEAF = _DEEPLY_NESTED_COMPONENT
+for _ in range(150):
+    _LEAF["components"] = [{"type": "library", "name": "nested", "version": "1.0.0"}]
+    _LEAF = _LEAF["components"][0]
+_LEAF["licenses"] = [{"license": {"id": "GPL-3.0-only"}}]
+
+_PARTLY_MALFORMED_SBOM = {
+    "bomFormat": "CycloneDX",
+    "specVersion": "1.5",
+    "components": ["a string", 42, None, *_SBOM["components"]],
+}
+
+# One unusable sub-field alongside 201 healthy components: the graph builders, unlike the
+# component loop, do not tolerate a non-list ``dependsOn``.
+_ONE_BAD_SUBFIELD_SBOM = {
+    "bomFormat": "CycloneDX",
+    "specVersion": "1.5",
+    "components": [
+        {
+            "type": "library",
+            "bom-ref": f"pkg:pypi/c{index}@1.0.0",
+            "name": f"c{index}",
+            "version": "1.0.0",
+            "purl": f"pkg:pypi/c{index}@1.0.0",
+            "licenses": [{"license": {"id": "GPL-3.0-only"}}],
+        }
+        for index in range(_HEALTHY_COMPONENTS)
+    ],
+    "dependencies": [{"ref": "pkg:pypi/c0@1.0.0", "dependsOn": None}],
+}
 
 # An explicit null name is a present key, so a dict default never fires.
 _NULL_NAMED_SBOM = {
@@ -179,7 +233,7 @@ async def test_failing_analyzer_is_reported_and_not_turned_into_a_system_warning
     request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["osv"], apply_global_waivers=False)
     response = await run_adhoc_analysis(request, FakeDatabase())
 
-    assert response.analyzers.errored == {"osv": _ANALYZER_ERROR}
+    assert response.analyzers.errored == {"osv": [f"{_FIRST_SBOM_SOURCE}: {_ANALYZER_ERROR}"]}
     assert "osv" not in response.analyzers.ran
     assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
 
@@ -199,7 +253,7 @@ async def test_error_shaped_analyzer_result_is_reported_not_aggregated(monkeypat
     request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["osv"], apply_global_waivers=False)
     response = await run_adhoc_analysis(request, FakeDatabase())
 
-    assert response.analyzers.errored == {"osv": _ANALYZER_TIMEOUT}
+    assert response.analyzers.errored == {"osv": [f"{_FIRST_SBOM_SOURCE}: {_ANALYZER_TIMEOUT}"]}
     assert "osv" not in response.analyzers.ran
     assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
 
@@ -270,7 +324,7 @@ async def test_error_shaped_posted_payload_is_reported_not_turned_into_a_system_
 
     response = await run_adhoc_analysis(request, FakeDatabase())
 
-    assert response.analyzers.errored == {"trufflehog": _ANALYZER_TIMEOUT}
+    assert response.analyzers.errored == {"trufflehog": [_ANALYZER_TIMEOUT]}
     assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
 
 
@@ -299,7 +353,7 @@ async def test_blank_error_string_is_reported_not_aggregated(monkeypatch):
     request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["osv"], apply_global_waivers=False)
     response = await run_adhoc_analysis(request, FakeDatabase())
 
-    assert response.analyzers.errored == {"osv": ""}
+    assert response.analyzers.errored == {"osv": [f"{_FIRST_SBOM_SOURCE}: "]}
     assert response.analyzers.ran == []
     assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
 
@@ -325,7 +379,7 @@ async def test_an_analyzer_that_failed_on_one_sbom_is_not_also_reported_as_ran(m
     request = AdhocAnalyzeRequest(sboms=[_SBOM, _SBOM], analyzers=["osv"], apply_global_waivers=False)
     response = await run_adhoc_analysis(request, FakeDatabase())
 
-    assert response.analyzers.errored == {"osv": _ANALYZER_ERROR}
+    assert response.analyzers.errored == {"osv": [f"{_SECOND_SBOM_SOURCE}: {_ANALYZER_ERROR}"]}
     assert response.analyzers.ran == []
 
 
@@ -347,3 +401,133 @@ async def test_a_null_metadata_name_without_a_serial_number_falls_back_to_the_po
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     assert [f["found_in"] for f in _findings_of_type(response, _TYPE_LICENSE)] == [[_FIRST_SBOM_SOURCE]]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("sbom", _UNREADABLE_SBOMS)
+async def test_an_sbom_nothing_could_be_read_from_is_not_reported_as_a_clean_run(sbom):
+    request = AdhocAnalyzeRequest(sboms=[sbom], analyzers=["license_compliance"], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert _NO_COMPONENTS in response.analyzers.skipped_inputs[_SBOM_LABEL]
+    assert response.analyzers.ran == []
+    assert response.findings == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("scanner", "payload"), _UNREADABLE_SCANNER_PAYLOADS)
+async def test_a_scanner_payload_shape_the_normalizer_cannot_read_is_not_reported_as_ran(scanner, payload):
+    request = AdhocAnalyzeRequest(scanners={scanner: payload}, analyzers=[], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert _UNRECOGNISED_PAYLOAD in response.analyzers.errored[scanner][0]
+    assert response.analyzers.ran == []
+    assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
+
+
+@pytest.mark.asyncio
+async def test_a_scanner_payload_that_genuinely_found_nothing_still_counts_as_ran():
+    request = AdhocAnalyzeRequest(scanners={"trufflehog": {"findings": []}}, analyzers=[], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.ran == ["trufflehog"]
+    assert response.analyzers.errored == {}
+
+
+@pytest.mark.asyncio
+async def test_components_the_parser_dropped_are_reported():
+    request = AdhocAnalyzeRequest(
+        sboms=[_PARTLY_MALFORMED_SBOM], analyzers=["license_compliance"], apply_global_waivers=False
+    )
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert _DROPPED_COMPONENTS in response.analyzers.skipped_inputs[_SBOM_LABEL]
+    assert "license_compliance" in response.analyzers.ran
+    assert [f["id"] for f in _findings_of_type(response, _TYPE_LICENSE)] == [_LICENSE_FINDING_ID]
+
+
+@pytest.mark.asyncio
+async def test_a_component_routed_to_crypto_assets_is_not_reported_as_dropped():
+    crypto_only = {
+        "bomFormat": "CycloneDX",
+        "specVersion": "1.5",
+        "components": [
+            {
+                "type": "cryptographic-asset",
+                "bom-ref": "algo-sha1",
+                "name": "SHA-1",
+                "cryptoProperties": {"assetType": "algorithm", "algorithmProperties": {"primitive": "hash"}},
+            }
+        ],
+    }
+    request = AdhocAnalyzeRequest(sboms=[crypto_only], analyzers=["crypto_weak_algorithm"], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.skipped_inputs == {}
+    assert response.analyzers.ran == ["crypto_weak_algorithm"]
+
+
+@pytest.mark.asyncio
+async def test_one_malformed_sub_field_rejects_the_whole_input_and_says_so():
+    request = AdhocAnalyzeRequest(
+        sboms=[_ONE_BAD_SUBFIELD_SBOM], analyzers=["license_compliance"], apply_global_waivers=False
+    )
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.skipped_inputs[_SBOM_LABEL].startswith("could not be parsed:")
+    assert response.analyzers.ran == []
+    assert response.findings == []
+
+
+@pytest.mark.asyncio
+async def test_every_failure_reason_is_kept_and_attributed_to_its_input(monkeypatch):
+    from app.services.analysis import registry
+
+    class _Flaky:
+        name = "osv"
+
+        def __init__(self):
+            self.calls = 0
+
+        async def analyze(self, sbom, settings=None, parsed_components=None):
+            self.calls += 1
+            if self.calls == 2:
+                return {"osv_vulnerabilities": []}
+            raise RuntimeError(f"{_ANALYZER_ERROR} {self.calls}")
+
+    monkeypatch.setitem(registry.analyzers, "osv", _Flaky())
+
+    request = AdhocAnalyzeRequest(sboms=[_SBOM, _SBOM, _SBOM], analyzers=["osv"], apply_global_waivers=False)
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.errored == {
+        "osv": [f"{_FIRST_SBOM_SOURCE}: {_ANALYZER_ERROR} 1", f"{_THIRD_SBOM_SOURCE}: {_ANALYZER_ERROR} 3"]
+    }
+    assert response.analyzers.ran == []
+
+
+@pytest.mark.asyncio
+async def test_a_normalizer_that_cannot_read_an_analyzer_result_is_reported_not_raised(monkeypatch):
+    from app.services.analysis import registry
+
+    class _Reshaped:
+        name = "osv"
+
+        async def analyze(self, sbom, settings=None, parsed_components=None):
+            # The normalizers dereference analyzer output without type checks.
+            return {"osv_vulnerabilities": [None]}
+
+    monkeypatch.setitem(registry.analyzers, "osv", _Reshaped())
+
+    request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["osv"], apply_global_waivers=False)
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert list(response.analyzers.errored) == ["osv"]
+    assert response.analyzers.ran == []
+    assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []

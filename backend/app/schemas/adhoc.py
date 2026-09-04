@@ -64,8 +64,9 @@ class AnalyzerReport(BaseModel):
 
     ran: list[str] = Field(default_factory=list)
     skipped: dict[str, str] = Field(default_factory=dict)
-    errored: dict[str, str] = Field(default_factory=dict)
-    # Inputs the pipeline could not use, keyed by input label rather than analyzer name.
+    # Every failure is kept: "failed on one of ten inputs" must not read like "failed on all ten".
+    errored: dict[str, list[str]] = Field(default_factory=dict)
+    # Defects in the posted inputs, keyed by input label rather than analyzer name.
     skipped_inputs: dict[str, str] = Field(default_factory=dict)
 
 
