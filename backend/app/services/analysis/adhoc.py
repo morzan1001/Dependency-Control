@@ -7,6 +7,8 @@ from collections import Counter, deque
 from dataclasses import dataclass
 from typing import Any
 
+from pydantic import BaseModel, ValidationError
+
 from app.core.cache import suppress_cache_writes
 from app.core.constants import (
     ADHOC_MAX_FINDINGS,
@@ -15,8 +17,6 @@ from app.core.constants import (
     ADHOC_MAX_SCANNER_FINDINGS,
     get_severity_value,
 )
-from pydantic import BaseModel, ValidationError
-
 from app.models.crypto_asset import CryptoAsset
 from app.models.match_signature import MatchSignature
 from app.models.system import SystemSettings
@@ -54,8 +54,8 @@ ADHOC_SLOTS = asyncio.Semaphore(1)
 _UNKNOWN_ANALYZER = "unknown analyzer"
 _EMPTY_PAYLOAD = "empty payload"
 _PARTIAL_COVERAGE = "partial coverage: {reason}"
-# What a record with no severity is counted as, matching the report renderer's own label.
-_UNKNOWN_SEVERITY = "UNKNOWN"
+# What a record missing the field the cut groups by is counted under.
+_UNKNOWN_BUCKET = "UNKNOWN"
 _ENRICHMENT = "epss_kev"
 _REACHABILITY = "reachability"
 _VULNERABILITY = "vulnerability"
@@ -280,7 +280,7 @@ def _reject_unaffordable_input(request: AdhocAnalyzeRequest) -> None:
 def _by_descending_severity(records: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
     buckets: dict[str, list[dict[str, Any]]] = {}
     for record in records:
-        buckets.setdefault(str(record.get("severity") or _UNKNOWN_SEVERITY), []).append(record)
+        buckets.setdefault(str(record.get("severity") or _UNKNOWN_BUCKET), []).append(record)
     return sorted(buckets.items(), key=lambda bucket: get_severity_value(bucket[0]), reverse=True)
 
 
@@ -307,7 +307,7 @@ def _fair_share(bucket: list[dict[str, Any]], budget: int) -> tuple[list[dict[st
 
 
 def _counted(records: list[dict[str, Any]], field: str) -> dict[str, int]:
-    counts: Counter[str] = Counter(str(record.get(field) or _UNKNOWN_SEVERITY) for record in records)
+    counts: Counter[str] = Counter(str(record.get(field) or _UNKNOWN_BUCKET) for record in records)
     return dict(sorted(counts.items()))
 
 
