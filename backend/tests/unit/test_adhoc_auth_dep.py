@@ -21,6 +21,18 @@ _KEY_NAME = "ci"
 _UNAUTHORIZED = 401
 _FORBIDDEN = 403
 
+# Every write create_mock_collection stubs. find_one_and_update is the idiomatic way to write a
+# touch-on-read, so leaving it unchecked would let the write this dependency must not do slip in.
+_WRITE_METHODS = (
+    "insert_one",
+    "find_one_and_update",
+    "update_one",
+    "update_many",
+    "delete_one",
+    "bulk_write",
+    "create_index",
+)
+
 
 def _key_doc():
     return {
@@ -69,9 +81,12 @@ async def test_authentication_writes_nothing(monkeypatch):
 
     await get_adhoc_api_key(authorization=f"Bearer {_TOKEN}", db=db)
 
-    keys.update_one.assert_not_awaited()
-    keys.update_many.assert_not_awaited()
-    keys.insert_one.assert_not_awaited()
+    for method_name in _WRITE_METHODS:
+        method = getattr(keys, method_name)
+        # A MagicMock answers assert_not_awaited() with another mock, so a name that is not
+        # actually stubbed would assert nothing at all.
+        assert isinstance(method, AsyncMock), method_name
+        method.assert_not_awaited()
 
 
 @pytest.mark.asyncio

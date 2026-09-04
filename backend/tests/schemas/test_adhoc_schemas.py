@@ -10,6 +10,7 @@ from app.schemas.adhoc import (
     AdhocAnalyzeResponse,
     AnalyzerReport,
 )
+from app.schemas.project import LicensePolicySchema
 
 _SBOM = {"bomFormat": "CycloneDX"}
 _TRUFFLEHOG_PAYLOAD = {"findings": []}
@@ -17,8 +18,15 @@ _ANALYZER = "osv"
 _SBOM_LABEL = "sbom#1"
 _SKIP_REASON = "could not be parsed"
 _EXTRA_FORBIDDEN = "extra_forbidden"
+_ENUM_ERROR = "enum"
 _MISSPELLED_OPTION = "aplly_global_waivers"
 _MISSPELLED_SCANNER = "trufflehogg"
+_MISSPELLED_POLICY_KEY = "deployment_modell"
+_MISSPELLED_POLICY_VALUE = "internalonly"
+_INPUT_REQUIRED = "at least one non-empty entry in 'sboms' or 'scanners'"
+_CLI_BATCH = "cli_batch"
+_INTERNAL_ONLY = "internal_only"
+_NETWORK_FACING = "network_facing"
 
 
 def test_request_defaults():
@@ -41,14 +49,26 @@ def test_scanner_only_request_is_valid():
 def test_empty_request_is_rejected():
     with pytest.raises(ValidationError) as exc:
         AdhocAnalyzeRequest()
-    assert "at least one of 'sboms' or 'scanners'" in str(exc.value)
+    assert _INPUT_REQUIRED in str(exc.value)
 
 
 def test_a_scanners_object_carrying_no_payload_is_rejected():
     """``scanners: {}`` is not an input; without this it analyses nothing and answers 200."""
     with pytest.raises(ValidationError) as exc:
         AdhocAnalyzeRequest(scanners={})
-    assert "at least one of 'sboms' or 'scanners'" in str(exc.value)
+    assert _INPUT_REQUIRED in str(exc.value)
+
+
+def test_a_list_of_empty_sboms_is_rejected():
+    """``sboms: [{}]`` is the empty-scanners shape one level over — still nothing to analyse."""
+    with pytest.raises(ValidationError) as exc:
+        AdhocAnalyzeRequest(sboms=[{}])
+    assert _INPUT_REQUIRED in str(exc.value)
+
+
+def test_one_real_sbom_among_empty_ones_is_accepted():
+    req = AdhocAnalyzeRequest(sboms=[{}, _SBOM])
+    assert req.sboms == [{}, _SBOM]
 
 
 def test_unknown_request_field_is_rejected():
@@ -66,6 +86,41 @@ def test_unknown_scanner_name_is_rejected():
     assert [(e["type"], e["loc"]) for e in exc.value.errors()] == [
         (_EXTRA_FORBIDDEN, ("scanners", _MISSPELLED_SCANNER))
     ]
+
+
+def test_misspelled_license_policy_key_is_rejected():
+    """Dropping the key restores the network-facing default and re-grades AGPL findings, with a 200."""
+    with pytest.raises(ValidationError) as exc:
+        AdhocAnalyzeRequest(sboms=[_SBOM], license_policy={_MISSPELLED_POLICY_KEY: _INTERNAL_ONLY})
+    assert [(e["type"], e["loc"]) for e in exc.value.errors()] == [
+        (_EXTRA_FORBIDDEN, ("license_policy", _MISSPELLED_POLICY_KEY))
+    ]
+
+
+def test_misspelled_license_policy_value_is_rejected():
+    """An unparseable value would otherwise raise inside the analyzer instead of at the boundary."""
+    with pytest.raises(ValidationError) as exc:
+        AdhocAnalyzeRequest(sboms=[_SBOM], license_policy={"deployment_model": _MISSPELLED_POLICY_VALUE})
+    assert [e["type"] for e in exc.value.errors()] == [_ENUM_ERROR]
+
+
+def test_a_partial_license_policy_keeps_plain_string_values():
+    """The license analyzer compares the policy against plain strings, not enum members."""
+    req = AdhocAnalyzeRequest(sboms=[_SBOM], license_policy={"deployment_model": _CLI_BATCH})
+    assert req.license_policy is not None
+    assert req.license_policy.model_dump() == {
+        "distribution_model": "distributed",
+        "deployment_model": _CLI_BATCH,
+        "library_usage": "mixed",
+        "allow_strong_copyleft": False,
+        "allow_network_copyleft": False,
+    }
+
+
+def test_the_project_policy_schema_stays_lenient():
+    """Forbidding extras belongs on the ad-hoc subclass; the project API accepts unknown keys today."""
+    policy = LicensePolicySchema(**{_MISSPELLED_POLICY_KEY: _INTERNAL_ONLY})
+    assert policy.deployment_model == _NETWORK_FACING
 
 
 def test_too_many_sboms_is_rejected():

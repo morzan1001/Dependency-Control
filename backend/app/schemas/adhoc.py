@@ -6,9 +6,19 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.stats import Stats
+from app.schemas.project import LicensePolicySchema
 
 MAX_ADHOC_SBOMS: int = 10
+# Above the 19 names in the analyzer registry; a literal because importing it here would
+# construct every analyzer class at schema import time.
 MAX_ADHOC_ANALYZERS: int = 25
+
+
+class AdhocLicensePolicy(LicensePolicySchema):
+    """The project API tolerates unknown policy keys; a one-shot request cannot, because a
+    misspelt key silently restores the network-facing default and re-grades AGPL findings."""
+
+    model_config = ConfigDict(extra="forbid")
 
 
 class AdhocScannerPayloads(BaseModel):
@@ -36,13 +46,15 @@ class AdhocAnalyzeRequest(BaseModel):
     analyzers: list[str] | None = Field(default=None, max_length=MAX_ADHOC_ANALYZERS)
     callgraph: dict[str, Any] | None = None
     apply_global_waivers: bool = True
-    license_policy: dict[str, Any] | None = None
+    license_policy: AdhocLicensePolicy | None = None
     format: Literal["json", "html"] = "json"
 
     @model_validator(mode="after")
     def _require_input(self) -> "AdhocAnalyzeRequest":
-        if not self.sboms and not (self.scanners and self.scanners.carries_payload()):
-            raise ValueError("at least one of 'sboms' or 'scanners' must be supplied")
+        # An SBOM document with no keys carries nothing to analyse, just as an empty scanners
+        # object does; either way the caller would get a 200 over an empty analysis.
+        if not any(self.sboms) and not (self.scanners and self.scanners.carries_payload()):
+            raise ValueError("at least one non-empty entry in 'sboms' or 'scanners' must be supplied")
         return self
 
 
