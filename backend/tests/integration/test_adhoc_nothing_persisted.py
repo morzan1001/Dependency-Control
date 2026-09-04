@@ -1,19 +1,24 @@
-"""B5: ad-hoc analysis must leave no MongoDB document, no GridFS blob and no caller-derived cache entry."""
+"""B5: ad-hoc analysis must leave no MongoDB document, no GridFS blob, no file and no caller-derived cache entry."""
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
+import tempfile
+from pathlib import Path
 from types import ModuleType
 from typing import Any
 
+import pymongo
 import pytest
-from motor.motor_asyncio import AsyncIOMotorClient
+import redis.asyncio
+from motor import motor_asyncio
 
 from app.core.cache import CacheKeys, CacheService
 from app.core.config import settings
 from app.db import mongodb
-from app.schemas.adhoc import AdhocAnalyzeRequest
+from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse
 from app.services.analysis.adhoc import run_adhoc_analysis
 from tests.mocks.fake_mongo import FakeCollection, FakeDatabase
 
@@ -34,7 +39,6 @@ _PERSISTENCE_COLLECTIONS: tuple[str, ...] = (
 # nobody anticipated is a violation until someone classifies it deliberately.
 _COLLECTION_READS = frozenset(
     {
-        "aggregate",
         "count_documents",
         "distinct",
         "estimated_document_count",
@@ -46,11 +50,30 @@ _COLLECTION_READS = frozenset(
     }
 )
 
-# Reaching MongoDB other than through the injected handle: the module-level accessor or a
-# GridFS bucket built from it. A directly constructed driver client is tripped separately,
-# since that path never touches this module at all.
+_AGGREGATE = "aggregate"
+# The one method whose read-ness depends on its argument: these stages write server-side.
+_WRITING_AGGREGATION_STAGES = frozenset({"$out", "$merge"})
+
+# Reaching a datastore other than through the injected handle: the module-level accessors,
+# or a driver client/bucket built from scratch, which never touches those modules at all.
 _BYPASS_ENTRY_POINTS = ("get_database", "connect_to_mongo", "primary_gridfs_bucket")
-_DRIVER_CLIENT_LABEL = "motor.motor_asyncio.AsyncIOMotorClient"
+
+_MOTOR_CLIENT_LABEL = "motor.motor_asyncio.AsyncIOMotorClient"
+_GRIDFS_BUCKET_LABEL = "motor.motor_asyncio.AsyncIOMotorGridFSBucket"
+_PYMONGO_CLIENT_LABEL = "pymongo.MongoClient"
+_PYMONGO_ASYNC_CLIENT_LABEL = "pymongo.AsyncMongoClient"
+_REDIS_CLIENT_LABEL = "redis.asyncio.Redis"
+_REDIS_FROM_URL_LABEL = "redis.asyncio.from_url"
+
+# Captured at import, before any test rebinds them, so the fixture patches by original identity.
+_DRIVER_ENTRY_POINTS: tuple[tuple[str, Any], ...] = (
+    (_MOTOR_CLIENT_LABEL, motor_asyncio.AsyncIOMotorClient),
+    (_GRIDFS_BUCKET_LABEL, motor_asyncio.AsyncIOMotorGridFSBucket),
+    (_PYMONGO_CLIENT_LABEL, pymongo.MongoClient),
+    (_PYMONGO_ASYNC_CLIENT_LABEL, pymongo.AsyncMongoClient),
+    (_REDIS_CLIENT_LABEL, redis.asyncio.Redis),
+    (_REDIS_FROM_URL_LABEL, redis.asyncio.from_url),
+)
 
 # Upstream reference lists shared by every caller: the key names the source, never the payload.
 _UPSTREAM_REFERENCE_CACHE_KEYS = frozenset(
@@ -61,11 +84,21 @@ _UPSTREAM_REFERENCE_CACHE_KEYS = frozenset(
     }
 )
 
+# What the run legitimately caches today. An equality assertion, so an analyzer that stops
+# running — or one that starts caching something new — turns this red instead of shrinking
+# the cache nets to nothing.
+_EXPECTED_CACHE_WRITES = frozenset({CacheKeys.popular_packages("npm")})
+
 _UPSTREAM_NPM_KEY = f"{settings.CACHE_PREFIX}{CacheKeys.popular_packages('npm')}"
 _UNNAMED_COLLECTION = "a_collection_no_one_named"
+_UNMODELLED_DRIVER_API = "get_collection"
 _LEAK_ID = "leak"
+_LEAK_SUFFIX = ".adhoc-leak"
+_TEMP_ROOT_NAME = "adhoc-temp"
 _CALLER_DERIVED_CACHE_KEY = "osv2:0123456789abcdef"
 _SEEDED_POPULAR_PYPI = ["requests", "flask", "django"]
+_MONGO_URL = "mongodb://localhost:27017"
+_FAILING_ANALYZER = "license_compliance"
 
 # A deliberately misspelled dependency. No upstream reference list can legitimately contain it,
 # so finding it inside a shared cache value means caller data leaked in under a permitted key.
@@ -157,6 +190,8 @@ _KICS = {
 
 _CALLGRAPH = {"nodes": [{"id": "app.handlers.run"}], "edges": []}
 
+_SCANNER_PAYLOADS = {"trufflehog": _TRUFFLEHOG, "opengrep": _OPENGREP, "bearer": _BEARER, "kics": _KICS}
+
 _ANALYZERS = [
     "license_compliance",
     "typosquatting",
@@ -166,6 +201,10 @@ _ANALYZERS = [
     "crypto_certificate_lifecycle",
     "crypto_protocol_cipher",
 ]
+
+# Every net below is only as wide as the run that exercises it, so the run's own reach is
+# asserted by equality rather than by truthiness.
+_EXPECTED_RAN = frozenset(_ANALYZERS) | frozenset(_SCANNER_PAYLOADS)
 
 
 # ── Net 1: every call the run makes on a collection
@@ -185,7 +224,16 @@ class _WatchedCollection:
         return self
 
     def __getattr__(self, attribute: str) -> Any:
-        target = getattr(self._inner, attribute)
+        try:
+            target = getattr(self._inner, attribute)
+        except AttributeError:
+            # A driver API the fake never modelled is exactly the unanticipated write this
+            # net promises to catch. Dunders are Python's own probing, not a driver call.
+            if not (attribute.startswith("__") and attribute.endswith("__")):
+                self._writes.append(f"{self._name}.{attribute}")
+            raise
+        if attribute == _AGGREGATE:
+            return self._watched_aggregate(target)
         if attribute in _COLLECTION_READS or not callable(target):
             return target
 
@@ -194,6 +242,29 @@ class _WatchedCollection:
             return target(*args, **kwargs)
 
         return _record
+
+    def _watched_aggregate(self, target: Any) -> Any:
+        def _aggregate(pipeline: Any, *args: Any, **kwargs: Any) -> Any:
+            writing = sorted(
+                stage_name
+                for stage in (pipeline if isinstance(pipeline, list) else [])
+                if isinstance(stage, dict)
+                for stage_name in stage
+                if stage_name in _WRITING_AGGREGATION_STAGES
+            )
+            if writing:
+                self._writes.append(f"{self._name}.{_AGGREGATE}({','.join(writing)})")
+            return target(pipeline, *args, **kwargs)
+
+        return _aggregate
+
+    def __call__(self, *_args: Any, **_kwargs: Any) -> Any:
+        self._writes.append(f"{self._name}.__call__")
+        raise TypeError(f"{self._name} is not callable")
+
+    def __getitem__(self, key: str) -> Any:
+        self._writes.append(f"{self._name}[{key}]")
+        raise TypeError(f"{self._name} is not subscriptable")
 
 
 class _WriteRecordingDatabase(FakeDatabase):
@@ -228,7 +299,7 @@ def assert_no_write_calls(db: _WriteRecordingDatabase) -> None:
     assert db.writes == [], f"ad-hoc analysis made write calls: {db.writes}"
 
 
-# ── Net 2: MongoDB reached without the injected handle
+# ── Net 2: a datastore reached without the injected handle
 
 
 class _BypassTripwire:
@@ -253,28 +324,30 @@ class _TripwireClient:
         raise AssertionError("ad-hoc analysis reached the process-wide Mongo client")
 
 
-def _rebind_everywhere(monkeypatch: pytest.MonkeyPatch, original: Any, replacement: Any) -> None:
+def _rebind_everywhere(monkeypatch: pytest.MonkeyPatch, replacements: list[tuple[Any, Any]]) -> None:
     """Rebind by identity across sys.modules: a ``from x import y`` consumer holds its own reference."""
     for module in list(sys.modules.values()):
         if not isinstance(module, ModuleType):
             continue
         for attribute, value in list(vars(module).items()):
-            if value is original:
-                monkeypatch.setattr(module, attribute, replacement, raising=False)
+            for original, replacement in replacements:
+                if value is original:
+                    monkeypatch.setattr(module, attribute, replacement, raising=False)
 
 
 @pytest.fixture
 def bypass_attempts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
     touched: list[str] = []
-    for name in _BYPASS_ENTRY_POINTS:
-        label = f"app.db.mongodb.{name}"
-        _rebind_everywhere(monkeypatch, getattr(mongodb, name), _BypassTripwire(label, touched))
-    _rebind_everywhere(monkeypatch, AsyncIOMotorClient, _BypassTripwire(_DRIVER_CLIENT_LABEL, touched))
+    replacements: list[tuple[Any, Any]] = [
+        (getattr(mongodb, name), _BypassTripwire(f"app.db.mongodb.{name}", touched)) for name in _BYPASS_ENTRY_POINTS
+    ]
+    replacements += [(original, _BypassTripwire(label, touched)) for label, original in _DRIVER_ENTRY_POINTS]
+    _rebind_everywhere(monkeypatch, replacements)
     monkeypatch.setattr(mongodb.db, "client", _TripwireClient(touched))
     return touched
 
 
-# ── Net 3: Redis
+# ── Nets 3 and 4: Redis key and value policy
 
 
 class _RecordingRedis:
@@ -369,57 +442,117 @@ def cache_writes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
     return writes
 
 
+# ── Net 5: the filesystem
+
+
+class _FilesystemWatch:
+    """Survivors under a private temp root and at the top of the working directory.
+
+    Scoped that way so ordinary library temp usage cannot make the proof flaky: a scratch file
+    the library removes leaves nothing, and bytecode caches deeper in the tree are out of view.
+    """
+
+    def __init__(self, temp_root: Path, working_directory: Path) -> None:
+        self._temp_root = temp_root
+        self._working_directory = working_directory
+        self._entries_before = set(working_directory.iterdir())
+
+    def leaked(self) -> list[str]:
+        left_in_temp = [str(path) for path in self._temp_root.rglob("*") if path.is_file()]
+        appeared_in_cwd = [str(path) for path in set(self._working_directory.iterdir()) - self._entries_before]
+        return sorted(left_in_temp + appeared_in_cwd)
+
+
+def assert_no_files_left_behind(watch: _FilesystemWatch) -> None:
+    leaked = watch.leaked()
+    assert leaked == [], f"ad-hoc analysis left files on disk: {leaked}"
+
+
+@pytest.fixture
+def filesystem_watch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> _FilesystemWatch:
+    temp_root = tmp_path / _TEMP_ROOT_NAME
+    temp_root.mkdir()
+    monkeypatch.setattr(tempfile, "tempdir", str(temp_root))
+    monkeypatch.setenv("TMPDIR", str(temp_root))
+    return _FilesystemWatch(temp_root, Path.cwd())
+
+
 # ── The proof
 
 
 def _full_request() -> AdhocAnalyzeRequest:
     return AdhocAnalyzeRequest(
         sboms=[_SBOM],
-        scanners={"trufflehog": _TRUFFLEHOG, "opengrep": _OPENGREP, "bearer": _BEARER, "kics": _KICS},
+        scanners=_SCANNER_PAYLOADS,
         analyzers=_ANALYZERS,
         callgraph=_CALLGRAPH,
         apply_global_waivers=True,
     )
 
 
+async def _run_and_drain(request: AdhocAnalyzeRequest, db: Any) -> tuple[AdhocAnalyzeResponse, set[asyncio.Task[Any]]]:
+    """Run to completion including anything handed to the loop, so a deferred write lands before the nets look."""
+    before = asyncio.all_tasks()
+    response = await run_adhoc_analysis(request, db)
+    spawned = asyncio.all_tasks() - before - {asyncio.current_task()}
+    await asyncio.gather(*spawned, return_exceptions=True)
+    return response, spawned
+
+
 @pytest.mark.asyncio
-async def test_adhoc_analysis_persists_nothing(bypass_attempts, cache_writes):
+async def test_adhoc_analysis_persists_nothing(bypass_attempts, cache_writes, filesystem_watch):
     db = _WriteRecordingDatabase()
 
-    response = await run_adhoc_analysis(_full_request(), db)
+    response, spawned = await _run_and_drain(_full_request(), db)
 
-    assert response.findings, "the run must actually produce findings, or the proof is vacuous"
-    assert response.analyzers.ran, "the run must actually reach analyzers, or the proof is vacuous"
-    assert cache_writes, "the run must actually reach Redis, or the cache net is vacuous"
+    assert not spawned, f"ad-hoc analysis scheduled background work: {spawned}"
     assert_no_write_calls(db)
     await assert_nothing_persisted(db)
     assert bypass_attempts == []
     assert_no_caller_derived_cache_writes(cache_writes)
     assert_no_caller_data_in_shared_cache(cache_writes)
+    assert_no_files_left_behind(filesystem_watch)
+
+    # Reachability last: a leak is the more useful diagnosis when a mutant trips both.
+    assert set(response.analyzers.ran) == set(_EXPECTED_RAN), "every net is only as wide as the run that reaches it"
+    assert response.analyzers.skipped == {}
+    assert set(response.analyzers.errored) == set()
+    assert response.analyzers.skipped_inputs == {}
+    assert response.findings, "the run must actually produce findings, or the proof is vacuous"
+    assert {_unprefixed(key) for key, _ in cache_writes} == set(_EXPECTED_CACHE_WRITES), (
+        "the run must reach Redis exactly where it is expected to, or the cache nets are vacuous"
+    )
 
 
 @pytest.mark.asyncio
-async def test_adhoc_analysis_persists_nothing_when_an_analyzer_fails(monkeypatch, bypass_attempts, cache_writes):
+async def test_adhoc_analysis_persists_nothing_when_an_analyzer_fails(
+    monkeypatch, bypass_attempts, cache_writes, filesystem_watch
+):
     from app.services.analysis import registry
 
     class _Boom:
-        name = "license_compliance"
+        name = _FAILING_ANALYZER
 
         async def analyze(self, sbom, settings=None, parsed_components=None):
             raise RuntimeError("upstream exploded")
 
-    monkeypatch.setitem(registry.analyzers, "license_compliance", _Boom())
+    monkeypatch.setitem(registry.analyzers, _FAILING_ANALYZER, _Boom())
 
     db = _WriteRecordingDatabase()
 
-    response = await run_adhoc_analysis(_full_request(), db)
+    response, spawned = await _run_and_drain(_full_request(), db)
 
-    assert response.analyzers.errored, "the failure must reach the report, or the proof is vacuous"
+    assert not spawned, f"ad-hoc analysis scheduled background work: {spawned}"
     assert_no_write_calls(db)
     await assert_nothing_persisted(db)
     assert bypass_attempts == []
     assert_no_caller_derived_cache_writes(cache_writes)
     assert_no_caller_data_in_shared_cache(cache_writes)
+    assert_no_files_left_behind(filesystem_watch)
+
+    assert set(response.analyzers.errored) == {_FAILING_ANALYZER}, "the failure must reach the report"
+    assert set(response.analyzers.ran) == set(_EXPECTED_RAN) - {_FAILING_ANALYZER}
+    assert {_unprefixed(key) for key, _ in cache_writes} == set(_EXPECTED_CACHE_WRITES)
 
 
 # ── The proof's own detectors
@@ -448,6 +581,52 @@ async def test_a_write_that_leaves_no_document_behind_is_caught():
         assert_no_write_calls(db)
 
 
+def test_a_driver_api_the_fake_never_modelled_is_caught():
+    db = _WriteRecordingDatabase()
+
+    with pytest.raises(TypeError):
+        db.get_collection(_UNNAMED_COLLECTION)
+    with pytest.raises(TypeError):
+        db.client[_UNNAMED_COLLECTION]
+    with pytest.raises(AttributeError):
+        db.scans.audit  # noqa: B018
+
+    assert db.writes == [f"{_UNMODELLED_DRIVER_API}.__call__", f"client[{_UNNAMED_COLLECTION}]", "scans.audit"]
+
+
+@pytest.mark.asyncio
+async def test_an_aggregation_stage_that_writes_server_side_is_caught():
+    db = _WriteRecordingDatabase()
+
+    await db.findings.aggregate([{"$match": {}}]).to_list(None)
+    assert_no_write_calls(db)
+
+    await db.findings.aggregate([{"$match": {}}, {"$merge": {"into": _UNNAMED_COLLECTION}}]).to_list(None)
+
+    with pytest.raises(AssertionError, match=r"\$merge"):
+        assert_no_write_calls(db)
+
+
+@pytest.mark.asyncio
+async def test_work_deferred_to_the_event_loop_is_caught(monkeypatch):
+    db = _WriteRecordingDatabase()
+
+    async def _leaky(_request: AdhocAnalyzeRequest, database: Any) -> AdhocAnalyzeResponse:
+        async def _later() -> None:
+            await asyncio.sleep(0)
+            await database[_UNNAMED_COLLECTION].insert_one({"_id": _LEAK_ID})
+
+        asyncio.get_running_loop().create_task(_later())
+        return AdhocAnalyzeResponse()
+
+    monkeypatch.setattr(sys.modules[__name__], "run_adhoc_analysis", _leaky)
+
+    _response, spawned = await _run_and_drain(_full_request(), db)
+
+    assert spawned, "a task handed to the loop must be visible before the nets are asserted"
+    assert db.writes == [f"{_UNNAMED_COLLECTION}.insert_one"]
+
+
 def test_reaching_mongo_without_the_injected_handle_is_caught(bypass_attempts):
     from app.api import deps
 
@@ -455,6 +634,24 @@ def test_reaching_mongo_without_the_injected_handle_is_caught(bypass_attempts):
         deps.get_database()
 
     assert bypass_attempts == ["app.db.mongodb.get_database"]
+
+
+@pytest.mark.parametrize(
+    ("label", "construct"),
+    [
+        (_MOTOR_CLIENT_LABEL, lambda: motor_asyncio.AsyncIOMotorClient(_MONGO_URL)),
+        (_GRIDFS_BUCKET_LABEL, lambda: motor_asyncio.AsyncIOMotorGridFSBucket(FakeDatabase())),
+        (_PYMONGO_CLIENT_LABEL, lambda: pymongo.MongoClient(_MONGO_URL)),
+        (_PYMONGO_ASYNC_CLIENT_LABEL, lambda: pymongo.AsyncMongoClient(_MONGO_URL)),
+        (_REDIS_CLIENT_LABEL, lambda: redis.asyncio.Redis()),
+        (_REDIS_FROM_URL_LABEL, lambda: redis.asyncio.from_url(settings.REDIS_URL)),
+    ],
+)
+def test_a_directly_constructed_driver_client_is_caught(bypass_attempts, label, construct):
+    with pytest.raises(AssertionError):
+        construct()
+
+    assert bypass_attempts == [label]
 
 
 def test_a_caller_derived_cache_key_is_caught():
@@ -471,10 +668,16 @@ def test_caller_data_cached_under_a_permitted_upstream_key_is_caught():
         assert_no_caller_data_in_shared_cache([(_UPSTREAM_NPM_KEY, json.dumps([_CALLER_ONLY_COMPONENT]))])
 
 
-def test_a_directly_constructed_driver_client_is_caught(bypass_attempts):
-    from motor.motor_asyncio import AsyncIOMotorClient as rebound
+def test_a_file_left_behind_is_caught(filesystem_watch):
+    with tempfile.NamedTemporaryFile("w", suffix=_LEAK_SUFFIX, delete=False) as handle:
+        handle.write(_LEAK_ID)
 
-    with pytest.raises(AssertionError):
-        rebound("mongodb://localhost:27017")
+    with pytest.raises(AssertionError, match=_LEAK_SUFFIX):
+        assert_no_files_left_behind(filesystem_watch)
 
-    assert bypass_attempts == [_DRIVER_CLIENT_LABEL]
+
+def test_a_temp_file_the_library_cleans_up_is_not_a_leak(filesystem_watch):
+    with tempfile.NamedTemporaryFile("w", suffix=_LEAK_SUFFIX) as handle:
+        handle.write(_LEAK_ID)
+
+    assert_no_files_left_behind(filesystem_watch)
