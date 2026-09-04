@@ -22,8 +22,8 @@ export const analyticsKeys = {
     search: (query: string, version?: string) => [...analyticsKeys.all, 'search', { query, version }] as const,
     advancedSearch: (filters: Record<string, unknown>, releaseEnvironment?: string) => [...analyticsKeys.all, 'advanced-search', filters, modeOf(releaseEnvironment)] as const,
     vulnerabilitySearch: (filters: Record<string, unknown>, releaseEnvironment?: string) => [...analyticsKeys.all, 'vulnerability-search', filters, modeOf(releaseEnvironment)] as const,
-    componentFindings: (component: string, version?: string) => [...analyticsKeys.all, 'component-findings', { component, version }] as const,
-    dependencyMetadata: (component: string, version?: string, type?: string) => [...analyticsKeys.all, 'dependency-metadata', { component, version, type }] as const,
+    componentFindings: (component: string, version?: string, releaseEnvironment?: string) => [...analyticsKeys.all, 'component-findings', { component, version }, modeOf(releaseEnvironment)] as const,
+    dependencyMetadata: (component: string, version?: string, type?: string, releaseEnvironment?: string) => [...analyticsKeys.all, 'dependency-metadata', { component, version, type }, modeOf(releaseEnvironment)] as const,
     dependencyTypes: (releaseEnvironment?: string) => [...analyticsKeys.all, 'dependency-types', modeOf(releaseEnvironment)] as const,
     recommendations: (projectId: string, scanId?: string) => [...analyticsKeys.all, 'recommendations', projectId, { scanId }] as const,
     updateFrequency: (projectId: string, opts?: UpdateFrequencyOpts) => [...analyticsKeys.all, 'update-frequency', projectId, { ...opts }] as const,
@@ -97,18 +97,18 @@ export const useImpactAnalysis = (limit: number = 20, releaseEnvironment?: strin
     });
 }
 
-export const useComponentFindings = (component: string, version?: string) => {
+export const useComponentFindings = (component: string, version?: string, releaseEnvironment?: string) => {
     return useQuery({
-        queryKey: analyticsKeys.componentFindings(component, version),
-        queryFn: () => analyticsApi.getComponentFindings(component, version),
+        queryKey: analyticsKeys.componentFindings(component, version, releaseEnvironment),
+        queryFn: () => analyticsApi.getComponentFindings(component, version, releaseEnvironment),
         enabled: !!component
     });
 }
 
-export const useDependencyMetadata = (component: string, version?: string, type?: string) => {
+export const useDependencyMetadata = (component: string, version?: string, type?: string, releaseEnvironment?: string) => {
     return useQuery({
-        queryKey: analyticsKeys.dependencyMetadata(component, version, type),
-        queryFn: () => analyticsApi.getDependencyMetadata(component, version, type),
+        queryKey: analyticsKeys.dependencyMetadata(component, version, type, releaseEnvironment),
+        queryFn: () => analyticsApi.getDependencyMetadata(component, version, type, releaseEnvironment),
         enabled: !!component
     });
 }

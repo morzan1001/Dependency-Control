@@ -7,6 +7,7 @@ from fastapi import HTTPException, Query
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
+    ReleaseEnvironmentQuery,
     build_findings_severity_map,
     get_latest_scan_ids,
     get_projects_with_scans,
@@ -217,6 +218,7 @@ async def get_component_findings(
     db: DatabaseDep,
     component: Annotated[str, Query(description="Component/package name")],
     version: Annotated[str | None, Query(description="Specific version")] = None,
+    release_environment: ReleaseEnvironmentQuery = None,
 ) -> list[dict[str, Any]]:
     """Get all findings for a specific component across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
@@ -226,7 +228,9 @@ async def get_component_findings(
     if not project_ids:
         return []
 
-    project_name_map, scan_ids = await get_projects_with_scans(project_ids, db)
+    # Same scope resolution as the tables that link here, or a component the hotspot ranking
+    # found in the release is looked up against the branch tip and reads as having no findings.
+    project_name_map, scan_ids = await get_projects_with_scans(project_ids, db, release_environment=release_environment)
 
     if not scan_ids:
         return []
@@ -308,6 +312,7 @@ async def get_dependency_metadata_endpoint(
     component: Annotated[str, Query(description="Component/package name")],
     version: Annotated[str | None, Query(description="Specific version")] = None,
     type: Annotated[str | None, Query(description="Package type")] = None,
+    release_environment: ReleaseEnvironmentQuery = None,
 ) -> DependencyMetadata | None:
     """Aggregated dependency metadata across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
@@ -316,7 +321,7 @@ async def get_dependency_metadata_endpoint(
     if not project_ids:
         return None
 
-    scan_ids = await get_latest_scan_ids(project_ids, db)
+    scan_ids = await get_latest_scan_ids(project_ids, db, release_environment=release_environment)
     if not scan_ids:
         return None
 

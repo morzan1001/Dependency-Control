@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react'
 import { useDependencyMetadata, useComponentFindings } from '@/hooks/queries/use-analytics'
+import { useAnalyticsMode } from '@/context/analytics-mode'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { DependencyMetadata, ComponentFinding } from '@/types/analytics'
 import { FindingDetailsModal } from '@/components/findings/FindingDetailsModal'
@@ -494,8 +495,15 @@ export function AnalyticsDependencyModal({
   const [findingModalOpen, setFindingModalOpen] = useState(false)
 
   const enabledComponent = open ? component : ''
-  const { data: metadata, isLoading: isLoadingMetadata } = useDependencyMetadata(enabledComponent, version, type)
-  const { data: findings, isLoading: isLoadingFindings } = useComponentFindings(enabledComponent, version)
+  // The mode the table that opened this modal rendered from, so the drill-down cannot report a
+  // different scope than the row the user clicked.
+  const releaseEnvironment = useAnalyticsMode()
+  const { data: metadata, isLoading: isLoadingMetadata } = useDependencyMetadata(
+    enabledComponent, version, type, releaseEnvironment,
+  )
+  const { data: findings, isLoading: isLoadingFindings } = useComponentFindings(
+    enabledComponent, version, releaseEnvironment,
+  )
 
   const sortedFindings = useMemo(() => {
     if (!findings) return []

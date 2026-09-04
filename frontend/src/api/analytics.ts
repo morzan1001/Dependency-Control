@@ -119,8 +119,12 @@ export const analyticsApi = {
         return response.data;
     },
 
-    getComponentFindings: async (component: string, version?: string): Promise<ComponentFinding[]> => {
-        const params = buildQueryParams({ component, version });
+    getComponentFindings: async (
+        component: string,
+        version?: string,
+        releaseEnvironment?: string
+      ): Promise<ComponentFinding[]> => {
+        const params = buildQueryParams({ component, version, release_environment: releaseEnvironment });
         const response = await api.get<ComponentFinding[]>('/analytics/component-findings', { params });
         return response.data;
     },
@@ -128,9 +132,10 @@ export const analyticsApi = {
     getDependencyMetadata: async (
         component: string,
         version?: string,
-        type?: string
+        type?: string,
+        releaseEnvironment?: string
       ): Promise<DependencyMetadata | null> => {
-        const params = buildQueryParams({ component, version, type });
+        const params = buildQueryParams({ component, version, type, release_environment: releaseEnvironment });
         const response = await api.get<DependencyMetadata | null>('/analytics/dependency-metadata', { params });
         return response.data;
     },
