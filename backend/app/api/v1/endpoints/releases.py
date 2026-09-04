@@ -169,8 +169,13 @@ async def list_releases(
         query["environment"] = environment
 
     total = await db.releases.count_documents(query)
+    # _id breaks released_at ties: a CD job that marks two environments with one explicit timestamp
+    # would otherwise leave "the latest release" to Mongo's unspecified order among equal keys.
     rows = await db.releases.find(
-        query, sort=[("released_at", pymongo.DESCENDING)], skip=skip, limit=limit
+        query,
+        sort=[("released_at", pymongo.DESCENDING), ("_id", pymongo.ASCENDING)],
+        skip=skip,
+        limit=limit,
     ).to_list(limit)
 
     return ReleaseListResponse(

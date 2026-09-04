@@ -86,7 +86,9 @@ async def _release_scan_ids(
         match["project_id"] = {"$in": list(project_ids)}
     pipeline: list[dict[str, Any]] = [
         {"$match": match},
-        {"$sort": {"released_at": -1}},
+        # _id breaks released_at ties so a rollback marked with an explicit timestamp cannot make
+        # analytics pick a different scan on every request. The sort is unindexed either way.
+        {"$sort": {"released_at": -1, "_id": 1}},
         {"$group": {"_id": "$project_id", "scan_id": {"$first": "$scan_id"}}},
     ]
     released = {row["_id"]: row["scan_id"] async for row in db.releases.aggregate(pipeline)}

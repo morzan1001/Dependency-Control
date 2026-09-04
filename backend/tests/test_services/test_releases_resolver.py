@@ -55,6 +55,9 @@ _EXEMPTED_RELEASE = "exempted-release"
 _SURVIVOR_AGE_HOURS = -100
 _CRITICALS_ON_THE_SURVIVOR = 7
 _CURRENT_PROJECT = "pc"
+# Two releases of one environment at the same instant; _release keys the row id on the scan id.
+_TIED_SCAN_LOW_ROW_ID = "tie-a"
+_TIED_SCAN_HIGH_ROW_ID = "tie-z"
 
 
 @pytest.fixture
@@ -466,6 +469,21 @@ async def test_resolve_scan_ids_release_mode_without_a_project_filter(db):
     resolved = await resolve_scan_ids(db, None, release_environment=_PRODUCTION)
 
     assert resolved == {_PROJECT_A: "released-a", _PROJECT_B: "released-b"}
+
+
+@pytest.mark.asyncio
+async def test_resolve_scan_ids_release_mode_breaks_a_released_at_tie_on_the_row_id(db):
+    """A rollback marked with an explicit released_at can equal the record it supersedes; without a
+    total order the environment's scan would differ between two identical requests."""
+    await db.scans.insert_one(_scan(_TIED_SCAN_HIGH_ROW_ID, _PROJECT_A))
+    await db.scans.insert_one(_scan(_TIED_SCAN_LOW_ROW_ID, _PROJECT_A))
+    # Inserted first, so insertion order alone would hand it the group.
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, _TIED_SCAN_HIGH_ROW_ID))
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, _TIED_SCAN_LOW_ROW_ID))
+
+    assert await resolve_scan_ids(db, [_PROJECT_A], release_environment=_PRODUCTION) == {
+        _PROJECT_A: _TIED_SCAN_LOW_ROW_ID
+    }
 
 
 @pytest.mark.asyncio

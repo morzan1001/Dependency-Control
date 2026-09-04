@@ -45,6 +45,9 @@ _OTHER_VERSION = "v3.0.0"
 _BLANK_TAG = ""
 _BRANCH = "main"
 _INVALID_ENVIRONMENT = "Prod.EU"
+# Two marks of one instant; the row inserted first is the one insertion order alone would list first.
+_TIED_LOW_ROW_ID = "row-a"
+_TIED_HIGH_ROW_ID = "row-z"
 
 _PAST = _NOW - timedelta(days=1)
 # BSON has no offsets, so an aware datetime reads back as naive UTC.
@@ -414,6 +417,22 @@ async def test_list_returns_every_environment_newest_first(client, db, member_au
     assert body["items"][0]["scan_id"] == "second"
     assert body["items"][0]["version"] == _OTHER_VERSION
     assert body["page"] == _FIRST_PAGE
+
+
+@pytest.mark.asyncio
+async def test_list_orders_releases_marked_at_the_same_instant_deterministically(client, db, member_auth_headers):
+    """A CD job that marks two environments with one explicit released_at ties the sort key, and
+    among equal keys Mongo's order is unspecified — so "the latest release" could flip per request."""
+    await _seed_scan(db, "rel")
+    for row_id, environment in ((_TIED_HIGH_ROW_ID, _CANARY), (_TIED_LOW_ROW_ID, _STAGING)):
+        await ReleaseRepository(db).record(
+            Release(id=row_id, project_id=_PROJECT, environment=environment, scan_id="rel", released_at=_NOW)
+        )
+
+    resp = await client.get(f"/api/v1/projects/{_PROJECT}/releases", headers=member_auth_headers)
+
+    assert resp.status_code == 200, resp.text
+    assert [item["environment"] for item in resp.json()["items"]] == [_STAGING, _CANARY]
 
 
 @pytest.mark.asyncio
