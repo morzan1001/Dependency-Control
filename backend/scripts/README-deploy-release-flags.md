@@ -223,6 +223,24 @@ discarded on a project whose chain is deeper than the walk's bound.
   ```js
   db.scans.countDocuments({ branch: "unknown", commit_tag: { $nin: [null, ""] } })
   ```
+* **Crypto assets uploaded through the CBOM endpoint, on any project the wave rescans.** A rescan
+  re-derives crypto assets from the SBOM it copies, so assets embedded in an SBOM survive. Assets
+  posted separately to `/cbom` have no such source: they are keyed to the scan they were posted
+  against, every reader looks them up by scan id, and the carry-over that copies external analyzer
+  results onto a rescan excludes the crypto analyzers. A rescan therefore leaves them behind, and
+  the project's crypto tab, hotspots and compliance report empty out for it.
+
+  This is not new, but a fleet-wide rescan wave turns a per-project loss into a single event, and
+  releases add a second population that gets rescanned. Check the blast radius in the deploy window
+  before choosing Option A or B — if this is zero, there is nothing to weigh:
+
+  ```js
+  db.crypto_assets.countDocuments({})
+  ```
+
+  If it is not zero, find which projects would lose assets — those whose current representative
+  scan is about to be rescanned — and either withhold them from the wave with
+  `rescan_enabled: false` or re-post their CBOMs after it lands.
 
 ---
 
@@ -233,13 +251,64 @@ kubectl rollout status deployment/dependency-control-backend -n dependency-contr
 kubectl get pods -n dependency-control     # no old ReplicaSet pods left
 ```
 
-Nothing changes for existing data at this point: every scan has `is_release` absent, which the
-resolver, the retention cursors and the rescan target query all read as "not a release".
+No release exists yet: every scan has `is_release` absent, which the resolver, the retention cursors
+and the rescan target query all read as "not a release". Existing data is nonetheless read
+differently from the first request after the rollout, in four ways, none of which needs a release
+to be marked.
 
-Two other behaviour changes ship with this deploy and are visible without any release being marked:
+* **Every project's representative scan is now validated, and a project without a stored pointer
+  gets one.** `get_latest_active_scan_ids` used to take `Project.latest_scan_id` on trust and skip
+  a project that had none. It now checks that the pointer still names a readable scan and falls
+  back to the project's newest usable scan when it does not, and it resolves a project with no
+  pointer the same way instead of dropping it. Both change *which* scan a project speaks for, fleet
+  wide and at once: analytics summary, top dependencies, hotspots, search, impact, risk, compliance
+  reports, and every chat and MCP tool. The numbers move because they were wrong, but they move.
+
+  Retention deletes a scan without clearing the pointer and defaults to 90 days, so the dangling
+  population is not hypothetical. Size both before deploying:
+
+  ```js
+  // pointers naming a scan that is gone or unreadable, on projects that took the trusted fast path
+  db.projects.aggregate([
+    { $match: { latest_scan_id: { $ne: null }, deleted_branches: { $in: [null, []] } } },
+    { $lookup: { from: "scans", localField: "latest_scan_id", foreignField: "_id", as: "cur" } },
+    { $set: { cur: { $first: "$cur" } } },
+    { $match: { $or: [ { cur: null },
+                       { "cur.status": { $nin: ["completed", "completed_with_errors"] } } ] } },
+    { $count: "dangling_pointers" }
+  ])
+
+  // projects with no pointer that do have a usable scan — these appear in rollups for the first time
+  db.projects.aggregate([
+    { $match: { latest_scan_id: null } },
+    { $lookup: {
+        from: "scans",
+        let: { pid: "$_id" },
+        pipeline: [
+          { $match: { $expr: { $eq: ["$project_id", "$$pid"] },
+                      status: { $in: ["completed", "completed_with_errors"] } } },
+          { $limit: 1 },
+          { $project: { _id: 1 } } ],
+        as: "usable" } },
+    { $match: { usable: { $ne: [] } } },
+    { $count: "projects_gaining_a_scan" }
+  ])
+  ```
+
+* **Compliance reports, chat and crypto hotspots pick their scans through the same resolver.** They
+  used to take each project's newest usable scan outright; they now take the project pointer and
+  honour `deleted_branches`. **Report content changes for any project with a deleted branch**, where
+  a scan on that branch could previously represent the project and now cannot. Size it:
+
+  ```js
+  db.projects.countDocuments({ deleted_branches: { $exists: true, $ne: [] } })
+  ```
+
+  Generate one report for such a project before and after the deploy and diff the finding counts.
 
 * **The scan delta now excludes waived findings.** Counts on the delta screen fall wherever a
-  waiver applies. That is the delta agreeing with stats, impact, hotspots and crypto trends.
+  waiver applies. That is the delta agreeing with stats, impact, hotspots and crypto trends. The
+  same function backs the **MCP `compare_scans` tool**, so its counts fall by the same amount.
 * **The branch census skips scans whose branch is their own commit tag.** The 6-hourly branch sync
   rebuilds `deleted_branches` from the distinct branches in `db.scans`, so without this the sync
   would put every historical tag name straight back after the backfill pruned it.
