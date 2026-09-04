@@ -2,7 +2,7 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProjectScans, useScanResults } from '@/hooks/queries/use-scans'
 import { useProjectWaivers } from '@/hooks/queries/use-waivers'
-import { Scan, ScanReleaseRef, ScanWithReleases } from '@/types/scan'
+import { EnhancedStats, Scan, ScanReleaseRef, ScanWithReleases } from '@/types/scan'
 import { isScanUsable } from '@/lib/scan-status'
 import { highestRiskBranch } from '@/lib/branches'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -31,6 +31,20 @@ function newestReleaseRow(scan: ScanWithReleases): ScanReleaseRef | undefined {
       !newest || new Date(row.released_at).getTime() > new Date(newest.released_at).getTime() ? row : newest,
     undefined,
   )
+}
+
+interface ResolvedRun {
+  scanId: string
+  stats: EnhancedStats
+}
+
+// A rescan reports on latest_run, which announces itself while it is still queued. Numbers and
+// identity are resolved together so no tile can link to a scan other than the one it counted.
+function resolveRun(scan: Scan | undefined): ResolvedRun | undefined {
+  if (!scan) return undefined
+  const run = scan.latest_run
+  if (run?.stats) return { scanId: run.scan_id, stats: run.stats }
+  return { scanId: scan.id, stats: scan.stats || {} }
 }
 
 export function ProjectOverview({ projectId, selectedBranches }: ProjectOverviewProps) {
@@ -95,12 +109,11 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   }, [filteredScans]);
   const releaseScan = latestRelease?.scan;
   const headScan = activeBranch ? latestScansByBranch[activeBranch] : undefined;
-  const activeScan = showRelease && releaseScan ? releaseScan : headScan;
-  // A rescan leaves the release scan's own stats untouched and reports on latest_run instead.
-  const releaseRun = showRelease ? releaseScan?.latest_run : undefined;
-  const activeScanId = releaseRun?.scan_id || activeScan?.id;
-  const headlineSource = showRelease && releaseScan
-    ? `Release on ${releaseScan.branch}`
+  const releaseShown = showRelease ? releaseScan : undefined;
+  const activeRun = resolveRun(releaseShown ?? headScan);
+  const activeScanId = activeRun?.scanId;
+  const headlineSource = releaseShown
+    ? `Release on ${releaseShown.branch}`
     : activeBranch ? `Branch ${activeBranch}` : null;
   const { data: scanResults } = useScanResults(activeScanId || '');
 
@@ -115,7 +128,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
     )
   }
 
-  const stats = releaseRun?.stats || activeScan?.stats || {}
+  const stats = activeRun?.stats ?? {}
   const branchStats = projectStats?.branchStats || []
 
   const threatIntel = stats.threat_intel

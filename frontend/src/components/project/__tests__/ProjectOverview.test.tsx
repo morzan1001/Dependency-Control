@@ -1,5 +1,5 @@
 import { fireEvent, render, screen, within } from '@testing-library/react'
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ProjectOverview } from '../ProjectOverview'
 import type { EnhancedStats, ScanWithReleases } from '@/types/scan'
@@ -10,6 +10,7 @@ const MAIN_BRANCH = 'main'
 const mockUseProjectScans = vi.fn()
 const mockUseScanResults = vi.fn()
 const mockUseProjectWaivers = vi.fn()
+const mockNavigate = vi.fn()
 
 vi.mock('@/hooks/queries/use-scans', () => ({
   useProjectScans: (...args: unknown[]) => mockUseProjectScans(...args),
@@ -21,7 +22,7 @@ vi.mock('@/hooks/queries/use-waivers', () => ({
 }))
 
 vi.mock('react-router-dom', () => ({
-  useNavigate: () => vi.fn(),
+  useNavigate: () => mockNavigate,
 }))
 
 // Isolate the gating logic: render a probe instead of the real dashboard.
@@ -70,6 +71,8 @@ function renderOverview(scans: ScanWithReleases[], selectedBranches: string[] = 
   mockUseProjectWaivers.mockReturnValue({ data: undefined })
   return render(<ProjectOverview projectId={PROJECT_ID} selectedBranches={selectedBranches} />)
 }
+
+beforeEach(() => vi.clearAllMocks())
 
 describe('ProjectOverview - ThreatIntelligenceDashboard gating', () => {
   it('renders the dashboard when reachability analysis exists with zero KEV/high-EPSS', () => {
@@ -165,29 +168,76 @@ describe('ProjectOverview - release tile', () => {
   const ROLLED_BACK_VERSION = 'rolled-back'
   const RELEASED_AT = '2026-08-01T00:00:00Z'
   const ROLLED_BACK_AT = '2026-08-20T00:00:00Z'
+  const HEAD_CREATED_AT = '2026-09-01T00:00:00Z'
   const RETIRED_BRANCH = 'release-1.0'
+  const HEAD_SCAN_ID = 's-head'
+  const HEAD_RESCAN_ID = 's-head-rescan'
+  const RELEASE_SCAN_ID = 's-release'
+  const RELEASE_RESCAN_ID = 's-release-rescan'
   const HEAD_CRITICAL = 9
   const HEAD_HIGH = 9
+  const HEAD_RESCANNED_CRITICAL = 4
   const RELEASE_CRITICAL = 2
   const RELEASE_HIGH = 3
   const RESCANNED_CRITICAL = 1
   const CRITICAL_TILE = 'Critical Issues'
   const HIGH_TILE = 'High Issues'
+  const CRITICAL_SEVERITY = 'CRITICAL'
   const SHOW_RELEASE_BUTTON = 'Show release numbers'
   const SHOW_HEAD_BUTTON = 'Show HEAD numbers'
   const NO_RELEASE_TEXT = 'No release marked'
   const GENERIC_RELEASE_LABEL = 'Release'
 
+  function findingsUrl(scanId: string, severity: string): string {
+    return `/projects/${PROJECT_ID}/scans/${scanId}?severity=${severity}`
+  }
+
   const head = makeScan(
-    { id: 's-head', created_at: '2026-09-01T00:00:00Z' },
+    { id: HEAD_SCAN_ID, created_at: HEAD_CREATED_AT },
     { critical: HEAD_CRITICAL, high: HEAD_HIGH },
   )
   const release = makeScan(
     {
-      id: 's-release',
+      id: RELEASE_SCAN_ID,
       created_at: RELEASED_AT,
       is_release: true,
       releases: [{ environment: PRODUCTION, version: RELEASE_VERSION, released_at: RELEASED_AT }],
+    },
+    { critical: RELEASE_CRITICAL, high: RELEASE_HIGH },
+  )
+  const releaseRescanned = makeScan(
+    {
+      id: RELEASE_SCAN_ID,
+      created_at: RELEASED_AT,
+      is_release: true,
+      releases: [{ environment: PRODUCTION, version: RELEASE_VERSION, released_at: RELEASED_AT }],
+      latest_run: {
+        scan_id: RELEASE_RESCAN_ID,
+        status: 'completed',
+        findings_count: RESCANNED_CRITICAL,
+        stats: { critical: RESCANNED_CRITICAL, high: 0 },
+      },
+    },
+    { critical: RELEASE_CRITICAL, high: RELEASE_HIGH },
+  )
+  const releaseRescanQueued = makeScan(
+    {
+      id: RELEASE_SCAN_ID,
+      created_at: RELEASED_AT,
+      is_release: true,
+      releases: [{ environment: PRODUCTION, version: RELEASE_VERSION, released_at: RELEASED_AT }],
+      // A queued rescan has analysed nothing yet, so its summary carries no stats.
+      latest_run: { scan_id: RELEASE_RESCAN_ID, status: 'pending' },
+    },
+    { critical: RELEASE_CRITICAL, high: RELEASE_HIGH },
+  )
+  const releaseRescanWithoutStats = makeScan(
+    {
+      id: RELEASE_SCAN_ID,
+      created_at: RELEASED_AT,
+      is_release: true,
+      releases: [{ environment: PRODUCTION, version: RELEASE_VERSION, released_at: RELEASED_AT }],
+      latest_run: { scan_id: RELEASE_RESCAN_ID, status: 'completed', stats: null },
     },
     { critical: RELEASE_CRITICAL, high: RELEASE_HIGH },
   )
@@ -241,45 +291,70 @@ describe('ProjectOverview - release tile', () => {
   })
 
   it('reads the release rescan numbers, not the stale release scan', () => {
-    const rescanned = makeScan(
-      {
-        id: 's-release-rescanned',
-        created_at: RELEASED_AT,
-        is_release: true,
-        releases: [{ environment: PRODUCTION, version: RELEASE_VERSION, released_at: RELEASED_AT }],
-        latest_run: {
-          scan_id: 's-release-rescan',
-          status: 'completed',
-          findings_count: RESCANNED_CRITICAL,
-          stats: { critical: RESCANNED_CRITICAL, high: 0 },
-        },
-      },
-      { critical: RELEASE_CRITICAL, high: RELEASE_HIGH },
-    )
-    renderOverview([head, rescanned])
+    renderOverview([head, releaseRescanned])
 
     fireEvent.click(screen.getByRole('button', { name: SHOW_RELEASE_BUTTON }))
 
     expect(within(tile(CRITICAL_TILE)).getByText(String(RESCANNED_CRITICAL))).toBeInTheDocument()
   })
 
+  it('sends the tile to the rescan whose numbers it shows', () => {
+    renderOverview([head, releaseRescanned])
+
+    fireEvent.click(screen.getByRole('button', { name: SHOW_RELEASE_BUTTON }))
+    fireEvent.click(tile(CRITICAL_TILE))
+
+    expect(mockNavigate).toHaveBeenCalledWith(findingsUrl(RELEASE_RESCAN_ID, CRITICAL_SEVERITY))
+  })
+
   it('keeps the release numbers while its rescan is still queued', () => {
-    const rescanQueued = makeScan(
-      {
-        id: 's-release-queued',
-        created_at: RELEASED_AT,
-        is_release: true,
-        releases: [{ environment: PRODUCTION, version: RELEASE_VERSION, released_at: RELEASED_AT }],
-        // A queued rescan has analysed nothing yet, so its summary carries no stats.
-        latest_run: { scan_id: 's-release-rescan', status: 'pending' },
-      },
-      { critical: RELEASE_CRITICAL, high: RELEASE_HIGH },
-    )
-    renderOverview([head, rescanQueued])
+    renderOverview([head, releaseRescanQueued])
 
     fireEvent.click(screen.getByRole('button', { name: SHOW_RELEASE_BUTTON }))
 
     expect(within(tile(CRITICAL_TILE)).getByText(String(RELEASE_CRITICAL))).toBeInTheDocument()
+  })
+
+  it('sends the tile to the release whose numbers it shows, not to the queued rescan', () => {
+    renderOverview([head, releaseRescanQueued])
+
+    fireEvent.click(screen.getByRole('button', { name: SHOW_RELEASE_BUTTON }))
+    fireEvent.click(tile(CRITICAL_TILE))
+
+    expect(mockNavigate).toHaveBeenCalledWith(findingsUrl(RELEASE_SCAN_ID, CRITICAL_SEVERITY))
+    expect(mockUseScanResults).toHaveBeenLastCalledWith(RELEASE_SCAN_ID)
+  })
+
+  it('keeps release numbers and release identity together when a finished rescan reports none', () => {
+    renderOverview([head, releaseRescanWithoutStats])
+
+    fireEvent.click(screen.getByRole('button', { name: SHOW_RELEASE_BUTTON }))
+    fireEvent.click(tile(CRITICAL_TILE))
+
+    expect(within(tile(CRITICAL_TILE)).getByText(String(RELEASE_CRITICAL))).toBeInTheDocument()
+    expect(mockNavigate).toHaveBeenCalledWith(findingsUrl(RELEASE_SCAN_ID, CRITICAL_SEVERITY))
+  })
+
+  it('reads the HEAD rescan numbers too, so the switch compares like with like', () => {
+    const headRescanned = makeScan(
+      {
+        id: HEAD_SCAN_ID,
+        created_at: HEAD_CREATED_AT,
+        latest_run: {
+          scan_id: HEAD_RESCAN_ID,
+          status: 'completed',
+          stats: { critical: HEAD_RESCANNED_CRITICAL, high: 0 },
+        },
+      },
+      { critical: HEAD_CRITICAL, high: HEAD_HIGH },
+    )
+    renderOverview([headRescanned, release])
+
+    expect(within(tile(CRITICAL_TILE)).getByText(String(HEAD_RESCANNED_CRITICAL))).toBeInTheDocument()
+
+    fireEvent.click(tile(CRITICAL_TILE))
+
+    expect(mockNavigate).toHaveBeenCalledWith(findingsUrl(HEAD_RESCAN_ID, CRITICAL_SEVERITY))
   })
 
   it('picks the newest release by released_at, not by created_at', () => {
