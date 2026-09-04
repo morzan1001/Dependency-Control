@@ -185,12 +185,19 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       {branchNames.length > 1 && activeBranch && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-muted-foreground">
-            Findings exist on every branch, so the blocks below show one branch at a time.
+            {releaseShown
+              ? 'A release is one build, so the branch picker is off while its numbers are shown.'
+              : 'Findings exist on every branch, so the blocks below show one branch at a time.'}
           </p>
           <Tabs value={activeBranch} onValueChange={setPickedBranch}>
             <TabsList>
               {branchNames.map(branch => (
-                <TabsTrigger key={branch} value={branch} className="gap-1.5">
+                <TabsTrigger
+                  key={branch}
+                  value={branch}
+                  className="gap-1.5"
+                  disabled={releaseShown !== undefined}
+                >
                   <GitBranch className="h-3 w-3" />
                   {branch}
                 </TabsTrigger>

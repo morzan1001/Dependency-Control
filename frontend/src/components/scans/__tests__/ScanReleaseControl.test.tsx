@@ -1,4 +1,5 @@
 import { render, screen, fireEvent } from '@testing-library/react'
+import { MemoryRouter } from 'react-router-dom'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ScanReleaseControl } from '../ScanReleaseControl'
@@ -7,6 +8,7 @@ import type { ScanReleaseRef, ScanWithReleases } from '@/types/scan'
 
 const PROJECT_ID = 'p1'
 const SCAN_ID = 'scan-1'
+const ORIGINAL_SCAN_ID = 'scan-0'
 const COMMIT_HASH = 'a'.repeat(40)
 const PRODUCTION = 'production'
 const STAGING = 'staging'
@@ -19,6 +21,8 @@ const GENERIC_RELEASE_LABEL = 'Release'
 const ENVIRONMENT_FIELD = 'Environment to release to'
 const OFF_PATTERN_ENVIRONMENT = 'Pre-Prod!'
 const OFF_PATTERN_HINT = /lowercase letters/i
+const RESCAN_NOTE = /releases are held by the original scan/i
+const ORIGINAL_SCAN_LINK = 'Open the original scan'
 
 const mockMark = vi.fn()
 const mockUnmark = vi.fn()
@@ -57,11 +61,19 @@ function releasedScan(releases: ScanReleaseRef[]): ScanWithReleases {
   return makeScan({ is_release: true, releases })
 }
 
+function renderControl(scan: ScanWithReleases) {
+  return render(
+    <MemoryRouter>
+      <ScanReleaseControl projectId={PROJECT_ID} scan={scan} />
+    </MemoryRouter>,
+  )
+}
+
 beforeEach(() => vi.clearAllMocks())
 
 describe('ScanReleaseControl', () => {
   it('marks a plain scan into the default environment, leaving the version to the backend', () => {
-    render(<ScanReleaseControl projectId={PROJECT_ID} scan={makeScan()} />)
+    renderControl(makeScan())
 
     fireEvent.click(screen.getByRole('button', { name: MARK_BUTTON }))
 
@@ -73,7 +85,7 @@ describe('ScanReleaseControl', () => {
 
   it('promotes a staging release to the environment that was typed', () => {
     const scan = releasedScan([makeRelease({ environment: STAGING, version: STAGING_VERSION })])
-    render(<ScanReleaseControl projectId={PROJECT_ID} scan={scan} />)
+    renderControl(scan)
 
     fireEvent.change(screen.getByLabelText(ENVIRONMENT_FIELD), { target: { value: PRODUCTION } })
     fireEvent.click(screen.getByRole('button', { name: MARK_BUTTON }))
@@ -85,14 +97,26 @@ describe('ScanReleaseControl', () => {
   })
 
   it('does not offer to re-mark an environment the scan already holds', () => {
-    render(<ScanReleaseControl projectId={PROJECT_ID} scan={releasedScan([makeRelease()])} />)
+    renderControl(releasedScan([makeRelease()]))
 
     expect(screen.getByRole('button', { name: MARK_BUTTON })).toBeDisabled()
     expect(screen.getByText(`Already released to ${PRODUCTION}.`)).toBeInTheDocument()
   })
 
+  it('points a re-scan at the original scan instead of offering a mark that lands elsewhere', () => {
+    renderControl(makeScan({ is_rescan: true, original_scan_id: ORIGINAL_SCAN_ID }))
+
+    expect(screen.getByText(RESCAN_NOTE)).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: ORIGINAL_SCAN_LINK })).toHaveAttribute(
+      'href',
+      `/projects/${PROJECT_ID}/scans/${ORIGINAL_SCAN_ID}`,
+    )
+    expect(screen.queryByRole('button', { name: MARK_BUTTON })).not.toBeInTheDocument()
+    expect(screen.queryByLabelText(ENVIRONMENT_FIELD)).not.toBeInTheDocument()
+  })
+
   it('rejects an environment the backend would refuse instead of requesting it', () => {
-    render(<ScanReleaseControl projectId={PROJECT_ID} scan={makeScan()} />)
+    renderControl(makeScan())
 
     fireEvent.change(screen.getByLabelText(ENVIRONMENT_FIELD), { target: { value: OFF_PATTERN_ENVIRONMENT } })
     fireEvent.click(screen.getByRole('button', { name: MARK_BUTTON }))
@@ -103,7 +127,7 @@ describe('ScanReleaseControl', () => {
   })
 
   it('cannot mark a scan that has no commit', () => {
-    render(<ScanReleaseControl projectId={PROJECT_ID} scan={makeScan({ commit_hash: undefined })} />)
+    renderControl(makeScan({ commit_hash: undefined }))
 
     expect(screen.getByRole('button', { name: MARK_BUTTON })).toBeDisabled()
   })
@@ -113,7 +137,7 @@ describe('ScanReleaseControl', () => {
       makeRelease({ environment: STAGING, version: STAGING_VERSION, released_at: STAGING_RELEASED_AT }),
       makeRelease(),
     ])
-    render(<ScanReleaseControl projectId={PROJECT_ID} scan={scan} />)
+    renderControl(scan)
 
     expect(screen.getByLabelText(`Release ${STAGING_VERSION} in ${STAGING}`)).toBeInTheDocument()
     expect(screen.getByLabelText(`Release ${PRODUCTION_VERSION} in ${PRODUCTION}`)).toBeInTheDocument()
@@ -131,14 +155,14 @@ describe('ScanReleaseControl', () => {
       makeRelease({ environment: STAGING, released_at: STAGING_RELEASED_AT }),
       makeRelease(),
     ])
-    render(<ScanReleaseControl projectId={PROJECT_ID} scan={scan} />)
+    renderControl(scan)
 
     expect(screen.getByText(`Released ${formatDateTime(STAGING_RELEASED_AT)}`)).toBeInTheDocument()
     expect(screen.getByText(`Released ${formatDateTime(PRODUCTION_RELEASED_AT)}`)).toBeInTheDocument()
   })
 
   it('keeps the badge for a release whose record it cannot see', () => {
-    render(<ScanReleaseControl projectId={PROJECT_ID} scan={releasedScan([])} />)
+    renderControl(releasedScan([]))
 
     expect(screen.getByLabelText(GENERIC_RELEASE_LABEL)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Withdraw from/ })).not.toBeInTheDocument()

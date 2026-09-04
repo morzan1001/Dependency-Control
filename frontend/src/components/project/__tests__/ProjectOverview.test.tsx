@@ -170,6 +170,7 @@ describe('ProjectOverview - release tile', () => {
   const ROLLED_BACK_AT = '2026-08-20T00:00:00Z'
   const HEAD_CREATED_AT = '2026-09-01T00:00:00Z'
   const RETIRED_BRANCH = 'release-1.0'
+  const SECOND_BRANCH = 'feature-b'
   const HEAD_SCAN_ID = 's-head'
   const HEAD_RESCAN_ID = 's-head-rescan'
   const RELEASE_SCAN_ID = 's-release'
@@ -180,6 +181,8 @@ describe('ProjectOverview - release tile', () => {
   const RELEASE_CRITICAL = 2
   const RELEASE_HIGH = 3
   const RESCANNED_CRITICAL = 1
+  const SECOND_BRANCH_CRITICAL = 3
+  const SECOND_BRANCH_HIGH = 3
   const CRITICAL_TILE = 'Critical Issues'
   const HIGH_TILE = 'High Issues'
   const CRITICAL_SEVERITY = 'CRITICAL'
@@ -355,6 +358,21 @@ describe('ProjectOverview - release tile', () => {
     fireEvent.click(tile(CRITICAL_TILE))
 
     expect(mockNavigate).toHaveBeenCalledWith(findingsUrl(HEAD_RESCAN_ID, CRITICAL_SEVERITY))
+  })
+
+  it('turns the branch tabs off while release numbers are shown', () => {
+    const otherBranch = makeScan(
+      { id: 's-second-branch', branch: SECOND_BRANCH, created_at: HEAD_CREATED_AT },
+      { critical: SECOND_BRANCH_CRITICAL, high: SECOND_BRANCH_HIGH },
+    )
+    renderOverview([head, release, otherBranch], [MAIN_BRANCH, SECOND_BRANCH])
+
+    expect(screen.getByRole('tab', { name: MAIN_BRANCH })).toBeEnabled()
+
+    fireEvent.click(screen.getByRole('button', { name: SHOW_RELEASE_BUTTON }))
+
+    expect(screen.getByRole('tab', { name: MAIN_BRANCH })).toBeDisabled()
+    expect(screen.getByRole('tab', { name: SECOND_BRANCH })).toBeDisabled()
   })
 
   it('picks the newest release by released_at, not by created_at', () => {

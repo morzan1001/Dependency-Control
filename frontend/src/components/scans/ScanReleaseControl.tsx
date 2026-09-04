@@ -1,5 +1,6 @@
 import { Rocket } from 'lucide-react'
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
@@ -12,6 +13,9 @@ import type { ScanWithReleases } from '@/types/scan'
 
 const ENVIRONMENT_LABEL = 'Environment to release to'
 const OFF_PATTERN_HINT = 'Lowercase letters, digits, - and _ only, up to 32 characters.'
+const RESCAN_NOTE = 'A re-scan carries the same commit, so its releases are held by the original scan.'
+const ORIGINAL_SCAN_LINK = 'Open the original scan'
+const SECTION_LABEL = 'Release'
 
 interface ScanReleaseControlProps {
   projectId: string
@@ -29,6 +33,25 @@ export function ScanReleaseControl({ projectId, scan }: ScanReleaseControlProps)
   const [environment, setEnvironment] = useState(DEFAULT_RELEASE_ENVIRONMENT)
   const markRelease = useMarkRelease()
   const unmarkRelease = useUnmarkRelease()
+
+  // mark_release resolves the commit to the scan that is not a re-scan, so a mark taken here would
+  // land on a record this page can never show.
+  if (scan.is_rescan) {
+    return (
+      <div className="flex flex-col space-y-1">
+        <span className="text-sm text-muted-foreground">{SECTION_LABEL}</span>
+        <span className="text-xs text-muted-foreground">{RESCAN_NOTE}</span>
+        {scan.original_scan_id && (
+          <Link
+            to={`/projects/${projectId}/scans/${scan.original_scan_id}`}
+            className="w-fit text-xs text-primary hover:underline"
+          >
+            {ORIGINAL_SCAN_LINK}
+          </Link>
+        )}
+      </div>
+    )
+  }
 
   const rejection = rejectionFor(environment, scan.releases.map((release) => release.environment))
 
@@ -56,7 +79,7 @@ export function ScanReleaseControl({ projectId, scan }: ScanReleaseControlProps)
 
   return (
     <div className="flex flex-col space-y-1">
-      <span className="text-sm text-muted-foreground">Release</span>
+      <span className="text-sm text-muted-foreground">{SECTION_LABEL}</span>
       <div className="flex flex-col gap-2">
         {scan.releases.map((release) => (
           <div key={release.environment} className="flex flex-col gap-0.5">
