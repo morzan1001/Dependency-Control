@@ -17,6 +17,8 @@ const PRODUCTION = 'production'
 const STAGING = 'staging'
 const RESOLVED_PROJECTS = 40
 const PROJECTS_WITHOUT_SCAN = 660
+const TOTAL_PROJECTS = 700
+const NONE_MISSING = 0
 
 // Annotated, not inferred: an inferred fixture drops a field from the response type silently.
 const base: AnalyticsScope = {
@@ -78,5 +80,47 @@ describe('AnalyticsScopeControl mode switch', () => {
     renderControl({ ...base, release_environments: [] })
 
     expect(screen.queryByLabelText(SCOPE_LABEL)).not.toBeInTheDocument()
+  })
+})
+
+describe('AnalyticsScopeControl coverage caption', () => {
+  afterEach(() => vi.clearAllMocks())
+
+  it('names how many projects were left out of the scope', () => {
+    renderControl(base)
+
+    expect(
+      screen.getByText(
+        `Counted ${RESOLVED_PROJECTS} of ${TOTAL_PROJECTS} projects; ${PROJECTS_WITHOUT_SCAN} contributed no scan to this scope.`,
+      ),
+    ).toBeInTheDocument()
+  })
+
+  // The bare-list tabs have their own permissions and report no counters, so the caption cannot
+  // depend on the mode switch being there.
+  it('is shown even where no environment exists to switch to', () => {
+    renderControl({ ...base, release_environments: [] })
+
+    expect(screen.getByText(/contributed no scan/)).toBeInTheDocument()
+  })
+
+  it('stays quiet when every project contributed', () => {
+    renderControl({ ...base, resolved_projects: TOTAL_PROJECTS, projects_without_release: NONE_MISSING })
+
+    expect(screen.queryByText(/contributed no scan/)).not.toBeInTheDocument()
+  })
+
+  it('stays quiet while the scope is still loading', () => {
+    renderControl(undefined)
+
+    expect(screen.queryByText(/contributed no scan/)).not.toBeInTheDocument()
+  })
+
+  // Without a release environment the backend fills projects_without_release with the projects
+  // that have no usable scan at all, so wording it as a release count would state something false.
+  it('does not blame the missing projects on a release they never made', () => {
+    renderControl({ ...base, release_environments: [] })
+
+    expect(screen.queryByText(/release/i)).not.toBeInTheDocument()
   })
 })

@@ -124,9 +124,6 @@ export interface AnalyticsSummary {
   unique_packages: number;
   dependency_types: DependencyTypeStats[];
   severity_distribution: SeverityBreakdown;
-  resolved_projects: number;
-  // Counts projects with no usable scan at all unless a release environment was requested.
-  projects_without_release: number;
 }
 
 export interface AnalyticsScope {

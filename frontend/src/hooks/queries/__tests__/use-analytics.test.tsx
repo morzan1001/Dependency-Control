@@ -20,7 +20,6 @@ const SORT_BY = 'finding_count'
 const SORT_ORDER = 'desc'
 const FILTERS = { query: 'log4j' }
 const NO_FINDINGS = 0
-const RESOLVED_PROJECTS = 0
 
 // Annotated, not inferred: an inferred fixture drops a field from the response type silently.
 const summary: AnalyticsSummary = {
@@ -34,8 +33,6 @@ const summary: AnalyticsSummary = {
     medium: NO_FINDINGS,
     low: NO_FINDINGS,
   },
-  resolved_projects: RESOLVED_PROJECTS,
-  projects_without_release: RESOLVED_PROJECTS,
 }
 
 // Every endpoint that accepts release_environment, keyed the way its caller keys it.
