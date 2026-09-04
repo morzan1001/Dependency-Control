@@ -20,6 +20,8 @@ const SECTION_LABEL = 'Release'
 const MARKED_SCAN_LINK = 'Open the marked scan'
 // Long enough to read which scan took the mark and reach the link.
 const MARKED_ELSEWHERE_TOAST_MS = 15_000
+const UNCOVERED_RELEASE_TOAST_MS = 15_000
+const UNCOVERED_SCAN_LINK = 'Open that release'
 
 interface ScanReleaseControlProps {
   projectId: string
@@ -97,7 +99,25 @@ export function ScanReleaseControl({ projectId, scan }: ScanReleaseControlProps)
     unmarkRelease.mutate(
       { projectId, scanId: scan.id, environment: withdrawnFrom },
       {
-        onSuccess: () => toast.success(`Withdrawn from ${withdrawnFrom}`),
+        onSuccess: (response) => {
+          // Marks are history, so a withdrawal can uncover an older one and leave the environment
+          // reporting a build nobody chose to deploy.
+          const uncovered = response.environment_release
+          if (!uncovered) {
+            toast.success(`Withdrawn from ${withdrawnFrom}`)
+            return
+          }
+          toast.warning(`Withdrawn from ${withdrawnFrom}, which now reports an earlier release`, {
+            description:
+              `${withdrawnFrom} is now ${uncovered.version ?? uncovered.scan_id}, released `
+              + `${formatDateTime(uncovered.released_at)}. Withdraw it too if nothing is deployed there.`,
+            duration: UNCOVERED_RELEASE_TOAST_MS,
+            action: {
+              label: UNCOVERED_SCAN_LINK,
+              onClick: () => navigate(`/projects/${projectId}/scans/${uncovered.scan_id}`),
+            },
+          })
+        },
         onError: () => toast.error(`Could not withdraw this scan from ${withdrawnFrom}`),
       },
     )

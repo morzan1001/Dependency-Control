@@ -140,15 +140,28 @@ async def unmark_release(
     if not remaining:
         await db.scans.update_one({"_id": scan_id, "project_id": project_id}, {"$set": {"is_release": False}})
 
+    # Marks are history, so withdrawing the newest uncovers the one below it and the environment
+    # goes on reporting a release the operator did not choose. Read it back and say which.
+    uncovered = await db.releases.find_one(
+        {"project_id": project_id, "environment": environment}, sort=RELEASES_LATEST_SORT
+    )
+    environment_release = (await _to_items(db, [uncovered]))[0] if uncovered else None
+
     logger.info(
         "release.unmark",
-        extra={"project_id": project_id, "scan_id": scan_id, "environment": environment},
+        extra={
+            "project_id": project_id,
+            "scan_id": scan_id,
+            "environment": environment,
+            "environment_release_scan_id": environment_release.scan_id if environment_release else None,
+        },
     )
     return ReleaseUnmarkResponse(
         scan_id=scan_id,
         environment=environment,
         is_release=bool(remaining),
         remaining_environments=remaining,
+        environment_release=environment_release,
     )
 
 

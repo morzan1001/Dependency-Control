@@ -33,4 +33,7 @@ export interface UnmarkReleaseResponse {
   // Still true while another environment holds the scan.
   is_release: boolean;
   remaining_environments: string[];
+  // What the environment reports as running now: the record the withdrawal uncovered, or null
+  // once nothing is released there.
+  environment_release: ReleaseItem | null;
 }

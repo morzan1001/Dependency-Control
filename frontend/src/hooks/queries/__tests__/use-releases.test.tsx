@@ -151,6 +151,7 @@ describe("release mutations", () => {
       environment: STAGING,
       is_release: true,
       remaining_environments: [PRODUCTION],
+      environment_release: null,
     });
 
     const { result } = renderHook(() => useUnmarkRelease(), { wrapper: wrapperFor(client) });

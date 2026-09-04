@@ -52,3 +52,9 @@ class ReleaseUnmarkResponse(BaseModel):
         ..., description="The scan's flag afterwards; still true while another environment holds it"
     )
     remaining_environments: list[str]
+    environment_release: ReleaseItem | None = Field(
+        None,
+        description="What the environment reports as running now that the scan is withdrawn: the "
+        "record underneath it, or null once nothing is released there. Every other field describes "
+        "the scan, and a withdrawal that uncovers an older record changes the environment too",
+    )

@@ -5,7 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ScanReleaseControl } from '../ScanReleaseControl'
 import { formatDateTime } from '@/lib/utils'
-import type { ReleaseItem } from '@/types/release'
+import type { ReleaseItem, UnmarkReleaseResponse } from '@/types/release'
 import type { ScanReleaseRef, ScanWithReleases } from '@/types/scan'
 
 const PROJECT_ID = 'p1'
@@ -27,6 +27,10 @@ const OFF_PATTERN_ENVIRONMENT = 'Pre-Prod!'
 const OFF_PATTERN_HINT = /lowercase letters/i
 const RESCAN_NOTE = /releases are held by the original scan/i
 const ORIGINAL_SCAN_LINK = 'Open the original scan'
+const UNCOVERED_SCAN_ID = 'scan-old'
+const UNCOVERED_VERSION = 'v0.9.0'
+const UNCOVERED_RELEASED_AT = '2026-08-05T16:49:16Z'
+const NO_ENVIRONMENTS: string[] = []
 
 const mockMark = vi.fn()
 const mockUnmark = vi.fn()
@@ -36,7 +40,7 @@ vi.mock('@/hooks/queries/use-releases', () => ({
   useUnmarkRelease: () => ({ mutate: mockUnmark, isPending: false }),
 }))
 
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
+vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }))
 
 function makeScan(overrides: Partial<ScanWithReleases> = {}): ScanWithReleases {
   return {
@@ -183,6 +187,50 @@ describe('ScanReleaseControl', () => {
       { projectId: PROJECT_ID, scanId: SCAN_ID, environment: STAGING },
       expect.anything(),
     )
+  })
+
+  // Annotated, not inferred: an inferred fixture drops a field from the response type silently.
+  function unmarkResponse(uncovered: ReleaseItem | null): UnmarkReleaseResponse {
+    return {
+      scan_id: SCAN_ID,
+      environment: PRODUCTION,
+      is_release: false,
+      remaining_environments: NO_ENVIRONMENTS,
+      environment_release: uncovered,
+    }
+  }
+
+  function withdrawAndResolveTo(uncovered: ReleaseItem | null) {
+    fireEvent.click(screen.getByRole('button', { name: `Withdraw from ${PRODUCTION}` }))
+    const handlers = mockUnmark.mock.calls[0][1] as { onSuccess: (r: UnmarkReleaseResponse) => void }
+    handlers.onSuccess(unmarkResponse(uncovered))
+  }
+
+  it('says which release the withdrawal uncovered rather than reporting a plain success', () => {
+    renderControl(releasedScan([makeRelease()]))
+
+    withdrawAndResolveTo({
+      ...markResponse(UNCOVERED_SCAN_ID),
+      version: UNCOVERED_VERSION,
+      released_at: UNCOVERED_RELEASED_AT,
+    })
+
+    expect(toast.warning).toHaveBeenCalledWith(
+      expect.stringContaining(`Withdrawn from ${PRODUCTION}`),
+      expect.objectContaining({
+        description: expect.stringContaining(UNCOVERED_VERSION),
+      }),
+    )
+    expect(toast.success).not.toHaveBeenCalled()
+  })
+
+  it('confirms plainly when the environment is left with nothing deployed', () => {
+    renderControl(releasedScan([makeRelease()]))
+
+    withdrawAndResolveTo(null)
+
+    expect(toast.success).toHaveBeenCalledWith(`Withdrawn from ${PRODUCTION}`)
+    expect(toast.warning).not.toHaveBeenCalled()
   })
 
   it('names when each environment took the release', () => {

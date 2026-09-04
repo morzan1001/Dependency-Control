@@ -330,6 +330,7 @@ async def test_unmark_of_the_last_environment_clears_the_flag(client, db, api_ke
         "environment": DEFAULT_RELEASE_ENVIRONMENT,
         "is_release": False,
         "remaining_environments": [],
+        "environment_release": None,
     }
     assert await db.releases.count_documents({"scan_id": "rel"}) == _NO_RECORDS
     scan = await db.scans.find_one({"_id": "rel"})
@@ -352,6 +353,39 @@ async def test_unmark_of_one_environment_keeps_the_flag_while_another_holds_it(c
     assert scan["is_release"] is True
     assert await latest_release_scan(db, _PROJECT, DEFAULT_RELEASE_ENVIRONMENT) == "rel"
     assert await latest_release_scan(db, _PROJECT, _STAGING) is None
+
+
+@pytest.mark.asyncio
+async def test_unmark_names_the_release_it_uncovers(client, db, api_key_headers):
+    """Marks are history, so withdrawing the newest makes the one below it live again. An operator
+    withdrawing the only thing they believe is deployed must not be told only that the scan is
+    no longer a release."""
+    await _seed_scan(db, "old", commit=_OTHER_COMMIT, created_delta=-2)
+    await _seed_scan(db, "new", commit=_COMMIT, created_delta=0)
+    await _mark(client, api_key_headers, commit_hash=_OTHER_COMMIT, version=_VERSION)
+    await _mark(client, api_key_headers, commit_hash=_COMMIT, version=_OTHER_VERSION)
+
+    resp = await _unmark(client, api_key_headers, "new")
+
+    assert resp.status_code == 200, resp.text
+    uncovered = resp.json()["environment_release"]
+    assert uncovered["scan_id"] == "old"
+    assert uncovered["version"] == _VERSION
+    assert uncovered["environment"] == DEFAULT_RELEASE_ENVIRONMENT
+    assert await latest_release_scan(db, _PROJECT, DEFAULT_RELEASE_ENVIRONMENT) == uncovered["scan_id"]
+
+
+@pytest.mark.asyncio
+async def test_unmark_of_one_environment_reports_the_other_environment_as_untouched(client, db, api_key_headers):
+    """The uncovered record belongs to the environment withdrawn from, not to whichever environment
+    the scan still holds."""
+    await _seed_scan(db, "rel")
+    await _mark(client, api_key_headers, commit_hash=_COMMIT)
+    await _mark(client, api_key_headers, commit_hash=_COMMIT, environment=_STAGING)
+
+    resp = await _unmark(client, api_key_headers, "rel", environment=_STAGING)
+
+    assert resp.json()["environment_release"] is None
 
 
 @pytest.mark.asyncio
