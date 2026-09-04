@@ -7,13 +7,16 @@ import { useAnalyticsScope } from '@/hooks/queries/use-analytics'
 const HEAD_MODE = '__head__'
 const HEAD_MODE_LABEL = 'Latest scan'
 const SCOPE_LABEL = 'Analytics scope'
+const headOnlyNote = (tab: string) => `The ${tab} tab always reports the latest scan, so the release view is off here.`
 
 interface AnalyticsScopeControlProps {
   releaseEnvironment?: string
   onChange: (releaseEnvironment: string | undefined) => void
+  // Label of the tab on screen when no endpoint behind it can answer for a release.
+  headOnlyTab?: string
 }
 
-export function AnalyticsScopeControl({ releaseEnvironment, onChange }: Readonly<AnalyticsScopeControlProps>) {
+export function AnalyticsScopeControl({ releaseEnvironment, onChange, headOnlyTab }: Readonly<AnalyticsScopeControlProps>) {
   const { data: scope } = useAnalyticsScope(releaseEnvironment)
   const environments = scope?.release_environments ?? []
 
@@ -21,18 +24,24 @@ export function AnalyticsScopeControl({ releaseEnvironment, onChange }: Readonly
     <div className="space-y-3">
       {/* Nothing was ever marked as released, so a switch would offer only the mode already in use. */}
       {environments.length > 0 && (
-        <Select
-          value={releaseEnvironment ?? HEAD_MODE}
-          onValueChange={(value) => onChange(value === HEAD_MODE ? undefined : value)}
-        >
-          <SelectTrigger className="w-[240px]" aria-label={SCOPE_LABEL}><SelectValue /></SelectTrigger>
-          <SelectContent>
-            <SelectItem value={HEAD_MODE}>{HEAD_MODE_LABEL}</SelectItem>
-            {environments.map((environment) => (
-              <SelectItem key={environment} value={environment}>{`${environment} release`}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+        <div className="space-y-1">
+          <Select
+            value={releaseEnvironment ?? HEAD_MODE}
+            onValueChange={(value) => onChange(value === HEAD_MODE ? undefined : value)}
+            disabled={headOnlyTab !== undefined}
+          >
+            <SelectTrigger className="w-[240px]" aria-label={SCOPE_LABEL}><SelectValue /></SelectTrigger>
+            <SelectContent>
+              <SelectItem value={HEAD_MODE}>{HEAD_MODE_LABEL}</SelectItem>
+              {environments.map((environment) => (
+                <SelectItem key={environment} value={environment}>{`${environment} release`}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {headOnlyTab !== undefined && (
+            <p className="text-xs text-muted-foreground">{headOnlyNote(headOnlyTab)}</p>
+          )}
+        </div>
       )}
       {/* Coverage carries the whole page: the bare-list tabs beside it return no counters, so a
           partly resolved fleet would otherwise read as a small healthy one. */}

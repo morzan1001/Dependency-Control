@@ -19,6 +19,8 @@ const RESOLVED_PROJECTS = 40
 const PROJECTS_WITHOUT_SCAN = 660
 const TOTAL_PROJECTS = 700
 const NONE_MISSING = 0
+const HEAD_ONLY_TAB = 'Tree'
+const HEAD_ONLY_NOTE = `The ${HEAD_ONLY_TAB} tab always reports the latest scan, so the release view is off here.`
 
 // Annotated, not inferred: an inferred fixture drops a field from the response type silently.
 const base: AnalyticsScope = {
@@ -27,10 +29,20 @@ const base: AnalyticsScope = {
   projects_without_release: PROJECTS_WITHOUT_SCAN,
 }
 
-function renderControl(scope: AnalyticsScope | undefined, releaseEnvironment: string | undefined = HEAD_MODE) {
+function renderControl(
+  scope: AnalyticsScope | undefined,
+  releaseEnvironment: string | undefined = HEAD_MODE,
+  headOnlyTab?: string,
+) {
   mockUseAnalyticsScope.mockReturnValue({ data: scope })
   const onChange = vi.fn()
-  render(<AnalyticsScopeControl releaseEnvironment={releaseEnvironment} onChange={onChange} />)
+  render(
+    <AnalyticsScopeControl
+      releaseEnvironment={releaseEnvironment}
+      onChange={onChange}
+      headOnlyTab={headOnlyTab}
+    />,
+  )
   return { onChange }
 }
 
@@ -80,6 +92,21 @@ describe('AnalyticsScopeControl mode switch', () => {
     renderControl({ ...base, release_environments: [] })
 
     expect(screen.queryByLabelText(SCOPE_LABEL)).not.toBeInTheDocument()
+  })
+
+  it('stays usable while the tab on screen reads the release', () => {
+    renderControl(base, PRODUCTION)
+
+    expect(screen.getByLabelText(SCOPE_LABEL)).toBeEnabled()
+    expect(screen.queryByText(HEAD_ONLY_NOTE)).not.toBeInTheDocument()
+  })
+
+  it('turns itself off and names the tab that cannot answer for a release', () => {
+    renderControl(base, HEAD_MODE, HEAD_ONLY_TAB)
+
+    expect(screen.getByLabelText(SCOPE_LABEL)).toBeDisabled()
+    expect(screen.getByLabelText(SCOPE_LABEL)).toHaveTextContent(HEAD_MODE_LABEL)
+    expect(screen.getByText(HEAD_ONLY_NOTE)).toBeInTheDocument()
   })
 })
 

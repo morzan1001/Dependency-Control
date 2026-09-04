@@ -17,11 +17,20 @@ import { BarChart3, GitBranch, Zap, Flame, Lightbulb, Package, ShieldAlert, Refr
 import { useAuth } from '@/context/useAuth'
 import { CryptoAnalyticsTab } from '@/components/analytics/CryptoAnalyticsTab'
 
+interface AnalyticsTab {
+  id: string
+  label: string
+  icon: typeof BarChart3
+  // True where every endpoint behind the tab accepts release_environment.
+  readsRelease: boolean
+}
+
 export default function AnalyticsPage() {
   const [selectedComponent, setSelectedComponent] = useState<{ name: string; version?: string } | null>(null)
   const [showFindingsModal, setShowFindingsModal] = useState(false)
   // Undefined is head mode, the default every tab reports until the scope control names an environment.
   const [releaseEnvironment, setReleaseEnvironment] = useState<string | undefined>(undefined)
+  const [pickedTab, setPickedTab] = useState<string | null>(null)
   const { hasPermission } = useAuth()
 
   const canViewSummary = hasPermission('analytics:read') || hasPermission('analytics:summary')
@@ -33,20 +42,26 @@ export default function AnalyticsPage() {
   const canViewCrypto = hasPermission('analytics:read')
 
   const availableTabs = useMemo(() => {
-    const tabs: { id: string; label: string; icon: typeof BarChart3 }[] = []
-    if (canViewSummary) tabs.push({ id: 'overview', label: 'Overview', icon: BarChart3 })
-    if (canViewTree) tabs.push({ id: 'tree', label: 'Tree', icon: GitBranch })
-    if (canViewImpact) tabs.push({ id: 'impact', label: 'Impact', icon: Zap })
-    if (canViewHotspots) tabs.push({ id: 'hotspots', label: 'Hotspots', icon: Flame })
-    if (canViewRecommendations) tabs.push({ id: 'recommendations', label: 'Recommendations', icon: Lightbulb })
-    if (canViewRecommendations) tabs.push({ id: 'update-frequency', label: 'Update Frequency', icon: RefreshCw })
-    if (canViewSearch) tabs.push({ id: 'search-deps', label: 'Dependencies', icon: Package })
-    if (canViewSearch) tabs.push({ id: 'search-vulns', label: 'Vulnerabilities', icon: ShieldAlert })
-    if (canViewCrypto) tabs.push({ id: 'cryptography', label: 'Cryptography', icon: KeyRound })
+    const tabs: AnalyticsTab[] = []
+    if (canViewSummary) tabs.push({ id: 'overview', label: 'Overview', icon: BarChart3, readsRelease: true })
+    if (canViewTree) tabs.push({ id: 'tree', label: 'Tree', icon: GitBranch, readsRelease: false })
+    if (canViewImpact) tabs.push({ id: 'impact', label: 'Impact', icon: Zap, readsRelease: true })
+    if (canViewHotspots) tabs.push({ id: 'hotspots', label: 'Hotspots', icon: Flame, readsRelease: true })
+    if (canViewRecommendations) tabs.push({ id: 'recommendations', label: 'Recommendations', icon: Lightbulb, readsRelease: false })
+    if (canViewRecommendations) tabs.push({ id: 'update-frequency', label: 'Update Frequency', icon: RefreshCw, readsRelease: false })
+    if (canViewSearch) tabs.push({ id: 'search-deps', label: 'Dependencies', icon: Package, readsRelease: true })
+    if (canViewSearch) tabs.push({ id: 'search-vulns', label: 'Vulnerabilities', icon: ShieldAlert, readsRelease: true })
+    if (canViewCrypto) tabs.push({ id: 'cryptography', label: 'Cryptography', icon: KeyRound, readsRelease: false })
     return tabs
   }, [canViewSummary, canViewTree, canViewImpact, canViewHotspots, canViewRecommendations, canViewSearch, canViewCrypto])
 
   const defaultTab = availableTabs.length > 0 ? availableTabs[0].id : 'overview'
+  const activeTab = pickedTab && availableTabs.some((tab) => tab.id === pickedTab) ? pickedTab : defaultTab
+  const headOnlyTab = availableTabs.find((tab) => tab.id === activeTab && !tab.readsRelease)?.label
+
+  // A head-only tab reports the branch tip whatever the switch says, so the page drops to head
+  // there and the switch names what is on screen instead of a mode nothing below it obeys.
+  const scopeEnvironment = headOnlyTab === undefined ? releaseEnvironment : undefined
 
   const handleComponentSelect = (name: string, version?: string) => {
     setSelectedComponent({ name, version })
@@ -54,7 +69,7 @@ export default function AnalyticsPage() {
   }
 
   return (
-    <AnalyticsModeContext.Provider value={releaseEnvironment}>
+    <AnalyticsModeContext.Provider value={scopeEnvironment}>
       <div className="space-y-8">
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Analytics</h2>
@@ -65,11 +80,15 @@ export default function AnalyticsPage() {
 
         {/* Above the tabs, so the coverage caption stays on screen on the tabs that show no counters
             of their own — and outside the summary gate, whose permission not every tab implies. */}
-        <AnalyticsScopeControl releaseEnvironment={releaseEnvironment} onChange={setReleaseEnvironment} />
+        <AnalyticsScopeControl
+          releaseEnvironment={scopeEnvironment}
+          onChange={setReleaseEnvironment}
+          headOnlyTab={headOnlyTab}
+        />
 
         {canViewSummary && <AnalyticsSummaryCards />}
 
-        <Tabs defaultValue={defaultTab} className="space-y-6">
+        <Tabs value={activeTab} onValueChange={setPickedTab} className="space-y-6">
           <TabsList>
             {availableTabs.map((tab) => {
               const Icon = tab.icon
