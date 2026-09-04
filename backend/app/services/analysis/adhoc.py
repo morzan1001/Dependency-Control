@@ -16,6 +16,7 @@ from app.services.sbom_parser import parse_sbom
 logger = logging.getLogger(__name__)
 
 _UNKNOWN_ANALYZER = "unknown analyzer"
+_EMPTY_PAYLOAD = "empty payload"
 
 
 @dataclass(frozen=True)
@@ -32,10 +33,25 @@ class _ParsedInput:
 def _sbom_source(sbom: dict[str, Any], fallback: str) -> str:
     metadata = sbom.get("metadata")
     if isinstance(metadata, dict) and isinstance(metadata.get("component"), dict):
-        return str(metadata["component"].get("name", fallback))
+        # An explicit ``"name": null`` is a present key, so a dict default would never fire.
+        name = metadata["component"].get("name")
+        if name:
+            return str(name)
     if sbom.get("serialNumber"):
         return str(sbom["serialNumber"])
     return fallback
+
+
+def _record_ran(report: AnalyzerReport, name: str) -> None:
+    if name not in report.ran and name not in report.errored:
+        report.ran.append(name)
+
+
+def _record_errored(report: AnalyzerReport, name: str, reason: str) -> None:
+    """A failure on one input shadows a success on another: partial coverage must not read as complete."""
+    report.errored[name] = reason
+    if name in report.ran:
+        report.ran.remove(name)
 
 
 async def _run_one_analyzer(
@@ -56,18 +72,17 @@ async def _run_one_analyzer(
     """
     try:
         result = await analyzer.analyze(sbom, settings=settings, parsed_components=parsed_components)
+        # The aggregator guards on membership, not truthiness, so ``{"error": ""}`` would reach it.
+        if "error" in result:
+            _record_errored(report, name, str(result["error"]))
+            return
+        aggregator.aggregate(name, result, source=_sbom_source(sbom, fallback_source))
     except Exception as exc:
         logger.warning("adhoc: analyzer %s failed: %s", name, exc)
-        report.errored[name] = str(exc)
+        _record_errored(report, name, str(exc))
         return
 
-    if result.get("error"):
-        report.errored[name] = str(result["error"])
-        return
-
-    aggregator.aggregate(name, result, source=_sbom_source(sbom, fallback_source))
-    if name not in report.ran:
-        report.ran.append(name)
+    _record_ran(report, name)
 
 
 def _aggregate_posted_scanners(
@@ -75,12 +90,28 @@ def _aggregate_posted_scanners(
     aggregator: ResultAggregator,
     report: AnalyzerReport,
 ) -> None:
+    """Normalise caller-posted scanner output.
+
+    The normalizers were written for trusted first-party output and dereference list elements
+    without type checks, so a scanner version that reshapes its report must land in
+    ``report.errored`` rather than abort the request.
+    """
     if request.scanners is None:
         return
     for name, payload in request.scanners.model_dump(exclude_none=True).items():
-        aggregator.aggregate(name, payload, source=f"posted:{name}")
-        if name not in report.ran:
-            report.ran.append(name)
+        if not payload:
+            report.skipped[name] = _EMPTY_PAYLOAD
+            continue
+        if "error" in payload:
+            _record_errored(report, name, str(payload["error"]))
+            continue
+        try:
+            aggregator.aggregate(name, payload, source=f"posted:{name}")
+        except Exception as exc:
+            logger.warning("adhoc: posted %s output could not be normalised: %s", name, exc)
+            _record_errored(report, name, str(exc))
+            continue
+        _record_ran(report, name)
 
 
 def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_ParsedInput]:
