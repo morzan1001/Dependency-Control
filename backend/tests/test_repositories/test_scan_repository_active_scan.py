@@ -156,7 +156,9 @@ class TestGetLatestActiveScanIds:
         assert asyncio.run(repo.get_latest_active_scan_ids([p])) == {}
 
     def test_collapses_multiple_pointer_less_projects_into_one_query(self):
-        coll = create_mock_collection(aggregate=[{"_id": "p5", "scan_id": "scan-a"}, {"_id": "p6", "scan_id": "scan-b"}])
+        coll = create_mock_collection(
+            aggregate=[{"_id": "p5", "scan_id": "scan-a"}, {"_id": "p6", "scan_id": "scan-b"}]
+        )
         repo = ScanRepository(create_mock_db({"scans": coll}))
 
         p5 = MagicMock(id="p5", deleted_branches=[], latest_scan_id=None)
@@ -180,7 +182,11 @@ class TestGetLatestActiveScanIds:
         assert result == {"p7": "active-scan"}
         pipeline = coll.aggregate.call_args.args[0]
         match_or = pipeline[0]["$match"]["$or"][0]
-        assert match_or == {"project_id": "p7", "branch": {"$nin": ["dead"]}, "status": {"$in": ["completed", "completed_with_errors"]}}
+        assert match_or == {
+            "project_id": "p7",
+            "branch": {"$nin": ["dead"]},
+            "status": {"$in": ["completed", "completed_with_errors"]},
+        }
 
     def test_falls_back_when_the_pointer_names_an_unreadable_scan(self):
         """Retention removes the scan document and leaves latest_scan_id behind, so a project whose

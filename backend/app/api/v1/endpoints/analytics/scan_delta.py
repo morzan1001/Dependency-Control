@@ -35,9 +35,7 @@ def _csv_to_list(value: str | None) -> list[str] | None:
     return [v.strip() for v in value.split(",") if v.strip()]
 
 
-async def _resolve_delta_ref(
-    db: AsyncIOMotorDatabase, project_id: str, ref: _DeltaRef, environment: str
-) -> str | None:
+async def _resolve_delta_ref(db: AsyncIOMotorDatabase, project_id: str, ref: _DeltaRef, environment: str) -> str | None:
     """Turn a symbolic side of the comparison into a scan id.
 
     The release side resolves through the rescan chain, so a delta compares the freshest analysis
@@ -48,9 +46,7 @@ async def _resolve_delta_ref(
     return (await resolve_scan_ids(db, [project_id])).get(project_id)
 
 
-async def _unresolved_ref_detail(
-    db: AsyncIOMotorDatabase, project_id: str, ref: _DeltaRef, environment: str
-) -> str:
+async def _unresolved_ref_detail(db: AsyncIOMotorDatabase, project_id: str, ref: _DeltaRef, environment: str) -> str:
     """A marked release that resolves to nothing is retention or a broken rescan chain — an
     operational condition, unlike an environment nothing was ever released to."""
     if ref == _REF_HEAD:

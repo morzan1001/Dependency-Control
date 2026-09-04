@@ -216,9 +216,7 @@ async def test_ne_against_an_array_compares_the_whole_array_as_well_as_its_eleme
     await db.scans.insert_one({"_id": "filled", "refs": [{"gridfs_id": "g1"}]})
 
     without_empty = {doc["_id"] for doc in await db.scans.find({"refs": {"$ne": []}}).to_list(None)}
-    without_filled = {
-        doc["_id"] for doc in await db.scans.find({"refs": {"$ne": [{"gridfs_id": "g1"}]}}).to_list(None)
-    }
+    without_filled = {doc["_id"] for doc in await db.scans.find({"refs": {"$ne": [{"gridfs_id": "g1"}]}}).to_list(None)}
 
     assert without_empty == {"filled"}
     assert without_filled == {"empty"}

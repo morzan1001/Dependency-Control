@@ -219,7 +219,9 @@ class ScanRepository:
         if needing_no_deleted:
             or_conditions.append({"project_id": {"$in": needing_no_deleted}, "status": {"$in": SCAN_USABLE_STATUSES}})
         for pid, deleted in needing_with_deleted:
-            or_conditions.append({"project_id": pid, "branch": {"$nin": deleted}, "status": {"$in": SCAN_USABLE_STATUSES}})
+            or_conditions.append(
+                {"project_id": pid, "branch": {"$nin": deleted}, "status": {"$in": SCAN_USABLE_STATUSES}}
+            )
 
         pipeline: list[dict[str, Any]] = [
             {"$match": {"$or": or_conditions}},
