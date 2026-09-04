@@ -327,6 +327,34 @@ async def test_malformed_posted_scanner_output_is_reported_not_raised(scanner, p
     assert scanner in response.analyzers.errored
     assert response.analyzers.ran == [_ENRICHMENT]
     assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
+    assert response.findings == [], "a payload reported as errored must not also contribute findings"
+
+
+def _opengrep_item(index: int) -> dict:
+    return {
+        "check_id": f"python.rule.{index}",
+        "path": _SECRET_FILE,
+        "start": {"line": index + 1},
+        "end": {"line": index + 1},
+        "extra": {"severity": "ERROR", "message": "eval() detected"},
+    }
+
+
+# The normalizer reads the list in order, so where the unreadable item sits decides how much
+# of the payload it accepted before it gave up.
+_UNREADABLE_FIRST = [None, _opengrep_item(0), _opengrep_item(1)]
+_UNREADABLE_LAST = [_opengrep_item(0), _opengrep_item(1), None]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("items", [_UNREADABLE_FIRST, _UNREADABLE_LAST])
+async def test_where_the_unreadable_item_sits_does_not_change_the_result(items):
+    request = AdhocAnalyzeRequest(scanners={"opengrep": {"findings": items}}, analyzers=[], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert list(response.analyzers.errored) == ["opengrep"]
+    assert response.findings == []
 
 
 @pytest.mark.asyncio

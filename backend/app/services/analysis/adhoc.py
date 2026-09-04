@@ -318,6 +318,19 @@ async def _run_one_analyzer(
     _record_ran(report, name)
 
 
+def _aggregate_atomically(aggregator: ResultAggregator, name: str, payload: dict[str, Any], source: str) -> None:
+    """Normalise into a scratch aggregator, then hand over only a complete result.
+
+    The normalizers add each item as they read it, so a payload that dies half-way would
+    otherwise contribute whatever preceded the unreadable item — the same items in a different
+    order yielding a different set of findings alongside the same error.
+    """
+    staged = ResultAggregator()
+    staged.aggregate(name, payload, source=source)
+    for finding in staged.findings.values():
+        aggregator.add_finding(finding, source=source)
+
+
 def _aggregate_posted_scanners(
     request: AdhocAnalyzeRequest,
     aggregator: ResultAggregator,
@@ -344,7 +357,7 @@ def _aggregate_posted_scanners(
             _record_errored(report, name, _UNRECOGNISED_PAYLOAD.format(keys=quoted))
             continue
         try:
-            aggregator.aggregate(name, payload, source=f"posted:{name}")
+            _aggregate_atomically(aggregator, name, payload, f"posted:{name}")
         except Exception as exc:
             logger.warning("adhoc: posted %s output could not be normalised: %s", name, exc)
             _record_errored(report, name, str(exc))
