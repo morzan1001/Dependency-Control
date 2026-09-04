@@ -351,8 +351,10 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                       <Button
                         variant="outline"
                         size="sm"
+                        // The delta compares the runs the two rows count, so a queued rescan is not
+                        // a side: it would diff against a scan that has analysed nothing.
                         onClick={() =>
-                          navigate(`/projects/${projectId}/delta?from=${prevScan.latest_rescan_id || prevScan.id}&to=${scan.latest_rescan_id || scan.id}`)
+                          navigate(`/projects/${projectId}/delta?from=${resolveRun(prevScan).scanId}&to=${resolveRun(scan).scanId}`)
                         }
                       >
                         Delta

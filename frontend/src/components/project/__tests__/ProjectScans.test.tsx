@@ -137,6 +137,31 @@ describe('ProjectScans - a scan whose rescan is still queued', () => {
     expect(screen.getByText('completed')).toBeInTheDocument()
     expect(screen.queryByText('pending')).not.toBeInTheDocument()
   })
+
+  it('deltas against the run it counted, not the rescan that has analysed nothing', () => {
+    const newer = makeScan({ id: 'main-2', created_at: '2026-07-05T00:00:00Z' })
+
+    renderScans([newer, queuedRescan()])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delta' }))
+
+    expect(mockNavigate).toHaveBeenCalledWith('/projects/p1/delta?from=main-1&to=main-2')
+  })
+
+  it('deltas against a finished rescan, which is what the row counted', () => {
+    const rescanned = makeScan({
+      id: 'main-1',
+      latest_rescan_id: RESCAN_ID,
+      latest_run: { scan_id: RESCAN_ID, status: 'completed', stats: { critical: 0 } },
+    })
+    const newer = makeScan({ id: 'main-2', created_at: '2026-07-05T00:00:00Z' })
+
+    renderScans([newer, rescanned])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delta' }))
+
+    expect(mockNavigate).toHaveBeenCalledWith(`/projects/p1/delta?from=${RESCAN_ID}&to=main-2`)
+  })
 })
 
 describe('ProjectScans - release', () => {
