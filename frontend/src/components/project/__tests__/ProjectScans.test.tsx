@@ -113,6 +113,9 @@ describe('ProjectScans - a scan whose rescan is still queued', () => {
   const OWN_CRITICAL = 4
   const RESCAN_ID = 'main-1-rescan'
   const NO_HIGH_RISKS = 'No high risks'
+  const NOTE_DELIVERED = 'Updated via re-scan'
+  const NOTE_IN_FLIGHT = 'Re-scan in progress'
+  const NOTE_FAILED = 'Re-scan failed'
 
   function queuedRescan(): ScanWithReleases {
     return makeScan({
@@ -161,6 +164,39 @@ describe('ProjectScans - a scan whose rescan is still queued', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Delta' }))
 
     expect(mockNavigate).toHaveBeenCalledWith(`/projects/p1/delta?from=${RESCAN_ID}&to=main-2`)
+  })
+
+  it('says the rescan is still running instead of claiming the row was updated by it', () => {
+    renderScans([queuedRescan()])
+
+    expect(screen.getByText(NOTE_IN_FLIGHT)).toBeInTheDocument()
+    expect(screen.queryByText(NOTE_DELIVERED)).not.toBeInTheDocument()
+  })
+
+  it('says the row was updated once the rescan has delivered its results', () => {
+    renderScans([
+      makeScan({
+        id: 'main-1',
+        latest_rescan_id: RESCAN_ID,
+        latest_run: { scan_id: RESCAN_ID, status: 'completed', stats: { critical: 0 } },
+      }),
+    ])
+
+    expect(screen.getByText(NOTE_DELIVERED)).toBeInTheDocument()
+    expect(screen.queryByText(NOTE_IN_FLIGHT)).not.toBeInTheDocument()
+  })
+
+  it('names a failed rescan as failed rather than as still running', () => {
+    renderScans([
+      makeScan({
+        id: 'main-1',
+        latest_rescan_id: RESCAN_ID,
+        latest_run: { scan_id: RESCAN_ID, status: 'failed', stats: {} },
+      }),
+    ])
+
+    expect(screen.getByText(NOTE_FAILED)).toBeInTheDocument()
+    expect(screen.queryByText(NOTE_IN_FLIGHT)).not.toBeInTheDocument()
   })
 })
 

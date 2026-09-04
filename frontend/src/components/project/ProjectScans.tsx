@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Scan } from '@/types/scan'
 import { hasUnrecordedRelease } from '@/lib/releases'
 import { resolveRun } from '@/lib/scan-run'
-import { isScanUsable } from '@/lib/scan-status'
+import { isScanUsable, SCAN_STATUS_FAILED } from '@/lib/scan-status'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
 import { useProjectBranches } from '@/hooks/queries/use-projects'
@@ -21,6 +21,17 @@ import { formatDateTime, shortCommitHash } from '@/lib/utils'
 
 interface ProjectScansProps {
   projectId: string
+}
+
+const RESCAN_NOTE_DELIVERED = 'Updated via re-scan'
+const RESCAN_NOTE_IN_FLIGHT = 'Re-scan in progress'
+const RESCAN_NOTE_FAILED = 'Re-scan failed'
+
+// The row keeps counting the source scan until the re-scan delivers, so the note has to name the
+// re-scan's own state rather than its mere existence.
+function rescanNote(status?: string): string {
+  if (isScanUsable(status)) return RESCAN_NOTE_DELIVERED
+  return status === SCAN_STATUS_FAILED ? RESCAN_NOTE_FAILED : RESCAN_NOTE_IN_FLIGHT
 }
 
 export function ProjectScans({ projectId }: ProjectScansProps) {
@@ -216,7 +227,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                     {scan.latest_rescan_id && (
                         <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
                             <RefreshCw className="h-3 w-3" />
-                            Updated via re-scan
+                            {rescanNote(scan.latest_run?.status)}
                         </div>
                     )}
                   </TableCell>

@@ -455,7 +455,7 @@ failed pass still applied its own plan, so the next one starts from a shorter ch
 exits 0 whatever it leaves behind: `--limit` makes a pass partial by request. Exit 1 is a connection
 or runtime error and means nothing was completed.
 
-Verify by re-running the second query: it must return no rows.
+Verify by re-running the second query once the unresolved count is zero: it must return no rows.
 
 Retention exempts a scan named by an `original_scan_id`, so the intermediate links lose that
 exemption and age out on their normal retention date. Lineage does not go with them: every rescan
