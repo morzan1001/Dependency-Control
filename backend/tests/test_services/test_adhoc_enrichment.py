@@ -114,6 +114,19 @@ async def test_summary_is_always_present(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_naming_the_stage_does_not_report_it_as_both_run_and_skipped(monkeypatch):
+    monkeypatch.setattr(_SERVICE_ATTRIBUTE, _SpyService)
+
+    request = AdhocAnalyzeRequest(
+        scanners={_TRUFFLEHOG_NAME: _TRUFFLEHOG}, analyzers=[_ENRICHMENT], apply_global_waivers=False
+    )
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert _ENRICHMENT in response.analyzers.ran
+    assert _ENRICHMENT not in response.analyzers.skipped
+
+
+@pytest.mark.asyncio
 async def test_only_vulnerability_records_are_handed_to_the_service(monkeypatch):
     from app.services.analysis import registry
 

@@ -10,7 +10,7 @@ from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, Analyze
 from app.schemas.sbom import ParsedSBOM
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _build_settings_resolver
-from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzers
+from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzers, post_processors
 from app.services.analysis.stats import build_epss_kev_summary
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
@@ -224,6 +224,10 @@ def resolve_adhoc_analyzers(requested: list[str] | None, report: AnalyzerReport)
 
     resolved: list[str] = []
     for name in selected:
+        if name in post_processors:
+            # Stages rather than selectable analyzers: they run on every request and put
+            # themselves in ``ran``, so a skip note here would contradict the same report.
+            continue
         if name in CRYPTO_ANALYZERS:
             report.skipped[name] = _CRYPTO_ANALYZER_REPLACED
         elif name not in analyzers:

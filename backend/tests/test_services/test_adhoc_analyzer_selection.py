@@ -13,6 +13,7 @@ _LICENSE = "license_compliance"
 _TRIVY = "trivy"
 _GRYPE = "grype"
 _CRYPTO = "crypto_weak_algorithm"
+_ENRICHMENT = "epss_kev"
 _UNKNOWN_NAME = "not_a_scanner"
 _UNKNOWN_REASON = "unknown analyzer"
 _NOT_REQUESTED = "not requested"
@@ -89,6 +90,15 @@ def test_crypto_analyzers_cannot_be_requested_and_name_their_replacement():
     # the reason has to point at the stage that evaluates the same rules on the posted CBOM.
     assert _CRYPTO_STORED_ASSETS in reason
     assert _CRYPTO_STAGE in reason
+
+
+def test_a_post_processor_name_is_not_reported_as_an_unknown_analyzer():
+    report = AnalyzerReport()
+
+    selected = resolve_adhoc_analyzers([_ENRICHMENT], report)
+
+    assert selected == []
+    assert _ENRICHMENT not in report.skipped
 
 
 def test_unknown_analyzer_is_surfaced_not_swallowed():
