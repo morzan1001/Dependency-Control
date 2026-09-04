@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useProjectScans, useScanResults } from '@/hooks/queries/use-scans'
+import { useProjectScans, useScan, useScanResults } from '@/hooks/queries/use-scans'
+import { useProjectReleases } from '@/hooks/queries/use-releases'
 import { useProjectWaivers } from '@/hooks/queries/use-waivers'
-import { Scan, ScanReleaseRef, ScanWithReleases } from '@/types/scan'
+import { Scan } from '@/types/scan'
+import { hasUnrecordedRelease } from '@/lib/releases'
 import { resolveRun } from '@/lib/scan-run'
 import { isScanUsable } from '@/lib/scan-status'
 import { highestRiskBranch } from '@/lib/branches'
@@ -23,6 +25,14 @@ import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
 interface ProjectOverviewProps {
   projectId: string
   selectedBranches: string[]
+}
+
+const LATEST_RELEASE_LIMIT = 1
+const NO_RELEASE_TEXT = 'No release marked'
+const RELEASE_NOT_ANALYSED = 'Nothing in its rescan chain has finished analysing'
+
+function releaseHeadline(environment: string | null, branch: string): string {
+  return environment ? `Release in ${environment} on ${branch}` : `Release on ${branch}`
 }
 
 export function ProjectOverview({ projectId, selectedBranches }: ProjectOverviewProps) {
@@ -73,27 +83,30 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   const activeBranch = pickedBranch && branchNames.includes(pickedBranch)
     ? pickedBranch
     : highestRiskBranch(latestScansByBranch);
-  const latestRelease = useMemo(() => {
-    let newest: { scan: ScanWithReleases; row: ScanReleaseRef | undefined; at: number } | undefined;
-    for (const scan of filteredScans) {
-      // A mark flags the scan before its row exists, and the flag alone still means released.
-      if (!scan.is_release || !isScanUsable(scan.status)) continue;
-      // The API sorts a scan's releases released_at descending, so [0] is the one it entered last.
-      const row = scan.releases[0];
-      // released_at orders releases, so re-marking an older build is a rollback, not a downgrade.
-      const at = new Date(row?.released_at || scan.created_at).getTime();
-      if (!newest || at > newest.at) newest = { scan, row, at };
-    }
-    return newest;
-  }, [filteredScans]);
-  const releaseScan = latestRelease?.scan;
+  // The endpoint answers newest-first across every environment, so one row is the project's newest
+  // release however far back it sits, and the tile names the environment rather than assuming one.
+  const { data: releases } = useProjectReleases(projectId, undefined, LATEST_RELEASE_LIMIT);
+  const latestRelease = releases?.items[0];
+  const { data: markedReleaseScan } = useScan(latestRelease?.analysis_scan_id ?? '');
+  // A release row is what the endpoint lists, so a scan holding only the flag reaches it no other way.
+  const flaggedScan = useMemo(
+    () => filteredScans.find((scan) => hasUnrecordedRelease(scan) && isScanUsable(scan.status)),
+    [filteredScans],
+  );
+  const releaseScan = latestRelease ? markedReleaseScan : flaggedScan;
+  const releaseEnvironment = latestRelease?.environment ?? null;
+  const hasRelease = latestRelease !== undefined || flaggedScan !== undefined;
+  // analysis_scan_id is null while nothing in the release's rescan chain has finished analysing.
+  const releaseHasNumbers = latestRelease
+    ? latestRelease.analysis_scan_id !== null
+    : flaggedScan !== undefined;
   const headScan = activeBranch ? latestScansByBranch[activeBranch] : undefined;
   const releaseShown = showRelease ? releaseScan : undefined;
   const activeScan = releaseShown ?? headScan;
   const activeRun = activeScan ? resolveRun(activeScan) : undefined;
   const activeScanId = activeRun?.scanId;
   const headlineSource = releaseShown
-    ? `Release on ${releaseShown.branch}`
+    ? releaseHeadline(releaseEnvironment, releaseShown.branch)
     : activeBranch ? `Branch ${activeBranch}` : null;
   const { data: scanResults } = useScanResults(activeScanId || '');
 
@@ -193,19 +206,23 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
             <Rocket className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent className="space-y-2">
-            {latestRelease ? (
+            {hasRelease ? (
               <>
-                <ReleaseBadge environment={latestRelease.row?.environment} version={latestRelease.row?.version} />
-                <button
-                  type="button"
-                  className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-                  onClick={() => setShowRelease((on) => !on)}
-                >
-                  {showRelease ? 'Show HEAD numbers' : 'Show release numbers'}
-                </button>
+                <ReleaseBadge environment={releaseEnvironment} version={latestRelease?.version} />
+                {releaseHasNumbers ? (
+                  <button
+                    type="button"
+                    className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                    onClick={() => setShowRelease((on) => !on)}
+                  >
+                    {showRelease ? 'Show HEAD numbers' : 'Show release numbers'}
+                  </button>
+                ) : (
+                  <p className="text-xs text-muted-foreground">{RELEASE_NOT_ANALYSED}</p>
+                )}
               </>
             ) : (
-              <p className="text-sm text-muted-foreground">No release marked</p>
+              <p className="text-sm text-muted-foreground">{NO_RELEASE_TEXT}</p>
             )}
           </CardContent>
         </Card>

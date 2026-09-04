@@ -2,19 +2,31 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ProjectOverview } from '../ProjectOverview'
+import type { ReleaseItem, ReleaseListResponse } from '@/types/release'
 import type { EnhancedStats, ScanWithReleases } from '@/types/scan'
 
 const PROJECT_ID = 'p1'
 const MAIN_BRANCH = 'main'
+const FIRST_PAGE = 1
+// The tile reads only the newest release, so the overview asks for a single row.
+const LATEST_RELEASE_LIMIT = 1
+const NO_RELEASES = 0
 
 const mockUseProjectScans = vi.fn()
+const mockUseScan = vi.fn()
 const mockUseScanResults = vi.fn()
+const mockUseProjectReleases = vi.fn()
 const mockUseProjectWaivers = vi.fn()
 const mockNavigate = vi.fn()
 
 vi.mock('@/hooks/queries/use-scans', () => ({
   useProjectScans: (...args: unknown[]) => mockUseProjectScans(...args),
+  useScan: (...args: unknown[]) => mockUseScan(...args),
   useScanResults: (...args: unknown[]) => mockUseScanResults(...args),
+}))
+
+vi.mock('@/hooks/queries/use-releases', () => ({
+  useProjectReleases: (...args: unknown[]) => mockUseProjectReleases(...args),
 }))
 
 vi.mock('@/hooks/queries/use-waivers', () => ({
@@ -65,9 +77,22 @@ function makeScan(overrides: Partial<ScanWithReleases>, stats: EnhancedStats): S
   }
 }
 
-function renderOverview(scans: ScanWithReleases[], selectedBranches: string[] = [MAIN_BRANCH]) {
+// Annotated, not inferred: an inferred fixture drops a field from the response type silently.
+const noReleases: ReleaseListResponse = {
+  items: [], total: NO_RELEASES, page: FIRST_PAGE, size: LATEST_RELEASE_LIMIT,
+}
+
+function renderOverview(
+  scans: ScanWithReleases[],
+  selectedBranches: string[] = [MAIN_BRANCH],
+  releases: ReleaseListResponse = noReleases,
+  offPageScans: ScanWithReleases[] = [],
+) {
+  const byId = new Map([...scans, ...offPageScans].map((scan) => [scan.id, scan]))
   mockUseProjectScans.mockReturnValue({ data: scans, isLoading: false })
+  mockUseScan.mockImplementation((scanId: string) => ({ data: byId.get(scanId) }))
   mockUseScanResults.mockReturnValue({ data: [] })
+  mockUseProjectReleases.mockReturnValue({ data: releases })
   mockUseProjectWaivers.mockReturnValue({ data: undefined })
   return render(<ProjectOverview projectId={PROJECT_ID} selectedBranches={selectedBranches} />)
 }
@@ -164,26 +189,25 @@ describe('ProjectOverview - multi-branch headline counts (W8)', () => {
 
 describe('ProjectOverview - release tile', () => {
   const PRODUCTION = 'production'
+  const STAGING = 'staging'
   const RELEASE_VERSION = 'v1.2.3'
-  const ROLLED_BACK_VERSION = 'rolled-back'
+  const STAGING_VERSION = 'v1.3.0-rc1'
   const RELEASED_AT = '2026-08-01T00:00:00Z'
-  const ROLLED_BACK_AT = '2026-08-20T00:00:00Z'
   const HEAD_CREATED_AT = '2026-09-01T00:00:00Z'
-  const OLD_BUILD_CREATED_AT = '2026-07-01T00:00:00Z'
   const RETIRED_BRANCH = 'release-1.0'
   const SECOND_BRANCH = 'feature-b'
   const HEAD_SCAN_ID = 's-head'
   const HEAD_RESCAN_ID = 's-head-rescan'
   const RELEASE_SCAN_ID = 's-release'
   const RELEASE_RESCAN_ID = 's-release-rescan'
+  const OFF_PAGE_SCAN_ID = 's-off-page'
   const HEAD_CRITICAL = 9
   const HEAD_HIGH = 9
   const HEAD_RESCANNED_CRITICAL = 4
   const RELEASE_CRITICAL = 2
   const RELEASE_HIGH = 3
   const RESCANNED_CRITICAL = 1
-  const OLD_BUILD_CRITICAL = 1
-  const OLD_BUILD_HIGH = 1
+  const OFF_PAGE_CRITICAL = 5
   const SECOND_BRANCH_CRITICAL = 3
   const SECOND_BRANCH_HIGH = 3
   const CRITICAL_TILE = 'Critical Issues'
@@ -192,10 +216,28 @@ describe('ProjectOverview - release tile', () => {
   const SHOW_RELEASE_BUTTON = 'Show release numbers'
   const SHOW_HEAD_BUTTON = 'Show HEAD numbers'
   const NO_RELEASE_TEXT = 'No release marked'
+  const NOT_ANALYSED_TEXT = 'Nothing in its rescan chain has finished analysing'
   const GENERIC_RELEASE_LABEL = 'Release'
+  const ANY_ENVIRONMENT = undefined
 
   function findingsUrl(scanId: string, severity: string): string {
     return `/projects/${PROJECT_ID}/scans/${scanId}?severity=${severity}`
+  }
+
+  function releaseList(overrides: Partial<ReleaseItem> = {}): ReleaseListResponse {
+    const item: ReleaseItem = {
+      scan_id: RELEASE_SCAN_ID,
+      project_id: PROJECT_ID,
+      environment: PRODUCTION,
+      version: RELEASE_VERSION,
+      released_at: RELEASED_AT,
+      commit_hash: null,
+      branch: MAIN_BRANCH,
+      scan_status: 'completed',
+      analysis_scan_id: RELEASE_SCAN_ID,
+      ...overrides,
+    }
+    return { items: [item], total: 1, page: FIRST_PAGE, size: LATEST_RELEASE_LIMIT }
   }
 
   const head = makeScan(
@@ -211,20 +253,10 @@ describe('ProjectOverview - release tile', () => {
     },
     { critical: RELEASE_CRITICAL, high: RELEASE_HIGH },
   )
-  const releaseRescanned = makeScan(
-    {
-      id: RELEASE_SCAN_ID,
-      created_at: RELEASED_AT,
-      is_release: true,
-      releases: [{ environment: PRODUCTION, version: RELEASE_VERSION, released_at: RELEASED_AT }],
-      latest_run: {
-        scan_id: RELEASE_RESCAN_ID,
-        status: 'completed',
-        findings_count: RESCANNED_CRITICAL,
-        stats: { critical: RESCANNED_CRITICAL, high: 0 },
-      },
-    },
-    { critical: RELEASE_CRITICAL, high: RELEASE_HIGH },
+  // The endpoint follows the rescan chain itself, so the row names the rescan as the analysis.
+  const releaseRescan = makeScan(
+    { id: RELEASE_RESCAN_ID, created_at: HEAD_CREATED_AT, is_rescan: true },
+    { critical: RESCANNED_CRITICAL, high: 0 },
   )
   const releaseRescanQueued = makeScan(
     {
@@ -258,9 +290,37 @@ describe('ProjectOverview - release tile', () => {
   }
 
   it('names the latest release', () => {
-    renderOverview([head, release])
+    renderOverview([head, release], [MAIN_BRANCH], releaseList())
 
     expect(screen.getByLabelText(`Release ${RELEASE_VERSION} in ${PRODUCTION}`)).toBeInTheDocument()
+  })
+
+  it('names whichever environment the release went to, rather than assuming production', () => {
+    renderOverview(
+      [head, release],
+      [MAIN_BRANCH],
+      releaseList({ environment: STAGING, version: STAGING_VERSION }),
+    )
+
+    expect(screen.getByLabelText(`Release ${STAGING_VERSION} in ${STAGING}`)).toBeInTheDocument()
+    // Asking for production only would leave a staging-only project with no tile at all.
+    expect(mockUseProjectReleases).toHaveBeenCalledWith(PROJECT_ID, ANY_ENVIRONMENT, LATEST_RELEASE_LIMIT)
+  })
+
+  it('takes the release the endpoint names, not the newest flagged scan on the page', () => {
+    const newerFlagged = makeScan(
+      {
+        id: 's-newer-flagged',
+        created_at: HEAD_CREATED_AT,
+        is_release: true,
+        releases: [{ environment: STAGING, version: STAGING_VERSION, released_at: HEAD_CREATED_AT }],
+      },
+      { critical: RELEASE_CRITICAL, high: RELEASE_HIGH },
+    )
+    renderOverview([head, release, newerFlagged], [MAIN_BRANCH], releaseList())
+
+    expect(screen.getByLabelText(`Release ${RELEASE_VERSION} in ${PRODUCTION}`)).toBeInTheDocument()
+    expect(screen.queryByLabelText(`Release ${STAGING_VERSION} in ${STAGING}`)).not.toBeInTheDocument()
   })
 
   it('says so when there is no release', () => {
@@ -270,15 +330,23 @@ describe('ProjectOverview - release tile', () => {
     expect(screen.queryByRole('button', { name: SHOW_RELEASE_BUTTON })).not.toBeInTheDocument()
   })
 
+  it('offers no numbers for a release whose analysis has not finished', () => {
+    renderOverview([head], [MAIN_BRANCH], releaseList({ analysis_scan_id: null }))
+
+    expect(screen.getByLabelText(`Release ${RELEASE_VERSION} in ${PRODUCTION}`)).toBeInTheDocument()
+    expect(screen.getByText(NOT_ANALYSED_TEXT)).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: SHOW_RELEASE_BUTTON })).not.toBeInTheDocument()
+  })
+
   it('shows HEAD numbers until the switch is used', () => {
-    renderOverview([head, release])
+    renderOverview([head, release], [MAIN_BRANCH], releaseList())
 
     expect(within(tile(CRITICAL_TILE)).getByText(String(HEAD_CRITICAL))).toBeInTheDocument()
     expect(within(tile(HIGH_TILE)).getByText(String(HEAD_HIGH))).toBeInTheDocument()
   })
 
   it('switches the headline numbers to the release', () => {
-    renderOverview([head, release])
+    renderOverview([head, release], [MAIN_BRANCH], releaseList())
 
     fireEvent.click(screen.getByRole('button', { name: SHOW_RELEASE_BUTTON }))
 
@@ -287,34 +355,34 @@ describe('ProjectOverview - release tile', () => {
     expect(screen.getByRole('button', { name: SHOW_HEAD_BUTTON })).toBeInTheDocument()
   })
 
-  it('says the switched numbers describe the release, not the branch head', () => {
-    renderOverview([head, release])
+  it('names the environment the switched numbers describe, not just the branch', () => {
+    renderOverview([head, release], [MAIN_BRANCH], releaseList())
 
     fireEvent.click(screen.getByRole('button', { name: SHOW_RELEASE_BUTTON }))
 
-    expect(screen.getAllByText(`Release on ${MAIN_BRANCH} — click to view findings`).length).toBeGreaterThan(0)
+    expect(
+      screen.getAllByText(`Release in ${PRODUCTION} on ${MAIN_BRANCH} — click to view findings`).length,
+    ).toBeGreaterThan(0)
     expect(screen.queryByText(`Branch ${MAIN_BRANCH} — click to view findings`)).not.toBeInTheDocument()
   })
 
-  it('reads the release rescan numbers, not the stale release scan', () => {
-    renderOverview([head, releaseRescanned])
-
-    fireEvent.click(screen.getByRole('button', { name: SHOW_RELEASE_BUTTON }))
-
-    expect(within(tile(CRITICAL_TILE)).getByText(String(RESCANNED_CRITICAL))).toBeInTheDocument()
-  })
-
-  it('sends the tile to the rescan whose numbers it shows', () => {
-    renderOverview([head, releaseRescanned])
+  it('reads the analysis the release row names, not the released scan', () => {
+    renderOverview(
+      [head, release],
+      [MAIN_BRANCH],
+      releaseList({ analysis_scan_id: RELEASE_RESCAN_ID }),
+      [releaseRescan],
+    )
 
     fireEvent.click(screen.getByRole('button', { name: SHOW_RELEASE_BUTTON }))
     fireEvent.click(tile(CRITICAL_TILE))
 
+    expect(within(tile(CRITICAL_TILE)).getByText(String(RESCANNED_CRITICAL))).toBeInTheDocument()
     expect(mockNavigate).toHaveBeenCalledWith(findingsUrl(RELEASE_RESCAN_ID, CRITICAL_SEVERITY))
   })
 
   it('keeps the release numbers while its rescan is still queued', () => {
-    renderOverview([head, releaseRescanQueued])
+    renderOverview([head, releaseRescanQueued], [MAIN_BRANCH], releaseList())
 
     fireEvent.click(screen.getByRole('button', { name: SHOW_RELEASE_BUTTON }))
 
@@ -322,7 +390,7 @@ describe('ProjectOverview - release tile', () => {
   })
 
   it('sends the tile to the release whose numbers it shows, not to the queued rescan', () => {
-    renderOverview([head, releaseRescanQueued])
+    renderOverview([head, releaseRescanQueued], [MAIN_BRANCH], releaseList())
 
     fireEvent.click(screen.getByRole('button', { name: SHOW_RELEASE_BUTTON }))
     fireEvent.click(tile(CRITICAL_TILE))
@@ -332,7 +400,7 @@ describe('ProjectOverview - release tile', () => {
   })
 
   it('keeps release numbers and release identity together when a finished rescan reports none', () => {
-    renderOverview([head, releaseRescanWithoutStats])
+    renderOverview([head, releaseRescanWithoutStats], [MAIN_BRANCH], releaseList())
 
     fireEvent.click(screen.getByRole('button', { name: SHOW_RELEASE_BUTTON }))
     fireEvent.click(tile(CRITICAL_TILE))
@@ -354,7 +422,7 @@ describe('ProjectOverview - release tile', () => {
       },
       { critical: HEAD_CRITICAL, high: HEAD_HIGH },
     )
-    renderOverview([headRescanned, release])
+    renderOverview([headRescanned, release], [MAIN_BRANCH], releaseList())
 
     expect(within(tile(CRITICAL_TILE)).getByText(String(HEAD_RESCANNED_CRITICAL))).toBeInTheDocument()
 
@@ -368,7 +436,7 @@ describe('ProjectOverview - release tile', () => {
       { id: 's-second-branch', branch: SECOND_BRANCH, created_at: HEAD_CREATED_AT },
       { critical: SECOND_BRANCH_CRITICAL, high: SECOND_BRANCH_HIGH },
     )
-    renderOverview([head, release, otherBranch], [MAIN_BRANCH, SECOND_BRANCH])
+    renderOverview([head, release, otherBranch], [MAIN_BRANCH, SECOND_BRANCH], releaseList())
 
     expect(screen.getByRole('tab', { name: MAIN_BRANCH })).toBeEnabled()
 
@@ -376,21 +444,6 @@ describe('ProjectOverview - release tile', () => {
 
     expect(screen.getByRole('tab', { name: MAIN_BRANCH })).toBeDisabled()
     expect(screen.getByRole('tab', { name: SECOND_BRANCH })).toBeDisabled()
-  })
-
-  it('picks the newest release by released_at, not by created_at', () => {
-    const rolledBackTo = makeScan(
-      {
-        id: 's-old-build',
-        created_at: OLD_BUILD_CREATED_AT,
-        is_release: true,
-        releases: [{ environment: PRODUCTION, version: ROLLED_BACK_VERSION, released_at: ROLLED_BACK_AT }],
-      },
-      { critical: OLD_BUILD_CRITICAL, high: OLD_BUILD_HIGH },
-    )
-    renderOverview([head, release, rolledBackTo])
-
-    expect(screen.getByLabelText(`Release ${ROLLED_BACK_VERSION} in ${PRODUCTION}`)).toBeInTheDocument()
   })
 
   it('counts a scan whose release record has not landed yet', () => {
@@ -407,19 +460,22 @@ describe('ProjectOverview - release tile', () => {
     expect(within(tile(CRITICAL_TILE)).getByText(String(RELEASE_CRITICAL))).toBeInTheDocument()
   })
 
-  it('leaves out a release on a branch this view does not cover', () => {
-    const retired = makeScan(
-      {
-        id: 's-retired',
-        branch: RETIRED_BRANCH,
-        created_at: RELEASED_AT,
-        is_release: true,
-        releases: [{ environment: PRODUCTION, version: RELEASE_VERSION, released_at: RELEASED_AT }],
-      },
-      { critical: RELEASE_CRITICAL, high: RELEASE_HIGH },
+  it('names a release that sits outside the branches and the page this view loaded', () => {
+    const offPage = makeScan(
+      { id: OFF_PAGE_SCAN_ID, branch: RETIRED_BRANCH, created_at: RELEASED_AT, is_release: true },
+      { critical: OFF_PAGE_CRITICAL },
     )
-    renderOverview([head, retired])
+    renderOverview(
+      [head],
+      [MAIN_BRANCH],
+      releaseList({ branch: RETIRED_BRANCH, analysis_scan_id: OFF_PAGE_SCAN_ID }),
+      [offPage],
+    )
 
-    expect(screen.getByText(NO_RELEASE_TEXT)).toBeInTheDocument()
+    expect(screen.getByLabelText(`Release ${RELEASE_VERSION} in ${PRODUCTION}`)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: SHOW_RELEASE_BUTTON }))
+
+    expect(within(tile(CRITICAL_TILE)).getByText(String(OFF_PAGE_CRITICAL))).toBeInTheDocument()
   })
 })
