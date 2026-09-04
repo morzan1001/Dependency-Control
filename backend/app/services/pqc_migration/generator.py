@@ -130,7 +130,9 @@ class PQCMigrationPlanGenerator:
         self,
         resolved: ResolvedScope,
     ) -> list[CryptoAsset]:
-        """Quantum-vulnerable assets from the latest scan of each resolved project."""
+        """Quantum-vulnerable assets from the head build of each resolved project."""
+        from app.services.releases import resolve_scan_ids
+
         out: list[CryptoAsset] = []
         # None project_ids means global scope (all projects); an explicit [] means none.
         if resolved.project_ids is None:
@@ -139,11 +141,8 @@ class PQCMigrationPlanGenerator:
             project_ids = resolved.project_ids
         repo = CryptoAssetRepository(self.db)
         canonical_families = {m.source_family for m in self.mappings.mappings}
-        for pid in project_ids:
-            scan_doc = await self._latest_scan_for_project(pid)
-            if not scan_doc:
-                continue
-            assets = await repo.list_by_scan(pid, scan_doc["_id"], limit=10000)
+        for pid, scan_id in (await resolve_scan_ids(self.db, project_ids)).items():
+            assets = await repo.list_by_scan(pid, scan_id, limit=10000)
             out.extend(self._filter_vulnerable(assets, canonical_families))
         return out
 
@@ -167,24 +166,6 @@ class PQCMigrationPlanGenerator:
             "project_id",
             {"status": {"$in": SCAN_USABLE_STATUSES}},
         )
-
-    async def _latest_scan_for_project(self, project_id: str) -> dict | None:
-        """Most recent usable scan for a project, or None."""
-        cursor = (
-            self.db.scans.find(
-                {
-                    "project_id": project_id,
-                    "status": {"$in": SCAN_USABLE_STATUSES},
-                }
-            )
-            .sort("created_at", -1)
-            .limit(1)
-        )
-        docs = await cursor.to_list(length=1)
-        if not docs:
-            return None
-        first: dict[str, Any] = docs[0]
-        return first
 
     def _find_mapping(self, family: str, primitive: Any) -> PQCMapping | None:
         prim_val = _enum_value(primitive)
