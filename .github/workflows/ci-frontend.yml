@@ -71,6 +71,36 @@ jobs:
           path: frontend/coverage/lcov.info
           retention-days: 7
 
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6.0.10
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+          cache: 'pnpm'
+          cache-dependency-path: frontend/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: |
+          cd frontend
+          pnpm install --frozen-lockfile
+
+      # The build compiles the app project, which excludes the tests; this covers both projects.
+      - name: TypeScript type check
+        run: |
+          cd frontend
+          pnpm typecheck
+
   build:
     name: Build
     runs-on: ubuntu-latest
