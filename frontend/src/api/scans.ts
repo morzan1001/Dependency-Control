@@ -31,8 +31,8 @@ export const scanApi = {
         return response.data;
     },
 
-    getOne: async (scanId: string): Promise<Scan> => {
-        const response = await api.get<Scan>(`/projects/scans/${scanId}`);
+    getOne: async (scanId: string): Promise<ScanWithReleases> => {
+        const response = await api.get<ScanWithReleases>(`/projects/scans/${scanId}`);
         return response.data;
     },
 

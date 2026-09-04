@@ -7,15 +7,17 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { DeltaHeader } from '../DeltaHeader'
 import * as scansApi from '@/api/scans'
 import { useProjectScans } from '@/hooks/queries/use-scans'
+import type { ScanWithReleases } from '@/types/scan'
 
 vi.mock('@/api/scans')
 vi.mock('@/hooks/queries/use-scans')
 
 // 'rescan-1' is a rescan the project-scans hook excludes from its option list.
-const rescan = { id: 'rescan-1', project_id: 'p1', branch: 'feature-x', status: 'completed', created_at: '2026-08-10T12:00:00Z' }
-const toScan = { id: 'b', project_id: 'p1', branch: 'main', status: 'completed', created_at: '2026-08-09T12:00:00Z' }
+// Annotated, not inferred: an inferred fixture drops a field from the response type silently.
+const rescan: ScanWithReleases = { id: 'rescan-1', project_id: 'p1', branch: 'feature-x', status: 'completed', created_at: '2026-08-10T12:00:00Z', releases: [] }
+const toScan: ScanWithReleases = { id: 'b', project_id: 'p1', branch: 'main', status: 'completed', created_at: '2026-08-09T12:00:00Z', releases: [] }
 
-function getOne(id: string) {
+function getOne(id: string): Promise<ScanWithReleases> {
   if (id === rescan.id) return Promise.resolve(rescan)
   if (id === toScan.id) return Promise.resolve(toScan)
   return Promise.reject(new Error(`unexpected scan id ${id}`))

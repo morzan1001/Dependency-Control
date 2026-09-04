@@ -6,7 +6,7 @@ import ScanDelta from '../ScanDelta'
 import * as deltaApi from '@/api/scanDelta'
 import * as scansApi from '@/api/scans'
 import type { DeltaCategory, ScanDeltaResponse } from '@/types/scanDelta'
-import type { Scan } from '@/types/scan'
+import type { ScanWithReleases } from '@/types/scan'
 
 vi.mock('@/api/scanDelta')
 vi.mock('@/api/scans')
@@ -19,9 +19,9 @@ const emptyDelta = (category: DeltaCategory): ScanDeltaResponse => ({
   from_waived_excluded: 0, to_waived_excluded: 0,
 })
 
-const scan = (id: string): Scan => ({
+const scan = (id: string): ScanWithReleases => ({
   id, project_id: 'p1', branch: 'main', status: 'completed',
-  created_at: '2026-08-10T12:00:00Z', commit_hash: `c-${id}`,
+  created_at: '2026-08-10T12:00:00Z', commit_hash: `c-${id}`, releases: [],
 })
 
 function renderPage(url = '/projects/p1/delta?from=a&to=b') {

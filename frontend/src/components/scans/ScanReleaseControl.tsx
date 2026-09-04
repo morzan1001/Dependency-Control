@@ -3,22 +3,18 @@ import { toast } from 'sonner'
 
 import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
 import { Button } from '@/components/ui/button'
-import { useMarkRelease, useProjectReleases, useUnmarkRelease } from '@/hooks/queries/use-releases'
+import { useMarkRelease, useUnmarkRelease } from '@/hooks/queries/use-releases'
 import { formatDateTime } from '@/lib/utils'
-import type { Scan } from '@/types/scan'
+import type { ScanWithReleases } from '@/types/scan'
 
 interface ScanReleaseControlProps {
   projectId: string
-  scan: Scan
+  scan: ScanWithReleases
 }
 
 export function ScanReleaseControl({ projectId, scan }: ScanReleaseControlProps) {
-  // Reading one scan does not carry its release rows, so they come from the project's list.
-  const { data: releases } = useProjectReleases(projectId)
   const markRelease = useMarkRelease()
   const unmarkRelease = useUnmarkRelease()
-
-  const scanReleases = releases?.items.filter((release) => release.scan_id === scan.id) ?? []
 
   const handleMark = () => {
     if (!scan.commit_hash) return
@@ -46,7 +42,7 @@ export function ScanReleaseControl({ projectId, scan }: ScanReleaseControlProps)
       <span className="text-sm text-muted-foreground">Release</span>
       {scan.is_release ? (
         <div className="flex flex-col gap-2">
-          {scanReleases.map((release) => (
+          {scan.releases.map((release) => (
             <div key={release.environment} className="flex flex-col gap-0.5">
               <ReleaseBadge environment={release.environment} version={release.version} />
               <span className="text-xs text-muted-foreground">Released {formatDateTime(release.released_at)}</span>
@@ -61,8 +57,8 @@ export function ScanReleaseControl({ projectId, scan }: ScanReleaseControlProps)
               </Button>
             </div>
           ))}
-          {/* Ingest sets the flag before writing the record, and the list it comes from is paged. */}
-          {scanReleases.length === 0 && <ReleaseBadge />}
+          {/* The flag denormalises the release records, so one without them is still a release. */}
+          {scan.releases.length === 0 && <ReleaseBadge />}
         </div>
       ) : (
         <Button

@@ -42,6 +42,7 @@ from app.core.risk_scoring import risk_score_expr
 from app.core.trufflehog import SECRET_DESCRIPTION_PREFIX, resolve_detector_name
 from app.core.worker import worker_manager
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
+from app.models.release import Release
 from app.models.system import SystemSettings
 from app.models.user import User
 from app.repositories import (
@@ -89,6 +90,13 @@ MONGO_GROUP = "$group"
 _MSG_PROJECT_NOT_FOUND = "Project not found"
 _MSG_SCAN_NOT_FOUND = "Scan not found"
 _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
+
+
+def _release_refs(releases: list[Release]) -> list[ScanReleaseRef]:
+    return [
+        ScanReleaseRef(environment=rel.environment, version=rel.version, released_at=rel.released_at)
+        for rel in releases
+    ]
 
 
 @router.get("/dashboard/stats", response_model=DashboardStats, responses=RESP_AUTH)
@@ -757,15 +765,7 @@ async def read_project_scans(
     releases_by_scan = await ReleaseRepository(db).group_by_scan([doc["_id"] for doc in scan_docs])
 
     return [
-        ScanWithReleases(
-            **{
-                **doc,
-                "releases": [
-                    ScanReleaseRef(environment=rel.environment, version=rel.version, released_at=rel.released_at)
-                    for rel in releases_by_scan.get(doc["_id"], [])
-                ],
-            }
-        )
+        ScanWithReleases(**{**doc, "releases": _release_refs(releases_by_scan.get(doc["_id"], []))})
         for doc in scan_docs
     ]
 
@@ -1028,8 +1028,9 @@ async def read_scan(
     scan_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> Scan:
-    """Get details of a specific scan; SBOMs are excluded (fetch them via /scans/{scan_id}/sboms)."""
+) -> ScanWithReleases:
+    """Get details of a specific scan and the environments it runs in; SBOMs are excluded
+    (fetch them via /scans/{scan_id}/sboms)."""
     scan_repo = ScanRepository(db)
 
     scan_data = await scan_repo.get_by_id(scan_id)
@@ -1038,7 +1039,9 @@ async def read_scan(
 
     await check_project_access(scan_data.project_id, current_user, db)
 
-    return scan_data
+    releases_by_scan = await ReleaseRepository(db).group_by_scan([scan_id])
+
+    return ScanWithReleases(**scan_data.model_dump(), releases=_release_refs(releases_by_scan.get(scan_id, [])))
 
 
 @router.get(

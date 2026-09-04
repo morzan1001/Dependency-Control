@@ -1,5 +1,6 @@
-"""The Pipelines table filters on the release mark and reads where each scan runs, and a rescan
-repeats the source's analyzer selection without inheriting its release identity."""
+"""The Pipelines table filters on the release mark, the table and the detail page both read where a
+scan runs, and a rescan repeats the source's analyzer selection without inheriting its release
+identity."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -171,6 +172,19 @@ async def _seed_releases(db) -> None:
     )
 
 
+async def _seed_stray_key_scan(db) -> None:
+    await db.scans.insert_one(
+        {
+            "_id": _STRAY_KEY_SCAN,
+            "project_id": _PROJECT,
+            "branch": _BRANCH,
+            "status": _SCAN_STATUS,
+            "created_at": _NOW,
+            "releases": [{"environment": _STAGING, "version": _STAGING_VERSION, "released_at": _NOW}],
+        }
+    )
+
+
 def _saturated_scan_doc() -> dict[str, Any]:
     """A source holding every Scan field at a value a freshly built rescan does not hold, so a field
     whose value survives into the rescan is exactly a field the endpoint copied."""
@@ -308,22 +322,50 @@ async def test_the_scan_list_names_every_environment_a_scan_runs_in(client, db, 
 @pytest.mark.asyncio
 async def test_a_scan_document_holding_a_releases_key_still_lists(client, db, member_auth_headers):
     """The environments come from the releases collection, whatever key the document happens to carry."""
-    await db.scans.insert_one(
-        {
-            "_id": _STRAY_KEY_SCAN,
-            "project_id": _PROJECT,
-            "branch": _BRANCH,
-            "status": _SCAN_STATUS,
-            "created_at": _NOW,
-            "releases": [{"environment": _STAGING, "version": _STAGING_VERSION, "released_at": _NOW}],
-        }
-    )
+    await _seed_stray_key_scan(db)
 
     resp = await client.get(f"/api/v1/projects/{_PROJECT}/scans", headers=member_auth_headers)
 
     assert resp.status_code == 200, resp.text
     body = {s["id"]: s for s in resp.json()}
     assert body[_STRAY_KEY_SCAN]["releases"] == []
+
+
+@pytest.mark.asyncio
+async def test_one_scan_names_every_environment_it_runs_in(client, db, member_auth_headers):
+    """The detail page offers a per-environment withdrawal, which needs the scan's own release rows
+    rather than the project's paged release list."""
+    await _seed(db)
+    await _seed_releases(db)
+
+    resp = await client.get(f"/api/v1/projects/scans/{_RELEASE_SCAN}", headers=member_auth_headers)
+
+    assert resp.status_code == 200, resp.text
+    assert [(r["environment"], r["version"]) for r in resp.json()["releases"]] == [
+        (_STAGING, _STAGING_VERSION),
+        (_PRODUCTION, None),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_one_unreleased_scan_names_no_environment(client, db, member_auth_headers):
+    await _seed(db)
+    await _seed_releases(db)
+
+    resp = await client.get(f"/api/v1/projects/scans/{_PLAIN_SCAN}", headers=member_auth_headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["releases"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_scan_document_holding_a_releases_key_reports_none_of_it(client, db, member_auth_headers):
+    await _seed_stray_key_scan(db)
+
+    resp = await client.get(f"/api/v1/projects/scans/{_STRAY_KEY_SCAN}", headers=member_auth_headers)
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["releases"] == []
 
 
 @pytest.mark.asyncio

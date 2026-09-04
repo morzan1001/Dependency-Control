@@ -565,7 +565,7 @@ export interface ScanReleaseRef {
   released_at: string;
 }
 
-// The project scan list attaches where each scan runs; reading a single scan does not.
 export interface ScanWithReleases extends Scan {
+  // Newest first; empty for a scan that runs nowhere.
   releases: ScanReleaseRef[];
 }
