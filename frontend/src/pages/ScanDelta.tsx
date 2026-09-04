@@ -9,9 +9,13 @@ import { ComponentsDeltaTab } from '@/components/scans/delta/tabs/ComponentsDelt
 import { CryptoDeltaTab } from '@/components/scans/delta/tabs/CryptoDeltaTab'
 import { DeltaBadge } from '@/components/scans/delta/shared/DeltaBadge'
 import { DeltaHeader } from '@/components/scans/delta/DeltaHeader'
+import type { ScanDeltaResponse } from '@/types/scanDelta'
 
 type TabId = 'findings' | 'components' | 'crypto'
 const TAB_IDS: TabId[] = ['findings', 'components', 'crypto']
+
+const changeCount = (delta: ScanDeltaResponse): number =>
+  delta.totals.added + delta.totals.removed + delta.totals.changed
 
 export default function ScanDelta() {
   const { id } = useParams<{ id: string }>()
@@ -25,9 +29,14 @@ export default function ScanDelta() {
   const [counts, setCounts] = useState<Record<TabId, number | null>>({
     findings: null, components: null, crypto: null,
   })
+  // The reachability and waived-count labels describe the pair, but only the mounted tab holds a
+  // response to read them off, so the header takes whichever tab last answered.
+  const [delta, setDelta] = useState<ScanDeltaResponse | null>(null)
 
-  const onCount = useCallback((tabId: TabId, n: number) => {
+  const onLoaded = useCallback((tabId: TabId, loaded: ScanDeltaResponse) => {
+    const n = changeCount(loaded)
     setCounts((prev) => (prev[tabId] === n ? prev : { ...prev, [tabId]: n }))
+    setDelta(loaded)
   }, [])
 
   if (!id || !from || !to || from === to) {
@@ -55,12 +64,14 @@ export default function ScanDelta() {
   const onTabChange = (value: string) => {
     const tabId = value as TabId
     setVisited((prev) => new Set(prev).add(tabId))
+    setDelta(null)
     setParams({ tab: tabId })
   }
 
   const onPairChange = (nextFrom: string, nextTo: string) => {
     setVisited(new Set<TabId>([tab]))
     setCounts({ findings: null, components: null, crypto: null })
+    setDelta(null)
     setParams({ from: nextFrom, to: nextTo })
   }
 
@@ -76,7 +87,7 @@ export default function ScanDelta() {
         </div>
       </div>
 
-      <DeltaHeader projectId={id} fromScanId={from} toScanId={to} onChange={onPairChange} />
+      <DeltaHeader projectId={id} fromScanId={from} toScanId={to} onChange={onPairChange} delta={delta} />
 
       {/* key remounts tab bodies on pair change so filters/pagination reset */}
       <Tabs key={`${from}->${to}`} value={tab} onValueChange={onTabChange} className="space-y-4">
@@ -88,19 +99,19 @@ export default function ScanDelta() {
         <TabsContent value="findings">
           {visited.has('findings') && (
             <FindingsDeltaTab projectId={id} fromScanId={from} toScanId={to}
-              onCountLoaded={(n) => onCount('findings', n)} />
+              onLoaded={(loaded) => onLoaded('findings', loaded)} />
           )}
         </TabsContent>
         <TabsContent value="components">
           {visited.has('components') && (
             <ComponentsDeltaTab projectId={id} fromScanId={from} toScanId={to}
-              onCountLoaded={(n) => onCount('components', n)} />
+              onLoaded={(loaded) => onLoaded('components', loaded)} />
           )}
         </TabsContent>
         <TabsContent value="crypto">
           {visited.has('crypto') && (
             <CryptoDeltaTab projectId={id} fromScanId={from} toScanId={to}
-              onCountLoaded={(n) => onCount('crypto', n)} />
+              onLoaded={(loaded) => onLoaded('crypto', loaded)} />
           )}
         </TabsContent>
       </Tabs>

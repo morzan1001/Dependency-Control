@@ -10,7 +10,7 @@ function renderTab() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <ComponentsDeltaTab projectId="p1" fromScanId="a" toScanId="b" onCountLoaded={() => {}} />
+      <ComponentsDeltaTab projectId="p1" fromScanId="a" toScanId="b" onLoaded={() => {}} />
     </QueryClientProvider>,
   );
 }

@@ -6,12 +6,14 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { scanApi } from '@/api/scans'
+import { DeltaComparability } from '@/components/scans/delta/DeltaComparability'
 import { useProjectReleases } from '@/hooks/queries/use-releases'
 import { useProjectScans } from '@/hooks/queries/use-scans'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
 import { isScanUsable } from '@/lib/scan-status'
 import type { ReleaseItem } from '@/types/release'
 import { Scan } from '@/types/scan'
+import type { ScanDeltaResponse } from '@/types/scanDelta'
 
 const LATEST_RELEASE_LIMIT = 1
 const RELEASE_MARKER_LABEL = 'Release'
@@ -21,6 +23,7 @@ interface DeltaHeaderProps {
   fromScanId: string
   toScanId: string
   onChange: (from: string, to: string) => void
+  delta: ScanDeltaResponse | null
 }
 
 function ScanLabel({ scan }: { readonly scan: Scan }) {
@@ -84,7 +87,7 @@ function ScanSide({ label, scanId, options, onSelect }: {
   )
 }
 
-export function DeltaHeader({ projectId, fromScanId, toScanId, onChange }: DeltaHeaderProps) {
+export function DeltaHeader({ projectId, fromScanId, toScanId, onChange, delta }: DeltaHeaderProps) {
   const { data: scans } = useProjectScans(projectId, { page: 1, limit: 50, excludeRescans: true })
   const options = (scans || []).filter((s) => isScanUsable(s.status))
   // The endpoint sorts releases newest first, so a single row is the newest one and no page
@@ -132,6 +135,7 @@ export function DeltaHeader({ projectId, fromScanId, toScanId, onChange }: Delta
           <ScanSide label="To" scanId={toScanId} options={options}
             onSelect={(id) => id !== fromScanId && onChange(fromScanId, id)} />
         </div>
+        <DeltaComparability delta={delta} />
       </CardContent>
     </Card>
   )

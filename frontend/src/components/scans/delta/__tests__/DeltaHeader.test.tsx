@@ -10,6 +10,7 @@ import { useProjectReleases } from '@/hooks/queries/use-releases'
 import { useProjectScans } from '@/hooks/queries/use-scans'
 import type { ReleaseItem, ReleaseListResponse } from '@/types/release'
 import type { ScanWithReleases } from '@/types/scan'
+import type { ScanDeltaResponse } from '@/types/scanDelta'
 
 vi.mock('@/api/scans')
 vi.mock('@/hooks/queries/use-scans')
@@ -55,7 +56,12 @@ function getOne(id: string): Promise<ScanWithReleases> {
   return Promise.reject(new Error(`unexpected scan id ${id}`))
 }
 
-function renderHeader(onChange = vi.fn(), releases: ReleaseItem[] = [], toScanId: string = toScan.id) {
+function renderHeader(
+  onChange = vi.fn(),
+  releases: ReleaseItem[] = [],
+  toScanId: string = toScan.id,
+  delta: ScanDeltaResponse | null = null,
+) {
   const listed: ReleaseListResponse = {
     items: releases,
     total: releases.length,
@@ -68,7 +74,8 @@ function renderHeader(onChange = vi.fn(), releases: ReleaseItem[] = [], toScanId
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
-      <DeltaHeader projectId={PROJECT_ID} fromScanId={rescan.id} toScanId={toScanId} onChange={onChange} />
+      <DeltaHeader projectId={PROJECT_ID} fromScanId={rescan.id} toScanId={toScanId} onChange={onChange}
+        delta={delta} />
     </QueryClientProvider>,
   )
   return { onChange }

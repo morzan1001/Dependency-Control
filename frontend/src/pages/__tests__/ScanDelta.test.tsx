@@ -26,13 +26,24 @@ const FIRST_PAGE = 1
 // The quick pick reads only the newest release, so the header asks for a single row.
 const LATEST_RELEASE_LIMIT = 1
 const NO_RELEASES = 0
+const COVERABLE = 120
+const ANALYSED = 118
+const NOT_ANALYSED = 0
+const FROM_WAIVED = 12
+const TO_WAIVED = 9
+const RISK_SCORE_WARNING = /only its risk scores are reachability-adjusted/i
+const LAPSED_WAIVER_WARNING = /before treating an added finding as newly introduced/i
 
 // Annotated, not inferred: an inferred fixture drops a field from the response type silently.
-const emptyDelta = (category: DeltaCategory): ScanDeltaResponse => ({
+const emptyDelta = (
+  category: DeltaCategory,
+  overrides: Partial<ScanDeltaResponse> = {},
+): ScanDeltaResponse => ({
   category, from_scan_id: FROM_SCAN_ID, to_scan_id: TO_SCAN_ID, project_id: PROJECT_ID,
   totals: { added: 2, removed: 1, unchanged: 5, changed: 0, by_severity: {}, by_type: {} },
   page: FIRST_PAGE, page_size: 50, total_pages: 1, items: [],
   from_waived_excluded: 0, to_waived_excluded: 0,
+  ...overrides,
 })
 
 const scan = (id: string): ScanWithReleases => ({
@@ -87,6 +98,26 @@ describe('ScanDelta page', () => {
   it('shows an error card for an invalid scan pair', () => {
     renderPage(`/projects/${PROJECT_ID}/delta?from=${FROM_SCAN_ID}&to=${FROM_SCAN_ID}`)
     expect(screen.getByText(/invalid scan comparison/i)).toBeInTheDocument()
+  })
+
+  it('carries the per-side labels from the response up to the header', async () => {
+    vi.mocked(deltaApi.getScanDelta).mockResolvedValue(
+      emptyDelta('findings', {
+        from_reachability: { coverable_count: COVERABLE, analyzed_count: NOT_ANALYSED },
+        to_reachability: { coverable_count: COVERABLE, analyzed_count: ANALYSED },
+        from_waived_excluded: FROM_WAIVED,
+        to_waived_excluded: TO_WAIVED,
+      }),
+    )
+    vi.mocked(scansApi.scanApi.getOne).mockImplementation((id: string) => Promise.resolve(scan(id)))
+    vi.mocked(releaseApi.list).mockResolvedValue(noReleases)
+
+    renderPage()
+
+    expect(await screen.findByText(new RegExp(`${FROM_WAIVED} waived hidden`))).toBeInTheDocument()
+    expect(screen.getByText(new RegExp(`${TO_WAIVED} waived hidden`))).toBeInTheDocument()
+    expect(screen.getByText(RISK_SCORE_WARNING)).toBeInTheDocument()
+    expect(screen.getByText(LAPSED_WAIVER_WARNING)).toBeInTheDocument()
   })
 
   it('re-anchors the comparison on the latest release', async () => {
