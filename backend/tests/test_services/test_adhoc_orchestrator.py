@@ -24,6 +24,8 @@ _TRUFFLEHOG_NAME = "trufflehog"
 _CRYPTO_ANALYZER = "crypto_weak_algorithm"
 # The enrichment stage runs on every request and is reported last.
 _ENRICHMENT = "epss_kev"
+# Reachability needs a callgraph none of these requests posts, so it reports itself as skipped.
+_REACHABILITY = "reachability"
 _EMPTY_PAYLOAD = "empty payload"
 _SERIAL_NUMBER = "urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79"
 _FIRST_SBOM_SOURCE = "SBOM #1"
@@ -222,7 +224,7 @@ async def test_unknown_analyzer_name_is_reported_not_silently_dropped():
 
     assert response.analyzers.skipped[_UNKNOWN_NAME] == _UNKNOWN_ANALYZER
     # Every registered analyzer the request left out is accounted for alongside it.
-    assert set(response.analyzers.skipped) == set(analyzers) | {_UNKNOWN_NAME}
+    assert set(response.analyzers.skipped) == set(analyzers) | {_UNKNOWN_NAME, _REACHABILITY}
     assert response.analyzers.ran == [_ENRICHMENT]
 
 
@@ -279,7 +281,7 @@ async def test_unparseable_sbom_is_reported_without_aborting_the_run():
 
     assert _SBOM_LABEL in response.analyzers.skipped_inputs
     # ``skipped`` is keyed by analyzer name; an input label in there is unreadable for consumers.
-    assert set(response.analyzers.skipped) == set(analyzers)
+    assert set(response.analyzers.skipped) == set(analyzers) | {_REACHABILITY}
     assert len(_findings_of_type(response, _TYPE_SECRET)) == _EXPECTED_SECRET_FINDINGS
 
 
@@ -343,7 +345,7 @@ async def test_empty_posted_payload_is_skipped_rather_than_reported_as_ran():
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     assert response.analyzers.skipped[_TRUFFLEHOG_NAME] == _EMPTY_PAYLOAD
-    assert set(response.analyzers.skipped) == set(analyzers) | {_TRUFFLEHOG_NAME}
+    assert set(response.analyzers.skipped) == set(analyzers) | {_TRUFFLEHOG_NAME, _REACHABILITY}
     assert response.analyzers.ran == [_ENRICHMENT]
 
 

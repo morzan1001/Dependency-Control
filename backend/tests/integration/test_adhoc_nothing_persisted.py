@@ -102,6 +102,7 @@ _MONGO_URL = "mongodb://localhost:27017"
 _FAILING_ANALYZER = "license_compliance"
 _CACHING_ANALYZER = "typosquatting"
 _ENRICHMENT = "epss_kev"
+_REACHABILITY = "reachability"
 
 # A deliberately misspelled dependency. No upstream reference list can legitimately contain it,
 # so finding it inside a shared cache value means caller data leaked in under a permitted key.
@@ -191,7 +192,14 @@ _KICS = {
     ]
 }
 
-_CALLGRAPH = {"nodes": [{"id": "app.handlers.run"}], "edges": []}
+# A callgraph the parsers actually read, so the reachability stage runs inside every net
+# below; the scan-backed path bulk-writes its verdicts, and this one must not.
+_CALLGRAPH = {
+    "language": "python",
+    "format": "generic",
+    "analyzed_modules": ["requests"],
+    "imports": [{"module": "requests", "file": "app/handlers.py", "line": 12, "symbols": ["get"]}],
+}
 
 _SCANNER_PAYLOADS = {"trufflehog": _TRUFFLEHOG, "opengrep": _OPENGREP, "bearer": _BEARER, "kics": _KICS}
 
@@ -202,7 +210,7 @@ _ANALYZERS = ["license_compliance", "typosquatting"]
 
 # Every net below is only as wide as the run that exercises it, so the run's own reach is
 # asserted by equality rather than by truthiness.
-_EXPECTED_RAN = frozenset(_ANALYZERS) | frozenset(_SCANNER_PAYLOADS) | {_ENRICHMENT}
+_EXPECTED_RAN = frozenset(_ANALYZERS) | frozenset(_SCANNER_PAYLOADS) | {_ENRICHMENT, _REACHABILITY}
 _EXPECTED_SKIPPED = frozenset(analyzers) - frozenset(_ANALYZERS)
 
 

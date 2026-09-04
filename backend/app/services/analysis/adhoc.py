@@ -7,14 +7,21 @@ from typing import Any
 from app.core.cache import suppress_cache_writes
 from app.models.system import SystemSettings
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport
+from app.schemas.projections import CallgraphMinimal
 from app.schemas.sbom import ParsedSBOM
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _build_settings_resolver
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzers, post_processors
-from app.services.analysis.stats import build_epss_kev_summary
+from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.enrichment.service import VulnerabilityEnrichmentService
+from app.services.reachability_enrichment import (
+    _PreparedCallgraph,
+    _prepare_callgraph,
+    component_language_map,
+    enrich_findings_from_callgraphs,
+)
 from app.services.sbom_parser import parse_sbom
 
 logger = logging.getLogger(__name__)
@@ -22,6 +29,7 @@ logger = logging.getLogger(__name__)
 _UNKNOWN_ANALYZER = "unknown analyzer"
 _EMPTY_PAYLOAD = "empty payload"
 _ENRICHMENT = "epss_kev"
+_REACHABILITY = "reachability"
 _VULNERABILITY = "vulnerability"
 _NO_COMPONENTS = "no components could be parsed (detected format: {sbom_format})"
 _DROPPED_COMPONENTS = "{count} component(s) dropped by the parser ({reasons})"
@@ -67,6 +75,17 @@ _CRYPTO_ANALYZER_REPLACED = (
     "assets from the database, the stage evaluates the same rules against the posted CBOM"
 )
 
+_NO_CALLGRAPH = "no callgraph supplied"
+_AUTO_FORMAT = "auto"
+_UNDETECTABLE_FORMAT = "could not auto-detect the callgraph format"
+_LANGUAGE_REQUIRED = "'language' is required for '{callgraph_format}' callgraph payloads"
+_UNSUPPORTED_FORMAT = "unsupported callgraph format: {callgraph_format}"
+# The one format that names its own language: madge only ever runs over a JS/TS tree.
+_MADGE_FORMAT = "madge"
+_MADGE_LANGUAGE = "javascript"
+# Identifies the graph within this request only; nothing here is stored or looked up by it.
+_POSTED_CALLGRAPH_ID = "posted"
+
 
 @dataclass(frozen=True)
 class _ParsedInput:
@@ -76,6 +95,7 @@ class _ParsedInput:
     # even when an earlier one was skipped.
     position: int
     sbom: dict[str, Any]
+    parsed: ParsedSBOM
     components: list[dict[str, Any]]
 
 
@@ -213,7 +233,12 @@ def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_
         if _yielded_nothing(parsed):
             continue
         parsed_inputs.append(
-            _ParsedInput(position=position, sbom=sbom, components=[dep.to_dict() for dep in parsed.dependencies])
+            _ParsedInput(
+                position=position,
+                sbom=sbom,
+                parsed=parsed,
+                components=[dep.to_dict() for dep in parsed.dependencies],
+            )
         )
     return parsed_inputs
 
@@ -225,8 +250,8 @@ def resolve_adhoc_analyzers(requested: list[str] | None, report: AnalyzerReport)
     resolved: list[str] = []
     for name in selected:
         if name in post_processors:
-            # Stages rather than selectable analyzers: they run on every request and put
-            # themselves in ``ran``, so a skip note here would contradict the same report.
+            # Stages rather than selectable analyzers: they report their own outcome, so a
+            # skip note here would contradict the same report.
             continue
         if name in CRYPTO_ANALYZERS:
             report.skipped[name] = _CRYPTO_ANALYZER_REPLACED
@@ -262,6 +287,67 @@ async def _enrich_vulnerabilities(records: list[dict[str, Any]], report: Analyze
     finally:
         await service.close()
     return dict(build_epss_kev_summary(vulnerabilities))
+
+
+def _prepare_posted_callgraph(payload: dict[str, Any]) -> tuple[dict[str, Any], _PreparedCallgraph]:
+    """Turn a posted callgraph into the same in-memory shape the stored one resolves to."""
+    from app.api.v1.helpers.callgraph import detect_format, parse_generic_format, parse_madge_format
+
+    raw_format = str(payload.get("format") or _AUTO_FORMAT)
+    data = {key: value for key, value in payload.items() if key not in ("format", "language")}
+    resolved_format = detect_format(data) if raw_format == _AUTO_FORMAT else raw_format
+    if resolved_format == "unknown":
+        raise ValueError(_UNDETECTABLE_FORMAT)
+
+    language = payload.get("language") or (_MADGE_LANGUAGE if resolved_format == _MADGE_FORMAT else None)
+    if not language:
+        raise ValueError(_LANGUAGE_REQUIRED.format(callgraph_format=resolved_format))
+
+    parser = {_MADGE_FORMAT: parse_madge_format, "generic": parse_generic_format}.get(resolved_format)
+    if parser is None:
+        raise ValueError(_UNSUPPORTED_FORMAT.format(callgraph_format=resolved_format))
+
+    imports, _calls, module_usage, analyzed_modules = parser(data, str(language))
+    # The model derives ``import_map`` from ``module_usage``, which is what the enrichment reads.
+    minimal = CallgraphMinimal(
+        id=_POSTED_CALLGRAPH_ID,
+        module_usage={key: usage.model_dump() for key, usage in module_usage.items()},
+        analyzed_modules=analyzed_modules,
+        language=str(language),
+    )
+    as_dict = {
+        "language": minimal.language,
+        "module_usage": minimal.module_usage,
+        "analyzed_modules": minimal.analyzed_modules,
+        "total_imports": len(imports),
+        "created_at": None,
+    }
+    return as_dict, _prepare_callgraph(minimal)
+
+
+def _run_reachability(
+    records: list[dict[str, Any]],
+    callgraph_payload: dict[str, Any] | None,
+    languages: dict[str, frozenset[str]],
+    report: AnalyzerReport,
+) -> dict[str, Any] | None:
+    if callgraph_payload is None:
+        report.skipped[_REACHABILITY] = _NO_CALLGRAPH
+        return None
+
+    try:
+        callgraph_dict, prepared = _prepare_posted_callgraph(callgraph_payload)
+    except Exception as exc:
+        logger.warning("adhoc: callgraph could not be prepared: %s", exc)
+        _record_errored(report, _REACHABILITY, str(exc))
+        return None
+
+    # The list holds the same dict objects as ``records``, so the mirroring store_reachability
+    # does in place stays visible to every later stage.
+    vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
+    enriched = enrich_findings_from_callgraphs(vulnerabilities, [prepared], languages)
+    _record_ran(report, _REACHABILITY)
+    return dict(build_reachability_summary(vulnerabilities, [callgraph_dict], enriched))
 
 
 async def run_adhoc_analysis(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeResponse:
@@ -309,4 +395,12 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
 
     epss_kev_summary = await _enrich_vulnerabilities(records, report)
 
-    return AdhocAnalyzeResponse(findings=records, epss_kev_summary=epss_kev_summary, analyzers=report)
+    languages = component_language_map([component for pi in parsed_inputs for component in pi.components])
+    reachability_summary = _run_reachability(records, request.callgraph, languages, report)
+
+    return AdhocAnalyzeResponse(
+        findings=records,
+        epss_kev_summary=epss_kev_summary,
+        reachability_summary=reachability_summary,
+        analyzers=report,
+    )
