@@ -2,23 +2,7 @@ import type { Severity } from './common';
 
 export type { Severity } from './common';
 
-export interface PipelineMetadata {
-  CI_COMMIT_BRANCH?: string;
-  CI_DEFAULT_BRANCH?: string;
-  CI_PROJECT_PATH?: string;
-  CI_PROJECT_ID?: number;
-  CI_PIPELINE_ID: number;
-  CI_PIPELINE_IID?: number;
-  CI_PROJECT_TITLE?: string;
-  CI_COMMIT_MESSAGE?: string;
-  CI_PROJECT_URL?: string;
-  CI_COMMIT_TAG?: string;
-  CI_JOB_STARTED_AT?: string;
-  CI_JOB_ID?: number;
-  CI_PROJECT_NAME?: string;
-}
-
-export type FindingType = 
+export type FindingType =
   | "vulnerability"
   | "license"
   | "secret"
@@ -523,7 +507,6 @@ export interface Scan {
   commit_hash?: string;
   pipeline_id?: number;
   pipeline_iid?: number;
-  metadata?: PipelineMetadata;
   project_url?: string;
   pipeline_url?: string;
   project_name?: string;

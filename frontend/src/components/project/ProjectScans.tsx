@@ -12,7 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink, ArrowUp, ArrowDown, RefreshCw, Rocket, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ArrowUp, ArrowDown, RefreshCw, Rocket, Trash2 } from 'lucide-react'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
@@ -231,7 +231,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs">
                         {(() => {
-                          const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
+                          const projectUrl = scan.project_url
                           const pipelineId = scan.pipeline_id
                           const href = buildPipelineUrl({
                             projectUrl,
@@ -255,24 +255,13 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                           )
                         })()}
                       </span>
-                      {scan.metadata?.CI_PROJECT_URL && (
-                        <a 
-                          href={scan.metadata.CI_PROJECT_URL}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-muted-foreground hover:text-primary"
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
-                      )}
                     </div>
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <GitBranch className="h-4 w-4 text-muted-foreground" />
                       {(() => {
-                        const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
+                        const projectUrl = scan.project_url
                         const href = buildBranchUrl({
                           projectUrl,
                           pipelineUrl: scan.pipeline_url,
@@ -312,7 +301,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                         const shortSha = shortCommitHash(scan.commit_hash)
                         if (!shortSha) return <span className="font-mono text-xs">N/A</span>
 
-                        const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
+                        const projectUrl = scan.project_url
                         const href = buildCommitUrl({
                           projectUrl,
                           pipelineUrl: scan.pipeline_url,
