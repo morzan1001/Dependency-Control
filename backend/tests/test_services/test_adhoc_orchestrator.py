@@ -14,7 +14,13 @@ _SEVERITY_HIGH = "HIGH"
 _SEVERITY_INFO = "INFO"
 _TYPE_SECRET = "secret"
 _TYPE_LICENSE = "license"
+_TYPE_VULNERABILITY = "vulnerability"
 _TYPE_SYSTEM_WARNING = "system_warning"
+_PARTIAL_COVERAGE = "partial coverage"
+_COMPONENTS_NOT_SCANNED = "{count} component(s) were not scanned"
+_RECORDS_NOT_FETCHED = "{count} vulnerability record(s) could not be fetched"
+_SKIPPED_COMPONENTS = 7
+_PARTIAL_CVE = "CVE-2024-12345"
 _EXPECTED_SECRET_FINDINGS = 1
 _ANALYZER_ERROR = "upstream exploded"
 _ANALYZER_TIMEOUT = "timed out after 60s"
@@ -616,3 +622,70 @@ async def test_a_normalizer_that_cannot_read_an_analyzer_result_is_reported_not_
     assert list(response.analyzers.errored) == ["osv"]
     assert response.analyzers.ran == [_ENRICHMENT]
     assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
+
+
+def _partial_osv(monkeypatch, result):
+    from app.services.analysis import registry
+
+    class _Partial:
+        name = _OSV_NAME
+
+        async def analyze(self, sbom, settings=None, parsed_components=None):
+            return result
+
+    monkeypatch.setitem(registry.analyzers, _OSV_NAME, _Partial())
+
+
+@pytest.mark.parametrize(
+    ("result_key", "expected"),
+    [
+        ("partial_components_skipped", _COMPONENTS_NOT_SCANNED),
+        ("partial_vulnerabilities_unhydrated", _RECORDS_NOT_FETCHED),
+    ],
+)
+@pytest.mark.asyncio
+async def test_an_analyzer_that_covered_only_part_of_its_input_is_not_reported_as_ran(
+    monkeypatch, result_key, expected
+):
+    """An unreachable CVE source answers a vulnerable SBOM with zero findings; the caller has to
+    be able to tell that from a clean bill of health."""
+    _partial_osv(monkeypatch, {"osv_vulnerabilities": [], result_key: _SKIPPED_COMPONENTS})
+
+    request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=[_OSV_NAME], apply_global_waivers=False)
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert _OSV_NAME not in response.analyzers.ran
+    assert response.analyzers.errored == {
+        _OSV_NAME: [f"{_FIRST_SBOM_SOURCE}: {_PARTIAL_COVERAGE}: {expected.format(count=_SKIPPED_COMPONENTS)}"]
+    }
+    # Trap 4: the engine surfaces the same gap through the aggregator, which would mint a HIGH
+    # SYSTEM_WARNING finding on a path whose caller asked only for what it posted.
+    assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
+
+
+@pytest.mark.asyncio
+async def test_what_a_partial_analyzer_did_find_is_still_returned(monkeypatch):
+    _partial_osv(
+        monkeypatch,
+        {
+            "osv_vulnerabilities": [
+                {
+                    "component": "requests",
+                    "version": "2.31.0",
+                    "vulnerabilities": [{"id": _PARTIAL_CVE, "severity": _SEVERITY_HIGH, "summary": "rce"}],
+                }
+            ],
+            "partial_components_skipped": _SKIPPED_COMPONENTS,
+        },
+    )
+
+    request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=[_OSV_NAME], apply_global_waivers=False)
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    advisories = [
+        entry["id"]
+        for finding in _findings_of_type(response, _TYPE_VULNERABILITY)
+        for entry in finding["details"]["vulnerabilities"]
+    ]
+    assert advisories == [_PARTIAL_CVE]
+    assert list(response.analyzers.errored) == [_OSV_NAME]

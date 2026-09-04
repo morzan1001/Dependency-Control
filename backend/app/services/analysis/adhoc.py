@@ -23,7 +23,7 @@ from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, Analyze
 from app.schemas.projections import CallgraphMinimal
 from app.schemas.sbom import ParsedSBOM
 from app.services.aggregation import ResultAggregator
-from app.services.analysis.engine import _build_settings_resolver
+from app.services.analysis.engine import _build_settings_resolver, _partial_result_reason
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzers, post_processors
 from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary, compute_stats
 from app.services.analysis.types import Database
@@ -48,6 +48,7 @@ ADHOC_SLOTS = asyncio.Semaphore(1)
 
 _UNKNOWN_ANALYZER = "unknown analyzer"
 _EMPTY_PAYLOAD = "empty payload"
+_PARTIAL_COVERAGE = "partial coverage: {reason}"
 _ENRICHMENT = "epss_kev"
 _REACHABILITY = "reachability"
 _VULNERABILITY = "vulnerability"
@@ -309,9 +310,9 @@ async def _run_one_analyzer(
 ) -> None:
     """Run one analyzer and record its outcome.
 
-    A failure lands in ``report.errored`` and is never aggregated: the aggregator turns
-    every ``{"error": ...}`` into a HIGH SYSTEM_WARNING finding, which would read as a
-    real defect instead of as missing coverage.
+    A failure and a coverage gap both land in ``report.errored`` and neither is ever aggregated:
+    the aggregator turns every ``{"error": ...}`` into a HIGH SYSTEM_WARNING finding, which would
+    read as a real defect instead of as missing coverage.
     """
     try:
         result = await analyzer.analyze(sbom, settings=settings, parsed_components=parsed_components)
@@ -324,6 +325,14 @@ async def _run_one_analyzer(
         logger.warning("adhoc: analyzer %s failed: %s", name, exc)
         # Attributed to the input, so "failed on one of ten" is distinguishable from "failed on ten".
         _record_errored(report, name, f"{fallback_source}: {exc}")
+        return
+
+    # What the analyzer did find is kept; what it could not reach is a gap, and an unreachable
+    # CVE source must not answer a Log4Shell SBOM with an empty finding list and no reason.
+    partial = _partial_result_reason(result)
+    if partial:
+        logger.warning("adhoc: analyzer %s returned partial coverage: %s", name, partial)
+        _record_errored(report, name, f"{fallback_source}: {_PARTIAL_COVERAGE.format(reason=partial)}")
         return
 
     _record_ran(report, name)
