@@ -33,6 +33,10 @@ _WRITE_METHODS = (
     "create_index",
 )
 
+# Asserting on the key collection alone leaves a usage or audit collection free to be written.
+_USERS_COL = "users"
+_REACHABLE_COLLECTIONS = frozenset({_COL, _USERS_COL})
+
 
 def _key_doc():
     return {
@@ -87,6 +91,20 @@ async def test_authentication_writes_nothing(monkeypatch):
         # actually stubbed would assert nothing at all.
         assert isinstance(method, AsyncMock), method_name
         method.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_authentication_reaches_no_other_collection(monkeypatch):
+    db, _ = _db_with_key(_key_doc())
+    _patch_user(monkeypatch, _active_user([Permissions.ANALYZE_ADHOC]))
+
+    await get_adhoc_api_key(authorization=f"Bearer {_TOKEN}", db=db)
+
+    by_item = {call.args[0] for call in db.__getitem__.call_args_list}
+    assert by_item == _REACHABLE_COLLECTIONS
+    # db.some_collection.insert_one(...) never touches __getitem__, but does land in mock_calls.
+    by_attribute = {name.split(".")[0] for name, _, _ in db.mock_calls} - {"__getitem__"}
+    assert by_attribute <= _REACHABLE_COLLECTIONS
 
 
 @pytest.mark.asyncio

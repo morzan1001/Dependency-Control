@@ -99,3 +99,20 @@ async def test_missing_permission_is_403(client, db):
     listed = await client.get(f"{_BASE}/", headers=headers)
     assert listed.status_code == _FORBIDDEN, listed.text
     assert await _key_count(db) == _NO_KEYS
+
+
+@pytest.mark.asyncio
+async def test_revoking_own_key_without_permission_is_403(client, db):
+    # Same subject, so the key is found: without the gate the revoke would succeed, not 404.
+    created = await client.post(
+        f"{_BASE}/",
+        json={"name": _KEY_NAME},
+        headers=_headers([Permissions.ANALYZE_ADHOC]),
+    )
+    key_id = created.json()["id"]
+
+    revoked = await client.delete(f"{_BASE}/{key_id}", headers=_headers([Permissions.PROJECT_READ]))
+
+    assert revoked.status_code == _FORBIDDEN, revoked.text
+    still_live = await client.get(f"{_BASE}/", headers=_headers([Permissions.ANALYZE_ADHOC]))
+    assert still_live.json()["keys"][0]["revoked_at"] is None

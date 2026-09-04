@@ -9,7 +9,7 @@ from app.models.stats import Stats
 from app.schemas.project import LicensePolicySchema
 
 MAX_ADHOC_SBOMS: int = 10
-# Above the 19 names in the analyzer registry; a literal because importing it here would
+# Above the 18 names in the analyzer registry; a literal because importing it here would
 # construct every analyzer class at schema import time.
 MAX_ADHOC_ANALYZERS: int = 25
 

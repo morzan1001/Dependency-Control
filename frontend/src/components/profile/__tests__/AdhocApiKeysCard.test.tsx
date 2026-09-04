@@ -16,9 +16,11 @@ const DEFAULT_EXPIRY_DAYS = 90;
 const CREATED_AT = "2026-09-01T10:00:00Z";
 const EXPIRES_AT = "2026-12-01T10:00:00Z";
 const NOT_CALLED = 0;
+const CALLED_ONCE = 1;
 
-const { createMutate, revokeMutate } = vi.hoisted(() => ({
+const { createMutate, createReset, revokeMutate } = vi.hoisted(() => ({
   createMutate: vi.fn(),
+  createReset: vi.fn(),
   revokeMutate: vi.fn(),
 }));
 
@@ -26,7 +28,11 @@ vi.mock("@/hooks/queries/use-adhoc-keys", () => {
   const noKeys: AdhocApiKeyListResponse = { keys: [] };
   return {
     useAdhocKeys: () => ({ data: noKeys, isLoading: false }),
-    useCreateAdhocKey: () => ({ mutateAsync: createMutate, isPending: false }),
+    useCreateAdhocKey: () => ({
+      mutateAsync: createMutate,
+      reset: createReset,
+      isPending: false,
+    }),
     useRevokeAdhocKey: () => ({ mutateAsync: revokeMutate, isPending: false }),
   };
 });
@@ -46,6 +52,23 @@ function openCreateDialog() {
   fireEvent.click(screen.getByRole("button", { name: /New key/i }));
 }
 
+async function revealToken() {
+  openCreateDialog();
+  fireEvent.change(screen.getByLabelText(/Name/i), {
+    target: { value: KEY_NAME },
+  });
+  fireEvent.click(screen.getByRole("button", { name: /Create key/i }));
+  expect(await screen.findByText(PLAINTEXT_TOKEN)).toBeInTheDocument();
+}
+
+async function expectTokenForgotten() {
+  await waitFor(() =>
+    expect(screen.queryByText(PLAINTEXT_TOKEN)).not.toBeInTheDocument(),
+  );
+  // The mutation result holds the plaintext too, and outlives the dialog without a reset.
+  expect(createReset).toHaveBeenCalledTimes(CALLED_ONCE);
+}
+
 describe("AdhocApiKeysCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -53,13 +76,7 @@ describe("AdhocApiKeysCard", () => {
   });
 
   it("reveals the plaintext token once and drops it when the dialog is dismissed", async () => {
-    openCreateDialog();
-    fireEvent.change(screen.getByLabelText(/Name/i), {
-      target: { value: KEY_NAME },
-    });
-    fireEvent.click(screen.getByRole("button", { name: /Create key/i }));
-
-    expect(await screen.findByText(PLAINTEXT_TOKEN)).toBeInTheDocument();
+    await revealToken();
     expect(createMutate).toHaveBeenCalledWith({
       name: KEY_NAME,
       expires_in_days: DEFAULT_EXPIRY_DAYS,
@@ -69,9 +86,15 @@ describe("AdhocApiKeysCard", () => {
       screen.getByRole("button", { name: /I have stored the key/i }),
     );
 
-    await waitFor(() =>
-      expect(screen.queryByText(PLAINTEXT_TOKEN)).not.toBeInTheDocument(),
-    );
+    await expectTokenForgotten();
+  });
+
+  it("drops the token when the reveal dialog is dismissed with Escape", async () => {
+    await revealToken();
+
+    fireEvent.keyDown(document, { key: "Escape" });
+
+    await expectTokenForgotten();
   });
 
   it("refuses to mint a nameless key", () => {

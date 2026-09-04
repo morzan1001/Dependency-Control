@@ -108,6 +108,12 @@ export function AdhocApiKeysCard() {
     toast.success('Token copied to clipboard.');
   };
 
+  const dismissRevealedToken = () => {
+    setRevealedToken(null);
+    // The plaintext also sits in react-query's MutationCache until the mutation is reset.
+    createMutation.reset();
+  };
+
   const keys = data?.keys ?? [];
 
   return (
@@ -231,7 +237,7 @@ export function AdhocApiKeysCard() {
       <Dialog
         open={revealedToken !== null}
         onOpenChange={(open) => {
-          if (!open) setRevealedToken(null);
+          if (!open) dismissRevealedToken();
         }}
       >
         <DialogContent>
