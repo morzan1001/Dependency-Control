@@ -8,6 +8,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core import ensure_utc
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, MAX_RESCAN_HOPS, SCAN_USABLE_STATUSES
+from app.core.init_db import RELEASES_LATEST_SORT
 from app.repositories import ProjectRepository, ScanRepository
 from app.schemas.projections import ProjectWithScanId
 
@@ -91,7 +92,7 @@ async def latest_release_scan(db: AsyncIOMotorDatabase, project_id: str, environ
         {"project_id": project_id, "environment": environment},
         # Same tie-break as the analytics path, or two marks landing in one millisecond answer
         # "what is in production" differently depending on which endpoint is asked.
-        sort=[("released_at", -1), ("_id", 1)],
+        sort=RELEASES_LATEST_SORT,
     )
     if row is None:
         return None

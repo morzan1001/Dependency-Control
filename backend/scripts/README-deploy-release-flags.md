@@ -16,13 +16,14 @@ then execute.
 `create_indexes` runs in the startup path, so a build there stalls the rollout. Build them by hand
 first; the startup call then finds them and is a no-op.
 
-Two of the three are on `releases`, which does not exist yet, so they are instant. The third is a
+Two of the four are on `releases`, which does not exist yet, so they are instant. The third is a
 partial index over `is_release: true`, and every production scan predates the field — so it is
-empty **now** and expensive **after** the backfill. Build it before, not after.
+empty **now** and expensive **after** the backfill. Build it before, not after. The fourth replaces
+an index on the largest collection in production and is the one that actually takes time.
 
 ```js
 db.releases.createIndex(
-  { project_id: 1, environment: 1, released_at: -1 },
+  { project_id: 1, environment: 1, released_at: -1, _id: 1 },
   { name: "releases_latest_lookup" }
 )
 db.releases.createIndex(
@@ -33,9 +34,25 @@ db.scans.createIndex(
   { project_id: 1, is_release: 1, created_at: -1 },
   { name: "scans_released_list", partialFilterExpression: { is_release: true } }
 )
+db.scans.createIndex({ project_id: 1, status: 1, created_at: -1, _id: 1 })
 ```
 
 Verify: `db.releases.getIndexes()` lists both, `db.scans.getIndexes()` lists `scans_released_list`.
+
+The date-ordered picks tie-break on `_id`, so the trailing `_id: 1` is load-bearing: without it the
+scheduled-rescan tip pick becomes a blocking sort over every usable scan of the project, ~211k
+times a day. Confirm the plan before you deploy — `topStage` must be `LIMIT` with
+`docsExamined: 1`:
+
+```js
+db.scans.find(
+  { project_id: "<any project>", status: { $in: ["completed", "completed_with_errors"] },
+    sbom_refs: { $exists: true, $ne: [] }, is_rescan: { $ne: true } }
+).sort({ created_at: -1, _id: 1 }).limit(1).explain("executionStats")
+```
+
+Then drop the superseded 3-key index, `db.scans.dropIndex("project_id_1_status_1_created_at_-1")`.
+Startup does this itself, but doing it by hand keeps the rollout off the largest collection.
 
 `releases_upsert_key` is what makes the backfill safe to re-run: the release upsert is keyed on
 `(project_id, environment, scan_id)`, and without the unique index a retry can insert a second row

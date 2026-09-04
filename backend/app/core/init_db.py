@@ -21,6 +21,43 @@ RELEASES_UPSERT_KEY_NAME = "releases_upsert_key"
 # so a test double can declare the same key rather than a copy of it.
 RELEASES_UPSERT_KEY_FIELDS: tuple[str, ...] = ("project_id", "environment", "scan_id")
 
+RELEASES_LATEST_LOOKUP_NAME = "releases_latest_lookup"
+
+# BSON dates are milliseconds, so a date-ordered pick tie-breaks on _id. Each sort is the trailing
+# keys of its index: sorting on anything else turns an indexed seek into a blocking sort.
+SCANS_TIP_SORT: list[tuple[str, int]] = [("created_at", pymongo.DESCENDING), ("_id", pymongo.ASCENDING)]
+RELEASES_LATEST_SORT: list[tuple[str, int]] = [("released_at", pymongo.DESCENDING), ("_id", pymongo.ASCENDING)]
+
+SCANS_TIP_INDEX_KEY: list[tuple[str, int]] = [
+    ("project_id", pymongo.ASCENDING),
+    ("status", pymongo.ASCENDING),
+    *SCANS_TIP_SORT,
+]
+RELEASES_LATEST_LOOKUP_KEY: list[tuple[str, int]] = [
+    ("project_id", pymongo.ASCENDING),
+    ("environment", pymongo.ASCENDING),
+    *RELEASES_LATEST_SORT,
+]
+_TIE_BREAK_INDEXES: tuple[tuple[str, list[tuple[str, int]]], ...] = (
+    ("scans", SCANS_TIP_INDEX_KEY),
+    ("releases", RELEASES_LATEST_LOOKUP_KEY),
+)
+
+
+async def _migrate_tie_break_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
+    """Drop the date-only ancestor of each tie-break index.
+
+    Mongo rejects a key change under an existing index name, and an ancestor left behind is a
+    second index every write to the collection has to maintain for no additional plan.
+    """
+    for collection_name, key in _TIE_BREAK_INDEXES:
+        collection = database[collection_name]
+        ancestor = [(field, direction) for field, direction in key if field != "_id"]
+        for idx_name, idx_info in (await collection.index_information()).items():
+            if [tuple(pair) for pair in idx_info.get("key", [])] == ancestor:
+                logger.info(f"Dropping index superseded by the {collection_name} tie-break key: {idx_name}")
+                await collection.drop_index(idx_name)
+
 
 async def _migrate_project_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     """Drop old sparse GitLab/GitHub project indexes; sparse compound indexes still collide on
@@ -180,6 +217,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     logger.info("Creating database indexes...")
 
     await _migrate_project_indexes(database)
+    await _migrate_tie_break_indexes(database)
     # Reconcile legacy synced teams BEFORE creating the unique team index, so the
     # index build does not trip over partially-tagged data.
     await _backfill_synced_team_gitlab_ids(database)
@@ -307,13 +345,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("pipeline_id", pymongo.ASCENDING)])
     await database["scans"].create_index([("project_id", pymongo.ASCENDING), ("status", pymongo.ASCENDING)])
-    await database["scans"].create_index(
-        [
-            ("project_id", pymongo.ASCENDING),
-            ("status", pymongo.ASCENDING),
-            ("created_at", pymongo.DESCENDING),
-        ]
-    )
+    await database["scans"].create_index(SCANS_TIP_INDEX_KEY)
     await database["scans"].create_index(
         [
             ("project_id", pymongo.ASCENDING),
@@ -336,12 +368,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     )  # Partial so only released scans are indexed; serves the released-only scan list.
 
     await database["releases"].create_index(
-        [
-            ("project_id", pymongo.ASCENDING),
-            ("environment", pymongo.ASCENDING),
-            ("released_at", pymongo.DESCENDING),
-        ],
-        name="releases_latest_lookup",
+        RELEASES_LATEST_LOOKUP_KEY,
+        name=RELEASES_LATEST_LOOKUP_NAME,
     )  # Serves the latest release of a (project, environment) as a single sorted find_one.
     await database["releases"].create_index(
         [(field, pymongo.ASCENDING) for field in RELEASES_UPSERT_KEY_FIELDS],

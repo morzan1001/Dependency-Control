@@ -32,6 +32,7 @@ from app.core.metrics import (
     update_archive_stats,
     update_db_stats,
 )
+from app.core.init_db import SCANS_TIP_SORT
 from app.core.s3 import delete_object, is_archive_enabled, list_objects
 from app.db.mongodb import get_database
 from app.models.project import Project, Scan
@@ -277,7 +278,7 @@ async def _rescan_targets(project: Project, db: Any) -> list[dict]:
 
     # BSON dates are milliseconds, so two scans of one project can share a created_at; _id decides
     # between them, or the tip alternates between passes and each alternate falls due immediately.
-    tip = await db.scans.find_one(tip_source, sort=[("created_at", -1), ("_id", 1)])
+    tip = await db.scans.find_one(tip_source, sort=SCANS_TIP_SORT)
     if tip:
         targets.append(tip)
         targeted_ids.add(str(tip["_id"]))

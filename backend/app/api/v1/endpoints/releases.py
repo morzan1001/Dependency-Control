@@ -14,6 +14,7 @@ from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_AUTH_404, RESP_AUTH_404_409
 from app.core import ensure_utc
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, PROJECT_ROLE_VIEWER, RELEASE_ENVIRONMENT_PATTERN
+from app.core.init_db import RELEASES_LATEST_SORT
 from app.models.release import Release
 from app.repositories import ReleaseRepository
 from app.schemas.release import ReleaseItem, ReleaseListResponse, ReleaseMarkRequest, ReleaseUnmarkResponse
@@ -173,7 +174,7 @@ async def list_releases(
     # would otherwise leave "the latest release" to Mongo's unspecified order among equal keys.
     rows = await db.releases.find(
         query,
-        sort=[("released_at", pymongo.DESCENDING), ("_id", pymongo.ASCENDING)],
+        sort=RELEASES_LATEST_SORT,
         skip=skip,
         limit=limit,
     ).to_list(limit)

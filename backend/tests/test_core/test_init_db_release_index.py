@@ -47,6 +47,7 @@ def test_latest_release_per_environment_is_indexed():
         ("project_id", pymongo.ASCENDING),
         ("environment", pymongo.ASCENDING),
         ("released_at", pymongo.DESCENDING),
+        ("_id", pymongo.ASCENDING),
     ]
 
 
