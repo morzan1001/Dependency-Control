@@ -22,7 +22,7 @@ from app.core.constants import (
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.waiver import Waiver
-from app.repositories import WaiverRepository
+from app.repositories import ScanRepository, WaiverRepository
 from app.schemas.waiver import WaiverCreate, WaiverResponse, WaiverUpdate
 from app.services.analytics.cache import get_analytics_cache
 from app.services.stats import _build_waiver_query, recalculate_all_projects, recalculate_project_stats
@@ -35,7 +35,7 @@ def _invalidate_analytics_cache() -> None:
 
 
 _MSG_NO_MATCHING_FINDING = (
-    "Waiver criteria do not match any finding in the project's latest scan. "
+    "Waiver criteria do not match any finding on the project's current build. "
     "Verify finding_id, finding_type, package_name and package_version. "
     "Use scope='rule' or 'file' to pre-emptively waive future findings."
 )
@@ -65,7 +65,7 @@ def _reject_unscoped_broad_waiver(waiver_in: WaiverCreate) -> None:
 
 
 async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMotorDatabase) -> dict | None:
-    """Reject finding-scope project waivers matching no finding in the latest scan; return the matched finding doc, or None when validation is skipped."""
+    """Reject finding-scope project waivers matching no finding on the head build; return the matched finding doc, or None when validation is skipped."""
     if not waiver_in.project_id:
         return None
     if waiver_in.scope != "finding":
@@ -73,11 +73,13 @@ async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMot
     if waiver_in.vulnerability_id:
         return None
 
-    project = await db.projects.find_one({"_id": waiver_in.project_id}, {"latest_scan_id": 1})
+    project = await db.projects.find_one(
+        {"_id": waiver_in.project_id}, {"latest_scan_id": 1, "default_branch": 1, "deleted_branches": 1}
+    )
     if not project:
         return None
-    latest_scan_id = project.get("latest_scan_id")
-    if not latest_scan_id:
+    head_scan_id = (await ScanRepository(db).get_latest_active_scan_ids([project])).get(waiver_in.project_id)
+    if not head_scan_id:
         return None
 
     probe = Waiver(**waiver_in.model_dump(), created_by="__validation__")
@@ -85,7 +87,7 @@ async def _ensure_waiver_matches_finding(waiver_in: WaiverCreate, db: AsyncIOMot
     if not finding_query:
         return None  # nothing concrete to validate against
 
-    finding_query["scan_id"] = latest_scan_id
+    finding_query["scan_id"] = head_scan_id
     finding: dict | None = await db.findings.find_one(finding_query, {"match": 1, "type": 1, "component": 1})
     if finding is None:
         raise HTTPException(status_code=422, detail=_MSG_NO_MATCHING_FINDING)

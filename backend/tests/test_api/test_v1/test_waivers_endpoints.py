@@ -7,9 +7,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import BackgroundTasks, HTTPException
 
+from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_PENDING
 from app.models.waiver import Waiver
+from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.api.v1.endpoints.waivers"
+
+_PROJECT = "proj-1"
+_BRANCH = "main"
+_HEAD_SCAN = "scan-1"
+_QUEUED_SCAN = "scan-2"
 
 _LIST_DEFAULTS = {
     "finding_id": None,
@@ -86,23 +93,36 @@ class TestCreateWaiver:
 
 
 class TestCreateWaiverValidatesFindingMatch:
-    """A finding-scope waiver must match at least one finding in the project's latest scan, else it is a zombie waiver that never applies."""
+    """A finding-scope waiver must match at least one finding on the project's head build, else it is a zombie waiver that never applies."""
 
     @staticmethod
-    def _mock_db_with_latest_scan(scan_id="scan-1", project_id="proj-1"):
-        async def _project_find_one(query, projection=None):
-            return {"_id": project_id, "latest_scan_id": scan_id}
-
-        db = MagicMock()
-        db.projects.find_one = _project_find_one
+    def _db_with_head_scan(scan_id=_HEAD_SCAN, project_id=_PROJECT, findings=(), scans=True):
+        """A project whose head resolves to ``scan_id``, plus whatever findings that build holds."""
+        db = FakeDatabase()
+        db.projects._docs[project_id] = {
+            "_id": project_id,
+            "name": "P",
+            "default_branch": _BRANCH,
+            "deleted_branches": [],
+            "latest_scan_id": scan_id if scans else None,
+        }
+        if scans:
+            db.scans._docs[scan_id] = {
+                "_id": scan_id,
+                "project_id": project_id,
+                "branch": _BRANCH,
+                "status": SCAN_STATUS_COMPLETED,
+                "created_at": datetime.now(timezone.utc),
+            }
+        for i, finding in enumerate(findings):
+            db.findings._docs[f"f-{i}"] = {"scan_id": scan_id, "project_id": project_id, **finding}
         return db
 
     def test_finding_scope_waiver_with_no_match_raises_422(self, admin_user):
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
-        db = self._mock_db_with_latest_scan()
-        db.findings.find_one = AsyncMock(return_value=None)
+        db = self._db_with_head_scan()
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -137,8 +157,9 @@ class TestCreateWaiverValidatesFindingMatch:
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
-        db = self._mock_db_with_latest_scan()
-        db.findings.find_one = AsyncMock(return_value={"_id": "fid1", "type": "quality", "component": None})
+        db = self._db_with_head_scan(
+            findings=[{"finding_id": "QUALITY:artemis-commons:2.43.0", "type": "quality", "component": None}]
+        )
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -164,13 +185,53 @@ class TestCreateWaiverValidatesFindingMatch:
 
         mock_repo.create.assert_called_once()
 
+    def test_validation_reads_the_head_build_not_the_queued_scan_the_pointer_names(self, admin_user):
+        """A queued scan holds no findings, so validating against the pointer would reject a waiver
+        for a finding the head build really reports."""
+        from app.api.v1.endpoints.waivers import create_waiver
+        from app.schemas.waiver import WaiverCreate
+
+        db = self._db_with_head_scan(
+            findings=[{"finding_id": "QUALITY:artemis-commons:2.43.0", "type": "quality", "component": None}]
+        )
+        db.scans._docs[_QUEUED_SCAN] = {
+            "_id": _QUEUED_SCAN,
+            "project_id": _PROJECT,
+            "branch": _BRANCH,
+            "status": SCAN_STATUS_PENDING,
+            "created_at": datetime.now(timezone.utc) + timedelta(hours=1),
+        }
+        db.projects._docs[_PROJECT]["latest_scan_id"] = _QUEUED_SCAN
+
+        mock_repo = MagicMock()
+        mock_repo.create = AsyncMock()
+
+        with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
+            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+                with patch(f"{MODULE}.recalculate_project_stats"):
+                    asyncio.run(
+                        create_waiver(
+                            waiver_in=WaiverCreate(
+                                project_id=_PROJECT,
+                                finding_id="QUALITY:artemis-commons:2.43.0",
+                                finding_type="quality",
+                                scope="finding",
+                                reason="ok",
+                            ),
+                            background_tasks=BackgroundTasks(),
+                            current_user=admin_user,
+                            db=db,
+                        )
+                    )
+
+        mock_repo.create.assert_called_once()
+
     def test_rule_scope_waiver_skips_match_check(self, admin_user):
         """rule-scope is preventive — covers future matches — so no current-scan match is required."""
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
-        db = self._mock_db_with_latest_scan()
-        db.findings.find_one = AsyncMock(return_value=None)
+        db = self._db_with_head_scan()
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -201,8 +262,7 @@ class TestCreateWaiverValidatesFindingMatch:
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
-        db = self._mock_db_with_latest_scan()
-        db.findings.find_one = AsyncMock(return_value=None)
+        db = self._db_with_head_scan()
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -355,12 +415,7 @@ class TestCreateWaiverValidatesFindingMatch:
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
-        async def _project_find_one(query, projection=None):
-            return {"_id": "proj-1", "latest_scan_id": None}
-
-        db = MagicMock()
-        db.projects.find_one = _project_find_one
-        db.findings.find_one = AsyncMock(return_value=None)
+        db = self._db_with_head_scan(scans=False)
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -385,15 +440,13 @@ class TestCreateWaiverValidatesFindingMatch:
                     )
 
         mock_repo.create.assert_called_once()
-        db.findings.find_one.assert_not_called()
 
     def test_vulnerability_id_scoped_waiver_skips_finding_id_check(self, admin_user):
         """CVE-targeted waivers match by vulnerability_id, not finding_id, so the finding_id format mismatch must not 422."""
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
-        db = self._mock_db_with_latest_scan()
-        db.findings.find_one = AsyncMock(return_value=None)
+        db = self._db_with_head_scan()
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -426,7 +479,7 @@ class TestCreateWaiverValidatesFindingMatch:
         from app.schemas.waiver import WaiverCreate
 
         finding_doc = {
-            "_id": "fid",
+            "finding_id": "OPENGREP-r-a.py-10",
             "type": "sast",
             "component": "a.py",
             "match": {
@@ -439,8 +492,7 @@ class TestCreateWaiverValidatesFindingMatch:
             },
         }
 
-        db = self._mock_db_with_latest_scan()
-        db.findings.find_one = AsyncMock(return_value=finding_doc)
+        db = self._db_with_head_scan(findings=[finding_doc])
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
