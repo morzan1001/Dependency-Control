@@ -6,9 +6,9 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { describe, it, expect, vi, afterEach } from 'vitest'
 import { DeltaHeader } from '../DeltaHeader'
 import * as scansApi from '@/api/scans'
-import { useProjectReleases } from '@/hooks/queries/use-releases'
+import { useLatestProjectRelease, type LatestProjectRelease } from '@/hooks/queries/use-releases'
 import { useProjectScans } from '@/hooks/queries/use-scans'
-import type { ReleaseItem, ReleaseListResponse } from '@/types/release'
+import type { ReleaseItem } from '@/types/release'
 import type { ScanWithReleases } from '@/types/scan'
 import type { ScanDeltaResponse } from '@/types/scanDelta'
 
@@ -16,10 +16,6 @@ vi.mock('@/api/scans')
 vi.mock('@/hooks/queries/use-scans')
 vi.mock('@/hooks/queries/use-releases')
 
-const FIRST_PAGE = 1
-// The quick pick reads only the newest release, so it must not depend on a page that can truncate.
-const LATEST_RELEASE_LIMIT = 1
-const NO_ENVIRONMENT_FILTER = undefined
 const PROJECT_ID = 'p1'
 const PRODUCTION = 'production'
 const STAGING = 'staging'
@@ -62,15 +58,13 @@ function renderHeader(
   toScanId: string = toScan.id,
   delta: ScanDeltaResponse | null = null,
 ) {
-  const listed: ReleaseListResponse = {
-    items: releases,
-    total: releases.length,
-    page: FIRST_PAGE,
-    size: LATEST_RELEASE_LIMIT,
+  // Annotated, not inferred: an inferred fixture drops a field from the hook's type silently.
+  const resolved: LatestProjectRelease = {
+    latestRelease: releases[0],
+    hasReleases: releases.length > 0,
+    isLoading: false,
   }
-  vi.mocked(useProjectReleases).mockReturnValue(
-    { data: listed } as unknown as ReturnType<typeof useProjectReleases>,
-  )
+  vi.mocked(useLatestProjectRelease).mockReturnValue(resolved)
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={qc}>
@@ -149,12 +143,12 @@ describe('DeltaHeader - release quick pick', () => {
     expect(onChange).toHaveBeenCalledWith(RELEASE_SCAN_ID, toScan.id)
   })
 
-  it('asks for one release, so a project with a long release history still resolves the newest', () => {
+  it('says nothing about releases on a project that reports none, rather than hinting at a fault', () => {
     mockScanSources()
 
-    renderHeader(vi.fn(), [release])
+    renderHeader()
 
-    expect(useProjectReleases).toHaveBeenCalledWith(PROJECT_ID, NO_ENVIRONMENT_FILTER, LATEST_RELEASE_LIMIT)
+    expect(screen.queryByText(/release/i)).not.toBeInTheDocument()
   })
 
   it('names the environment and version the quick pick would compare against', () => {

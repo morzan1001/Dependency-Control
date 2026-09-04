@@ -7,7 +7,7 @@ import {
 } from '@/components/ui/select'
 import { scanApi } from '@/api/scans'
 import { DeltaComparability } from '@/components/scans/delta/DeltaComparability'
-import { useProjectReleases } from '@/hooks/queries/use-releases'
+import { useLatestProjectRelease } from '@/hooks/queries/use-releases'
 import { useProjectScans } from '@/hooks/queries/use-scans'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
 import { isScanUsable } from '@/lib/scan-status'
@@ -15,7 +15,6 @@ import type { ReleaseItem } from '@/types/release'
 import { Scan } from '@/types/scan'
 import type { ScanDeltaResponse } from '@/types/scanDelta'
 
-const LATEST_RELEASE_LIMIT = 1
 const RELEASE_MARKER_LABEL = 'Release'
 
 interface DeltaHeaderProps {
@@ -90,12 +89,9 @@ function ScanSide({ label, scanId, options, onSelect }: {
 export function DeltaHeader({ projectId, fromScanId, toScanId, onChange, delta }: DeltaHeaderProps) {
   const { data: scans } = useProjectScans(projectId, { page: 1, limit: 50, excludeRescans: true })
   const options = (scans || []).filter((s) => isScanUsable(s.status))
-  // The endpoint sorts releases newest first, so a single row is the newest one and no page
-  // size can hide it — the quick pick never needs the rest of the project's release history.
   // Unqualified by environment so a project that only deploys to staging still gets a quick pick;
   // the button names whichever environment won, since "the release" elsewhere means production.
-  const { data: releases } = useProjectReleases(projectId, undefined, LATEST_RELEASE_LIMIT)
-  const latestRelease = releases?.items[0]
+  const { latestRelease } = useLatestProjectRelease(projectId)
   // A rescan moves a release's analysis onto a newer scan and the backend's own `from=release`
   // follows that chain, so `scan_id` would diff against findings the release no longer reports.
   // Null means nothing in the chain is readable — retention took it, or none of it has finished.

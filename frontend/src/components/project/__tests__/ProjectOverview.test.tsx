@@ -2,20 +2,17 @@ import { fireEvent, render, screen, within } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ProjectOverview } from '../ProjectOverview'
-import type { ReleaseItem, ReleaseListResponse } from '@/types/release'
+import type { LatestProjectRelease } from '@/hooks/queries/use-releases'
+import type { ReleaseItem } from '@/types/release'
 import type { EnhancedStats, ScanWithReleases } from '@/types/scan'
 
 const PROJECT_ID = 'p1'
 const MAIN_BRANCH = 'main'
-const FIRST_PAGE = 1
-// The tile reads only the newest release, so the overview asks for a single row.
-const LATEST_RELEASE_LIMIT = 1
-const NO_RELEASES = 0
 
 const mockUseProjectScans = vi.fn()
 const mockUseScan = vi.fn()
 const mockUseScanResults = vi.fn()
-const mockUseProjectReleases = vi.fn()
+const mockUseLatestProjectRelease = vi.fn()
 const mockUseProjectWaivers = vi.fn()
 const mockNavigate = vi.fn()
 
@@ -26,7 +23,7 @@ vi.mock('@/hooks/queries/use-scans', () => ({
 }))
 
 vi.mock('@/hooks/queries/use-releases', () => ({
-  useProjectReleases: (...args: unknown[]) => mockUseProjectReleases(...args),
+  useLatestProjectRelease: (...args: unknown[]) => mockUseLatestProjectRelease(...args),
 }))
 
 vi.mock('@/hooks/queries/use-waivers', () => ({
@@ -77,22 +74,21 @@ function makeScan(overrides: Partial<ScanWithReleases>, stats: EnhancedStats): S
   }
 }
 
-// Annotated, not inferred: an inferred fixture drops a field from the response type silently.
-const noReleases: ReleaseListResponse = {
-  items: [], total: NO_RELEASES, page: FIRST_PAGE, size: LATEST_RELEASE_LIMIT,
-}
+// Annotated, not inferred: an inferred fixture drops a field from the hook's type silently.
+const noReleases: LatestProjectRelease = { latestRelease: undefined, hasReleases: false, isLoading: false }
+const releasesUnknown: LatestProjectRelease = { latestRelease: undefined, hasReleases: false, isLoading: true }
 
 function renderOverview(
   scans: ScanWithReleases[],
   selectedBranches: string[] = [MAIN_BRANCH],
-  releases: ReleaseListResponse = noReleases,
+  releases: LatestProjectRelease = noReleases,
   offPageScans: ScanWithReleases[] = [],
 ) {
   const byId = new Map([...scans, ...offPageScans].map((scan) => [scan.id, scan]))
   mockUseProjectScans.mockReturnValue({ data: scans, isLoading: false })
   mockUseScan.mockImplementation((scanId: string) => ({ data: byId.get(scanId) }))
   mockUseScanResults.mockReturnValue({ data: [] })
-  mockUseProjectReleases.mockReturnValue({ data: releases })
+  mockUseLatestProjectRelease.mockReturnValue(releases)
   mockUseProjectWaivers.mockReturnValue({ data: undefined })
   return render(<ProjectOverview projectId={PROJECT_ID} selectedBranches={selectedBranches} />)
 }
@@ -239,16 +235,15 @@ describe('ProjectOverview - release tile', () => {
   const CRITICAL_SEVERITY = 'CRITICAL'
   const SHOW_RELEASE_BUTTON = 'Show release numbers'
   const SHOW_HEAD_BUTTON = 'Show HEAD numbers'
-  const NO_RELEASE_TEXT = 'No release marked'
+  const RELEASE_TILE_TITLE = 'Latest Release'
   const NOT_ANALYSED_TEXT = 'Nothing in its rescan chain has finished analysing'
   const GENERIC_RELEASE_LABEL = 'Release'
-  const ANY_ENVIRONMENT = undefined
 
   function findingsUrl(scanId: string, severity: string): string {
     return `/projects/${PROJECT_ID}/scans/${scanId}?severity=${severity}`
   }
 
-  function releaseList(overrides: Partial<ReleaseItem> = {}): ReleaseListResponse {
+  function releaseList(overrides: Partial<ReleaseItem> = {}): LatestProjectRelease {
     const item: ReleaseItem = {
       scan_id: RELEASE_SCAN_ID,
       project_id: PROJECT_ID,
@@ -261,7 +256,7 @@ describe('ProjectOverview - release tile', () => {
       analysis_scan_id: RELEASE_SCAN_ID,
       ...overrides,
     }
-    return { items: [item], total: 1, page: FIRST_PAGE, size: LATEST_RELEASE_LIMIT }
+    return { latestRelease: item, hasReleases: true, isLoading: false }
   }
 
   const head = makeScan(
@@ -327,8 +322,6 @@ describe('ProjectOverview - release tile', () => {
     )
 
     expect(screen.getByLabelText(`Release ${STAGING_VERSION} in ${STAGING}`)).toBeInTheDocument()
-    // Asking for production only would leave a staging-only project with no tile at all.
-    expect(mockUseProjectReleases).toHaveBeenCalledWith(PROJECT_ID, ANY_ENVIRONMENT, LATEST_RELEASE_LIMIT)
   })
 
   it('takes the release the endpoint names, not the newest flagged scan on the page', () => {
@@ -347,11 +340,28 @@ describe('ProjectOverview - release tile', () => {
     expect(screen.queryByLabelText(`Release ${STAGING_VERSION} in ${STAGING}`)).not.toBeInTheDocument()
   })
 
-  it('says so when there is no release', () => {
+  it('shows no tile at all on a project that reports no release', () => {
+    // An empty tile reads as a missing report rather than as a repo that does not release.
     renderOverview([head])
 
-    expect(screen.getByText(NO_RELEASE_TEXT)).toBeInTheDocument()
+    expect(screen.queryByText(RELEASE_TILE_TITLE)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: SHOW_RELEASE_BUTTON })).not.toBeInTheDocument()
+  })
+
+  it('waits for the row before falling back to a flagged scan, so no nameless badge flashes up', () => {
+    const flaggedOnly = makeScan(
+      { id: 's-flagged', created_at: RELEASED_AT, is_release: true },
+      { critical: RELEASE_CRITICAL, high: RELEASE_HIGH },
+    )
+    renderOverview([head, flaggedOnly], [MAIN_BRANCH], releasesUnknown)
+
+    expect(screen.queryByText(RELEASE_TILE_TITLE)).not.toBeInTheDocument()
+  })
+
+  it('shows the tile once the project reports one', () => {
+    renderOverview([head, release], [MAIN_BRANCH], releaseList())
+
+    expect(screen.getByText(RELEASE_TILE_TITLE)).toBeInTheDocument()
   })
 
   it('offers no numbers for a release whose analysis has not finished', () => {

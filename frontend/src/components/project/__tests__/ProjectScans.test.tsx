@@ -2,6 +2,7 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ProjectScans } from '../ProjectScans'
+import type { LatestProjectRelease } from '@/hooks/queries/use-releases'
 import type { ScanWithReleases } from '@/types/scan'
 
 const PRODUCTION = 'production'
@@ -14,6 +15,7 @@ const GENERIC_RELEASE_LABEL = 'Release'
 
 const mockUseProjectScans = vi.fn()
 const mockUseProjectBranches = vi.fn()
+const mockUseLatestProjectRelease = vi.fn()
 
 vi.mock('@/hooks/queries/use-scans', () => ({
   useProjectScans: (...args: unknown[]) => mockUseProjectScans(...args),
@@ -21,6 +23,10 @@ vi.mock('@/hooks/queries/use-scans', () => ({
 
 vi.mock('@/hooks/queries/use-projects', () => ({
   useProjectBranches: (...args: unknown[]) => mockUseProjectBranches(...args),
+}))
+
+vi.mock('@/hooks/queries/use-releases', () => ({
+  useLatestProjectRelease: (...args: unknown[]) => mockUseLatestProjectRelease(...args),
 }))
 
 const mockNavigate = vi.fn()
@@ -43,13 +49,18 @@ function makeScan(overrides: Partial<ScanWithReleases>): ScanWithReleases {
   }
 }
 
-function renderScans(scans: ScanWithReleases[]) {
+// Annotated, not inferred: an inferred fixture drops a field from the hook's type silently.
+const HAS_RELEASES: LatestProjectRelease = { latestRelease: undefined, hasReleases: true, isLoading: false }
+const NO_RELEASES: LatestProjectRelease = { latestRelease: undefined, hasReleases: false, isLoading: false }
+
+function renderScans(scans: ScanWithReleases[], releases: LatestProjectRelease = HAS_RELEASES) {
   mockUseProjectScans.mockReturnValue({
     data: scans,
     isLoading: false,
     isPlaceholderData: false,
   })
   mockUseProjectBranches.mockReturnValue({ data: [] })
+  mockUseLatestProjectRelease.mockReturnValue(releases)
   return render(<ProjectScans projectId="p1" />)
 }
 
@@ -270,5 +281,34 @@ describe('ProjectScans - release', () => {
 
     const lastCall = mockUseProjectScans.mock.calls[mockUseProjectScans.mock.calls.length - 1]
     expect(lastCall[1].excludeDeletedBranches).toBe(false)
+  })
+})
+
+describe('ProjectScans - the release filter on a project that does not release', () => {
+  it('offers no release filter', () => {
+    renderScans([makeScan({ id: 'plain' })], NO_RELEASES)
+
+    expect(screen.queryByRole('button', { name: RELEASES_ONLY_BUTTON })).not.toBeInTheDocument()
+  })
+
+  it('keeps the filter while it is engaged, so a withdrawal cannot strand the user in it', () => {
+    const { rerender } = renderScans([makeScan({ id: 'rel', is_release: true })])
+
+    fireEvent.click(screen.getByRole('button', { name: RELEASES_ONLY_BUTTON }))
+    mockUseLatestProjectRelease.mockReturnValue(NO_RELEASES)
+    rerender(<ProjectScans projectId="p1" />)
+
+    expect(screen.getByRole('button', { name: RELEASES_ONLY_BUTTON })).toBeInTheDocument()
+  })
+
+  it('lets the filter go once the user switches it off', () => {
+    const { rerender } = renderScans([makeScan({ id: 'rel', is_release: true })])
+
+    fireEvent.click(screen.getByRole('button', { name: RELEASES_ONLY_BUTTON }))
+    mockUseLatestProjectRelease.mockReturnValue(NO_RELEASES)
+    rerender(<ProjectScans projectId="p1" />)
+    fireEvent.click(screen.getByRole('button', { name: RELEASES_ONLY_BUTTON }))
+
+    expect(screen.queryByRole('button', { name: RELEASES_ONLY_BUTTON })).not.toBeInTheDocument()
   })
 })

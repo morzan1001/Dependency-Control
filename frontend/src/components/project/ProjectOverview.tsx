@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProjectScans, useScan, useScanResults } from '@/hooks/queries/use-scans'
-import { useProjectReleases } from '@/hooks/queries/use-releases'
+import { useLatestProjectRelease } from '@/hooks/queries/use-releases'
 import { useProjectWaivers } from '@/hooks/queries/use-waivers'
 import { Scan } from '@/types/scan'
 import { hasUnrecordedRelease } from '@/lib/releases'
@@ -27,8 +27,6 @@ interface ProjectOverviewProps {
   selectedBranches: string[]
 }
 
-const LATEST_RELEASE_LIMIT = 1
-const NO_RELEASE_TEXT = 'No release marked'
 const RELEASE_NOT_ANALYSED = 'Nothing in its rescan chain has finished analysing'
 
 function releaseHeadline(environment: string | null, branch: string): string {
@@ -83,10 +81,8 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   const activeBranch = pickedBranch && branchNames.includes(pickedBranch)
     ? pickedBranch
     : highestRiskBranch(latestScansByBranch);
-  // The endpoint answers newest-first across every environment, so one row is the project's newest
-  // release however far back it sits, and the tile names the environment rather than assuming one.
-  const { data: releases } = useProjectReleases(projectId, undefined, LATEST_RELEASE_LIMIT);
-  const latestRelease = releases?.items[0];
+  // The tile names the environment the release went to rather than assuming production.
+  const { latestRelease, isLoading: releasesLoading } = useLatestProjectRelease(projectId);
   const { data: markedReleaseScan } = useScan(latestRelease?.analysis_scan_id ?? '');
   // A release row is what the endpoint lists, so a scan holding only the flag reaches it no other way.
   const flaggedScan = useMemo(
@@ -95,7 +91,10 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   );
   const releaseScan = latestRelease ? markedReleaseScan : flaggedScan;
   const releaseEnvironment = latestRelease?.environment ?? null;
-  const hasRelease = latestRelease !== undefined || flaggedScan !== undefined;
+  // Hidden entirely on a project that reports no release: an empty tile reads as a missing report.
+  // Withheld while the answer is in flight too, because the flag-only fallback would otherwise put
+  // a nameless badge on screen for the instant before the row names its environment.
+  const showReleaseTile = !releasesLoading && (latestRelease !== undefined || flaggedScan !== undefined);
   // analysis_scan_id is null while nothing in the release's rescan chain has finished analysing.
   const releaseHasNumbers = latestRelease
     ? latestRelease.analysis_scan_id !== null
@@ -199,33 +198,29 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           </Tabs>
         </div>
       )}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Latest Release</CardTitle>
-            <Rocket className="h-4 w-4 text-success" />
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {hasRelease ? (
-              <>
-                <ReleaseBadge environment={releaseEnvironment} version={latestRelease?.version} />
-                {releaseHasNumbers ? (
-                  <button
-                    type="button"
-                    className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-                    onClick={() => setShowRelease((on) => !on)}
-                  >
-                    {showRelease ? 'Show HEAD numbers' : 'Show release numbers'}
-                  </button>
-                ) : (
-                  <p className="text-xs text-muted-foreground">{RELEASE_NOT_ANALYSED}</p>
-                )}
-              </>
-            ) : (
-              <p className="text-sm text-muted-foreground">{NO_RELEASE_TEXT}</p>
-            )}
-          </CardContent>
-        </Card>
+      <div className={`grid gap-4 md:grid-cols-2 ${showReleaseTile ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}>
+        {showReleaseTile && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Latest Release</CardTitle>
+              <Rocket className="h-4 w-4 text-success" />
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <ReleaseBadge environment={releaseEnvironment} version={latestRelease?.version} />
+              {releaseHasNumbers ? (
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                  onClick={() => setShowRelease((on) => !on)}
+                >
+                  {showRelease ? 'Show HEAD numbers' : 'Show release numbers'}
+                </button>
+              ) : (
+                <p className="text-xs text-muted-foreground">{RELEASE_NOT_ANALYSED}</p>
+              )}
+            </CardContent>
+          </Card>
+        )}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Scans</CardTitle>

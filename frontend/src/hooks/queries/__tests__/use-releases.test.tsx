@@ -4,10 +4,17 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { releaseApi } from "@/api/releases";
+import type { ReleaseListResponse } from "@/types/release";
 import { SMALL_PAGE_SIZE } from "@/lib/constants";
 import { analyticsKeys } from "../use-analytics";
 import { scanKeys } from "../use-scans";
-import { releaseKeys, useMarkRelease, useProjectReleases, useUnmarkRelease } from "../use-releases";
+import {
+  releaseKeys,
+  useLatestProjectRelease,
+  useMarkRelease,
+  useProjectReleases,
+  useUnmarkRelease,
+} from "../use-releases";
 
 vi.mock("@/api/releases", () => ({
   releaseApi: { list: vi.fn(), mark: vi.fn(), unmark: vi.fn() },
@@ -113,6 +120,90 @@ describe("useProjectReleases", () => {
 
     await waitFor(() => expect(result.current.data?.items).toHaveLength(SINGLE_ITEM_TOTAL));
     expect(result.current.data?.items[0].branch).toBeNull();
+  });
+});
+
+describe("useLatestProjectRelease", () => {
+  const NO_ITEMS = 0;
+
+  // Annotated, not inferred: an inferred fixture drops a field from the response type silently.
+  const listedRelease: ReleaseListResponse = {
+    items: [
+      {
+        scan_id: SCAN_ID,
+        project_id: PROJECT_ID,
+        environment: STAGING,
+        version: null,
+        released_at: RELEASED_AT,
+        commit_hash: null,
+        branch: BRANCH,
+        scan_status: SCAN_STATUS_COMPLETED,
+        analysis_scan_id: SCAN_ID,
+      },
+    ],
+    total: SINGLE_ITEM_TOTAL,
+    page: FIRST_PAGE,
+    size: LATEST_ONLY_LIMIT,
+  };
+  const noReleases: ReleaseListResponse = {
+    items: [],
+    total: NO_ITEMS,
+    page: FIRST_PAGE,
+    size: LATEST_ONLY_LIMIT,
+  };
+
+  beforeEach(() => vi.clearAllMocks());
+
+  it("asks unqualified by environment, so a staging-only project still counts as releasing", async () => {
+    vi.mocked(releaseApi.list).mockResolvedValue(listedRelease);
+
+    const { result } = renderHook(() => useLatestProjectRelease(PROJECT_ID), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    await waitFor(() => expect(result.current.hasReleases).toBe(true));
+    expect(releaseApi.list).toHaveBeenCalledWith(PROJECT_ID, {
+      environment: NO_ENVIRONMENT_FILTER,
+      limit: LATEST_ONLY_LIMIT,
+    });
+    expect(result.current.latestRelease?.environment).toBe(STAGING);
+  });
+
+  it("reports no releases for a project that has never marked one", async () => {
+    vi.mocked(releaseApi.list).mockResolvedValue(noReleases);
+
+    const { result } = renderHook(() => useLatestProjectRelease(PROJECT_ID), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    await waitFor(() => expect(result.current.isLoading).toBe(false));
+    expect(result.current.hasReleases).toBe(false);
+    expect(result.current.latestRelease).toBeUndefined();
+  });
+
+  it("reads an unanswered request as no releases, so no surface flashes in and then out", () => {
+    vi.mocked(releaseApi.list).mockReturnValue(new Promise(() => undefined));
+
+    const { result } = renderHook(() => useLatestProjectRelease(PROJECT_ID), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    expect(result.current.isLoading).toBe(true);
+    expect(result.current.hasReleases).toBe(false);
+    expect(result.current.latestRelease).toBeUndefined();
+  });
+
+  it("costs one request however many surfaces ask", async () => {
+    vi.mocked(releaseApi.list).mockResolvedValue(listedRelease);
+    const client = makeClient();
+    const wrapper = wrapperFor(client);
+
+    renderHook(() => useLatestProjectRelease(PROJECT_ID), { wrapper });
+    renderHook(() => useLatestProjectRelease(PROJECT_ID), { wrapper });
+    renderHook(() => useLatestProjectRelease(PROJECT_ID), { wrapper });
+
+    await waitFor(() => expect(client.getQueryCache().getAll()).toHaveLength(SINGLE_ITEM_TOTAL));
+    expect(releaseApi.list).toHaveBeenCalledTimes(SINGLE_ITEM_TOTAL);
   });
 });
 

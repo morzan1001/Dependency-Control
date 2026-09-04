@@ -7,6 +7,7 @@ import { isScanUsable, SCAN_STATUS_FAILED } from '@/lib/scan-status'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
 import { useProjectBranches } from '@/hooks/queries/use-projects'
+import { useLatestProjectRelease } from '@/hooks/queries/use-releases'
 import { useProjectScans } from '@/hooks/queries/use-scans'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -44,6 +45,11 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
   const navigate = useNavigate()
 
   const { data: branches } = useProjectBranches(projectId)
+
+  const { hasReleases } = useLatestProjectRelease(projectId)
+  // Withdrawing the last release while the filter is on would change the table under the user with
+  // no control left to undo it, so an engaged filter keeps its button until it is switched off.
+  const showReleaseFilter = hasReleases || releasesOnly
 
   const activeBranches = useMemo(() => branches?.filter(b => b.is_active) || [], [branches])
   const deletedBranches = useMemo(() => branches?.filter(b => !b.is_active) || [], [branches])
@@ -121,18 +127,20 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                 <X className="h-4 w-4" />
               </Button>
             )}
-            <Button
-              variant={releasesOnly ? 'default' : 'outline'}
-              size="sm"
-              aria-pressed={releasesOnly}
-              onClick={() => {
-                setReleasesOnly((on) => !on)
-                setPage(1)
-              }}
-            >
-              <Rocket className="mr-2 h-4 w-4" />
-              Releases only
-            </Button>
+            {showReleaseFilter && (
+              <Button
+                variant={releasesOnly ? 'default' : 'outline'}
+                size="sm"
+                aria-pressed={releasesOnly}
+                onClick={() => {
+                  setReleasesOnly((on) => !on)
+                  setPage(1)
+                }}
+              >
+                <Rocket className="mr-2 h-4 w-4" />
+                Releases only
+              </Button>
+            )}
             <Select
               value={selectedBranch || "__all__"}
               onValueChange={(value) => {
