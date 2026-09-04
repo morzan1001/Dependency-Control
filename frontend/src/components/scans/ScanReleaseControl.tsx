@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useMarkRelease, useUnmarkRelease } from '@/hooks/queries/use-releases'
 import { DEFAULT_RELEASE_ENVIRONMENT, RELEASE_ENVIRONMENT_PATTERN } from '@/lib/constants'
+import { hasUnrecordedRelease } from '@/lib/releases'
 import { formatDateTime } from '@/lib/utils'
 import type { ScanWithReleases } from '@/types/scan'
 
@@ -102,8 +103,7 @@ export function ScanReleaseControl({ projectId, scan }: ScanReleaseControlProps)
             </Button>
           </div>
         ))}
-        {/* The flag denormalises the release records, so one without them is still a release. */}
-        {scan.is_release && scan.releases.length === 0 && <ReleaseBadge />}
+        {hasUnrecordedRelease(scan) && <ReleaseBadge />}
         <div className="flex flex-col gap-1">
           <Input
             aria-label={ENVIRONMENT_LABEL}

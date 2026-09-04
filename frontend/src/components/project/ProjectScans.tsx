@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Scan } from '@/types/scan'
+import { hasUnrecordedRelease } from '@/lib/releases'
 import { isScanUsable } from '@/lib/scan-status'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
@@ -291,8 +292,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                         className="mt-1"
                       />
                     ))}
-                    {/* Ingest sets the flag and writes the record in separate steps, so the mark can outrun it. */}
-                    {scan.is_release && scan.releases.length === 0 && <ReleaseBadge className="mt-1" />}
+                    {hasUnrecordedRelease(scan) && <ReleaseBadge className="mt-1" />}
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
