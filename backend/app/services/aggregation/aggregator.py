@@ -6,6 +6,7 @@ from typing import Any
 from app.core.constants import (
     AGG_KEY_QUALITY,
     AGG_KEY_VULNERABILITY,
+    MAX_CROSS_LINK_GROUP_SIZE,
     UNKNOWN_LICENSE_PATTERNS,
     get_severity_value,
 )
@@ -427,7 +428,11 @@ class ResultAggregator:
                 cross_link_pair(f1, f2)
 
     def _link_related_findings_by_component(self, findings: list[Finding]) -> None:
-        """Link all findings for the same package to each other (vuln, outdated, quality, license, eol)."""
+        """Link findings for the same package to each other (vuln, outdated, quality, license, eol).
+
+        Groups past ``MAX_CROSS_LINK_GROUP_SIZE`` are left alone: a file carrying thousands of
+        SAST hits is one "component" here, and linking it pairwise costs more than it tells anyone.
+        """
         representatives = cluster_by_package_identity(f.component for f in findings if f.component)
         component_map: dict[str, list[Finding]] = {}
 
@@ -438,7 +443,7 @@ class ResultAggregator:
             component_map.setdefault(key, []).append(f)
 
         for component_findings in component_map.values():
-            if len(component_findings) > 1:
+            if 1 < len(component_findings) <= MAX_CROSS_LINK_GROUP_SIZE:
                 self._link_finding_group(component_findings)
 
     def get_dependency_enrichments(self) -> list[dict[str, Any]]:

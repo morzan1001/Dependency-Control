@@ -1,12 +1,20 @@
 """Stateless ad-hoc analysis: the analysis pipeline without a scan, a project or a write."""
 
+import asyncio
 import logging
 import re
 from dataclasses import dataclass
 from typing import Any
 
 from app.core.cache import suppress_cache_writes
-from app.core.constants import get_severity_value
+from app.core.constants import (
+    ADHOC_MAX_FINDINGS,
+    ADHOC_MAX_SBOM_COMPONENTS,
+    ADHOC_MAX_SBOM_EVIDENCE_ENTRIES,
+    ADHOC_MAX_SCANNER_FINDINGS,
+    get_severity_value,
+    sort_by_severity,
+)
 from app.models.crypto_asset import CryptoAsset
 from app.models.match_signature import MatchSignature
 from app.models.system import SystemSettings
@@ -34,6 +42,9 @@ from app.services.sbom_parser import parse_sbom
 from app.services.stats import _resolve_finding_id_query
 
 logger = logging.getLogger(__name__)
+
+# One ad-hoc analysis per pod: the two in-process analysis workers must not be starved.
+ADHOC_SLOTS = asyncio.Semaphore(1)
 
 _UNKNOWN_ANALYZER = "unknown analyzer"
 _EMPTY_PAYLOAD = "empty payload"
@@ -150,6 +161,89 @@ _WAIVER_FIELD_MAP: tuple[tuple[str, str], ...] = (
 # A vulnerability waiver narrows documents but never by type: the advisory it names only
 # ever lives in a vulnerability document, whatever ``finding_type`` the waiver carries.
 _VULNERABILITY_SCOPE_FIELDS = tuple(pair for pair in _WAIVER_FIELD_MAP if pair[0] != _WAIVER_FINDING_TYPE)
+
+
+class AdhocInputTooLarge(Exception):
+    """The request is shaped so that a synchronous stage would run superlinearly over it."""
+
+
+# Where each SBOM dialect keeps its component list.
+_COMPONENT_KEYS: tuple[str, ...] = ("components", "packages", "artifacts")
+# Per-component lists the parser folds into a deduped list with a linear membership test,
+# which makes the parse quadratic in whatever one component carries.
+_EVIDENCE_LIST_KEYS: tuple[str, ...] = ("properties", "cpes", "locations")
+
+_TOO_MANY_COMPONENTS = "{count} components exceeds the ad-hoc limit of {limit}"
+_TOO_MANY_EVIDENCE = "{count} component evidence entries exceeds the ad-hoc limit of {limit}"
+_TOO_MANY_SCANNER_FINDINGS = "{count} posted scanner findings exceeds the ad-hoc limit of {limit}"
+
+
+def _components_of(sbom: dict[str, Any]) -> list[dict[str, Any]]:
+    entries: list[dict[str, Any]] = []
+    for key in _COMPONENT_KEYS:
+        value = sbom.get(key)
+        if isinstance(value, list):
+            entries.extend(entry for entry in value if isinstance(entry, dict))
+    return entries
+
+
+def _evidence_entries(component: dict[str, Any]) -> int:
+    total = sum(len(component[key]) for key in _EVIDENCE_LIST_KEYS if isinstance(component.get(key), list))
+    evidence = component.get("evidence")
+    occurrences = evidence.get("occurrences") if isinstance(evidence, dict) else None
+    return total + (len(occurrences) if isinstance(occurrences, list) else 0)
+
+
+def _posted_finding_count(name: str, payload: dict[str, Any]) -> int:
+    total = 0
+    for key in _SCANNER_RESULT_KEYS[name]:
+        items = payload.get(key)
+        if not isinstance(items, list):
+            continue
+        total += len(items)
+        # KICS nests one entry per hit inside the query that produced it.
+        total += sum(
+            len(item["files"]) for item in items if isinstance(item, dict) and isinstance(item.get("files"), list)
+        )
+    return total
+
+
+def _reject_unaffordable_input(request: AdhocAnalyzeRequest) -> None:
+    """Refuse a request whose shape drives a superlinear synchronous stage.
+
+    The parse and the cross-linking run to completion without an await, so no deadline can
+    interrupt them and the 25 MB body ceiling sits far above where they become expensive.
+    Counting the three shapes that drive them is linear, and it happens before any of them run.
+    """
+    components = [component for sbom in request.sboms for component in _components_of(sbom)]
+    if len(components) > ADHOC_MAX_SBOM_COMPONENTS:
+        raise AdhocInputTooLarge(_TOO_MANY_COMPONENTS.format(count=len(components), limit=ADHOC_MAX_SBOM_COMPONENTS))
+
+    evidence = sum(_evidence_entries(component) for component in components)
+    if evidence > ADHOC_MAX_SBOM_EVIDENCE_ENTRIES:
+        raise AdhocInputTooLarge(_TOO_MANY_EVIDENCE.format(count=evidence, limit=ADHOC_MAX_SBOM_EVIDENCE_ENTRIES))
+
+    if request.scanners is None:
+        return
+    posted = sum(
+        _posted_finding_count(name, payload)
+        for name, payload in request.scanners.model_dump(exclude_none=True).items()
+        if payload
+    )
+    if posted > ADHOC_MAX_SCANNER_FINDINGS:
+        raise AdhocInputTooLarge(_TOO_MANY_SCANNER_FINDINGS.format(count=posted, limit=ADHOC_MAX_SCANNER_FINDINGS))
+
+
+def _cap_findings(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
+    """Keep the most severe findings when the set has to be cut.
+
+    The aggregator orders by type name, where ``vulnerability`` sorts last, so a head slice
+    would drop every CVE before the first secret.
+    """
+    if len(records) <= ADHOC_MAX_FINDINGS:
+        return records, False
+    logger.warning("adhoc: capping %d findings at %d", len(records), ADHOC_MAX_FINDINGS)
+    return sort_by_severity(records)[:ADHOC_MAX_FINDINGS], True
 
 
 @dataclass(frozen=True)
@@ -575,6 +669,8 @@ async def run_adhoc_analysis(request: AdhocAnalyzeRequest, db: Database) -> Adho
 
 
 async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeResponse:
+    _reject_unaffordable_input(request)
+
     report = AnalyzerReport()
     aggregator = ResultAggregator()
 
@@ -607,6 +703,9 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
     for record in records:
         # Findings are addressed by ``finding_id`` everywhere the scan-backed API exposes them.
         record["finding_id"] = record["id"]
+
+    # Before enrichment, so waivers, stats and recommendations all describe the returned set.
+    records, truncated = _cap_findings(records)
 
     epss_kev_summary = await _enrich_vulnerabilities(records, report)
 
@@ -641,4 +740,5 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         analyzers=report,
         waivers_applied=waivers_applied,
         waived_count=waived_count,
+        truncated=truncated,
     )

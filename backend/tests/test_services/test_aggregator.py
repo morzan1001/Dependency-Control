@@ -1,5 +1,6 @@
 """Tests for the ResultAggregator."""
 
+from app.core.constants import MAX_CROSS_LINK_GROUP_SIZE
 from app.models.finding import Finding, FindingType, Severity
 from app.services.aggregation import ResultAggregator
 from app.services.aggregation.components import (
@@ -15,6 +16,9 @@ from app.services.aggregation.versions import (
     normalize_version,
     parse_version_key,
 )
+
+# One file carrying many SAST hits is a single "component" to the cross-linker.
+_CROWDED_FILE = "app/handlers.py"
 
 
 class TestParseVersionKey:
@@ -798,6 +802,38 @@ class TestGetFindings:
         # Should be linked despite different component name formats
         assert out_f.id in vuln_f.related_findings
         assert vuln_f.id in out_f.related_findings
+
+    def _add_sast_findings_on_one_file(self, count):
+        for index in range(count):
+            self.agg.add_finding(
+                Finding(
+                    id=f"SAST-{index}",
+                    type=FindingType.SAST,
+                    severity=Severity.MEDIUM,
+                    component=_CROWDED_FILE,
+                    version="",
+                    description="eval() detected",
+                    scanners=["opengrep"],
+                    details={"line": index + 1, "rule_id": f"rule-{index}"},
+                )
+            )
+
+    def test_a_group_at_the_cap_is_still_cross_linked(self):
+        self._add_sast_findings_on_one_file(MAX_CROSS_LINK_GROUP_SIZE)
+
+        findings = self.agg.get_findings()
+
+        assert len(findings) == MAX_CROSS_LINK_GROUP_SIZE
+        assert all(len(f.related_findings) == MAX_CROSS_LINK_GROUP_SIZE - 1 for f in findings)
+
+    def test_a_group_past_the_cap_is_left_unlinked(self):
+        """Pairwise linking of one crowded file is quadratic and tells a reader nothing."""
+        self._add_sast_findings_on_one_file(MAX_CROSS_LINK_GROUP_SIZE + 1)
+
+        findings = self.agg.get_findings()
+
+        assert len(findings) == MAX_CROSS_LINK_GROUP_SIZE + 1
+        assert all(f.related_findings == [] for f in findings)
 
 
 class TestAggregateDispatch:

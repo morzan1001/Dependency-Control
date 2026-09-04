@@ -358,6 +358,7 @@ ANALYZER_BATCH_SIZES: dict[str, int] = {
     "outdated": 25,
     "malware": 20,
     "maintainer_risk": 10,
+    "hash_verification": 10,
     "typosquatting": 50,
     "end_of_life": 20,
     "epss": 100,  # Max CVEs per EPSS API request
@@ -917,6 +918,10 @@ AGG_KEY_VULNERABILITY = "AGG:VULN"
 AGG_KEY_QUALITY = "AGG:QUALITY"
 AGG_KEY_SAST = "SAST-AGG"
 
+# Cross-linking is pairwise, so a component carrying thousands of findings costs O(n^2) to
+# produce a related-findings list no reader can use. Above this the group is left unlinked.
+MAX_CROSS_LINK_GROUP_SIZE: int = 100
+
 # Limits for waiver queries
 WAIVER_QUERY_LIMIT = 1000
 
@@ -1024,6 +1029,19 @@ ARCHIVE_ORPHAN_MIN_AGE_HOURS = 24
 MAX_CRYPTO_ASSETS_PER_SCAN: int = 50_000
 MAX_CBOM_BODY_BYTES: int = 25 * 1024 * 1024
 MAX_ADHOC_BODY_BYTES: int = 25 * 1024 * 1024
+ADHOC_MAX_FINDINGS: int = 5000
+ADHOC_DEADLINE_SECONDS: float = 180.0
+ADHOC_RATE_LIMIT_PER_MINUTE: int = 5
+ADHOC_RATE_LIMIT_PER_HOUR: int = 60
+
+# The parse and the aggregation are synchronous and superlinear in these three counts, so a
+# deadline cannot interrupt them and the body ceiling is 25 MB above where they hurt. Each
+# limit is the shape that drives one measured blow-up, counted in linear time before it runs.
+ADHOC_MAX_SBOM_COMPONENTS: int = 10_000
+# ``properties``, ``evidence.occurrences`` and ``cpes``: the parser dedupes each into a list
+# with a linear membership test, so cost is quadratic in whatever one component carries.
+ADHOC_MAX_SBOM_EVIDENCE_ENTRIES: int = 20_000
+ADHOC_MAX_SCANNER_FINDINGS: int = 5_000
 MAX_CONCURRENT_COMPLIANCE_REPORTS: int = 10
 POLICY_AUDIT_DEFAULT_MIN_PRUNE_DAYS: int = 90
 CRYPTO_ASSET_BULK_CHUNK_SIZE: int = 500
