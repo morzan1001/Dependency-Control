@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 import tempfile
 from dataclasses import dataclass
@@ -110,6 +111,9 @@ _KEY_DAYS = 30
 _ANALYZE_ADHOC = "analyze:adhoc"
 _RATE_LIMIT_PREFIX = "dc:adhoc:rl:"
 _ALLOWED = 1
+_FORMAT_JSON = "json"
+_FORMAT_HTML = "html"
+_RAN_LINE = re.compile(r"<strong>Ran:</strong>([^<]*)<")
 _FAILING_ANALYZER = "license_compliance"
 _CACHING_ANALYZER = "typosquatting"
 _ENRICHMENT = "epss_kev"
@@ -711,11 +715,19 @@ class _RateLimitRedis:
         return [_ALLOWED, 0]
 
 
+def _ran_from_html(html: str) -> set[str]:
+    match = _RAN_LINE.search(html)
+    assert match, "the report must name the stages that ran, or this case proves nothing"
+    return {name.strip() for name in match.group(1).split(",")}
+
+
 @pytest.mark.asyncio
+@pytest.mark.parametrize("response_format", [_FORMAT_JSON, _FORMAT_HTML])
 async def test_the_endpoint_persists_nothing(
-    injected_database, mongo_bypass_attempts, recording_cache, filesystem_watch, monkeypatch
+    injected_database, mongo_bypass_attempts, recording_cache, filesystem_watch, monkeypatch, response_format
 ):
-    """Same guarantee one layer up: authentication resolves a key and stamps nothing on it."""
+    """Same guarantee one layer up, over both exits: authentication resolves a key and stamps
+    nothing on it, and rendering a report reads a template rather than writing one."""
     from httpx import ASGITransport, AsyncClient
 
     from app.main import app
@@ -733,14 +745,17 @@ async def test_the_endpoint_persists_nothing(
     async with AsyncClient(transport=ASGITransport(app=app), base_url=_BASE_URL) as ac:
         resp = await ac.post(
             _ANALYZE_PATH,
-            json=request.model_dump(exclude_none=True),
+            json={**request.model_dump(exclude_none=True), "format": response_format},
             headers={"Authorization": f"Bearer {token}"},
         )
 
     assert resp.status_code == 200, resp.text
-    body = resp.json()
-    assert body["findings"], "the request must actually produce findings, or the proof is vacuous"
-    assert set(body["analyzers"]["ran"]) == set(_EXPECTED_RAN)
+    if response_format == _FORMAT_HTML:
+        assert _ran_from_html(resp.text) == set(_EXPECTED_RAN)
+    else:
+        body = resp.json()
+        assert body["findings"], "the request must actually produce findings, or the proof is vacuous"
+        assert set(body["analyzers"]["ran"]) == set(_EXPECTED_RAN)
 
     assert_no_write_calls(db)
     await assert_no_new_documents(db, before)
