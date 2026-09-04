@@ -150,7 +150,7 @@ def test_response_defaults_are_a_complete_envelope():
     assert dumped["waivers_applied"] == "none"
     assert dumped["waived_count"] == 0
     assert dumped["truncated"] is False
-    assert dumped["analyzers"] == {"ran": [], "skipped": {}, "errored": {}, "skipped_inputs": {}}
+    assert dumped["analyzers"] == {"ran": [], "skipped": {}, "errored": {}, "skipped_inputs": {}, "notes": {}}
     assert dumped["stats"]["threat_intel"] is None
     assert dumped["stats"]["risk_score"] == 0.0
 

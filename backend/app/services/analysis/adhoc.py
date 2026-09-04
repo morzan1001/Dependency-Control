@@ -68,9 +68,11 @@ _SCANNER_RESULT_KEYS: dict[str, tuple[str, ...]] = {
     "kics": ("queries",),
 }
 
+_OSV = "osv"
+
 # What a caller gets without naming an analyzer: an SBOM in, vulnerabilities and licence
 # verdicts out, with no CLI process and one batched upstream call.
-ADHOC_DEFAULT_ANALYZERS: tuple[str, ...] = ("osv", "license_compliance")
+ADHOC_DEFAULT_ANALYZERS: tuple[str, ...] = (_OSV, "license_compliance")
 
 _NOT_REQUESTED = "not requested"
 _UNCACHED_FANOUT = (
@@ -126,6 +128,15 @@ _RULE_DRIVEN_FINDING_TYPES: frozenset[str] = frozenset(
     if isinstance(analyzer, CryptoRuleAnalyzer)
     for finding_type in analyzer.finding_types
 )
+
+# What a stage that ran does not otherwise reveal. ``osv`` is in the defaults, so a caller who
+# named no analyzer still has to be told their package list left the process, and the crypto
+# stage grades against the shipped seeds because it never reads this installation's policy.
+_STAGE_NOTES: dict[str, str] = {
+    _OSV: "package coordinates from the posted SBOMs are sent to api.osv.dev",
+    _ENRICHMENT: "vulnerability ids are sent to the EPSS API and matched against the CISA KEV catalog",
+    _CRYPTO_RULES: "graded against the shipped seed rules, not against this installation's crypto policy",
+}
 
 _NO_CALLGRAPH = "no callgraph supplied"
 _AUTO_FORMAT = "auto"
@@ -742,6 +753,9 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         dependencies=components,
         source_target=source_target,
     )
+
+    # A stage that errored still reached upstream, so attempted is the condition, not success.
+    report.notes = {name: note for name, note in _STAGE_NOTES.items() if name in report.ran or name in report.errored}
 
     return AdhocAnalyzeResponse(
         findings=records,

@@ -68,6 +68,9 @@ class AnalyzerReport(BaseModel):
     errored: dict[str, list[str]] = Field(default_factory=dict)
     # Defects in the posted inputs, keyed by input label rather than analyzer name.
     skipped_inputs: dict[str, str] = Field(default_factory=dict)
+    # What a stage did that its findings do not show: where the posted data went, which
+    # policy graded it. Storing nothing is not the same as sending nothing.
+    notes: dict[str, str] = Field(default_factory=dict)
 
 
 class AdhocAnalyzeResponse(BaseModel):

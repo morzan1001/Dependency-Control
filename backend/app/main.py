@@ -10,6 +10,7 @@ from app.api import health
 from app.api.v1.endpoints import (
     adhoc_keys,
     analytics,
+    analyze,
     archives,
     auth,
     callgraph,
@@ -205,6 +206,7 @@ app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["cha
 app.include_router(mcp_keys.router, prefix=f"{settings.API_V1_STR}/mcp-keys", tags=["mcp-keys"])
 app.include_router(mcp.router, prefix=f"{settings.API_V1_STR}/mcp", tags=["mcp"])
 app.include_router(adhoc_keys.router, prefix=f"{settings.API_V1_STR}/analyze-keys", tags=["adhoc-keys"])
+app.include_router(analyze.router, prefix=f"{settings.API_V1_STR}", tags=["analyze"])
 
 
 @app.get("/")

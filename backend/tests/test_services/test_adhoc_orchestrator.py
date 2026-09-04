@@ -21,6 +21,8 @@ _ANALYZER_TIMEOUT = "timed out after 60s"
 _UNKNOWN_NAME = "not_a_scanner"
 _UNKNOWN_ANALYZER = "unknown analyzer"
 _TRUFFLEHOG_NAME = "trufflehog"
+_OSV_NAME = "osv"
+_OSV_UPSTREAM = "api.osv.dev"
 _CRYPTO_ANALYZER = "crypto_weak_algorithm"
 # The stage that evaluates the crypto rules; it reports itself as skipped for an SBOM
 # carrying no cryptographic-asset components.
@@ -467,6 +469,44 @@ async def test_a_scanner_payload_shape_the_normalizer_cannot_read_is_not_reporte
     assert _UNRECOGNISED_PAYLOAD in response.analyzers.errored[scanner][0]
     assert response.analyzers.ran == [_ENRICHMENT]
     assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
+
+
+class _FakeOsv:
+    name = _OSV_NAME
+
+    async def analyze(self, sbom, settings=None, parsed_components=None):
+        return {"osv_vulnerabilities": []}
+
+
+class _BrokenOsv:
+    name = _OSV_NAME
+
+    async def analyze(self, sbom, settings=None, parsed_components=None):
+        raise RuntimeError(_ANALYZER_ERROR)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("analyzer", [_FakeOsv(), _BrokenOsv()])
+async def test_the_stages_that_left_the_process_are_named_whether_or_not_they_succeeded(monkeypatch, analyzer):
+    """Storing nothing is not sending nothing, and a failed upstream call still sent the query."""
+    from app.services.analysis import registry
+
+    monkeypatch.setitem(registry.analyzers, _OSV_NAME, analyzer)
+    request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=[_OSV_NAME], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert set(response.analyzers.notes) == {_OSV_NAME, _ENRICHMENT}
+    assert _OSV_UPSTREAM in response.analyzers.notes[_OSV_NAME]
+
+
+@pytest.mark.asyncio
+async def test_an_analyzer_that_never_ran_is_not_named_in_the_notes():
+    request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["license_compliance"], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert set(response.analyzers.notes) == {_ENRICHMENT}
 
 
 @pytest.mark.asyncio

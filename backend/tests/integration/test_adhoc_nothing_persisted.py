@@ -99,6 +99,12 @@ _TEMP_ROOT_NAME = "adhoc-temp"
 _CALLER_DERIVED_CACHE_KEY = "osv2:0123456789abcdef"
 _SEEDED_POPULAR_PYPI = ["requests", "flask", "django"]
 _MONGO_URL = "mongodb://localhost:27017"
+_BASE_URL = "http://test"
+_ANALYZE_PATH = "/api/v1/analyze"
+_KEY_OWNER = "adhoc-user"
+_KEY_NAME = "ci"
+_KEY_DAYS = 30
+_ANALYZE_ADHOC = "analyze:adhoc"
 _FAILING_ANALYZER = "license_compliance"
 _CACHING_ANALYZER = "typosquatting"
 _ENRICHMENT = "epss_kev"
@@ -302,6 +308,20 @@ async def assert_nothing_persisted(db: Any) -> None:
     for name in _collection_names(db):
         count = await db[name].count_documents({})
         assert count == 0, f"ad-hoc analysis wrote {count} document(s) into '{name}'"
+
+
+async def collection_counts(db: Any) -> dict[str, int]:
+    """A baseline for a handle that had to be seeded — with the caller's own key, say."""
+    return {name: await db[name].count_documents({}) for name in _collection_names(db)}
+
+
+async def assert_no_new_documents(db: Any, before: dict[str, int]) -> None:
+    for name in _collection_names(db):
+        count = await db[name].count_documents({})
+        # A collection the run vivified is absent from the baseline, and a floor of zero is
+        # what "the run must not create it" means.
+        seeded = before.get(name, 0)
+        assert count == seeded, f"ad-hoc analysis wrote {count - seeded} document(s) into '{name}'"
 
 
 def assert_no_write_calls(db: _WriteRecordingDatabase) -> None:
@@ -622,6 +642,74 @@ async def test_an_analyzer_that_caches_publishes_nothing_through_this_path(
     assert _CACHING_ANALYZER in response.analyzers.ran
 
 
+@pytest.fixture
+def injected_database() -> Any:
+    """Bound before the bypass tripwires replace the module attribute the app imported."""
+    from app.db.mongodb import get_database
+    from app.main import app
+
+    database = _WriteRecordingDatabase()
+
+    async def _use_it() -> _WriteRecordingDatabase:
+        return database
+
+    app.dependency_overrides[get_database] = _use_it
+    yield database
+    app.dependency_overrides.pop(get_database, None)
+
+
+async def _seed_adhoc_key(db: Any) -> str:
+    from app.repositories.adhoc_api_keys import AdhocApiKeyRepository
+
+    _doc, plaintext = await AdhocApiKeyRepository(db).create(_KEY_OWNER, _KEY_NAME, _KEY_DAYS)
+    await db.users.insert_one(
+        {
+            "_id": _KEY_OWNER,
+            "username": _KEY_OWNER,
+            "email": f"{_KEY_OWNER}@example.com",
+            "permissions": [_ANALYZE_ADHOC],
+            "is_active": True,
+            "hashed_password": "x",
+        }
+    )
+    return str(plaintext)
+
+
+@pytest.mark.asyncio
+async def test_the_endpoint_persists_nothing(injected_database, bypass_attempts, recording_cache, filesystem_watch):
+    """Same guarantee one layer up: authentication resolves a key and stamps nothing on it."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import app
+
+    db = injected_database
+    token = await _seed_adhoc_key(db)
+    before = await collection_counts(db)
+    # The key and its owner are the caller's credentials, not the run's output.
+    db.writes.clear()
+
+    request = _full_request()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url=_BASE_URL) as ac:
+        resp = await ac.post(
+            _ANALYZE_PATH,
+            json=request.model_dump(exclude_none=True),
+            headers={"Authorization": f"Bearer {token}"},
+        )
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["findings"], "the request must actually produce findings, or the proof is vacuous"
+    assert set(body["analyzers"]["ran"]) == set(_EXPECTED_RAN)
+
+    assert_no_write_calls(db)
+    await assert_no_new_documents(db, before)
+    assert bypass_attempts == []
+    assert_no_caller_derived_cache_writes(recording_cache.writes)
+    assert_no_caller_data_in_shared_cache(recording_cache.writes)
+    assert_no_files_left_behind(filesystem_watch)
+    assert recording_cache.writes == []
+
+
 @pytest.mark.asyncio
 async def test_cache_suppression_does_not_outlive_the_run(recording_cache):
     await run_adhoc_analysis(_full_request(), FakeDatabase())
@@ -642,6 +730,31 @@ async def test_a_write_into_a_collection_no_one_named_is_caught():
     assert db.writes == [f"{_UNNAMED_COLLECTION}.insert_one"]
     with pytest.raises(AssertionError, match=_UNNAMED_COLLECTION):
         await assert_nothing_persisted(db)
+
+
+@pytest.mark.asyncio
+async def test_a_document_added_after_the_baseline_is_caught():
+    """The HTTP proof has to seed a key, so its net compares against a baseline rather than zero."""
+    db = _WriteRecordingDatabase()
+    await db.users.insert_one({"_id": _KEY_OWNER})
+    before = await collection_counts(db)
+
+    await assert_no_new_documents(db, before)
+
+    await db.users.insert_one({"_id": _LEAK_ID})
+    with pytest.raises(AssertionError, match="users"):
+        await assert_no_new_documents(db, before)
+
+
+@pytest.mark.asyncio
+async def test_a_collection_the_baseline_never_saw_is_caught():
+    db = _WriteRecordingDatabase()
+    before = await collection_counts(db)
+
+    await db[_UNNAMED_COLLECTION].insert_one({"_id": _LEAK_ID})
+
+    with pytest.raises(AssertionError, match=_UNNAMED_COLLECTION):
+        await assert_no_new_documents(db, before)
 
 
 @pytest.mark.asyncio

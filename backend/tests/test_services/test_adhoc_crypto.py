@@ -11,6 +11,8 @@ _NO_CRYPTO_ASSETS = "no cryptographic-asset components in the SBOM"
 # The enrichment stage runs on every request and is reported last.
 _ENRICHMENT = "epss_kev"
 
+_SEED_POLICY = "shipped seed rules"
+
 _CRYPTO_TYPE_PREFIX = "crypto_"
 _TYPE_WEAK_KEY = "crypto_weak_key"
 _TYPE_WEAK_ALGORITHM = "crypto_weak_algorithm"
@@ -133,6 +135,21 @@ async def test_a_crypto_finding_names_the_sbom_it_was_read_from():
 
     attribution = {finding["details"]["bom_ref"]: finding["found_in"] for finding in _crypto_findings(response)}
     assert attribution == {_MD5_REF: [_FIRST_SBOM_NAME], _RSA_REF: [_SECOND_SBOM_SOURCE]}
+
+
+@pytest.mark.asyncio
+async def test_the_response_says_which_policy_graded_the_assets():
+    """The stage never reads the installation's crypto policy, so the result must not imply it did."""
+    response = await _run([_cbom(_MD5)])
+
+    assert _SEED_POLICY in response.analyzers.notes[_CRYPTO_RULES]
+
+
+@pytest.mark.asyncio
+async def test_a_cbom_the_stage_skipped_carries_no_policy_note():
+    response = await _run([_cbom()])
+
+    assert _CRYPTO_RULES not in response.analyzers.notes
 
 
 @pytest.mark.asyncio
