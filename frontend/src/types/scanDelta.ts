@@ -54,9 +54,20 @@ export interface ScanDeltaReachability {
   analyzed_count: number;
 }
 
+// Which build a side of the comparison actually is. A symbolic side ("release", "head") resolves
+// server-side, and a release side follows the rescan chain, so the requested id need not be it.
+export interface ScanDeltaSide {
+  scan_id: string;
+  branch: string | null;
+  commit_hash: string | null;
+  created_at: string | null;
+}
+
 export interface ScanDeltaResponse {
   from_scan_id: string;
   to_scan_id: string;
+  from_side?: ScanDeltaSide | null;
+  to_side?: ScanDeltaSide | null;
   project_id: string;
   category: DeltaCategory;
   totals: ScanDeltaTotals;

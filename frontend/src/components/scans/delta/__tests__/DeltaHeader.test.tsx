@@ -150,6 +150,79 @@ describe('DeltaHeader - release quick pick', () => {
 
     expect(screen.queryByText(/release/i)).not.toBeInTheDocument()
   })
+})
+
+describe('DeltaHeader - what the comparison actually used', () => {
+  const RESOLVED_FROM_ID = 'resolved-from'
+  const RESOLVED_TO_ID = 'resolved-to'
+  const RESOLVED_FROM_BRANCH = 'release-1.0'
+  const RESOLVED_TO_BRANCH = 'main'
+  const RESOLVED_FROM_COMMIT = 'b'.repeat(40)
+  const SHORT_FROM_COMMIT = RESOLVED_FROM_COMMIT.slice(0, 7)
+  const FIRST_PAGE = 1
+  const PAGE_SIZE = 50
+  const ONE_PAGE = 1
+  const NONE = 0
+
+  // Annotated, not inferred: an inferred fixture drops a field from the response type silently.
+  function deltaWithSides(): ScanDeltaResponse {
+    return {
+      category: 'findings',
+      from_scan_id: rescan.id,
+      to_scan_id: toScan.id,
+      from_side: {
+        scan_id: RESOLVED_FROM_ID,
+        branch: RESOLVED_FROM_BRANCH,
+        commit_hash: RESOLVED_FROM_COMMIT,
+        created_at: '2026-01-02T03:04:00Z',
+      },
+      to_side: {
+        scan_id: RESOLVED_TO_ID,
+        branch: RESOLVED_TO_BRANCH,
+        commit_hash: null,
+        created_at: null,
+      },
+      project_id: PROJECT_ID,
+      totals: { added: NONE, removed: NONE, unchanged: NONE, changed: NONE, by_severity: {}, by_type: {} },
+      page: FIRST_PAGE,
+      page_size: PAGE_SIZE,
+      total_pages: ONE_PAGE,
+      items: [],
+      from_waived_excluded: NONE,
+      to_waived_excluded: NONE,
+      waiver_only_changes: NONE,
+    }
+  }
+
+  afterEach(() => vi.clearAllMocks())
+
+  it('names the build each side resolved to, so a wrong side is visible rather than inferred', () => {
+    mockScanSources()
+
+    renderHeader(vi.fn(), [], toScan.id, deltaWithSides())
+
+    expect(screen.getByTitle(RESOLVED_FROM_ID)).toBeInTheDocument()
+    expect(screen.getByTitle(RESOLVED_TO_ID)).toBeInTheDocument()
+  })
+
+  it('describes each side with the branch, commit and time the response reports', () => {
+    mockScanSources()
+
+    renderHeader(vi.fn(), [], toScan.id, deltaWithSides())
+
+    expect(screen.getByText(RESOLVED_FROM_BRANCH)).toBeInTheDocument()
+    expect(screen.getByText(SHORT_FROM_COMMIT)).toBeInTheDocument()
+    expect(screen.getByText(RESOLVED_TO_BRANCH)).toBeInTheDocument()
+  })
+
+  it('falls back to the requested scan before the first response lands', async () => {
+    mockScanSources()
+
+    renderHeader()
+
+    await waitFor(() => expect(screen.getByText(rescan.branch)).toBeInTheDocument())
+    expect(screen.queryByTitle(RESOLVED_FROM_ID)).not.toBeInTheDocument()
+  })
 
   it('names the environment and version the quick pick would compare against', () => {
     mockScanSources()

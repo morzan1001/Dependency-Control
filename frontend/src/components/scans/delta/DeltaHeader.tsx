@@ -13,9 +13,10 @@ import { formatDateTime, shortCommitHash } from '@/lib/utils'
 import { isScanUsable } from '@/lib/scan-status'
 import type { ReleaseItem } from '@/types/release'
 import { Scan } from '@/types/scan'
-import type { ScanDeltaResponse } from '@/types/scanDelta'
+import type { ScanDeltaResponse, ScanDeltaSide } from '@/types/scanDelta'
 
 const RELEASE_MARKER_LABEL = 'Release'
+const COMPARED_PREFIX = 'compared: '
 
 interface DeltaHeaderProps {
   projectId: string
@@ -47,16 +48,22 @@ function releaseHint(release: ReleaseItem, alreadyCompared: boolean): string {
   return `Compares the ${release.environment} release${version} against the To scan.`
 }
 
-function ScanSide({ label, scanId, options, onSelect }: {
+function ScanSide({ label, scanId, options, onSelect, side }: {
   readonly label: string
   readonly scanId: string
   readonly options: Scan[]
   readonly onSelect: (id: string) => void
+  readonly side: ScanDeltaSide | null | undefined
 }) {
   const { data: scan } = useQuery({ queryKey: ['scan', scanId], queryFn: () => scanApi.getOne(scanId) })
   // The compared scan can be a rescan or a release older than the option window; without this
   // fallback the trigger renders blank.
   const currentInOptions = options.some((option) => option.id === scanId)
+  // The response names the build this side resolved to, which is the one the totals describe; the
+  // fetched scan only answers for the id that was asked for, and a symbolic side has none.
+  const branch = side?.branch ?? scan?.branch
+  const commitHash = side?.commit_hash ?? scan?.commit_hash
+  const createdAt = side?.created_at ?? scan?.created_at
   return (
     <div className="flex-1 space-y-2">
       <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
@@ -71,15 +78,20 @@ function ScanSide({ label, scanId, options, onSelect }: {
           ))}
         </SelectContent>
       </Select>
-      {scan && (
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1"><GitBranch className="h-3 w-3" />{scan.branch}</span>
-          {scan.commit_hash && (
+      {(side || scan) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          {branch && <span className="flex items-center gap-1"><GitBranch className="h-3 w-3" />{branch}</span>}
+          {commitHash && (
             <span className="flex items-center gap-1 font-mono">
-              <GitCommit className="h-3 w-3" />{shortCommitHash(scan.commit_hash)}
+              <GitCommit className="h-3 w-3" />{shortCommitHash(commitHash)}
             </span>
           )}
-          <span>{formatDateTime(scan.created_at)}</span>
+          {createdAt && <span>{formatDateTime(createdAt)}</span>}
+          {side && (
+            <span className="max-w-full truncate font-mono" title={side.scan_id}>
+              {`${COMPARED_PREFIX}${side.scan_id}`}
+            </span>
+          )}
         </div>
       )}
     </div>
@@ -122,13 +134,13 @@ export function DeltaHeader({ projectId, fromScanId, toScanId, onChange, delta }
           </div>
         )}
         <div className="flex items-end gap-4">
-          <ScanSide label="From" scanId={fromScanId} options={options}
+          <ScanSide label="From" scanId={fromScanId} options={options} side={delta?.from_side}
             onSelect={(id) => id !== toScanId && onChange(id, toScanId)} />
           <Button variant="outline" size="icon" className="shrink-0"
             onClick={() => onChange(toScanId, fromScanId)} aria-label="Swap scans">
             <ArrowLeftRight className="h-4 w-4" />
           </Button>
-          <ScanSide label="To" scanId={toScanId} options={options}
+          <ScanSide label="To" scanId={toScanId} options={options} side={delta?.to_side}
             onSelect={(id) => id !== fromScanId && onChange(fromScanId, id)} />
         </div>
         <DeltaComparability delta={delta} />
