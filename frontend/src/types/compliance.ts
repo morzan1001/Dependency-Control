@@ -10,6 +10,14 @@ export type ReportFramework =
   | "license-audit"
   | "cve-remediation-sla";
 
+// What the report's verdicts were computed over. findings_evaluated below findings_in_scope means
+// a control reported as passed was not checked against the remainder.
+export interface EvaluationCoverage {
+  findings_evaluated: number;
+  findings_in_scope: number;
+  limit: number;
+}
+
 export interface ComplianceReportMeta {
   _id: string;
   scope: "project" | "team" | "global" | "user";
@@ -24,6 +32,7 @@ export interface ComplianceReportMeta {
   artifact_size_bytes: number | null;
   artifact_mime_type: string | null;
   summary: Record<string, unknown>;
+  coverage?: EvaluationCoverage | null;
   error_message: string | null;
   expires_at: string | null;
 }

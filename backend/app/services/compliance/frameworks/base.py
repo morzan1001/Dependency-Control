@@ -13,6 +13,7 @@ from app.schemas.compliance import (
     ControlDefinition,
     ControlResult,
     ControlStatus,
+    EvaluationCoverage,
     FrameworkEvaluation,
     ReportFramework,
     ResidualRisk,
@@ -36,6 +37,9 @@ class EvaluationInput:
     scan_ids: list[str]
     # Set for meta-frameworks that run their own DB queries (e.g. PQC).
     db: AsyncIOMotorDatabase[Any] | None = None
+    # What `findings` covers of the scope. None where the caller assembled the input itself and
+    # therefore already knows.
+    coverage: EvaluationCoverage | None = None
 
 
 @runtime_checkable

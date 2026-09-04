@@ -4,7 +4,29 @@ from datetime import datetime
 from typing import Protocol
 
 from app.models.compliance_report import ComplianceReport
-from app.schemas.compliance import FrameworkEvaluation, ReportFormat
+from app.schemas.compliance import EvaluationCoverage, FrameworkEvaluation, ReportFormat
+
+_COVERAGE_COMPLETE = "Evaluated all {in_scope} findings in scope."
+_COVERAGE_PARTIAL = (
+    "Evaluated {evaluated} of {in_scope} findings in scope, a cap of {limit} per report. "
+    "Every verdict below was computed over that subset: a control reported as passed was not "
+    "checked against the remaining {missing} findings and is not evidence of compliance. "
+    "Narrow the scope and regenerate for a verdict that covers everything."
+)
+
+
+def coverage_statement(coverage: EvaluationCoverage | None) -> str | None:
+    """The sentence a reader needs to know whether the verdicts cover the scope."""
+    if coverage is None:
+        return None
+    if coverage.complete:
+        return _COVERAGE_COMPLETE.format(in_scope=coverage.findings_in_scope)
+    return _COVERAGE_PARTIAL.format(
+        evaluated=coverage.findings_evaluated,
+        in_scope=coverage.findings_in_scope,
+        limit=coverage.limit,
+        missing=coverage.findings_in_scope - coverage.findings_evaluated,
+    )
 
 
 class Renderer(Protocol):

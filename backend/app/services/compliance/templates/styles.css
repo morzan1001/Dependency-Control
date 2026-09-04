@@ -9,6 +9,8 @@ h3 { font-size: 12pt; }
 .metadata td { padding: 4px 8px; }
 .metadata .fingerprint { font-family: monospace; font-size: 8pt; word-break: break-all; }
 .disclaimer { margin-top: 2em; padding: 8px 12px; background: #fffbea; border-left: 4px solid #e0a800; }
+.coverage { margin-top: 1em; padding: 8px 12px; background: #f2f7f2; border-left: 4px solid #2e7d32; }
+.coverage-partial { margin-top: 1em; padding: 8px 12px; background: #fdecea; border-left: 4px solid #c62828; font-weight: bold; }
 .summary-grid { display: flex; gap: 8px; margin: 12px 0; }
 .summary-grid .card { flex: 1; padding: 12px; border: 1px solid #ddd; text-align: center; border-radius: 4px; }
 .summary-grid .card .count { font-size: 22pt; font-weight: bold; }

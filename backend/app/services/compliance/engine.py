@@ -14,6 +14,7 @@ from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.compliance import (
+    EvaluationCoverage,
     FrameworkEvaluation,
     ReportFormat,
     ReportFramework,
@@ -27,6 +28,8 @@ from app.services.compliance.renderers import RENDERER_REGISTRY
 
 logger = logging.getLogger(__name__)
 
+# Findings held in memory for one report. The projection measures 2.66 KiB per document and
+# MAX_CONCURRENT_COMPLIANCE_REPORTS reports can run at once, so this is ~530 MiB at saturation.
 _FINDINGS_LIMIT = 20000
 
 
@@ -51,6 +54,9 @@ class ComplianceReportEngine:
                 evaluation = await framework.evaluate_async(inputs)  # type: ignore[attr-defined]
             else:
                 evaluation = framework.evaluate(inputs)
+            # Every framework builds its own FrameworkEvaluation, so the engine is the one place
+            # that can guarantee no renderer receives a verdict without its coverage.
+            evaluation.coverage = inputs.coverage
             artifact_bytes, filename, mime = self._render(
                 report.format,
                 framework,
@@ -74,6 +80,7 @@ class ComplianceReportEngine:
                 artifact_size_bytes=len(artifact_bytes),
                 artifact_mime_type=mime,
                 summary=evaluation.summary,
+                coverage=evaluation.coverage,
                 policy_version_snapshot=inputs.policy_version,
                 iana_catalog_version_snapshot=inputs.iana_catalog_version,
                 completed_at=datetime.now(timezone.utc),
@@ -103,7 +110,7 @@ class ComplianceReportEngine:
         scan_pairs = await self._pick_scan_ids(db, resolved)
         scan_ids = [sid for _, sid in scan_pairs]
         assets = await self._collect_crypto_assets(db, scan_pairs)
-        findings = await self._collect_findings(db, resolved, scan_ids, framework)
+        findings, findings_in_scope = await self._collect_findings(db, resolved, scan_ids, framework)
         policy_repo = CryptoPolicyRepository(db)
         system = await policy_repo.get_system_policy()
         policy_version = getattr(system, "version", None) if system else None
@@ -124,6 +131,11 @@ class ComplianceReportEngine:
             iana_catalog_version=CURRENT_IANA_CATALOG_VERSION,
             scan_ids=scan_ids,
             db=db,
+            coverage=EvaluationCoverage(
+                findings_evaluated=len(findings),
+                findings_in_scope=findings_in_scope,
+                limit=_FINDINGS_LIMIT,
+            ),
         )
 
     async def _pick_scan_ids(self, db: AsyncIOMotorDatabase, resolved: ResolvedScope) -> list[tuple[str, str]]:
@@ -148,7 +160,9 @@ class ComplianceReportEngine:
         resolved: ResolvedScope,
         scan_ids: list[str],
         framework: ComplianceFramework | None = None,
-    ) -> list[dict]:
+    ) -> tuple[list[dict], int]:
+        """The findings the controls are evaluated over, and how many the scope holds. The count
+        costs a round trip only once the fetch has saturated."""
         query: dict[str, Any] = {
             "scan_id": {"$in": scan_ids},
             "type": self._finding_type_filter(framework),
@@ -165,14 +179,17 @@ class ComplianceReportEngine:
         }
         cursor = db.findings.find(query, projection).limit(_FINDINGS_LIMIT)
         results = [doc async for doc in cursor]
-        if len(results) >= _FINDINGS_LIMIT:
-            logger.warning(
-                "Compliance evaluation hit findings cap (%d) for scope %s; "
-                "report may understate exposure — consider narrowing the scope",
-                _FINDINGS_LIMIT,
-                self._scope_description(resolved),
-            )
-        return results
+        if len(results) < _FINDINGS_LIMIT:
+            return results, len(results)
+        in_scope: int = await db.findings.count_documents(query)
+        logger.warning(
+            "Compliance evaluation hit findings cap (%d of %d) for scope %s; "
+            "report may understate exposure — consider narrowing the scope",
+            _FINDINGS_LIMIT,
+            in_scope,
+            self._scope_description(resolved),
+        )
+        return results, in_scope
 
     def _finding_type_filter(self, framework: ComplianceFramework | None) -> Any:
         """Findings-query `type` clause per framework; unknown framework loads the union."""

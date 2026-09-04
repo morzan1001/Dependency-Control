@@ -4,7 +4,7 @@ from pathlib import Path
 
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import FrameworkEvaluation, ReportFormat
-from app.services.compliance.renderers.base import build_filename
+from app.services.compliance.renderers.base import build_filename, coverage_statement
 
 _TEMPLATE_DIR = Path(__file__).resolve().parent.parent / "templates"
 
@@ -42,6 +42,8 @@ class PdfRenderer:
             "inputs_fingerprint": evaluation.inputs_fingerprint,
             "requested_by": report.requested_by,
             "disclaimer": disclaimer,
+            "coverage_statement": coverage_statement(evaluation.coverage),
+            "coverage_complete": evaluation.coverage is None or evaluation.coverage.complete,
             "summary": evaluation.summary,
             "controls": [
                 {

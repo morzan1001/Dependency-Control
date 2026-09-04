@@ -8,7 +8,7 @@ from app.schemas.compliance import (
     FrameworkEvaluation,
     ReportFormat,
 )
-from app.services.compliance.renderers.base import build_filename
+from app.services.compliance.renderers.base import build_filename, coverage_statement
 
 _SEVERITY_TO_LEVEL = {
     Severity.CRITICAL.value: "error",
@@ -94,6 +94,11 @@ class SarifRenderer:
                     "properties": {
                         "generated_at": evaluation.generated_at.isoformat(),
                         "scope_description": evaluation.scope_description,
+                        **(
+                            {"coverage": coverage_statement(evaluation.coverage)}
+                            if evaluation.coverage is not None
+                            else {}
+                        ),
                     },
                 },
             ],

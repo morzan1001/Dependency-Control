@@ -9,9 +9,29 @@ import { useDialogState } from "@/hooks/use-dialog-state";
 import { extractErrorMessage } from "@/lib/errors";
 import { formatDateTime } from "@/lib/utils";
 import { ReportStatusBadge } from "./ReportStatusBadge";
-import type { ComplianceReportMeta } from "@/types/compliance";
+import type { ComplianceReportMeta, EvaluationCoverage } from "@/types/compliance";
 
 interface Props { report: ComplianceReportMeta | null; onClose: () => void; }
+
+function CoverageNotice({ coverage }: { readonly coverage: EvaluationCoverage }) {
+  if (coverage.findings_evaluated >= coverage.findings_in_scope) {
+    return (
+      <div className="text-xs text-muted-foreground">
+        Evaluated all {coverage.findings_in_scope.toLocaleString()} findings in scope.
+      </div>
+    );
+  }
+  return (
+    <div className="rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+      Evaluated {coverage.findings_evaluated.toLocaleString()} of{" "}
+      {coverage.findings_in_scope.toLocaleString()} findings in scope, a cap of{" "}
+      {coverage.limit.toLocaleString()} per report. A control below reported as passed was not
+      checked against the remaining{" "}
+      {(coverage.findings_in_scope - coverage.findings_evaluated).toLocaleString()} findings.
+      Narrow the scope and regenerate before handing this to an auditor.
+    </div>
+  );
+}
 
 export function ReportDetailDrawer({ report, onClose }: Props) {
   const qc = useQueryClient();
@@ -64,6 +84,7 @@ export function ReportDetailDrawer({ report, onClose }: Props) {
                     {report.error_message}
                   </div>
                 )}
+                {report.coverage && <CoverageNotice coverage={report.coverage} />}
                 {Object.keys(report.summary || {}).length > 0 && (
                   <dl className="mt-3 grid grid-cols-2 gap-y-1">
                     {Object.entries(report.summary).map(([k, v]) => (

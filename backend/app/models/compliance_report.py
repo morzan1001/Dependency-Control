@@ -6,7 +6,7 @@ from typing import Any, Literal
 from pydantic import Field
 
 from app.models.types import MongoDocument
-from app.schemas.compliance import ReportFormat, ReportFramework, ReportStatus
+from app.schemas.compliance import EvaluationCoverage, ReportFormat, ReportFramework, ReportStatus
 
 
 class ComplianceReport(MongoDocument):
@@ -25,6 +25,9 @@ class ComplianceReport(MongoDocument):
     policy_version_snapshot: int | None = None
     iana_catalog_version_snapshot: int | None = None
     summary: dict[str, Any] = Field(default_factory=dict)
+    # What the stored summary's verdicts were computed over; a caller reading `summary` without it
+    # cannot tell a full evaluation from a windowed one.
+    coverage: EvaluationCoverage | None = None
     error_message: str | None = None
     expires_at: datetime | None = None
     comment: str | None = None

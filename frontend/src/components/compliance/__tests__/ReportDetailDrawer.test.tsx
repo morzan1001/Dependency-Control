@@ -30,7 +30,34 @@ const sampleReport: ComplianceReportMeta = {
   summary: {},
 } as ComplianceReportMeta;
 
+const EVALUATED = 20000;
+const IN_SCOPE = 20050;
+const NOT_EVALUATED = IN_SCOPE - EVALUATED;
+const PARTIAL_WARNING = /was not\s+checked against the remaining/i;
+
 describe("ReportDetailDrawer", () => {
+  it("says a verdict computed over a subset was not checked against the rest", () => {
+    const partial: ComplianceReportMeta = {
+      ...sampleReport,
+      coverage: { findings_evaluated: EVALUATED, findings_in_scope: IN_SCOPE, limit: EVALUATED },
+    };
+    withClient(<ReportDetailDrawer report={partial} onClose={() => {}} />);
+
+    expect(screen.getByText(PARTIAL_WARNING)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(NOT_EVALUATED.toLocaleString()))).toBeInTheDocument();
+  });
+
+  it("states plainly that a full evaluation covered the scope", () => {
+    const complete: ComplianceReportMeta = {
+      ...sampleReport,
+      coverage: { findings_evaluated: IN_SCOPE, findings_in_scope: IN_SCOPE, limit: EVALUATED },
+    };
+    withClient(<ReportDetailDrawer report={complete} onClose={() => {}} />);
+
+    expect(screen.getByText(/Evaluated all/i)).toBeInTheDocument();
+    expect(screen.queryByText(PARTIAL_WARNING)).not.toBeInTheDocument();
+  });
+
   it("renders a Delete report button and opens confirmation dialog", async () => {
     withClient(<ReportDetailDrawer report={sampleReport} onClose={() => {}} />);
     const deleteBtn = await screen.findByRole("button", { name: /Delete report/i });

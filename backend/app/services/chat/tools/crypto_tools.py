@@ -10,6 +10,7 @@ from typing import Any, Literal, cast
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.user import User
+from app.services.compliance.renderers.base import coverage_statement
 
 
 def _pkg() -> Any:
@@ -258,8 +259,10 @@ async def get_framework_evaluation_summary(
         eval_result = await framework_obj.evaluate_async(inputs)
     else:
         eval_result = framework_obj.evaluate(inputs)
+    coverage = coverage_statement(inputs.coverage)
     return {
         "framework": framework,
         "framework_name": eval_result.framework_name,
         "summary": eval_result.summary,
+        **({"coverage": coverage} if coverage else {}),
     }

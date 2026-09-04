@@ -22,10 +22,18 @@
     <strong>Disclaimer:</strong> {{ disclaimer }}
   </div>
   {% endif %}
+  {% if coverage_statement %}
+  <div class="{{ 'coverage' if coverage_complete else 'coverage-partial' }}">
+    <strong>Coverage:</strong> {{ coverage_statement }}
+  </div>
+  {% endif %}
 </section>
 
 <section class="summary">
   <h2>Executive Summary</h2>
+  {% if coverage_statement and not coverage_complete %}
+  <div class="coverage-partial">{{ coverage_statement }}</div>
+  {% endif %}
   <div class="summary-grid">
     <div class="card passed"><div class="count">{{ summary.passed }}</div><div class="label">Passed</div></div>
     <div class="card failed"><div class="count">{{ summary.failed }}</div><div class="label">Failed</div></div>

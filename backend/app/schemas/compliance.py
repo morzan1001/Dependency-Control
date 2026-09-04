@@ -81,6 +81,18 @@ class ResidualRisk(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
 
+class EvaluationCoverage(BaseModel):
+    """What the control verdicts were actually computed over."""
+
+    findings_evaluated: int
+    findings_in_scope: int
+    limit: int
+
+    @property
+    def complete(self) -> bool:
+        return self.findings_evaluated >= self.findings_in_scope
+
+
 class FrameworkEvaluation(BaseModel):
     framework_key: ReportFramework
     framework_name: str
@@ -91,5 +103,7 @@ class FrameworkEvaluation(BaseModel):
     summary: dict[str, int] = Field(default_factory=dict)
     residual_risks: list[ResidualRisk] = Field(default_factory=list)
     inputs_fingerprint: str
+    # Set by the engine, which is the only caller that knows the scope's true finding count.
+    coverage: EvaluationCoverage | None = None
 
     model_config = ConfigDict(use_enum_values=True)

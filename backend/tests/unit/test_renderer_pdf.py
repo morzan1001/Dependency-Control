@@ -44,3 +44,18 @@ def test_pdf_includes_disclaimer_when_provided():
     rep.format = ReportFormat.PDF
     out, _, _ = r.render(_evaluation(), rep, disclaimer="Module-level CMVP out of scope")
     assert out[:4] == b"%PDF"
+
+
+def test_pdf_renders_a_partial_coverage_report():
+    """The renderer has to reach the template with the coverage; test_compliance_coverage.py checks
+    what the template then prints, since it can run where WeasyPrint's native stack cannot."""
+    from app.schemas.compliance import EvaluationCoverage, ReportFormat
+    from app.services.compliance.renderers.pdf_renderer import PdfRenderer
+    from tests.unit.test_renderer_json import _evaluation, _report
+
+    evaluation = _evaluation()
+    evaluation.coverage = EvaluationCoverage(findings_evaluated=20000, findings_in_scope=20050, limit=20000)
+    rep = _report()
+    rep.format = ReportFormat.PDF
+    out, _, _ = PdfRenderer().render(evaluation, rep)
+    assert out[:4] == b"%PDF"
