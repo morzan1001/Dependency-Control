@@ -4,12 +4,13 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
+from app.core.cache import suppress_cache_writes
 from app.models.system import SystemSettings
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport
 from app.schemas.sbom import ParsedSBOM
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _build_settings_resolver
-from app.services.analysis.registry import analyzers
+from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzers
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.sbom_parser import parse_sbom
@@ -34,6 +35,33 @@ _SCANNER_RESULT_KEYS: dict[str, tuple[str, ...]] = {
     "bearer": ("findings",),
     "kics": ("queries",),
 }
+
+# What a caller gets without naming an analyzer: an SBOM in, vulnerabilities and licence
+# verdicts out, with no CLI process and one batched upstream call.
+ADHOC_DEFAULT_ANALYZERS: tuple[str, ...] = ("osv", "license_compliance")
+
+_NOT_REQUESTED = "not requested"
+_UNCACHED_FANOUT = (
+    "off by default: this path publishes nothing to the shared cache, so every run re-queries "
+    "the upstream registry for each package it recognises"
+)
+
+ADHOC_SKIP_REASONS: dict[str, str] = {
+    "trivy": "off by default: CLI scanner, may run up to 300 s",
+    "grype": "off by default: CLI scanner, may run up to 600 s",
+    "deps_dev": _UNCACHED_FANOUT,
+    "outdated_packages": _UNCACHED_FANOUT,
+    "hash_verification": _UNCACHED_FANOUT,
+    "end_of_life": _UNCACHED_FANOUT,
+    "maintainer_risk": _UNCACHED_FANOUT,
+    "os_malware": _UNCACHED_FANOUT,
+    "typosquatting": "off by default: downloads the PyPI top-packages list, which this path does not cache",
+}
+
+_CRYPTO_ANALYZER_REPLACED = (
+    "replaced ad-hoc by the 'crypto_rules' stage: the registered analyzer reads stored crypto "
+    "assets from the database, the stage evaluates the same rules against the posted CBOM"
+)
 
 
 @dataclass(frozen=True)
@@ -186,8 +214,41 @@ def _parse_sboms(request: AdhocAnalyzeRequest, report: AnalyzerReport) -> list[_
     return parsed_inputs
 
 
+def resolve_adhoc_analyzers(requested: list[str] | None, report: AnalyzerReport) -> list[str]:
+    """Pick the analyzers to run and record a reason for every registered one left out."""
+    selected = list(ADHOC_DEFAULT_ANALYZERS) if requested is None else list(requested)
+
+    resolved: list[str] = []
+    for name in selected:
+        if name in CRYPTO_ANALYZERS:
+            report.skipped[name] = _CRYPTO_ANALYZER_REPLACED
+        elif name not in analyzers:
+            report.skipped[name] = _UNKNOWN_ANALYZER
+        else:
+            resolved.append(name)
+
+    for name in analyzers:
+        if name in resolved or name in report.skipped:
+            continue
+        if name in CRYPTO_ANALYZERS:
+            report.skipped[name] = _CRYPTO_ANALYZER_REPLACED
+        else:
+            report.skipped[name] = ADHOC_SKIP_REASONS.get(name, _NOT_REQUESTED)
+
+    return resolved
+
+
 async def run_adhoc_analysis(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeResponse:
-    """Analyze the posted SBOMs and scanner results in memory. Writes nothing."""
+    """Analyze the posted SBOMs and scanner results in memory. Writes nothing.
+
+    The analyzers cache through a Redis shared with the scan pipeline under keys built from the
+    package names they are given, so this path reads that cache but publishes nothing into it.
+    """
+    with suppress_cache_writes():
+        return await _analyze(request, db)
+
+
+async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeResponse:
     report = AnalyzerReport()
     aggregator = ResultAggregator()
 
@@ -198,12 +259,7 @@ async def run_adhoc_analysis(request: AdhocAnalyzeRequest, db: Database) -> Adho
     license_policy = request.license_policy.model_dump() if request.license_policy else None
     settings_for = _build_settings_resolver(SystemSettings(), license_policy, None)
 
-    requested: list[str] = []
-    for name in request.analyzers or []:
-        if name in analyzers:
-            requested.append(name)
-        else:
-            report.skipped[name] = _UNKNOWN_ANALYZER
+    requested = resolve_adhoc_analyzers(request.analyzers, report)
 
     for parsed_input in parsed_inputs:
         for name in requested:

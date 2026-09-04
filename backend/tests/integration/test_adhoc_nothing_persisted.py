@@ -6,6 +6,7 @@ import asyncio
 import json
 import sys
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Any
@@ -15,11 +16,12 @@ import pytest
 import redis.asyncio
 from motor import motor_asyncio
 
-from app.core.cache import CacheKeys, CacheService
+from app.core.cache import CacheKeys, CacheService, cache_service
 from app.core.config import settings
 from app.db import mongodb
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse
 from app.services.analysis.adhoc import run_adhoc_analysis
+from app.services.analysis.registry import analyzers
 from tests.mocks.fake_mongo import FakeCollection, FakeDatabase
 
 # The scan-backed pipeline's collections plus the GridFS indexes. A floor, not a closed set:
@@ -84,10 +86,9 @@ _UPSTREAM_REFERENCE_CACHE_KEYS = frozenset(
     }
 )
 
-# What the run legitimately caches today. An equality assertion, so an analyzer that stops
-# running — or one that starts caching something new — turns this red instead of shrinking
-# the cache nets to nothing.
-_EXPECTED_CACHE_WRITES = frozenset({CacheKeys.popular_packages("npm")})
+# The run reads the shared cache and publishes nothing back. An equality assertion on the
+# reads, so an analyzer that stops running cannot quietly shrink the cache nets to nothing.
+_EXPECTED_CACHE_READS = frozenset({CacheKeys.popular_packages("npm"), CacheKeys.popular_packages("pypi")})
 
 _UPSTREAM_NPM_KEY = f"{settings.CACHE_PREFIX}{CacheKeys.popular_packages('npm')}"
 _UNNAMED_COLLECTION = "a_collection_no_one_named"
@@ -99,6 +100,7 @@ _CALLER_DERIVED_CACHE_KEY = "osv2:0123456789abcdef"
 _SEEDED_POPULAR_PYPI = ["requests", "flask", "django"]
 _MONGO_URL = "mongodb://localhost:27017"
 _FAILING_ANALYZER = "license_compliance"
+_CACHING_ANALYZER = "typosquatting"
 
 # A deliberately misspelled dependency. No upstream reference list can legitimately contain it,
 # so finding it inside a shared cache value means caller data leaked in under a permitted key.
@@ -192,19 +194,15 @@ _CALLGRAPH = {"nodes": [{"id": "app.handlers.run"}], "edges": []}
 
 _SCANNER_PAYLOADS = {"trufflehog": _TRUFFLEHOG, "opengrep": _OPENGREP, "bearer": _BEARER, "kics": _KICS}
 
-_ANALYZERS = [
-    "license_compliance",
-    "typosquatting",
-    "crypto_weak_algorithm",
-    "crypto_weak_key",
-    "crypto_quantum_vulnerable",
-    "crypto_certificate_lifecycle",
-    "crypto_protocol_cipher",
-]
+# The two registered analyzers this path can carry to a verdict without a scan behind it:
+# one pure, one cache-backed. The crypto analyzers read assets from a completed scan and the
+# rest fan out to package registries, so both are resolved away before they can run.
+_ANALYZERS = ["license_compliance", "typosquatting"]
 
 # Every net below is only as wide as the run that exercises it, so the run's own reach is
 # asserted by equality rather than by truthiness.
 _EXPECTED_RAN = frozenset(_ANALYZERS) | frozenset(_SCANNER_PAYLOADS)
+_EXPECTED_SKIPPED = frozenset(analyzers) - frozenset(_ANALYZERS)
 
 
 # ── Net 1: every call the run makes on a collection
@@ -351,19 +349,23 @@ def bypass_attempts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
 
 
 class _RecordingRedis:
-    """Minimal Redis stand-in that serves what it holds and records every key it is asked to write."""
+    """Minimal Redis stand-in that serves what it holds and records every key it touches."""
 
-    def __init__(self, store: dict[str, str], writes: list[tuple[str, str]]) -> None:
+    def __init__(self, store: dict[str, str], writes: list[tuple[str, str]], reads: list[str]) -> None:
         self._store = store
         self._writes = writes
+        self._reads = reads
 
     async def get(self, key: str) -> str | None:
+        self._reads.append(key)
         return self._store.get(key)
 
     async def mget(self, keys: list[str]) -> list[str | None]:
+        self._reads.extend(keys)
         return [self._store.get(key) for key in keys]
 
     async def exists(self, key: str) -> int:
+        self._reads.append(key)
         return int(key in self._store)
 
     async def ping(self) -> bool:
@@ -413,6 +415,18 @@ def _unprefixed(key: str) -> str:
     return key[len(prefix) :] if key.startswith(prefix) else key
 
 
+@dataclass(frozen=True)
+class _RecordedCache:
+    writes: list[tuple[str, str]]
+    reads: list[str]
+
+    def written_keys(self) -> set[str]:
+        return {_unprefixed(key) for key, _ in self.writes}
+
+    def read_keys(self) -> set[str]:
+        return {_unprefixed(key) for key in self.reads}
+
+
 def assert_no_caller_derived_cache_writes(writes: list[tuple[str, str]]) -> None:
     """Upstream reference data may be cached; anything keyed off the posted payload may not."""
     leaked = [key for key, _ in writes if _unprefixed(key) not in _UPSTREAM_REFERENCE_CACHE_KEYS]
@@ -426,10 +440,10 @@ def assert_no_caller_data_in_shared_cache(writes: list[tuple[str, str]]) -> None
 
 
 @pytest.fixture
-def cache_writes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
-    writes: list[tuple[str, str]] = []
+def recording_cache(monkeypatch: pytest.MonkeyPatch) -> _RecordedCache:
+    recorded = _RecordedCache([], [])
     seeded = {f"{settings.CACHE_PREFIX}{CacheKeys.popular_packages('pypi')}": json.dumps(_SEEDED_POPULAR_PYPI)}
-    client = _RecordingRedis(seeded, writes)
+    client = _RecordingRedis(seeded, recorded.writes, recorded.reads)
 
     async def _get_client(_self: CacheService) -> _RecordingRedis:
         return client
@@ -439,7 +453,7 @@ def cache_writes(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, str]]:
 
     monkeypatch.setattr(CacheService, "get_client", _get_client)
     monkeypatch.setattr(CacheService, "_ensure_available", _available)
-    return writes
+    return recorded
 
 
 # ── Net 5: the filesystem
@@ -500,7 +514,7 @@ async def _run_and_drain(request: AdhocAnalyzeRequest, db: Any) -> tuple[AdhocAn
 
 
 @pytest.mark.asyncio
-async def test_adhoc_analysis_persists_nothing(bypass_attempts, cache_writes, filesystem_watch):
+async def test_adhoc_analysis_persists_nothing(bypass_attempts, recording_cache, filesystem_watch):
     db = _WriteRecordingDatabase()
 
     response, spawned = await _run_and_drain(_full_request(), db)
@@ -509,24 +523,25 @@ async def test_adhoc_analysis_persists_nothing(bypass_attempts, cache_writes, fi
     assert_no_write_calls(db)
     await assert_nothing_persisted(db)
     assert bypass_attempts == []
-    assert_no_caller_derived_cache_writes(cache_writes)
-    assert_no_caller_data_in_shared_cache(cache_writes)
+    assert_no_caller_derived_cache_writes(recording_cache.writes)
+    assert_no_caller_data_in_shared_cache(recording_cache.writes)
     assert_no_files_left_behind(filesystem_watch)
 
     # Reachability last: a leak is the more useful diagnosis when a mutant trips both.
     assert set(response.analyzers.ran) == set(_EXPECTED_RAN), "every net is only as wide as the run that reaches it"
-    assert response.analyzers.skipped == {}
+    assert set(response.analyzers.skipped) == set(_EXPECTED_SKIPPED)
     assert set(response.analyzers.errored) == set()
     assert response.analyzers.skipped_inputs == {}
     assert response.findings, "the run must actually produce findings, or the proof is vacuous"
-    assert {_unprefixed(key) for key, _ in cache_writes} == set(_EXPECTED_CACHE_WRITES), (
+    assert recording_cache.read_keys() == set(_EXPECTED_CACHE_READS), (
         "the run must reach Redis exactly where it is expected to, or the cache nets are vacuous"
     )
+    assert recording_cache.writes == []
 
 
 @pytest.mark.asyncio
 async def test_adhoc_analysis_persists_nothing_when_an_analyzer_fails(
-    monkeypatch, bypass_attempts, cache_writes, filesystem_watch
+    monkeypatch, bypass_attempts, recording_cache, filesystem_watch
 ):
     from app.services.analysis import registry
 
@@ -546,13 +561,62 @@ async def test_adhoc_analysis_persists_nothing_when_an_analyzer_fails(
     assert_no_write_calls(db)
     await assert_nothing_persisted(db)
     assert bypass_attempts == []
-    assert_no_caller_derived_cache_writes(cache_writes)
-    assert_no_caller_data_in_shared_cache(cache_writes)
+    assert_no_caller_derived_cache_writes(recording_cache.writes)
+    assert_no_caller_data_in_shared_cache(recording_cache.writes)
     assert_no_files_left_behind(filesystem_watch)
 
     assert set(response.analyzers.errored) == {_FAILING_ANALYZER}, "the failure must reach the report"
     assert set(response.analyzers.ran) == set(_EXPECTED_RAN) - {_FAILING_ANALYZER}
-    assert {_unprefixed(key) for key, _ in cache_writes} == set(_EXPECTED_CACHE_WRITES)
+    assert recording_cache.read_keys() == set(_EXPECTED_CACHE_READS)
+    assert recording_cache.writes == []
+
+
+@pytest.mark.asyncio
+async def test_an_analyzer_that_caches_publishes_nothing_through_this_path(
+    monkeypatch, bypass_attempts, recording_cache, filesystem_watch
+):
+    """The guarantee has to hold for any analyzer, not only for the ones the defaults allow."""
+    from app.services.analysis import registry
+
+    fetched: list[str] = []
+
+    async def _fetch() -> list[str]:
+        fetched.append(_CALLER_DERIVED_CACHE_KEY)
+        return [_CALLER_ONLY_COMPONENT]
+
+    class _Caching:
+        name = _CACHING_ANALYZER
+
+        async def analyze(self, sbom, settings=None, parsed_components=None):
+            await cache_service.set(_CALLER_DERIVED_CACHE_KEY, [_CALLER_ONLY_COMPONENT])
+            await cache_service.mset({_CALLER_DERIVED_CACHE_KEY: [_CALLER_ONLY_COMPONENT]})
+            await cache_service.get_or_fetch_with_lock(_CALLER_DERIVED_CACHE_KEY, _fetch)
+            await cache_service.delete(_UPSTREAM_NPM_KEY)
+            return {"findings": []}
+
+    monkeypatch.setitem(registry.analyzers, _CACHING_ANALYZER, _Caching())
+
+    db = _WriteRecordingDatabase()
+
+    response, spawned = await _run_and_drain(_full_request(), db)
+
+    assert not spawned, f"ad-hoc analysis scheduled background work: {spawned}"
+    assert_no_write_calls(db)
+    assert bypass_attempts == []
+    assert recording_cache.writes == []
+    assert_no_files_left_behind(filesystem_watch)
+
+    # The analyzer is silenced, not disabled: its upstream fetch still ran and it still contributed.
+    assert fetched == [_CALLER_DERIVED_CACHE_KEY]
+    assert _CACHING_ANALYZER in response.analyzers.ran
+
+
+@pytest.mark.asyncio
+async def test_cache_suppression_does_not_outlive_the_run(recording_cache):
+    await run_adhoc_analysis(_full_request(), FakeDatabase())
+
+    assert await cache_service.set(_CALLER_DERIVED_CACHE_KEY, [_LEAK_ID]) is True
+    assert recording_cache.written_keys() == {_CALLER_DERIVED_CACHE_KEY}
 
 
 # ── The proof's own detectors

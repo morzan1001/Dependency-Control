@@ -7,7 +7,7 @@ import hashlib
 import fakeredis.aioredis
 import pytest
 
-from app.core.cache import CacheKeys, CacheService, CacheTTL
+from app.core.cache import CacheKeys, CacheService, CacheTTL, suppress_cache_writes
 
 
 class TestCacheTTLValues:
@@ -264,3 +264,105 @@ class TestStampedeHolderVanishes:
             await holder
 
         assert await waiter == {"value": 42}
+
+
+_SUPPRESSED_KEY = "deps:pypi:acme-private:1.0.0"
+_SUPPRESSED_VALUE = {"scorecard": 4.2}
+_SEEDED_KEY = "popular:npm"
+_SEEDED_VALUE = ["express"]
+
+
+class TestSuppressCacheWrites:
+    """Callers that must not publish into the shared cache still read from it."""
+
+    @pytest.mark.asyncio
+    async def test_set_writes_nothing_and_reports_failure(self, fake_cache):
+        with suppress_cache_writes():
+            assert await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE) is False
+
+        assert await fake_cache._client.exists(fake_cache._make_key(_SUPPRESSED_KEY)) == 0
+
+    @pytest.mark.asyncio
+    async def test_mset_writes_nothing(self, fake_cache):
+        with suppress_cache_writes():
+            assert await fake_cache.mset({_SUPPRESSED_KEY: _SUPPRESSED_VALUE}) is False
+
+        assert await fake_cache._client.exists(fake_cache._make_key(_SUPPRESSED_KEY)) == 0
+
+    @pytest.mark.asyncio
+    async def test_delete_leaves_another_callers_entry_alone(self, fake_cache):
+        await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE)
+
+        with suppress_cache_writes():
+            assert await fake_cache.delete(_SEEDED_KEY) is False
+
+        assert await fake_cache.get(_SEEDED_KEY) == _SEEDED_VALUE
+
+    @pytest.mark.asyncio
+    async def test_reads_still_hit_the_shared_cache(self, fake_cache):
+        await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE)
+
+        with suppress_cache_writes():
+            assert await fake_cache.get(_SEEDED_KEY) == _SEEDED_VALUE
+            assert await fake_cache.mget([_SEEDED_KEY]) == {_SEEDED_KEY: _SEEDED_VALUE}
+
+    @pytest.mark.asyncio
+    async def test_fetch_still_runs_but_leaves_neither_value_nor_lock(self, fake_cache):
+        fetched = []
+
+        async def fetch():
+            fetched.append(_SUPPRESSED_KEY)
+            # The stampede lock is a key built from ours, so it must not be taken either --
+            # and it is released again, so only a look from inside the fetch can see it.
+            assert await fake_cache._client.keys("*") == []
+            return _SUPPRESSED_VALUE
+
+        with suppress_cache_writes():
+            result = await fake_cache.get_or_fetch_with_lock(_SUPPRESSED_KEY, fetch)
+
+        assert result == _SUPPRESSED_VALUE
+        assert fetched == [_SUPPRESSED_KEY]
+        assert await fake_cache._client.keys("*") == []
+
+    @pytest.mark.asyncio
+    async def test_a_cached_value_is_served_without_refetching(self, fake_cache):
+        await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE)
+        fetched = []
+
+        async def fetch():
+            fetched.append(_SEEDED_KEY)
+            return ["other"]
+
+        with suppress_cache_writes():
+            result = await fake_cache.get_or_fetch_with_lock(_SEEDED_KEY, fetch)
+
+        assert result == _SEEDED_VALUE
+        assert fetched == []
+
+    @pytest.mark.asyncio
+    async def test_suppression_ends_with_the_block(self, fake_cache):
+        with suppress_cache_writes():
+            await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE)
+
+        assert await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE) is True
+        assert await fake_cache.get(_SUPPRESSED_KEY) == _SUPPRESSED_VALUE
+
+    @pytest.mark.asyncio
+    async def test_a_concurrent_task_outside_the_block_still_writes(self, fake_cache):
+        started = asyncio.Event()
+        release = asyncio.Event()
+
+        async def suppressed():
+            with suppress_cache_writes():
+                started.set()
+                await release.wait()
+                await fake_cache.set(_SUPPRESSED_KEY, _SUPPRESSED_VALUE)
+
+        task = asyncio.create_task(suppressed())
+        await started.wait()
+        assert await fake_cache.set(_SEEDED_KEY, _SEEDED_VALUE) is True
+        release.set()
+        await task
+
+        assert await fake_cache.get(_SEEDED_KEY) == _SEEDED_VALUE
+        assert await fake_cache._client.exists(fake_cache._make_key(_SUPPRESSED_KEY)) == 0

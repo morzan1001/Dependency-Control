@@ -4,6 +4,7 @@ import pytest
 
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocLicensePolicy
 from app.services.analysis.adhoc import run_adhoc_analysis
+from app.services.analysis.registry import analyzers
 from tests.mocks.fake_mongo import FakeDatabase
 
 _SECRET_FILE = "app/config.py"
@@ -18,6 +19,9 @@ _EXPECTED_SECRET_FINDINGS = 1
 _ANALYZER_ERROR = "upstream exploded"
 _ANALYZER_TIMEOUT = "timed out after 60s"
 _UNKNOWN_NAME = "not_a_scanner"
+_UNKNOWN_ANALYZER = "unknown analyzer"
+_TRUFFLEHOG_NAME = "trufflehog"
+_CRYPTO_ANALYZER = "crypto_weak_algorithm"
 _EMPTY_PAYLOAD = "empty payload"
 _SERIAL_NUMBER = "urn:uuid:3e671687-395b-41f5-a30f-a58921a69b79"
 _FIRST_SBOM_SOURCE = "SBOM #1"
@@ -214,7 +218,9 @@ async def test_unknown_analyzer_name_is_reported_not_silently_dropped():
 
     response = await run_adhoc_analysis(request, FakeDatabase())
 
-    assert response.analyzers.skipped == {_UNKNOWN_NAME: "unknown analyzer"}
+    assert response.analyzers.skipped[_UNKNOWN_NAME] == _UNKNOWN_ANALYZER
+    # Every registered analyzer the request left out is accounted for alongside it.
+    assert set(response.analyzers.skipped) == set(analyzers) | {_UNKNOWN_NAME}
     assert response.analyzers.ran == []
 
 
@@ -271,7 +277,7 @@ async def test_unparseable_sbom_is_reported_without_aborting_the_run():
 
     assert _SBOM_LABEL in response.analyzers.skipped_inputs
     # ``skipped`` is keyed by analyzer name; an input label in there is unreadable for consumers.
-    assert response.analyzers.skipped == {}
+    assert set(response.analyzers.skipped) == set(analyzers)
     assert len(_findings_of_type(response, _TYPE_SECRET)) == _EXPECTED_SECRET_FINDINGS
 
 
@@ -334,7 +340,8 @@ async def test_empty_posted_payload_is_skipped_rather_than_reported_as_ran():
 
     response = await run_adhoc_analysis(request, FakeDatabase())
 
-    assert response.analyzers.skipped == {"trufflehog": _EMPTY_PAYLOAD}
+    assert response.analyzers.skipped[_TRUFFLEHOG_NAME] == _EMPTY_PAYLOAD
+    assert set(response.analyzers.skipped) == set(analyzers) | {_TRUFFLEHOG_NAME}
     assert response.analyzers.ran == []
 
 
@@ -464,12 +471,14 @@ async def test_a_component_routed_to_crypto_assets_is_not_reported_as_dropped():
             }
         ],
     }
-    request = AdhocAnalyzeRequest(sboms=[crypto_only], analyzers=["crypto_weak_algorithm"], apply_global_waivers=False)
+    request = AdhocAnalyzeRequest(sboms=[crypto_only], analyzers=[_CRYPTO_ANALYZER], apply_global_waivers=False)
 
     response = await run_adhoc_analysis(request, FakeDatabase())
 
+    # An empty ``skipped_inputs`` is what proves the asset was read: an SBOM the parser got
+    # nothing out of is reported there instead.
     assert response.analyzers.skipped_inputs == {}
-    assert response.analyzers.ran == ["crypto_weak_algorithm"]
+    assert response.analyzers.ran == []
 
 
 @pytest.mark.asyncio
