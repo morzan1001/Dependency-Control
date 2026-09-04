@@ -95,6 +95,35 @@ _MALFORMED_SCANNER_PAYLOADS = [
     ("kics", {"queries": [{"query_name": "q", "files": "deploy/pod.yaml"}]}),
 ]
 
+_KICS_QUERIES_WITHOUT_FILES = 200
+_TRUFFLEHOG_LOWERCASE_KEYS = 5000
+_ONE_UNREADABLE_OF_TWO = "1 of 2"
+
+# The container each normalizer reads, filled with entries it cannot: a KICS report whose queries
+# carry no hits, and a TruffleHog version that lowercased its field names.
+_WRONG_SHAPED_ENTRIES = [
+    (
+        "kics",
+        {
+            "queries": [
+                {"query_name": f"q{i}", "query_id": f"id{i}", "severity": "HIGH"}
+                for i in range(_KICS_QUERIES_WITHOUT_FILES)
+            ]
+        },
+        "files",
+    ),
+    (
+        "trufflehog",
+        {"findings": [{"detectortype": "AWS", "raw": f"secret{i}"} for i in range(_TRUFFLEHOG_LOWERCASE_KEYS)]},
+        "DetectorType",
+    ),
+    (
+        "opengrep",
+        {"findings": [{"check_id": "python.rule.0", "path": _SECRET_FILE, "start": {"line": 1}}]},
+        "end",
+    ),
+]
+
 # Shapes a caller reaches this endpoint with by accident: an error body, a wrapper around the
 # real document, and the right format with the component list misspelled.
 _UNREADABLE_SBOMS = [
@@ -363,6 +392,47 @@ async def test_where_the_unreadable_item_sits_does_not_change_the_result(items):
 
     assert list(response.analyzers.errored) == ["opengrep"]
     assert response.findings == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("scanner", "payload", "field"), _WRONG_SHAPED_ENTRIES)
+async def test_entries_the_normalizer_cannot_read_are_not_reported_as_coverage(scanner, payload, field):
+    """The container is the shape the endpoint documents and the entries in it are not, so the
+    run normalises to nothing and would otherwise answer with an unqualified all-clear."""
+    request = AdhocAnalyzeRequest(scanners={scanner: payload}, analyzers=[], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert scanner not in response.analyzers.ran
+    assert field in response.analyzers.errored[scanner][0]
+    assert response.findings == []
+    assert _findings_of_type(response, _TYPE_SYSTEM_WARNING) == []
+
+
+@pytest.mark.asyncio
+async def test_the_shortfall_counts_the_unreadable_entries_against_the_posted_ones():
+    payload = {"findings": [_TRUFFLEHOG["findings"][0], {"Raw": "no detector"}]}
+    request = AdhocAnalyzeRequest(scanners={_TRUFFLEHOG_NAME: payload}, analyzers=[], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.errored[_TRUFFLEHOG_NAME] == [
+        f"{_ONE_UNREADABLE_OF_TWO} 'findings' entries could not be read (DetectorType: Field required)"
+    ]
+
+
+@pytest.mark.asyncio
+async def test_entries_that_dedup_to_one_finding_are_still_full_coverage():
+    """The same secret twice in one file is one finding by design, so comparing entry count to
+    finding count would report a shortfall on a payload the pipeline read completely."""
+    payload = {"findings": [_TRUFFLEHOG["findings"][0], dict(_TRUFFLEHOG["findings"][0])]}
+    request = AdhocAnalyzeRequest(scanners={_TRUFFLEHOG_NAME: payload}, analyzers=[], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert response.analyzers.errored == {}
+    assert _TRUFFLEHOG_NAME in response.analyzers.ran
+    assert len(_findings_of_type(response, _TYPE_SECRET)) == _EXPECTED_SECRET_FINDINGS
 
 
 @pytest.mark.asyncio

@@ -46,6 +46,10 @@ which sends the package coordinates read out of the posted SBOMs to `api.osv.dev
 explicit `analyzers` list to decide what leaves this process; `analyzers.notes` in the response
 names every stage that did.
 
+Posted scanner output is validated entry by entry against the same models `/api/v1/ingest/*`
+uses. A scanner whose entries do not validate is reported in `analyzers.errored` and contributes
+no findings, so a report the pipeline could not read never reads as an all-clear.
+
 `format: "html"` returns the same result as a standalone report document instead of JSON.
 """
 

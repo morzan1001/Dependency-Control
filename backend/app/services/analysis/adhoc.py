@@ -15,13 +15,18 @@ from app.core.constants import (
     get_severity_value,
     sort_by_severity,
 )
+from pydantic import BaseModel, ValidationError
+
 from app.models.crypto_asset import CryptoAsset
 from app.models.match_signature import MatchSignature
 from app.models.system import SystemSettings
 from app.models.waiver import Waiver
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport
+from app.schemas.kics import KicsQuery
+from app.schemas.opengrep import OpenGrepFinding
 from app.schemas.projections import CallgraphMinimal
 from app.schemas.sbom import ParsedSBOM
+from app.schemas.trufflehog import TruffleHogFinding
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _build_settings_resolver, _partial_result_reason
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzers, post_processors
@@ -68,6 +73,17 @@ _SCANNER_RESULT_KEYS: dict[str, tuple[str, ...]] = {
     "bearer": ("findings",),
     "kics": ("queries",),
 }
+
+# The typed entry the ingest routes validate each scanner's list against. An entry the
+# normalizer cannot read contributes no finding, which must not be reported as coverage.
+# Bearer is absent because its ingest model types the container and not the entries.
+_SCANNER_ENTRY_MODELS: dict[str, type[BaseModel]] = {
+    "trufflehog": TruffleHogFinding,
+    "opengrep": OpenGrepFinding,
+    "kics": KicsQuery,
+}
+_UNREADABLE_ENTRIES = "{unreadable} of {total} '{key}' entries could not be read ({reason})"
+_WHOLE_ENTRY = "entry"
 
 _OSV = "osv"
 
@@ -364,6 +380,39 @@ def _aggregate_atomically(aggregator: ResultAggregator, name: str, payload: dict
         aggregator.add_finding(finding, source=source)
 
 
+def _first_reason(exc: ValidationError) -> str:
+    error = exc.errors()[0]
+    field = ".".join(str(part) for part in error["loc"])
+    return f"{field or _WHOLE_ENTRY}: {error['msg']}"
+
+
+def _entry_shortfall(name: str, payload: dict[str, Any]) -> str | None:
+    """Why the normalizer cannot read the posted entries, or None when it can read them all.
+
+    The container being the right shape says nothing about the entries in it: 200 kics queries
+    carrying no ``files`` normalise to zero findings, which is an all-clear the run never earned.
+    """
+    model = _SCANNER_ENTRY_MODELS.get(name)
+    if model is None:
+        return None
+    for key in _SCANNER_RESULT_KEYS[name]:
+        entries = payload.get(key)
+        if not isinstance(entries, list) or not entries:
+            continue
+        unreadable = 0
+        first_reason = ""
+        for entry in entries:
+            try:
+                model.model_validate(entry)
+            except ValidationError as exc:
+                unreadable += 1
+                first_reason = first_reason or _first_reason(exc)
+        if not unreadable:
+            return None
+        return _UNREADABLE_ENTRIES.format(unreadable=unreadable, total=len(entries), key=key, reason=first_reason)
+    return None
+
+
 def _aggregate_posted_scanners(
     request: AdhocAnalyzeRequest,
     aggregator: ResultAggregator,
@@ -388,6 +437,11 @@ def _aggregate_posted_scanners(
         if not any(key in payload for key in expected_keys):
             quoted = " or ".join(f"'{key}'" for key in expected_keys)
             _record_errored(report, name, _UNRECOGNISED_PAYLOAD.format(keys=quoted))
+            continue
+        shortfall = _entry_shortfall(name, payload)
+        if shortfall:
+            logger.warning("adhoc: posted %s output: %s", name, shortfall)
+            _record_errored(report, name, shortfall)
             continue
         try:
             _aggregate_atomically(aggregator, name, payload, f"posted:{name}")
