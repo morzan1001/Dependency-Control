@@ -942,6 +942,8 @@ async def _should_update_project_latest_scan(
     the project onto its numbers.
     A non-authoritative scan (no SBOM ever received) may only become latest when the project
     has none yet, so a SAST-only pipeline run cannot wipe the SBOM-derived picture.
+    The slot means "the tip of the default branch", so a pipeline on another branch — a feature
+    branch or a tag build — cannot take it off the branch the VCS calls default.
     """
     project_doc = await project_repo.get_by_id_strong(project_id)
     current_latest_id = getattr(project_doc, "latest_scan_id", None) if project_doc else None
@@ -953,6 +955,11 @@ async def _should_update_project_latest_scan(
     current_latest = await scan_repo.get_by_id_strong(current_latest_id)
     if not current_latest:
         return True
+
+    default_branch = getattr(project_doc, "default_branch", None)
+    incoming_branch = getattr(scan_doc, "branch", None)
+    if default_branch and current_latest.branch == default_branch and incoming_branch != default_branch:
+        return False
 
     if getattr(scan_doc, "is_rescan", False):
         incoming_parent = getattr(scan_doc, "original_scan_id", None)

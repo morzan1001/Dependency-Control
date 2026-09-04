@@ -30,12 +30,13 @@ class ProjectMinimal(BaseModel):
 
 
 class ProjectWithScanId(BaseModel):
-    """Project with ID, name, latest scan ID, and deleted branches."""
+    """Project with ID, name, latest scan ID, and the branch fields head resolution reads."""
 
     id: PyObjectId = Field(validation_alias="_id", serialization_alias="_id")
     name: str
     latest_scan_id: str | None = None
     deleted_branches: list[str] = Field(default_factory=list)
+    default_branch: str | None = None
 
     model_config = ConfigDict(populate_by_name=True)
 

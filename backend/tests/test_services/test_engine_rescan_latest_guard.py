@@ -12,6 +12,9 @@ from tests.mocks.fake_mongo import FakeDatabase
 _PROJECT_ID = "p1"
 _PROJECT_NAME = "proj"
 _MAIN_BRANCH = "main"
+_FEATURE_BRANCH = "feature/spike"
+_TAG_REF = "v1.2.3"
+_UNSCANNED_DEFAULT_BRANCH = "trunk"
 
 _HEAD_SCAN_ID = "head"
 _RELEASE_SCAN_ID = "release"
@@ -36,10 +39,11 @@ _ONLY_THE_CURRENT_LATEST = 1
 
 
 class _ScanDoc:
-    def __init__(self, created_at, is_rescan=False, original_scan_id=None):
+    def __init__(self, created_at, is_rescan=False, original_scan_id=None, branch=_MAIN_BRANCH):
         self.created_at = created_at
         self.is_rescan = is_rescan
         self.original_scan_id = original_scan_id
+        self.branch = branch
 
 
 class _CountingScanRepository(ScanRepository):
@@ -188,6 +192,63 @@ async def test_a_rescan_of_the_current_latest_reads_nothing_beyond_it(db):
 
     assert await _decide(db, _INCOMING_RESCAN_ID, scan_doc, scan_repo) is True
     assert scan_repo.reads == _ONLY_THE_CURRENT_LATEST
+
+
+async def _seed_with_default_branch(db, default_branch):
+    await db.projects.insert_one(
+        {
+            "_id": _PROJECT_ID,
+            "name": _PROJECT_NAME,
+            "latest_scan_id": _HEAD_SCAN_ID,
+            "default_branch": default_branch,
+        }
+    )
+    await _insert_scan(db, _HEAD_SCAN_ID, _NOW)
+
+
+@pytest.mark.asyncio
+async def test_a_feature_branch_scan_does_not_take_the_head_slot_from_the_default_branch(db):
+    """The slot answers "what is on main"; a feature pipeline finishing later answers something else,
+    and letting it in makes a delta against head report main's findings as removed."""
+    await _seed_with_default_branch(db, _MAIN_BRANCH)
+    scan_doc = _ScanDoc(_NOW + _LATER, branch=_FEATURE_BRANCH)
+
+    assert await _decide(db, _INCOMING_INGEST_ID, scan_doc) is False
+
+
+@pytest.mark.asyncio
+async def test_a_tag_build_does_not_take_the_head_slot(db):
+    await _seed_with_default_branch(db, _MAIN_BRANCH)
+    scan_doc = _ScanDoc(_NOW + _LATER, branch=_TAG_REF)
+
+    assert await _decide(db, _INCOMING_INGEST_ID, scan_doc) is False
+
+
+@pytest.mark.asyncio
+async def test_a_newer_scan_on_the_default_branch_still_takes_the_slot(db):
+    await _seed_with_default_branch(db, _MAIN_BRANCH)
+    scan_doc = _ScanDoc(_NOW + _LATER, branch=_MAIN_BRANCH)
+
+    assert await _decide(db, _INCOMING_INGEST_ID, scan_doc) is True
+
+
+@pytest.mark.asyncio
+async def test_a_project_with_no_known_default_branch_keeps_the_created_at_rule(db):
+    """Without VCS integration nothing says which branch is the tip, so recency decides as before."""
+    await _seed(db, _HEAD_SCAN_ID)
+    scan_doc = _ScanDoc(_NOW + _LATER, branch=_FEATURE_BRANCH)
+
+    assert await _decide(db, _INCOMING_INGEST_ID, scan_doc) is True
+
+
+@pytest.mark.asyncio
+async def test_a_branch_scan_still_wins_when_the_current_latest_is_not_on_the_default_branch(db):
+    """CI wired to one branch while the VCS default is another: the slot follows recency there, or
+    nothing would ever update it."""
+    await _seed_with_default_branch(db, _UNSCANNED_DEFAULT_BRANCH)
+    scan_doc = _ScanDoc(_NOW + _LATER, branch=_FEATURE_BRANCH)
+
+    assert await _decide(db, _INCOMING_INGEST_ID, scan_doc) is True
 
 
 @pytest.mark.asyncio

@@ -12,6 +12,7 @@ from app.models.project import Scan
 from app.schemas.projections import ScanMinimal, ScanWithStats
 
 _COL = "scans"
+_RESCAN_RANK = "_rescan_rank"
 
 _MINIMAL_PROJECTION = {
     "_id": 1,
@@ -33,6 +34,36 @@ def _project_id_and_deleted(project: Any) -> tuple[str | None, list[str]]:
         pid = getattr(project, "id", None) or getattr(project, "_id", None)
         deleted = getattr(project, "deleted_branches", None) or []
     return pid, list(deleted)
+
+
+def _project_field(project: Any, name: str) -> Any:
+    if isinstance(project, dict):
+        return project.get(name)
+    return getattr(project, name, None)
+
+
+def _is_head_branch(branch: str | None, default_branch: str | None, deleted: list[str]) -> bool:
+    """Whether a scan on this branch can be the project's head.
+
+    The head is the tip of the default branch whenever the VCS still has one, because a pipeline on
+    any other branch answers a different question than "what is on main".
+    """
+    if default_branch and default_branch not in deleted:
+        return branch == default_branch
+    return branch not in deleted
+
+
+def _head_pipeline(or_conditions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        {"$match": {"$or": or_conditions}},
+        # A rescan carries created_at = now while re-analysing an older commit, so it is the tip
+        # only once the branch holds nothing that was actually built.
+        {"$addFields": {_RESCAN_RANK: {"$cond": [{"$eq": ["$is_rescan", True]}, 1, 0]}}},
+        # BSON dates are milliseconds: without _id, two scans stamped inside one leave the
+        # project's representative scan up to the server and it can change between requests.
+        {"$sort": {_RESCAN_RANK: 1, "created_at": -1, "_id": 1}},
+        {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
+    ]
 
 
 class ScanRepository:
@@ -174,66 +205,84 @@ class ScanRepository:
             data = await self.collection.find_one(query, sort=[("created_at", -1)])
         return Scan(**data) if data else None
 
-    async def _readable_scan_ids(self, scan_ids: list[str]) -> set[str]:
-        """The subset that still exists with a usable status."""
-        with track_db_operation(_COL, "distinct"):
-            found = await self.collection.distinct(
-                "_id", {"_id": {"$in": scan_ids}, "status": {"$in": SCAN_USABLE_STATUSES}}
+    async def _readable_scan_branches(self, scan_ids: list[str]) -> dict[str, str | None]:
+        """The branch of each of these scans that still exists with a usable status."""
+        with track_db_operation(_COL, "find"):
+            cursor = self.collection.find(
+                {"_id": {"$in": scan_ids}, "status": {"$in": SCAN_USABLE_STATUSES}}, {"branch": 1}
             )
-        return set(found)
+            return {doc["_id"]: doc.get("branch") async for doc in cursor}
+
+    async def _newest_head_per_project(self, or_conditions: list[dict[str, Any]]) -> dict[str, str]:
+        if not or_conditions:
+            return {}
+        with track_db_operation(_COL, "aggregate"):
+            cursor = self.collection.aggregate(_head_pipeline(or_conditions))
+            return {doc["_id"]: doc["scan_id"] async for doc in cursor}
 
     async def get_latest_active_scan_ids(self, projects: list[Any]) -> dict[str, str]:
-        """Maps project_id -> latest active scan_id: the stored latest_scan_id when it is set, still
-        readable and the project has no deleted branches, else the most recent completed scan on a
-        non-deleted branch; projects resolving to no scan are omitted."""
-        result: dict[str, str] = {}
-        needing_no_deleted: list[str] = []
-        needing_with_deleted: list[tuple[str, list[str]]] = []
-        for p in projects:
-            pid, deleted = _project_id_and_deleted(p)
-            latest_scan_id = p.get("latest_scan_id") if isinstance(p, dict) else getattr(p, "latest_scan_id", None)
-            if not pid:
-                continue
-            if deleted or not latest_scan_id:
-                if deleted:
-                    needing_with_deleted.append((pid, deleted))
-                else:
-                    needing_no_deleted.append(pid)
-            else:
-                result[pid] = latest_scan_id
+        """Maps project_id -> the scan that represents its head: the newest usable build on the
+        default branch, or on any branch the VCS still has when no default is known; projects
+        resolving to no scan are omitted.
 
-        if result:
+        ``latest_scan_id`` is that answer cached by ingest, so it is trusted only while it still
+        names a readable scan on the head branch.
+        """
+        scopes: dict[str, tuple[str | None, list[str]]] = {}
+        pointers: dict[str, str] = {}
+        for project in projects:
+            project_id, deleted = _project_id_and_deleted(project)
+            if not project_id:
+                continue
+            scopes[project_id] = (_project_field(project, "default_branch"), deleted)
+            pointer = _project_field(project, "latest_scan_id")
+            if pointer:
+                pointers[project_id] = pointer
+
+        result: dict[str, str] = {}
+        if pointers:
             # Retention deletes a scan without clearing the pointer, so a pointer can name a scan
             # that is gone while an older one it exempted survives. Re-ingest and a late analyzer
             # result send a completed scan back to pending, so it can also name an unreadable one.
-            live = await self._readable_scan_ids(list(result.values()))
-            dangling = [pid for pid, sid in result.items() if sid not in live]
-            for pid in dangling:
-                del result[pid]
-            needing_no_deleted.extend(dangling)
+            branches = await self._readable_scan_branches(list(pointers.values()))
+            for project_id, scan_id in pointers.items():
+                default_branch, deleted = scopes[project_id]
+                if scan_id in branches and _is_head_branch(branches[scan_id], default_branch, deleted):
+                    result[project_id] = scan_id
 
-        if not needing_no_deleted and not needing_with_deleted:
+        unresolved = {pid: scope for pid, scope in scopes.items() if pid not in result}
+        if not unresolved:
             return result
 
-        or_conditions: list[dict[str, Any]] = []
-        if needing_no_deleted:
-            or_conditions.append({"project_id": {"$in": needing_no_deleted}, "status": {"$in": SCAN_USABLE_STATUSES}})
-        for pid, deleted in needing_with_deleted:
-            or_conditions.append(
-                {"project_id": pid, "branch": {"$nin": deleted}, "status": {"$in": SCAN_USABLE_STATUSES}}
+        by_default_branch: dict[str, list[str]] = {}
+        for project_id, (default_branch, deleted) in unresolved.items():
+            if default_branch and default_branch not in deleted:
+                by_default_branch.setdefault(default_branch, []).append(project_id)
+        result.update(
+            await self._newest_head_per_project(
+                [
+                    {"project_id": {"$in": project_ids}, "branch": branch, "status": {"$in": SCAN_USABLE_STATUSES}}
+                    for branch, project_ids in by_default_branch.items()
+                ]
             )
+        )
 
-        pipeline: list[dict[str, Any]] = [
-            {"$match": {"$or": or_conditions}},
-            # BSON dates are milliseconds: without _id, two scans stamped inside one leave the
-            # project's representative scan up to the server and it can change between requests.
-            {"$sort": {"created_at": -1, "_id": 1}},
-            {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
-        ]
-        with track_db_operation(_COL, "aggregate"):
-            cursor = self.collection.aggregate(pipeline)
-            async for doc in cursor:
-                result[doc["_id"]] = doc["scan_id"]
+        # A default branch this instance never scanned — CI wired to another one, or a repo whose
+        # tip predates the integration — must leave the project visible rather than empty.
+        or_conditions: list[dict[str, Any]] = []
+        without_deleted: list[str] = []
+        for project_id, (_, deleted) in unresolved.items():
+            if project_id in result:
+                continue
+            if deleted:
+                or_conditions.append(
+                    {"project_id": project_id, "branch": {"$nin": deleted}, "status": {"$in": SCAN_USABLE_STATUSES}}
+                )
+            else:
+                without_deleted.append(project_id)
+        if without_deleted:
+            or_conditions.append({"project_id": {"$in": without_deleted}, "status": {"$in": SCAN_USABLE_STATUSES}})
+        result.update(await self._newest_head_per_project(or_conditions))
         return result
 
     async def iterate(

@@ -31,6 +31,9 @@ _CANARY_SCAN = "canary-scan"
 _PENDING_SCAN = "pending-scan"
 _ONLY_SCAN = "only-scan"
 _RETIRED_SCAN = "retention-deleted-scan"
+_FEATURE_SCAN = "feature-branch-scan"
+_FEATURE_BRANCH = "feature/spike"
+_HEAD_COMMIT = "abc123"
 
 _CANARY = "canary"
 _EMPTY_ENVIRONMENT = "nowhere"
@@ -351,3 +354,23 @@ async def test_an_invalid_environment_slug_is_rejected(client, db, member_auth_h
     )
 
     assert resp.status_code == 422, resp.text
+
+
+async def _seed_a_feature_branch_pipeline_after_the_main_one(db) -> None:
+    """The ordinary shape: a feature pipeline finishes after the main-branch one and, before the
+    branch predicate, takes over latest_scan_id and with it the head side of every delta."""
+    await _seed(db)
+    await db.projects.update_one({"_id": _PROJECT}, {"$set": {"default_branch": _BRANCH}})
+    await _seed_scan(db, _FEATURE_SCAN, created_at=_NOW + _ONE_DAY, branch=_FEATURE_BRANCH)
+    await db.projects.update_one({"_id": _PROJECT}, {"$set": {"latest_scan_id": _FEATURE_SCAN}})
+
+
+@pytest.mark.asyncio
+async def test_head_is_the_tip_of_the_default_branch_not_the_newest_pipeline(client, db, member_auth_headers):
+    await _seed_a_feature_branch_pipeline_after_the_main_one(db)
+
+    resp = await _delta(client, member_auth_headers, **{"from": _RELEASE_REF, "to": _HEAD_REF})
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["to_scan_id"] == _HEAD_SCAN
+
