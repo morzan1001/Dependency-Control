@@ -525,7 +525,44 @@ async def authorize_release_write(
     raise HTTPException(status_code=401, detail="Missing authentication credentials")
 
 
+async def get_adhoc_api_key(
+    authorization: str = Header(default=""),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict[str, Any]:
+    """Resolve an ad-hoc analysis Bearer token to its key document.
+
+    No usage timestamp is stamped: the ad-hoc endpoint persists nothing, auth included.
+    """
+    from app.core.permissions import Permissions, has_permission
+    from app.repositories.adhoc_api_keys import AdhocApiKeyRepository
+
+    if not authorization.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Bearer token",
+            headers={"WWW-Authenticate": 'Bearer realm="analyze"'},
+        )
+    token = authorization.split(" ", 1)[1].strip()
+    key_doc = await AdhocApiKeyRepository(db).get_by_plaintext(token)
+    if not key_doc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid, revoked, or expired ad-hoc API key",
+        )
+
+    user = await UserRepository(db).get_by_id(key_doc["user_id"])
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token owner is no longer active")
+    if not has_permission(user.permissions, Permissions.ANALYZE_ADHOC):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token owner no longer has ad-hoc analysis access",
+        )
+    return key_doc
+
+
 DatabaseDep = Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)]
 CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
 CallgraphWriteDep = Annotated[str, Depends(authorize_callgraph_write)]
 ReleaseWriteDep = Annotated[str, Depends(authorize_release_write)]
+AdhocKeyDep = Annotated[dict[str, Any], Depends(get_adhoc_api_key)]
