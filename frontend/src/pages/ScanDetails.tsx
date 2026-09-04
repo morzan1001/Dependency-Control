@@ -19,6 +19,7 @@ import { toast } from "sonner"
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { SCAN_STATUS_COMPLETED_WITH_ERRORS } from '@/lib/scan-status'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
+import { ScanReleaseControl } from '@/components/scans/ScanReleaseControl'
 import { logger } from '@/lib/logger'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
 import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
@@ -287,6 +288,7 @@ export default function ScanDetails() {
                                 </ScmLink>
                             </div>
                         </div>
+                        <ScanReleaseControl projectId={projectId!} scan={scan} />
                         {scan.commit_hash && (
                             <div className="flex flex-col space-y-1">
                                 <span className="text-sm text-muted-foreground">Commit</span>
