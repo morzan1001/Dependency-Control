@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
@@ -7,6 +7,8 @@ from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT
 from app.models.project import Scan
 from app.models.release import Release
 from app.schemas.ingest import SBOMIngest
+from app.schemas.project import ScanReleaseRef
+from app.schemas.release import ReleaseItem
 
 _MAX_ENVIRONMENT_LENGTH = 32
 _PIPELINE_ID = 1
@@ -19,6 +21,9 @@ _VERSION = "v1.2.3"
 _COMMIT_TAG = "v9"
 _UNSET = ""
 _FIELDS_A_SCAN_MUST_NOT_CARRY = ("release_version", "release_environment", "released_at")
+_NAIVE_RELEASED_AT = datetime(2026, 9, 4, 22, 30)
+_OFFSET_RELEASED_AT = datetime(2026, 9, 4, 22, 30, tzinfo=timezone(timedelta(hours=2)))
+_UTC_SUFFIX = "Z"
 
 
 def _minimal_payload(**extra):
@@ -100,6 +105,26 @@ def test_a_release_off_a_branch_pipeline_is_unnamed_rather_than_named_blank(payl
 def test_a_blank_release_version_still_falls_back_to_the_commit_tag():
     data = SBOMIngest(**_minimal_payload(is_release=True, release_version=_UNSET, commit_tag=_COMMIT_TAG))
     assert data.release_fields(datetime.now(timezone.utc))["version"] == _COMMIT_TAG
+
+
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda when: ReleaseItem(
+            scan_id=_SCAN_ID, project_id=_PROJECT_ID, environment=_STAGING, released_at=when
+        ).model_dump_json(),
+        lambda when: ScanReleaseRef(environment=_STAGING, released_at=when).model_dump_json(),
+    ],
+    ids=["release listing", "scan release ref"],
+)
+def test_released_at_leaves_the_api_with_its_zone(build):
+    """Mongo returns the timestamp naive, and a bare one invites a client to read it as local time."""
+    assert _UTC_SUFFIX in build(_NAIVE_RELEASED_AT)
+
+
+def test_an_offset_the_caller_supplied_survives_untouched():
+    item = ReleaseItem(scan_id=_SCAN_ID, project_id=_PROJECT_ID, environment=_STAGING, released_at=_OFFSET_RELEASED_AT)
+    assert item.released_at == _OFFSET_RELEASED_AT
 
 
 def test_release_fields_name_the_keys_of_a_release_document():

@@ -8,6 +8,7 @@ from app.core.notification_prefs import sanitize_notification_preferences
 from app.models.finding import FindingType, Severity
 from app.models.license import DeploymentModel, DistributionModel, LibraryUsage
 from app.models.project import Project, Scan
+from app.schemas.datetimes import UtcDatetime
 
 
 class LicensePolicySchema(BaseModel):
@@ -201,7 +202,7 @@ class ScanReleaseRef(BaseModel):
 
     environment: str = Field(..., description="Environment slug the scan was released to")
     version: str | None = Field(None, description="Release name recorded when the scan was marked")
-    released_at: datetime = Field(..., description="When the scan started running in that environment")
+    released_at: UtcDatetime = Field(..., description="When the scan started running in that environment")
 
 
 class ScanWithReleases(Scan):
