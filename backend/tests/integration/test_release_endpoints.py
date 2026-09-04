@@ -308,9 +308,7 @@ async def test_an_invalid_environment_slug_is_rejected(client, db, api_key_heade
 
 
 @pytest.mark.asyncio
-async def test_an_invalid_environment_slug_is_rejected_on_every_route(
-    client, db, api_key_headers, member_auth_headers
-):
+async def test_an_invalid_environment_slug_is_rejected_on_every_route(client, db, api_key_headers, member_auth_headers):
     await _seed_scan(db, "rel")
     params = {"environment": _INVALID_ENVIRONMENT}
 
@@ -533,9 +531,7 @@ async def test_list_pages_through_the_records(client, db, member_auth_headers, a
 @pytest.mark.asyncio
 async def test_list_rejects_out_of_range_pagination(client, db, member_auth_headers):
     async def _get(params):
-        return await client.get(
-            f"/api/v1/projects/{_PROJECT}/releases", headers=member_auth_headers, params=params
-        )
+        return await client.get(f"/api/v1/projects/{_PROJECT}/releases", headers=member_auth_headers, params=params)
 
     assert (await _get({"limit": _MAX_PAGE_SIZE + 1})).status_code == 422
     assert (await _get({"limit": 0})).status_code == 422
@@ -594,9 +590,7 @@ async def test_a_project_viewer_may_not_mark(client, db, viewer_auth_headers):
 
 
 @pytest.mark.asyncio
-async def test_ci_credentials_of_another_project_are_rejected(
-    client, db, other_project, other_project_api_key_headers
-):
+async def test_ci_credentials_of_another_project_are_rejected(client, db, other_project, other_project_api_key_headers):
     await _seed_scan(db, "rel")
 
     resp = await _mark(client, other_project_api_key_headers, commit_hash=_COMMIT)

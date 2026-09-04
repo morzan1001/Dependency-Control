@@ -265,9 +265,7 @@ async def _seed_scan(db: FakeDatabase, scan_id: str = _SOURCE_SCAN_ID, **overrid
     return stored
 
 
-async def _seed_release(
-    db: FakeDatabase, environment: str, scan_id: str, released_at: datetime = _NOW
-) -> None:
+async def _seed_release(db: FakeDatabase, environment: str, scan_id: str, released_at: datetime = _NOW) -> None:
     release = Release(
         id=f"{_RELEASE_ROW_PREFIX}{environment}:{scan_id}",
         project_id=_PROJECT_ID,
@@ -467,9 +465,7 @@ class TestCreateRescanForProject:
         worker.add_job.assert_awaited_once_with(rescans[0]["_id"])
 
     @pytest.mark.asyncio
-    async def test_creating_a_rescan_stamps_the_clock_on_the_source(
-        self, db: FakeDatabase, worker: AsyncMock
-    ) -> None:
+    async def test_creating_a_rescan_stamps_the_clock_on_the_source(self, db: FakeDatabase, worker: AsyncMock) -> None:
         source = await _seed_scan(db)
 
         await _create_rescan_for_project(_project(), source, db, worker)
@@ -478,9 +474,7 @@ class TestCreateRescanForProject:
         assert stored_source["last_rescanned_at"] is not None
 
     @pytest.mark.asyncio
-    async def test_the_source_scan_is_not_given_a_latest_run_summary(
-        self, db: FakeDatabase, worker: AsyncMock
-    ) -> None:
+    async def test_the_source_scan_is_not_given_a_latest_run_summary(self, db: FakeDatabase, worker: AsyncMock) -> None:
         source = await _seed_scan(db)
 
         await _create_rescan_for_project(_project(), source, db, worker)
@@ -489,9 +483,7 @@ class TestCreateRescanForProject:
         assert stored_source.get("latest_run") is None
 
     @pytest.mark.asyncio
-    async def test_a_lock_held_for_this_source_stops_the_creation(
-        self, db: FakeDatabase, worker: AsyncMock
-    ) -> None:
+    async def test_a_lock_held_for_this_source_stops_the_creation(self, db: FakeDatabase, worker: AsyncMock) -> None:
         source = await _seed_scan(db)
         await DistributedLocksRepository(db).acquire_lock(
             _lock_name(_PROJECT_ID, _SOURCE_SCAN_ID), _FOREIGN_LOCK_HOLDER, ttl_seconds=_LOCK_TTL_SECONDS
@@ -530,9 +522,7 @@ class TestCreateRescanForProject:
         worker.add_job.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_the_lock_is_released_once_the_rescan_is_created(
-        self, db: FakeDatabase, worker: AsyncMock
-    ) -> None:
+    async def test_the_lock_is_released_once_the_rescan_is_created(self, db: FakeDatabase, worker: AsyncMock) -> None:
         source = await _seed_scan(db)
         locks = await _seed_expired_lock(db)
 
@@ -569,9 +559,7 @@ class TestCreateRescanForProject:
         self, db: FakeDatabase, worker: AsyncMock
     ) -> None:
         source = await _seed_scan(db)
-        await _seed_scan(
-            db, _ACTIVE_SCAN_ID, branch=_FEATURE_BRANCH, status=SCAN_STATUS_PROCESSING, created_at=_NOW
-        )
+        await _seed_scan(db, _ACTIVE_SCAN_ID, branch=_FEATURE_BRANCH, status=SCAN_STATUS_PROCESSING, created_at=_NOW)
 
         await _create_rescan_for_project(_project(), source, db, worker)
 
@@ -818,9 +806,7 @@ class TestReleaseRescanTargets:
         assert worker.add_job.await_count == 2
 
     @pytest.mark.asyncio
-    async def test_a_marked_scan_carrying_no_sboms_is_not_a_target(
-        self, db: FakeDatabase, worker: AsyncMock
-    ) -> None:
+    async def test_a_marked_scan_carrying_no_sboms_is_not_a_target(self, db: FakeDatabase, worker: AsyncMock) -> None:
         await _seed_scan(db, _SOURCE_SCAN_ID, created_at=_NOW - _RECENT)
         await _seed_scan(db, _EMPTY_SBOM_SCAN_ID, created_at=_NOW - _OLDER, sbom_refs=[])
         await _seed_release(db, _PRODUCTION_ENVIRONMENT, _EMPTY_SBOM_SCAN_ID)
@@ -849,9 +835,7 @@ class TestReleaseRescanTargets:
     ) -> None:
         """Sourcing from the rescan would add a link per interval until the chain outruns the bound
         the release resolver walks, and the resolver would then answer with a mid-chain scan."""
-        await _seed_scan(
-            db, _RELEASED_SCAN_ID, created_at=_NOW - _OLDER, latest_rescan_id=_PREVIOUS_RESCAN_ID
-        )
+        await _seed_scan(db, _RELEASED_SCAN_ID, created_at=_NOW - _OLDER, latest_rescan_id=_PREVIOUS_RESCAN_ID)
         await _seed_scan(
             db,
             _PREVIOUS_RESCAN_ID,
@@ -931,9 +915,7 @@ class TestCheckScheduledRescans:
     ) -> None:
         await _seed_system_settings(db)
         await db.projects.insert_one(_project_doc())
-        await db.projects.insert_one(
-            {"_id": _OTHER_PROJECT_ID, "name": _OTHER_PROJECT_NAME, "last_scan_at": None}
-        )
+        await db.projects.insert_one({"_id": _OTHER_PROJECT_ID, "name": _OTHER_PROJECT_NAME, "last_scan_at": None})
         await db.projects.insert_one({"_id": _UNSCANNED_PROJECT_ID, "name": _UNSCANNED_PROJECT_NAME})
         seen: list[str] = []
 
@@ -972,18 +954,14 @@ class TestCheckScheduledRescans:
     async def test_a_database_failure_is_swallowed_so_the_housekeeping_loop_survives(
         self, worker: AsyncMock, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        monkeypatch.setattr(
-            housekeeping, "get_database", AsyncMock(side_effect=RuntimeError(_FAILURE_MESSAGE))
-        )
+        monkeypatch.setattr(housekeeping, "get_database", AsyncMock(side_effect=RuntimeError(_FAILURE_MESSAGE)))
 
         await check_scheduled_rescans(worker)
 
         worker.add_job.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_without_a_worker_manager_the_database_is_never_opened(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    async def test_without_a_worker_manager_the_database_is_never_opened(self, monkeypatch: pytest.MonkeyPatch) -> None:
         get_database = AsyncMock()
         monkeypatch.setattr(housekeeping, "get_database", get_database)
 

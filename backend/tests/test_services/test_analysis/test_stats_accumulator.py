@@ -187,9 +187,7 @@ class TestThreatIntelBoundaries:
 
     def test_active_exploitation_threshold_is_inclusive_at_the_boundary(self):
         """Boundary: EPSS_ACTIVE_EXPLOITATION_THRESHOLD is inclusive."""
-        t = compute_stats(
-            [_finding(epss_score=EPSS_ACTIVE_EXPLOITATION_THRESHOLD)], {}
-        ).threat_intel
+        t = compute_stats([_finding(epss_score=EPSS_ACTIVE_EXPLOITATION_THRESHOLD)], {}).threat_intel
         assert t.active_exploitation_count == 1
 
     def test_very_high_epss_with_kev_below_threshold_does_not_weaponize(self):

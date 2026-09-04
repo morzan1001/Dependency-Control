@@ -119,9 +119,7 @@ async def _plan_prunes(db: Any, tag_names_by_project: dict[str, set[str]]) -> tu
         if remaining == current:
             continue
         removed = [branch for branch in current if branch in tags]
-        prunes.append(
-            PlannedPrune(project_id=project_id, removed=tuple(removed), remaining=tuple(remaining))
-        )
+        prunes.append(PlannedPrune(project_id=project_id, removed=tuple(removed), remaining=tuple(remaining)))
     return tuple(prunes)
 
 
@@ -231,9 +229,7 @@ async def apply_plan(db: Any, plan: BackfillPlan, *, batch_size: int, sleep_ms: 
         await db.scans.update_one({"_id": scan_id}, {"$set": {"is_release": True}})
 
     for prune in plan.prunes:
-        await db.projects.update_one(
-            {"_id": prune.project_id}, {"$set": {"deleted_branches": list(prune.remaining)}}
-        )
+        await db.projects.update_one({"_id": prune.project_id}, {"$set": {"deleted_branches": list(prune.remaining)}})
 
 
 async def run_backfill(db: Any, *, batch_size: int, sleep_ms: int, limit: int, execute: bool) -> BackfillPlan:

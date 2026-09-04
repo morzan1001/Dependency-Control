@@ -39,9 +39,7 @@ async def _sync(db: FakeDatabase) -> dict[str, Any]:
 @pytest.mark.asyncio
 async def test_a_tag_build_does_not_file_its_tag_as_a_deleted_branch() -> None:
     db = FakeDatabase()
-    await db.scans.insert_one(
-        {"_id": _TAG_BUILD_ID, "project_id": _PROJECT_ID, "branch": _TAG, "commit_tag": _TAG}
-    )
+    await db.scans.insert_one({"_id": _TAG_BUILD_ID, "project_id": _PROJECT_ID, "branch": _TAG, "commit_tag": _TAG})
     await db.scans.insert_one(
         {"_id": _BRANCH_BUILD_ID, "project_id": _PROJECT_ID, "branch": _MAIN_BRANCH, "commit_tag": None}
     )

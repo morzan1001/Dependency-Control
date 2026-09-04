@@ -55,9 +55,7 @@ async def _seed_original(db: FakeDatabase, scan_id: str, created_at: datetime) -
 
 
 async def _seed_project_with_head(db: FakeDatabase) -> None:
-    await db.projects.insert_one(
-        {"_id": _PROJECT_ID, "name": _PROJECT_NAME, "latest_scan_id": _HEAD_SCAN_ID}
-    )
+    await db.projects.insert_one({"_id": _PROJECT_ID, "name": _PROJECT_NAME, "latest_scan_id": _HEAD_SCAN_ID})
     await _seed_original(db, _HEAD_SCAN_ID, _T0)
 
 
@@ -118,20 +116,22 @@ def db() -> FakeDatabase:
 
 class TestProjectWithARelease:
     @pytest.mark.asyncio
-    async def test_the_tip_lineage_is_targeted_and_wins_the_slot_on_every_interval(
-        self, db: FakeDatabase
-    ) -> None:
+    async def test_the_tip_lineage_is_targeted_and_wins_the_slot_on_every_interval(self, db: FakeDatabase) -> None:
         await _seed_project_with_head(db)
         await _seed_release(db)
 
         passes = await _run_intervals(db)
 
-        assert passes == [
-            _Pass(
-                target_ids=(_HEAD_SCAN_ID, _RELEASED_SCAN_ID),
-                outcomes=((_HEAD_SCAN_ID, True), (_RELEASED_SCAN_ID, False)),
-            )
-        ] * _INTERVAL_COUNT
+        assert (
+            passes
+            == [
+                _Pass(
+                    target_ids=(_HEAD_SCAN_ID, _RELEASED_SCAN_ID),
+                    outcomes=((_HEAD_SCAN_ID, True), (_RELEASED_SCAN_ID, False)),
+                )
+            ]
+            * _INTERVAL_COUNT
+        )
 
     @pytest.mark.asyncio
     async def test_every_rescan_hangs_directly_off_an_original(self, db: FakeDatabase) -> None:
@@ -168,16 +168,12 @@ class TestProjectWithARelease:
 
 class TestProjectWithoutARelease:
     @pytest.mark.asyncio
-    async def test_the_tip_lineage_is_targeted_and_wins_the_slot_on_every_interval(
-        self, db: FakeDatabase
-    ) -> None:
+    async def test_the_tip_lineage_is_targeted_and_wins_the_slot_on_every_interval(self, db: FakeDatabase) -> None:
         await _seed_project_with_head(db)
 
         passes = await _run_intervals(db)
 
-        assert passes == [
-            _Pass(target_ids=(_HEAD_SCAN_ID,), outcomes=((_HEAD_SCAN_ID, True),))
-        ] * _INTERVAL_COUNT
+        assert passes == [_Pass(target_ids=(_HEAD_SCAN_ID,), outcomes=((_HEAD_SCAN_ID, True),))] * _INTERVAL_COUNT
 
     @pytest.mark.asyncio
     async def test_the_chain_never_grows_past_one_link(self, db: FakeDatabase) -> None:

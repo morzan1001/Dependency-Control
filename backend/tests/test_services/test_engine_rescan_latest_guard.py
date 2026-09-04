@@ -83,9 +83,7 @@ async def test_a_manual_rescan_wins_the_slot_when_the_latest_is_a_scheduled_resc
     """Both sides reduce to their lineage root, so the manual endpoint's root-valued
     original_scan_id matches a latest that is itself a rescan."""
     await _seed(db, _SCHEDULED_RESCAN_ID)
-    await _insert_scan(
-        db, _SCHEDULED_RESCAN_ID, _NOW + _LATER, is_rescan=True, original_scan_id=_HEAD_SCAN_ID
-    )
+    await _insert_scan(db, _SCHEDULED_RESCAN_ID, _NOW + _LATER, is_rescan=True, original_scan_id=_HEAD_SCAN_ID)
     scan_doc = _ScanDoc(_NOW + 2 * _LATER, is_rescan=True, original_scan_id=_HEAD_SCAN_ID)
 
     assert await _decide(db, _INCOMING_RESCAN_ID, scan_doc) is True

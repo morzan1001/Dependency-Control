@@ -110,8 +110,7 @@ async def _seeded_db() -> FakeDatabase:
 
 async def _snapshot(db: FakeDatabase) -> dict[str, dict[str, Any]]:
     return {
-        name: {doc["_id"]: copy.deepcopy(doc) for doc in await db[name].find({}).to_list(None)}
-        for name in _COLLECTIONS
+        name: {doc["_id"]: copy.deepcopy(doc) for doc in await db[name].find({}).to_list(None)} for name in _COLLECTIONS
     }
 
 
@@ -163,9 +162,7 @@ async def test_only_a_usable_original_tag_build_is_planned() -> None:
 @pytest.mark.asyncio
 async def test_a_completed_with_errors_tag_build_is_still_a_release() -> None:
     db = FakeDatabase()
-    await db.scans.insert_one(
-        _scan(_TAG_BUILD, branch=_TAG, commit_tag=_TAG, status=SCAN_STATUS_COMPLETED_WITH_ERRORS)
-    )
+    await db.scans.insert_one(_scan(_TAG_BUILD, branch=_TAG, commit_tag=_TAG, status=SCAN_STATUS_COMPLETED_WITH_ERRORS))
 
     plan = await _run(db, execute=False)
 

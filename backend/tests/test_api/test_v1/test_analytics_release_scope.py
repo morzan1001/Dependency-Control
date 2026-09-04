@@ -180,9 +180,7 @@ async def test_dependency_search_counts_the_projects_without_a_release():
     db = FakeDatabase()
     with (
         patch(f"{_SEARCH}.get_user_project_ids", new=AsyncMock(return_value=_THREE_PROJECTS)),
-        patch(
-            f"{_SEARCH}.get_projects_with_scans", new=AsyncMock(return_value=(_NO_NAMES, _ONE_SCAN))
-        ) as resolve,
+        patch(f"{_SEARCH}.get_projects_with_scans", new=AsyncMock(return_value=(_NO_NAMES, _ONE_SCAN))) as resolve,
     ):
         result = await search_dependencies_advanced(
             current_user=_user(), db=db, q=_SEARCH_TERM, release_environment=DEFAULT_RELEASE_ENVIRONMENT
@@ -227,9 +225,7 @@ async def test_vulnerability_search_counts_the_projects_without_a_release():
     db = FakeDatabase()
     with (
         patch(f"{_SEARCH}.get_user_project_ids", new=AsyncMock(return_value=_THREE_PROJECTS)),
-        patch(
-            f"{_SEARCH}.get_projects_with_scans", new=AsyncMock(return_value=(_NO_NAMES, _ONE_SCAN))
-        ) as resolve,
+        patch(f"{_SEARCH}.get_projects_with_scans", new=AsyncMock(return_value=(_NO_NAMES, _ONE_SCAN))) as resolve,
     ):
         result = await search_vulnerabilities(
             current_user=_user(), db=db, q=_SEARCH_TERM, release_environment=DEFAULT_RELEASE_ENVIRONMENT
@@ -309,9 +305,7 @@ async def test_scope_counts_the_projects_the_requested_mode_resolved():
     await _seed_mixed_release_scope(db)
 
     with patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_THREE_PROJECTS)):
-        result = await get_analytics_scope(
-            current_user=_user(), db=db, release_environment=DEFAULT_RELEASE_ENVIRONMENT
-        )
+        result = await get_analytics_scope(current_user=_user(), db=db, release_environment=DEFAULT_RELEASE_ENVIRONMENT)
 
     assert result.resolved_projects == _EXPECTED_RESOLVED
     assert result.projects_without_release == _EXPECTED_WITHOUT_RELEASE
