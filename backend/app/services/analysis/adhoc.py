@@ -15,7 +15,7 @@ from app.schemas.sbom import ParsedSBOM
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _build_settings_resolver
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzers, post_processors
-from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary
+from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary, compute_stats
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
 from app.services.enrichment.service import VulnerabilityEnrichmentService
@@ -25,6 +25,7 @@ from app.services.reachability_enrichment import (
     component_language_map,
     enrich_findings_from_callgraphs,
 )
+from app.services.recommendations import recommendation_engine
 from app.services.sbom_parser import parse_sbom
 
 logger = logging.getLogger(__name__)
@@ -513,7 +514,8 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
 
     epss_kev_summary = await _enrich_vulnerabilities(records, report)
 
-    languages = component_language_map([component for pi in parsed_inputs for component in pi.components])
+    components = [component for pi in parsed_inputs for component in pi.components]
+    languages = component_language_map(components)
     reachability_summary = _run_reachability(records, request.callgraph, languages, report)
 
     waived_count = 0
@@ -524,10 +526,22 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         waived_count = apply_global_waivers_in_memory(records, await WaiverRepository(db).find_active_global())
         waivers_applied = _WAIVERS_GLOBAL
 
+    # After the waivers, so an accepted risk neither scores nor generates work to do.
+    stats = compute_stats(records, languages)
+    source_target = next((pi.parsed.source_target for pi in parsed_inputs if pi.parsed.source_target), None)
+    recommendations = await recommendation_engine.generate_recommendations(
+        findings=[record for record in records if not record.get("waived")],
+        dependencies=components,
+        source_target=source_target,
+    )
+
     return AdhocAnalyzeResponse(
         findings=records,
+        stats=stats,
+        dependencies=aggregator.get_dependency_enrichments(),
         epss_kev_summary=epss_kev_summary,
         reachability_summary=reachability_summary,
+        recommendations=[recommendation.to_dict() for recommendation in recommendations],
         analyzers=report,
         waivers_applied=waivers_applied,
         waived_count=waived_count,
