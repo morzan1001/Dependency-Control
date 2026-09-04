@@ -432,6 +432,8 @@ class ResultAggregator:
 
         Groups past ``MAX_CROSS_LINK_GROUP_SIZE`` are left alone: a file carrying thousands of
         SAST hits is one "component" here, and linking it pairwise costs more than it tells anyone.
+        Only ``related_findings`` and the ``details`` context blocks depend on this, never a
+        severity, a count or a score — which is why the ceiling is safe on the persisted path too.
         """
         representatives = cluster_by_package_identity(f.component for f in findings if f.component)
         component_map: dict[str, list[Finding]] = {}
