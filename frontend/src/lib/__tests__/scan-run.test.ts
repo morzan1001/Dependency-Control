@@ -10,8 +10,10 @@ const COMPLETED_AT = '2026-08-01T01:00:00Z'
 const RESCAN_COMPLETED_AT = '2026-08-20T00:00:00Z'
 const COMPLETED = 'completed'
 const PENDING = 'pending'
+const FAILED = 'failed'
 const OWN_CRITICAL = 7
 const RESCANNED_CRITICAL = 2
+const PARTIAL_CRITICAL = 1
 
 // Annotated, not inferred: an inferred fixture drops a field from the type silently.
 function makeScan(overrides: Partial<Scan> = {}): Scan {
@@ -62,6 +64,25 @@ describe('resolveRun', () => {
 
     expect(resolveRun(scan).stats).toEqual({ critical: OWN_CRITICAL })
     expect(resolveRun(scan).scanId).toBe(SCAN_ID)
+  })
+
+  it('keeps the numbers the scan itself reports when its rescan failed part-way', () => {
+    // A failed rescan still summarises whatever it persisted, so its stats are a partial count.
+    const scan = makeScan({
+      latest_run: {
+        scan_id: RESCAN_ID,
+        status: FAILED,
+        stats: { critical: PARTIAL_CRITICAL },
+        completed_at: RESCAN_COMPLETED_AT,
+      },
+    })
+
+    expect(resolveRun(scan)).toEqual({
+      scanId: SCAN_ID,
+      stats: { critical: OWN_CRITICAL },
+      status: COMPLETED,
+      date: COMPLETED_AT,
+    })
   })
 
   it('falls back to an empty stat set rather than inventing zeroes', () => {

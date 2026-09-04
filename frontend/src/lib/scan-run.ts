@@ -1,3 +1,4 @@
+import { isScanUsable } from '@/lib/scan-status'
 import type { EnhancedStats, Scan } from '@/types/scan'
 
 export interface ResolvedRun {
@@ -7,12 +8,12 @@ export interface ResolvedRun {
   date: string
 }
 
-// A rescan announces itself on latest_run the moment it is queued, with nothing analysed. Identity,
-// numbers, status and date come off one side together, so nothing can attribute a run's stats to
-// another scan or read a queued rescan's empty summary as a clean result.
+// A rescan announces itself on latest_run the moment it is queued, and a failed one still summarises
+// whatever it managed to persist. Identity, numbers, status and date come off one side together, so
+// nothing can attribute a run's stats to another scan or let a partial count replace a complete one.
 export function resolveRun(scan: Scan): ResolvedRun {
   const run = scan.latest_run
-  if (run?.stats) {
+  if (run?.stats && isScanUsable(run.status)) {
     return {
       scanId: run.scan_id,
       stats: run.stats,

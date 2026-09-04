@@ -187,6 +187,30 @@ describe('ProjectOverview - multi-branch headline counts (W8)', () => {
   })
 })
 
+describe('ProjectOverview - headline numbers after a failed rescan', () => {
+  const HEAD_SCAN_ID = 's-main'
+  const RESCAN_ID = 's-main-rescan'
+  const COMPLETE_CRITICAL = 42
+  const PARTIAL_CRITICAL = 337
+
+  it('keeps the complete count rather than what a failed rescan managed to persist', () => {
+    // The page shows no failure of its own, so a partial count here reads as the security posture.
+    renderOverview([
+      makeScan(
+        {
+          id: HEAD_SCAN_ID,
+          latest_rescan_id: RESCAN_ID,
+          latest_run: { scan_id: RESCAN_ID, status: 'failed', stats: { critical: PARTIAL_CRITICAL } },
+        },
+        { critical: COMPLETE_CRITICAL },
+      ),
+    ])
+
+    expect(screen.getByText(String(COMPLETE_CRITICAL))).toBeInTheDocument()
+    expect(screen.queryByText(String(PARTIAL_CRITICAL))).not.toBeInTheDocument()
+  })
+})
+
 describe('ProjectOverview - release tile', () => {
   const PRODUCTION = 'production'
   const STAGING = 'staging'

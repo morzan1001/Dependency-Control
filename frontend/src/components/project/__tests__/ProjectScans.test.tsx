@@ -186,6 +186,15 @@ describe('ProjectScans - a scan whose rescan is still queued', () => {
     expect(screen.queryByText(NOTE_IN_FLIGHT)).not.toBeInTheDocument()
   })
 
+  it('says the rescan is still running when the scheduler has queued it without a summary', () => {
+    // The automatic scheduler sets latest_rescan_id and never writes latest_run.
+    renderScans([makeScan({ id: 'main-1', latest_rescan_id: RESCAN_ID })])
+
+    expect(screen.getByText(NOTE_IN_FLIGHT)).toBeInTheDocument()
+    expect(screen.queryByText(NOTE_DELIVERED)).not.toBeInTheDocument()
+    expect(screen.queryByText(NOTE_FAILED)).not.toBeInTheDocument()
+  })
+
   it('names a failed rescan as failed rather than as still running', () => {
     renderScans([
       makeScan({
