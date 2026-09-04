@@ -42,8 +42,8 @@ describe('heatmapCell', () => {
 
   it('groups by project_ids when scope is not project', () => {
     const e = entry({ locations: [], project_ids: ['p1'] })
-    expect(heatmapCell(e, 'p1', 'organization', 5).present).toBe(true)
-    expect(heatmapCell(e, 'p2', 'organization', 5).present).toBe(false)
+    expect(heatmapCell(e, 'p1', 'global', 5).present).toBe(true)
+    expect(heatmapCell(e, 'p2', 'global', 5).present).toBe(false)
   })
 })
 

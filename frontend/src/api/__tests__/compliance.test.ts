@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from "vitest";
 import { downloadReport } from "@/api/compliance";
 import { api } from "@/api/client";
 
@@ -11,7 +11,7 @@ const mockedGet = api.get as unknown as ReturnType<typeof vi.fn>;
 describe("downloadReport", () => {
   let createObjectURL: ReturnType<typeof vi.fn>;
   let revokeObjectURL: ReturnType<typeof vi.fn>;
-  let clickSpy: ReturnType<typeof vi.fn>;
+  let clickSpy: Mock<() => void>;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -20,7 +20,7 @@ describe("downloadReport", () => {
     // jsdom does not implement the object-URL APIs.
     window.URL.createObjectURL = createObjectURL as unknown as typeof window.URL.createObjectURL;
     window.URL.revokeObjectURL = revokeObjectURL as unknown as typeof window.URL.revokeObjectURL;
-    clickSpy = vi.fn();
+    clickSpy = vi.fn<() => void>();
     vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(clickSpy);
   });
 

@@ -20,6 +20,7 @@ const PRODUCTION = "production";
 const COMMIT_HASH = "abc";
 const DISTINCT_SCOPE_COUNT = 3;
 const FIRST_PAGE = 1;
+const SINGLE_ITEM_TOTAL = 1;
 const RELEASED_AT = "2026-09-04T00:00:00Z";
 const BRANCH = "main";
 const SCAN_STATUS_COMPLETED = "completed";
@@ -58,6 +59,34 @@ describe("useProjectReleases", () => {
     await waitFor(() =>
       expect(client.getQueryCache().getAll()).toHaveLength(DISTINCT_SCOPE_COUNT),
     );
+  });
+
+  it("keeps a release whose scan retention removed", async () => {
+    vi.mocked(releaseApi.list).mockResolvedValue({
+      items: [
+        {
+          scan_id: SCAN_ID,
+          project_id: PROJECT_ID,
+          environment: PRODUCTION,
+          version: null,
+          released_at: RELEASED_AT,
+          commit_hash: COMMIT_HASH,
+          branch: null,
+          scan_status: null,
+          analysis_scan_id: null,
+        },
+      ],
+      total: SINGLE_ITEM_TOTAL,
+      page: FIRST_PAGE,
+      size: SMALL_PAGE_SIZE,
+    });
+
+    const { result } = renderHook(() => useProjectReleases(PROJECT_ID), {
+      wrapper: wrapperFor(makeClient()),
+    });
+
+    await waitFor(() => expect(result.current.data?.items).toHaveLength(SINGLE_ITEM_TOTAL));
+    expect(result.current.data?.items[0].branch).toBeNull();
   });
 });
 

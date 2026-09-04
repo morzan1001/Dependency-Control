@@ -5,14 +5,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import ScanDelta from '../ScanDelta'
 import * as deltaApi from '@/api/scanDelta'
 import * as scansApi from '@/api/scans'
+import type { DeltaCategory } from '@/types/scanDelta'
 
 vi.mock('@/api/scanDelta')
 vi.mock('@/api/scans')
 
-const emptyDelta = (category: string) => ({
+const emptyDelta = (category: DeltaCategory) => ({
   category, from_scan_id: 'a', to_scan_id: 'b', project_id: 'p1',
   totals: { added: 2, removed: 1, unchanged: 5, changed: 0, by_severity: {}, by_type: {} },
   page: 1, page_size: 50, total_pages: 1, items: [],
+  from_waived_excluded: 0, to_waived_excluded: 0,
 })
 
 const scan = (id: string) => ({

@@ -73,7 +73,7 @@ describe('ArchivesPage - date filters', () => {
     fireEvent.change(screen.getByLabelText('From'), { target: { value: '2026-07-01' } })
     fireEvent.change(screen.getByLabelText('To'), { target: { value: '2026-07-01' } })
 
-    const lastCall = mockUseAdminArchives.mock.calls.at(-1)
+    const lastCall = mockUseAdminArchives.mock.calls[mockUseAdminArchives.mock.calls.length - 1]
     const filters = lastCall?.[2] as (ArchiveFilters & { project_id?: string }) | undefined
 
     expect(filters?.date_from).toBe(new Date('2026-07-01T00:00:00').toISOString())
