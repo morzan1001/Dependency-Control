@@ -6,7 +6,8 @@ Run the backfill as a Kubernetes **Job**, never via `kubectl exec`: the autoscal
 pods and a long exec dies with them. The Job manifest, its labels and its NetworkPolicy are in
 `README-deploy-waves-2-3.md` section 2 — nothing about them changes here.
 
-Order: indexes, then the rescan brake, then deploy, then dry run, then execute.
+Order: indexes, then the rescan brake, then deploy, then the lineage collapse, then dry run,
+then execute.
 
 ---
 
@@ -102,7 +103,8 @@ db.projects.countDocuments({ last_scan_at: null })   // never scanned; housekeep
    db.system_settings.updateOne({}, { $set: { global_rescan_enabled: false } })
    ```
 
-2. Deploy (section 3) and run the backfill (sections 4–5).
+2. Deploy (section 3), collapse the rescan lineage pointers (section 4) and run the backfill
+   (sections 5–6).
 
 3. Seed `last_rescanned_at`, one tranche per **cohort day**. The seed is not a delay switch: it
    backdates the clock, and cohort `k` is stamped so that it comes due `k` days from now. You are
@@ -172,12 +174,12 @@ db.projects.countDocuments({ last_scan_at: null })   // never scanned; housekeep
    ]);
    ```
 
-   That stamps the whole release population onto one day. If `releases to record` from section 5 is
+   That stamps the whole release population onto one day. If `releases to record` from section 6 is
    more than a day's worth of work, split it across successive cohort days the same way step 3
    does — select a `$limit`ed batch of ids first, then update only those.
 
-5. Confirm the due count is zero — every source is now stamped for a future day — and switch the
-   scheduler back on:
+5. Confirm the due count is zero — every source is now stamped for a future day — confirm
+   section 4 reports no pointers left to rewrite, and switch the scheduler back on:
 
    ```js
    // "Count the real population" above must return no due_projects, and this must return 0
@@ -191,7 +193,9 @@ db.projects.countDocuments({ last_scan_at: null })   // never scanned; housekeep
 ### Option B — take the burst deliberately
 
 Skip the brake, and watch it land. Acceptable when the count from the aggregation is small enough
-for the worker pool and the window is quiet.
+for the worker pool and the window is quiet. Take the brake for the rollout itself even so: the
+scans section 4 collapses are the ones the burst rescans, and a rescan that lands first is
+discarded on a project whose chain is deeper than the walk's bound.
 
 ### What to watch either way
 
@@ -316,7 +320,75 @@ Two other behaviour changes ship with this deploy and are visible without any re
 
 ---
 
-## 4. Dry run the backfill
+## 4. Collapse the rescan lineage pointers
+
+**Run this before the scheduler is allowed to fire again** — Option A step 5, or the rollout under
+Option B.
+
+`Scan.original_scan_id` names the scan a rescan lineage descends from, and every reader treats it
+as the root: the latest-scan guard compares it against the incoming rescan's root, the scan-history
+endpoint collects a family by it, and retention exempts whatever it names. Production carries
+chains whose links name their immediate parent instead — `head → r1 → r2`, each pointing one step
+up.
+
+The guard walks such a chain rather than trusting the one hop, so a project on a short chain keeps
+working. The walk is bounded at ten hops, so a project that has taken more than ten scheduled
+rescans does not: its walk stops mid-chain, the roots never match, and its `latest_scan_id`,
+`stats` and `last_scan_at` hold their pre-deploy values through every rescan that follows.
+
+Size it first. Projects whose pointer names a rescan whose own pointer names a rescan — the shape
+the guard has to walk at all:
+
+```js
+db.projects.aggregate([
+  { $match: { latest_scan_id: { $ne: null } } },
+  { $lookup: { from: "scans", localField: "latest_scan_id", foreignField: "_id", as: "cur" } },
+  { $set: { cur: { $first: "$cur" } } },
+  { $match: { "cur.is_rescan": true, "cur.original_scan_id": { $ne: null } } },
+  { $lookup: { from: "scans", localField: "cur.original_scan_id", foreignField: "_id", as: "parent" } },
+  { $set: { parent: { $first: "$parent" } } },
+  { $match: { "parent.is_rescan": true } },
+  { $count: "frozen_projects" }
+])
+```
+
+And the pointers the run rewrites — this one is also the verification, so note the number:
+
+```js
+db.scans.aggregate([
+  { $match: { is_rescan: true, original_scan_id: { $ne: null } } },
+  { $lookup: { from: "scans", localField: "original_scan_id", foreignField: "_id", as: "parent" } },
+  { $set: { parent: { $first: "$parent" } } },
+  { $match: { "parent.is_rescan": true } },
+  { $count: "pointers_to_rewrite" }
+])
+```
+
+Then:
+
+```
+python -m scripts.backfill_rescan_lineage
+python -m scripts.backfill_rescan_lineage --limit 20 --execute    # smoke test
+python -m scripts.backfill_rescan_lineage --execute
+```
+
+The dry run computes the plan and stops; `--execute` applies that same plan, so the report is the
+change list. `pointers to rewrite` matches `pointers_to_rewrite` above, less anything the run
+reports as unresolved.
+
+`unresolved, past the bound` counts rescans still more than ten links above their root, and the run
+names each one. Re-run it: every pass shortens the chain beneath them, so the count falls to zero.
+A count that stops falling is a pointer cycle, and the ids it names need a human.
+
+Verify by re-running the second query: it must return no rows.
+
+Retention exempts a scan named by an `original_scan_id`, so the intermediate links lose that
+exemption and age out on their normal retention date. Lineage does not go with them: every rescan
+names the root directly, which is where the scan-history endpoint collects the family from.
+
+---
+
+## 5. Dry run the backfill
 
 ```
 python -m scripts.backfill_release_flags
@@ -342,7 +414,7 @@ for a human).
 
 ---
 
-## 5. Execute
+## 6. Execute
 
 ```
 python -m scripts.backfill_release_flags --limit 20 --execute    # smoke test
@@ -362,7 +434,7 @@ before the backfill, which is the same name the branch census would drop on its 
 
 ---
 
-## 6. Verify
+## 7. Verify
 
 ```js
 db.releases.countDocuments({ environment: "production" })   // == "releases to record"
@@ -397,7 +469,7 @@ Pipelines table's release filter returns the same scan.
 
 ---
 
-## 7. After the backfill
+## 8. After the backfill
 
 **No new release will be marked until consumer pipelines act.** The backend accepts the mark, but
 nothing sends one: a pipeline has to pin scanner **1.2.0 or newer** *and* set
