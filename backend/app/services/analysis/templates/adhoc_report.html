@@ -58,8 +58,17 @@
 
 {% if truncated %}
 <div class="notice">
-  <strong>Result truncated:</strong> the findings ceiling was reached, so this report and its
-  statistics describe a bounded subset of the run.
+  <strong>Result truncated:</strong> the ceiling of {{ truncated.limit }} findings was reached, so
+  this report and its statistics describe a bounded subset of the run. {{ truncated.dropped }}
+  finding(s) were dropped:
+  <ul>
+    {% for severity, count in truncated.dropped_by_severity.items() %}
+    <li><strong>{{ severity }}:</strong> {{ count }}</li>
+    {% endfor %}
+    {% for finding_type, count in truncated.dropped_by_type.items() %}
+    <li><strong>{{ finding_type }}:</strong> {{ count }}</li>
+    {% endfor %}
+  </ul>
 </div>
 {% endif %}
 

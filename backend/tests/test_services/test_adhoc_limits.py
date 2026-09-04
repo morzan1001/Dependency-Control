@@ -1,6 +1,7 @@
 """Ad-hoc runs are bounded: an input-shape ceiling, a findings ceiling that keeps the worst first."""
 
 import time
+from collections import Counter
 
 import pytest
 
@@ -20,8 +21,18 @@ _FIRST_SBOM_LABEL = "sbom#1"
 _DROPPED_BY_DEPTH = "nesting-depth"
 _CVE = "CVE-2024-99999"
 _CRITICAL = "CRITICAL"
+_LOW = "LOW"
+_TYPE_SAST = "sast"
+_TYPE_SECRET = "secret"
+_VULNERABILITY = "vulnerability"
 _COMPONENT = "requests"
 _VERSION = "2.31.0"
+
+# Ceilings small enough to reason about by hand; the production one is ADHOC_MAX_FINDINGS.
+_SMALL_CEILING = 10
+_TINY_CEILING = 3
+_UNDER_THE_CEILING = 5
+_OVERSHOOT = 7
 
 # Every measurement below is on the shapes an adversarial pass timed against this pipeline:
 # 40 000 occurrences on one component parsed for 4.36 s, and 2 000 findings crowded onto one
@@ -80,6 +91,21 @@ def _nested(sbom: dict, depth: int = 1) -> dict:
     return {**sbom, "components": components}
 
 
+def _trufflehog(count: int) -> dict:
+    """Verified secrets, which the scoring rules grade CRITICAL whatever the file's fate."""
+    return {
+        "findings": [
+            {
+                "DetectorType": 8,
+                "Raw": f"AKIAIOSFODNN7EXAMPLE{i}",
+                "Verified": True,
+                "SourceMetadata": {"Data": {"Filesystem": {"file": f"config/{i}.env"}}},
+            }
+            for i in range(count)
+        ]
+    }
+
+
 def _opengrep(count: int, path: str) -> dict:
     return {
         "findings": [
@@ -128,50 +154,106 @@ async def _run(request: AdhocAnalyzeRequest):
 
 @pytest.mark.asyncio
 async def test_under_the_ceiling_is_not_truncated(monkeypatch):
-    monkeypatch.setattr(adhoc, "ADHOC_MAX_FINDINGS", 10)
+    monkeypatch.setattr(adhoc, "ADHOC_MAX_FINDINGS", _SMALL_CEILING)
     request = AdhocAnalyzeRequest(
-        scanners={"opengrep": _opengrep(5, _CROWDED_PATH)}, analyzers=[], apply_global_waivers=False
+        scanners={"opengrep": _opengrep(_UNDER_THE_CEILING, _CROWDED_PATH)}, analyzers=[], apply_global_waivers=False
     )
 
     response = await _run(request)
 
-    assert response.truncated is False
-    assert len(response.findings) == 5
+    assert response.truncated is None
+    assert len(response.findings) == _UNDER_THE_CEILING
 
 
 @pytest.mark.asyncio
 async def test_over_the_ceiling_is_cut_and_flagged(monkeypatch):
-    monkeypatch.setattr(adhoc, "ADHOC_MAX_FINDINGS", 3)
+    monkeypatch.setattr(adhoc, "ADHOC_MAX_FINDINGS", _TINY_CEILING)
+    posted = _TINY_CEILING + _OVERSHOOT
     request = AdhocAnalyzeRequest(
-        scanners={"opengrep": _opengrep(10, _CROWDED_PATH)}, analyzers=[], apply_global_waivers=False
+        scanners={"opengrep": _opengrep(posted, _CROWDED_PATH)}, analyzers=[], apply_global_waivers=False
     )
 
     response = await _run(request)
 
-    assert response.truncated is True
-    assert len(response.findings) == 3
+    assert len(response.findings) == _TINY_CEILING
+    assert response.truncated.limit == _TINY_CEILING
+    assert response.truncated.dropped == posted - _TINY_CEILING
     # The cap is applied before the fold, so the stats describe exactly the returned set.
     stats = response.stats
     bucketed = stats.critical + stats.high + stats.medium + stats.low + stats.negligible + stats.info + stats.unknown
-    assert bucketed == 3
+    assert bucketed == _TINY_CEILING
+
+
+@pytest.mark.asyncio
+async def test_the_cut_says_which_types_and_severities_it_dropped(monkeypatch):
+    monkeypatch.setattr(adhoc, "ADHOC_MAX_FINDINGS", _TINY_CEILING)
+    posted = _TINY_CEILING + _OVERSHOOT
+    request = AdhocAnalyzeRequest(
+        scanners={"opengrep": _opengrep(posted, _CROWDED_PATH)}, analyzers=[], apply_global_waivers=False
+    )
+
+    response = await _run(request)
+
+    assert response.truncated.dropped_by_type == {_TYPE_SAST: posted - _TINY_CEILING}
+    assert response.truncated.dropped_by_severity == {_LOW: posted - _TINY_CEILING}
 
 
 @pytest.mark.asyncio
 async def test_the_cut_keeps_the_most_severe_findings(monkeypatch, _osv):
     """The aggregator orders by type name, where ``vulnerability`` sorts last of all."""
-    monkeypatch.setattr(adhoc, "ADHOC_MAX_FINDINGS", 3)
+    monkeypatch.setattr(adhoc, "ADHOC_MAX_FINDINGS", _TINY_CEILING)
     request = AdhocAnalyzeRequest(
         sboms=[_SBOM],
-        scanners={"opengrep": _opengrep(8, _CROWDED_PATH)},
+        scanners={"opengrep": _opengrep(_TINY_CEILING + _OVERSHOOT, _CROWDED_PATH)},
         analyzers=[_OSV],
         apply_global_waivers=False,
     )
 
     response = await _run(request)
 
-    assert response.truncated is True
-    assert [record["severity"] for record in response.findings] == [_CRITICAL, "LOW", "LOW"]
+    assert response.truncated is not None
+    assert [record["severity"] for record in response.findings] == [_CRITICAL, _LOW, _LOW]
     assert response.stats.critical == 1
+
+
+@pytest.mark.asyncio
+async def test_a_crowded_type_does_not_evict_an_equally_severe_one(monkeypatch, _osv):
+    """5000 CRITICAL secrets and one CRITICAL CVE tie on severity, and a stable sort hands the
+    whole ceiling to whichever type the aggregator emits first."""
+    monkeypatch.setattr(adhoc, "ADHOC_MAX_FINDINGS", _TINY_CEILING)
+    request = AdhocAnalyzeRequest(
+        sboms=[_SBOM],
+        scanners={"trufflehog": _trufflehog(_TINY_CEILING)},
+        analyzers=[_OSV],
+        apply_global_waivers=False,
+    )
+
+    response = await _run(request)
+
+    kept = Counter(record["type"] for record in response.findings)
+    assert kept[_VULNERABILITY] == 1
+    assert kept[_TYPE_SECRET] == _TINY_CEILING - 1
+    assert response.truncated.dropped_by_type == {_TYPE_SECRET: 1}
+
+
+@pytest.mark.asyncio
+async def test_severity_still_beats_the_share_between_types(monkeypatch, _osv):
+    """Fairness is within one severity only: a LOW finding must never displace a CRITICAL one."""
+    monkeypatch.setattr(adhoc, "ADHOC_MAX_FINDINGS", _TINY_CEILING)
+    request = AdhocAnalyzeRequest(
+        sboms=[_SBOM],
+        scanners={
+            "trufflehog": _trufflehog(_TINY_CEILING - 1),
+            "opengrep": _opengrep(_TINY_CEILING, _CROWDED_PATH),
+        },
+        analyzers=[_OSV],
+        apply_global_waivers=False,
+    )
+
+    response = await _run(request)
+
+    assert {record["severity"] for record in response.findings} == {_CRITICAL}
+    assert response.truncated.dropped_by_severity == {_LOW: _TINY_CEILING}
 
 
 # ── The input-shape ceiling

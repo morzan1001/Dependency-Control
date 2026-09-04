@@ -17,6 +17,7 @@ from app.api.v1.helpers.responses import RESP_AUTH_400
 from app.core.config import settings
 from app.core.constants import (
     ADHOC_DEADLINE_SECONDS,
+    ADHOC_MAX_FINDINGS,
     ADHOC_RATE_LIMIT_PER_HOUR,
     ADHOC_RATE_LIMIT_PER_MINUTE,
     MAX_ADHOC_BODY_BYTES,
@@ -50,8 +51,13 @@ Posted scanner output is validated entry by entry against the same models `/api/
 uses. A scanner whose entries do not validate is reported in `analyzers.errored` and contributes
 no findings, so a report the pipeline could not read never reads as an all-clear.
 
+At most {max_findings} findings are returned. Past that the set is cut by severity, and equally
+severe findings are shared out over the finding types present so no one type can evict another.
+`truncated` is null when the whole result is returned; otherwise it counts what was dropped, by
+type and by severity, and `stats` describes only what came back.
+
 `format: "html"` returns the same result as a standalone report document instead of JSON.
-"""
+""".format(max_findings=ADHOC_MAX_FINDINGS)
 
 _HTML_RESPONSE: dict[int | str, dict[str, Any]] = {200: {"content": {"text/html": {"schema": {"type": "string"}}}}}
 

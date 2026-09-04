@@ -73,6 +73,16 @@ class AnalyzerReport(BaseModel):
     notes: dict[str, str] = Field(default_factory=dict)
 
 
+class AdhocTruncation(BaseModel):
+    """What the findings ceiling cut. On a security endpoint "something was dropped" is not an
+    answer: a caller has to be able to see whether a CRITICAL or a whole finding type went."""
+
+    limit: int
+    dropped: int
+    dropped_by_type: dict[str, int] = Field(default_factory=dict)
+    dropped_by_severity: dict[str, int] = Field(default_factory=dict)
+
+
 class AdhocAnalyzeResponse(BaseModel):
     findings: list[dict[str, Any]] = Field(default_factory=list)
     stats: Stats = Field(default_factory=Stats)
@@ -83,7 +93,8 @@ class AdhocAnalyzeResponse(BaseModel):
     analyzers: AnalyzerReport = Field(default_factory=AnalyzerReport)
     waivers_applied: Literal["global", "none"] = "none"
     waived_count: int = 0
-    truncated: bool = False
+    # Null when the whole result is returned, so a caller never has to read a count to find out.
+    truncated: AdhocTruncation | None = None
 
 
 # ── Ad-hoc analysis API key management ──────────────────────────────────

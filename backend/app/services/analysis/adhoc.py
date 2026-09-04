@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import re
+from collections import Counter, deque
 from dataclasses import dataclass
 from typing import Any
 
@@ -13,7 +14,6 @@ from app.core.constants import (
     ADHOC_MAX_SBOM_EVIDENCE_ENTRIES,
     ADHOC_MAX_SCANNER_FINDINGS,
     get_severity_value,
-    sort_by_severity,
 )
 from pydantic import BaseModel, ValidationError
 
@@ -21,7 +21,7 @@ from app.models.crypto_asset import CryptoAsset
 from app.models.match_signature import MatchSignature
 from app.models.system import SystemSettings
 from app.models.waiver import Waiver
-from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AnalyzerReport
+from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AdhocTruncation, AnalyzerReport
 from app.schemas.kics import KicsQuery
 from app.schemas.opengrep import OpenGrepFinding
 from app.schemas.projections import CallgraphMinimal
@@ -54,6 +54,8 @@ ADHOC_SLOTS = asyncio.Semaphore(1)
 _UNKNOWN_ANALYZER = "unknown analyzer"
 _EMPTY_PAYLOAD = "empty payload"
 _PARTIAL_COVERAGE = "partial coverage: {reason}"
+# What a record with no severity is counted as, matching the report renderer's own label.
+_UNKNOWN_SEVERITY = "UNKNOWN"
 _ENRICHMENT = "epss_kev"
 _REACHABILITY = "reachability"
 _VULNERABILITY = "vulnerability"
@@ -275,16 +277,64 @@ def _reject_unaffordable_input(request: AdhocAnalyzeRequest) -> None:
         raise AdhocInputTooLarge(_TOO_MANY_SCANNER_FINDINGS.format(count=posted, limit=ADHOC_MAX_SCANNER_FINDINGS))
 
 
-def _cap_findings(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], bool]:
-    """Keep the most severe findings when the set has to be cut.
+def _by_descending_severity(records: list[dict[str, Any]]) -> list[tuple[str, list[dict[str, Any]]]]:
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        buckets.setdefault(str(record.get("severity") or _UNKNOWN_SEVERITY), []).append(record)
+    return sorted(buckets.items(), key=lambda bucket: get_severity_value(bucket[0]), reverse=True)
 
-    The aggregator orders by type name, where ``vulnerability`` sorts last, so a head slice
-    would drop every CVE before the first secret.
+
+def _fair_share(bucket: list[dict[str, Any]], budget: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Take up to ``budget`` records of one severity, round-robin over the finding types present.
+
+    Equally severe findings are equally worth returning, so the type that posted thousands takes
+    its share rather than the whole ceiling.
+    """
+    by_type: dict[str, deque[dict[str, Any]]] = {}
+    for record in bucket:
+        by_type.setdefault(str(record.get("type")), deque()).append(record)
+
+    kept: list[dict[str, Any]] = []
+    queues = list(by_type.values())
+    while queues and len(kept) < budget:
+        for queue in list(queues):
+            if len(kept) >= budget:
+                break
+            kept.append(queue.popleft())
+            if not queue:
+                queues.remove(queue)
+    return kept, [record for queue in queues for record in queue]
+
+
+def _counted(records: list[dict[str, Any]], field: str) -> dict[str, int]:
+    counts: Counter[str] = Counter(str(record.get(field) or _UNKNOWN_SEVERITY) for record in records)
+    return dict(sorted(counts.items()))
+
+
+def _cap_findings(records: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], AdhocTruncation | None]:
+    """Keep the most severe findings when the set has to be cut, and say what went.
+
+    Severity decides first. Within one severity the aggregator's own order decides nothing: it
+    orders by type name, where ``vulnerability`` sorts last, so a stable sort at the ceiling
+    drops the CVE and keeps five thousand equally severe secrets.
     """
     if len(records) <= ADHOC_MAX_FINDINGS:
-        return records, False
+        return records, None
     logger.warning("adhoc: capping %d findings at %d", len(records), ADHOC_MAX_FINDINGS)
-    return sort_by_severity(records)[:ADHOC_MAX_FINDINGS], True
+
+    kept: list[dict[str, Any]] = []
+    dropped: list[dict[str, Any]] = []
+    for _severity, bucket in _by_descending_severity(records):
+        taken, left = _fair_share(bucket, ADHOC_MAX_FINDINGS - len(kept))
+        kept.extend(taken)
+        dropped.extend(left)
+
+    return kept, AdhocTruncation(
+        limit=ADHOC_MAX_FINDINGS,
+        dropped=len(dropped),
+        dropped_by_type=_counted(dropped, "type"),
+        dropped_by_severity=_counted(dropped, "severity"),
+    )
 
 
 @dataclass(frozen=True)
