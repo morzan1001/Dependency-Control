@@ -2,6 +2,7 @@ import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Scan } from '@/types/scan'
 import { hasUnrecordedRelease } from '@/lib/releases'
+import { resolveRun } from '@/lib/scan-run'
 import { isScanUsable } from '@/lib/scan-status'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
 import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
@@ -21,15 +22,6 @@ import { formatDateTime, shortCommitHash } from '@/lib/utils'
 interface ProjectScansProps {
   projectId: string
 }
-
-const getEffectiveScanData = (scan: Scan) => {
-    const source = scan.latest_run || scan;
-    return {
-        stats: source.stats || { critical: 0, high: 0, medium: 0, low: 0 },
-        status: source.status,
-        date: source.completed_at || source.created_at || scan.created_at
-    };
-};
 
 export function ProjectScans({ projectId }: ProjectScansProps) {
   const [page, setPage] = useState(1)
@@ -91,7 +83,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
       let prevCompleted: Scan | undefined
       for (const scan of chronological) {
         if (prevCompleted) partners.set(scan.id, prevCompleted)
-        if (isScanUsable(getEffectiveScanData(scan).status)) prevCompleted = scan
+        if (isScanUsable(resolveRun(scan).status)) prevCompleted = scan
       }
     }
     return partners
@@ -217,7 +209,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                     <div className="flex items-center gap-2">
                       <Calendar className="h-4 w-4 text-muted-foreground" />
                       {(() => {
-                          const { date } = getEffectiveScanData(scan);
+                          const { date } = resolveRun(scan);
                           return formatDateTime(date);
                       })()}
                     </div>
@@ -328,7 +320,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                   <TableCell>
                     <div className="flex gap-2">
                       {(() => {
-                          const { stats } = getEffectiveScanData(scan);
+                          const { stats } = resolveRun(scan);
                           return (
                               <>
                                 {(stats.critical || 0) > 0 && (
@@ -352,7 +344,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <ScanStatusBadge status={getEffectiveScanData(scan).status} failedAnalyzers={scan.failed_analyzers} />
+                    <ScanStatusBadge status={resolveRun(scan).status} failedAnalyzers={scan.failed_analyzers} />
                   </TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     {prevScan && (

@@ -109,6 +109,36 @@ describe('ProjectScans - Delta comparison partner', () => {
   })
 })
 
+describe('ProjectScans - a scan whose rescan is still queued', () => {
+  const OWN_CRITICAL = 4
+  const RESCAN_ID = 'main-1-rescan'
+  const NO_HIGH_RISKS = 'No high risks'
+
+  function queuedRescan(): ScanWithReleases {
+    return makeScan({
+      id: 'main-1',
+      stats: { critical: OWN_CRITICAL, high: 0, medium: 0, low: 0 },
+      latest_rescan_id: RESCAN_ID,
+      // A queued rescan has analysed nothing yet, so its summary carries no stats.
+      latest_run: { scan_id: RESCAN_ID, status: 'pending' },
+    })
+  }
+
+  it('keeps the findings the scan itself reports instead of reading the queue as clean', () => {
+    renderScans([queuedRescan()])
+
+    expect(screen.getByText(String(OWN_CRITICAL))).toBeInTheDocument()
+    expect(screen.queryByText(NO_HIGH_RISKS)).not.toBeInTheDocument()
+  })
+
+  it('shows the status of the run those findings came from', () => {
+    renderScans([queuedRescan()])
+
+    expect(screen.getByText('completed')).toBeInTheDocument()
+    expect(screen.queryByText('pending')).not.toBeInTheDocument()
+  })
+})
+
 describe('ProjectScans - release', () => {
   it('renders the release badge with its environment', () => {
     renderScans([

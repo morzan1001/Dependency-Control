@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProjectScans, useScanResults } from '@/hooks/queries/use-scans'
 import { useProjectWaivers } from '@/hooks/queries/use-waivers'
-import { EnhancedStats, Scan, ScanReleaseRef, ScanWithReleases } from '@/types/scan'
+import { Scan, ScanReleaseRef, ScanWithReleases } from '@/types/scan'
+import { resolveRun } from '@/lib/scan-run'
 import { isScanUsable } from '@/lib/scan-status'
 import { highestRiskBranch } from '@/lib/branches'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -22,20 +23,6 @@ import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
 interface ProjectOverviewProps {
   projectId: string
   selectedBranches: string[]
-}
-
-interface ResolvedRun {
-  scanId: string
-  stats: EnhancedStats
-}
-
-// A rescan reports on latest_run, which announces itself while it is still queued. Numbers and
-// identity are resolved together so no tile can link to a scan other than the one it counted.
-function resolveRun(scan: Scan | undefined): ResolvedRun | undefined {
-  if (!scan) return undefined
-  const run = scan.latest_run
-  if (run?.stats) return { scanId: run.scan_id, stats: run.stats }
-  return { scanId: scan.id, stats: scan.stats || {} }
 }
 
 export function ProjectOverview({ projectId, selectedBranches }: ProjectOverviewProps) {
@@ -102,7 +89,8 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   const releaseScan = latestRelease?.scan;
   const headScan = activeBranch ? latestScansByBranch[activeBranch] : undefined;
   const releaseShown = showRelease ? releaseScan : undefined;
-  const activeRun = resolveRun(releaseShown ?? headScan);
+  const activeScan = releaseShown ?? headScan;
+  const activeRun = activeScan ? resolveRun(activeScan) : undefined;
   const activeScanId = activeRun?.scanId;
   const headlineSource = releaseShown
     ? `Release on ${releaseShown.branch}`
