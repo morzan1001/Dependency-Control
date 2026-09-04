@@ -9,8 +9,11 @@ import pytest
 
 from app.core.constants import MAX_RESCAN_HOPS, SCAN_STATUS_COMPLETED
 from scripts.backfill_rescan_lineage import (
+    EXIT_OK,
+    EXIT_UNRESOLVED,
     NO_LIMIT,
     apply_lineage_plan,
+    exit_code_for,
     plan_lineage_backfill,
     run_lineage_backfill,
 )
@@ -147,6 +150,53 @@ async def test_a_pointer_cycle_is_reported_and_left_alone() -> None:
     assert sorted(plan.unresolved) == [_CYCLE_LEFT, _CYCLE_RIGHT]
     assert plan.repoints == ()
     assert (await db.scans.find_one({"_id": _CYCLE_LEFT}))["original_scan_id"] == _CYCLE_RIGHT
+
+
+@pytest.mark.asyncio
+async def test_a_write_pass_that_leaves_anything_unresolved_fails() -> None:
+    db = FakeDatabase()
+    await db.scans.insert_one(_scan(_CYCLE_LEFT, is_rescan=True, original_scan_id=_CYCLE_RIGHT))
+    await db.scans.insert_one(_scan(_CYCLE_RIGHT, is_rescan=True, original_scan_id=_CYCLE_LEFT))
+
+    plan = await _run(db, execute=True)
+
+    assert exit_code_for(plan, execute=True) == EXIT_UNRESOLVED
+
+
+@pytest.mark.asyncio
+async def test_a_dry_run_reports_the_leftovers_without_failing() -> None:
+    """The dry run is a read; only a write pass claims to have finished the job."""
+    db = FakeDatabase()
+    await db.scans.insert_one(_scan(_CYCLE_LEFT, is_rescan=True, original_scan_id=_CYCLE_RIGHT))
+    await db.scans.insert_one(_scan(_CYCLE_RIGHT, is_rescan=True, original_scan_id=_CYCLE_LEFT))
+
+    plan = await _run(db, execute=False)
+
+    assert plan.unresolved
+    assert exit_code_for(plan, execute=False) == EXIT_OK
+
+
+@pytest.mark.asyncio
+async def test_a_limited_pass_is_partial_by_request_and_does_not_fail() -> None:
+    db = FakeDatabase()
+    await db.scans.insert_one(_scan(_CYCLE_LEFT, is_rescan=True, original_scan_id=_CYCLE_RIGHT))
+    await db.scans.insert_one(_scan(_CYCLE_RIGHT, is_rescan=True, original_scan_id=_CYCLE_LEFT))
+    await _seed_chain(db)
+
+    plan = await _run(db, execute=True, limit=_ONE_REWRITE)
+
+    assert plan.limit_reached is True
+    assert exit_code_for(plan, execute=True) == EXIT_OK
+
+
+@pytest.mark.asyncio
+async def test_a_write_pass_that_resolved_everything_succeeds() -> None:
+    db = await _seeded_db()
+
+    plan = await _run(db, execute=True)
+
+    assert plan.repoints
+    assert exit_code_for(plan, execute=True) == EXIT_OK
 
 
 @pytest.mark.asyncio

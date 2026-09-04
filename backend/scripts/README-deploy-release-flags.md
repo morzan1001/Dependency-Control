@@ -449,6 +449,12 @@ reports as unresolved.
 names each one. Re-run it: every pass shortens the chain beneath them, so the count falls to zero.
 A count that stops falling is a pointer cycle, and the ids it names need a human.
 
+You do not have to notice that number. An `--execute` pass that finishes with anything unresolved
+exits **2**, so run `--execute` until it exits 0 — as a Job, that is a failed pod per pass, and each
+failed pass still applied its own plan, so the next one starts from a shorter chain. The smoke test
+exits 0 whatever it leaves behind: `--limit` makes a pass partial by request. Exit 1 is a connection
+or runtime error and means nothing was completed.
+
 Verify by re-running the second query: it must return no rows.
 
 Retention exempts a scan named by an `original_scan_id`, so the intermediate links lose that

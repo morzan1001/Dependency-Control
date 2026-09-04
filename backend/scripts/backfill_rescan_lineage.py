@@ -16,6 +16,7 @@ Usage (in-pod): `python -m scripts.backfill_rescan_lineage --help` from /app.
 Exit codes:
     0 — completed (dry-run or execute)
     1 — connection or runtime error
+    2 — an --execute pass finished with pointers still past the bound; run it again
 """
 
 import argparse
@@ -33,6 +34,9 @@ from app.core.constants import MAX_RESCAN_HOPS
 DEFAULT_BATCH_SIZE = 500
 DEFAULT_SLEEP_MS = 50
 NO_LIMIT = 0
+EXIT_OK = 0
+EXIT_ERROR = 1
+EXIT_UNRESOLVED = 2
 _REPORT_LABEL_WIDTH = 30
 
 _RESCAN_PROJECTION = {"_id": 1, "original_scan_id": 1}
@@ -192,6 +196,14 @@ def _report(plan: LineagePlan, mode: str) -> None:
         print(f"[{mode}] unresolved: {scan_id}")
 
 
+def exit_code_for(plan: LineagePlan, *, execute: bool) -> int:
+    """Non-zero while a write pass leaves pointers past the bound: it needs another pass, and a
+    failed command is harder to walk past than a count. A ``--limit`` run is partial by request."""
+    if execute and not plan.limit_reached and plan.unresolved:
+        return EXIT_UNRESOLVED
+    return EXIT_OK
+
+
 async def run(args: argparse.Namespace) -> int:
     client: AsyncIOMotorClient = AsyncIOMotorClient(settings.MONGODB_URL)
     try:
@@ -211,12 +223,18 @@ async def run(args: argparse.Namespace) -> int:
         _report(plan, mode)
         if not args.execute:
             print("Dry-run (pass --execute to write).")
+        code = exit_code_for(plan, execute=args.execute)
+        if code == EXIT_UNRESOLVED:
+            print(
+                f"{len(plan.unresolved)} pointer(s) still past the bound; run this again.",
+                file=sys.stderr,
+            )
+        return code
     except Exception as exc:
         print(f"backfill_rescan_lineage: ERROR — {exc}", file=sys.stderr)
-        return 1
+        return EXIT_ERROR
     finally:
         client.close()
-    return 0
 
 
 def main() -> int:
