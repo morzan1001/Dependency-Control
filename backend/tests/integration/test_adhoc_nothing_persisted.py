@@ -68,14 +68,17 @@ _REDIS_CLIENT_LABEL = "redis.asyncio.Redis"
 _REDIS_FROM_URL_LABEL = "redis.asyncio.from_url"
 
 # Captured at import, before any test rebinds them, so the fixture patches by original identity.
-_DRIVER_ENTRY_POINTS: tuple[tuple[str, Any], ...] = (
+_MONGO_DRIVER_ENTRY_POINTS: tuple[tuple[str, Any], ...] = (
     (_MOTOR_CLIENT_LABEL, motor_asyncio.AsyncIOMotorClient),
     (_GRIDFS_BUCKET_LABEL, motor_asyncio.AsyncIOMotorGridFSBucket),
     (_PYMONGO_CLIENT_LABEL, pymongo.MongoClient),
     (_PYMONGO_ASYNC_CLIENT_LABEL, pymongo.AsyncMongoClient),
+)
+_REDIS_DRIVER_ENTRY_POINTS: tuple[tuple[str, Any], ...] = (
     (_REDIS_CLIENT_LABEL, redis.asyncio.Redis),
     (_REDIS_FROM_URL_LABEL, redis.asyncio.from_url),
 )
+_DRIVER_ENTRY_POINTS = _MONGO_DRIVER_ENTRY_POINTS + _REDIS_DRIVER_ENTRY_POINTS
 
 # Upstream reference lists shared by every caller: the key names the source, never the payload.
 _UPSTREAM_REFERENCE_CACHE_KEYS = frozenset(
@@ -105,6 +108,8 @@ _KEY_OWNER = "adhoc-user"
 _KEY_NAME = "ci"
 _KEY_DAYS = 30
 _ANALYZE_ADHOC = "analyze:adhoc"
+_RATE_LIMIT_PREFIX = "dc:adhoc:rl:"
+_ALLOWED = 1
 _FAILING_ANALYZER = "license_compliance"
 _CACHING_ANALYZER = "typosquatting"
 _ENRICHMENT = "epss_kev"
@@ -364,16 +369,30 @@ def _rebind_everywhere(monkeypatch: pytest.MonkeyPatch, replacements: list[tuple
                     monkeypatch.setattr(module, attribute, replacement, raising=False)
 
 
-@pytest.fixture
-def bypass_attempts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+def _install_tripwires(monkeypatch: pytest.MonkeyPatch, drivers: tuple[tuple[str, Any], ...]) -> list[str]:
     touched: list[str] = []
     replacements: list[tuple[Any, Any]] = [
         (getattr(mongodb, name), _BypassTripwire(f"app.db.mongodb.{name}", touched)) for name in _BYPASS_ENTRY_POINTS
     ]
-    replacements += [(original, _BypassTripwire(label, touched)) for label, original in _DRIVER_ENTRY_POINTS]
+    replacements += [(original, _BypassTripwire(label, touched)) for label, original in drivers]
     _rebind_everywhere(monkeypatch, replacements)
     monkeypatch.setattr(mongodb.db, "client", _TripwireClient(touched))
     return touched
+
+
+@pytest.fixture
+def bypass_attempts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    return _install_tripwires(monkeypatch, _DRIVER_ENTRY_POINTS)
+
+
+@pytest.fixture
+def mongo_bypass_attempts(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """Redis left untripwired for the HTTP layer, which opens it for the rate-limit window.
+
+    The analysis behind the endpoint still may not, so the caller of this fixture has to say
+    which Redis keys it accepts instead of accepting the whole datastore.
+    """
+    return _install_tripwires(monkeypatch, _MONGO_DRIVER_ENTRY_POINTS)
 
 
 # ── Nets 3 and 4: Redis key and value policy
@@ -675,8 +694,27 @@ async def _seed_adhoc_key(db: Any) -> str:
     return str(plaintext)
 
 
+class _RateLimitRedis:
+    """Serves the sliding-window script and records the key of every call."""
+
+    def __init__(self, keys: list[str]) -> None:
+        self._keys = keys
+
+    async def __aenter__(self) -> "_RateLimitRedis":
+        return self
+
+    async def __aexit__(self, *_exc: Any) -> bool:
+        return False
+
+    async def eval(self, _script: str, _numkeys: int, key: str, *_args: Any) -> list[int]:
+        self._keys.append(key)
+        return [_ALLOWED, 0]
+
+
 @pytest.mark.asyncio
-async def test_the_endpoint_persists_nothing(injected_database, bypass_attempts, recording_cache, filesystem_watch):
+async def test_the_endpoint_persists_nothing(
+    injected_database, mongo_bypass_attempts, recording_cache, filesystem_watch, monkeypatch
+):
     """Same guarantee one layer up: authentication resolves a key and stamps nothing on it."""
     from httpx import ASGITransport, AsyncClient
 
@@ -687,6 +725,9 @@ async def test_the_endpoint_persists_nothing(injected_database, bypass_attempts,
     before = await collection_counts(db)
     # The key and its owner are the caller's credentials, not the run's output.
     db.writes.clear()
+
+    redis_keys: list[str] = []
+    monkeypatch.setattr(redis.asyncio, "from_url", lambda *_a, **_k: _RateLimitRedis(redis_keys))
 
     request = _full_request()
     async with AsyncClient(transport=ASGITransport(app=app), base_url=_BASE_URL) as ac:
@@ -703,11 +744,15 @@ async def test_the_endpoint_persists_nothing(injected_database, bypass_attempts,
 
     assert_no_write_calls(db)
     await assert_no_new_documents(db, before)
-    assert bypass_attempts == []
+    assert mongo_bypass_attempts == []
     assert_no_caller_derived_cache_writes(recording_cache.writes)
     assert_no_caller_data_in_shared_cache(recording_cache.writes)
     assert_no_files_left_behind(filesystem_watch)
     assert recording_cache.writes == []
+
+    # The one thing the HTTP layer is allowed to leave in a datastore, named rather than excused.
+    assert redis_keys, "the rate-limit window must reach Redis, or this net is vacuous"
+    assert all(key.startswith(_RATE_LIMIT_PREFIX) for key in redis_keys), redis_keys
 
 
 @pytest.mark.asyncio

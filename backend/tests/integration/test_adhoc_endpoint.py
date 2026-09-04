@@ -83,6 +83,16 @@ def _bearer(token):
     return {"Authorization": f"Bearer {token}"}
 
 
+@pytest.fixture(autouse=True)
+def _rate_limit_allows(monkeypatch):
+    """The window has its own file and its own Redis; here it must not depend on a listening port."""
+
+    async def _allow(_token_prefix):
+        return None
+
+    monkeypatch.setattr("app.api.v1.endpoints.analyze._enforce_rate_limit", _allow)
+
+
 @pytest.mark.asyncio
 async def test_analyze_returns_the_full_envelope(client, db):
     _, token = await _issue_key(db)
