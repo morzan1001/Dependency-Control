@@ -134,12 +134,7 @@ async def get_project_recommendations(
     previous_scan_findings = None
     scan_history = None
 
-    previous_scans = await scan_repo.find_many(
-        {"project_id": project_id, "_id": {"$ne": scan_id}},
-        limit=1,
-        sort=[("created_at", -1)],
-    )
-    previous_scan = previous_scans[0] if previous_scans else None
+    previous_scan = await scan_repo.get_preceding_scan(scan_id)
 
     if previous_scan:
         previous_scan_findings = await finding_repo.find_by_scan(previous_scan.id, limit=ANALYTICS_MAX_QUERY_LIMIT)
