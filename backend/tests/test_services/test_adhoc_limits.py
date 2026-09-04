@@ -12,9 +12,12 @@ from app.core.constants import (
 from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.services.analysis import adhoc
 from app.services.analysis.adhoc import AdhocInputTooLarge, run_adhoc_analysis
+from app.services.sbom_parser import MAX_COMPONENT_NESTING_DEPTH
 from tests.mocks.fake_mongo import FakeDatabase
 
 _OSV = "osv"
+_FIRST_SBOM_LABEL = "sbom#1"
+_DROPPED_BY_DEPTH = "nesting-depth"
 _CVE = "CVE-2024-99999"
 _CRITICAL = "CRITICAL"
 _COMPONENT = "requests"
@@ -64,6 +67,17 @@ def _sbom_with_components(count: int) -> dict:
             for i in range(count)
         ],
     }
+
+
+def _nested(sbom: dict, depth: int = 1) -> dict:
+    """The same components wrapped in ``depth`` parent components, which is how CycloneDX
+    expresses a bundled application and how the parser reads it back."""
+    components = sbom["components"]
+    for level in range(depth):
+        components = [
+            {"type": "application", "bom-ref": f"wrapper-{level}", "name": f"wrapper-{level}", "components": components}
+        ]
+    return {**sbom, "components": components}
 
 
 def _opengrep(count: int, path: str) -> dict:
@@ -208,6 +222,40 @@ async def test_the_component_budget_is_shared_across_posted_sboms():
 
     with pytest.raises(AdhocInputTooLarge, match=str(ADHOC_MAX_SBOM_COMPONENTS)):
         await _run(request)
+
+
+@pytest.mark.asyncio
+async def test_nesting_the_components_does_not_buy_a_second_budget():
+    """One wrapper component would otherwise walk the whole document past the count."""
+    request = AdhocAnalyzeRequest(
+        sboms=[_nested(_sbom_with_components(ADHOC_MAX_SBOM_COMPONENTS))], analyzers=[], apply_global_waivers=False
+    )
+
+    with pytest.raises(AdhocInputTooLarge, match=str(ADHOC_MAX_SBOM_COMPONENTS)):
+        await _run(request)
+
+
+@pytest.mark.asyncio
+async def test_nesting_the_evidence_does_not_buy_a_second_budget():
+    request = AdhocAnalyzeRequest(
+        sboms=[_nested(_sbom_with_occurrences(_OCCURRENCE_ATTACK))], analyzers=[], apply_global_waivers=False
+    )
+
+    with pytest.raises(AdhocInputTooLarge, match=str(ADHOC_MAX_SBOM_EVIDENCE_ENTRIES)):
+        await _run(request)
+
+
+@pytest.mark.asyncio
+async def test_components_below_the_parser_depth_are_not_counted():
+    """The parser counts and drops them without flattening, so they never reach the stage the
+    ceiling protects and charging for them would refuse a document the pipeline handles."""
+    sbom = _nested(_sbom_with_components(ADHOC_MAX_SBOM_COMPONENTS + 1), depth=MAX_COMPONENT_NESTING_DEPTH)
+
+    started = time.perf_counter()
+    response = await _run(AdhocAnalyzeRequest(sboms=[sbom], analyzers=[], apply_global_waivers=False))
+
+    assert time.perf_counter() - started < _AFFORDABLE_SECONDS
+    assert _DROPPED_BY_DEPTH in response.analyzers.skipped_inputs[_FIRST_SBOM_LABEL]
 
 
 @pytest.mark.asyncio

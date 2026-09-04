@@ -38,7 +38,7 @@ from app.services.reachability_enrichment import (
     enrich_findings_from_callgraphs,
 )
 from app.services.recommendations import recommendation_engine
-from app.services.sbom_parser import parse_sbom
+from app.services.sbom_parser import MAX_COMPONENT_NESTING_DEPTH, parse_sbom
 from app.services.stats import _resolve_finding_id_query
 
 logger = logging.getLogger(__name__)
@@ -190,12 +190,25 @@ _TOO_MANY_EVIDENCE = "{count} component evidence entries exceeds the ad-hoc limi
 _TOO_MANY_SCANNER_FINDINGS = "{count} posted scanner findings exceeds the ad-hoc limit of {limit}"
 
 
-def _components_of(sbom: dict[str, Any]) -> list[dict[str, Any]]:
+def _components_of(sbom: dict[str, Any], depth: int = 0) -> list[dict[str, Any]]:
+    """Every component the parser will flatten, nested ones included.
+
+    Bounded at the parser's own depth, because everything below it the parser counts and drops
+    without ever reaching the stage this ceiling protects. One wrapper component is otherwise
+    enough to walk a document of any size past both counts.
+    """
     entries: list[dict[str, Any]] = []
+    if depth >= MAX_COMPONENT_NESTING_DEPTH:
+        return entries
     for key in _COMPONENT_KEYS:
         value = sbom.get(key)
-        if isinstance(value, list):
-            entries.extend(entry for entry in value if isinstance(entry, dict))
+        if not isinstance(value, list):
+            continue
+        for entry in value:
+            if not isinstance(entry, dict):
+                continue
+            entries.append(entry)
+            entries.extend(_components_of(entry, depth + 1))
     return entries
 
 
