@@ -11,14 +11,18 @@ from app.schemas.sbom import ParsedSBOM
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _build_settings_resolver
 from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzers
+from app.services.analysis.stats import build_epss_kev_summary
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
+from app.services.enrichment.service import VulnerabilityEnrichmentService
 from app.services.sbom_parser import parse_sbom
 
 logger = logging.getLogger(__name__)
 
 _UNKNOWN_ANALYZER = "unknown analyzer"
 _EMPTY_PAYLOAD = "empty payload"
+_ENRICHMENT = "epss_kev"
+_VULNERABILITY = "vulnerability"
 _NO_COMPONENTS = "no components could be parsed (detected format: {sbom_format})"
 _DROPPED_COMPONENTS = "{count} component(s) dropped by the parser ({reasons})"
 
@@ -238,6 +242,24 @@ def resolve_adhoc_analyzers(requested: list[str] | None, report: AnalyzerReport)
     return resolved
 
 
+async def _enrich_vulnerabilities(records: list[dict[str, Any]], report: AnalyzerReport) -> dict[str, Any]:
+    """Add EPSS/KEV to the vulnerability records through a service private to this request.
+
+    The module singleton carries a mutable GitHub token shared with background scans.
+    """
+    vulnerabilities = [record for record in records if record.get("type") == _VULNERABILITY]
+    service = VulnerabilityEnrichmentService()
+    try:
+        await service.enrich_findings(vulnerabilities)
+        _record_ran(report, _ENRICHMENT)
+    except Exception as exc:
+        logger.warning("adhoc: EPSS/KEV enrichment failed: %s", exc)
+        _record_errored(report, _ENRICHMENT, str(exc))
+    finally:
+        await service.close()
+    return dict(build_epss_kev_summary(vulnerabilities))
+
+
 async def run_adhoc_analysis(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeResponse:
     """Analyze the posted SBOMs and scanner results in memory. Writes nothing.
 
@@ -281,4 +303,6 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         # Findings are addressed by ``finding_id`` everywhere the scan-backed API exposes them.
         record["finding_id"] = record["id"]
 
-    return AdhocAnalyzeResponse(findings=records, analyzers=report)
+    epss_kev_summary = await _enrich_vulnerabilities(records, report)
+
+    return AdhocAnalyzeResponse(findings=records, epss_kev_summary=epss_kev_summary, analyzers=report)
