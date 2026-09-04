@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from app.core.constants import RETENTION_PROTECTED_FLAG_VALUES
 from app.core.housekeeping import (
     _archive_scans_and_delete,
     _delete_scans_and_related_data,
@@ -195,7 +196,7 @@ class TestRunHousekeepingArchive:
         with (
             patch(f"{MODULE}.get_database", new_callable=AsyncMock, return_value=mock_db),
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
-            patch(f"{MODULE}._get_referenced_scan_ids", new_callable=AsyncMock, return_value=[]),
+            patch(f"{MODULE}._referenced_scan_ids", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock) as mock_handle,
         ):
             asyncio.run(run_housekeeping())
@@ -249,7 +250,7 @@ class TestRunHousekeepingArchive:
         with (
             patch(f"{MODULE}.get_database", new_callable=AsyncMock, return_value=mock_db),
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
-            patch(f"{MODULE}._get_referenced_scan_ids", new_callable=AsyncMock, return_value=[]),
+            patch(f"{MODULE}._referenced_scan_ids", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock),
             patch(f"{MODULE}.reap_orphan_gridfs_files", new_callable=AsyncMock),
         ):
@@ -258,7 +259,7 @@ class TestRunHousekeepingArchive:
         find_call = mock_db.scans.find.call_args
         query = find_call[0][0]
         assert "pinned" in query
-        assert query["pinned"] == {"$ne": True}
+        assert query["pinned"] == {"$nin": RETENTION_PROTECTED_FLAG_VALUES}
 
     def test_global_mode_zero_retention_days_skips(self):
         from app.core.housekeeping import run_housekeeping
@@ -317,7 +318,7 @@ async def test_housekeeping_global_skips_in_progress_scans(monkeypatch):
     settings_repo.get = AsyncMock(return_value=_SystemSettings())
 
     monkeypatch.setattr("app.core.housekeeping.SystemSettingsRepository", lambda _db: settings_repo)
-    monkeypatch.setattr("app.core.housekeeping._get_referenced_scan_ids", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.core.housekeeping._referenced_scan_ids", AsyncMock(return_value=set()))
     monkeypatch.setattr("app.core.housekeeping.get_database", AsyncMock(return_value=db))
     monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
 
@@ -369,7 +370,7 @@ async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch
     settings_repo.get = AsyncMock(return_value=_SystemSettings())
 
     monkeypatch.setattr("app.core.housekeeping.SystemSettingsRepository", lambda _db: settings_repo)
-    monkeypatch.setattr("app.core.housekeeping._get_referenced_scan_ids", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.core.housekeeping._referenced_scan_ids", AsyncMock(return_value=set()))
     monkeypatch.setattr("app.core.housekeeping.get_database", AsyncMock(return_value=db))
     monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
 

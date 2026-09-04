@@ -5,9 +5,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from app.core.constants import RETENTION_PROTECTED_FLAG_VALUES
+
 MODULE = "app.core.housekeeping"
 
-_NOT_A_RELEASE = {"$ne": True}
+_NOT_A_RELEASE = {"$nin": RETENTION_PROTECTED_FLAG_VALUES}
 _RETENTION_DAYS = 30
 _RETENTION_ACTION = "delete"
 _PROJECT_ID = "p1"
@@ -28,7 +30,7 @@ def _patch_common(monkeypatch, db, settings_obj):
     monkeypatch.setattr(
         f"{MODULE}.SystemSettingsRepository", lambda _db: MagicMock(get=AsyncMock(return_value=settings_obj))
     )
-    monkeypatch.setattr(f"{MODULE}._get_referenced_scan_ids", AsyncMock(return_value=[]))
+    monkeypatch.setattr(f"{MODULE}._referenced_scan_ids", AsyncMock(return_value=set()))
     monkeypatch.setattr(f"{MODULE}.is_archive_enabled", lambda: False)
 
 

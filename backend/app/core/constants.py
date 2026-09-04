@@ -1013,6 +1013,10 @@ RESTORE_INSERT_BATCH_SIZE = 1000
 # Housekeeping
 ARCHIVE_BATCH_SIZE = 50
 
+# BSON int32 is a different type from bool, so a flag written outside the model as 1 satisfies
+# {"$ne": True} and the scan is deleted for good. The retention guards spell out both spellings.
+RETENTION_PROTECTED_FLAG_VALUES: list[object] = [True, 1]
+
 # Orphan reaper: only delete S3 objects older than this without metadata
 ARCHIVE_ORPHAN_MIN_AGE_HOURS = 24
 

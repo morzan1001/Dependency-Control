@@ -21,6 +21,7 @@ from app.core.constants import (
     HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC,
     RETENTION_ACTION_ARCHIVE,
     RETENTION_ACTION_DELETE,
+    RETENTION_PROTECTED_FLAG_VALUES,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
     SCAN_USABLE_STATUSES,
@@ -47,23 +48,21 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-async def _get_referenced_scan_ids(db: Any) -> list[str]:
-    """Scan IDs referenced by rescans (via original_scan_id); retention must not delete these."""
-    cursor = db.scans.find(
-        {
-            "is_rescan": True,
-            "original_scan_id": {"$exists": True, "$ne": None},
-        },
-        {"original_scan_id": 1},
-    )
+async def _referenced_scan_ids(db: Any, scan_ids: list[str]) -> set[str]:
+    """Which of these scans a rescan points at (via original_scan_id); retention must not delete those.
 
-    referenced_ids = set()
-    async for doc in cursor:
+    Asked per batch rather than as one estate-wide set: the whole set spliced into the retention
+    cursor as ``$nin`` outgrows the 16 MB BSON document limit and the cursor stops opening at all.
+    """
+    referenced: set[str] = set()
+    async for doc in db.scans.find(
+        {"is_rescan": True, "original_scan_id": {"$in": scan_ids}},
+        {"original_scan_id": 1},
+    ):
         original_id = doc.get("original_scan_id")
         if original_id:
-            referenced_ids.add(original_id)
-
-    return list(referenced_ids)
+            referenced.add(original_id)
+    return referenced
 
 
 async def _collect_gridfs_ids(db: Any, scan_ids: list[str]) -> list[str]:
@@ -275,7 +274,9 @@ async def _rescan_targets(project: Project, db: Any) -> list[dict]:
     targets: list[dict] = []
     targeted_ids: set[str] = set()
 
-    tip = await db.scans.find_one(tip_source, sort=[("created_at", -1)])
+    # BSON dates are milliseconds, so two scans of one project can share a created_at; _id decides
+    # between them, or the tip alternates between passes and each alternate falls due immediately.
+    tip = await db.scans.find_one(tip_source, sort=[("created_at", -1), ("_id", 1)])
     if tip:
         targets.append(tip)
         targeted_ids.add(str(tip["_id"]))
@@ -486,18 +487,24 @@ async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, la
         )
 
 
+async def _unreferenced(db: Any, scan_ids: list[str]) -> list[str]:
+    referenced = await _referenced_scan_ids(db, scan_ids)
+    return [scan_id for scan_id in scan_ids if scan_id not in referenced]
+
+
 async def _process_scans_in_batches(
     db: Any, cursor: Any, action: str, label: str, batch_size: int = ARCHIVE_BATCH_SIZE
 ) -> None:
-    """Stream scan IDs from cursor and process retention in batches."""
+    """Stream scan IDs from cursor and process retention in batches, dropping the ones a rescan
+    still points at."""
     batch: list[str] = []
     async for doc in cursor:
         batch.append(str(doc["_id"]))
         if len(batch) >= batch_size:
-            await _handle_retention_action(db, batch, action, label)
+            await _handle_retention_action(db, await _unreferenced(db, batch), action, label)
             batch = []
     if batch:
-        await _handle_retention_action(db, batch, action, label)
+        await _handle_retention_action(db, await _unreferenced(db, batch), action, label)
 
 
 async def run_housekeeping() -> None:
@@ -524,17 +531,13 @@ async def run_housekeeping() -> None:
                     f"Processing scans older than {cutoff_date}"
                 )
 
-                # Don't delete/archive scans referenced by rescans.
-                referenced_scan_ids = await _get_referenced_scan_ids(db)
-
                 cursor = db.scans.find(
                     {
                         "created_at": {"$lt": cutoff_date},
-                        "_id": {"$nin": referenced_scan_ids},
-                        "pinned": {"$ne": True},
+                        "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
                         # A release answers "what is in production"; dropping it would take its
                         # findings, dependencies and SBOMs with it and orphan the resolver.
-                        "is_release": {"$ne": True},
+                        "is_release": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
                         "status": {"$nin": ["pending", "processing"]},
                     },
                     {"_id": 1},
@@ -567,9 +570,6 @@ async def run_housekeeping() -> None:
                 },
             ]
 
-            # Fetch referenced scan IDs once, not per group.
-            referenced_scan_ids = await _get_referenced_scan_ids(db)
-
             async for group in db.projects.aggregate(pipeline):
                 days = group["_id"]["days"]
                 action = group["_id"]["action"]
@@ -584,9 +584,8 @@ async def run_housekeeping() -> None:
                     {
                         "project_id": {"$in": project_ids},
                         "created_at": {"$lt": cutoff_date},
-                        "_id": {"$nin": referenced_scan_ids},
-                        "pinned": {"$ne": True},
-                        "is_release": {"$ne": True},
+                        "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
+                        "is_release": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
                         "status": {"$nin": ["pending", "processing"]},
                     },
                     {"_id": 1},
