@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Ad-hoc Analysis Report</title>
+  <style>
+    body { font-family: "Helvetica", "Arial", sans-serif; font-size: 13px; color: #222; margin: 24px; }
+    h1 { font-size: 24px; margin-bottom: 0.2em; }
+    h2 { font-size: 16px; border-bottom: 1px solid #ccc; padding-bottom: 4px; margin-top: 1.6em; }
+    .metadata { margin-top: 1em; width: 100%; border-collapse: collapse; }
+    .metadata th { text-align: left; width: 220px; padding: 4px 8px; background: #f4f4f4; }
+    .metadata td { padding: 4px 8px; }
+    .notice { margin-top: 1em; padding: 8px 12px; background: #fffbea; border-left: 4px solid #e0a800; }
+    .notice.unread { background: #fdecea; border-left-color: #c62828; }
+    .notice ul { margin: 6px 0 0; padding-left: 20px; }
+    .summary-grid { display: flex; gap: 8px; margin: 12px 0; flex-wrap: wrap; }
+    .summary-grid .card { flex: 1; min-width: 110px; padding: 12px; border: 1px solid #ddd;
+      text-align: center; border-radius: 4px; }
+    .summary-grid .card .count { font-size: 22px; font-weight: bold; }
+    .summary-grid .card .label { font-size: 11px; color: #666; margin-top: 4px; }
+    .summary-grid .critical { border-left: 4px solid #c62828; }
+    .summary-grid .high { border-left: 4px solid #ef6c00; }
+    .summary-grid .medium { border-left: 4px solid #f9a825; }
+    .summary-grid .low { border-left: 4px solid #558b2f; }
+    .summary-grid .score { border-left: 4px solid #1565c0; }
+    table.data { width: 100%; border-collapse: collapse; margin-top: 8px; }
+    table.data th { background: #f4f4f4; padding: 6px; text-align: left; font-size: 11px; }
+    table.data td { padding: 6px; border-top: 1px solid #eee; font-size: 12px; vertical-align: top; }
+    tr.sev-CRITICAL .severity { color: #c62828; font-weight: bold; }
+    tr.sev-HIGH .severity { color: #ef6c00; font-weight: bold; }
+    tr.sev-MEDIUM .severity { color: #f9a825; }
+    tr.waived td { color: #999; text-decoration: line-through; }
+    .coverage li { margin-bottom: 3px; }
+    footer { margin-top: 2em; color: #888; font-size: 11px; }
+  </style>
+</head>
+<body>
+
+<h1>Ad-hoc Analysis Report</h1>
+<table class="metadata">
+  <tr><th>Generated at</th><td>{{ generated_at }}</td></tr>
+  <tr><th>Findings</th><td>{{ findings_total }}</td></tr>
+  <tr><th>Dependencies enriched</th><td>{{ dependencies_total }}</td></tr>
+  <tr><th>Waivers applied</th><td>{{ waivers_applied }} ({{ waived_count }} finding(s) waived)</td></tr>
+</table>
+
+{% if analyzers.skipped_inputs %}
+<div class="notice unread">
+  <strong>Not every input was analysed.</strong> The findings below describe only what could be read,
+  so this report is not a verdict on the inputs listed here.
+  <ul>
+    {% for label, reason in analyzers.skipped_inputs.items() %}
+    <li><strong>{{ label }}:</strong> {{ reason }}</li>
+    {% endfor %}
+  </ul>
+</div>
+{% endif %}
+
+{% if truncated %}
+<div class="notice">
+  <strong>Result truncated:</strong> the findings ceiling was reached, so this report and its
+  statistics describe a bounded subset of the run.
+</div>
+{% endif %}
+
+<h2>Severity Summary</h2>
+<div class="summary-grid">
+  <div class="card critical"><div class="count">{{ stats.critical }}</div><div class="label">Critical</div></div>
+  <div class="card high"><div class="count">{{ stats.high }}</div><div class="label">High</div></div>
+  <div class="card medium"><div class="count">{{ stats.medium }}</div><div class="label">Medium</div></div>
+  <div class="card low"><div class="count">{{ stats.low }}</div><div class="label">Low</div></div>
+  <div class="card score"><div class="count">{{ "%.1f"|format(stats.risk_score) }}</div>
+    <div class="label">Risk score</div></div>
+  <div class="card score"><div class="count">{{ "%.1f"|format(stats.adjusted_risk_score) }}</div>
+    <div class="label">Adjusted</div></div>
+</div>
+
+<h2>Analyzer Coverage</h2>
+<ul class="coverage">
+  <li><strong>Ran:</strong> {{ analyzers.ran|join(', ') if analyzers.ran else 'none' }}</li>
+  {% for name, reasons in analyzers.errored.items() %}
+  <li><strong>Errored — {{ name }}:</strong> {{ reasons|join('; ') }}</li>
+  {% endfor %}
+  {% for name, reason in analyzers.skipped.items() %}
+  <li><strong>Skipped — {{ name }}:</strong> {{ reason }}</li>
+  {% endfor %}
+</ul>
+
+{% if analyzers.notes %}
+<h2>What Left This Process</h2>
+<p>Nothing from this request was stored. That is not the same as nothing being sent, and the
+  findings alone do not say which policy graded them.</p>
+<ul class="coverage">
+  {% for name, note in analyzers.notes.items() %}
+  <li><strong>{{ name }}:</strong> {{ note }}</li>
+  {% endfor %}
+</ul>
+{% endif %}
+
+{% if reachability_summary is not none %}
+<h2>Reachability</h2>
+<table class="metadata">
+  <tr><th>Languages</th><td>{{ reachability_summary.languages|join(', ') }}</td></tr>
+  <tr><th>Analyzed</th><td>{{ reachability_summary.analyzed }}</td></tr>
+  <tr><th>Reachable</th><td>{{ reachability_summary.reachable_total }}</td></tr>
+  <tr><th>Unreachable</th><td>{{ reachability_summary.unreachable_total }}</td></tr>
+</table>
+{% endif %}
+
+{% if epss_kev_summary %}
+<h2>Threat Intelligence</h2>
+<table class="metadata">
+  <tr><th>Vulnerabilities</th><td>{{ epss_kev_summary.total_vulnerabilities }}</td></tr>
+  <tr><th>EPSS enriched</th><td>{{ epss_kev_summary.epss_enriched }}</td></tr>
+  <tr><th>CISA KEV matches</th><td>{{ epss_kev_summary.kev_matches }}</td></tr>
+  <tr><th>KEV with ransomware use</th><td>{{ epss_kev_summary.kev_ransomware }}</td></tr>
+</table>
+{% endif %}
+
+<h2>Findings ({{ findings_shown }} of {{ findings_total }})</h2>
+<table class="data">
+  <thead>
+    <tr><th>Severity</th><th>Type</th><th>Component</th><th>Version</th><th>Description</th><th>Scanners</th></tr>
+  </thead>
+  <tbody>
+    {% for f in findings %}
+    <tr class="sev-{{ f.severity }}{% if f.waived %} waived{% endif %}">
+      <td class="severity">{{ f.severity }}</td>
+      <td>{{ f.type }}</td>
+      <td>{{ f.component }}</td>
+      <td>{{ f.version }}</td>
+      <td>{{ f.description }}</td>
+      <td>{{ f.scanners }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+
+{% if recommendations %}
+<h2>Recommendations</h2>
+<table class="data">
+  <thead><tr><th>Priority</th><th>Title</th><th>Effort</th></tr></thead>
+  <tbody>
+    {% for r in recommendations %}
+    <tr><td>{{ r.priority }}</td><td>{{ r.title }}</td><td>{{ r.effort }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+<footer>Generated by Dependency Control — ad-hoc analysis. Nothing from this request was stored.</footer>
+
+</body>
+</html>

@@ -125,6 +125,42 @@ async def test_the_response_names_the_stages_that_left_the_process(client, db):
 
 
 @pytest.mark.asyncio
+async def test_html_format_returns_a_document(client, db):
+    _, token = await _issue_key(db)
+
+    resp = await client.post(
+        _ANALYZE,
+        json={
+            "sboms": [_SBOM],
+            "analyzers": [_LICENSE_COMPLIANCE],
+            "apply_global_waivers": False,
+            "format": "html",
+        },
+        headers=_bearer(token),
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"].startswith("text/html")
+    assert resp.text.startswith("<!DOCTYPE html>")
+    assert "requests" in resp.text
+
+
+@pytest.mark.asyncio
+async def test_the_default_format_is_still_json(client, db):
+    """The two branches share one route; an html default would break every existing caller."""
+    _, token = await _issue_key(db)
+
+    resp = await client.post(
+        _ANALYZE,
+        json={"sboms": [_SBOM], "analyzers": [_LICENSE_COMPLIANCE], "apply_global_waivers": False},
+        headers=_bearer(token),
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"].startswith("application/json")
+
+
+@pytest.mark.asyncio
 async def test_unauthenticated_request_is_rejected(db):
     from app.db.mongodb import get_database
     from app.main import app

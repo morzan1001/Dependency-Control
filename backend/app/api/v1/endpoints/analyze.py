@@ -2,11 +2,12 @@
 
 import asyncio
 import logging
+from typing import Any
 
 import redis.asyncio as redis
 from fastapi import Depends, HTTPException, Request, Response, status
 from fastapi.encoders import jsonable_encoder
-from fastapi.responses import JSONResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import ValidationError
 
 from app.api.deps import AdhocKeyDep, DatabaseDep
@@ -22,6 +23,7 @@ from app.core.constants import (
 )
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse
 from app.services.analysis.adhoc import ADHOC_SLOTS, AdhocInputTooLarge, run_adhoc_analysis
+from app.services.analysis.adhoc_report import render_adhoc_html
 from app.services.chat.rate_limiter import ChatRateLimiter
 
 logger = logging.getLogger(__name__)
@@ -32,6 +34,7 @@ _DEADLINE_EXCEEDED = "Analysis exceeded the {budget:.0f}s budget. Request fewer 
 # A namespace of its own, so an ad-hoc caller and a chat user never share a window.
 _RATE_LIMIT_PREFIX = "dc:adhoc:rl:"
 _RATE_LIMITED = "Rate limit exceeded"
+_HTML = "html"
 
 _DESCRIPTION = """
 Analyze posted SBOMs and scanner results and return findings, statistics, dependencies and
@@ -42,7 +45,11 @@ through the EPSS API and the CISA KEV catalog, and the default analyzer set incl
 which sends the package coordinates read out of the posted SBOMs to `api.osv.dev`. Pass an
 explicit `analyzers` list to decide what leaves this process; `analyzers.notes` in the response
 names every stage that did.
+
+`format: "html"` returns the same result as a standalone report document instead of JSON.
 """
+
+_HTML_RESPONSE: dict[int | str, dict[str, Any]] = {200: {"content": {"text/html": {"schema": {"type": "string"}}}}}
 
 
 def _parse_request(raw: bytes) -> AdhocAnalyzeRequest:
@@ -80,7 +87,7 @@ async def _enforce_rate_limit(token_prefix: str) -> None:
 @router.post(
     "/analyze",
     response_model=AdhocAnalyzeResponse,
-    responses=RESP_AUTH_400,
+    responses={**RESP_AUTH_400, **_HTML_RESPONSE},
     summary="Analyze an SBOM without storing anything",
     description=_DESCRIPTION,
     dependencies=[Depends(enforce_declared_body_size(MAX_ADHOC_BODY_BYTES))],
@@ -108,4 +115,6 @@ async def analyze(
             detail=_DEADLINE_EXCEEDED.format(budget=ADHOC_DEADLINE_SECONDS),
         ) from exc
 
+    if payload.format == _HTML:
+        return HTMLResponse(content=render_adhoc_html(result))
     return JSONResponse(content=jsonable_encoder(result))
