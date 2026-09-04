@@ -1,7 +1,7 @@
 import { useAnalyticsSummary } from '@/hooks/queries/use-analytics'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
-import { Package, AlertTriangle, Layers, PieChart } from 'lucide-react'
+import { Package, AlertTriangle, Layers, PieChart, Info } from 'lucide-react'
 
 export function AnalyticsSummaryCards() {
   const { data: summary, isLoading } = useAnalyticsSummary()
@@ -45,22 +45,34 @@ export function AnalyticsSummaryCards() {
   ]
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-      {stats.map((stat) => {
-        const Icon = stat.icon
-        return (
-          <Card key={stat.title}>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
-              <Icon className={`h-4 w-4 text-muted-foreground ${stat.className || ''}`} />
-            </CardHeader>
-            <CardContent>
-              <div className={`text-2xl font-bold ${stat.className || ''}`}>{stat.value}</div>
-              <p className="text-xs text-muted-foreground">{stat.description}</p>
-            </CardContent>
-          </Card>
-        )
-      })}
+    <div className="space-y-4">
+      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+        {stats.map((stat) => {
+          const Icon = stat.icon
+          return (
+            <Card key={stat.title}>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+                <CardTitle className="text-sm font-medium">{stat.title}</CardTitle>
+                <Icon className={`h-4 w-4 text-muted-foreground ${stat.className || ''}`} />
+              </CardHeader>
+              <CardContent>
+                <div className={`text-2xl font-bold ${stat.className || ''}`}>{stat.value}</div>
+                <p className="text-xs text-muted-foreground">{stat.description}</p>
+              </CardContent>
+            </Card>
+          )
+        })}
+      </div>
+      {/* Coverage carries the whole page: the four bare-list endpoints beside these tiles return
+          no counters, so a partly resolved fleet would otherwise read as a small healthy one. */}
+      {summary !== undefined && summary.projects_without_release > 0 && (
+        <div className="flex items-start gap-2 rounded-md border border-info/30 bg-info/10 px-3 py-2 text-sm">
+          <Info className="mt-0.5 h-4 w-4 shrink-0 text-info" />
+          <p>
+            {`Counted ${summary.resolved_projects} of ${summary.resolved_projects + summary.projects_without_release} projects; ${summary.projects_without_release} contributed no scan to this scope.`}
+          </p>
+        </div>
+      )}
     </div>
   )
 }
