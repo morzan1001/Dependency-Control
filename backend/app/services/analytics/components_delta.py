@@ -15,8 +15,12 @@ from app.schemas.scan_delta import (
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-from app.services.analytics._delta_pagination import MAX_FETCH, paginate
+from app.services.analytics._delta_pagination import MAX_FETCH, delta_truncation, paginate
 from app.services.analytics._delta_reachability import side_reachability
+
+# Served by the {scan_id, name, version} index, so a capped side is cut at the same point in the
+# component namespace on both sides instead of at two arbitrary points in natural order.
+_SIDE_SORT: list[tuple[str, int]] = [("name", 1), ("version", 1)]
 
 
 def component_identity_key(comp: dict) -> tuple[str, str]:
@@ -54,9 +58,16 @@ async def _fetch_components(
     db: AsyncIOMotorDatabase,
     project_id: str,
     scan_id: str,
-) -> list[dict]:
-    cursor = db["dependencies"].find({"project_id": project_id, "scan_id": scan_id}).limit(MAX_FETCH)
-    return [doc async for doc in cursor]
+) -> tuple[list[dict], int]:
+    """The side's components and how many it holds. The count costs a round trip only once the
+    fetch has saturated, which is the only case in which the two numbers differ."""
+    query = {"project_id": project_id, "scan_id": scan_id}
+    cursor = db["dependencies"].find(query).sort(_SIDE_SORT).limit(MAX_FETCH)
+    docs = [doc async for doc in cursor]
+    if len(docs) < MAX_FETCH:
+        return docs, len(docs)
+    total: int = await db["dependencies"].count_documents(query)
+    return docs, total
 
 
 def _to_added_or_removed(doc: dict, change: str) -> ComponentDeltaItem:
@@ -92,8 +103,8 @@ async def compute_components_delta(
     change: str | None,
 ) -> ScanDeltaResponse:
     """Compute the delta between two scans' components as a paginated envelope."""
-    from_docs = await _fetch_components(db, project_id, from_scan)
-    to_docs = await _fetch_components(db, project_id, to_scan)
+    from_docs, from_total = await _fetch_components(db, project_id, from_scan)
+    to_docs, to_total = await _fetch_components(db, project_id, to_scan)
 
     from_map = {component_identity_key(d): d for d in from_docs}
     to_map = {component_identity_key(d): d for d in to_docs}
@@ -147,4 +158,11 @@ async def compute_components_delta(
         items=paged,
         from_reachability=await side_reachability(db, from_scan),
         to_reachability=await side_reachability(db, to_scan),
+        truncation=delta_truncation(
+            MAX_FETCH,
+            from_compared=len(from_docs),
+            from_total=from_total,
+            to_compared=len(to_docs),
+            to_total=to_total,
+        ),
     )

@@ -63,6 +63,16 @@ export interface ScanDeltaSide {
   created_at: string | null;
 }
 
+// Present only when a side held more rows than the comparison read. Both sides are read in the
+// same order, so the two windows cover the same stretch of the identity space.
+export interface DeltaTruncation {
+  limit: number;
+  from_compared: number;
+  from_total: number;
+  to_compared: number;
+  to_total: number;
+}
+
 export interface ScanDeltaResponse {
   from_scan_id: string;
   to_scan_id: string;
@@ -83,4 +93,6 @@ export interface ScanDeltaResponse {
   to_waived_excluded: number;
   // Added and removed items the comparison would not have produced had no waiver applied.
   waiver_only_changes: number;
+  // Null means both sides fit under the per-side fetch cap and the totals describe the two scans.
+  truncation?: DeltaTruncation | null;
 }

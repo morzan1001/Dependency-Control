@@ -4,6 +4,7 @@
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import CRYPTO_ASSET_MAX_LIST_LIMIT
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.scan_delta import (
@@ -12,7 +13,7 @@ from app.schemas.scan_delta import (
     ScanDeltaResponse,
     ScanDeltaTotals,
 )
-from app.services.analytics._delta_pagination import MAX_FETCH, paginate
+from app.services.analytics._delta_pagination import delta_truncation, paginate
 from app.services.analytics._delta_reachability import side_reachability
 
 
@@ -46,6 +47,19 @@ def _asset_to_envelope_item(asset: CryptoAsset, change: str) -> CryptoDeltaItem:
     )
 
 
+async def _side_assets(
+    repo: CryptoAssetRepository,
+    project_id: str,
+    scan_id: str,
+) -> tuple[list[CryptoAsset], int]:
+    """The side's assets and how many it holds. ``list_by_scan`` orders by name, so a capped side
+    is cut at the same alphabetical point on both sides."""
+    assets = await repo.list_by_scan(project_id, scan_id, limit=CRYPTO_ASSET_MAX_LIST_LIMIT)
+    if len(assets) < CRYPTO_ASSET_MAX_LIST_LIMIT:
+        return assets, len(assets)
+    return assets, await repo.count_by_scan(project_id, scan_id)
+
+
 async def compute_crypto_delta_envelope(
     db: AsyncIOMotorDatabase,
     *,
@@ -57,8 +71,8 @@ async def compute_crypto_delta_envelope(
     change: str | None,
 ) -> ScanDeltaResponse:
     repo = CryptoAssetRepository(db)
-    from_assets = await repo.list_by_scan(project_id, from_scan, limit=MAX_FETCH)
-    to_assets = await repo.list_by_scan(project_id, to_scan, limit=MAX_FETCH)
+    from_assets, from_total = await _side_assets(repo, project_id, from_scan)
+    to_assets, to_total = await _side_assets(repo, project_id, to_scan)
 
     from_map = {_key(a): a for a in from_assets}
     to_map = {_key(a): a for a in to_assets}
@@ -93,4 +107,11 @@ async def compute_crypto_delta_envelope(
         items=paged,
         from_reachability=await side_reachability(db, from_scan),
         to_reachability=await side_reachability(db, to_scan),
+        truncation=delta_truncation(
+            CRYPTO_ASSET_MAX_LIST_LIMIT,
+            from_compared=len(from_assets),
+            from_total=from_total,
+            to_compared=len(to_assets),
+            to_total=to_total,
+        ),
     )

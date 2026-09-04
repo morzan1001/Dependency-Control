@@ -111,6 +111,20 @@ class ScanDeltaSide(BaseModel):
     created_at: datetime | None = None
 
 
+class DeltaTruncation(BaseModel):
+    """Present only when a side holds more rows than the comparison read. Both sides are read in
+    the same order, so the two windows cover the same stretch of the identity space, but a row
+    past the window on one side and inside it on the other still reads as added or removed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int
+    from_compared: int
+    from_total: int
+    to_compared: int
+    to_total: int
+
+
 class ScanDeltaResponse(BaseModel):
     """Unified response envelope for the scan-delta endpoint."""
 
@@ -140,3 +154,5 @@ class ScanDeltaResponse(BaseModel):
     # only evidence that a change is a waiver difference rather than a code difference, since two
     # sides can hide equal numbers of different findings.
     waiver_only_changes: int = 0
+    # None means both sides fit under the per-side fetch cap and `totals` describe the two scans.
+    truncation: DeltaTruncation | None = None

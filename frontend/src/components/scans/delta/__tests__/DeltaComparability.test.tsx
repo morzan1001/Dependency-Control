@@ -23,6 +23,12 @@ const NO_WAIVER_ONLY = 0
 const RISK_SCORE_WARNING = /only its risk scores are reachability-adjusted/i
 const LAPSED_WAIVER_WARNING = /before treating an added finding as newly introduced/i
 const BOTH_SIDES_HIDE = /sit below what the two scans themselves report/i
+const WINDOW_WARNING = /describe that window rather than the two scans/i
+const FETCH_CAP = 50000
+const FROM_COMPARED = 50000
+const FROM_TOTAL = 61204
+const TO_COMPARED = 50000
+const TO_TOTAL = 60988
 
 // Annotated, not inferred: an inferred fixture drops a field from the response type silently.
 function delta(overrides: Partial<ScanDeltaResponse> = {}): ScanDeltaResponse {
@@ -126,6 +132,32 @@ describe('DeltaComparability', () => {
     )
 
     expect(screen.getByText(LAPSED_WAIVER_WARNING)).toBeInTheDocument()
+  })
+
+  it('says the totals describe a window when a side held more than the comparison read', () => {
+    render(
+      <DeltaComparability
+        delta={delta({
+          truncation: {
+            limit: FETCH_CAP,
+            from_compared: FROM_COMPARED,
+            from_total: FROM_TOTAL,
+            to_compared: TO_COMPARED,
+            to_total: TO_TOTAL,
+          },
+        })}
+      />,
+    )
+
+    expect(screen.getByText(WINDOW_WARNING)).toBeInTheDocument()
+    expect(screen.getByText(new RegExp(FROM_TOTAL.toLocaleString()))).toBeInTheDocument()
+    expect(screen.getByText(new RegExp(TO_TOTAL.toLocaleString()))).toBeInTheDocument()
+  })
+
+  it('says nothing about a window when the comparison read both sides whole', () => {
+    render(<DeltaComparability delta={delta({ truncation: null })} />)
+
+    expect(screen.queryByText(WINDOW_WARNING)).not.toBeInTheDocument()
   })
 
   it('explains the shortfall without the lapsed-waiver warning when no change is a waiver difference', () => {

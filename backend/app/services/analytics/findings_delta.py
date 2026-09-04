@@ -19,8 +19,12 @@ from app.schemas.scan_delta import (
     ScanDeltaTotals,
 )
 from app.services.aggregation.components import extract_artifact_name
-from app.services.analytics._delta_pagination import MAX_FETCH, paginate
+from app.services.analytics._delta_pagination import MAX_FETCH, delta_truncation, paginate
 from app.services.analytics._delta_reachability import side_reachability
+
+# Served by the {scan_id, component, version} index, so a capped side is cut at the same point in
+# the identity space on both sides instead of at two arbitrary points in natural order.
+_SIDE_SORT: list[tuple[str, int]] = [("component", 1), ("version", 1)]
 
 _SEVERITY_RANK = {
     "critical": 0,
@@ -187,12 +191,18 @@ async def _fetch_scan_findings(
     scan_id: str,
     finding_type: Iterable[str] | None,
     severity: Iterable[str] | None,
-) -> list[dict]:
+) -> tuple[list[dict], int]:
+    """The side's live findings and how many it holds. The count costs a round trip only once the
+    fetch has saturated, which is the only case in which the two numbers differ."""
     # Waived risk is excluded from every other metric in the product; the delta answers what is
     # delivered, so it has to agree. Documents predating the flag carry no key and are not waived.
     query = _side_query(project_id, scan_id, finding_type, severity) | {"waived": {"$ne": True}}
-    cursor = db["findings"].find(query, projection=_FETCH_PROJECTION).limit(MAX_FETCH)
-    return [doc async for doc in cursor]
+    cursor = db["findings"].find(query, projection=_FETCH_PROJECTION).sort(_SIDE_SORT).limit(MAX_FETCH)
+    docs = [doc async for doc in cursor]
+    if len(docs) < MAX_FETCH:
+        return docs, len(docs)
+    total: int = await db["findings"].count_documents(query)
+    return docs, total
 
 
 def _waiver_touched_query(
@@ -235,6 +245,7 @@ async def _fetch_waiver_touched(
     cursor = (
         db["findings"]
         .find(_waiver_touched_query(project_id, scan_id, finding_type, severity), projection=_FETCH_PROJECTION)
+        .sort(_SIDE_SORT)
         .limit(MAX_FETCH)
     )
     return [doc async for doc in cursor]
@@ -308,10 +319,12 @@ async def compute_findings_delta(
     finding_type: list[str] | None,
 ) -> ScanDeltaResponse:
     """Compute the delta between two scans' findings as a paginated envelope."""
-    from_docs = await _fetch_scan_findings(db, project_id, from_scan, finding_type, severity)
-    to_docs = await _fetch_scan_findings(db, project_id, to_scan, finding_type, severity)
+    from_docs, from_live_total = await _fetch_scan_findings(db, project_id, from_scan, finding_type, severity)
+    to_docs, to_live_total = await _fetch_scan_findings(db, project_id, to_scan, finding_type, severity)
     from_waived = await _fetch_waiver_touched(db, project_id, from_scan, finding_type, severity)
     to_waived = await _fetch_waiver_touched(db, project_id, to_scan, finding_type, severity)
+    from_waived_excluded = await _count_waived_out(db, project_id, from_scan, finding_type, severity)
+    to_waived_excluded = await _count_waived_out(db, project_id, to_scan, finding_type, severity)
 
     from_map = {finding_identity_key(d): d for d in from_docs}
     to_map = {finding_identity_key(d): d for d in to_docs}
@@ -371,12 +384,20 @@ async def compute_findings_delta(
         items=paged,
         from_reachability=await side_reachability(db, from_scan),
         to_reachability=await side_reachability(db, to_scan),
-        from_waived_excluded=await _count_waived_out(db, project_id, from_scan, finding_type, severity),
-        to_waived_excluded=await _count_waived_out(db, project_id, to_scan, finding_type, severity),
+        from_waived_excluded=from_waived_excluded,
+        to_waived_excluded=to_waived_excluded,
         waiver_only_changes=_waiver_only_changes(
             set(added_keys),
             set(removed_keys),
             _unwaived_keys(from_docs, from_waived),
             _unwaived_keys(to_docs, to_waived),
+        ),
+        # Both fetches per side feed the comparison, so coverage counts them together.
+        truncation=delta_truncation(
+            MAX_FETCH,
+            from_compared=len(from_docs) + len(from_waived),
+            from_total=from_live_total + from_waived_excluded,
+            to_compared=len(to_docs) + len(to_waived),
+            to_total=to_live_total + to_waived_excluded,
         ),
     )
