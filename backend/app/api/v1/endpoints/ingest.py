@@ -328,6 +328,10 @@ async def ingest_sbom(
 
         release = data.release_fields(now)
         if release:
+            # The row before the flag: the backfill repairs a row whose flag is missing, while a
+            # flag whose row is missing has no repair path and shows a release that is not there.
+            release_repo = ReleaseRepository(db)
+            await release_repo.record(Release(project_id=str(project.id), scan_id=scan_id, **release))
             scan_update["$set"]["is_release"] = True
 
         # Replace (never append) so a CI retry cannot pile up duplicate SBOMs that get
@@ -340,10 +344,6 @@ async def ingest_sbom(
         previous = await db.scans.find_one_and_update(
             {"_id": scan_id}, scan_update, upsert=True, return_document=ReturnDocument.BEFORE
         )
-
-        if release:
-            release_repo = ReleaseRepository(db)
-            await release_repo.record(Release(project_id=str(project.id), scan_id=scan_id, **release))
 
         if previous and sbom_refs:
             new_ids = {ref["gridfs_id"] for ref in sbom_refs}

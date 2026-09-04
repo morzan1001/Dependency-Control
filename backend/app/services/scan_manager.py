@@ -84,21 +84,21 @@ class ScanManager:
             },
         }
 
-        release = data.release_fields(now)
-        if release:
-            scan_update["$set"]["is_release"] = True
-
-        # Capture the raw result so is_new reflects insert (upserted_id set) vs update.
         from app.core.metrics import track_db_operation
         from app.repositories import ReleaseRepository, ScanRepository
 
+        release = data.release_fields(now)
+        if release:
+            # The row before the flag: the backfill repairs a row whose flag is missing, while a
+            # flag whose row is missing has no repair path and shows a release that is not there.
+            release_repo = ReleaseRepository(self.db)
+            await release_repo.record(Release(project_id=str(self.project.id), scan_id=scan_id, **release))
+            scan_update["$set"]["is_release"] = True
+
+        # Capture the raw result so is_new reflects insert (upserted_id set) vs update.
         scan_repo = ScanRepository(self.db)
         with track_db_operation("scans", "update_one"):
             upsert_result = await scan_repo.collection.update_one({"_id": scan_id}, scan_update, upsert=True)
-
-        if release:
-            release_repo = ReleaseRepository(self.db)
-            await release_repo.record(Release(project_id=str(self.project.id), scan_id=scan_id, **release))
 
         is_new = upsert_result.upserted_id is not None
 

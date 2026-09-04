@@ -758,11 +758,13 @@ async def read_project_scans(
 
     return [
         ScanWithReleases(
-            **doc,
-            releases=[
-                ScanReleaseRef(environment=rel.environment, version=rel.version, released_at=rel.released_at)
-                for rel in releases_by_scan.get(doc["_id"], [])
-            ],
+            **{
+                **doc,
+                "releases": [
+                    ScanReleaseRef(environment=rel.environment, version=rel.version, released_at=rel.released_at)
+                    for rel in releases_by_scan.get(doc["_id"], [])
+                ],
+            }
         )
         for doc in scan_docs
     ]

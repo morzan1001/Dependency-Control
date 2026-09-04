@@ -19,6 +19,7 @@ _RELEASE_SCAN = "rel"
 _UNMARKED_SCAN = "unmarked"
 _PLAIN_SCAN = "plain"
 _SATURATED_SCAN = "saturated"
+_STRAY_KEY_SCAN = "stray"
 
 _BRANCH = "main"
 _PRODUCTION = "production"
@@ -268,6 +269,27 @@ async def test_the_scan_list_names_every_environment_a_scan_runs_in(client, db, 
         (_PRODUCTION, None),
     ]
     assert body[_PLAIN_SCAN]["releases"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_scan_document_holding_a_releases_key_still_lists(client, db, member_auth_headers):
+    """The environments come from the releases collection, whatever key the document happens to carry."""
+    await db.scans.insert_one(
+        {
+            "_id": _STRAY_KEY_SCAN,
+            "project_id": _PROJECT,
+            "branch": _BRANCH,
+            "status": _SCAN_STATUS,
+            "created_at": _NOW,
+            "releases": [{"environment": _STAGING, "version": _STAGING_VERSION, "released_at": _NOW}],
+        }
+    )
+
+    resp = await client.get(f"/api/v1/projects/{_PROJECT}/scans", headers=member_auth_headers)
+
+    assert resp.status_code == 200, resp.text
+    body = {s["id"]: s for s in resp.json()}
+    assert body[_STRAY_KEY_SCAN]["releases"] == []
 
 
 @pytest.mark.asyncio

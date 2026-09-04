@@ -7,6 +7,7 @@ import pymongo
 import pytest
 
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT
+from app.repositories import ReleaseRepository
 
 _COMMIT = "b" * 40
 _BRANCH = "main"
@@ -16,9 +17,13 @@ _STAGING = "staging"
 _CANARY = "canary"
 _VERSION = "v2.1.0"
 _OTHER_VERSION = "v3"
+_NO_RECORDS = 0
 _ONE_RECORD = 1
 _TWO_RECORDS = 2
 _SBOM = {"bomFormat": "CycloneDX", "specVersion": "1.6", "version": 1, "components": []}
+_SBOM_ROUTE = "/api/v1/ingest"
+_FINDINGS_ROUTE = "/api/v1/ingest/opengrep"
+_RECORD_FAILED = "release write failed"
 
 
 def _sbom_payload(**extra):
@@ -275,6 +280,30 @@ async def test_sbom_ingest_can_promote_an_existing_scan(client, db, api_key_head
     scan = await db.scans.find_one({"_id": scan_id})
     assert scan["is_release"] is True
     assert (await latest_release(_CANARY))["scan_id"] == scan_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("route", "payload"), [(_SBOM_ROUTE, _sbom_payload), (_FINDINGS_ROUTE, _findings_payload)])
+async def test_a_failed_release_write_leaves_the_scan_unflagged(client, db, api_key_headers, route, payload):
+    """The backfill repairs a row whose flag is missing; a flag whose row is missing it never sees."""
+    process_sboms, gridfs = _patched_sbom_ingest()
+    with process_sboms, gridfs:
+        created = await client.post(_SBOM_ROUTE, json=_sbom_payload(), headers=api_key_headers)
+    assert created.status_code == 202, created.text
+    scan_id = created.json()["scan_id"]
+
+    process_sboms, gridfs = _patched_sbom_ingest()
+    failing_record = patch.object(ReleaseRepository, "record", side_effect=RuntimeError(_RECORD_FAILED))
+    with process_sboms, gridfs, failing_record, pytest.raises(RuntimeError, match=_RECORD_FAILED):
+        await client.post(
+            route,
+            json=payload(is_release=True, release_environment=_CANARY),
+            headers=api_key_headers,
+        )
+
+    scan = await db.scans.find_one({"_id": scan_id})
+    assert "is_release" not in scan
+    assert await db.releases.count_documents({"scan_id": scan_id}) == _NO_RECORDS
 
 
 @pytest.mark.asyncio
