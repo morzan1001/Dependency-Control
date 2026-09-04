@@ -30,6 +30,29 @@ _SAST_LINE = 12
 _SEVERITY_CRITICAL = "CRITICAL"
 _SEVERITY_LOW = "LOW"
 
+_SCOPE_FILE = "file"
+_SCOPE_RULE = "rule"
+_TYPE_SAST = "sast"
+_BEARER = "bearer"
+_BEARER_RULE = "javascript_lang_insufficiently_random_values"
+_OTHER_BEARER_RULE = "javascript_lang_eval"
+_BEARER_FILE = "src/random.js"
+_OTHER_FILE = "src/other.js"
+_WAIVED_LINE = 102
+_MOVED_LINE = 140
+_OTHER_FILE_LINE = 7
+_SEVERITY_BEARER_HIGH = "high"
+
+
+def _bearer_finding_id(rule_id: str, file_path: str, line: int) -> str:
+    return f"BEARER-{rule_id}-{file_path}-{line}"
+
+
+_WAIVED_FINDING_ID = _bearer_finding_id(_BEARER_RULE, _BEARER_FILE, _WAIVED_LINE)
+_MOVED_FINDING_ID = _bearer_finding_id(_BEARER_RULE, _BEARER_FILE, _MOVED_LINE)
+_OTHER_FILE_FINDING_ID = _bearer_finding_id(_BEARER_RULE, _OTHER_FILE, _OTHER_FILE_LINE)
+_OTHER_RULE_FINDING_ID = _bearer_finding_id(_OTHER_BEARER_RULE, _BEARER_FILE, _WAIVED_LINE)
+
 _SBOM = {
     "bomFormat": "CycloneDX",
     "specVersion": "1.5",
@@ -102,6 +125,21 @@ def _vulnerability_record(component: str = _COMPONENT) -> dict:
             ]
         },
     }
+
+
+def _bearer_record(finding_id: str, component: str) -> dict:
+    return {
+        "id": finding_id,
+        "finding_id": finding_id,
+        "type": _TYPE_SAST,
+        "component": component,
+        "version": "",
+    }
+
+
+def _bearer_waiver(scope: str) -> Waiver:
+    """Taken from the line the scanner first reported, as the UI records it."""
+    return _waiver(finding_id=_WAIVED_FINDING_ID, package_name=_BEARER_FILE, scope=scope)
 
 
 def _sast_record(anchor: str, content_hash: str) -> dict:
@@ -197,14 +235,53 @@ def test_a_vulnerability_waiver_reaches_its_advisory_whatever_type_it_names():
     assert records[0]["details"]["vulnerabilities"][0]["waived"] is True
 
 
-def test_file_scope_waiver_is_left_unapplied():
-    """File and rule scope expand through a Mongo regex that has no in-memory counterpart."""
-    records = [_license_record(_COMPONENT)]
+def test_a_file_scope_waiver_reaches_the_same_rule_at_another_line_in_that_file():
+    records = [
+        _bearer_record(_MOVED_FINDING_ID, _BEARER_FILE),
+        _bearer_record(_OTHER_FILE_FINDING_ID, _OTHER_FILE),
+        _bearer_record(_OTHER_RULE_FINDING_ID, _BEARER_FILE),
+    ]
 
-    waiver = _waiver(finding_id=_COMPONENT, finding_type="license", package_name=_COMPONENT, scope="file")
+    assert apply_global_waivers_in_memory(records, [_bearer_waiver(_SCOPE_FILE)]) == 1
+    assert [record.get("waived") for record in records] == [True, None, None]
 
-    assert apply_global_waivers_in_memory(records, [waiver]) == 0
-    assert records[0].get("waived") is not True
+
+def test_a_rule_scope_waiver_reaches_the_same_rule_in_another_file():
+    records = [
+        _bearer_record(_MOVED_FINDING_ID, _BEARER_FILE),
+        _bearer_record(_OTHER_FILE_FINDING_ID, _OTHER_FILE),
+        _bearer_record(_OTHER_RULE_FINDING_ID, _BEARER_FILE),
+    ]
+
+    assert apply_global_waivers_in_memory(records, [_bearer_waiver(_SCOPE_RULE)]) == 2
+    assert [record.get("waived") for record in records] == [True, True, None]
+
+
+def test_a_widened_scope_is_not_narrowed_by_the_signature_it_carries():
+    """The scan-backed path keeps file and rule scope on the query, whatever signature they carry."""
+    records = [_bearer_record(_MOVED_FINDING_ID, _BEARER_FILE)]
+
+    waiver = _bearer_waiver(_SCOPE_FILE)
+    waiver.match = MatchSignature(
+        rule_key=_RULE_KEY,
+        file_key=_SAST_FILE,
+        anchor=_ANCHOR,
+        anchor_kind="scanner_fp",
+        content_hash=_CONTENT_HASH,
+        last_line=_SAST_LINE,
+    )
+
+    assert apply_global_waivers_in_memory(records, [waiver]) == 1
+
+
+def test_a_scope_that_cannot_be_widened_falls_back_to_the_exact_finding_id():
+    """A finding_id with no trailing line number carries no file prefix to widen to."""
+    records = [_license_record(_COMPONENT), _license_record(_OTHER_COMPONENT)]
+
+    waiver = _waiver(finding_id=_COMPONENT, finding_type="license", package_name=_COMPONENT, scope=_SCOPE_FILE)
+
+    assert apply_global_waivers_in_memory(records, [waiver]) == 1
+    assert [record.get("waived") for record in records] == [True, None]
 
 
 def test_signature_waiver_waives_the_location_it_was_taken_from():
@@ -256,6 +333,31 @@ async def test_opt_in_applies_the_global_waiver_and_writes_nothing(_osv):
     stored = await db.waivers.find_one({})
     # The persisted path records what each waiver suppressed; this one must not write that back.
     assert stored.get("last_match_count") is None
+
+
+@pytest.mark.asyncio
+async def test_a_widened_scope_is_covered_by_the_control_the_response_reports():
+    """``waivers_applied`` names every scope the run honours, so a widened one must be applied."""
+    db = FakeDatabase()
+    await _seed_waiver(db, finding_id=_WAIVED_FINDING_ID, package_name=_BEARER_FILE, scope=_SCOPE_FILE)
+
+    payload = {
+        "findings": [
+            {
+                "id": _BEARER_RULE,
+                "title": _REASON,
+                "filename": _BEARER_FILE,
+                "line_number": _MOVED_LINE,
+                "severity": _SEVERITY_BEARER_HIGH,
+            }
+        ]
+    }
+    request = AdhocAnalyzeRequest(scanners={_BEARER: payload}, analyzers=[], apply_global_waivers=True)
+    response = await run_adhoc_analysis(request, db)
+
+    assert response.waivers_applied == "global"
+    assert [f["finding_id"] for f in response.findings if f.get("waived") is True] == [_MOVED_FINDING_ID]
+    assert response.waived_count == 1
 
 
 @pytest.mark.asyncio

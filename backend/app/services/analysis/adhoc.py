@@ -1,6 +1,7 @@
 """Stateless ad-hoc analysis: the analysis pipeline without a scan, a project or a write."""
 
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,6 +31,7 @@ from app.services.reachability_enrichment import (
 )
 from app.services.recommendations import recommendation_engine
 from app.services.sbom_parser import parse_sbom
+from app.services.stats import _resolve_finding_id_query
 
 logger = logging.getLogger(__name__)
 
@@ -127,22 +129,27 @@ _POSTED_CALLGRAPH_ID = "posted"
 
 _WAIVERS_GLOBAL = "global"
 _WAIVERS_NONE = "none"
-# Only instance-precise waivers are honoured: file and rule scope expand through a Mongo
-# regex over ``finding_id`` that has no in-memory counterpart.
 _SCOPE_FINDING = "finding"
+# A rule-scope waiver spans every file, so the component it was taken from is not a criterion.
+_SCOPE_RULE = "rule"
 # The waiver UI stores this in place of a field the user left unset.
 _UNCONSTRAINED_WAIVER_VALUE = "Unknown"
 
+_WAIVER_FINDING_ID = "finding_id"
+_WAIVER_PACKAGE_NAME = "package_name"
+_WAIVER_PACKAGE_VERSION = "package_version"
+_WAIVER_FINDING_TYPE = "finding_type"
+
 # Waiver field -> record field, mirroring the query the scan-backed path builds.
 _WAIVER_FIELD_MAP: tuple[tuple[str, str], ...] = (
-    ("finding_id", "finding_id"),
-    ("package_name", "component"),
-    ("package_version", "version"),
-    ("finding_type", "type"),
+    (_WAIVER_FINDING_ID, "finding_id"),
+    (_WAIVER_PACKAGE_NAME, "component"),
+    (_WAIVER_PACKAGE_VERSION, "version"),
+    (_WAIVER_FINDING_TYPE, "type"),
 )
 # A vulnerability waiver narrows documents but never by type: the advisory it names only
 # ever lives in a vulnerability document, whatever ``finding_type`` the waiver carries.
-_VULNERABILITY_SCOPE_FIELDS = tuple(pair for pair in _WAIVER_FIELD_MAP if pair[0] != "finding_type")
+_VULNERABILITY_SCOPE_FIELDS = tuple(pair for pair in _WAIVER_FIELD_MAP if pair[0] != _WAIVER_FINDING_TYPE)
 
 
 @dataclass(frozen=True)
@@ -441,18 +448,38 @@ def _run_reachability(
     return dict(build_reachability_summary(vulnerabilities, [callgraph_dict], enriched))
 
 
+def _scoped_finding_id(finding_id: str, scope: str, package_name: str) -> str | re.Pattern[str]:
+    """The finding ids a waiver reaches, as the same resolver the scan-backed query is built from."""
+    resolved = _resolve_finding_id_query(finding_id, scope, package_name)
+    return re.compile(resolved["$regex"]) if isinstance(resolved, dict) else resolved
+
+
 def _waiver_criteria(waiver: Waiver, fields: tuple[tuple[str, str], ...]) -> dict[str, Any]:
     """The record fields a waiver actually constrains, keyed as they appear on a record."""
+    scope = waiver.scope or _SCOPE_FINDING
     criteria: dict[str, Any] = {}
     for waiver_field, record_field in fields:
+        if waiver_field == _WAIVER_PACKAGE_NAME and scope == _SCOPE_RULE:
+            continue
         value = getattr(waiver, waiver_field, None)
-        if value and value != _UNCONSTRAINED_WAIVER_VALUE:
+        if not value or value == _UNCONSTRAINED_WAIVER_VALUE:
+            continue
+        if waiver_field == _WAIVER_FINDING_ID:
+            criteria[record_field] = _scoped_finding_id(str(value), scope, waiver.package_name or "")
+        else:
             criteria[record_field] = value
     return criteria
 
 
 def _matches(record: dict[str, Any], criteria: dict[str, Any]) -> bool:
-    return all(record.get(field) == value for field, value in criteria.items())
+    for field, expected in criteria.items():
+        value = record.get(field)
+        if isinstance(expected, re.Pattern):
+            if not isinstance(value, str) or not expected.search(value):
+                return False
+        elif value != expected:
+            return False
+    return True
 
 
 def _waive_matching_advisories(record: dict[str, Any], waiver: Waiver) -> None:
@@ -524,9 +551,9 @@ def apply_global_waivers_in_memory(records: list[dict[str, Any]], waivers: list[
     """Apply global waivers to in-memory records; returns how many records end up waived."""
     signature_waivers: list[Waiver] = []
     for waiver in waivers:
-        if (waiver.scope or _SCOPE_FINDING) != _SCOPE_FINDING:
-            continue
-        if waiver.match is not None:
+        # A widened scope keeps its query semantics: re-anchoring one signature would narrow it
+        # back to the single location the waiver was taken from.
+        if waiver.match is not None and (waiver.scope or _SCOPE_FINDING) == _SCOPE_FINDING:
             signature_waivers.append(waiver)
         elif waiver.vulnerability_id:
             _apply_vulnerability_waiver(records, waiver)
