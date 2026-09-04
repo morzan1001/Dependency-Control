@@ -10,11 +10,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from app.core.constants import SCAN_STATUS_FAILED
 from app.models.stats import Stats
 from app.repositories.scans import ScanRepository
 from tests.mocks.fake_mongo import FakeDatabase
 
 _NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
+_HEAD = "head"
 
 
 def _project(project_id: str, **overrides) -> dict:
@@ -369,6 +371,87 @@ class TestHeadIsTheDefaultBranch:
         )
 
         assert result == {"p1": "develop-tip"}
+
+
+class TestGetPrecedingScan:
+    """The build a scan succeeded, which is what "what changed since the last build" compares against."""
+
+    @staticmethod
+    async def _preceding_id(scans: list[dict], scan_id: str = _HEAD) -> str | None:
+        db = await _seeded(scans)
+        preceding = await ScanRepository(db).get_preceding_scan(scan_id)
+        return preceding.id if preceding else None
+
+    def test_the_newest_earlier_build_on_the_same_branch(self):
+        result = asyncio.run(
+            self._preceding_id(
+                [
+                    _scan(_HEAD, "p1", "main", 0),
+                    _scan("previous", "p1", "main", 5),
+                    _scan("ancient", "p1", "main", 50),
+                ]
+            )
+        )
+
+        assert result == "previous"
+
+    def test_a_build_on_another_branch_is_not_what_this_one_succeeded(self):
+        result = asyncio.run(
+            self._preceding_id([_scan(_HEAD, "p1", "main", 0), _scan("feature-build", "p1", "feature/spike", 1)])
+        )
+
+        assert result is None
+
+    def test_an_unusable_scan_is_not_a_build(self):
+        """A failed run holds no findings, so a delta against it invents a fix for everything."""
+        result = asyncio.run(
+            self._preceding_id(
+                [
+                    _scan(_HEAD, "p1", "main", 0),
+                    _scan("failed", "p1", "main", 1, status=SCAN_STATUS_FAILED),
+                    _scan("previous", "p1", "main", 5),
+                ]
+            )
+        )
+
+        assert result == "previous"
+
+    def test_a_rescan_is_not_the_build_the_next_one_followed(self):
+        result = asyncio.run(
+            self._preceding_id(
+                [
+                    _scan(_HEAD, "p1", "main", 0),
+                    _scan("rescan", "p1", "main", 1, is_rescan=True, original_scan_id="previous"),
+                    _scan("previous", "p1", "main", 5),
+                ]
+            )
+        )
+
+        assert result == "previous"
+
+    def test_a_build_that_never_carried_the_rescan_flag_is_eligible(self):
+        """``is_rescan`` is tri-state: absent and False both mean a real build."""
+        result = asyncio.run(
+            self._preceding_id(
+                [
+                    _scan(_HEAD, "p1", "main", 0),
+                    _scan("flag-absent", "p1", "main", 5),
+                    _scan("flag-false", "p1", "main", 9, is_rescan=False),
+                ]
+            )
+        )
+
+        assert result == "flag-absent"
+
+    def test_the_first_build_on_a_branch_has_no_predecessor(self):
+        result = asyncio.run(self._preceding_id([_scan(_HEAD, "p1", "main", 0)]))
+
+        assert result is None
+
+    def test_a_scan_that_does_not_exist_has_no_predecessor(self):
+        result = asyncio.run(self._preceding_id([_scan("previous", "p1", "main", 5)]))
+
+        assert result is None
 
 
 def _vulnerability(finding_id: str, scan_id: str, severity: str) -> dict:

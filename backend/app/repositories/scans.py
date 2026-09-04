@@ -213,6 +213,27 @@ class ScanRepository:
         scan_id = (await self._head_scan_ids({project_id: scope})).get(project_id)
         return await self.get_by_id(scan_id) if scan_id else None
 
+    async def get_preceding_scan(self, scan_id: str) -> Scan | None:
+        """The build the given scan succeeded: the newest usable build on its own branch that
+        predates it. A rescan carries today's date over an older commit, so it is not the build
+        anything followed; ``$ne`` rather than ``False`` because the flag is often simply absent."""
+        with track_db_operation(_COL, "find_one"):
+            current = await self.collection.find_one({"_id": scan_id}, {"project_id": 1, "branch": 1, "created_at": 1})
+        if not current or current.get("created_at") is None:
+            return None
+        query = {
+            "project_id": current.get("project_id"),
+            "branch": current.get("branch"),
+            "status": {"$in": SCAN_USABLE_STATUSES},
+            "is_rescan": {"$ne": True},
+            "created_at": {"$lt": current["created_at"]},
+        }
+        with track_db_operation(_COL, "find_one"):
+            # Same _id tie-break as head resolution, so two builds stamped inside one millisecond
+            # do not swap places between requests.
+            data = await self.collection.find_one(query, sort=[("created_at", -1), ("_id", 1)])
+        return Scan(**data) if data else None
+
     async def _readable_scan_branches(self, scan_ids: list[str]) -> dict[str, str | None]:
         """The branch of each of these scans that still exists with a usable status."""
         with track_db_operation(_COL, "find"):
