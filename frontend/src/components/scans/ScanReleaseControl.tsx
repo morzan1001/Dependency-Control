@@ -22,10 +22,16 @@ interface ScanReleaseControlProps {
   scan: ScanWithReleases
 }
 
-function rejectionFor(environment: string, held: readonly string[]): string | null {
-  if (!RELEASE_ENVIRONMENT_PATTERN.test(environment)) return OFF_PATTERN_HINT
+interface MarkRejection {
+  reason: string
+  // An environment the scan already holds is a fine value badly timed, not a malformed one.
+  malformed: boolean
+}
+
+function rejectionFor(environment: string, held: readonly string[]): MarkRejection | null {
+  if (!RELEASE_ENVIRONMENT_PATTERN.test(environment)) return { reason: OFF_PATTERN_HINT, malformed: true }
   // The backend would upsert the same record; offering that only invites confusion.
-  if (held.includes(environment)) return `Already released to ${environment}.`
+  if (held.includes(environment)) return { reason: `Already released to ${environment}.`, malformed: false }
   return null
 }
 
@@ -101,7 +107,7 @@ export function ScanReleaseControl({ projectId, scan }: ScanReleaseControlProps)
         <div className="flex flex-col gap-1">
           <Input
             aria-label={ENVIRONMENT_LABEL}
-            aria-invalid={rejection !== null}
+            aria-invalid={rejection?.malformed === true}
             value={environment}
             onChange={(event) => setEnvironment(event.target.value)}
             className="h-8 w-full max-w-[12rem] text-xs"
@@ -116,7 +122,11 @@ export function ScanReleaseControl({ projectId, scan }: ScanReleaseControlProps)
             <Rocket className="mr-2 h-3 w-3" />
             Mark as release
           </Button>
-          {rejection && <span className="text-xs text-destructive">{rejection}</span>}
+          {rejection && (
+            <span className={`text-xs ${rejection.malformed ? 'text-destructive' : 'text-muted-foreground'}`}>
+              {rejection.reason}
+            </span>
+          )}
         </div>
       </div>
     </div>

@@ -169,6 +169,7 @@ describe('ProjectOverview - release tile', () => {
   const RELEASED_AT = '2026-08-01T00:00:00Z'
   const ROLLED_BACK_AT = '2026-08-20T00:00:00Z'
   const HEAD_CREATED_AT = '2026-09-01T00:00:00Z'
+  const OLD_BUILD_CREATED_AT = '2026-07-01T00:00:00Z'
   const RETIRED_BRANCH = 'release-1.0'
   const SECOND_BRANCH = 'feature-b'
   const HEAD_SCAN_ID = 's-head'
@@ -181,6 +182,8 @@ describe('ProjectOverview - release tile', () => {
   const RELEASE_CRITICAL = 2
   const RELEASE_HIGH = 3
   const RESCANNED_CRITICAL = 1
+  const OLD_BUILD_CRITICAL = 1
+  const OLD_BUILD_HIGH = 1
   const SECOND_BRANCH_CRITICAL = 3
   const SECOND_BRANCH_HIGH = 3
   const CRITICAL_TILE = 'Critical Issues'
@@ -379,11 +382,11 @@ describe('ProjectOverview - release tile', () => {
     const rolledBackTo = makeScan(
       {
         id: 's-old-build',
-        created_at: '2026-07-01T00:00:00Z',
+        created_at: OLD_BUILD_CREATED_AT,
         is_release: true,
         releases: [{ environment: PRODUCTION, version: ROLLED_BACK_VERSION, released_at: ROLLED_BACK_AT }],
       },
-      { critical: 1, high: 1 },
+      { critical: OLD_BUILD_CRITICAL, high: OLD_BUILD_HIGH },
     )
     renderOverview([head, release, rolledBackTo])
 

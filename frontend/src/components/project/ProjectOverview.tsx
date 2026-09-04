@@ -24,15 +24,6 @@ interface ProjectOverviewProps {
   selectedBranches: string[]
 }
 
-// One scan can run in several environments; the one it entered last names the release.
-function newestReleaseRow(scan: ScanWithReleases): ScanReleaseRef | undefined {
-  return scan.releases.reduce<ScanReleaseRef | undefined>(
-    (newest, row) =>
-      !newest || new Date(row.released_at).getTime() > new Date(newest.released_at).getTime() ? row : newest,
-    undefined,
-  )
-}
-
 interface ResolvedRun {
   scanId: string
   stats: EnhancedStats
@@ -100,7 +91,8 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
     for (const scan of filteredScans) {
       // A mark flags the scan before its row exists, and the flag alone still means released.
       if (!scan.is_release || !isScanUsable(scan.status)) continue;
-      const row = newestReleaseRow(scan);
+      // The API sorts a scan's releases released_at descending, so [0] is the one it entered last.
+      const row = scan.releases[0];
       // released_at orders releases, so re-marking an older build is a rollback, not a downgrade.
       const at = new Date(row?.released_at || scan.created_at).getTime();
       if (!newest || at > newest.at) newest = { scan, row, at };

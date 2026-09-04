@@ -101,6 +101,16 @@ describe('ScanReleaseControl', () => {
 
     expect(screen.getByRole('button', { name: MARK_BUTTON })).toBeDisabled()
     expect(screen.getByText(`Already released to ${PRODUCTION}.`)).toBeInTheDocument()
+    // An untouched field holding the default is not a value the user got wrong.
+    expect(screen.getByLabelText(ENVIRONMENT_FIELD)).not.toHaveAttribute('aria-invalid', 'true')
+  })
+
+  it('marks the field invalid only for a value the backend would refuse', () => {
+    renderControl(makeScan())
+
+    fireEvent.change(screen.getByLabelText(ENVIRONMENT_FIELD), { target: { value: OFF_PATTERN_ENVIRONMENT } })
+
+    expect(screen.getByLabelText(ENVIRONMENT_FIELD)).toHaveAttribute('aria-invalid', 'true')
   })
 
   it('points a re-scan at the original scan instead of offering a mark that lands elsewhere', () => {
