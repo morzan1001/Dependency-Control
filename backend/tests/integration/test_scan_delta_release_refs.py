@@ -374,3 +374,19 @@ async def test_head_is_the_tip_of_the_default_branch_not_the_newest_pipeline(cli
     assert resp.status_code == 200, resp.text
     assert resp.json()["to_scan_id"] == _HEAD_SCAN
 
+
+@pytest.mark.asyncio
+async def test_the_response_names_the_branch_and_commit_of_both_sides(client, db, member_auth_headers):
+    """Without them a caller cannot tell which artefact the totals describe."""
+    await _seed(db)
+    await db.scans.update_one({"_id": _HEAD_SCAN}, {"$set": {"commit_hash": _HEAD_COMMIT}})
+
+    resp = await _delta(client, member_auth_headers, **{"from": _RELEASE_REF, "to": _HEAD_REF})
+
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["to_side"]["scan_id"] == _HEAD_SCAN
+    assert body["to_side"]["branch"] == _BRANCH
+    assert body["to_side"]["commit_hash"] == _HEAD_COMMIT
+    assert body["from_side"]["scan_id"] == _RELEASED_SCAN
+    assert body["from_side"]["branch"] == _BRANCH

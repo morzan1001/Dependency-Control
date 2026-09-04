@@ -99,6 +99,18 @@ class ScanDeltaReachability(BaseModel):
     analyzed_count: int = 0
 
 
+class ScanDeltaSide(BaseModel):
+    """Which build one side of a delta actually is. A symbolic side resolves server-side, so
+    without the branch and commit a caller cannot tell which artefact the totals describe."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scan_id: str
+    branch: str | None = None
+    commit_hash: str | None = None
+    created_at: datetime | None = None
+
+
 class ScanDeltaResponse(BaseModel):
     """Unified response envelope for the scan-delta endpoint."""
 
@@ -106,6 +118,8 @@ class ScanDeltaResponse(BaseModel):
 
     from_scan_id: str
     to_scan_id: str
+    from_side: ScanDeltaSide | None = None
+    to_side: ScanDeltaSide | None = None
     project_id: str
     category: DeltaCategory
     totals: ScanDeltaTotals

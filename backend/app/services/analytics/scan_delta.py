@@ -10,8 +10,9 @@ from __future__ import annotations
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core import ensure_utc
 from app.models.finding import FindingType, Severity
-from app.schemas.scan_delta import ScanDeltaResponse
+from app.schemas.scan_delta import ScanDeltaResponse, ScanDeltaSide
 from app.services.analytics.components_delta import compute_components_delta
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import compute_findings_delta
@@ -32,6 +33,7 @@ _VALID_CHANGES_BY_CATEGORY = {
 _MIN_PAGE = 1
 _MIN_PAGE_SIZE = 1
 _MAX_PAGE_SIZE = 200
+_SIDE_PROJECTION = {"branch": 1, "commit_hash": 1, "created_at": 1}
 
 
 def _reject_unknown(
@@ -83,6 +85,24 @@ def _validate_query(
         raise InvalidDeltaQuery(f"change={change} is not valid for category={category} (valid: {valid})")
 
 
+async def _describe_sides(
+    db: AsyncIOMotorDatabase, from_scan: str, to_scan: str
+) -> tuple[ScanDeltaSide, ScanDeltaSide]:
+    """The build each side is, so a caller can check a symbolic side resolved to what it expected."""
+    docs = {doc["_id"]: doc async for doc in db["scans"].find({"_id": {"$in": [from_scan, to_scan]}}, _SIDE_PROJECTION)}
+
+    def _side(scan_id: str) -> ScanDeltaSide:
+        doc = docs.get(scan_id) or {}
+        return ScanDeltaSide(
+            scan_id=scan_id,
+            branch=doc.get("branch"),
+            commit_hash=doc.get("commit_hash"),
+            created_at=ensure_utc(doc.get("created_at")),
+        )
+
+    return _side(from_scan), _side(to_scan)
+
+
 async def compute_scan_delta_dispatch(
     *,
     db: AsyncIOMotorDatabase,
@@ -110,7 +130,7 @@ async def compute_scan_delta_dispatch(
     )
 
     if category == "findings":
-        return await compute_findings_delta(
+        response = await compute_findings_delta(
             db,
             project_id=project_id,
             from_scan=from_scan,
@@ -121,8 +141,8 @@ async def compute_scan_delta_dispatch(
             severity=severity,
             finding_type=finding_type,
         )
-    if category == "components":
-        return await compute_components_delta(
+    elif category == "components":
+        response = await compute_components_delta(
             db,
             project_id=project_id,
             from_scan=from_scan,
@@ -131,12 +151,16 @@ async def compute_scan_delta_dispatch(
             page_size=page_size,
             change=change,
         )
-    return await compute_crypto_delta_envelope(
-        db,
-        project_id=project_id,
-        from_scan=from_scan,
-        to_scan=to_scan,
-        page=page,
-        page_size=page_size,
-        change=change,
-    )
+    else:
+        response = await compute_crypto_delta_envelope(
+            db,
+            project_id=project_id,
+            from_scan=from_scan,
+            to_scan=to_scan,
+            page=page,
+            page_size=page_size,
+            change=change,
+        )
+
+    response.from_side, response.to_side = await _describe_sides(db, from_scan, to_scan)
+    return response
