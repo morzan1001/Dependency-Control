@@ -15,6 +15,7 @@ from pymongo import UpdateMany, UpdateOne
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
+    MAX_RESCAN_HOPS,
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
@@ -906,6 +907,25 @@ def _as_utc(dt: datetime | None) -> datetime | None:
     return dt
 
 
+async def _lineage_root(scan_id: str, scan_doc: Any, scan_repo: ScanRepository) -> str:
+    """The scan a rescan lineage descends from, following original_scan_id upwards.
+
+    A pointer may name a rescan rather than the root, so one hop is not enough. Bounded, so a
+    cyclic pointer cannot hang the ingest path.
+    """
+    root_id = scan_id
+    doc = scan_doc
+    for _hop in range(MAX_RESCAN_HOPS):
+        if doc is None or not getattr(doc, "is_rescan", False):
+            break
+        parent_id = getattr(doc, "original_scan_id", None)
+        if not parent_id or parent_id == root_id:
+            break
+        root_id = parent_id
+        doc = await scan_repo.get_by_id_strong(parent_id)
+    return root_id
+
+
 async def _should_update_project_latest_scan(
     scan_id: str,
     scan_doc: Any,
@@ -935,10 +955,15 @@ async def _should_update_project_latest_scan(
         return True
 
     if getattr(scan_doc, "is_rescan", False):
-        original_scan_id = getattr(scan_doc, "original_scan_id", None)
-        current_root = getattr(current_latest, "original_scan_id", None) or current_latest_id
-        if original_scan_id and original_scan_id != current_root:
-            return False
+        incoming_parent = getattr(scan_doc, "original_scan_id", None)
+        current_parent = getattr(current_latest, "original_scan_id", None) or current_latest_id
+        # One shared parent settles the common case with no read at all; only a mismatch is worth
+        # resolving both sides for, because a pointer into the middle of a chain names no root.
+        if incoming_parent and incoming_parent != current_parent:
+            incoming_root = await _lineage_root(scan_id, scan_doc, scan_repo)
+            current_root = await _lineage_root(current_latest_id, current_latest, scan_repo)
+            if incoming_root != current_root:
+                return False
 
     this_created = _as_utc(getattr(scan_doc, "created_at", None))
     current_created = _as_utc(getattr(current_latest, "created_at", None))

@@ -817,6 +817,9 @@ SCAN_USABLE_STATUSES = [
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
 ]
 
+# Bound on any walk along a rescan lineage, so a cyclic pointer cannot hang a request.
+MAX_RESCAN_HOPS: int = 10
+
 # SPDX originator/supplier prefix for organization entities
 SPDX_ORGANIZATION_PREFIX = "Organization:"
 

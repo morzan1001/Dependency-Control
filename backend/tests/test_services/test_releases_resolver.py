@@ -5,11 +5,10 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, MAX_RESCAN_HOPS
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.services.releases import (
-    _MAX_RESCAN_HOPS,
     latest_release_scan,
     released_scan_ids,
     resolve_scan_ids,
@@ -44,7 +43,7 @@ _RELEASE_QUERIES = {"releases.aggregate": 1, "scans.find": 1}
 _RELEASE_QUERIES_WITH_RESCANS = {"releases.aggregate": 1, "scans.find": 2}
 _RELEASE_QUERIES_WITH_A_CHAIN = {"releases.aggregate": 1, "scans.find": 4}
 _CHAIN_DEPTH = 3
-_CHAIN_BEYOND_THE_BOUND = _MAX_RESCAN_HOPS + 5
+_CHAIN_BEYOND_THE_BOUND = MAX_RESCAN_HOPS + 5
 _NO_RELEASES: dict[str, str] = {}
 _CYCLE_QUERIES = {"releases.find_one": 1, "scans.find": 2}
 _NO_QUERIES: dict[str, int] = {}
@@ -259,7 +258,7 @@ async def test_a_chain_longer_than_the_bound_stops_at_the_bound(db):
 
     resolved = await latest_release_scan(db, _PROJECT_A, _PRODUCTION)
 
-    assert resolved == chain[_MAX_RESCAN_HOPS - 1], "the walk stops at the bound instead of running the chain out"
+    assert resolved == chain[MAX_RESCAN_HOPS - 1], "the walk stops at the bound instead of running the chain out"
 
 
 @pytest.mark.asyncio

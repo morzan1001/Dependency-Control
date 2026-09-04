@@ -7,11 +7,10 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core import ensure_utc
-from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, SCAN_USABLE_STATUSES
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, MAX_RESCAN_HOPS, SCAN_USABLE_STATUSES
 from app.repositories import ProjectRepository, ScanRepository
 from app.schemas.projections import ProjectWithScanId
 
-_MAX_RESCAN_HOPS = 10
 _CHAIN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1, "created_at": 1}
 _UNDATED = datetime.min.replace(tzinfo=timezone.utc)
 
@@ -34,7 +33,7 @@ async def effective_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Iterable[str]) 
     visited: set[str] = set()
     freshest: dict[str, dict[str, Any]] = {}
 
-    for _hop in range(_MAX_RESCAN_HOPS + 1):
+    for _hop in range(MAX_RESCAN_HOPS + 1):
         if not frontier:
             break
         visited.update(frontier)
