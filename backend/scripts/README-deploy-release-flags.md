@@ -41,6 +41,23 @@ Verify: `db.releases.getIndexes()` lists both, `db.scans.getIndexes()` lists `sc
 `(project_id, environment, scan_id)`, and without the unique index a retry can insert a second row
 for one deployment.
 
+Build it before anything writes to `releases`, not after. Over a collection that already holds two
+rows with one `(project_id, environment, scan_id)`, the build fails with `Index build failed …
+E11000` and leaves the collection unindexed — and a backfill or a deploy that ran without the index
+is exactly what produces such a pair. If the build fails, list the offenders, keep the newest row of
+each group, delete the rest and build again:
+
+```js
+db.releases.aggregate([
+  { $group: {
+      _id: { project_id: "$project_id", environment: "$environment", scan_id: "$scan_id" },
+      ids: { $push: "$_id" },
+      n: { $sum: 1 }
+  } },
+  { $match: { n: { $gt: 1 } } }
+])
+```
+
 ---
 
 ## 2. Decide the scheduled-rescan burst before you deploy

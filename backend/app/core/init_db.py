@@ -16,6 +16,11 @@ logger = logging.getLogger(__name__)
 
 MONGO_TYPE = "$type"
 
+RELEASES_UPSERT_KEY_NAME = "releases_upsert_key"
+# One release per (project, environment, scan): the upsert filter and the constraint behind it,
+# so a test double can declare the same key rather than a copy of it.
+RELEASES_UPSERT_KEY_FIELDS: tuple[str, ...] = ("project_id", "environment", "scan_id")
+
 
 async def _migrate_project_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     """Drop old sparse GitLab/GitHub project indexes; sparse compound indexes still collide on
@@ -339,12 +344,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         name="releases_latest_lookup",
     )  # Serves the latest release of a (project, environment) as a single sorted find_one.
     await database["releases"].create_index(
-        [
-            ("project_id", pymongo.ASCENDING),
-            ("environment", pymongo.ASCENDING),
-            ("scan_id", pymongo.ASCENDING),
-        ],
-        name="releases_upsert_key",
+        [(field, pymongo.ASCENDING) for field in RELEASES_UPSERT_KEY_FIELDS],
+        name=RELEASES_UPSERT_KEY_NAME,
         unique=True,
     )  # The upsert key: without uniqueness two concurrent marks of one scan both insert.
     await database["releases"].create_index("scan_id")

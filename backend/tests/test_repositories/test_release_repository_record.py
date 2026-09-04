@@ -2,7 +2,6 @@
 
 from datetime import datetime, timedelta, timezone
 
-import pymongo
 import pytest
 import pytest_asyncio
 from pymongo.errors import DuplicateKeyError
@@ -18,20 +17,13 @@ _ENVIRONMENT = "production"
 _SCAN = "scan-1"
 _VERSION = "v2.1.0"
 _EARLIER_VERSION = "v2.0.0"
-_UNIQUE_KEY = [
-    ("project_id", pymongo.ASCENDING),
-    ("environment", pymongo.ASCENDING),
-    ("scan_id", pymongo.ASCENDING),
-]
 _ONE_RECORD = 1
 _FIRST_CALL = 1
 
 
 @pytest_asyncio.fixture
 async def db():
-    database = FakeDatabase()
-    await database.releases.create_index(_UNIQUE_KEY, unique=True)
-    return database
+    return FakeDatabase()
 
 
 def _competitor_row() -> dict:
@@ -77,9 +69,21 @@ async def test_a_lost_insert_race_updates_the_row_the_winner_wrote(db):
 
 
 @pytest.mark.asyncio
+async def test_a_second_row_for_one_triple_is_refused(db):
+    """The constraint the retry handler exists for: recording is only idempotent because the server
+    refuses the second insert."""
+    await ReleaseRepository(db).record(
+        Release(project_id=_PROJECT, environment=_ENVIRONMENT, version=_VERSION, scan_id=_SCAN, released_at=_NOW)
+    )
+
+    with pytest.raises(DuplicateKeyError):
+        await db.releases.insert_one(_competitor_row())
+
+
+@pytest.mark.asyncio
 async def test_the_upsert_filter_is_the_key_triple(db):
-    """The in-process upsert skips its duplicate check once the filter matches, so what a single
-    surviving row shows is that the filter selects on the triple — not that uniqueness is enforced."""
+    """A filter selecting on anything but the triple would insert, and the unique key would refuse
+    the insert, so one surviving row is the filter and the constraint agreeing."""
     await ReleaseRepository(db).record(
         Release(project_id=_PROJECT, environment=_ENVIRONMENT, version=_VERSION, scan_id=_SCAN, released_at=_NOW)
     )
