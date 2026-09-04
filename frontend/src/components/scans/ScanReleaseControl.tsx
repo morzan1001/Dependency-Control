@@ -1,38 +1,55 @@
 import { Rocket } from 'lucide-react'
+import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
 import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
 import { useMarkRelease, useUnmarkRelease } from '@/hooks/queries/use-releases'
+import { DEFAULT_RELEASE_ENVIRONMENT, RELEASE_ENVIRONMENT_PATTERN } from '@/lib/constants'
 import { formatDateTime } from '@/lib/utils'
 import type { ScanWithReleases } from '@/types/scan'
+
+const ENVIRONMENT_LABEL = 'Environment to release to'
+const OFF_PATTERN_HINT = 'Lowercase letters, digits, - and _ only, up to 32 characters.'
 
 interface ScanReleaseControlProps {
   projectId: string
   scan: ScanWithReleases
 }
 
+function rejectionFor(environment: string, held: readonly string[]): string | null {
+  if (!RELEASE_ENVIRONMENT_PATTERN.test(environment)) return OFF_PATTERN_HINT
+  // The backend would upsert the same record; offering that only invites confusion.
+  if (held.includes(environment)) return `Already released to ${environment}.`
+  return null
+}
+
 export function ScanReleaseControl({ projectId, scan }: ScanReleaseControlProps) {
+  const [environment, setEnvironment] = useState(DEFAULT_RELEASE_ENVIRONMENT)
   const markRelease = useMarkRelease()
   const unmarkRelease = useUnmarkRelease()
+
+  const rejection = rejectionFor(environment, scan.releases.map((release) => release.environment))
 
   const handleMark = () => {
     if (!scan.commit_hash) return
     markRelease.mutate(
-      { projectId, payload: { commit_hash: scan.commit_hash } },
+      // No version: the backend falls back to the scan's commit_tag, which is what CI built.
+      { projectId, payload: { commit_hash: scan.commit_hash, environment } },
       {
-        onSuccess: () => toast.success('Marked as release'),
-        onError: () => toast.error('Could not mark this scan as a release'),
+        onSuccess: () => toast.success(`Marked as release in ${environment}`),
+        onError: () => toast.error(`Could not mark this scan as a release in ${environment}`),
       },
     )
   }
 
-  const handleUnmark = (environment: string) => {
+  const handleUnmark = (withdrawnFrom: string) => {
     unmarkRelease.mutate(
-      { projectId, scanId: scan.id, environment },
+      { projectId, scanId: scan.id, environment: withdrawnFrom },
       {
-        onSuccess: () => toast.success(`Withdrawn from ${environment}`),
-        onError: () => toast.error(`Could not withdraw this scan from ${environment}`),
+        onSuccess: () => toast.success(`Withdrawn from ${withdrawnFrom}`),
+        onError: () => toast.error(`Could not withdraw this scan from ${withdrawnFrom}`),
       },
     )
   }
@@ -40,38 +57,45 @@ export function ScanReleaseControl({ projectId, scan }: ScanReleaseControlProps)
   return (
     <div className="flex flex-col space-y-1">
       <span className="text-sm text-muted-foreground">Release</span>
-      {scan.is_release ? (
-        <div className="flex flex-col gap-2">
-          {scan.releases.map((release) => (
-            <div key={release.environment} className="flex flex-col gap-0.5">
-              <ReleaseBadge environment={release.environment} version={release.version} />
-              <span className="text-xs text-muted-foreground">Released {formatDateTime(release.released_at)}</span>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="w-fit px-0 text-xs"
-                disabled={unmarkRelease.isPending}
-                onClick={() => handleUnmark(release.environment)}
-              >
-                Withdraw from {release.environment}
-              </Button>
-            </div>
-          ))}
-          {/* The flag denormalises the release records, so one without them is still a release. */}
-          {scan.releases.length === 0 && <ReleaseBadge />}
+      <div className="flex flex-col gap-2">
+        {scan.releases.map((release) => (
+          <div key={release.environment} className="flex flex-col gap-0.5">
+            <ReleaseBadge environment={release.environment} version={release.version} />
+            <span className="text-xs text-muted-foreground">Released {formatDateTime(release.released_at)}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="w-fit px-0 text-xs"
+              disabled={unmarkRelease.isPending}
+              onClick={() => handleUnmark(release.environment)}
+            >
+              Withdraw from {release.environment}
+            </Button>
+          </div>
+        ))}
+        {/* The flag denormalises the release records, so one without them is still a release. */}
+        {scan.is_release && scan.releases.length === 0 && <ReleaseBadge />}
+        <div className="flex flex-col gap-1">
+          <Input
+            aria-label={ENVIRONMENT_LABEL}
+            aria-invalid={rejection !== null}
+            value={environment}
+            onChange={(event) => setEnvironment(event.target.value)}
+            className="h-8 w-full max-w-[12rem] text-xs"
+          />
+          <Button
+            variant="outline"
+            size="sm"
+            className="w-fit"
+            disabled={!scan.commit_hash || markRelease.isPending || rejection !== null}
+            onClick={handleMark}
+          >
+            <Rocket className="mr-2 h-3 w-3" />
+            Mark as release
+          </Button>
+          {rejection && <span className="text-xs text-destructive">{rejection}</span>}
         </div>
-      ) : (
-        <Button
-          variant="outline"
-          size="sm"
-          className="w-fit"
-          disabled={!scan.commit_hash || markRelease.isPending}
-          onClick={handleMark}
-        >
-          <Rocket className="mr-2 h-3 w-3" />
-          Mark as release
-        </Button>
-      )}
+      </div>
     </div>
   )
 }

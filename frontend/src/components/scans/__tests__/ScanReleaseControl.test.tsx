@@ -16,6 +16,9 @@ const PRODUCTION_RELEASED_AT = '2026-09-01T10:00:00Z'
 const STAGING_RELEASED_AT = '2026-09-02T11:00:00Z'
 const MARK_BUTTON = 'Mark as release'
 const GENERIC_RELEASE_LABEL = 'Release'
+const ENVIRONMENT_FIELD = 'Environment to release to'
+const OFF_PATTERN_ENVIRONMENT = 'Pre-Prod!'
+const OFF_PATTERN_HINT = /lowercase letters/i
 
 const mockMark = vi.fn()
 const mockUnmark = vi.fn()
@@ -57,15 +60,46 @@ function releasedScan(releases: ScanReleaseRef[]): ScanWithReleases {
 beforeEach(() => vi.clearAllMocks())
 
 describe('ScanReleaseControl', () => {
-  it('offers to mark a plain scan', () => {
+  it('marks a plain scan into the default environment, leaving the version to the backend', () => {
     render(<ScanReleaseControl projectId={PROJECT_ID} scan={makeScan()} />)
 
     fireEvent.click(screen.getByRole('button', { name: MARK_BUTTON }))
 
     expect(mockMark).toHaveBeenCalledWith(
-      { projectId: PROJECT_ID, payload: { commit_hash: COMMIT_HASH } },
+      { projectId: PROJECT_ID, payload: { commit_hash: COMMIT_HASH, environment: PRODUCTION } },
       expect.anything(),
     )
+  })
+
+  it('promotes a staging release to the environment that was typed', () => {
+    const scan = releasedScan([makeRelease({ environment: STAGING, version: STAGING_VERSION })])
+    render(<ScanReleaseControl projectId={PROJECT_ID} scan={scan} />)
+
+    fireEvent.change(screen.getByLabelText(ENVIRONMENT_FIELD), { target: { value: PRODUCTION } })
+    fireEvent.click(screen.getByRole('button', { name: MARK_BUTTON }))
+
+    expect(mockMark).toHaveBeenCalledWith(
+      { projectId: PROJECT_ID, payload: { commit_hash: COMMIT_HASH, environment: PRODUCTION } },
+      expect.anything(),
+    )
+  })
+
+  it('does not offer to re-mark an environment the scan already holds', () => {
+    render(<ScanReleaseControl projectId={PROJECT_ID} scan={releasedScan([makeRelease()])} />)
+
+    expect(screen.getByRole('button', { name: MARK_BUTTON })).toBeDisabled()
+    expect(screen.getByText(`Already released to ${PRODUCTION}.`)).toBeInTheDocument()
+  })
+
+  it('rejects an environment the backend would refuse instead of requesting it', () => {
+    render(<ScanReleaseControl projectId={PROJECT_ID} scan={makeScan()} />)
+
+    fireEvent.change(screen.getByLabelText(ENVIRONMENT_FIELD), { target: { value: OFF_PATTERN_ENVIRONMENT } })
+    fireEvent.click(screen.getByRole('button', { name: MARK_BUTTON }))
+
+    expect(screen.getByRole('button', { name: MARK_BUTTON })).toBeDisabled()
+    expect(screen.getByText(OFF_PATTERN_HINT)).toBeInTheDocument()
+    expect(mockMark).not.toHaveBeenCalled()
   })
 
   it('cannot mark a scan that has no commit', () => {
@@ -108,5 +142,7 @@ describe('ScanReleaseControl', () => {
 
     expect(screen.getByLabelText(GENERIC_RELEASE_LABEL)).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Withdraw from/ })).not.toBeInTheDocument()
+    // Nothing names the environments it holds, so every one of them stays markable.
+    expect(screen.getByRole('button', { name: MARK_BUTTON })).toBeEnabled()
   })
 })
