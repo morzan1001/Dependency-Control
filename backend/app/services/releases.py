@@ -103,9 +103,10 @@ async def released_scan_ids(db: AsyncIOMotorDatabase, project_id: str) -> dict[s
     """environment -> the scan that was marked for it, before any rescan chain."""
     pipeline: list[dict[str, Any]] = [
         {"$match": {"project_id": project_id}},
-        # Matches the residual releases_latest_lookup order after the project_id equality, so the
-        # sort is index-served instead of ranking every release row the project ever had.
-        {"$sort": {"environment": 1, "released_at": -1}},
+        # The residual releases_latest_lookup order after the project_id equality, so the sort is
+        # index-served instead of ranking every release row the project ever had — and the _id
+        # tie-break its two siblings carry, so a tie is decided by the query rather than the plan.
+        {"$sort": {"environment": 1, "released_at": -1, "_id": 1}},
         {"$group": {"_id": "$environment", "scan_id": {"$first": "$scan_id"}}},
     ]
     marked = {row["_id"]: row["scan_id"] async for row in db.releases.aggregate(pipeline)}
@@ -120,9 +121,12 @@ async def _release_scan_ids(
         match["project_id"] = {"$in": list(project_ids)}
     pipeline: list[dict[str, Any]] = [
         {"$match": match},
-        # _id breaks released_at ties so a rollback marked with an explicit timestamp cannot make
-        # analytics pick a different scan on every request. The sort is unindexed either way.
-        {"$sort": {"released_at": -1, "_id": 1}},
+        # The full releases_latest_lookup order, so the pick is one index seek per project instead
+        # of a blocking sort over every release row the accessible projects ever recorded — this
+        # runs in front of the analytics cache, so its cost is on every request. _id breaks
+        # released_at ties, or a rollback marked with an explicit timestamp picks a different scan
+        # per request.
+        {"$sort": {"project_id": 1, "environment": 1, "released_at": -1, "_id": 1}},
         {"$group": {"_id": "$project_id", "scan_id": {"$first": "$scan_id"}}},
     ]
     released = {row["_id"]: row["scan_id"] async for row in db.releases.aggregate(pipeline)}

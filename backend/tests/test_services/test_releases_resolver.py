@@ -301,6 +301,22 @@ async def test_released_scan_ids_take_the_newest_release_of_an_environment(db):
 
 
 @pytest.mark.asyncio
+async def test_released_scan_ids_break_a_tie_the_way_every_other_release_read_does(db):
+    """The rescanner keeps this answer warm, so a tie it settles differently from the list endpoint
+    and latest_release_scan leaves the scan every user-facing path calls deployed never rescanned."""
+    await db.scans.insert_one(_scan(_TIED_SCAN_HIGH_ROW_ID, _PROJECT_A))
+    await db.scans.insert_one(_scan(_TIED_SCAN_LOW_ROW_ID, _PROJECT_A))
+    # Inserted first, so insertion order alone would hand it the group.
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, _TIED_SCAN_HIGH_ROW_ID))
+    await db.releases.insert_one(_release(_PROJECT_A, _PRODUCTION, _TIED_SCAN_LOW_ROW_ID))
+
+    marked = await released_scan_ids(db, _PROJECT_A)
+
+    assert marked == {_PRODUCTION: _TIED_SCAN_LOW_ROW_ID}
+    assert marked[_PRODUCTION] == await latest_release_scan(db, _PROJECT_A, _PRODUCTION)
+
+
+@pytest.mark.asyncio
 async def test_released_scan_ids_of_a_project_without_releases_is_empty(db):
     await db.releases.insert_one(_release(_OTHER_PROJECT, _PRODUCTION, "someone-elses"))
 
