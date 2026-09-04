@@ -212,9 +212,7 @@ _ANALYZERS = ["license_compliance", "typosquatting"]
 
 # Every net below is only as wide as the run that exercises it, so the run's own reach is
 # asserted by equality rather than by truthiness.
-_EXPECTED_RAN = (
-    frozenset(_ANALYZERS) | frozenset(_SCANNER_PAYLOADS) | {_ENRICHMENT, _REACHABILITY, _CRYPTO_RULES}
-)
+_EXPECTED_RAN = frozenset(_ANALYZERS) | frozenset(_SCANNER_PAYLOADS) | {_ENRICHMENT, _REACHABILITY, _CRYPTO_RULES}
 _EXPECTED_SKIPPED = frozenset(analyzers) - frozenset(_ANALYZERS)
 
 
