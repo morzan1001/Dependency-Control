@@ -36,6 +36,9 @@ _NOTHING = 0
 _ONE = 1
 _TWO = 2
 
+_LIVE_CVE = "CVE-3001"
+_WAIVED_CVE = "CVE-3002"
+
 # Waiver state of one side: the tri-state flag, plus the side carrying no document at all.
 _WAIVED = "waived"
 _NOT_WAIVED = "not-waived"
@@ -207,3 +210,90 @@ async def test_the_counts_cover_the_same_item_set_as_the_delta(db, filters):
     result = await _delta(db, **filters)
 
     assert result.from_waived_excluded == _ONE
+
+
+def _aggregated(fid: str, scan_id: str, entries: list[dict], *, waived: bool = False) -> dict:
+    """One aggregated vulnerability record; a per-CVE waiver flags the entry, not the document."""
+    doc = _finding(fid, scan_id, component=_WAIVED_COMPONENT, waived=waived)
+    doc["details"] = {"vulnerabilities": entries}
+    return doc
+
+
+@pytest.mark.asyncio
+async def test_a_per_cve_waiver_does_not_split_one_record_into_an_added_and_removed_pair(db):
+    """The head side gained a critical and waived it; the delivered set is unchanged, and the count
+    is what tells the caller a waiver is holding something back."""
+    await db.findings.insert_one(_aggregated(_SHARED_FINDING, _FROM_SCAN, [{"id": _LIVE_CVE}]))
+    await db.findings.insert_one(
+        _aggregated(
+            _SHARED_FINDING,
+            _TO_SCAN,
+            [{"id": _LIVE_CVE}, {"id": _WAIVED_CVE, "waived": True}],
+        )
+    )
+
+    result = await _delta(db)
+
+    assert result.totals.added == _NOTHING
+    assert result.totals.removed == _NOTHING
+    assert result.totals.unchanged == _ONE
+    assert result.to_waived_excluded == _ONE
+    assert result.from_waived_excluded == _NOTHING
+
+
+@pytest.mark.asyncio
+async def test_an_entry_the_waiver_never_touched_still_keys_the_record(db):
+    """Tri-state: an entry carries no ``waived`` key until a waiver writes one."""
+    await db.findings.insert_one(_aggregated(_SHARED_FINDING, _FROM_SCAN, [{"id": _LIVE_CVE}]))
+    await db.findings.insert_one(_aggregated(_SHARED_FINDING, _TO_SCAN, [{"id": _LIVE_CVE, "waived": False}]))
+
+    result = await _delta(db)
+
+    assert result.totals.unchanged == _ONE
+    assert result.to_waived_excluded == _NOTHING
+
+
+@pytest.mark.asyncio
+async def test_waiving_one_cve_of_a_record_is_reported_as_a_waiver_difference(db):
+    await db.findings.insert_one(_aggregated(_SHARED_FINDING, _FROM_SCAN, [{"id": _LIVE_CVE}, {"id": _WAIVED_CVE}]))
+    await db.findings.insert_one(
+        _aggregated(
+            _SHARED_FINDING,
+            _TO_SCAN,
+            [{"id": _LIVE_CVE}, {"id": _WAIVED_CVE, "waived": True}],
+        )
+    )
+
+    result = await _delta(db)
+
+    assert result.totals.added == _ONE
+    assert result.totals.removed == _ONE
+    assert result.waiver_only_changes == _TWO
+
+
+@pytest.mark.asyncio
+async def test_a_lapsed_waiver_is_reported_even_when_both_sides_hide_the_same_number(db):
+    """The counterfactual the count comparison cannot see: equal counts, different hidden sets."""
+    await db.findings.insert_one(_finding(_SHARED_FINDING, _FROM_SCAN, component=_WAIVED_COMPONENT, waived=True))
+    await db.findings.insert_one(_finding(_SHARED_FINDING, _TO_SCAN, component=_WAIVED_COMPONENT, waived=False))
+    await db.findings.insert_one(_finding(_SECOND_WAIVED_FINDING, _TO_SCAN, component=_SECOND_COMPONENT, waived=True))
+
+    result = await _delta(db)
+
+    assert result.totals.added == _ONE
+    assert result.from_waived_excluded == result.to_waived_excluded == _ONE
+    assert result.waiver_only_changes == _ONE
+
+
+@pytest.mark.asyncio
+async def test_a_change_no_waiver_explains_is_not_counted_as_one(db):
+    """Waivers on both sides, and a finding that genuinely appeared: the warning must stay silent."""
+    await db.findings.insert_one(_finding(_WAIVED_FINDING, _FROM_SCAN, component=_WAIVED_COMPONENT, waived=True))
+    await db.findings.insert_one(_finding(_WAIVED_FINDING, _TO_SCAN, component=_WAIVED_COMPONENT, waived=True))
+    await db.findings.insert_one(_finding(_LIVE_FINDING, _TO_SCAN, component=_LIVE_COMPONENT, waived=False))
+
+    result = await _delta(db)
+
+    assert result.totals.added == _ONE
+    assert result.from_waived_excluded == result.to_waived_excluded == _ONE
+    assert result.waiver_only_changes == _NOTHING

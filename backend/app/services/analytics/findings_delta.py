@@ -67,17 +67,23 @@ def _malware_identifier(details: dict[str, Any]) -> str:
     return _first_id(details, "reference")
 
 
-def _vulnerability_identifier(finding: dict[str, Any]) -> str:
+def _vulnerability_identifier(finding: dict[str, Any], include_waived: bool) -> str:
     """Identity for an aggregated vulnerability record.
 
     CVE/advisory ids live in ``details.vulnerabilities[].id`` and version is top-level;
     key on the sorted id set plus version so adding/dropping a CVE or a version bump reads
-    as a change, not "unchanged".
+    as a change, not "unchanged". A per-CVE waiver suppresses its entry alone, so the key names
+    only the entries the side still reports; ``include_waived`` asks instead for the identity the
+    record would carry if no waiver applied.
     """
     details = finding.get("details") or {}
     version = finding.get("version") or ""
     vulns = details.get("vulnerabilities") or []
-    ids = sorted(str(v.get("id")) for v in vulns if isinstance(v, dict) and v.get("id"))
+    ids = sorted(
+        str(v.get("id"))
+        for v in vulns
+        if isinstance(v, dict) and v.get("id") and (include_waived or not v.get("waived"))
+    )
     if not ids:
         return ""
     joined = ",".join(ids)
@@ -99,12 +105,6 @@ _FINDING_TYPE_IDENTIFIER: dict[str, Callable[[dict[str, Any]], str]] = {
     "outdated": lambda d: _first_id(d, "fixed_version"),
 }
 
-# Extractors needing top-level finding fields (version, finding_id), not just details.
-_FINDING_TYPE_IDENTIFIER_FULL: dict[str, Callable[[dict[str, Any]], str]] = {
-    "vulnerability": _vulnerability_identifier,
-    "secret": _secret_identifier,
-}
-
 
 def _fallback_identifier(finding: dict[str, Any]) -> str:
     """Hash of description + found_in so an unidentifiable finding matches itself across scans."""
@@ -112,20 +112,24 @@ def _fallback_identifier(finding: dict[str, Any]) -> str:
     return hashlib.sha1(digest_src.encode("utf-8"), usedforsecurity=False).hexdigest()[:12]
 
 
-def finding_identity_key(finding: dict[str, Any]) -> tuple[str, str, str]:
-    """Stable identity for matching the same finding across two scans (finding_id is per-scan)."""
+def finding_identity_key(finding: dict[str, Any], *, include_waived: bool = False) -> tuple[str, str, str]:
+    """Stable identity for matching the same finding across two scans (finding_id is per-scan).
+
+    ``include_waived`` keys a vulnerability record on every entry rather than only the live ones,
+    which is the identity it would have carried had no waiver been applied to it.
+    """
     ftype = finding.get("type") or ""
     component = finding.get("component") or ""
+    details = finding.get("details") or {}
+
     if ftype == "vulnerability":
         # Scanners disagree on how far a package name is qualified; fold to the artifact name
         # so a requalified component reads as unchanged instead of removed + added. Other
         # types keep the raw component because theirs is a file path, not a package name.
         component = extract_artifact_name(component)
-    details = finding.get("details") or {}
-
-    full_extractor = _FINDING_TYPE_IDENTIFIER_FULL.get(ftype)
-    if full_extractor:
-        identifier = full_extractor(finding)
+        identifier = _vulnerability_identifier(finding, include_waived)
+    elif ftype == "secret":
+        identifier = _secret_identifier(finding)
     else:
         extractor = _FINDING_TYPE_IDENTIFIER.get(ftype)
         identifier = extractor(details) if extractor else ""
@@ -148,6 +152,7 @@ _FETCH_PROJECTION: dict[str, int] = {
     "finding_id": 1,
     "scan_created_at": 1,
     "details.vulnerabilities.id": 1,
+    "details.vulnerabilities.waived": 1,
     "details.sast_findings.id": 1,
     "details.rule_id": 1,
     "details.line": 1,
@@ -190,6 +195,20 @@ async def _fetch_scan_findings(
     return [doc async for doc in cursor]
 
 
+def _waiver_touched_query(
+    project_id: str,
+    scan_id: str,
+    finding_type: Iterable[str] | None,
+    severity: Iterable[str] | None,
+) -> dict:
+    """Findings a waiver suppresses in whole or in part. A per-CVE waiver leaves the document
+    level untouched, so asking only for ``waived: True`` reports nothing hidden while a waiver is
+    hiding a critical."""
+    return _side_query(project_id, scan_id, finding_type, severity) | {
+        "$or": [{"waived": True}, {"details.vulnerabilities.waived": True}]
+    }
+
+
 async def _count_waived_out(
     db: AsyncIOMotorDatabase,
     project_id: str,
@@ -197,11 +216,28 @@ async def _count_waived_out(
     finding_type: Iterable[str] | None,
     severity: Iterable[str] | None,
 ) -> int:
-    """Complement of the fetch: counted rather than fetched so waived documents cannot consume
-    the MAX_FETCH budget and push live findings out of the delta."""
-    query = _side_query(project_id, scan_id, finding_type, severity) | {"waived": True}
-    count: int = await db["findings"].count_documents(query)
+    """Counted rather than derived from a fetch, so the number stays exact past MAX_FETCH."""
+    count: int = await db["findings"].count_documents(
+        _waiver_touched_query(project_id, scan_id, finding_type, severity)
+    )
     return count
+
+
+async def _fetch_waiver_touched(
+    db: AsyncIOMotorDatabase,
+    project_id: str,
+    scan_id: str,
+    finding_type: Iterable[str] | None,
+    severity: Iterable[str] | None,
+) -> list[dict]:
+    """Read on its own budget so waived documents cannot consume the MAX_FETCH the live findings
+    share and push delivered risk out of the delta."""
+    cursor = (
+        db["findings"]
+        .find(_waiver_touched_query(project_id, scan_id, finding_type, severity), projection=_FETCH_PROJECTION)
+        .limit(MAX_FETCH)
+    )
+    return [doc async for doc in cursor]
 
 
 def _doc_severity(doc: dict) -> str:
@@ -236,6 +272,29 @@ def _to_item(doc: dict, change: str) -> FindingDeltaItem:
     )
 
 
+def _unwaived_keys(*sides: Iterable[dict]) -> set[tuple[str, str, str]]:
+    """The identities a side would carry with no waiver applied to any of its findings."""
+    return {finding_identity_key(doc, include_waived=True) for docs in sides for doc in docs}
+
+
+def _waiver_only_changes(
+    added_keys: set[tuple[str, str, str]],
+    removed_keys: set[tuple[str, str, str]],
+    from_unwaived: set[tuple[str, str, str]],
+    to_unwaived: set[tuple[str, str, str]],
+) -> int:
+    """Added and removed items the same comparison would not have produced had no waiver applied.
+
+    Waivers are re-evaluated only for the newest scan, so the older side's flags are frozen: a
+    waiver that lapsed since makes a pre-existing finding read as added, and a waiver created since
+    makes one read as removed. Both sides can hide the same number of findings while hiding
+    different ones, so a count comparison cannot see either.
+    """
+    unwaived_added = to_unwaived - from_unwaived
+    unwaived_removed = from_unwaived - to_unwaived
+    return len(added_keys - unwaived_added) + len(removed_keys - unwaived_removed)
+
+
 async def compute_findings_delta(
     db: AsyncIOMotorDatabase,
     *,
@@ -251,6 +310,8 @@ async def compute_findings_delta(
     """Compute the delta between two scans' findings as a paginated envelope."""
     from_docs = await _fetch_scan_findings(db, project_id, from_scan, finding_type, severity)
     to_docs = await _fetch_scan_findings(db, project_id, to_scan, finding_type, severity)
+    from_waived = await _fetch_waiver_touched(db, project_id, from_scan, finding_type, severity)
+    to_waived = await _fetch_waiver_touched(db, project_id, to_scan, finding_type, severity)
 
     from_map = {finding_identity_key(d): d for d in from_docs}
     to_map = {finding_identity_key(d): d for d in to_docs}
@@ -312,4 +373,10 @@ async def compute_findings_delta(
         to_reachability=await side_reachability(db, to_scan),
         from_waived_excluded=await _count_waived_out(db, project_id, from_scan, finding_type, severity),
         to_waived_excluded=await _count_waived_out(db, project_id, to_scan, finding_type, severity),
+        waiver_only_changes=_waiver_only_changes(
+            set(added_keys),
+            set(removed_keys),
+            _unwaived_keys(from_docs, from_waived),
+            _unwaived_keys(to_docs, to_waived),
+        ),
     )

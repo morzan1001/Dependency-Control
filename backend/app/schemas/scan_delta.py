@@ -132,8 +132,11 @@ class ScanDeltaResponse(BaseModel):
     # was scored with, so it counts every vulnerability in the scan whatever the delta asked for.
     from_reachability: ScanDeltaReachability | None = None
     to_reachability: ScanDeltaReachability | None = None
-    # Findings the waiver filter took out of each side, counted under the finding_type and severity
-    # filters; the `change` filter only scopes the item list. Waivers are re-evaluated only for the
-    # latest scan, so a waiver that lapsed since the older side makes a pre-existing finding read as added.
+    # Findings a waiver hides in whole or in part on each side, counted under the finding_type and
+    # severity filters; the `change` filter only scopes the item list.
     from_waived_excluded: int = 0
     to_waived_excluded: int = 0
+    # Added and removed items the comparison would not have produced had no waiver applied — the
+    # only evidence that a change is a waiver difference rather than a code difference, since two
+    # sides can hide equal numbers of different findings.
+    waiver_only_changes: int = 0
