@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { Scan } from '@/types/scan'
 import { isScanUsable } from '@/lib/scan-status'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
+import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
 import { useProjectBranches } from '@/hooks/queries/use-projects'
 import { useProjectScans } from '@/hooks/queries/use-scans'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -11,7 +12,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink, ArrowUp, ArrowDown, RefreshCw, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink, ArrowUp, ArrowDown, RefreshCw, Rocket, Trash2 } from 'lucide-react'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
@@ -34,6 +35,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
   const [selectedBranch, setSelectedBranch] = useState<string | undefined>(undefined)
   const [sortBy, setSortBy] = useState("created_at")
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
+  const [releasesOnly, setReleasesOnly] = useState(false)
   const limit = DEFAULT_PAGE_SIZE
   const navigate = useNavigate()
 
@@ -43,7 +45,14 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
   const deletedBranches = useMemo(() => branches?.filter(b => !b.is_active) || [], [branches])
 
   const { data: scans, isLoading, isPlaceholderData } = useProjectScans(
-    projectId, { page, limit, branch: selectedBranch, sortBy, sortOrder, excludeRescans: true, excludeDeletedBranches: !selectedBranch }
+    projectId,
+    {
+      page, limit, branch: selectedBranch, sortBy, sortOrder,
+      excludeRescans: true,
+      // A release commonly sits on a branch that has since been deleted, tag builds above all.
+      excludeDeletedBranches: !selectedBranch && !releasesOnly,
+      isRelease: releasesOnly ? true : undefined,
+    }
   )
 
   const renderSortIcon = (column: string) => {
@@ -108,6 +117,18 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                 <X className="h-4 w-4" />
               </Button>
             )}
+            <Button
+              variant={releasesOnly ? 'default' : 'outline'}
+              size="sm"
+              aria-pressed={releasesOnly}
+              onClick={() => {
+                setReleasesOnly((on) => !on)
+                setPage(1)
+              }}
+            >
+              <Rocket className="mr-2 h-4 w-4" />
+              Releases only
+            </Button>
             <Select
               value={selectedBranch || "__all__"}
               onValueChange={(value) => {
@@ -273,6 +294,16 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                         )
                       })()}
                     </div>
+                    {scan.releases.map((release) => (
+                      <ReleaseBadge
+                        key={release.environment}
+                        environment={release.environment}
+                        version={release.version}
+                        className="mt-1"
+                      />
+                    ))}
+                    {/* Ingest sets the flag and writes the record in separate steps, so the mark can outrun it. */}
+                    {scan.is_release && scan.releases.length === 0 && <ReleaseBadge className="mt-1" />}
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">

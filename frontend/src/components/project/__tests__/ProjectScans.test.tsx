@@ -2,7 +2,14 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ProjectScans } from '../ProjectScans'
-import type { Scan } from '@/types/scan'
+import type { ScanWithReleases } from '@/types/scan'
+
+const PRODUCTION = 'production'
+const STAGING = 'staging'
+const RELEASE_VERSION = 'v1.2.3'
+const STAGING_VERSION = 'v1.3.0-rc1'
+const RELEASED_AT = '2026-07-01T00:00:00Z'
+const RELEASES_ONLY_BUTTON = 'Releases only'
 
 const mockUseProjectScans = vi.fn()
 const mockUseProjectBranches = vi.fn()
@@ -21,19 +28,21 @@ vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
 }))
 
-function makeScan(overrides: Partial<Scan>): Scan {
+function makeScan(overrides: Partial<ScanWithReleases>): ScanWithReleases {
   return {
     id: 'scan-x',
     project_id: 'p1',
     branch: 'main',
     status: 'completed',
+    is_release: false,
+    releases: [],
     created_at: '2026-07-01T00:00:00Z',
     stats: { critical: 0, high: 0, medium: 0, low: 0 },
     ...overrides,
-  } as unknown as Scan
+  }
 }
 
-function renderScans(scans: Scan[]) {
+function renderScans(scans: ScanWithReleases[]) {
   mockUseProjectScans.mockReturnValue({
     data: scans,
     isLoading: false,
@@ -96,5 +105,69 @@ describe('ProjectScans - Delta comparison partner', () => {
     renderScans([makeScan({ id: 'main-partial', status: 'completed_with_errors' })])
 
     expect(screen.getByText('completed with errors')).toBeInTheDocument()
+  })
+})
+
+describe('ProjectScans - release', () => {
+  it('renders the release badge with its environment', () => {
+    renderScans([
+      makeScan({
+        id: 'rel',
+        is_release: true,
+        releases: [{ environment: PRODUCTION, version: RELEASE_VERSION, released_at: RELEASED_AT }],
+      }),
+    ])
+
+    expect(screen.getByLabelText(`Release ${RELEASE_VERSION} in ${PRODUCTION}`)).toBeInTheDocument()
+  })
+
+  it('renders one badge per environment the scan runs in', () => {
+    renderScans([
+      makeScan({
+        id: 'rel',
+        is_release: true,
+        releases: [
+          { environment: STAGING, version: STAGING_VERSION, released_at: RELEASED_AT },
+          { environment: PRODUCTION, version: RELEASE_VERSION, released_at: RELEASED_AT },
+        ],
+      }),
+    ])
+
+    expect(screen.getByLabelText(`Release ${STAGING_VERSION} in ${STAGING}`)).toBeInTheDocument()
+    expect(screen.getByLabelText(`Release ${RELEASE_VERSION} in ${PRODUCTION}`)).toBeInTheDocument()
+  })
+
+  it('still marks a scan whose release record has not landed yet', () => {
+    renderScans([makeScan({ id: 'rel', is_release: true })])
+
+    expect(screen.getByLabelText('Release in release')).toBeInTheDocument()
+  })
+
+  it('renders no badge for a plain scan', () => {
+    renderScans([makeScan({ id: 'plain' })])
+
+    expect(screen.queryByLabelText(/^Release/)).not.toBeInTheDocument()
+  })
+
+  it('asks the backend for releases only once the filter is on', () => {
+    renderScans([makeScan({ id: 'plain' })])
+
+    expect(mockUseProjectScans.mock.calls[0][1].isRelease).toBeUndefined()
+
+    fireEvent.click(screen.getByRole('button', { name: RELEASES_ONLY_BUTTON }))
+
+    const lastCall = mockUseProjectScans.mock.calls[mockUseProjectScans.mock.calls.length - 1]
+    expect(lastCall[1].isRelease).toBe(true)
+  })
+
+  it('stops excluding deleted branches while the release filter is on', () => {
+    renderScans([makeScan({ id: 'plain' })])
+
+    expect(mockUseProjectScans.mock.calls[0][1].excludeDeletedBranches).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: RELEASES_ONLY_BUTTON }))
+
+    const lastCall = mockUseProjectScans.mock.calls[mockUseProjectScans.mock.calls.length - 1]
+    expect(lastCall[1].excludeDeletedBranches).toBe(false)
   })
 })
