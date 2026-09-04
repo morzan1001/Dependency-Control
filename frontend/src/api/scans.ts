@@ -1,5 +1,6 @@
 import { api } from '@/api/client';
-import { Scan, ScanAnalysisResult, SbomResponse, ScanFindingsParams, ScanFindingsResponse, ScanStats } from '@/types/scan';
+import { SMALL_PAGE_SIZE } from '@/lib/constants';
+import { Scan, ScanAnalysisResult, SbomResponse, ScanFindingsParams, ScanFindingsResponse, ScanStats, ScanWithReleases } from '@/types/scan';
 
 export const scanApi = {
     getRecent: async (): Promise<Scan[]> => {
@@ -11,10 +12,10 @@ export const scanApi = {
         skip?: number; limit?: number; branch?: string; sortBy?: string;
         sortOrder?: 'asc' | 'desc'; excludeRescans?: boolean; excludeDeletedBranches?: boolean;
         isRelease?: boolean;
-    } = {}): Promise<Scan[]> => {
+    } = {}): Promise<ScanWithReleases[]> => {
         // isRelease is tri-state: undefined is no filter, false selects the scans that are not releases.
-        const { skip = 0, limit = 20, branch, sortBy = 'created_at', sortOrder = 'desc', excludeRescans = false, excludeDeletedBranches = false, isRelease } = params;
-        const response = await api.get<Scan[]>(`/projects/${id}/scans`, {
+        const { skip = 0, limit = SMALL_PAGE_SIZE, branch, sortBy = 'created_at', sortOrder = 'desc', excludeRescans = false, excludeDeletedBranches = false, isRelease } = params;
+        const response = await api.get<ScanWithReleases[]>(`/projects/${id}/scans`, {
           params: { skip, limit, branch, sort_by: sortBy, sort_order: sortOrder, exclude_rescans: excludeRescans, exclude_deleted_branches: excludeDeletedBranches, is_release: isRelease }
         });
         return response.data;

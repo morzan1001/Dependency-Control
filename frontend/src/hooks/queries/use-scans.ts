@@ -1,8 +1,9 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query';
 import { scanApi } from '@/api/scans';
+import { SMALL_PAGE_SIZE } from '@/lib/constants';
 import { ScanFindingsParams } from '@/types/scan';
 
-interface ScanListFilters {
+export interface ScanListFilters {
     page: number;
     limit: number;
     branch?: string;
@@ -41,7 +42,7 @@ export const useProjectScans = (
     projectId: string,
     filters: Partial<ScanListFilters> = {}
 ) => {
-    const { page = 1, limit = 20, branch, sortBy = 'created_at', sortOrder = 'desc', excludeRescans = false, excludeDeletedBranches = false, isRelease } = filters;
+    const { page = 1, limit = SMALL_PAGE_SIZE, branch, sortBy = 'created_at', sortOrder = 'desc', excludeRescans = false, excludeDeletedBranches = false, isRelease } = filters;
     const resolvedFilters: ScanListFilters = { page, limit, branch, sortBy, sortOrder, excludeRescans, excludeDeletedBranches, isRelease };
     return useQuery({
         queryKey: scanKeys.list(projectId, resolvedFilters),

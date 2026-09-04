@@ -557,3 +557,14 @@ export interface Scan {
     created_at?: string;
   };
 }
+
+export interface ScanReleaseRef {
+  environment: string;
+  version: string | null;
+  released_at: string;
+}
+
+// The project scan list attaches where each scan runs; reading a single scan does not.
+export interface ScanWithReleases extends Scan {
+  releases: ScanReleaseRef[];
+}

@@ -2,6 +2,7 @@
 
 from typing import Any
 
+import pymongo
 from pymongo.errors import DuplicateKeyError
 
 from app.core.metrics import track_db_operation
@@ -12,6 +13,20 @@ from app.repositories.base import BaseRepository
 class ReleaseRepository(BaseRepository[Release]):
     collection_name = "releases"
     model_class = Release
+
+    async def group_by_scan(self, scan_ids: list[str]) -> dict[str, list[Release]]:
+        """One query for a whole page of scans; each list is newest first."""
+        if not scan_ids:
+            return {}
+        grouped: dict[str, list[Release]] = {}
+        with track_db_operation(self.collection_name, "find"):
+            cursor = self.collection.find(
+                {"scan_id": {"$in": scan_ids}},
+                sort=[("released_at", pymongo.DESCENDING)],
+            )
+            async for doc in cursor:
+                grouped.setdefault(doc["scan_id"], []).append(Release(**doc))
+        return grouped
 
     async def record(self, release: Release) -> None:
         """Keyed on (project_id, environment, scan_id): a CI retry or a re-deploy of the same artefact

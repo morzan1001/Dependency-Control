@@ -12,6 +12,15 @@ vi.mock("@/api/scans", () => ({
 
 const PROJECT_ID = "p1";
 const TRI_STATE_COUNT = 3;
+const SCAN_ID = "s1";
+const BRANCH = "main";
+const CREATED_AT = "2026-09-04T00:00:00Z";
+const RELEASED_AT = "2026-09-04T01:00:00Z";
+const SCAN_STATUS_COMPLETED = "completed";
+const STAGING = "staging";
+const PRODUCTION = "production";
+const STAGING_VERSION = "v1.3.0-rc1";
+const RELEASE_ENVIRONMENT_COUNT = 2;
 
 function renderFilter(client: QueryClient, isRelease?: boolean) {
   const wrapper = ({ children }: { children: ReactNode }) => (
@@ -45,5 +54,29 @@ describe("useProjectScans release filter", () => {
 
     await waitFor(() => expect(scanApi.getProjectScans).toHaveBeenCalled());
     expect(vi.mocked(scanApi.getProjectScans).mock.calls[0][1]?.isRelease).toBe(false);
+  });
+
+  it("hands the caller every environment the server attached to a scan", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.mocked(scanApi.getProjectScans).mockResolvedValue([
+      {
+        id: SCAN_ID,
+        project_id: PROJECT_ID,
+        branch: BRANCH,
+        created_at: CREATED_AT,
+        status: SCAN_STATUS_COMPLETED,
+        is_release: true,
+        releases: [
+          { environment: STAGING, version: STAGING_VERSION, released_at: RELEASED_AT },
+          { environment: PRODUCTION, version: null, released_at: RELEASED_AT },
+        ],
+      },
+    ]);
+
+    const { result } = renderFilter(client, true);
+
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(result.current.data?.[0].releases).toHaveLength(RELEASE_ENVIRONMENT_COUNT);
+    expect(result.current.data?.[0].releases[0].environment).toBe(STAGING);
   });
 });

@@ -196,6 +196,25 @@ class RecentScan(Scan):
     project_name: str = Field(..., description="Name of the project this scan belongs to")
 
 
+class ScanReleaseRef(BaseModel):
+    """One environment a scan is the running artefact in."""
+
+    environment: str = Field(..., description="Environment slug the scan was released to")
+    version: str | None = Field(None, description="Release name recorded when the scan was marked")
+    released_at: datetime = Field(..., description="When the scan started running in that environment")
+
+
+class ScanWithReleases(Scan):
+    """Scan carrying where it runs. Response-only: the environments live in the releases collection,
+    while the scan document holds nothing beyond the ``is_release`` flag."""
+
+    releases: list[ScanReleaseRef] = Field(
+        default_factory=list,
+        description="Newest first; a scan can run in several environments at once, and a scan that "
+        "is not a release has none",
+    )
+
+
 class DashboardStats(BaseModel):
     """Dashboard statistics for project overview."""
 

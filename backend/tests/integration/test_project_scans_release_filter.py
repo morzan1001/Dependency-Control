@@ -1,5 +1,5 @@
-"""The Pipelines table filters on the release mark, and a rescan repeats the source's analyzer
-selection without inheriting its release identity."""
+"""The Pipelines table filters on the release mark and reads where each scan runs, and a rescan
+repeats the source's analyzer selection without inheriting its release identity."""
 
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -21,6 +21,11 @@ _PLAIN_SCAN = "plain"
 _SATURATED_SCAN = "saturated"
 
 _BRANCH = "main"
+_PRODUCTION = "production"
+_STAGING = "staging"
+_STAGING_VERSION = "v1.3.0-rc1"
+_PRODUCTION_RELEASE_ID = "rel-prod"
+_STAGING_RELEASE_ID = "rel-staging"
 _COMMIT_HASH = "a" * 40
 _COMMIT_MESSAGE = "bump the parser"
 _COMMIT_TAG = "v1.0.0"
@@ -139,6 +144,30 @@ async def _seed(db) -> None:
     )
 
 
+async def _seed_releases(db) -> None:
+    """The release scan runs in two environments at once, the older one without a recorded version."""
+    await db.releases.insert_many(
+        [
+            {
+                "_id": _PRODUCTION_RELEASE_ID,
+                "project_id": _PROJECT,
+                "environment": _PRODUCTION,
+                "version": None,
+                "scan_id": _RELEASE_SCAN,
+                "released_at": _NOW - _AN_HOUR,
+            },
+            {
+                "_id": _STAGING_RELEASE_ID,
+                "project_id": _PROJECT,
+                "environment": _STAGING,
+                "version": _STAGING_VERSION,
+                "scan_id": _RELEASE_SCAN,
+                "released_at": _NOW,
+            },
+        ]
+    )
+
+
 def _saturated_scan_doc() -> dict[str, Any]:
     """A source holding every Scan field at a value a freshly built rescan does not hold, so a field
     whose value survives into the rescan is exactly a field the endpoint copied."""
@@ -222,6 +251,23 @@ async def test_the_scan_list_exposes_the_release_mark(client, db, member_auth_he
     body = {s["id"]: s for s in resp.json()}
     assert body[_RELEASE_SCAN]["is_release"] is True
     assert body[_PLAIN_SCAN]["is_release"] is False
+
+
+@pytest.mark.asyncio
+async def test_the_scan_list_names_every_environment_a_scan_runs_in(client, db, member_auth_headers):
+    """The badge needs the environment and the version, which the scan document does not hold."""
+    await _seed(db)
+    await _seed_releases(db)
+
+    resp = await client.get(f"/api/v1/projects/{_PROJECT}/scans", headers=member_auth_headers)
+
+    assert resp.status_code == 200, resp.text
+    body = {s["id"]: s for s in resp.json()}
+    assert [(r["environment"], r["version"]) for r in body[_RELEASE_SCAN]["releases"]] == [
+        (_STAGING, _STAGING_VERSION),
+        (_PRODUCTION, None),
+    ]
+    assert body[_PLAIN_SCAN]["releases"] == []
 
 
 @pytest.mark.asyncio

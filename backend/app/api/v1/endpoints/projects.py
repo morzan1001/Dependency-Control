@@ -72,6 +72,8 @@ from app.schemas.project import (
     RecentScan,
     RiskyProject,
     ScanFindingsResponse,
+    ScanReleaseRef,
+    ScanWithReleases,
 )
 from app.services.aggregation.components import component_match_expr
 from app.services.branches import resolve_default_branch
@@ -720,8 +722,8 @@ async def read_project_scans(
     is_release: bool | None = None,
     sort_by: str = "created_at",
     sort_order: str = "desc",
-) -> list[Scan]:
-    """Get scans for a project."""
+) -> list[ScanWithReleases]:
+    """Get scans for a project, each carrying the environments it was released to."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
     scan_repo = ScanRepository(db)
@@ -745,14 +747,25 @@ async def read_project_scans(
     direction = parse_sort_direction(sort_order)
     sort_field = get_sort_field("project_scans", sort_by)
 
-    scans = await scan_repo.find_many(
+    scan_docs = await scan_repo.find_many_raw(
         query,
         sort=[(sort_field, direction)],
         skip=skip,
         limit=limit,
     )
 
-    return scans
+    releases_by_scan = await ReleaseRepository(db).group_by_scan([doc["_id"] for doc in scan_docs])
+
+    return [
+        ScanWithReleases(
+            **doc,
+            releases=[
+                ScanReleaseRef(environment=rel.environment, version=rel.version, released_at=rel.released_at)
+                for rel in releases_by_scan.get(doc["_id"], [])
+            ],
+        )
+        for doc in scan_docs
+    ]
 
 
 @router.post(
