@@ -7,7 +7,22 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
+from app.services.analytics.findings_delta import finding_identity_key
+from app.services.enrichment import canonical_cves
 from app.services.recommendation.common import ModelOrDict, get_attr
+
+# What finding_identity_key reads; the scan-scoped ``_id`` stays out, it never matches across a pair.
+_IDENTITY_FIELDS = ("type", "component", "version", "details", "finding_id", "description", "found_in")
+
+
+def _identity(finding: ModelOrDict) -> tuple[str, str, str]:
+    """The same cross-scan identity the scan delta matches findings on."""
+    return finding_identity_key({field: get_attr(finding, field) for field in _IDENTITY_FIELDS})
+
+
+def _cves(findings: list[ModelOrDict]) -> set[str]:
+    """The CVE ids these findings report; one finding aggregates a whole advisory list."""
+    return {cve for f in findings for cve in canonical_cves([get_attr(f, "details", {})])}
 
 
 def analyze_regressions(
@@ -17,22 +32,8 @@ def analyze_regressions(
     """Detect regressions - vulnerabilities that were fixed but have returned."""
     recommendations = []
 
-    def finding_key(f: ModelOrDict) -> str:
-        if get_attr(f, "type") == "vulnerability":
-            details = get_attr(f, "details", {})
-            cve = details.get("cve_id") or details.get("id") or get_attr(f, "id")
-            component = get_attr(f, "component", "")
-            return f"vuln:{cve}:{component}"
-        else:
-            return f"{get_attr(f, 'type')}:{get_attr(f, 'component')}:{get_attr(f, 'id')}"
-
-    previous_keys = {finding_key(f) for f in previous_findings}
-
-    new_findings = []
-    for f in current_findings:
-        key = finding_key(f)
-        if key not in previous_keys:
-            new_findings.append(f)
+    previous_keys = {_identity(f) for f in previous_findings}
+    new_findings = [f for f in current_findings if _identity(f) not in previous_keys]
 
     new_vulns = [f for f in new_findings if get_attr(f, "type") == "vulnerability"]
     new_critical = [f for f in new_vulns if get_attr(f, "severity") == "CRITICAL"]
@@ -64,9 +65,9 @@ def analyze_regressions(
                 affected_components=list({get_attr(f, "component", "unknown") for f in (new_critical + new_high)[:15]}),
                 action={
                     "type": "investigate_regression",
-                    "new_critical_cves": [
-                        get_attr(f, "details", {}).get("cve_id", get_attr(f, "id")) for f in new_critical
-                    ],
+                    # A record whose advisory list merely grew is new as a whole, so the CVEs the
+                    # previous build already reported are not what this build introduced.
+                    "new_critical_cves": sorted(_cves(new_critical) - _cves(previous_findings)),
                     "suggestion": "Review recent dependency updates and code changes",
                 },
                 effort="medium",

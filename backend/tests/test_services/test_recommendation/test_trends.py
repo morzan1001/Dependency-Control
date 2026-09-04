@@ -1,29 +1,53 @@
 """Tests for app.services.recommendation.trends."""
 
+import pytest
+
 from app.schemas.recommendation import Priority, RecommendationType
+from app.services.analytics.findings_delta import finding_identity_key
 from app.services.recommendation.trends import (
+    _identity,
     analyze_recurring_issues,
     analyze_regressions,
 )
 
+_SEV_CRITICAL = "CRITICAL"
+_SEV_MEDIUM = "MEDIUM"
+_COMPONENT = "pkg"
+_VERSION = "1.0.0"
+_CVE_DEFAULT = "CVE-2024-001"
+_LICENCE_DEFAULT = "MIT"
+_LICENCE_CATEGORY = "permissive"
 
-def _vuln(severity="CRITICAL", component="pkg", cve_id="CVE-2024-001"):
+
+def _vuln(severity=_SEV_CRITICAL, component=_COMPONENT, cve_id=_CVE_DEFAULT, version=_VERSION):
+    """The stored shape: one aggregated record per component@version carrying an advisory list."""
     return {
         "type": "vulnerability",
         "severity": severity,
         "component": component,
-        "id": cve_id,
-        "details": {"cve_id": cve_id},
+        "version": version,
+        "id": f"{component}:{version}",
+        "finding_id": f"{component}:{version}",
+        "details": {"vulnerabilities": [{"id": cve_id, "severity": severity}]},
     }
 
 
-def _non_vuln(component="pkg", finding_id="finding-1"):
+def _multi_cve_vuln(cve_ids, severity=_SEV_CRITICAL, component=_COMPONENT, version=_VERSION):
+    """One record whose advisory list carries several CVEs against the same installed version."""
+    record = _vuln(severity=severity, component=component, version=version)
+    record["details"] = {"vulnerabilities": [{"id": cve, "severity": severity} for cve in cve_ids]}
+    return record
+
+
+def _non_vuln(component=_COMPONENT, licence=_LICENCE_DEFAULT):
     return {
         "type": "license",
-        "severity": "MEDIUM",
+        "severity": _SEV_MEDIUM,
         "component": component,
-        "id": finding_id,
-        "details": {},
+        "version": _VERSION,
+        "id": f"LIC-{licence}",
+        "finding_id": f"LIC-{licence}",
+        "details": {"license": licence, "category": _LICENCE_CATEGORY},
     }
 
 
@@ -117,32 +141,32 @@ class TestAnalyzeRegressionsDeltaThreshold:
 
     def test_delta_above_threshold_produces_low_priority(self):
         # 12 new non-vuln findings, 0 previous => delta = 12 > 10
-        current = [_non_vuln(finding_id=f"f-{i}") for i in range(12)]
+        current = [_non_vuln(licence=f"LIC-{i}") for i in range(12)]
         previous = []
         result = analyze_regressions(current, previous)
         assert len(result) == 1
 
     def test_delta_above_threshold_priority_low(self):
-        current = [_non_vuln(finding_id=f"f-{i}") for i in range(12)]
+        current = [_non_vuln(licence=f"LIC-{i}") for i in range(12)]
         previous = []
         rec = analyze_regressions(current, previous)[0]
         assert rec.priority == Priority.LOW
 
     def test_delta_above_threshold_type(self):
-        current = [_non_vuln(finding_id=f"f-{i}") for i in range(12)]
+        current = [_non_vuln(licence=f"LIC-{i}") for i in range(12)]
         previous = []
         rec = analyze_regressions(current, previous)[0]
         assert rec.type == RecommendationType.REGRESSION_DETECTED
 
     def test_delta_exactly_at_threshold_no_recommendation(self):
         # delta = 10, threshold is > 10, so no recommendation
-        current = [_non_vuln(finding_id=f"f-{i}") for i in range(10)]
+        current = [_non_vuln(licence=f"LIC-{i}") for i in range(10)]
         previous = []
         result = analyze_regressions(current, previous)
         assert len(result) == 0
 
     def test_delta_below_threshold_no_recommendation(self):
-        current = [_non_vuln(finding_id=f"f-{i}") for i in range(5)]
+        current = [_non_vuln(licence=f"LIC-{i}") for i in range(5)]
         previous = []
         result = analyze_regressions(current, previous)
         assert len(result) == 0
@@ -181,6 +205,74 @@ class TestAnalyzeRegressionsMixedNewFindings:
         rec = analyze_regressions(current, previous)[0]
         assert "1 critical" in rec.title
         assert "2 high" in rec.title
+
+
+_BARE_COMPONENT = "jackson-databind"
+_QUALIFIED_COMPONENT = "com.fasterxml.jackson.core:jackson-databind"
+_CARRIED_CVE = "CVE-2020-36518"
+_PUBLISHED_CVE = "CVE-2026-11111"
+_SCAN_A_DOCUMENT_ID = "scan-a:pkg:1.0.0"
+_SCAN_B_DOCUMENT_ID = "scan-b:pkg:1.0.0"
+
+
+class TestAnalyzeRegressionsIdentity:
+    """The pair is matched on the identity the scan delta uses, so the two never disagree about
+    whether a finding is the same one."""
+
+    def test_the_scan_scoped_document_id_does_not_enter_the_key(self):
+        previous = _vuln() | {"_id": _SCAN_A_DOCUMENT_ID}
+        current = _vuln() | {"_id": _SCAN_B_DOCUMENT_ID}
+
+        assert analyze_regressions([current], [previous]) == []
+
+    def test_a_requalified_component_is_not_a_regression(self):
+        """Scanners disagree on how far a package name is qualified; the delta folds both to the
+        artefact name, so a requalified record must not read as introduced."""
+        previous = _vuln(component=_QUALIFIED_COMPONENT, cve_id=_CARRIED_CVE)
+        current = _vuln(component=_BARE_COMPONENT, cve_id=_CARRIED_CVE)
+
+        assert analyze_regressions([current], [previous]) == []
+
+    def test_an_advisory_published_against_the_installed_version_is_a_regression(self):
+        previous = [_vuln(cve_id=_CARRIED_CVE)]
+        current = [_multi_cve_vuln([_CARRIED_CVE, _PUBLISHED_CVE])]
+
+        rec = analyze_regressions(current, previous)[0]
+
+        assert rec.impact["critical"] == 1
+
+    def test_only_the_published_advisory_is_named_as_introduced(self):
+        previous = [_vuln(cve_id=_CARRIED_CVE)]
+        current = [_multi_cve_vuln([_CARRIED_CVE, _PUBLISHED_CVE])]
+
+        rec = analyze_regressions(current, previous)[0]
+
+        assert rec.action["new_critical_cves"] == [_PUBLISHED_CVE]
+
+    @pytest.mark.parametrize("record", [_vuln(), _multi_cve_vuln([_CARRIED_CVE, _PUBLISHED_CVE]), _non_vuln()])
+    def test_the_projection_carries_everything_the_delta_key_reads(self, record):
+        """A field missing from the projection silently degrades the key to the description hash."""
+        assert _identity(record) == finding_identity_key(record)
+
+    def test_the_stored_document_and_its_model_key_alike(self):
+        """The endpoint hands the engine FindingRecord models while the delta reads raw documents."""
+        from app.models.finding import Finding
+        from app.models.finding_record import FindingRecord
+        from app.services.analysis.engine import _prepare_finding_records
+
+        aggregated = Finding(
+            id=f"{_BARE_COMPONENT}:{_VERSION}",
+            type="vulnerability",
+            severity=_SEV_CRITICAL,
+            component=_BARE_COMPONENT,
+            version=_VERSION,
+            description="",
+            scanners=["osv"],
+            details={"vulnerabilities": [{"id": _CARRIED_CVE, "severity": _SEV_CRITICAL}]},
+        )
+        (record,), _ = _prepare_finding_records([aggregated], _SCAN_A_DOCUMENT_ID, "proj-1", None)
+
+        assert _identity(FindingRecord(**record)) == finding_identity_key(record)
 
 
 class TestAnalyzeRecurringIssuesEmpty:
