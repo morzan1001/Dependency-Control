@@ -104,7 +104,6 @@ async def get_project_recommendations(
         if scan and scan.project_id != project_id:
             scan = None
     else:
-        # Excludes scans on deleted branches.
         scan = await scan_repo.get_latest_active_scan(project)
 
     if not scan:

@@ -856,9 +856,7 @@ async def _resolve_latest_scan_after_branch_deletion(
     if not scan_doc or scan_doc.get("branch") not in deleted:
         return {}
 
-    # Delegate the "latest scan on a non-deleted branch" selection to the
-    # canonical ScanRepository method (single source of truth). ``deleted`` is
-    # the freshly-computed deleted-branch set, not yet persisted on the project.
+    # ``deleted`` is the freshly-computed set, not yet persisted on the project.
     active_scan = await ScanRepository(db).get_latest_active_scan(project_data, deleted_branches=deleted)
     if active_scan:
         updates: dict = {

@@ -9,7 +9,6 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.stats import Stats
 from app.models.waiver import Waiver
-from app.repositories.scans import ScanRepository
 from app.services.analysis.stats import calculate_comprehensive_stats
 
 logger = logging.getLogger(__name__)
@@ -68,25 +67,6 @@ def _extract_rule_prefix(finding_id: str, component: str) -> str | None:
     if file_prefix.endswith(suffix):
         return file_prefix[: -len(suffix)]
     return None
-
-
-async def _resolve_active_scan_id(
-    db: AsyncIOMotorDatabase, project_id: str, scan_id: str, deleted_branches: list[str]
-) -> str | None:
-    """Resolve the active scan_id, skipping deleted branches if needed."""
-    if not deleted_branches:
-        return scan_id
-
-    scan_doc = await db.scans.find_one({"_id": scan_id}, {"branch": 1})
-    if not scan_doc or scan_doc.get("branch") not in deleted_branches:
-        return scan_id
-
-    # Delegate the "latest scan on a non-deleted branch" selection to the
-    # canonical ScanRepository method (single source of truth).
-    active_scan = await ScanRepository(db).get_latest_active_scan(
-        {"_id": project_id, "deleted_branches": deleted_branches}
-    )
-    return active_scan.id if active_scan else None
 
 
 def _resolve_finding_id_query(
@@ -366,10 +346,10 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
     lock_repo = DistributedLocksRepository(db)
 
     project = await project_repo.get_by_id(project_id)
-    if not project or not project.latest_scan_id:
+    if not project:
         return None
 
-    scan_id = await _resolve_active_scan_id(db, project_id, project.latest_scan_id, project.deleted_branches or [])
+    scan_id = (await ScanRepository(db).get_latest_active_scan_ids([project])).get(project_id)
     if not scan_id:
         return None
 

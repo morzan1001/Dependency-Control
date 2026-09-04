@@ -1538,11 +1538,9 @@ async def export_project_sbom(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Response:
-    await check_project_access(project_id, current_user, db, required_role="viewer")
+    project = await check_project_access(project_id, current_user, db, required_role="viewer")
 
-    scan_repo = ScanRepository(db)
-
-    scan = await scan_repo.get_latest_for_project(project_id, statuses=SCAN_USABLE_STATUSES)
+    scan = await ScanRepository(db).get_latest_active_scan(project)
 
     if not scan:
         raise HTTPException(status_code=404, detail="No completed scans found for this project")

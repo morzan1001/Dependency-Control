@@ -1,7 +1,7 @@
 """Repository for scans."""
 
 from collections.abc import AsyncGenerator
-from typing import Any
+from typing import Any, NamedTuple
 
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pymongo import ReadPreference
@@ -40,6 +40,23 @@ def _project_field(project: Any, name: str) -> Any:
     if isinstance(project, dict):
         return project.get(name)
     return getattr(project, name, None)
+
+
+class _HeadScope(NamedTuple):
+    """Everything head resolution reads off one project."""
+
+    default_branch: str | None
+    deleted: list[str]
+    pointer: str | None
+
+
+def _head_scope(project: Any, deleted_override: list[str] | None = None) -> tuple[str | None, _HeadScope]:
+    project_id, deleted = _project_id_and_deleted(project)
+    return project_id, _HeadScope(
+        default_branch=_project_field(project, "default_branch"),
+        deleted=deleted if deleted_override is None else list(deleted_override),
+        pointer=_project_field(project, "latest_scan_id"),
+    )
 
 
 def _is_head_branch(branch: str | None, default_branch: str | None, deleted: list[str]) -> bool:
@@ -186,24 +203,15 @@ class ScanRepository:
                 return await self.collection.count_documents(query or {}, limit=limit)
             return await self.collection.count_documents(query or {})
 
-    async def get_latest_for_project(self, project_id: str, statuses: list[str] | None = None) -> Scan | None:
-        query: dict[str, Any] = {"project_id": project_id}
-        if statuses:
-            query["status"] = {"$in": statuses}
-        with track_db_operation(_COL, "find_one"):
-            data = await self.collection.find_one(query, sort=[("created_at", -1)])
-        return Scan(**data) if data else None
-
     async def get_latest_active_scan(self, project: Any, deleted_branches: list[str] | None = None) -> Scan | None:
-        """Most recent completed scan for project on a non-deleted branch. project may be a model or raw dict; deleted_branches overrides the project's value (housekeeping passes the freshly-computed set before it is persisted)."""
-        project_id, project_deleted = _project_id_and_deleted(project)
-        deleted = deleted_branches if deleted_branches is not None else project_deleted
-        query: dict[str, Any] = {"project_id": project_id, "status": {"$in": SCAN_USABLE_STATUSES}}
-        if deleted:
-            query["branch"] = {"$nin": deleted}
-        with track_db_operation(_COL, "find_one"):
-            data = await self.collection.find_one(query, sort=[("created_at", -1)])
-        return Scan(**data) if data else None
+        """The project's head as a full document. ``project`` may be a model or a raw dict, and
+        ``deleted_branches`` overrides the project's own set, which housekeeping needs while the
+        freshly-computed one is not yet persisted."""
+        project_id, scope = _head_scope(project, deleted_branches)
+        if not project_id:
+            return None
+        scan_id = (await self._head_scan_ids({project_id: scope})).get(project_id)
+        return await self.get_by_id(scan_id) if scan_id else None
 
     async def _readable_scan_branches(self, scan_ids: list[str]) -> dict[str, str | None]:
         """The branch of each of these scans that still exists with a usable status."""
@@ -224,20 +232,18 @@ class ScanRepository:
         """Maps project_id -> the scan that represents its head: the newest usable build on the
         default branch, or on any branch the VCS still has when no default is known; projects
         resolving to no scan are omitted.
-
-        ``latest_scan_id`` is that answer cached by ingest, so it is trusted only while it still
-        names a readable scan on the head branch.
         """
-        scopes: dict[str, tuple[str | None, list[str]]] = {}
-        pointers: dict[str, str] = {}
+        scopes: dict[str, _HeadScope] = {}
         for project in projects:
-            project_id, deleted = _project_id_and_deleted(project)
-            if not project_id:
-                continue
-            scopes[project_id] = (_project_field(project, "default_branch"), deleted)
-            pointer = _project_field(project, "latest_scan_id")
-            if pointer:
-                pointers[project_id] = pointer
+            project_id, scope = _head_scope(project)
+            if project_id:
+                scopes[project_id] = scope
+        return await self._head_scan_ids(scopes)
+
+    async def _head_scan_ids(self, scopes: dict[str, _HeadScope]) -> dict[str, str]:
+        """The one head resolver. ``latest_scan_id`` is head cached by ingest, so it is trusted
+        only while it still names a readable scan on the head branch."""
+        pointers = {pid: scope.pointer for pid, scope in scopes.items() if scope.pointer}
 
         result: dict[str, str] = {}
         if pointers:
@@ -246,8 +252,8 @@ class ScanRepository:
             # result send a completed scan back to pending, so it can also name an unreadable one.
             branches = await self._readable_scan_branches(list(pointers.values()))
             for project_id, scan_id in pointers.items():
-                default_branch, deleted = scopes[project_id]
-                if scan_id in branches and _is_head_branch(branches[scan_id], default_branch, deleted):
+                scope = scopes[project_id]
+                if scan_id in branches and _is_head_branch(branches[scan_id], scope.default_branch, scope.deleted):
                     result[project_id] = scan_id
 
         unresolved = {pid: scope for pid, scope in scopes.items() if pid not in result}
@@ -255,9 +261,9 @@ class ScanRepository:
             return result
 
         by_default_branch: dict[str, list[str]] = {}
-        for project_id, (default_branch, deleted) in unresolved.items():
-            if default_branch and default_branch not in deleted:
-                by_default_branch.setdefault(default_branch, []).append(project_id)
+        for project_id, scope in unresolved.items():
+            if scope.default_branch and scope.default_branch not in scope.deleted:
+                by_default_branch.setdefault(scope.default_branch, []).append(project_id)
         result.update(
             await self._newest_head_per_project(
                 [
@@ -271,12 +277,16 @@ class ScanRepository:
         # tip predates the integration — must leave the project visible rather than empty.
         or_conditions: list[dict[str, Any]] = []
         without_deleted: list[str] = []
-        for project_id, (_, deleted) in unresolved.items():
+        for project_id, scope in unresolved.items():
             if project_id in result:
                 continue
-            if deleted:
+            if scope.deleted:
                 or_conditions.append(
-                    {"project_id": project_id, "branch": {"$nin": deleted}, "status": {"$in": SCAN_USABLE_STATUSES}}
+                    {
+                        "project_id": project_id,
+                        "branch": {"$nin": scope.deleted},
+                        "status": {"$in": SCAN_USABLE_STATUSES},
+                    }
                 )
             else:
                 without_deleted.append(project_id)

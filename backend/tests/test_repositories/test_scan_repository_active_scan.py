@@ -1,92 +1,20 @@
-"""Tests for the canonical latest-active-scan selection on ScanRepository and its delegators.
+"""Tests for the one head resolver on ScanRepository and its delegators.
 
-The rule: select the latest completed scan whose branch is not deleted. The selector must
-always exclude deleted-branch scans when a project has deleted branches.
+Head is the newest usable build on the project's default branch, falling back to any branch the
+VCS still has; a rescan ranks behind the build it re-analysed, and ``latest_scan_id`` is that
+answer cached and trusted only while it names a readable scan on the head branch.
 """
 
 import asyncio
 from datetime import datetime, timedelta, timezone
-from unittest.mock import MagicMock
+
+import pytest
 
 from app.models.stats import Stats
 from app.repositories.scans import ScanRepository
 from tests.mocks.fake_mongo import FakeDatabase
-from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
 _NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
-
-
-def _completed_scan_doc(scan_id: str = "scan-1", branch: str = "main", with_stats: bool = False) -> dict:
-    doc = {
-        "_id": scan_id,
-        "project_id": "p1",
-        "branch": branch,
-        "status": "completed",
-        "created_at": datetime(2026, 7, 1, tzinfo=timezone.utc),
-    }
-    if with_stats:
-        doc["stats"] = Stats().model_dump()
-    return doc
-
-
-class TestGetLatestActiveScan:
-    def test_excludes_deleted_branches_in_query(self):
-        coll = create_mock_collection(find_one=_completed_scan_doc("scan-9"))
-        repo = ScanRepository(create_mock_db({"scans": coll}))
-
-        result = asyncio.run(repo.get_latest_active_scan({"_id": "p1", "deleted_branches": ["feature-x", "old"]}))
-
-        query = coll.find_one.call_args.args[0]
-        assert query["project_id"] == "p1"
-        assert query["status"] == {"$in": ["completed", "completed_with_errors"]}
-        assert query["branch"] == {"$nin": ["feature-x", "old"]}
-        assert coll.find_one.call_args.kwargs["sort"] == [("created_at", -1)]
-        assert result is not None and result.id == "scan-9"
-
-    def test_no_branch_filter_when_no_deleted_branches(self):
-        coll = create_mock_collection(find_one=_completed_scan_doc())
-        repo = ScanRepository(create_mock_db({"scans": coll}))
-
-        asyncio.run(repo.get_latest_active_scan({"_id": "p1", "deleted_branches": []}))
-
-        query = coll.find_one.call_args.args[0]
-        assert "branch" not in query
-        assert query == {"project_id": "p1", "status": {"$in": ["completed", "completed_with_errors"]}}
-
-    def test_deleted_branches_override(self):
-        """An explicit deleted_branches arg takes precedence over the project's stored value."""
-        coll = create_mock_collection(find_one=_completed_scan_doc())
-        repo = ScanRepository(create_mock_db({"scans": coll}))
-
-        asyncio.run(
-            repo.get_latest_active_scan(
-                {"_id": "p1", "deleted_branches": ["stale"]},
-                deleted_branches=["fresh-a", "fresh-b"],
-            )
-        )
-
-        query = coll.find_one.call_args.args[0]
-        assert query["branch"] == {"$nin": ["fresh-a", "fresh-b"]}
-
-    def test_accepts_project_model_like_object(self):
-        coll = create_mock_collection(find_one=_completed_scan_doc())
-        repo = ScanRepository(create_mock_db({"scans": coll}))
-
-        project = MagicMock()
-        project.id = "proj-42"
-        project.deleted_branches = ["gone"]
-
-        asyncio.run(repo.get_latest_active_scan(project))
-
-        query = coll.find_one.call_args.args[0]
-        assert query["project_id"] == "proj-42"
-        assert query["branch"] == {"$nin": ["gone"]}
-
-    def test_returns_none_when_no_scan(self):
-        coll = create_mock_collection(find_one=None)
-        repo = ScanRepository(create_mock_db({"scans": coll}))
-
-        assert asyncio.run(repo.get_latest_active_scan({"_id": "p1", "deleted_branches": ["x"]})) is None
 
 
 def _project(project_id: str, **overrides) -> dict:
@@ -106,6 +34,13 @@ def _scan(scan_id: str, project_id: str, branch: str, hours_old: int, **override
     }
     doc.update(overrides)
     return doc
+
+
+async def _seeded(scans: list[dict]) -> FakeDatabase:
+    db = FakeDatabase()
+    for scan in scans:
+        await db.scans.insert_one(scan)
+    return db
 
 
 class _CountingScans:
@@ -129,13 +64,108 @@ class _CountingScans:
 
 
 async def _resolve(scans: list[dict], projects: list[dict]) -> tuple[dict[str, str], _CountingScans]:
-    db = FakeDatabase()
-    for scan in scans:
-        await db.scans.insert_one(scan)
+    db = await _seeded(scans)
     counting = _CountingScans(db.scans)
     repo = ScanRepository(db)
     repo.collection = counting
     return await repo.get_latest_active_scan_ids(projects), counting
+
+
+class SimpleProject:
+    """A model-shaped project: head resolution reads its fields with getattr."""
+
+    def __init__(self, project_id: str, deleted_branches: list[str]):
+        self.id = project_id
+        self.deleted_branches = deleted_branches
+        self.default_branch = None
+        self.latest_scan_id = None
+
+
+class TestGetLatestActiveScan:
+    """The single-project entry point answers with the same head as the bulk one."""
+
+    def test_head_is_the_default_branch_tip_not_the_newest_scan_anywhere(self):
+        async def run():
+            db = await _seeded([_scan("main-tip", "p1", "main", 6), _scan("feature-tip", "p1", "feature/spike", 0)])
+            return await ScanRepository(db).get_latest_active_scan(_project("p1", default_branch="main"))
+
+        scan = asyncio.run(run())
+
+        assert scan is not None and scan.id == "main-tip"
+
+    def test_a_rescan_does_not_take_head_from_the_build_it_re_analysed(self):
+        """The recommendations tab resolved head here and reported a 200-day-old release's findings
+        because the rescanner had just re-analysed it."""
+
+        async def run():
+            db = await _seeded(
+                [
+                    _scan("build", "p1", "main", 4800),
+                    _scan("rescan", "p1", "main", 0, is_rescan=True, original_scan_id="build"),
+                    _scan("tip", "p1", "main", 48),
+                ]
+            )
+            return await ScanRepository(db).get_latest_active_scan(_project("p1", default_branch="main"))
+
+        scan = asyncio.run(run())
+
+        assert scan is not None and scan.id == "tip"
+
+    def test_the_two_entry_points_agree(self):
+        async def run():
+            scans = [
+                _scan("main-tip", "p1", "main", 6),
+                _scan("rescan", "p1", "main", 0, is_rescan=True, original_scan_id="main-tip"),
+                _scan("feature-tip", "p1", "feature/spike", 1),
+            ]
+            project = _project("p1", default_branch="main", latest_scan_id="feature-tip")
+            db = await _seeded(scans)
+            repo = ScanRepository(db)
+            single = await repo.get_latest_active_scan(project)
+            bulk = await repo.get_latest_active_scan_ids([project])
+            return single, bulk
+
+        single, bulk = asyncio.run(run())
+
+        assert single is not None and bulk == {"p1": single.id}
+
+    def test_deleted_branches_argument_overrides_the_projects_own_set(self):
+        """Housekeeping passes the freshly-computed set before it is persisted."""
+
+        async def run():
+            db = await _seeded([_scan("on-fresh", "p1", "fresh-a", 0), _scan("on-stale", "p1", "stale", 1)])
+            return await ScanRepository(db).get_latest_active_scan(
+                _project("p1", deleted_branches=["stale"]),
+                deleted_branches=["fresh-a"],
+            )
+
+        scan = asyncio.run(run())
+
+        assert scan is not None and scan.id == "on-stale"
+
+    def test_accepts_a_project_model_like_object(self):
+        async def run():
+            db = await _seeded([_scan("on-live", "proj-42", "main", 0), _scan("on-gone", "proj-42", "gone", 1)])
+            project = SimpleProject(project_id="proj-42", deleted_branches=["gone"])
+            return await ScanRepository(db).get_latest_active_scan(project)
+
+        scan = asyncio.run(run())
+
+        assert scan is not None and scan.id == "on-live"
+
+    def test_returns_none_when_no_scan_is_usable(self):
+        async def run():
+            db = await _seeded([_scan("failed", "p1", "main", 0, status="failed")])
+            return await ScanRepository(db).get_latest_active_scan(_project("p1"))
+
+        assert asyncio.run(run()) is None
+
+    def test_returns_none_for_a_project_without_an_id(self):
+        async def run():
+            db = await _seeded([_scan("orphan", "", "main", 0)])
+            return await ScanRepository(db).get_latest_active_scan(_project(""))
+
+        assert asyncio.run(run()) is None
 
 
 class TestGetLatestActiveScanIds:
@@ -341,125 +371,83 @@ class TestHeadIsTheDefaultBranch:
         assert result == {"p1": "develop-tip"}
 
 
-class TestStatsDelegation:
-    """stats._resolve_active_scan_id keeps its short-circuits and delegates the fallback lookup."""
+def _vulnerability(finding_id: str, scan_id: str, severity: str) -> dict:
+    return {
+        "_id": f"{scan_id}:{finding_id}",
+        "id": finding_id,
+        "finding_id": finding_id,
+        "scan_id": scan_id,
+        "project_id": "p1",
+        "type": "vulnerability",
+        "severity": severity,
+        "component": "pkg",
+        "version": "1.0.0",
+        "description": "",
+        "scanners": ["trivy"],
+        "details": {},
+        "waived": False,
+    }
 
-    def test_returns_scan_id_when_no_deleted_branches(self):
-        from app.services import stats
 
-        db = create_mock_db({"scans": create_mock_collection()})
-        result = asyncio.run(stats._resolve_active_scan_id(db, "p1", "scan-1", []))
-        assert result == "scan-1"
+class TestStatsRecalculationReadsHead:
+    @pytest.mark.asyncio
+    async def test_a_pointer_on_a_feature_branch_does_not_decide_the_projects_stats(self):
+        from app.services.stats import recalculate_project_stats
 
-    def test_returns_scan_id_when_current_branch_not_deleted(self):
-        from app.services import stats
+        db = FakeDatabase()
+        await db.projects.insert_one(_project("p1", name="proj", default_branch="main", latest_scan_id="feature-scan"))
+        await db.scans.insert_one(_scan("main-tip", "p1", "main", 5))
+        await db.scans.insert_one(_scan("feature-scan", "p1", "feature/x", 0))
+        await db.findings.insert_one(_vulnerability("f-main", "main-tip", "CRITICAL"))
+        await db.findings.insert_one(_vulnerability("f-feature", "feature-scan", "LOW"))
 
-        coll = create_mock_collection(find_one={"_id": "scan-1", "branch": "main"})
-        db = create_mock_db({"scans": coll})
-        result = asyncio.run(stats._resolve_active_scan_id(db, "p1", "scan-1", ["feature"]))
-        assert result == "scan-1"
+        stats = await recalculate_project_stats("p1", db)
 
-    def test_resolves_active_scan_when_current_on_deleted_branch(self):
-        from app.services import stats
-
-        # First find_one returns the current scan (on a deleted branch); the
-        # canonical fallback find_one returns the replacement active scan.
-        coll = MagicMock()
-        from unittest.mock import AsyncMock
-
-        coll.find_one = AsyncMock(
-            side_effect=[
-                {"_id": "scan-1", "branch": "feature"},  # current scan lookup
-                _completed_scan_doc("scan-active", branch="main"),  # canonical fallback selection
-            ]
-        )
-        db = create_mock_db({"scans": coll})
-
-        result = asyncio.run(stats._resolve_active_scan_id(db, "p1", "scan-1", ["feature"]))
-
-        assert result == "scan-active"
-        # The fallback query must exclude the deleted branch.
-        fallback_query = coll.find_one.call_args_list[1].args[0]
-        assert fallback_query["branch"] == {"$nin": ["feature"]}
-        assert fallback_query["status"] == {"$in": ["completed", "completed_with_errors"]}
-
-    def test_returns_none_when_no_active_scan(self):
-        from unittest.mock import AsyncMock
-
-        from app.services import stats
-
-        coll = MagicMock()
-        coll.find_one = AsyncMock(
-            side_effect=[
-                {"_id": "scan-1", "branch": "feature"},  # current scan on deleted branch
-                None,  # no replacement
-            ]
-        )
-        db = create_mock_db({"scans": coll})
-
-        result = asyncio.run(stats._resolve_active_scan_id(db, "p1", "scan-1", ["feature"]))
-        assert result is None
+        assert stats is not None
+        assert (stats.critical, stats.low) == (1, 0)
 
 
 class TestHousekeepingDelegation:
-    """housekeeping._resolve_latest_scan_after_branch_deletion keeps its update-dict shape while delegating selection."""
+    """housekeeping._resolve_latest_scan_after_branch_deletion keeps its update-dict shape while
+    the replacement it writes into the pointer is head."""
 
-    def test_updates_from_active_scan(self):
-        from unittest.mock import AsyncMock
-
+    @pytest.mark.asyncio
+    async def test_updates_to_the_branch_tip_rather_than_the_newest_rescan(self):
         from app.core import housekeeping
 
-        coll = MagicMock()
-        coll.find_one = AsyncMock(
-            side_effect=[
-                {"_id": "scan-old", "branch": "feature"},  # current scan on deleted branch
-                _completed_scan_doc("scan-new", branch="main", with_stats=True),  # replacement
-            ]
-        )
-        db = create_mock_db({"scans": coll})
+        db = FakeDatabase()
+        await db.scans.insert_one(_scan("scan-old", "p1", "feature", 10))
+        await db.scans.insert_one(_scan("main-tip", "p1", "main", 5, stats=Stats().model_dump()))
+        await db.scans.insert_one(_scan("rescan", "p1", "main", 0, is_rescan=True, original_scan_id="main-tip"))
+        project_data = {"_id": "p1", "latest_scan_id": "scan-old", "default_branch": "main"}
 
-        project_data = {"_id": "p1", "latest_scan_id": "scan-old"}
-        updates = asyncio.run(
-            housekeeping._resolve_latest_scan_after_branch_deletion(project_data, ["feature"], db, "proj")
-        )
+        updates = await housekeeping._resolve_latest_scan_after_branch_deletion(project_data, ["feature"], db, "proj")
 
-        assert updates["latest_scan_id"] == "scan-new"
+        assert updates["latest_scan_id"] == "main-tip"
         assert updates["last_scan_at"] is not None
         # stats round-trips back to the stored (model_dump) shape.
         assert updates["stats"] == Stats().model_dump()
 
-    def test_clears_when_no_active_scan(self):
-        from unittest.mock import AsyncMock
-
+    @pytest.mark.asyncio
+    async def test_clears_when_no_active_scan(self):
         from app.core import housekeeping
 
-        coll = MagicMock()
-        coll.find_one = AsyncMock(
-            side_effect=[
-                {"_id": "scan-old", "branch": "feature"},
-                None,  # no replacement scan on an active branch
-            ]
-        )
-        db = create_mock_db({"scans": coll})
+        db = FakeDatabase()
+        await db.scans.insert_one(_scan("scan-old", "p1", "feature", 10))
+        project_data = {"_id": "p1", "latest_scan_id": "scan-old", "default_branch": "main"}
 
-        project_data = {"_id": "p1", "latest_scan_id": "scan-old"}
-        updates = asyncio.run(
-            housekeeping._resolve_latest_scan_after_branch_deletion(project_data, ["feature"], db, "proj")
-        )
+        updates = await housekeeping._resolve_latest_scan_after_branch_deletion(project_data, ["feature"], db, "proj")
 
         assert updates == {"latest_scan_id": None, "stats": None}
 
-    def test_noop_when_current_scan_not_on_deleted_branch(self):
-        from unittest.mock import AsyncMock
-
+    @pytest.mark.asyncio
+    async def test_noop_when_current_scan_not_on_deleted_branch(self):
         from app.core import housekeeping
 
-        coll = MagicMock()
-        coll.find_one = AsyncMock(return_value={"_id": "scan-old", "branch": "main"})
-        db = create_mock_db({"scans": coll})
+        db = FakeDatabase()
+        await db.scans.insert_one(_scan("scan-old", "p1", "main", 10))
+        project_data = {"_id": "p1", "latest_scan_id": "scan-old", "default_branch": "main"}
 
-        project_data = {"_id": "p1", "latest_scan_id": "scan-old"}
-        updates = asyncio.run(
-            housekeeping._resolve_latest_scan_after_branch_deletion(project_data, ["feature"], db, "proj")
-        )
+        updates = await housekeeping._resolve_latest_scan_after_branch_deletion(project_data, ["feature"], db, "proj")
+
         assert updates == {}

@@ -35,9 +35,4 @@ async def resolve_inventory_scan(db: AsyncIOMotorDatabase, project: Project, bra
         if branch in (project.deleted_branches or []):
             return None
         return await latest_completed_scan(db, project.id, branch)
-    default = project.default_branch
-    if default and default not in (project.deleted_branches or []):
-        scan = await latest_completed_scan(db, project.id, default)
-        if scan:
-            return scan
     return await ScanRepository(db).get_latest_active_scan(project)
