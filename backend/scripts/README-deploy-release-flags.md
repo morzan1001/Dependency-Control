@@ -422,12 +422,15 @@ python -m scripts.backfill_release_flags --execute
 ```
 
 `--batch-size` and `--sleep-ms` throttle both the walk and the writes. Defaults are 500 and 50 ms.
+`--limit` bounds the releases recorded, not the flag repairs: those come from a sweep over
+`db.releases` and are applied in full on every run, smoke test included.
 
 Re-running is safe, from any point a run can be killed at. A scan that already has a release row is
-skipped rather than marked again; one left holding only its row — a run killed between its two
-writes — has just its flag set, counted on the `of those, flags to repair` line; and a run killed
-before its prunes leaves tag names in `deleted_branches` that the next run plans and drops, because
-the prune is planned from every released tag build the walk sees, not only from this run's.
+skipped rather than marked again; every scan left holding only its row has its flag set, counted on
+the `release rows missing the flag` line, whether the row came from a tag build, from a branch build
+marked with `DEP_CONTROL_IS_RELEASE=true`, or from a run killed between its two writes; and a run
+killed before its prunes leaves tag names in `deleted_branches` that the next run plans and drops,
+because the prune is planned from every released tag build the walk sees, not only from this run's.
 
 A consequence of that: the run also drops the tag name of a tag build released through the API
 before the backfill, which is the same name the branch census would drop on its next pass anyway.
@@ -444,7 +447,12 @@ db.scans.countDocuments({ is_release: true })
 
 The last two must be equal, and stay equal: a scan whose flag is set but whose row is missing
 resolves to nothing in `latest_release_scan` and the release list, and a scan with a row but no
-flag is missing from the `scans_released_list` index the released-only scan list reads.
+flag is missing from the `scans_released_list` index the released-only scan list reads, is not
+exempt from retention or archiving, and does not answer the "Releases only" filter.
+
+Only the second of those has a repair path, and re-running the backfill is it — the sweep covers
+every release row, however the row was marked. A flag whose row is missing needs the row written
+through `POST /api/v1/projects/{project_id}/releases` or the flag cleared by hand.
 
 ```js
 db.releases.find({}, { project_id: 1, scan_id: 1, version: 1, released_at: 1 }).limit(5)

@@ -7,7 +7,8 @@ tag build that ends the run released — this run's and any earlier one's — is
 
 A release is a document in ``db.releases``; ``Scan.is_release`` is the denormalised boolean the
 ``scans_released_list`` partial index is keyed on. Both are written, in the order the mark endpoint
-writes them, and a scan left holding only the row has its flag repaired on the next run.
+writes them, and a separate sweep over ``db.releases`` repairs the flag of every scan left holding
+only the row, whichever pipeline or endpoint marked it.
 
 The run plans first and writes second, and ``--execute`` only decides whether the plan is applied,
 so the dry run's report is the plan the real run carries out.
@@ -107,6 +108,20 @@ async def _already_released(db: Any, scan_ids: list[str]) -> set[str]:
     return set(rows)
 
 
+async def _plan_flag_repairs(db: Any) -> tuple[str, ...]:
+    """Scans holding a release row without the flag the partial index is keyed on.
+
+    Keyed on the release collection, so a release marked on a branch build — which no walk over tag
+    builds reaches — is repaired as well.
+    """
+    released: list[str] = await db.releases.distinct("scan_id")
+    if not released:
+        return ()
+    cursor = db.scans.find({"_id": {"$in": released}}, {"_id": 1, "is_release": 1})
+    unflagged = [str(doc["_id"]) async for doc in cursor if not doc.get("is_release")]
+    return tuple(sorted(unflagged))
+
+
 async def _plan_prunes(db: Any, tag_names_by_project: dict[str, set[str]]) -> tuple[PlannedPrune, ...]:
     prunes: list[PlannedPrune] = []
     for project_id in sorted(tag_names_by_project):
@@ -159,7 +174,6 @@ def _plan_release(doc: dict[str, Any], scan_id: str) -> PlannedRelease | None:
 async def plan_backfill(db: Any, *, batch_size: int, sleep_ms: int, limit: int) -> BackfillPlan:
     """Read-only: everything the run would write, without writing any of it."""
     releases: list[PlannedRelease] = []
-    flag_repairs: list[str] = []
     tag_names_by_project: dict[str, set[str]] = {}
     inspected = 0
     skipped_already_released = 0
@@ -176,8 +190,6 @@ async def plan_backfill(db: Any, *, batch_size: int, sleep_ms: int, limit: int) 
             # somewhere must not gain a second, invented production release.
             if scan_id in released:
                 skipped_already_released += 1
-                if not doc.get("is_release"):
-                    flag_repairs.append(scan_id)
                 # A run killed before its prunes leaves the tag hidden, and on the next pass the
                 # scan reaches only this branch, so the prune has to be planned from here as well.
                 tag_names_by_project.setdefault(doc["project_id"], set()).add(doc["commit_tag"])
@@ -198,7 +210,7 @@ async def plan_backfill(db: Any, *, batch_size: int, sleep_ms: int, limit: int) 
 
     return BackfillPlan(
         releases=tuple(releases),
-        flag_repairs=tuple(flag_repairs),
+        flag_repairs=await _plan_flag_repairs(db),
         prunes=await _plan_prunes(db, tag_names_by_project),
         inspected=inspected,
         skipped_already_released=skipped_already_released,
@@ -244,7 +256,7 @@ def _report(plan: BackfillPlan, mode: str) -> None:
         ("tag builds inspected", plan.inspected),
         ("releases to record", len(plan.releases)),
         ("already released", plan.skipped_already_released),
-        ("of those, flags to repair", len(plan.flag_repairs)),
+        ("release rows missing the flag", len(plan.flag_repairs)),
         ("skipped, no created_at", plan.skipped_undated),
         ("projects to prune", len(plan.prunes)),
         ("deleted-branch names to drop", sum(len(prune.removed) for prune in plan.prunes)),

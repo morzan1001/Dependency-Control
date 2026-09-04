@@ -328,8 +328,8 @@ async def ingest_sbom(
 
         release = data.release_fields(now)
         if release:
-            # The row before the flag: the backfill repairs a row whose flag is missing, while a
-            # flag whose row is missing has no repair path and shows a release that is not there.
+            # The row before the flag: the backfill sweeps the release rows and repairs a missing
+            # flag, while a flag whose row is missing shows a release that is not there.
             release_repo = ReleaseRepository(db)
             await release_repo.record(Release(project_id=str(project.id), scan_id=scan_id, **release))
             scan_update["$set"]["is_release"] = True

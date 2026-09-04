@@ -47,6 +47,9 @@ _MAIN_BRANCH = "main"
 _KEPT_DELETED_BRANCH = "feature-x"
 _STAGING_ENVIRONMENT = "staging"
 _RELEASE_ROW_ID = "release-already"
+_BRANCH_RELEASE_ROW_ID = "release-branch"
+_ORPHAN_RELEASE_ROW_ID = "release-orphan"
+_DELETED_SCAN = "deleted-scan"
 
 _COLLECTIONS = ("scans", "releases", "projects")
 
@@ -217,6 +220,50 @@ async def test_a_scan_left_holding_only_its_row_gets_the_flag_and_no_second_rele
     assert (await db.scans.find_one({"_id": _ALREADY_RELEASED}))["is_release"] is True
     rows = await db.releases.find({"scan_id": _ALREADY_RELEASED}).to_list(None)
     assert [row["environment"] for row in rows] == [_STAGING_ENVIRONMENT]
+
+
+@pytest.mark.asyncio
+async def test_a_release_marked_on_a_branch_build_has_its_flag_repaired() -> None:
+    """A pipeline marks a release on the branch it deploys from, and no walk over tag builds reaches
+    such a scan, so only a sweep over the release rows repairs it."""
+    db = FakeDatabase()
+    await db.scans.insert_one(_scan(_BRANCH_BUILD, branch=_MAIN_BRANCH, commit_tag=None))
+    await db.releases.insert_one(
+        {
+            "_id": _BRANCH_RELEASE_ROW_ID,
+            "project_id": _PROJECT,
+            "environment": DEFAULT_RELEASE_ENVIRONMENT,
+            "version": _TAG,
+            "scan_id": _BRANCH_BUILD,
+            "released_at": _EARLIER,
+        }
+    )
+
+    plan = await _run(db, execute=True)
+
+    assert plan.flag_repairs == (_BRANCH_BUILD,)
+    assert (await db.scans.find_one({"_id": _BRANCH_BUILD}))["is_release"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_release_row_whose_scan_is_gone_is_not_reported_as_a_repair() -> None:
+    """Reporting a repair no write can carry out would break the promise that the dry run's report
+    is the change list."""
+    db = FakeDatabase()
+    await db.releases.insert_one(
+        {
+            "_id": _ORPHAN_RELEASE_ROW_ID,
+            "project_id": _PROJECT,
+            "environment": DEFAULT_RELEASE_ENVIRONMENT,
+            "version": _TAG,
+            "scan_id": _DELETED_SCAN,
+            "released_at": _EARLIER,
+        }
+    )
+
+    plan = await _run(db, execute=True)
+
+    assert plan.flag_repairs == ()
 
 
 @pytest.mark.asyncio
