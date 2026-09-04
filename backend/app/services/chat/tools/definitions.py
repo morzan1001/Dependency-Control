@@ -5,9 +5,14 @@ from typing import Any
 from app.core.permissions import Permissions
 
 _DESC_PROJECT_ID = "The project ID"
-_DESC_SCAN_ID = "The scan ID"
 _DESC_OPTIONAL_SINGLE_PROJECT = "Optional: restrict to a single project."
 _DESC_MAX_FINDINGS_10_25 = "Max findings (default 10, max 25)."
+_DESC_OPTIONAL_SCAN_ID = (
+    "Optional scan ID. Omit it to ask about the project's head build — the newest usable build on "
+    "its default branch. Pass one only when the question is about that specific build; a scan ID "
+    "taken from the top of get_scan_history is frequently a queued run or a deleted branch."
+)
+_DESC_ANSWER_NAMES_BUILD = "The result's 'scan' object names the build described and whether it is head."
 
 TOOL_DEFINITIONS: list[dict[str, Any]] = [
     {
@@ -79,7 +84,12 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_scan_history",
-            "description": "Get the scan history for a project, showing scan dates, status, and findings summary.",
+            "description": (
+                "Get the scan history for a project, showing scan dates, status, and findings summary. "
+                "Rows are newest-first across every branch and every status, so the first row is NOT "
+                "the project's current build: the response's head_scan_id names that one, and the row "
+                "it belongs to carries is_head=true."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -94,14 +104,17 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_scan_details",
-            "description": "Get details of a specific scan: findings summary, stats, branch, commit, status.",
+            "description": (
+                "Get details of a scan: findings summary, stats, branch, commit, status. Describes the "
+                f"project's head build unless scan_id says otherwise. {_DESC_ANSWER_NAMES_BUILD}"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "scan_id": {"type": "string", "description": _DESC_SCAN_ID},
+                    "scan_id": {"type": "string", "description": _DESC_OPTIONAL_SCAN_ID},
                     "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                 },
-                "required": ["scan_id", "project_id"],
+                "required": ["project_id"],
             },
         },
     },
@@ -109,11 +122,14 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_scan_findings",
-            "description": "Get findings from a specific scan, optionally filtered by severity or type.",
+            "description": (
+                "Get findings from a scan, optionally filtered by severity or type. Answers about the "
+                f"project's head build unless scan_id says otherwise. {_DESC_ANSWER_NAMES_BUILD}"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "scan_id": {"type": "string", "description": _DESC_SCAN_ID},
+                    "scan_id": {"type": "string", "description": _DESC_OPTIONAL_SCAN_ID},
                     "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
                     "severity": {
                         "type": "string",
@@ -125,7 +141,7 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
                     },
                     "limit": {"type": "integer", "description": "Max findings to return (default 50)"},
                 },
-                "required": ["scan_id", "project_id"],
+                "required": ["project_id"],
             },
         },
     },
@@ -789,21 +805,22 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "list_crypto_assets",
             "description": (
-                "List cryptographic assets ingested for a scan. "
-                "Supports filtering by asset_type, primitive, and name_search."
+                "List cryptographic assets ingested for a build, filterable by asset_type, primitive "
+                "and name_search. Lists the project's head build unless scan_id says otherwise. "
+                f"{_DESC_ANSWER_NAMES_BUILD}"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
-                    "scan_id": {"type": "string", "description": _DESC_SCAN_ID},
+                    "scan_id": {"type": "string", "description": _DESC_OPTIONAL_SCAN_ID},
                     "asset_type": {"type": "string", "description": "Optional filter by asset type (e.g. 'algorithm')"},
                     "primitive": {"type": "string", "description": "Optional filter by primitive (e.g. 'hash')"},
                     "name_search": {"type": "string", "description": "Optional substring filter on asset name"},
                     "skip": {"type": "integer", "description": "Number of items to skip (default 0)"},
                     "limit": {"type": "integer", "description": "Max results (default 100, max 500)"},
                 },
-                "required": ["project_id", "scan_id"],
+                "required": ["project_id"],
             },
         },
     },
@@ -826,14 +843,17 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "get_crypto_summary",
-            "description": "Get a summary of cryptographic assets for a scan, broken down by asset type.",
+            "description": (
+                "Get a summary of cryptographic assets broken down by asset type. Summarises the "
+                f"project's head build unless scan_id says otherwise. {_DESC_ANSWER_NAMES_BUILD}"
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
-                    "scan_id": {"type": "string", "description": _DESC_SCAN_ID},
+                    "scan_id": {"type": "string", "description": _DESC_OPTIONAL_SCAN_ID},
                 },
-                "required": ["project_id", "scan_id"],
+                "required": ["project_id"],
             },
         },
     },
@@ -859,17 +879,18 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
         "function": {
             "name": "suggest_crypto_policy_override",
             "description": (
-                "Advisory: returns the crypto policy rule IDs that produce the most findings "
-                "for a scan. Does NOT make any changes — the caller decides whether to craft "
-                "a project-scoped override based on the suggestions."
+                "Advisory: returns the crypto policy rule IDs that produce the most findings. Reads "
+                "the project's head build unless scan_id says otherwise. Does NOT make any changes — "
+                "the caller decides whether to craft a project-scoped override based on the "
+                f"suggestions. {_DESC_ANSWER_NAMES_BUILD}"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "project_id": {"type": "string", "description": _DESC_PROJECT_ID},
-                    "scan_id": {"type": "string", "description": _DESC_SCAN_ID},
+                    "scan_id": {"type": "string", "description": _DESC_OPTIONAL_SCAN_ID},
                 },
-                "required": ["project_id", "scan_id"],
+                "required": ["project_id"],
             },
         },
     },

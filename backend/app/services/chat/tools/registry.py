@@ -61,6 +61,9 @@ _ERR_NEED_TWO_SCANS = "Need at least two builds on the head branch to compare"
 _FIELD_VULN_ID = "details.vulnerabilities.id"
 _FIELD_EPSS_SCORE = "details.epss_score"
 
+# Everything an answer needs to name the build it describes.
+_BUILD_PROJECTION = {"branch": 1, "commit_hash": 1, "created_at": 1, "status": 1}
+
 # `severity` is stored as a string, so a server-side sort orders it
 # lexicographically and drops the highest severities; pull a bounded candidate
 # set and rank in-process against `_SEVERITY_RANK` before slicing to the limit.
@@ -83,6 +86,11 @@ _CALLGRAPH_SUMMARY_PROJECTION = {
     "total_imports": 1,
     "total_calls": 1,
 }
+
+
+def _scan_lookup_error(requested_scan_id: str | None) -> str:
+    """A named scan the project does not have is a bad argument; an absent one means nothing built yet."""
+    return _ERR_SCAN_NOT_FOUND_IN_PROJECT if requested_scan_id else _ERR_NO_SCAN_DATA
 
 
 def _stat(stats: dict[str, Any] | None, severity: str) -> int:
@@ -229,32 +237,48 @@ class ChatToolRegistry:
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
             limit = _clamp_limit(args.get("limit"), 10)
+            # Newest-first across every branch and status, so the first row is a queued run on a
+            # branch nobody ships as often as it is the build the project stands on.
             cursor = db["scans"].find({"project_id": args["project_id"]}, sort=[("created_at", -1)], limit=limit)
             scans = await cursor.to_list(length=limit)
+            head_scan_id = await self._head_scan_id(project, db)
             return {
                 "scans": [
-                    _serialize_doc(s, ["_id", "status", "branch", "commit_hash", "created_at", "completed_at", "stats"])
+                    {
+                        **_serialize_doc(
+                            s, ["_id", "status", "branch", "commit_hash", "created_at", "completed_at", "stats"]
+                        ),
+                        "is_head": s["_id"] == head_scan_id,
+                    }
                     for s in scans
-                ]
+                ],
+                "head_scan_id": head_scan_id,
+                "hint": (
+                    "head_scan_id is the build that represents this project. Rows are ordered by "
+                    "time across all branches and statuses, so the first one often is not it."
+                ),
             }
 
         if tool_name == "get_scan_details":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
-            scan = await db["scans"].find_one({"_id": args["scan_id"], "project_id": args["project_id"]})
-            if not scan:
-                return {"error": "Scan not found"}
-            return {"scan": _serialize_doc(scan)}
+            answer_scan = await self._scan_under_answer(project, args.get("scan_id"), db)
+            if not answer_scan:
+                return {"error": _scan_lookup_error(args.get("scan_id"))}
+            scan_id, build = answer_scan
+            scan = await db["scans"].find_one({"_id": scan_id, "project_id": args["project_id"]})
+            return {"scan": {**_serialize_doc(scan), "is_head": build["is_head"]}}
 
         if tool_name == "get_scan_findings":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
-            scan = await db["scans"].find_one({"_id": args["scan_id"], "project_id": args["project_id"]})
-            if not scan:
-                return {"error": _ERR_SCAN_NOT_FOUND_IN_PROJECT}
-            query = {"scan_id": args["scan_id"], "project_id": args["project_id"]}
+            answer_scan = await self._scan_under_answer(project, args.get("scan_id"), db)
+            if not answer_scan:
+                return {"error": _scan_lookup_error(args.get("scan_id"))}
+            scan_id, build = answer_scan
+            query = {"scan_id": scan_id, "project_id": args["project_id"]}
             if args.get("severity"):
                 query["severity"] = args["severity"].upper()
             if args.get("type"):
@@ -267,6 +291,7 @@ class ChatToolRegistry:
             return {
                 "findings": [_serialize_finding_for_llm(f) for f in findings],
                 "count": len(findings),
+                "scan": build,
             }
 
         if tool_name == "get_project_findings":
@@ -1292,16 +1317,21 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
-            return await list_crypto_assets(
+            answer_scan = await self._scan_under_answer(project, args.get("scan_id"), db)
+            if not answer_scan:
+                return {"error": _scan_lookup_error(args.get("scan_id"))}
+            scan_id, build = answer_scan
+            assets = await list_crypto_assets(
                 db,
                 project_id=args["project_id"],
-                scan_id=args["scan_id"],
+                scan_id=scan_id,
                 asset_type=args.get("asset_type"),
                 primitive=args.get("primitive"),
                 name_search=args.get("name_search"),
                 skip=int(args.get("skip") or 0),
                 limit=_clamp_limit(args.get("limit"), 100, 500),
             )
+            return {**assets, "scan": build}
 
         if tool_name == "get_crypto_asset_details":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
@@ -1314,7 +1344,12 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
-            return await get_crypto_summary(db, project_id=args["project_id"], scan_id=args["scan_id"])
+            answer_scan = await self._scan_under_answer(project, args.get("scan_id"), db)
+            if not answer_scan:
+                return {"error": _scan_lookup_error(args.get("scan_id"))}
+            scan_id, build = answer_scan
+            summary = await get_crypto_summary(db, project_id=args["project_id"], scan_id=scan_id)
+            return {**summary, "scan": build}
 
         if tool_name == "get_project_crypto_policy":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
@@ -1326,7 +1361,12 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
-            return await suggest_crypto_policy_override(db, project_id=args["project_id"], scan_id=args["scan_id"])
+            answer_scan = await self._scan_under_answer(project, args.get("scan_id"), db)
+            if not answer_scan:
+                return {"error": _scan_lookup_error(args.get("scan_id"))}
+            scan_id, build = answer_scan
+            advice = await suggest_crypto_policy_override(db, project_id=args["project_id"], scan_id=scan_id)
+            return {**advice, "scan": build}
 
         if tool_name == "get_crypto_hotspots":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
@@ -1502,6 +1542,28 @@ class ChatToolRegistry:
         """The scan representing the head of a project the caller already read and authorised."""
         project_id: str = project["_id"]
         return (await ScanRepository(db).get_latest_active_scan_ids([project])).get(project_id)
+
+    async def _scan_under_answer(
+        self, project: dict[str, Any], requested_scan_id: str | None, db: AsyncIOMotorDatabase
+    ) -> tuple[str, dict[str, Any]] | None:
+        """The build a scan-scoped tool answers about, with the block that names it. No scan_id means
+        head; a caller that names one gets it, labelled against head, because a relayed answer carries
+        no chart beside it against which a reader could notice the wrong build."""
+        head_scan_id = await self._head_scan_id(project, db)
+        scan_id = requested_scan_id or head_scan_id
+        if not scan_id:
+            return None
+        doc = await db["scans"].find_one({"_id": scan_id, "project_id": project["_id"]}, _BUILD_PROJECTION)
+        if not doc:
+            return None
+        return scan_id, {
+            "scan_id": scan_id,
+            "branch": doc.get("branch"),
+            "commit_hash": doc.get("commit_hash"),
+            "created_at": _clip_value(doc.get("created_at")),
+            "status": doc.get("status"),
+            "is_head": scan_id == head_scan_id,
+        }
 
     async def _head_scan_stats(self, db: AsyncIOMotorDatabase, head: dict[str, str]) -> dict[str, dict[str, Any]]:
         """project_id -> the stats block of that project's head scan."""

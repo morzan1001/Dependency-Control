@@ -43,6 +43,16 @@ _SEV_LOW = "LOW"
 
 _TYPE_VULNERABILITY = "vulnerability"
 _TYPE_LICENSE = "license"
+_TYPE_CRYPTO = "crypto_weak_algorithm"
+
+_CRYPTO_ASSET_TYPE = "algorithm"
+_HEAD_CRYPTO_ASSET = "MD5"
+_DELETED_BRANCH_CRYPTO_ASSET = "RC4"
+_HEAD_CRYPTO_RULE = "crypto.weak-hash"
+_HEAD_CRYPTO_FINDING_ID = "CRYPTO:MD5"
+_HEAD_CRYPTO_ASSET_COUNT = 1
+_HEAD_CRYPTO_RULE_HITS = 1
+_FOREIGN_SCAN = "scan-of-another-project"
 
 _HEAD_CRITICAL_COUNT = 1
 _FIX_VERSION = "1.0.1"
@@ -301,6 +311,159 @@ class TestCompareScansDefaultPair:
         )
 
         assert result["to_scan_id"] == _DELETED_BRANCH_SCAN
+
+
+def _crypto_asset(scan_id, name):
+    return {
+        "_id": f"{scan_id}:{name}",
+        "project_id": _PROJECT,
+        "scan_id": scan_id,
+        "bom_ref": f"crypto/{name}",
+        "name": name,
+        "asset_type": _CRYPTO_ASSET_TYPE,
+    }
+
+
+@pytest.fixture
+def seeded_with_crypto(seeded):
+    """The CBOM and the crypto findings the scan-scoped tools read, on head and on the branch the
+    VCS dropped."""
+    for doc in (
+        _crypto_asset(_HEAD_SCAN, _HEAD_CRYPTO_ASSET),
+        _crypto_asset(_DELETED_BRANCH_SCAN, _DELETED_BRANCH_CRYPTO_ASSET),
+    ):
+        seeded.crypto_assets._docs[doc["_id"]] = doc
+    seeded.findings._docs[f"{_HEAD_SCAN}:crypto"] = {
+        "_id": f"{_HEAD_SCAN}:crypto",
+        "finding_id": _HEAD_CRYPTO_FINDING_ID,
+        "scan_id": _HEAD_SCAN,
+        "project_id": _PROJECT,
+        "type": _TYPE_CRYPTO,
+        "severity": _SEV_HIGH,
+        "component": _HEAD_CRYPTO_ASSET,
+        "created_at": _NOW,
+        "waived": False,
+        "details": {"rule_id": _HEAD_CRYPTO_RULE},
+    }
+    _point_at(seeded, _QUEUED_SCAN)
+    return seeded
+
+
+class TestScanScopedToolsDefaultToHead:
+    """An omitted scan_id is the obvious call, and it has to be the correct one: the model's only
+    source for an id is get_scan_history, whose newest row is a queued run on any branch."""
+
+    @pytest.mark.asyncio
+    async def test_crypto_summary_counts_the_head_builds_assets(self, seeded_with_crypto, admin_user):
+        result = await _call(seeded_with_crypto, admin_user, "get_crypto_summary", {"project_id": _PROJECT})
+
+        assert result["total"] == _HEAD_CRYPTO_ASSET_COUNT
+        assert result["scan"]["scan_id"] == _HEAD_SCAN
+
+    @pytest.mark.asyncio
+    async def test_crypto_assets_are_the_head_builds(self, seeded_with_crypto, admin_user):
+        result = await _call(seeded_with_crypto, admin_user, "list_crypto_assets", {"project_id": _PROJECT})
+
+        assert [i["name"] for i in result["items"]] == [_HEAD_CRYPTO_ASSET]
+
+    @pytest.mark.asyncio
+    async def test_policy_override_advice_reads_the_head_build(self, seeded_with_crypto, admin_user):
+        result = await _call(seeded_with_crypto, admin_user, "suggest_crypto_policy_override", {"project_id": _PROJECT})
+
+        assert result["top_noisy_rules"] == [{"rule_id": _HEAD_CRYPTO_RULE, "findings": _HEAD_CRYPTO_RULE_HITS}]
+
+    @pytest.mark.asyncio
+    async def test_scan_findings_are_the_head_builds(self, seeded_with_crypto, admin_user):
+        result = await _call(seeded_with_crypto, admin_user, "get_scan_findings", {"project_id": _PROJECT})
+
+        assert {f["finding_id"] for f in result["findings"]} == {
+            _HEAD_CVE,
+            _WAIVED_FINDING_ID,
+            _HEAD_CRYPTO_FINDING_ID,
+        }
+
+    @pytest.mark.asyncio
+    async def test_scan_details_describe_the_head_build(self, seeded_with_crypto, admin_user):
+        result = await _call(seeded_with_crypto, admin_user, "get_scan_details", {"project_id": _PROJECT})
+
+        assert result["scan"]["id"] == _HEAD_SCAN
+        assert result["scan"]["is_head"] is True
+
+
+class TestScanScopedAnswersNameTheirBuild:
+    @pytest.mark.asyncio
+    async def test_an_explicit_scan_id_is_still_answered(self, seeded_with_crypto, admin_user):
+        result = await _call(
+            seeded_with_crypto,
+            admin_user,
+            "list_crypto_assets",
+            {"project_id": _PROJECT, "scan_id": _DELETED_BRANCH_SCAN},
+        )
+
+        assert [i["name"] for i in result["items"]] == [_DELETED_BRANCH_CRYPTO_ASSET]
+
+    @pytest.mark.asyncio
+    async def test_an_explicit_scan_id_is_labelled_against_head(self, seeded_with_crypto, admin_user):
+        """A relayed answer carries no chart beside it, so the build has to be in the answer."""
+        result = await _call(
+            seeded_with_crypto,
+            admin_user,
+            "get_scan_findings",
+            {"project_id": _PROJECT, "scan_id": _DELETED_BRANCH_SCAN},
+        )
+
+        assert result["scan"]["is_head"] is False
+        assert result["scan"]["branch"] == _DELETED_BRANCH
+
+    @pytest.mark.asyncio
+    async def test_a_queued_build_reports_the_status_that_explains_its_emptiness(self, seeded_with_crypto, admin_user):
+        result = await _call(
+            seeded_with_crypto,
+            admin_user,
+            "get_crypto_summary",
+            {"project_id": _PROJECT, "scan_id": _QUEUED_SCAN},
+        )
+
+        assert result["total"] == 0
+        assert result["scan"]["status"] == SCAN_STATUS_PENDING
+        assert result["scan"]["is_head"] is False
+
+    @pytest.mark.asyncio
+    async def test_a_scan_outside_the_project_is_refused(self, seeded_with_crypto, admin_user):
+        seeded_with_crypto.scans._docs[_FOREIGN_SCAN] = _scan(
+            _FOREIGN_SCAN, _DEFAULT_BRANCH, SCAN_STATUS_COMPLETED, 0, project_id="another-project"
+        )
+
+        result = await _call(
+            seeded_with_crypto,
+            admin_user,
+            "get_crypto_summary",
+            {"project_id": _PROJECT, "scan_id": _FOREIGN_SCAN},
+        )
+
+        assert "error" in result
+
+    @pytest.mark.asyncio
+    async def test_a_project_with_no_usable_build_says_so_rather_than_reporting_zero(self, seeded, admin_user):
+        _point_at(seeded, _QUEUED_SCAN)
+        for scan_id in (_HEAD_SCAN, _OLDER_SCAN, _DELETED_BRANCH_SCAN):
+            del seeded.scans._docs[scan_id]
+
+        result = await _call(seeded, admin_user, "get_crypto_summary", {"project_id": _PROJECT})
+
+        assert "error" in result
+
+
+class TestScanHistoryNamesHead:
+    @pytest.mark.asyncio
+    async def test_the_head_row_is_labelled_and_the_newest_row_is_not(self, seeded, admin_user):
+        _point_at(seeded, _QUEUED_SCAN)
+
+        result = await _call(seeded, admin_user, "get_scan_history", {"project_id": _PROJECT})
+
+        assert result["head_scan_id"] == _HEAD_SCAN
+        assert [row["id"] for row in result["scans"] if row["is_head"]] == [_HEAD_SCAN]
+        assert result["scans"][0]["is_head"] is False
 
 
 class TestUnresolvableHead:
