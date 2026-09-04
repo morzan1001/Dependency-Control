@@ -1,6 +1,6 @@
 import { Rocket } from 'lucide-react'
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { toast } from 'sonner'
 
 import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
@@ -17,6 +17,9 @@ const OFF_PATTERN_HINT = 'Lowercase letters, digits, - and _ only, up to 32 char
 const RESCAN_NOTE = 'A re-scan carries the same commit, so its releases are held by the original scan.'
 const ORIGINAL_SCAN_LINK = 'Open the original scan'
 const SECTION_LABEL = 'Release'
+const MARKED_SCAN_LINK = 'Open the marked scan'
+// Long enough to read which scan took the mark and reach the link.
+const MARKED_ELSEWHERE_TOAST_MS = 15_000
 
 interface ScanReleaseControlProps {
   projectId: string
@@ -38,6 +41,7 @@ function rejectionFor(environment: string, held: readonly string[]): MarkRejecti
 
 export function ScanReleaseControl({ projectId, scan }: ScanReleaseControlProps) {
   const [environment, setEnvironment] = useState(DEFAULT_RELEASE_ENVIRONMENT)
+  const navigate = useNavigate()
   const markRelease = useMarkRelease()
   const unmarkRelease = useUnmarkRelease()
 
@@ -68,7 +72,22 @@ export function ScanReleaseControl({ projectId, scan }: ScanReleaseControlProps)
       // No version: the backend falls back to the scan's commit_tag, which is what CI built.
       { projectId, payload: { commit_hash: scan.commit_hash, environment } },
       {
-        onSuccess: () => toast.success(`Marked as release in ${environment}`),
+        onSuccess: (release) => {
+          // The mark resolves the commit to its newest analysis, and a re-run pipeline on the same
+          // commit makes a second one, so the row can land on a scan other than the one open here.
+          if (release.scan_id === scan.id) {
+            toast.success(`Marked as release in ${environment}`)
+            return
+          }
+          toast.success(`Marked as release in ${environment}, on a newer scan of this commit`, {
+            description: `Recorded against scan ${release.scan_id}, which this page is not showing.`,
+            duration: MARKED_ELSEWHERE_TOAST_MS,
+            action: {
+              label: MARKED_SCAN_LINK,
+              onClick: () => navigate(`/projects/${projectId}/scans/${release.scan_id}`),
+            },
+          })
+        },
         onError: () => toast.error(`Could not mark this scan as a release in ${environment}`),
       },
     )

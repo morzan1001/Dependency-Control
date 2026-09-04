@@ -1,14 +1,18 @@
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom'
+import { toast } from 'sonner'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ScanReleaseControl } from '../ScanReleaseControl'
 import { formatDateTime } from '@/lib/utils'
+import type { ReleaseItem } from '@/types/release'
 import type { ScanReleaseRef, ScanWithReleases } from '@/types/scan'
 
 const PROJECT_ID = 'p1'
 const SCAN_ID = 'scan-1'
 const ORIGINAL_SCAN_ID = 'scan-0'
+const NEWER_SCAN_ID = 'scan-2'
+const MARKED_SCAN_LINK = 'Open the marked scan'
 const COMMIT_HASH = 'a'.repeat(40)
 const PRODUCTION = 'production'
 const STAGING = 'staging'
@@ -46,6 +50,27 @@ function makeScan(overrides: Partial<ScanWithReleases> = {}): ScanWithReleases {
     releases: [],
     ...overrides,
   }
+}
+
+// Annotated, not inferred: an inferred fixture drops a field from the response type silently.
+function markResponse(scanId: string): ReleaseItem {
+  return {
+    scan_id: scanId,
+    project_id: PROJECT_ID,
+    environment: PRODUCTION,
+    version: PRODUCTION_VERSION,
+    released_at: PRODUCTION_RELEASED_AT,
+    commit_hash: COMMIT_HASH,
+    branch: 'main',
+    scan_status: 'completed',
+    analysis_scan_id: scanId,
+  }
+}
+
+function markAndResolveTo(scanId: string) {
+  fireEvent.click(screen.getByRole('button', { name: MARK_BUTTON }))
+  const handlers = mockMark.mock.calls[0][1] as { onSuccess: (release: ReleaseItem) => void }
+  handlers.onSuccess(markResponse(scanId))
 }
 
 function makeRelease(overrides: Partial<ScanReleaseRef> = {}): ScanReleaseRef {
@@ -169,6 +194,33 @@ describe('ScanReleaseControl', () => {
 
     expect(screen.getByText(`Released ${formatDateTime(STAGING_RELEASED_AT)}`)).toBeInTheDocument()
     expect(screen.getByText(`Released ${formatDateTime(PRODUCTION_RELEASED_AT)}`)).toBeInTheDocument()
+  })
+
+  it('confirms plainly when the mark landed on the scan on screen', () => {
+    renderControl(makeScan())
+
+    markAndResolveTo(SCAN_ID)
+
+    expect(toast.success).toHaveBeenCalledWith(`Marked as release in ${PRODUCTION}`)
+  })
+
+  it('names the scan that took the mark when a newer analysis of the commit won it', () => {
+    renderControl(makeScan())
+
+    markAndResolveTo(NEWER_SCAN_ID)
+
+    const [message, options] = vi.mocked(toast.success).mock.calls[0]
+    expect(message).toContain('newer scan of this commit')
+    expect(options?.description).toContain(NEWER_SCAN_ID)
+  })
+
+  it('links to the scan that took the mark', () => {
+    renderControl(makeScan())
+
+    markAndResolveTo(NEWER_SCAN_ID)
+
+    const action = vi.mocked(toast.success).mock.calls[0][1]?.action
+    expect(action).toMatchObject({ label: MARKED_SCAN_LINK })
   })
 
   it('keeps the badge for a release whose record it cannot see', () => {
