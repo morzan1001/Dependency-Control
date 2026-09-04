@@ -207,6 +207,33 @@ describe('ProjectOverview - headline numbers after a failed rescan', () => {
   })
 })
 
+describe('ProjectOverview - the branch headline is the branch tip', () => {
+  const TIP_SCAN_ID = 's-tip'
+  const OLD_COMMIT_SCAN_ID = 's-old-commit'
+  const RESCAN_ID = 's-rescan-of-old-commit'
+  const TIP_BUILT_AT = '2026-08-10T00:00:00Z'
+  const OLD_COMMIT_BUILT_AT = '2026-08-01T00:00:00Z'
+  const RESCAN_RAN_AT = '2026-09-01T00:00:00Z'
+  const TIP_CRITICAL = 11
+  const OLD_COMMIT_CRITICAL = 77
+
+  it('ignores a rescan of an older commit that ran after the tip was built', () => {
+    // A rescan carries today's date over an older commit, so ordering by time alone puts the
+    // released commit's numbers under the branch name.
+    renderOverview([
+      makeScan({ id: TIP_SCAN_ID, created_at: TIP_BUILT_AT }, { critical: TIP_CRITICAL }),
+      makeScan({ id: OLD_COMMIT_SCAN_ID, created_at: OLD_COMMIT_BUILT_AT }, { critical: OLD_COMMIT_CRITICAL }),
+      makeScan(
+        { id: RESCAN_ID, created_at: RESCAN_RAN_AT, is_rescan: true },
+        { critical: OLD_COMMIT_CRITICAL },
+      ),
+    ])
+
+    expect(screen.getByText(String(TIP_CRITICAL))).toBeInTheDocument()
+    expect(screen.queryByText(String(OLD_COMMIT_CRITICAL))).not.toBeInTheDocument()
+  })
+})
+
 describe('ProjectOverview - release tile', () => {
   const PRODUCTION = 'production'
   const STAGING = 'staging'

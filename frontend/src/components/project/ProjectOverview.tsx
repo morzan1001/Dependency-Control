@@ -7,7 +7,7 @@ import { Scan } from '@/types/scan'
 import { hasUnrecordedRelease } from '@/lib/releases'
 import { resolveRun } from '@/lib/scan-run'
 import { isScanUsable } from '@/lib/scan-status'
-import { highestRiskBranch } from '@/lib/branches'
+import { highestRiskBranch, outranksBranchTip } from '@/lib/branches'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -53,8 +53,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       filteredScans.forEach((scan: Scan) => {
           if (!isScanUsable(scan.status)) return;
 
-          const currentLatest = latestScansByBranch[scan.branch];
-          if (!currentLatest || new Date(scan.created_at) > new Date(currentLatest.created_at)) {
+          if (outranksBranchTip(scan, latestScansByBranch[scan.branch])) {
               latestScansByBranch[scan.branch] = scan;
           }
       });

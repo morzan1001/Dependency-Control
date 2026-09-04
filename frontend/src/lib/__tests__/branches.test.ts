@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 
-import { highestRiskBranch, initialBranchSelection } from '@/lib/branches'
+import { highestRiskBranch, initialBranchSelection, outranksBranchTip } from '@/lib/branches'
 import type { BranchInfo } from '@/types/project'
 import type { Scan } from '@/types/scan'
 
@@ -44,5 +44,35 @@ describe('highestRiskBranch', () => {
 
   it('returns null without scans', () => {
     expect(highestRiskBranch({})).toBeNull()
+  })
+})
+
+const TIP_BUILT_AT = '2026-08-10T00:00:00Z'
+const RESCAN_RAN_AT = '2026-08-20T00:00:00Z'
+const OLDER_BUILD_AT = '2026-08-01T00:00:00Z'
+
+function build(id: string, created_at: string, is_rescan = false): Scan {
+  return { id, branch: 'main', status: 'completed', created_at, is_rescan, stats: {} } as unknown as Scan
+}
+
+describe('outranksBranchTip', () => {
+  it('keeps the branch tip when a rescan of an older commit ran since', () => {
+    const tip = build('tip', TIP_BUILT_AT)
+    expect(outranksBranchTip(build('rescan', RESCAN_RAN_AT, true), tip)).toBe(false)
+  })
+
+  it('lets a real build displace a rescan that ran later', () => {
+    const rescan = build('rescan', RESCAN_RAN_AT, true)
+    expect(outranksBranchTip(build('tip', TIP_BUILT_AT), rescan)).toBe(true)
+  })
+
+  it('ranks two real builds by build time', () => {
+    const older = build('older', OLDER_BUILD_AT)
+    expect(outranksBranchTip(build('tip', TIP_BUILT_AT), older)).toBe(true)
+    expect(outranksBranchTip(older, build('tip', TIP_BUILT_AT))).toBe(false)
+  })
+
+  it('takes a rescan when the branch holds nothing else', () => {
+    expect(outranksBranchTip(build('rescan', RESCAN_RAN_AT, true), undefined)).toBe(true)
   })
 })
