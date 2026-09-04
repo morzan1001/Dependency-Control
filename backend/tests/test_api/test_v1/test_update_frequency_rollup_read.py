@@ -37,7 +37,9 @@ def _one_scan_each(commit_count: int) -> dict[str, int]:
 
 
 # Anchored inside the window so both paths see the same scans.
-NOW = datetime.now(tz=timezone.utc)
+# BSON dates are int64 milliseconds, so an instant with microseconds reads back as a different
+# value than the one an assertion recomputes.
+NOW = datetime.now(tz=timezone.utc).replace(microsecond=0)
 
 
 def _days_ago(days: float) -> datetime:

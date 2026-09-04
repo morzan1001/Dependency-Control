@@ -38,7 +38,9 @@ from tests.mocks.fake_mongo import FakeDatabase
 PROJECT = "proj-1"
 BRANCH = "main"
 WINDOW_DAYS = 90
-NOW = datetime.now(tz=timezone.utc)
+# BSON dates are int64 milliseconds, so an instant with microseconds reads back as a different
+# value than the one an assertion recomputes.
+NOW = datetime.now(tz=timezone.utc).replace(microsecond=0)
 
 # The gate excuses these three by name; nothing here may hide behind them.
 _NO_KNOWN_CAUSES = KnownCauses(capped_sample_scans=0, live_updates_saturated=False, slowest_packages_capped=False)
