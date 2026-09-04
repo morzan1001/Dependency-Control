@@ -16,7 +16,14 @@ from app.core.constants import (
 )
 from app.models.release import Release
 from app.repositories import ReleaseRepository
-from scripts.backfill_release_flags import NO_LIMIT, BackfillPlan, apply_plan, plan_backfill, run_backfill
+from scripts import backfill_release_flags
+from scripts.backfill_release_flags import (
+    NO_LIMIT,
+    BackfillPlan,
+    apply_plan,
+    plan_backfill,
+    run_backfill,
+)
 from tests.mocks.fake_mongo import FakeDatabase
 
 _NOW = datetime(2026, 8, 1, tzinfo=timezone.utc)
@@ -52,6 +59,11 @@ _ORPHAN_RELEASE_ROW_ID = "release-orphan"
 _DELETED_SCAN = "deleted-scan"
 
 _COLLECTIONS = ("scans", "releases", "projects")
+# Small enough that a handful of rows spans several pages and both boundaries are exercised.
+_TINY_PAGE_SIZE = 2
+_ROWS_ACROSS_PAGES = 5
+_SWEPT_SCAN_PREFIX = "swept-scan-"
+_SWEPT_ROW_PREFIX = "swept-row-"
 
 
 def _scan(
@@ -243,6 +255,31 @@ async def test_a_release_marked_on_a_branch_build_has_its_flag_repaired() -> Non
 
     assert plan.flag_repairs == (_BRANCH_BUILD,)
     assert (await db.scans.find_one({"_id": _BRANCH_BUILD}))["is_release"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_flag_repair_sweep_pages_over_the_release_rows(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One reply carrying every release row — a distinct, or the $in it feeds — outgrows the 16 MB
+    cap on a production estate, and a paged sweep is only correct if no row falls between pages."""
+    monkeypatch.setattr(backfill_release_flags, "FLAG_REPAIR_PAGE_SIZE", _TINY_PAGE_SIZE)
+    db = FakeDatabase()
+    scan_ids = [f"{_SWEPT_SCAN_PREFIX}{index:03d}" for index in range(_ROWS_ACROSS_PAGES)]
+    for index, scan_id in enumerate(scan_ids):
+        await db.scans.insert_one(_scan(scan_id, branch=_MAIN_BRANCH, commit_tag=None))
+        await db.releases.insert_one(
+            {
+                "_id": f"{_SWEPT_ROW_PREFIX}{index:03d}",
+                "project_id": _PROJECT,
+                "environment": DEFAULT_RELEASE_ENVIRONMENT,
+                "scan_id": scan_id,
+                "released_at": _EARLIER,
+            }
+        )
+
+    plan = await _run(db, execute=True)
+
+    assert plan.flag_repairs == tuple(scan_ids)
+    assert [doc["is_release"] async for doc in db.scans.find({})] == [True] * _ROWS_ACROSS_PAGES
 
 
 @pytest.mark.asyncio

@@ -39,6 +39,8 @@ from app.repositories import ReleaseRepository
 DEFAULT_BATCH_SIZE = 500
 DEFAULT_SLEEP_MS = 50
 NO_LIMIT = 0
+# Release rows read per page of the flag-repair sweep; also the width of the scan lookup it feeds.
+FLAG_REPAIR_PAGE_SIZE = 1000
 _REPORT_LABEL_WIDTH = 30
 
 _SCAN_PROJECTION = {
@@ -50,6 +52,7 @@ _SCAN_PROJECTION = {
     "is_release": 1,
 }
 _PROJECT_PROJECTION = {"_id": 1, "deleted_branches": 1}
+_RELEASE_ROW_PROJECTION = {"_id": 1, "scan_id": 1}
 
 
 @dataclass(frozen=True)
@@ -112,14 +115,29 @@ async def _plan_flag_repairs(db: Any) -> tuple[str, ...]:
     """Scans holding a release row without the flag the partial index is keyed on.
 
     Keyed on the release collection, so a release marked on a branch build — which no walk over tag
-    builds reaches — is repaired as well.
+    builds reaches — is repaired as well. Paged on ``_id``: a whole estate's release rows in one
+    ``distinct`` reply, or one ``$in``, outgrows the 16 MB BSON limit and the plan fails outright.
     """
-    released: list[str] = await db.releases.distinct("scan_id")
-    if not released:
-        return ()
-    cursor = db.scans.find({"_id": {"$in": released}}, {"_id": 1, "is_release": 1})
-    unflagged = [str(doc["_id"]) async for doc in cursor if not doc.get("is_release")]
-    return tuple(sorted(unflagged))
+    unflagged: set[str] = set()
+    after_id: Any = None
+    while True:
+        query: dict[str, Any] = {} if after_id is None else {"_id": {"$gt": after_id}}
+        rows = (
+            await db.releases.find(query, _RELEASE_ROW_PROJECTION)
+            .sort("_id", 1)
+            .limit(FLAG_REPAIR_PAGE_SIZE)
+            .to_list(FLAG_REPAIR_PAGE_SIZE)
+        )
+        if not rows:
+            return tuple(sorted(unflagged))
+        after_id = rows[-1]["_id"]
+        scan_ids = sorted({row["scan_id"] for row in rows if row.get("scan_id")})
+        if scan_ids:
+            cursor = db.scans.find({"_id": {"$in": scan_ids}}, {"_id": 1, "is_release": 1})
+            # The partial index is keyed on boolean true, so anything else is unindexed and repairable.
+            unflagged.update([str(doc["_id"]) async for doc in cursor if doc.get("is_release") is not True])
+        if len(rows) < FLAG_REPAIR_PAGE_SIZE:
+            return tuple(sorted(unflagged))
 
 
 async def _plan_prunes(db: Any, tag_names_by_project: dict[str, set[str]]) -> tuple[PlannedPrune, ...]:
