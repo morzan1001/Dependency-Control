@@ -1,7 +1,10 @@
-"""Tests for project API endpoints (notification settings)."""
+"""Tests for project API endpoints."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+from fastapi import HTTPException
 
 from app.models.project import Project, ProjectMember, Scan
 from app.models.user import User
@@ -230,3 +233,132 @@ class TestProjectMemberWritesAddressTheMemberByIdentity:
 
         stored = {m["user_id"]: m["notification_preferences"] for m in db.projects._docs["proj-1"]["members"]}
         assert stored == {self._CALLER: {}, self._TARGET: preferences, self._BYSTANDER: {}}
+
+
+class TestProjectLimitCountsOnlyProjectsTheUserAdmins:
+    """The limit query has to require user_id and role on the SAME member, and the fake has to run it."""
+
+    _LIMIT = 2
+    _CALLER = "limited-user"
+
+    def _db(self, projects):
+        from tests.mocks.fake_mongo import FakeDatabase
+
+        db = FakeDatabase()
+        for index, members in enumerate(projects):
+            db.projects._docs[f"proj-{index}"] = Project(
+                id=f"proj-{index}",
+                name=f"Demo {index}",
+                members=[ProjectMember(user_id=user_id, role=role) for user_id, role in members],
+            ).model_dump(by_alias=True)
+        return db
+
+    def _create(self, db):
+        from app.api.v1.endpoints.projects import create_project
+        from app.models.system import SystemSettings
+        from app.schemas.project import ProjectCreate
+
+        return asyncio.run(
+            create_project(
+                project_in=ProjectCreate(name="New"),
+                current_user=User(
+                    id=self._CALLER,
+                    username="limited",
+                    email="limited@test.com",
+                    permissions=["project:create"],
+                ),
+                db=db,
+                settings=SystemSettings(project_limit_per_user=self._LIMIT),
+            )
+        )
+
+    def test_a_user_at_the_limit_is_refused(self):
+        db = self._db([[(self._CALLER, "admin")], [(self._CALLER, "admin")]])
+
+        with pytest.raises(HTTPException) as exc_info:
+            self._create(db)
+
+        assert exc_info.value.status_code == 403
+
+    def test_projects_the_user_only_views_do_not_count_towards_the_limit(self):
+        db = self._db(
+            [
+                [(self._CALLER, "admin")],
+                [("other-user", "admin"), (self._CALLER, "viewer")],
+                [("other-user", "admin"), (self._CALLER, "editor")],
+            ]
+        )
+
+        response = self._create(db)
+
+        assert response.api_key.startswith(f"{response.project_id}.")
+        assert len(db.projects._docs) == len([1, 2, 3]) + 1
+
+
+class TestHideHistoricalSecretsNarrowsTheResult:
+    """The $nor has to run for real: a filter the fake ignored would leave the buried secret visible."""
+
+    _SCAN_ID = "scan-1"
+    _CALLER = "reader"
+
+    def _db(self):
+        from tests.mocks.fake_mongo import FakeDatabase
+
+        db = FakeDatabase()
+        db.projects._docs["proj-1"] = Project(
+            id="proj-1",
+            name="Demo",
+            members=[ProjectMember(user_id=self._CALLER, role="admin")],
+        ).model_dump(by_alias=True)
+        db.scans._docs[self._SCAN_ID] = {"_id": self._SCAN_ID, "project_id": "proj-1", "status": "completed"}
+        db.findings._docs = {
+            "gone": self._finding("gone", "secret", {"in_current_tree": False}),
+            "present": self._finding("present", "secret", {"in_current_tree": True}),
+            "unknown": self._finding("unknown", "secret", {}),
+            "sast-gone": self._finding("sast-gone", "sast", {"in_current_tree": False}),
+        }
+        return db
+
+    def _finding(self, finding_id, finding_type, details):
+        return {
+            "_id": finding_id,
+            "finding_id": finding_id,
+            "scan_id": self._SCAN_ID,
+            "project_id": "proj-1",
+            "type": finding_type,
+            "severity": "HIGH",
+            "component": finding_id,
+            "details": details,
+        }
+
+    def _read(self, db, hide_historical_secrets):
+        from app.api.v1.endpoints.projects import read_scan_findings
+
+        return asyncio.run(
+            read_scan_findings(
+                scan_id=self._SCAN_ID,
+                current_user=User(
+                    id=self._CALLER,
+                    username="reader",
+                    email="reader@test.com",
+                    permissions=["project:read"],
+                ),
+                db=db,
+                hide_historical_secrets=hide_historical_secrets,
+            )
+        )
+
+    def test_a_secret_gone_from_the_tree_is_the_only_finding_dropped(self):
+        db = self._db()
+
+        shown = self._read(db, True)
+
+        assert sorted(item["finding_id"] for item in shown["items"]) == ["present", "sast-gone", "unknown"]
+        assert shown["total"] == len(shown["items"])
+
+    def test_without_the_flag_the_buried_secret_is_visible(self):
+        db = self._db()
+
+        shown = self._read(db, None)
+
+        assert "gone" in {item["finding_id"] for item in shown["items"]}

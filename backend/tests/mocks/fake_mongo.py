@@ -298,8 +298,8 @@ def _in_allowed(value: Any, allowed: list) -> bool:
 
 
 _PULL_ELEMENT = "__element__"
-_MATCH_TOP_LEVEL_OPERATORS = frozenset({"$or", "$and", "$expr"})
-_MATCH_FIELD_OPERATORS = frozenset({"$exists", "$in", "$nin", "$ne", "$regex", "$options", *_CMP})
+_MATCH_TOP_LEVEL_OPERATORS = frozenset({"$or", "$and", "$nor", "$expr"})
+_MATCH_FIELD_OPERATORS = frozenset({"$exists", "$in", "$nin", "$ne", "$regex", "$options", "$elemMatch", *_CMP})
 
 
 def _assert_known_operators(query: dict) -> None:
@@ -341,6 +341,10 @@ def _match_doc(doc: dict, query: dict) -> bool:
             if not all(_match_doc(doc, sub) for sub in condition):
                 return False
             continue
+        if key == "$nor":
+            if any(_match_doc(doc, sub) for sub in condition):
+                return False
+            continue
         if key == "$expr":
             # Unsupported before: an unrecognised operator fell through as "matches".
             if not _eval_bool(doc, condition):
@@ -355,6 +359,11 @@ def _match_doc(doc: dict, query: dict) -> bool:
                 continue
             return False
         if isinstance(condition, dict):
+            if "$elemMatch" in condition:
+                # A single element has to satisfy every clause; a non-array field never does.
+                elements = value if isinstance(value, list) else []
+                if not any(isinstance(e, dict) and _match_doc(e, condition["$elemMatch"]) for e in elements):
+                    return False
             if "$exists" in condition:
                 field_present = _resolve_dotted(doc, key) is not None or key in doc
                 if bool(condition["$exists"]) != field_present:
