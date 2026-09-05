@@ -7,7 +7,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { DeltaHeader } from '../DeltaHeader'
 import * as scansApi from '@/api/scans'
 import { useLatestProjectRelease, type LatestProjectRelease } from '@/hooks/queries/use-releases'
-import { useProjectScans } from '@/hooks/queries/use-scans'
+import { SCAN_WINDOW_PAGE_SIZE, useProjectScanWindow, type ScanWindow } from '@/hooks/queries/use-scans'
 import type { ReleaseItem } from '@/types/release'
 import type { ScanWithReleases } from '@/types/scan'
 import type { ScanDeltaResponse } from '@/types/scanDelta'
@@ -76,13 +76,44 @@ function renderHeader(
   return { onChange }
 }
 
-function mockScanSources(options: ScanWithReleases[] = [toScan]) {
+function mockScanSources(options: ScanWithReleases[] = [toScan], complete = true) {
   vi.mocked(scansApi.scanApi.getOne).mockImplementation(getOne)
-  vi.mocked(useProjectScans).mockReturnValue({ data: options } as unknown as ReturnType<typeof useProjectScans>)
+  // Annotated, not inferred: an inferred fixture drops a field from the hook's type silently.
+  const window: ScanWindow = { scans: options, complete }
+  vi.mocked(useProjectScanWindow).mockReturnValue(
+    { data: window } as unknown as ReturnType<typeof useProjectScanWindow>,
+  )
 }
 
 describe('DeltaHeader', () => {
   afterEach(() => vi.clearAllMocks())
+
+  it('says the pickers are a window and offers to widen it when older scans exist', () => {
+    mockScanSources([toScan, releasedOption], false)
+
+    renderHeader()
+
+    expect(screen.getByText(/this project has older ones/)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: `Load ${SCAN_WINDOW_PAGE_SIZE} older` })).toBeInTheDocument()
+  })
+
+  it('claims nothing about older scans once the window read to the end', () => {
+    mockScanSources([toScan, releasedOption], true)
+
+    renderHeader()
+
+    expect(screen.queryByText(/this project has older ones/)).not.toBeInTheDocument()
+  })
+
+  it('asks the window for another page when the widen control is used', () => {
+    mockScanSources([toScan], false)
+
+    renderHeader()
+    fireEvent.click(screen.getByRole('button', { name: `Load ${SCAN_WINDOW_PAGE_SIZE} older` }))
+
+    const pagesAsked = vi.mocked(useProjectScanWindow).mock.calls.map((call) => call[1])
+    expect(Math.max(...pagesAsked)).toBe(2)
+  })
 
   it("shows the compared scan's label on the From side even though it is excluded from the pickable options", async () => {
     mockScanSources()

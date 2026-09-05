@@ -4,7 +4,8 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 
 import { scanApi } from "@/api/scans";
-import { useProjectScans } from "../use-scans";
+import type { ScanWithReleases } from "@/types/scan";
+import { SCAN_WINDOW_PAGE_SIZE, useProjectScanWindow, useProjectScans } from "../use-scans";
 
 vi.mock("@/api/scans", () => ({
   scanApi: { getProjectScans: vi.fn() },
@@ -78,5 +79,60 @@ describe("useProjectScans release filter", () => {
     await waitFor(() => expect(result.current.data).toBeDefined());
     expect(result.current.data?.[0].releases).toHaveLength(RELEASE_ENVIRONMENT_COUNT);
     expect(result.current.data?.[0].releases[0].environment).toBe(STAGING);
+  });
+});
+
+function scanPage(size: number): ScanWithReleases[] {
+  return Array.from({ length: size }, (_, index) => ({
+    id: `s${index}`,
+    project_id: PROJECT_ID,
+    branch: BRANCH,
+    created_at: CREATED_AT,
+    status: SCAN_STATUS_COMPLETED,
+    releases: [],
+  }));
+}
+
+function renderWindow(client: QueryClient, pages: number) {
+  const wrapper = ({ children }: { children: ReactNode }) => (
+    <QueryClientProvider client={client}>{children}</QueryClientProvider>
+  );
+  return renderHook(() => useProjectScanWindow(PROJECT_ID, pages), { wrapper });
+}
+
+describe("useProjectScanWindow", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it("reports the window as incomplete while a full page came back", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.mocked(scanApi.getProjectScans).mockResolvedValue(scanPage(SCAN_WINDOW_PAGE_SIZE));
+
+    const { result } = renderWindow(client, 1);
+
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(result.current.data?.complete).toBe(false);
+    expect(result.current.data?.scans).toHaveLength(SCAN_WINDOW_PAGE_SIZE);
+  });
+
+  it("reports the window as complete once a short page ends it", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.mocked(scanApi.getProjectScans).mockResolvedValue(scanPage(SCAN_WINDOW_PAGE_SIZE - 1));
+
+    const { result } = renderWindow(client, 1);
+
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(result.current.data?.complete).toBe(true);
+  });
+
+  it("reads one page per requested page and skips past the ones already read", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    vi.mocked(scanApi.getProjectScans).mockResolvedValue(scanPage(SCAN_WINDOW_PAGE_SIZE));
+
+    const { result } = renderWindow(client, 2);
+
+    await waitFor(() => expect(result.current.data).toBeDefined());
+    expect(result.current.data?.scans).toHaveLength(SCAN_WINDOW_PAGE_SIZE * 2);
+    const skips = vi.mocked(scanApi.getProjectScans).mock.calls.map((call) => call[1]?.skip);
+    expect(skips).toEqual([0, SCAN_WINDOW_PAGE_SIZE]);
   });
 });
