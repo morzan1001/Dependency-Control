@@ -825,6 +825,7 @@ class TestGetFindings:
 
         assert len(findings) == MAX_CROSS_LINK_GROUP_SIZE
         assert all(len(f.related_findings) == MAX_CROSS_LINK_GROUP_SIZE - 1 for f in findings)
+        assert all(f.related_findings_omitted is None for f in findings)
 
     def test_a_group_past_the_cap_is_left_unlinked(self):
         """Pairwise linking of one crowded file is quadratic and tells a reader nothing."""
@@ -834,6 +835,22 @@ class TestGetFindings:
 
         assert len(findings) == MAX_CROSS_LINK_GROUP_SIZE + 1
         assert all(f.related_findings == [] for f in findings)
+
+    def test_a_group_past_the_cap_says_how_many_it_did_not_link(self):
+        """An empty related_findings otherwise reads exactly like a finding with no siblings."""
+        self._add_sast_findings_on_one_file(MAX_CROSS_LINK_GROUP_SIZE + 1)
+
+        findings = self.agg.get_findings()
+
+        assert all(f.related_findings_omitted == MAX_CROSS_LINK_GROUP_SIZE for f in findings)
+
+    def test_a_lone_finding_omits_nothing(self):
+        self._add_sast_findings_on_one_file(1)
+
+        findings = self.agg.get_findings()
+
+        assert findings[0].related_findings == []
+        assert findings[0].related_findings_omitted is None
 
 
 class TestAggregateDispatch:

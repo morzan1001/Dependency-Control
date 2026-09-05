@@ -62,6 +62,11 @@ class Finding(BaseModel):
         default_factory=list,
         description="IDs of related findings (e.g. same CVEs in different packages)",
     )
+    related_findings_omitted: int | None = Field(
+        None,
+        description="Same-component findings this one was not linked to because the group exceeded "
+        "the cross-linking ceiling; None when the list above is complete",
+    )
 
     # Status fields
     waived: bool = False

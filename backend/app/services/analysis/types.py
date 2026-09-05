@@ -138,6 +138,7 @@ class FindingDict(TypedDict, total=False):
     found_in: list[str]
     aliases: list[str]
     related_findings: list[str]
+    related_findings_omitted: int | None
     waived: bool
     waiver_reason: str | None
     reachable: bool | None

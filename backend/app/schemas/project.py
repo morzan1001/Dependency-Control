@@ -254,6 +254,11 @@ class ScanFindingItem(BaseModel):
     found_in: list[str] = Field(default_factory=list, description="Files where found")
     aliases: list[str] = Field(default_factory=list, description="Alternative IDs")
     related_findings: list[str] = Field(default_factory=list, description="Related finding IDs")
+    related_findings_omitted: int | None = Field(
+        None,
+        description="Same-component findings left unlinked because the group exceeded the "
+        "cross-linking ceiling; None when the list above is complete",
+    )
     created_at: datetime | None = Field(None, description="When the finding was created")
 
     # Enriched fields from dependency lookup

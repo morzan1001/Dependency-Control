@@ -295,6 +295,9 @@ export interface Finding {
   found_in: string[];
   aliases: string[];
   related_findings?: string[];
+  // Set when the component's finding group was too large to cross-link, so an empty
+  // related_findings above means "too many to list", not "none".
+  related_findings_omitted?: number | null;
   waived: boolean;
   waiver_reason?: string;
   source_type?: string;

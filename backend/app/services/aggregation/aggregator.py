@@ -430,10 +430,13 @@ class ResultAggregator:
     def _link_related_findings_by_component(self, findings: list[Finding]) -> None:
         """Link findings for the same package to each other (vuln, outdated, quality, license, eol).
 
-        Groups past ``MAX_CROSS_LINK_GROUP_SIZE`` are left alone: a file carrying thousands of
-        SAST hits is one "component" here, and linking it pairwise costs more than it tells anyone.
-        Only ``related_findings`` and the ``details`` context blocks depend on this, never a
-        severity, a count or a score — which is why the ceiling is safe on the persisted path too.
+        Groups past ``MAX_CROSS_LINK_GROUP_SIZE`` are left unlinked but not unmarked: a file
+        carrying thousands of SAST hits is one "component" here, linking it pairwise costs more
+        than it tells anyone, and an empty ``related_findings`` reads the same as a finding with
+        no siblings at all. ``related_findings_omitted`` carries the sibling count the list would
+        have held so the two cases stop looking alike. Only ``related_findings`` and the
+        ``details`` context blocks depend on this, never a severity, a count or a score — which
+        is why the ceiling is safe on the persisted path too.
         """
         representatives = cluster_by_package_identity(f.component for f in findings if f.component)
         component_map: dict[str, list[Finding]] = {}
@@ -445,8 +448,14 @@ class ResultAggregator:
             component_map.setdefault(key, []).append(f)
 
         for component_findings in component_map.values():
-            if 1 < len(component_findings) <= MAX_CROSS_LINK_GROUP_SIZE:
+            if len(component_findings) <= 1:
+                continue
+            if len(component_findings) <= MAX_CROSS_LINK_GROUP_SIZE:
                 self._link_finding_group(component_findings)
+                continue
+            siblings = len(component_findings) - 1
+            for finding in component_findings:
+                finding.related_findings_omitted = siblings
 
     def get_dependency_enrichments(self) -> list[dict[str, Any]]:
         """Enrichment entries for persistence: canonical purl (cross-scan key), name/version (per-scan match), payload."""
