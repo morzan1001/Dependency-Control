@@ -1,5 +1,6 @@
 from collections import defaultdict
-from typing import Any
+from collections.abc import AsyncIterator
+from dataclasses import dataclass, field
 
 from app.core.constants import FINDING_DELTA_THRESHOLD, RECURRING_ISSUE_THRESHOLD
 from app.schemas.recommendation import (
@@ -13,6 +14,7 @@ from app.services.recommendation.common import ModelOrDict, get_attr
 
 # What finding_identity_key reads; the scan-scoped ``_id`` stays out, it never matches across a pair.
 _IDENTITY_FIELDS = ("type", "component", "version", "details", "finding_id", "description", "found_in")
+_RECURRING_ROWS_SHOWN = 10
 
 
 def _identity(finding: ModelOrDict) -> tuple[str, str, str]:
@@ -96,60 +98,65 @@ def analyze_regressions(
     return recommendations
 
 
-def _build_finding_frequency(
-    scan_history: list[ModelOrDict],
-) -> dict[str, dict[str, Any]]:
-    """Count how often each CVE/finding appears across scans."""
-    finding_frequency: dict[str, dict[str, Any]] = defaultdict(lambda: {"count": 0, "scans": set(), "info": None})
+@dataclass
+class CveRecurrence:
+    """The scans one CVE was found in, and a row describing it."""
 
-    for scan in scan_history:
-        scan_id = get_attr(scan, "_id") or get_attr(scan, "id")
-        findings_summary = get_attr(scan, "findings_summary", []) or []
-
-        for f in findings_summary:
-            if get_attr(f, "type") != "vulnerability":
-                continue
-            details = get_attr(f, "details", {})
-            cve = details.get("cve_id") or get_attr(f, "id")
-            if not cve:
-                continue
-            finding_frequency[cve]["count"] += 1
-            finding_frequency[cve]["scans"].add(scan_id)
-            if not finding_frequency[cve]["info"]:
-                finding_frequency[cve]["info"] = {
-                    "severity": get_attr(f, "severity"),
-                    "component": get_attr(f, "component"),
-                    "description": get_attr(f, "description", "")[:100],
-                }
-
-    return finding_frequency
+    scans: set[str] = field(default_factory=set)
+    severity: str | None = None
+    component: str | None = None
 
 
-def _count_recurring_by_severity(recurring: list[dict[str, Any]], severity: str) -> int:
+def _cve_keys(finding: ModelOrDict) -> list[str]:
+    """Every CVE the finding reports, or the identifier it is known by when it names none."""
+    details = get_attr(finding, "details", {})
+    cves = canonical_cves([details]) if isinstance(details, dict) else []
+    if cves:
+        return cves
+    fallback = get_attr(finding, "finding_id") or get_attr(finding, "_id")
+    return [str(fallback)] if fallback else []
+
+
+async def build_cve_recurrence(vulnerability_findings: AsyncIterator[ModelOrDict]) -> dict[str, CveRecurrence]:
+    """Fold vulnerability findings of a scan window into the scan set each CVE appeared in.
+
+    Folded off the findings collection rather than the scan document's ``findings_summary``,
+    which is bounded to keep the scan under Mongo's document limit.
+    """
+    recurrence: dict[str, CveRecurrence] = defaultdict(CveRecurrence)
+    async for finding in vulnerability_findings:
+        scan_id = get_attr(finding, "scan_id")
+        if not scan_id:
+            continue
+        for cve in _cve_keys(finding):
+            row = recurrence[cve]
+            row.scans.add(scan_id)
+            if row.component is None:
+                row.severity = get_attr(finding, "severity")
+                row.component = get_attr(finding, "component")
+    return recurrence
+
+
+def _count_recurring_by_severity(recurring: list[tuple[str, CveRecurrence]], severity: str) -> int:
     """Count recurring issues matching a given severity."""
-    return len([r for r in recurring if r.get("info", {}).get("severity") == severity])
+    return len([1 for _cve, row in recurring if row.severity == severity])
 
 
 def analyze_recurring_issues(
-    scan_history: list[ModelOrDict],
+    recurrence: dict[str, CveRecurrence],
+    window_scans: int,
 ) -> list[Recommendation]:
-    """Identify issues that keep appearing across multiple scans."""
-    if not scan_history:
-        return []
-
-    finding_frequency = _build_finding_frequency(scan_history)
-
-    recurring = [
-        {"cve": cve, **data} for cve, data in finding_frequency.items() if data["count"] >= RECURRING_ISSUE_THRESHOLD
-    ]
+    """Identify issues that keep appearing across the scan window the caller folded."""
+    recurring = [(cve, row) for cve, row in recurrence.items() if len(row.scans) >= RECURRING_ISSUE_THRESHOLD]
 
     if not recurring:
         return []
 
     recurring.sort(
-        key=lambda x: (
-            x["count"],
-            {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}.get(x.get("info", {}).get("severity", ""), 0),
+        key=lambda entry: (
+            len(entry[1].scans),
+            {"CRITICAL": 4, "HIGH": 3, "MEDIUM": 2, "LOW": 1}.get(entry[1].severity or "", 0),
+            entry[0],
         ),
         reverse=True,
     )
@@ -163,8 +170,8 @@ def analyze_recurring_issues(
             title=f"{len(recurring)} vulnerabilities keep recurring across scans",
             description=(
                 f"These vulnerabilities have appeared in {RECURRING_ISSUE_THRESHOLD} "
-                "or more scans without being fixed. Consider creating waivers with "
-                "justification, or addressing the root cause architecturally."
+                f"or more of the last {window_scans} scans without being fixed. Consider creating "
+                "waivers with justification, or addressing the root cause architecturally."
             ),
             impact={
                 "critical": critical_count,
@@ -174,12 +181,12 @@ def analyze_recurring_issues(
                 "total": len(recurring),
             },
             affected_components=[
-                f"{r['cve']} ({r.get('info', {}).get('component', 'unknown')}) - {r['count']} scans"
-                for r in recurring[:10]
+                f"{cve} ({row.component or 'unknown'}) - {len(row.scans)} scans"
+                for cve, row in recurring[:_RECURRING_ROWS_SHOWN]
             ],
             action={
                 "type": "address_recurring",
-                "cves": [r["cve"] for r in recurring[:10]],
+                "cves": [cve for cve, _row in recurring[:_RECURRING_ROWS_SHOWN]],
                 "suggestions": [
                     "Create waivers with documented justification for accepted risks",
                     "Look for alternative packages without these vulnerabilities",

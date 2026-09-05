@@ -129,7 +129,8 @@ class RecommendationEngine:
         dependencies: Sequence[ModelOrDict] | None = None,
         source_target: str | None = None,
         previous_scan_findings: Sequence[ModelOrDict] | None = None,
-        scan_history: Sequence[dict[str, Any]] | None = None,
+        cve_recurrence: dict[str, trends.CveRecurrence] | None = None,
+        recurrence_window_scans: int = 0,
         cross_project_data: dict[str, Any] | None = None,
     ) -> list[Recommendation]:
         """Generate prioritized remediation recommendations across all finding types."""
@@ -246,11 +247,10 @@ class RecommendationEngine:
                 "regressions",
             )
 
-        if scan_history:
-            scan_history_list: list[ModelOrDict] = list(scan_history)
+        if cve_recurrence:
             _safe_extend(
                 recommendations,
-                lambda: trends.analyze_recurring_issues(scan_history_list),
+                lambda: trends.analyze_recurring_issues(cve_recurrence, recurrence_window_scans),
                 "recurring_issues",
             )
 

@@ -33,6 +33,7 @@ from app.schemas.analytics import (
     RecommendationsResponse,
 )
 from app.services.enrichment import canonical_cves, get_cve_enrichment
+from app.services.recommendation import trends
 from app.services.recommendation.common import get_attr
 from app.services.recommendations import recommendation_engine
 
@@ -41,6 +42,9 @@ from ._shared import _MSG_ACCESS_DENIED
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
+
+# Newest scans the recurrence count is taken over; the recommendation text names the window.
+_RECURRENCE_WINDOW_SCANS = 10
 
 
 async def _apply_live_threat_intel(findings: list[Any]) -> None:
@@ -133,21 +137,21 @@ async def get_project_recommendations(
             break
 
     previous_scan_findings = None
-    scan_history = None
 
     previous_scan = await scan_repo.get_preceding_scan(scan_id)
 
     if previous_scan:
         previous_scan_findings = await finding_repo.find_by_scan(previous_scan.id, limit=ANALYTICS_MAX_QUERY_LIMIT)
 
-    recent_scans = await scan_repo.find_many(
-        {"project_id": project_id},
-        limit=10,
-        sort=[("created_at", -1)],
-    )
-
-    if recent_scans:
-        scan_history = [s.model_dump() for s in recent_scans]
+    recent_scan_ids = [
+        recent.id
+        for recent in await scan_repo.find_many(
+            {"project_id": project_id},
+            limit=_RECURRENCE_WINDOW_SCANS,
+            sort=[("created_at", -1)],
+        )
+    ]
+    cve_recurrence = await trends.build_cve_recurrence(finding_repo.iter_vulnerability_identities(recent_scan_ids))
 
     cross_project_data = await gather_cross_project_data(user_project_ids, project_id, db)
 
@@ -156,7 +160,8 @@ async def get_project_recommendations(
         dependencies=dependencies,
         source_target=source_target,
         previous_scan_findings=previous_scan_findings,
-        scan_history=scan_history,
+        cve_recurrence=cve_recurrence,
+        recurrence_window_scans=len(recent_scan_ids),
         cross_project_data=cross_project_data,
     )
 
