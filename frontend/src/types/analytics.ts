@@ -137,6 +137,8 @@ export interface AnalyticsScope {
   resolved_projects: number;
   // Counts projects with no usable scan at all unless a release environment was requested.
   projects_without_release: number;
+  // Date of the oldest analysis behind the numbers; null when the scope resolved to no scan.
+  oldest_analysis_at: string | null;
 }
 
 export interface AdvancedSearchResult {

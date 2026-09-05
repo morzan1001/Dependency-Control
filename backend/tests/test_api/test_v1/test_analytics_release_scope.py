@@ -37,6 +37,8 @@ _EXPECTED_RESOLVED = 2
 _EXPECTED_WITHOUT_RELEASE = 1
 _RELEASED_AT = datetime(2026, 9, 1, tzinfo=timezone.utc)
 _SUPERSEDED_AT = datetime(2026, 8, 1, tzinfo=timezone.utc)
+_STALE_ANALYSIS_AT = datetime(2026, 6, 1, tzinfo=timezone.utc)
+_NO_ANALYSIS = None
 
 _CANARY = "canary"
 _STAGING = "staging"
@@ -73,13 +75,15 @@ async def test_summary_reports_how_many_projects_had_no_release():
     assert scan_ids.await_args.kwargs["release_environment"] == DEFAULT_RELEASE_ENVIRONMENT
 
 
-async def _seed_scan(db: FakeDatabase, scan_id: str, project_id: str) -> None:
+async def _seed_scan(
+    db: FakeDatabase, scan_id: str, project_id: str, created_at: datetime = _RELEASED_AT
+) -> None:
     await db.scans.insert_one(
         {
             "_id": scan_id,
             "project_id": project_id,
             "status": SCAN_STATUS_COMPLETED,
-            "created_at": _RELEASED_AT,
+            "created_at": created_at,
         }
     )
 
@@ -335,6 +339,43 @@ async def test_scope_with_no_accessible_projects_offers_nothing():
     assert result.release_environments == _NO_ENVIRONMENTS
     assert result.resolved_projects == 0
     assert result.projects_without_release == 0
+    assert result.oldest_analysis_at is _NO_ANALYSIS
+
+
+async def _seed_release_scope_with_one_stale_analysis(db: FakeDatabase) -> None:
+    """Two released projects; one of them ships a build analysed three months before the other."""
+    for project_id in _RELEASED_PROJECTS:
+        await db.projects.insert_one({"_id": project_id, "name": project_id})
+        await _seed_release(db, project_id, f"scan-{project_id}", _RELEASED_AT)
+    await _seed_scan(db, "scan-p1", "p1", _STALE_ANALYSIS_AT)
+    await _seed_scan(db, "scan-p2", "p2", _RELEASED_AT)
+
+
+@pytest.mark.asyncio
+async def test_scope_dates_the_oldest_analysis_the_numbers_rest_on():
+    """A release resolves to a build nobody rebuilt, so its findings are the landscape of the day it
+    was analysed; the count on its own reads as today's answer."""
+    db = FakeDatabase()
+    await _seed_release_scope_with_one_stale_analysis(db)
+
+    with patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_RELEASED_PROJECTS)):
+        result = await get_analytics_scope(current_user=_user(), db=db, release_environment=DEFAULT_RELEASE_ENVIRONMENT)
+
+    assert result.oldest_analysis_at == _STALE_ANALYSIS_AT
+
+
+@pytest.mark.asyncio
+async def test_scope_dates_the_branch_tip_too():
+    """Head is the freshest analysis there is, which is not the same as a recent one."""
+    db = FakeDatabase()
+    await _seed_release_scope_with_one_stale_analysis(db)
+    await db.projects.update_one({"_id": "p1"}, {"$set": {"latest_scan_id": "scan-p1"}})
+    await db.projects.update_one({"_id": "p2"}, {"$set": {"latest_scan_id": "scan-p2"}})
+
+    with patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_RELEASED_PROJECTS)):
+        result = await get_analytics_scope(current_user=_user(), db=db)
+
+    assert result.oldest_analysis_at == _STALE_ANALYSIS_AT
 
 
 @pytest.mark.asyncio

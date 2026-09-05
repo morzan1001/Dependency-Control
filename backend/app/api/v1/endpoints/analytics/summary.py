@@ -20,6 +20,7 @@ from app.core.permissions import Permissions
 from app.repositories import (
     DependencyRepository,
     FindingRepository,
+    ScanRepository,
 )
 from app.schemas.analytics import (
     AnalyticsScope,
@@ -64,6 +65,7 @@ async def get_analytics_scope(
         release_environments=environments,
         resolved_projects=resolved_projects,
         projects_without_release=projects_without_release,
+        oldest_analysis_at=await ScanRepository(db).oldest_analysis_at(scan_ids),
     )
 
 

@@ -3,11 +3,13 @@ import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { useAnalyticsScope } from '@/hooks/queries/use-analytics'
+import { formatDate } from '@/lib/utils'
 
 const HEAD_MODE = '__head__'
 const HEAD_MODE_LABEL = 'Latest scan'
 const SCOPE_LABEL = 'Analytics scope'
 const headOnlyNote = (tab: string) => `The ${tab} tab always reports the latest scan, so the release view is off here.`
+const asOfNote = (date: string) => `Vulnerabilities published since then are not in these numbers; the oldest analysis behind them ran ${date}.`
 
 interface AnalyticsScopeControlProps {
   releaseEnvironment?: string
@@ -52,6 +54,11 @@ export function AnalyticsScopeControl({ releaseEnvironment, onChange, headOnlyTa
             {`Counted ${scope.resolved_projects} of ${scope.resolved_projects + scope.projects_without_release} projects; ${scope.projects_without_release} contributed no scan to this scope.`}
           </p>
         </div>
+      )}
+      {/* A release is a build nobody rebuilt, so its findings are the landscape of its analysis
+          date. Head is the freshest analysis there is and can still be months old. */}
+      {scope?.oldest_analysis_at && (
+        <p className="text-xs text-muted-foreground">{asOfNote(formatDate(scope.oldest_analysis_at))}</p>
       )}
     </div>
   )

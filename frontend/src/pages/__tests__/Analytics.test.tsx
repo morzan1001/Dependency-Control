@@ -18,6 +18,7 @@ const HOTSPOTS_TAB = 'Hotspots'
 const HEAD_ONLY_NOTE = /always reports the latest scan/
 const RESOLVED_PROJECTS = 40
 const PROJECTS_WITHOUT_RELEASE = 660
+const OLDEST_ANALYSIS_AT = '2026-08-06T00:00:00Z'
 const READ_EVERYTHING = 'analytics:read'
 
 // Reports the release environment the tab it stands in would query with.
@@ -53,6 +54,7 @@ const scope: AnalyticsScope = {
   release_environments: [PRODUCTION],
   resolved_projects: RESOLVED_PROJECTS,
   projects_without_release: PROJECTS_WITHOUT_RELEASE,
+  oldest_analysis_at: OLDEST_ANALYSIS_AT,
 }
 
 function renderPage() {

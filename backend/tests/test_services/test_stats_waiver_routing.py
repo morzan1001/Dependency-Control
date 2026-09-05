@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 import pytest_asyncio
 
@@ -175,6 +177,84 @@ class TestRecalculateUnifiedStats:
         assert scan_doc["stats"]["adjusted_risk_score"] != 0.0
         assert project_doc["stats"]["reachability"] is not None
         assert scan_doc["ignored_count"] == 1
+
+
+# ---------------------------------------------------------------------------
+# A waiver is a decision that holds now rather than a property of the build it
+# was written against, so revoking one has to reach the build that is in
+# production as well as the one at head.
+# ---------------------------------------------------------------------------
+
+RELEASE_SCAN_ID = "scan-w4-released"
+PRODUCTION = "production"
+RELEASED_AT = datetime(2026, 8, 1, tzinfo=timezone.utc)
+SHIPPED_FINDING_ID = "f-shipped"
+STALE_WAIVER_REASON = "compensating control: egress firewall"
+CRITICALS_ON_THE_SHIPPED_BUILD = 1
+CRITICALS_AT_HEAD = 1
+
+
+@pytest_asyncio.fixture
+async def released_db(seeded_db):
+    """The head scan plus a shipped build whose one live CRITICAL still carries the waived flag a
+    waiver nobody holds any more left on it."""
+    await seeded_db.scans.insert_one(
+        {"_id": RELEASE_SCAN_ID, "project_id": PROJECT_ID, "status": "completed", "is_release": True}
+    )
+    shipped = _finding(SHIPPED_FINDING_ID, "CRITICAL", cvss_score=9.1, risk_score=91.0, waived=True)
+    shipped["scan_id"] = RELEASE_SCAN_ID
+    shipped["waiver_reason"] = STALE_WAIVER_REASON
+    await seeded_db.findings.insert_one(shipped)
+    await seeded_db.releases.insert_one(
+        {
+            "_id": "rel-1",
+            "project_id": PROJECT_ID,
+            "environment": PRODUCTION,
+            "scan_id": RELEASE_SCAN_ID,
+            "released_at": RELEASED_AT,
+        }
+    )
+    return seeded_db
+
+
+class TestRecalculateReachesTheReleasedBuild:
+    @pytest.mark.asyncio
+    async def test_a_revoked_waiver_stops_hiding_a_critical_that_is_in_production(self, released_db):
+        """Nothing waives this finding any more, so "what is in production" must stop reading zero."""
+        from app.repositories import FindingRepository
+
+        await recalculate_project_stats(PROJECT_ID, released_db)
+
+        shipped = await released_db.findings.find_one({"_id": SHIPPED_FINDING_ID})
+        assert (shipped["waived"], shipped["waiver_reason"]) == (False, None)
+        assert await FindingRepository(released_db).get_severity_distribution([RELEASE_SCAN_ID]) == {
+            "CRITICAL": CRITICALS_ON_THE_SHIPPED_BUILD
+        }
+
+    @pytest.mark.asyncio
+    async def test_the_shipped_builds_own_stats_are_rewritten_too(self, released_db):
+        await recalculate_project_stats(PROJECT_ID, released_db)
+
+        released_scan = await released_db.scans.find_one({"_id": RELEASE_SCAN_ID})
+        assert released_scan["stats"]["critical"] == CRITICALS_ON_THE_SHIPPED_BUILD
+        assert released_scan["ignored_count"] == 0
+
+    @pytest.mark.asyncio
+    async def test_the_project_tile_still_carries_head_rather_than_the_release(self, released_db):
+        """Project.stats is head's; reaching the shipped build must not redirect it."""
+        result = await recalculate_project_stats(PROJECT_ID, released_db)
+
+        project = await released_db.projects.find_one({"_id": PROJECT_ID})
+        assert result is not None and result.critical == CRITICALS_AT_HEAD
+        assert project["stats"]["critical"] == CRITICALS_AT_HEAD
+
+    @pytest.mark.asyncio
+    async def test_head_owns_the_waiver_outcome_the_ui_shows(self, released_db):
+        """Every pass records what the waiver suppressed; the one the user reads is head's."""
+        await recalculate_project_stats(PROJECT_ID, released_db)
+
+        waiver = await released_db.waivers.find_one({"_id": "w-1"})
+        assert waiver["last_eval_scan_id"] == SCAN_ID
 
 
 # ---------------------------------------------------------------------------

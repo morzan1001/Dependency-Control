@@ -326,10 +326,71 @@ async def _apply_waivers_signature(finding_repo: Any, waiver_repo: Any, scan_id:
         await waiver_repo.update(wid, {"match": new_sig.model_dump()})
 
 
-async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -> Stats | None:
-    """Recalculate a project's stats from its latest scan and active waivers.
+async def _restamp_scan(
+    scan_id: str,
+    db: AsyncIOMotorDatabase,
+    waivers: list[Waiver],
+    finding_repo: Any,
+    waiver_repo: Any,
+) -> Stats:
+    """Re-apply the current waiver set to one scan and rewrite its stats from the result."""
+    # 1. Reset waivers AND lapsed flags for this scan, nested vulnerability entries included
+    await finding_repo.update_many(
+        {"scan_id": scan_id},
+        {"waived": False, "waiver_reason": None, "waiver_lapsed": False, "lapsed_waiver_id": None},
+    )
+    await finding_repo.reset_nested_vulnerability_waivers(scan_id)
 
-    Resets ALL waivers for the scan and re-applies them under a distributed lock to
+    # 2. Apply vulnerability-id waivers, then signature-match the rest
+    vuln_waivers = [w for w in waivers if w.vulnerability_id]
+    non_vuln = [w for w in waivers if not w.vulnerability_id]
+    legacy = [w for w in non_vuln if not _is_signature_waiver(w)]
+    loc_waivers = [w for w in non_vuln if _is_signature_waiver(w)]
+    await _apply_waivers(finding_repo, scan_id, vuln_waivers + legacy, waiver_repo)
+    await _apply_waivers_signature(finding_repo, waiver_repo, scan_id, loc_waivers)
+
+    # 3. Recompute the authoritative full Stats; it reads from PRIMARY so it sees the waiver
+    #    writes above.
+    stats = await calculate_comprehensive_stats(db, scan_id)
+
+    # 4. Calculate ignored count (read from PRIMARY after waiver writes)
+    from pymongo import ReadPreference
+
+    findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
+    ignored_count = await findings_primary.count_documents({"scan_id": scan_id, "waived": True})
+
+    from app.repositories import ScanRepository
+
+    await ScanRepository(db).update_raw(
+        scan_id,
+        {"$set": {"stats": stats.model_dump(), "ignored_count": ignored_count}},
+    )
+    return stats
+
+
+async def _released_analysis_ids(db: AsyncIOMotorDatabase, project_id: str) -> list[str]:
+    """The scans release mode reports for this project, one per environment.
+
+    A waiver is a decision that holds now, not a property of the build it was written against, so
+    revoking one has to reach the shipped build too — otherwise "what is in production" answers
+    through flags frozen at analysis time and can report zero criticals against a build that has
+    one. The scan's own age is disclosed rather than corrected; its waiver flags are corrected.
+    """
+    from app.repositories import ScanRepository
+    from app.services.releases import released_scan_ids
+
+    marked = set((await released_scan_ids(db, project_id)).values())
+    if not marked:
+        return []
+    resolved = await ScanRepository(db).freshest_in_lineage(marked)
+    return sorted({analysis.scan_id for analysis in resolved.values()})
+
+
+async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -> Stats | None:
+    """Recalculate a project's stats from its head scan and active waivers, and re-stamp the same
+    waiver set onto the scans release mode reports.
+
+    Resets ALL waivers for those scans and re-applies them under a distributed lock to
     prevent races when pods modify waivers concurrently. Returns None if project not found.
     """
     from app.repositories import (
@@ -350,7 +411,8 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         return None
 
     scan_id = (await ScanRepository(db).get_latest_active_scan_ids([project])).get(project_id)
-    if not scan_id:
+    released_ids = [rid for rid in await _released_analysis_ids(db, project_id) if rid != scan_id]
+    if not scan_id and not released_ids:
         return None
 
     # Acquire distributed lock to prevent race conditions
@@ -382,40 +444,20 @@ async def recalculate_project_stats(project_id: str, db: AsyncIOMotorDatabase) -
         return None
 
     try:
-        logger.info(f"Recalculating stats for project {project_id} (scan {scan_id}) with lock {lock_name}")
-
-        # 1. Reset waivers AND lapsed flags for this scan, nested vulnerability entries included
-        await finding_repo.update_many(
-            {"scan_id": scan_id},
-            {"waived": False, "waiver_reason": None, "waiver_lapsed": False, "lapsed_waiver_id": None},
+        logger.info(
+            f"Recalculating stats for project {project_id} (head {scan_id}, released {released_ids}) "
+            f"with lock {lock_name}"
         )
-        await finding_repo.reset_nested_vulnerability_waivers(scan_id)
 
-        # 2. Fetch active waivers, apply vulnerability-id ones, then signature-match the rest
         waivers = await waiver_repo.find_active_for_project(project_id, include_global=True)
-        vuln_waivers = [w for w in waivers if w.vulnerability_id]
-        non_vuln = [w for w in waivers if not w.vulnerability_id]
-        legacy = [w for w in non_vuln if not _is_signature_waiver(w)]
-        loc_waivers = [w for w in non_vuln if _is_signature_waiver(w)]
-        await _apply_waivers(finding_repo, scan_id, vuln_waivers + legacy, waiver_repo)
-        await _apply_waivers_signature(finding_repo, waiver_repo, scan_id, loc_waivers)
+        # Head last: every pass writes each waiver's last_eval_scan_id and re-anchored signature,
+        # and those describe head.
+        for released_id in released_ids:
+            await _restamp_scan(released_id, db, waivers, finding_repo, waiver_repo)
+        if not scan_id:
+            return None
 
-        # 3. Recompute the authoritative full Stats; it reads from PRIMARY so it sees the waiver
-        #    writes above.
-        stats = await calculate_comprehensive_stats(db, scan_id)
-
-        # 4. Calculate ignored count (read from PRIMARY after waiver writes)
-        from pymongo import ReadPreference
-
-        findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-        ignored_count = await findings_primary.count_documents({"scan_id": scan_id, "waived": True})
-
-        scan_repo = ScanRepository(db)
-        await scan_repo.update_raw(
-            scan_id,
-            {"$set": {"stats": stats.model_dump(), "ignored_count": ignored_count}},
-        )
-
+        stats = await _restamp_scan(scan_id, db, waivers, finding_repo, waiver_repo)
         await project_repo.update_raw(project_id, {"$set": {"stats": stats.model_dump()}})
 
         logger.info(f"Stats updated for project {project_id}: {stats.model_dump()}")

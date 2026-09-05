@@ -152,11 +152,15 @@ class AnalyticsSummary(BaseModel):
 
 class AnalyticsScope(BaseModel):
     """What the caller's analytics scope offers: the release environments it can be narrowed to,
-    and how much of it the current mode resolved."""
+    how much of it the current mode resolved, and how far back the analyses behind it reach."""
 
     release_environments: list[str]
     resolved_projects: int
     projects_without_release: int
+    # Release mode resolves to a build nobody rebuilt, so its findings are the vulnerability
+    # landscape of its analysis date; without that date beside them the answer reads as present
+    # tense. Null when the scope resolved to no scan at all.
+    oldest_analysis_at: datetime | None = None
 
 
 class DependencyMetadata(BaseModel):

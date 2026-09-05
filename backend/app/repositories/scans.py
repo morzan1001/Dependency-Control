@@ -14,7 +14,7 @@ the marked scan), so the project tile, the analytics page and the release view c
 """
 
 import logging
-from collections.abc import AsyncGenerator, Iterable
+from collections.abc import AsyncGenerator, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, NamedTuple
@@ -386,6 +386,21 @@ class ScanRepository:
             root_id: LineageAnalysis(scan_id=doc["_id"], chain_bounded=root_id in bounded)
             for root_id, doc in freshest.items()
         }
+
+    async def oldest_analysis_at(self, scan_ids: Sequence[str]) -> datetime | None:
+        """The date of the oldest of these scans: how far back the answer they carry reaches.
+
+        Release mode resolves to a build that was deliberately not rebuilt, so its findings are the
+        vulnerability landscape of that date and not of today; a reader given the number without
+        the date reads it as current.
+        """
+        if not scan_ids:
+            return None
+        with track_db_operation(_COL, "find_one"):
+            doc = await self.collection.find_one(
+                {"_id": {"$in": list(scan_ids)}}, {"created_at": 1}, sort=[("created_at", 1)]
+            )
+        return ensure_utc(doc.get("created_at")) if doc else None
 
     async def _freshest_analysis_docs(self, scan_ids: list[str]) -> dict[str, dict[str, Any]]:
         """Each of these scans mapped to the whole document of the analysis its lineage resolves to."""
