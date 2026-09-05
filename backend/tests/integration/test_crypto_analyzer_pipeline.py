@@ -12,6 +12,9 @@ from app.services.analyzers.crypto.base import CryptoRuleAnalyzer, crypto_findin
 _SHARED_PROJECT = "p4"
 _SHARED_SCAN = "s4"
 _ASSET_LIMIT = 50_000
+_POLL_ATTEMPTS = 200
+_POLL_INTERVAL_SECONDS = 0.1
+_NON_TERMINAL_STATUSES = ("running", "pending", "processing", None)
 # Regenerated per call, so it is the one field two evaluations of the same rules cannot share.
 _GENERATED_FIELD = "id"
 
@@ -246,10 +249,14 @@ async def test_analyzer_adds_nothing_to_the_shared_rule_evaluation(db):
     assert _without_generated_ids(result["findings"]) == _without_generated_ids(expected)
 
 
-@pytest.mark.skip(reason="Requires live worker+engine infrastructure — covered by PR 2 acceptance")
+@pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_end_to_end_cbom_ingest_creates_findings(client, db, api_key_headers):
-    """CBOM ingest + analyzer dispatch produce findings in the findings collection."""
+async def test_end_to_end_cbom_ingest_creates_findings(client, db, running_worker, api_key_headers):
+    """CBOM ingest + analyzer dispatch produce findings in the findings collection.
+
+    The scan legitimately ends ``failed`` — it carries no SBOM — while the crypto findings are
+    still written, so the assertion is about the findings and not about the scan status.
+    """
     import json
     from pathlib import Path
 
@@ -276,11 +283,11 @@ async def test_end_to_end_cbom_ingest_creates_findings(client, db, api_key_heade
 
     import asyncio
 
-    for _ in range(200):
+    for _ in range(_POLL_ATTEMPTS):
         scan = await db.scans.find_one({"_id": scan_id})
-        if scan and scan.get("status") not in ("running", "pending", None):
+        if scan and scan.get("status") not in _NON_TERMINAL_STATUSES:
             break
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(_POLL_INTERVAL_SECONDS)
 
     findings = [f async for f in db.findings.find({"scan_id": scan_id})]
     md5_findings = [

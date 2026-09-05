@@ -4,7 +4,12 @@ import asyncio
 
 import pytest
 
+_POLL_ATTEMPTS = 50
+_POLL_INTERVAL_SECONDS = 0.1
+_TERMINAL_STATUSES = ("completed", "failed")
 
+
+@pytest.mark.live_mongo
 @pytest.mark.asyncio
 async def test_pqc_report_does_not_crash_with_asyncio_run(
     client,
@@ -24,26 +29,16 @@ async def test_pqc_report_does_not_crash_with_asyncio_run(
     assert resp.status_code == 202, resp.text
     report_id = resp.json()["report_id"]
 
-    data = None
-    for _ in range(50):
+    data = {}
+    for _ in range(_POLL_ATTEMPTS):
         get = await client.get(
             f"/api/v1/compliance/reports/{report_id}",
             headers=owner_auth_headers_proj,
         )
         assert get.status_code == 200
         data = get.json()
-        if data["status"] in ("completed", "failed"):
+        if data["status"] in _TERMINAL_STATUSES:
             break
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(_POLL_INTERVAL_SECONDS)
 
-    assert data is not None
-    # Guard against the asyncio.run-in-running-loop RuntimeError; skip on unrelated fake-DB data-path limitations.
-    if data["status"] == "failed":
-        err = (data.get("error_message") or "").lower()
-        if "asyncio.run" in err or "running event loop" in err:
-            pytest.fail(f"PQC framework still calls asyncio.run in running loop: {err}")
-        pytest.skip(
-            f"Fake DB cannot satisfy PQC generator data path (error: {err}); "
-            "the asyncio.run regression is what this test guards against.",
-        )
     assert data["status"] == "completed", data

@@ -34,6 +34,20 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    services:
+      mongo:
+        image: mongo:7
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DC_TEST_MONGO_URL: mongodb://localhost:27017
+      # Fail the run instead of skipping the live-Mongo tests back into silence.
+      DC_REQUIRE_LIVE_MONGO: '1'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
