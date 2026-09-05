@@ -42,8 +42,8 @@ WINDOW_DAYS = 90
 # value than the one an assertion recomputes.
 NOW = datetime.now(tz=timezone.utc).replace(microsecond=0)
 
-# The gate excuses this one by name; nothing here may hide behind it.
-_NO_KNOWN_CAUSES = KnownCauses(slowest_packages_capped=False)
+# The gate excuses one field by name; nothing here may hide behind it.
+_NO_KNOWN_CAUSES = KnownCauses()
 
 
 def _days_ago(days: float) -> datetime:

@@ -19,12 +19,13 @@ from app.repositories.update_frequency import (
 )
 from app.schemas.analytics import ScanTimelineEntry, UpdateFrequencyMetrics
 from app.services.release_history import ReleaseHistory, ReleaseInfo
-from app.core.constants import RECENT_UPDATES_LIMIT
+from app.core.constants import RECENT_UPDATES_LIMIT, SLOWEST_PACKAGES_LIMIT
 from app.services.update_frequency import (
     _COMPARISON_CONCURRENCY,
     READY_COVERAGE_RATIO,
     _aggregate_metrics,
     _dominant_ecosystem,
+    _build_slowest_packages,
     _empty_metrics,
     classify_version_change,
     compute_trend,
@@ -1968,3 +1969,44 @@ class TestRecentUpdatesSelection:
         m = await self._compute(scans, deps)
 
         assert [event.new_version for event in m.recent_updates] == ["1.0.2", "1.0.1"]
+
+
+class TestSlowestPackagesCut:
+    """The table is the head of a backlog, ranked with a tie-break both read paths share."""
+
+    @staticmethod
+    def _rows(package_outdated_counts, latest_outdated):
+        return _build_slowest_packages(package_outdated_counts, {}, {}, latest_outdated, {})
+
+    def test_packages_tied_on_scans_are_ordered_by_name(self):
+        tied = {f"pkg{i:02d}": 3 for i in range(SLOWEST_PACKAGES_LIMIT + 5)}
+        # Insertion order is Mongo document order, which is not stable across requests.
+        shuffled = dict(reversed(list(tied.items())))
+
+        rows, _backlog = self._rows(shuffled, set(tied))
+
+        assert [row.name for row in rows] == sorted(tied)[:SLOWEST_PACKAGES_LIMIT]
+
+    def test_a_higher_count_still_outranks_the_name(self):
+        counts = {"zzz": 9, "aaa": 1}
+
+        rows, _backlog = self._rows(counts, set(counts))
+
+        assert [row.name for row in rows] == ["zzz", "aaa"]
+
+    def test_the_backlog_is_counted_before_the_table_is_cut(self):
+        backlog_size = SLOWEST_PACKAGES_LIMIT + 7
+        counts = {f"pkg{i:02d}": 2 for i in range(backlog_size)}
+
+        rows, backlog = self._rows(counts, set(counts))
+
+        assert len(rows) == SLOWEST_PACKAGES_LIMIT
+        assert backlog == backlog_size
+
+    def test_resolved_packages_are_not_backlog(self):
+        counts = {"still-outdated": 4, "resolved": 9}
+
+        rows, backlog = self._rows(counts, {"still-outdated"})
+
+        assert [row.name for row in rows] == ["still-outdated"]
+        assert backlog == 1

@@ -393,6 +393,9 @@ class UpdateFrequencyMetrics(BaseModel):
     # Scans the numbers cover when the branch holds more than either read path follows;
     # None when the whole window was read. scan_count counts timeline bars, not scans.
     window_scan_cap: int | None = None
+    # Packages still outdated in the newest measured scan: the backlog slowest_packages ranks,
+    # counted before the table was cut.
+    outdated_backlog: int = 0
 
     scan_timeline: list[ScanTimelineEntry]
     slowest_packages: list[SlowPackage]

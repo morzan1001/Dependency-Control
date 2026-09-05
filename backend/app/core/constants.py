@@ -834,6 +834,10 @@ RECENT_UPDATES_LIMIT: int = 30
 # on every path. Downgrades rank last: they are recorded but are not update activity.
 UPDATE_SAMPLE_RANK: dict[str, int] = {"major": 0, "minor": 1, "patch": 2, "unknown": 3, "downgrade": 4}
 
+# Rows of the slowest-to-update table. Both read paths rank by scans outdated and break ties on
+# the package name; without that, packages tied at the cap swap places between requests.
+SLOWEST_PACKAGES_LIMIT: int = 15
+
 # Bound on the pointer hops a rescan-lineage walk follows, so a cyclic pointer cannot hang a
 # request. A walk whose first iteration reads the starting scan spends that one on zero hops.
 MAX_RESCAN_HOPS: int = 10

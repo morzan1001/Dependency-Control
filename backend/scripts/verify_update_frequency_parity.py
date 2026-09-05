@@ -49,7 +49,6 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.api.v1.endpoints.analytics.update_frequency import (
     _DEFAULT_COMPARISON_WINDOW_DAYS,
-    _SLOWEST_PACKAGES_LIMIT,
     _compute_comparison,
     _compute_comparison_from_rollup,
     _rollup_project_metrics,
@@ -124,7 +123,6 @@ _COMPARISON_TOTAL_FIELDS = (
 _ROW_ORDER_FIELD = "row order"
 
 _ECOSYSTEM_REASON = "the live path folds every scan's dependency types, the ledger the newest scan's"
-_SLOWEST_CAP_REASON = f"the list hit its {_SLOWEST_PACKAGES_LIMIT}-entry cap, whose tie-break neither path defines"
 
 _ABSENCE_NO_DELTA = "no delta written yet"
 _ABSENCE_WRITER_ERROR = "its delta records a writer failure"
@@ -152,14 +150,8 @@ class Deviation:
 class KnownCauses:
     """Conditions under which one named field is meant to differ between the paths."""
 
-    slowest_packages_capped: bool
-
     def reason_for(self, field: str) -> str | None:
-        if field == "dominant_ecosystem":
-            return _ECOSYSTEM_REASON
-        if field == "slowest_packages" and self.slowest_packages_capped:
-            return _SLOWEST_CAP_REASON
-        return None
+        return _ECOSYSTEM_REASON if field == "dominant_ecosystem" else None
 
 
 @dataclass(frozen=True)
@@ -268,10 +260,6 @@ def compare_comparisons(live: dict[str, Any], rollup: dict[str, Any]) -> list[De
     return deviations
 
 
-def known_causes(live: UpdateFrequencyMetrics) -> KnownCauses:
-    return KnownCauses(slowest_packages_capped=len(live.slowest_packages) >= _SLOWEST_PACKAGES_LIMIT)
-
-
 async def scan_set_diff(db: Any, project_id: str, branch: str, since: datetime) -> ScanSetDiff:
     """Which scans only one path selects, and why the ledger has no usable delta for each.
 
@@ -365,7 +353,7 @@ async def verify_project(db: Any, project: dict[str, Any], window_days: int) -> 
             declined=await _decline_reason(db, project_id, live.branch, since),
         )
 
-    causes = known_causes(live)
+    causes = KnownCauses()
     return ProjectReport(
         project_id=project_id,
         project_name=project_name,

@@ -245,7 +245,8 @@ function SlowPackagesTable({ data }: Readonly<{ data: UpdateFrequencyMetrics }>)
       <CardHeader>
         <CardTitle>Slowest to Update</CardTitle>
         <CardDescription>
-          Packages that remain outdated across the most scans
+          {`Showing ${data.slowest_packages.length} of ${data.outdated_backlog} packages still outdated, ` +
+            'ranked by the scans they stayed outdated across'}
         </CardDescription>
       </CardHeader>
       <CardContent>

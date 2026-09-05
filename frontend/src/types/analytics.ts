@@ -520,6 +520,8 @@ export interface UpdateFrequencyMetrics {
     // Scans the numbers cover when the branch holds more than either read path follows;
     // null when the whole window was read.
     window_scan_cap: number | null;
+    // Packages still outdated in the newest measured scan, counted before slowest_packages was cut.
+    outdated_backlog: number;
     scan_timeline: ScanTimelineEntry[];
     slowest_packages: SlowPackage[];
     recent_updates: DependencyUpdateEvent[];

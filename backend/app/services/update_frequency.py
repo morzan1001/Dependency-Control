@@ -15,7 +15,12 @@ from typing import Any, Literal
 
 from packaging.version import InvalidVersion, Version
 
-from app.core.constants import RECENT_UPDATES_LIMIT, SCAN_USABLE_STATUSES, UPDATE_SAMPLE_RANK
+from app.core.constants import (
+    RECENT_UPDATES_LIMIT,
+    SCAN_USABLE_STATUSES,
+    SLOWEST_PACKAGES_LIMIT,
+    UPDATE_SAMPLE_RANK,
+)
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
@@ -440,7 +445,7 @@ def _aggregate_metrics(
 
     trend_direction, trend_detail = compute_trend(bars)
 
-    slowest_packages = _build_slowest_packages(
+    slowest_packages, outdated_backlog = _build_slowest_packages(
         package_outdated_counts,
         package_latest_info,
         dep_type_map,
@@ -472,6 +477,7 @@ def _aggregate_metrics(
         trend_direction=trend_direction,
         trend_detail=trend_detail,
         window_scan_cap=window_scan_cap,
+        outdated_backlog=outdated_backlog,
         scan_timeline=bars,
         slowest_packages=slowest_packages,
         recent_updates=recent_events,
@@ -503,8 +509,8 @@ def _build_slowest_packages(
     dep_type_map: dict[str, str],
     latest_outdated: set[str],
     final_versions: dict[str, str],
-) -> list[SlowPackage]:
-    """Slowest-to-update packages: the remaining backlog, ranked by scans outdated.
+) -> tuple[list[SlowPackage], int]:
+    """The rows of the slowest-to-update table and the backlog they are the head of.
 
     Only packages still outdated in the newest scan that carried an outdated
     analysis qualify — resolved ones are history, not backlog, and a scan
@@ -512,7 +518,7 @@ def _build_slowest_packages(
     from the newest scan's dependency set; analyzer entries may be scans old.
     """
     remaining = {pkg: count for pkg, count in package_outdated_counts.items() if pkg in latest_outdated}
-    slowest = sorted(remaining.items(), key=lambda x: x[1], reverse=True)[:15]
+    slowest = sorted(remaining.items(), key=lambda entry: (-entry[1], entry[0]))[:SLOWEST_PACKAGES_LIMIT]
     return [
         SlowPackage(
             name=pkg_name,
@@ -523,7 +529,7 @@ def _build_slowest_packages(
             scans_outdated=count,
         )
         for pkg_name, count in slowest
-    ]
+    ], len(remaining)
 
 
 def _empty_metrics(

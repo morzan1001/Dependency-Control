@@ -22,7 +22,7 @@ from app.api.v1.helpers.analytics import (
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.config import settings
-from app.core.constants import SCAN_USABLE_STATUSES
+from app.core.constants import SCAN_USABLE_STATUSES, SLOWEST_PACKAGES_LIMIT
 from app.core.http_utils import InstrumentedAsyncClient
 from app.core.permissions import Permissions
 from app.repositories import (
@@ -84,8 +84,6 @@ _DEFAULT_COMPARISON_WINDOW_DAYS = 90
 # bounded queries and folds them in memory, so it needs a fraction of the room.
 _LIVE_COMPARISON_BUDGET_SECONDS = 240.0
 _ROLLUP_COMPARISON_BUDGET_SECONDS = 30.0
-
-_SLOWEST_PACKAGES_LIMIT = 15
 
 
 def _comparison_lock_timings(use_rollup: bool) -> tuple[float, int]:
@@ -450,13 +448,15 @@ async def _scan_deps(db: DatabaseDep, scan_id: str) -> dict[str, dict[str, str]]
     return fold_scan_deps(await DependencyRepository(db).find_all({"scan_id": scan_id}, projection=DEP_PROJECTION))
 
 
-async def _rollup_slowest_packages(db: DatabaseDep, bars: Sequence[Sequence[dict[str, Any]]]) -> list[SlowPackage]:
-    """Remaining backlog, ranked by how many timeline bars kept flagging the package."""
+async def _rollup_slowest_packages(
+    db: DatabaseDep, bars: Sequence[Sequence[dict[str, Any]]]
+) -> tuple[list[SlowPackage], int]:
+    """The table's rows, ranked by how many timeline bars kept flagging the package, and its backlog."""
     scan_ids = [bar[-1]["_id"] for bar in bars]
     outdated_sets = await ScanOutdatedSetRepository(db).names_by_scan(scan_ids)
     latest_id = next((scan_id for scan_id in reversed(scan_ids) if scan_id in outdated_sets), None)
     if latest_id is None:
-        return []
+        return [], 0
 
     # Resolved packages are history, not backlog.
     remaining = outdated_sets[latest_id]
@@ -481,8 +481,8 @@ async def _rollup_slowest_packages(db: DatabaseDep, bars: Sequence[Sequence[dict
             latest_version=analyzer_info.get(name, {}).get("latest_version"),
             scans_outdated=count,
         )
-        for name, count in counts.most_common(_SLOWEST_PACKAGES_LIMIT)
-    ]
+        for name, count in sorted(counts.items(), key=lambda entry: (-entry[1], entry[0]))[:SLOWEST_PACKAGES_LIMIT]
+    ], len(counts)
 
 
 async def _rollup_project_metrics(
@@ -510,12 +510,14 @@ async def _rollup_project_metrics(
     anchor_id = resolved.window[0]["_id"]
     baselines = await ScanOutdatedSetRepository(db).names_by_scan([anchor_id])
     folded = fold_window(resolved.window, baselines.get(anchor_id), resolved.measured_days or window_days)
+    slowest_packages, outdated_backlog = await _rollup_slowest_packages(db, resolved.bars)
     return folded.to_metrics(
         project_id,
         project.get("name", "Unknown"),
         branch=resolved.branch,
-        slowest_packages=await _rollup_slowest_packages(db, resolved.bars),
+        slowest_packages=slowest_packages,
         window_scan_cap=resolved.window_scan_cap,
+        outdated_backlog=outdated_backlog,
     )
 
 
