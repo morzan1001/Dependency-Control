@@ -362,3 +362,91 @@ class TestHideHistoricalSecretsNarrowsTheResult:
         shown = self._read(db, None)
 
         assert "gone" in {item["finding_id"] for item in shown["items"]}
+
+
+class TestDashboardStats:
+    """The estate tile: a persisted risk score wins, an absent one is derived from severity counts."""
+
+    _PERSISTED_RISK = 42.0
+    _CRITICALS = 3
+    _HIGHS = 2
+    _TOP_RISKY_CAP = 5
+
+    def _db(self, projects):
+        from tests.mocks.fake_mongo import FakeDatabase
+
+        db = FakeDatabase()
+        for project_id, stats in projects:
+            db.projects._docs[project_id] = {"_id": project_id, "name": project_id, "stats": stats}
+        return db
+
+    def _read(self, db, permissions=("project:read_all",)):
+        from app.api.v1.endpoints.projects import get_dashboard_stats
+
+        return asyncio.run(
+            get_dashboard_stats(
+                db=db,
+                current_user=User(id="u1", username="u", email="u@test.com", permissions=list(permissions)),
+            )
+        )
+
+    def test_an_empty_estate_reports_zeroes(self):
+        stats = self._read(self._db([]))
+
+        assert stats["total_projects"] == 0
+        assert stats["avg_risk_score"] == 0.0
+        assert stats["top_risky_projects"] == []
+
+    def test_severity_totals_and_the_average_span_the_estate(self):
+        db = self._db(
+            [
+                ("p-persisted", {"risk_score": self._PERSISTED_RISK, "critical": self._CRITICALS, "high": self._HIGHS}),
+                ("p-clean", {"critical": 0, "high": 0}),
+            ]
+        )
+
+        stats = self._read(db)
+
+        assert stats["total_projects"] == 2
+        assert stats["total_critical"] == self._CRITICALS
+        assert stats["total_high"] == self._HIGHS
+        assert stats["avg_risk_score"] == round(self._PERSISTED_RISK / 2, 1)
+
+    def test_a_project_without_a_persisted_score_is_ranked_on_a_derived_one(self):
+        db = self._db(
+            [
+                ("p-derived", {"critical": self._CRITICALS, "high": self._HIGHS}),
+                ("p-clean", {"critical": 0, "high": 0}),
+            ]
+        )
+
+        stats = self._read(db)
+
+        derived = next(p for p in stats["top_risky_projects"] if p.id == "p-derived")
+        assert derived.risk > 0
+        assert [p.id for p in stats["top_risky_projects"]] == ["p-derived", "p-clean"]
+
+    def test_the_persisted_score_is_used_rather_than_recomputed(self):
+        db = self._db([("p-persisted", {"risk_score": self._PERSISTED_RISK, "critical": 0, "high": 0})])
+
+        stats = self._read(db)
+
+        assert stats["top_risky_projects"][0].risk == self._PERSISTED_RISK
+
+    def test_only_the_riskiest_five_projects_are_listed(self):
+        db = self._db([(f"p-{index}", {"risk_score": float(index)}) for index in range(self._TOP_RISKY_CAP + 3)])
+
+        stats = self._read(db)
+
+        assert [p.id for p in stats["top_risky_projects"]] == [
+            f"p-{index}" for index in range(self._TOP_RISKY_CAP + 2, self._TOP_RISKY_CAP - 3, -1)
+        ]
+
+    def test_a_user_without_read_all_only_sees_the_projects_they_belong_to(self):
+        db = self._db([("mine", {"critical": 1}), ("theirs", {"critical": 1})])
+        db.projects._docs["mine"]["members"] = [{"user_id": "u1", "role": "admin"}]
+
+        stats = self._read(db, permissions=("project:read",))
+
+        assert stats["total_projects"] == 1
+        assert [p.id for p in stats["top_risky_projects"]] == ["mine"]
