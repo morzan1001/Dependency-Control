@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from app.core.constants import SCAN_STATUS_FAILED
+from app.core.constants import SCAN_STATUS_FAILED, SCAN_STATUS_PENDING
 from app.repositories.scans import ScanRepository
 from tests.mocks.fake_mongo import FakeDatabase
 
@@ -133,3 +133,15 @@ async def test_deleted_branches_are_excluded():
     tips = await repo.branch_tips(_PROJECT, [_RELEASE_BRANCH])
 
     assert [branch for branch, _count, _tip in tips] == [_MAIN]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unusable_status", [SCAN_STATUS_FAILED, SCAN_STATUS_PENDING])
+async def test_a_newer_unusable_build_does_not_displace_the_last_good_one(unusable_status):
+    scans = [_scan("good", _MAIN, 5), _scan("newer", _MAIN, 1, status=unusable_status)]
+    repo = ScanRepository(await _seeded(scans))
+
+    branch, count, tip = (await repo.branch_tips(_PROJECT))[0]
+
+    assert (branch, count) == (_MAIN, 2)
+    assert tip is not None and tip["_id"] == "good"

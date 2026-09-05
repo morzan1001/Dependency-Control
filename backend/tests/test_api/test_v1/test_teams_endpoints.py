@@ -1,6 +1,7 @@
 """Tests for team API endpoints."""
 
 import asyncio
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,8 +9,10 @@ from fastapi import HTTPException
 
 from app.core.constants import TEAM_ROLE_ADMIN, TEAM_ROLE_MEMBER
 from app.models.team import Team, TeamMember
+from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.api.v1.endpoints.teams"
+_TEAM_TIMESTAMP = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 def _make_team(id="team-1", name="Test Team", members=None):
@@ -588,3 +591,83 @@ class TestUpdateTeamMemberOwnerProtection:
         assert exc_info.value.status_code == 403
         call_kwargs = mock_access.call_args
         assert call_kwargs.kwargs["required_role"] == TEAM_ROLE_ADMIN
+
+
+class TestTeamScopingAndRolePersistence:
+    """FakeDatabase-backed: the query and the write are the behaviour, so a mock that answers
+    every query the same way cannot see either of them."""
+
+    @staticmethod
+    async def _seeded(teams, users=()):
+        db = FakeDatabase()
+        for user in users:
+            await db.users.insert_one(user)
+        for team in teams:
+            await db.teams.insert_one(team)
+        return db
+
+    @staticmethod
+    def _team_doc(team_id, name, member_ids):
+        return {
+            "_id": team_id,
+            "name": name,
+            "members": [{"user_id": uid, "role": TEAM_ROLE_MEMBER} for uid in member_ids],
+            "created_at": _TEAM_TIMESTAMP,
+            "updated_at": _TEAM_TIMESTAMP,
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_team_read_user_sees_only_the_teams_holding_them(self, regular_user):
+        from app.api.v1.endpoints.teams import read_teams
+
+        caller = str(regular_user.id)
+        db = await self._seeded(
+            teams=[
+                self._team_doc("t-mine", "Mine", [caller]),
+                self._team_doc("t-theirs", "Theirs", ["someone-else"]),
+                self._team_doc("t-empty", "Empty", []),
+            ],
+            users=[{"_id": caller, "username": regular_user.username}],
+        )
+
+        teams = await read_teams(search=None, sort_by="name", sort_order="asc", current_user=regular_user, db=db)
+
+        assert [team["_id"] for team in teams] == ["t-mine"]
+
+    @pytest.mark.asyncio
+    async def test_a_read_all_user_sees_every_team(self, admin_user):
+        from app.api.v1.endpoints.teams import read_teams
+
+        db = await self._seeded(
+            teams=[
+                self._team_doc("t-mine", "Mine", [str(admin_user.id)]),
+                self._team_doc("t-theirs", "Theirs", ["someone-else"]),
+            ]
+        )
+
+        teams = await read_teams(search=None, sort_by="name", sort_order="asc", current_user=admin_user, db=db)
+
+        assert sorted(team["_id"] for team in teams) == ["t-mine", "t-theirs"]
+
+    @pytest.mark.asyncio
+    async def test_the_requested_role_is_the_one_persisted(self, admin_user):
+        from app.api.v1.endpoints.teams import update_team_member
+        from app.schemas.team import TeamMemberUpdate
+
+        target = "target-user"
+        db = await self._seeded(
+            teams=[self._team_doc("team-1", "Test Team", [str(admin_user.id), target])],
+            users=[{"_id": target, "username": "target"}],
+        )
+
+        await update_team_member(
+            team_id="team-1",
+            user_id=target,
+            member_in=TeamMemberUpdate(role=TEAM_ROLE_ADMIN),
+            current_user=admin_user,
+            db=db,
+        )
+
+        stored = await db.teams.find_one({"_id": "team-1"})
+        roles = {member["user_id"]: member["role"] for member in stored["members"]}
+        assert roles[target] == TEAM_ROLE_ADMIN

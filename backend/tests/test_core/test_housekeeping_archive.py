@@ -635,3 +635,39 @@ async def test_delete_scans_purges_crypto_assets():
     db.callgraphs.delete_many.assert_awaited_once()
     db.scan_update_deltas.delete_many.assert_awaited_once_with({"_id": {"$in": ["s1", "s2"]}})
     db.scan_outdated_sets.delete_many.assert_awaited_once_with({"_id": {"$in": ["s1", "s2"]}})
+
+
+@pytest.mark.asyncio
+async def test_reap_orphan_callgraphs_deletes_only_orphans_past_the_age_window():
+    """The window protects a callgraph uploaded before its scan row exists; the reaper deletes
+    rows outright, so an inverted cutoff destroys work in flight."""
+    from datetime import datetime, timedelta, timezone
+
+    from app.core.constants import ARCHIVE_ORPHAN_MIN_AGE_HOURS
+    from app.core.housekeeping import _reap_orphan_callgraphs
+    from tests.mocks.fake_mongo import FakeDatabase
+
+    now = datetime.now(timezone.utc)
+    db = FakeDatabase()
+    await db.scans.insert_one({"_id": "scan-known"})
+    await db.callgraphs.insert_many(
+        [
+            {
+                "_id": "cg-orphan-old",
+                "scan_id": "scan-missing",
+                "created_at": now - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS * 2),
+            },
+            {"_id": "cg-orphan-fresh", "scan_id": "scan-arriving", "created_at": now - timedelta(minutes=1)},
+            {
+                "_id": "cg-known-old",
+                "scan_id": "scan-known",
+                "created_at": now - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS * 2),
+            },
+        ]
+    )
+
+    deleted = await _reap_orphan_callgraphs(db)
+
+    survivors = sorted([cg["_id"] async for cg in db.callgraphs.find({})])
+    assert deleted == 1
+    assert survivors == ["cg-known-old", "cg-orphan-fresh"]

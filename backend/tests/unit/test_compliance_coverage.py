@@ -33,7 +33,7 @@ from app.schemas.compliance import (
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance import engine as engine_module
 from app.services.compliance.engine import ComplianceReportEngine
-from app.services.compliance.frameworks.base import EvaluationInput, default_evaluator
+from app.services.compliance.frameworks.base import EvaluationInput, build_residual_risks, default_evaluator
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
 from app.services.compliance.frameworks.fips_140_3 import Fips1403Framework
 from app.services.compliance.renderers.base import coverage_statement
@@ -576,3 +576,29 @@ async def test_the_pdf_prints_the_withheld_count_and_the_per_control_reason():
     assert "Not Evaluated" in html
     assert 'class="status-reason"' in html
     assert _WITHHELD_REASON_FRAGMENT in html
+
+
+def _control(control_id: str, status: ControlStatus) -> ControlResult:
+    return ControlResult(
+        control_id=control_id,
+        title=f"Control {control_id}",
+        description="desc",
+        status=status,
+        severity=Severity.HIGH,
+        remediation="fix it",
+    )
+
+
+def test_residual_risks_lists_the_failed_control_and_nothing_else():
+    """The auditor reads this section as the outstanding exposure, so a sign flip here would
+    publish the controls that passed as the ones still open."""
+    results = [
+        _control("c-failed", ControlStatus.FAILED),
+        _control("c-passed", ControlStatus.PASSED),
+        _control("c-waived", ControlStatus.WAIVED),
+        _control("c-not-evaluated", ControlStatus.NOT_EVALUATED),
+    ]
+
+    risks = build_residual_risks(results)
+
+    assert [risk.control_id for risk in risks] == ["c-failed"]

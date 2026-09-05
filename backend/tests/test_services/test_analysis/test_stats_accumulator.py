@@ -26,6 +26,12 @@ from app.services.reachability_enrichment import component_language_map
 from tests.mocks.fake_mongo import FakeDatabase
 
 
+# One CRITICAL finding, scored through saturating_risk_score at each reachability tier.
+_UNMODIFIED_CRITICAL_SCORE = 7.4
+_CONFIRMED_REACHABLE_CRITICAL_SCORE = 8.1
+_UNREACHABLE_CRITICAL_SCORE = 3.1
+
+
 def _finding(ftype="vulnerability", severity="HIGH", **details):
     return {"type": ftype, "severity": severity, "component": "pkg", "details": dict(details), "waived": False}
 
@@ -557,3 +563,27 @@ class TestProjectionOracle:
         languages = component_language_map(_ORACLE_DEPENDENCIES)
         stripped = [_without_path(document, path) for document in documents]
         assert compute_stats(stripped, languages).model_dump() != compute_stats(documents, languages).model_dump()
+
+
+class TestAdjustedRiskScoreMagnitude:
+    """The reachability modifiers are the only thing separating adjusted_risk_score from the base
+    score, so a comparison between the two cannot pin how far apart they are."""
+
+    @pytest.mark.parametrize(
+        "reachable,level,expected_adjusted",
+        [
+            (True, REACHABILITY_LEVEL_SYMBOL, _CONFIRMED_REACHABLE_CRITICAL_SCORE),
+            (False, "none", _UNREACHABLE_CRITICAL_SCORE),
+            (True, REACHABILITY_LEVEL_IMPORT, _UNMODIFIED_CRITICAL_SCORE),
+            (None, None, _UNMODIFIED_CRITICAL_SCORE),
+        ],
+    )
+    def test_one_critical_scores_its_reachability_tier(self, reachable, level, expected_adjusted):
+        finding = _finding(severity="CRITICAL")
+        finding["reachable"] = reachable
+        finding["reachability_level"] = level
+
+        stats = compute_stats([finding], {})
+
+        assert stats.risk_score == _UNMODIFIED_CRITICAL_SCORE
+        assert stats.adjusted_risk_score == expected_adjusted

@@ -216,6 +216,22 @@ def _resolve_dotted(doc: dict, path: str):
     return None
 
 
+def _descend_for_update(node: Any, part: str) -> Any:
+    """The container one update-path segment deeper, created as a dict when it is missing.
+    An index past the end of a list pads with nulls, as the server does."""
+    if isinstance(node, list):
+        index = int(part)
+        node.extend([None] * (index + 1 - len(node)))
+        if not isinstance(node[index], (dict, list)):
+            node[index] = {}
+        return node[index]
+    child = node.get(part)
+    if not isinstance(child, (dict, list)):
+        child = {}
+        node[part] = child
+    return child
+
+
 def _match_range_ops(value, ops_dict: dict) -> bool:
     """Evaluate $gt/$gte/$lt/$lte; None values never satisfy a range op."""
     for op_key, cmp_fn in _CMP.items():
@@ -399,7 +415,13 @@ def _substitute_var(expr, prefix: str, value):
     """
     if isinstance(expr, str) and (expr == prefix or expr.startswith(f"{prefix}.")):
         tail = expr[len(prefix) :].lstrip(".")
-        return {"$literal": _resolve_dotted(value, tail) if tail else value}
+        if not tail:
+            return {"$literal": value}
+        # A path into a non-document, or into a document that lacks it, is missing on the
+        # server: the enclosing document expression omits the field rather than nulling it.
+        if not isinstance(value, dict) or not _has_field(value, tail):
+            return {"$literal": _REMOVE}
+        return {"$literal": _resolve_dotted(value, tail)}
     if isinstance(expr, dict):
         return {k: _substitute_var(v, prefix, value) for k, v in expr.items()}
     if isinstance(expr, list):
@@ -558,8 +580,10 @@ def _eval_expr(doc: dict, expr):
             return _eval_bool(doc, expr)
     for unknown in (k for k in expr if k.startswith("$")):
         raise OperationFailure(f"Unrecognized expression '{unknown}'")
-    # Operator-free dict: Mongo treats it as a document expression, so evaluate each value.
-    return {k: _eval_expr(doc, v) for k, v in expr.items()}
+    # Operator-free dict: Mongo treats it as a document expression, so evaluate each value
+    # and omit the fields whose expression resolved to missing.
+    evaluated = ((k, _eval_expr(doc, v)) for k, v in expr.items())
+    return {k: v for k, v in evaluated if v is not _REMOVE}
 
 
 def _truthy(value) -> bool:
@@ -1121,17 +1145,18 @@ class FakeCollection:
                         bucket.append(value)
 
     @staticmethod
-    def _resolve_parent(target: dict, dotted_key: str) -> tuple[dict, str]:
-        """Walk (creating) nested dicts so dotted update paths behave like real Mongo."""
+    def _resolve_parent(target: dict, dotted_key: str) -> tuple[Any, Any]:
+        """Walk (creating) nested containers so dotted update paths behave like real Mongo.
+
+        A numeric segment indexes into a list, so ``members.1.role`` rewrites that element
+        instead of hanging a ``{"1": ...}`` dict off the document.
+        """
         parts = dotted_key.split(".")
-        node = target
+        node: Any = target
         for part in parts[:-1]:
-            nxt = node.get(part)
-            if not isinstance(nxt, dict):
-                nxt = {}
-                node[part] = nxt
-            node = nxt
-        return node, parts[-1]
+            node = _descend_for_update(node, part)
+        leaf = parts[-1]
+        return node, int(leaf) if isinstance(node, list) else leaf
 
     @staticmethod
     def _unset_dotted(target: dict, dotted_key: str) -> None:
