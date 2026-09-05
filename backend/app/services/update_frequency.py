@@ -171,10 +171,6 @@ def fold_scan_deps(deps: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
     return {identity: _resolve_duplicate(infos) for identity, infos in candidates.items()}
 
 
-# One outdated_packages row is stored per SBOM of a scan; well above any real SBOM count.
-_MAX_OUTDATED_RESULTS_PER_SCAN = 50
-
-
 async def load_outdated_entries(
     analysis_repo: AnalysisResultRepository,
     scan_id: str,
@@ -185,15 +181,16 @@ async def load_outdated_entries(
     An analyzer that raised leaves no document behind and one that failed stores a
     result without ``outdated_dependencies``; reading either as an empty backlog
     would report the whole backlog of the previous scan as brought up to date.
+
+    One row is stored per SBOM of the scan and the caller folds them into a set, so the
+    cursor is walked whole: a bounded read would drop an arbitrary SBOM's backlog.
     """
-    docs = await analysis_repo.find_many_raw(
-        {"scan_id": scan_id, "analyzer_name": "outdated_packages"},
-        limit=_MAX_OUTDATED_RESULTS_PER_SCAN,
-        projection=projection,
-    )
     entries: list[dict[str, Any]] = []
     measured = False
-    for doc in docs:
+    async for doc in analysis_repo.iterate_raw(
+        {"scan_id": scan_id, "analyzer_name": "outdated_packages"},
+        projection=projection,
+    ):
         found = (doc.get("result") or {}).get("outdated_dependencies")
         if not isinstance(found, list):
             continue

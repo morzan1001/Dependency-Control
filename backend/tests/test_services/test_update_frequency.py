@@ -2,7 +2,7 @@
 
 import asyncio
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import patch
@@ -31,6 +31,7 @@ from app.services.update_frequency import (
     compute_trend,
     compute_update_frequency,
     compute_update_frequency_comparison,
+    load_outdated_entries,
     select_primary_branch,
     window_coverage_status,
     window_cutoff,
@@ -369,12 +370,7 @@ class FakeAnalysisRepo:
         self._results = results
         self.queries: list[dict[str, Any]] = []
 
-    async def find_many_raw(
-        self,
-        query: dict[str, Any],
-        limit: int = 1000,
-        projection: dict[str, int] | None = None,
-    ) -> list[dict[str, Any]]:
+    def _matching(self, query: dict[str, Any], projection: dict[str, int] | None) -> list[dict[str, Any]]:
         self.queries.append(query)
         scan_filter = query.get("scan_id")
         analyzer = query.get("analyzer_name")
@@ -389,7 +385,23 @@ class FakeAnalysisRepo:
             if analyzer is not None and r["analyzer_name"] != analyzer:
                 continue
             out.append(_apply_projection(r, projection))
-        return out[:limit]
+        return out
+
+    async def find_many_raw(
+        self,
+        query: dict[str, Any],
+        limit: int = 1000,
+        projection: dict[str, int] | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._matching(query, projection)[:limit]
+
+    async def iterate_raw(
+        self,
+        query: dict[str, Any] | None = None,
+        projection: dict[str, int] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        for doc in self._matching(query or {}, projection):
+            yield doc
 
 
 _BASE_SCAN_DATE = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -2010,3 +2022,34 @@ class TestSlowestPackagesCut:
 
         assert [row.name for row in rows] == ["still-outdated"]
         assert backlog == 1
+
+
+class TestOutdatedRowsPerScan:
+    """One row is stored per SBOM; the backlog is their union, so every row must be read."""
+
+    _SBOMS_PER_SCAN = 60
+
+    def _repo(self) -> FakeAnalysisRepo:
+        return FakeAnalysisRepo(
+            [
+                {
+                    "scan_id": "scan-1",
+                    "analyzer_name": "outdated_packages",
+                    "result": {"outdated_dependencies": [{"component": f"pkg{i:03d}"}]},
+                }
+                for i in range(self._SBOMS_PER_SCAN)
+            ]
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_monorepo_posting_many_sboms_keeps_every_backlog_row(self):
+        entries = await load_outdated_entries(self._repo(), "scan-1")
+
+        assert entries is not None
+        assert [e["component"] for e in entries] == [f"pkg{i:03d}" for i in range(self._SBOMS_PER_SCAN)]
+
+    @pytest.mark.asyncio
+    async def test_a_scan_with_no_outdated_analysis_is_unmeasured_not_empty(self):
+        entries = await load_outdated_entries(FakeAnalysisRepo([]), "scan-1")
+
+        assert entries is None
