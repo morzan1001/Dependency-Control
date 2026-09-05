@@ -102,6 +102,12 @@ class TestSecretGate:
         assert s.deprioritized_count == 1
         assert s.actionable_count == 0
 
+    def test_a_scan_without_secrets_still_reports_a_zeroed_block(self):
+        """None means "no findings at all"; a scan with only vulnerabilities reports zeroes."""
+        secrets = compute_stats([_finding()], {}).secret_priority
+        assert secrets is not None
+        assert secrets.total == 0
+
     def test_verified_historical_secret_is_neither_actionable_nor_deprioritized(self):
         """(verified=True, in_current_tree=False) is historical only; not actionable, not deprioritized."""
         findings = [_finding(ftype="secret", verified=True, in_current_tree=False)]
@@ -239,6 +245,16 @@ class TestReachabilityTriState:
     def test_unknown_count_is_measured_against_vulnerabilities_only(self):
         findings = [_finding(ftype="license") for _ in range(5)] + [_finding(), _finding()]
         assert compute_stats(findings, {}).reachability.unknown_count == 2
+
+    def test_symbol_level_is_confirmed_import_level_is_likely_and_reachable_is_both(self):
+        findings = [
+            {**_finding(), "reachable": True, "reachability_level": REACHABILITY_LEVEL_SYMBOL},
+            {**_finding(), "reachable": True, "reachability_level": REACHABILITY_LEVEL_IMPORT},
+        ]
+
+        r = compute_stats(findings, {}).reachability
+
+        assert (r.confirmed_reachable_count, r.likely_reachable_count, r.reachable_count) == (1, 1, 2)
 
 
 class TestHighConfidenceGate:
