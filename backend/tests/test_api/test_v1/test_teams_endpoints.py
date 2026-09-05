@@ -21,6 +21,28 @@ def _make_team(id="team-1", name="Test Team", members=None):
     return Team(id=id, name=name, members=members)
 
 
+def _fake_db_with_team(members) -> FakeDatabase:
+    db = FakeDatabase()
+    db.teams._docs["team-1"] = {
+        "_id": "team-1",
+        "name": "Test Team",
+        "members": [{"user_id": user_id, "role": role} for user_id, role in members],
+        "created_at": _TEAM_TIMESTAMP,
+        "updated_at": _TEAM_TIMESTAMP,
+    }
+    for user_id, _role in members:
+        db.users._docs[user_id] = {"_id": user_id, "username": user_id}
+    return db
+
+
+def _stored_team(db: FakeDatabase) -> Team:
+    return Team(**db.teams._docs["team-1"])
+
+
+def _stored_roles(db: FakeDatabase) -> dict[str, str]:
+    return {member["user_id"]: member["role"] for member in db.teams._docs["team-1"]["members"]}
+
+
 class TestCreateTeam:
     def test_creator_becomes_owner(self, regular_user):
         from app.api.v1.endpoints.teams import create_team
@@ -271,41 +293,26 @@ class TestDeleteTeam:
 class TestAddTeamMember:
     def test_success_adds_member(self, admin_user):
         from app.api.v1.endpoints.teams import add_team_member
-        from app.schemas.team import TeamMemberAdd, TeamResponse
+        from app.schemas.team import TeamMemberAdd
 
-        team = _make_team(members=[TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN)])
-        user_doc = {"_id": "new-user-id", "username": "newuser", "email": "new@test.com"}
-        enriched = TeamResponse(
-            _id="team-1",
-            name="Test Team",
-            members=[
-                {"user_id": "admin-1", "role": "owner", "username": "admin"},
-                {"user_id": "new-user-id", "role": "member", "username": "newuser"},
-            ],
-            created_at="2024-01-01T00:00:00",
-            updated_at="2024-01-01T00:00:00",
-        )
+        db = _fake_db_with_team([("admin-1", TEAM_ROLE_ADMIN)])
+        asyncio.run(db.users.insert_one({"_id": "new-user-id", "username": "newuser", "email": "new@test.com"}))
 
-        mock_team_repo = MagicMock()
-        mock_team_repo.update_raw = AsyncMock()
-        mock_user_repo = MagicMock()
-        mock_user_repo.get_raw_by_email = AsyncMock(return_value=user_doc)
+        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=_stored_team(db)):
+            result = asyncio.run(
+                add_team_member(
+                    team_id="team-1",
+                    member_in=TeamMemberAdd(email="new@test.com"),
+                    current_user=admin_user,
+                    db=db,
+                )
+            )
 
-        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=team):
-            with patch(f"{MODULE}.TeamRepository", return_value=mock_team_repo):
-                with patch(f"{MODULE}.UserRepository", return_value=mock_user_repo):
-                    with patch(f"{MODULE}.fetch_and_enrich_team", new_callable=AsyncMock, return_value=enriched):
-                        result = asyncio.run(
-                            add_team_member(
-                                team_id="team-1",
-                                member_in=TeamMemberAdd(email="new@test.com"),
-                                current_user=admin_user,
-                                db=MagicMock(),
-                            )
-                        )
-
-        assert len(result.members) == 2
-        mock_team_repo.update_raw.assert_called_once()
+        assert [(m.user_id, m.role) for m in result.members] == [
+            ("admin-1", TEAM_ROLE_ADMIN),
+            ("new-user-id", TEAM_ROLE_MEMBER),
+        ]
+        assert _stored_roles(db) == {"admin-1": TEAM_ROLE_ADMIN, "new-user-id": TEAM_ROLE_MEMBER}
 
     def test_raises_404_when_user_not_found(self, admin_user):
         from app.api.v1.endpoints.teams import add_team_member
@@ -384,38 +391,23 @@ class TestUpdateTeamMember:
 class TestRemoveTeamMember:
     def test_success_removes_member(self, admin_user):
         from app.api.v1.endpoints.teams import remove_team_member
-        from app.schemas.team import TeamResponse
 
-        team = _make_team(
-            members=[
-                TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN),
-                TeamMember(user_id="to-remove", role=TEAM_ROLE_MEMBER),
-            ]
-        )
-        enriched = TeamResponse(
-            _id="team-1",
-            name="Test Team",
-            members=[{"user_id": "admin-1", "role": "owner", "username": "admin"}],
-            created_at="2024-01-01T00:00:00",
-            updated_at="2024-01-01T00:00:00",
+        db = _fake_db_with_team(
+            [("admin-1", TEAM_ROLE_ADMIN), ("to-remove", TEAM_ROLE_MEMBER), ("stay", TEAM_ROLE_MEMBER)]
         )
 
-        mock_repo = MagicMock()
-        mock_repo.update_raw = AsyncMock()
+        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=_stored_team(db)):
+            result = asyncio.run(
+                remove_team_member(
+                    team_id="team-1",
+                    user_id="to-remove",
+                    current_user=admin_user,
+                    db=db,
+                )
+            )
 
-        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=team):
-            with patch(f"{MODULE}.TeamRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.fetch_and_enrich_team", new_callable=AsyncMock, return_value=enriched):
-                    asyncio.run(
-                        remove_team_member(
-                            team_id="team-1",
-                            user_id="to-remove",
-                            current_user=admin_user,
-                            db=MagicMock(),
-                        )
-                    )
-
-        mock_repo.update_raw.assert_called_once()
+        assert [m.user_id for m in result.members] == ["admin-1", "stay"]
+        assert _stored_roles(db) == {"admin-1": TEAM_ROLE_ADMIN, "stay": TEAM_ROLE_MEMBER}
 
     def test_raises_400_when_removing_last_admin_self(self, admin_user):
         from app.api.v1.endpoints.teams import remove_team_member

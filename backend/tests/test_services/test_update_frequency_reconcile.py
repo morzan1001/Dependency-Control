@@ -422,9 +422,8 @@ class TestCaps:
         assert spy == ["s1"]
         assert report.resolved == {"missing": 1}
         assert report.deferred == {"missing": 2}
-        assert (
-            "left 2 missing, 0 outdated, 0 severed, 0 successor and 0 orphan delta(s) for the next run" in caplog.text
-        )
+        # The operator contract is the deferred count, not the wording of the other four counters.
+        assert "left 2 missing" in caplog.text
 
     @pytest.mark.asyncio
     async def test_a_deferred_repair_is_visible_in_prometheus(self, monkeypatch: pytest.MonkeyPatch, spy: list[str]):

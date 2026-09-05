@@ -28,26 +28,25 @@ def _admin_user() -> User:
     )
 
 
-def _iter_push_exprs(pipeline: list[dict[str, Any]]):
-    """Yield every ``$push`` accumulator expression in any ``$group`` stage."""
+_ARRAY_ACCUMULATORS = ("$push", "$addToSet")
+
+
+def _iter_array_accumulators(pipeline: list[dict[str, Any]]):
+    """Yield every array-collecting accumulator in any ``$group`` stage.
+
+    Both operators, because risk.py collects with $addToSet only: a $push-only check iterates
+    zero times and would pass a regression spelled {"severities": {"$addToSet": "$severity"}}.
+    """
     for stage in pipeline:
         group = stage.get("$group")
         if not group:
             continue
         for acc_name, acc_expr in group.items():
-            if isinstance(acc_expr, dict) and "$push" in acc_expr:
-                yield acc_name, acc_expr["$push"]
-
-
-def _iter_add_to_set_exprs(pipeline: list[dict[str, Any]]):
-    """Yield every ``$addToSet`` accumulator expression in any ``$group`` stage."""
-    for stage in pipeline:
-        group = stage.get("$group")
-        if not group:
-            continue
-        for acc_name, acc_expr in group.items():
-            if isinstance(acc_expr, dict) and "$addToSet" in acc_expr:
-                yield acc_name, acc_expr["$addToSet"]
+            if not isinstance(acc_expr, dict):
+                continue
+            for operator in _ARRAY_ACCUMULATORS:
+                if operator in acc_expr:
+                    yield acc_name, acc_expr[operator]
 
 
 def _group_stage(pipeline: list[dict[str, Any]]) -> dict[str, Any]:
@@ -227,10 +226,12 @@ class TestImpactPipelineBounded:
             "details must be $project-slimmed to fix-version fields before $group"
         )
 
-    def test_severities_not_pushed_raw(self):
+    def test_severities_are_not_collected_as_a_raw_array(self):
         _, pipeline, _ = _run_impact(agg_results=[])
-        for _acc, push_expr in _iter_push_exprs(pipeline):
-            assert push_expr != "$severity", "raw severity array must not be pushed; use scalar counts"
+        collected = list(_iter_array_accumulators(pipeline))
+        assert collected, "no array accumulator in the $group — the check below would inspect nothing"
+        for _acc, expr in collected:
+            assert expr != "$severity", "raw severity array must not be collected; use scalar counts"
 
     def test_counts_come_from_advisories(self):
         _, pipeline, _ = _run_impact(agg_results=[])
@@ -265,10 +266,12 @@ class TestHotspotsPipelineBounded:
             "details must be $project-slimmed to fix-version fields before $group"
         )
 
-    def test_severities_not_pushed_raw(self):
+    def test_severities_are_not_collected_as_a_raw_array(self):
         _, pipeline, _ = _run_hotspots(agg_results=[])
-        for _acc, push_expr in _iter_push_exprs(pipeline):
-            assert push_expr != "$severity", "raw severity array must not be pushed; use scalar counts"
+        collected = list(_iter_array_accumulators(pipeline))
+        assert collected, "no array accumulator in the $group — the check below would inspect nothing"
+        for _acc, expr in collected:
+            assert expr != "$severity", "raw severity array must not be collected; use scalar counts"
 
     def test_counts_come_from_advisories(self):
         _, pipeline, _ = _run_hotspots(agg_results=[])
@@ -437,22 +440,15 @@ def _limit_values_after_group(pipeline: list[dict[str, Any]]) -> list[int]:
 
 
 class TestHotspotsPostSortPagination:
-    def test_epss_deep_page_pipeline_not_truncated(self):
-        # skip=60/limit=20 needs the first 80 epss-ranked groups; fetch must not cap below skip+limit
+    def test_epss_deep_page_is_not_capped_in_mongo(self):
+        # skip=60/limit=20 needs the 80 highest-epss groups and the rank is only known in Python,
+        # so any Mongo-side cap drops rows the page needs.
         _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="epss", skip=60, limit=20)
-        for lim in _limit_values_after_group(pipeline):
-            assert lim >= 60 + 20, (
-                f"post-sort pipeline caps fetch at {lim}, dropping rows needed for "
-                "skip=60/limit=20 (needs >= 80 or no cap)"
-            )
+        assert _limit_values_after_group(pipeline) == []
 
-    def test_risk_deep_page_pipeline_not_truncated(self):
+    def test_risk_deep_page_is_not_capped_in_mongo(self):
         _, pipeline, _ = _run_hotspots(agg_results=[], sort_by="risk", skip=60, limit=20)
-        for lim in _limit_values_after_group(pipeline):
-            assert lim >= 60 + 20, (
-                f"post-sort pipeline caps fetch at {lim}, dropping rows needed for "
-                "skip=60/limit=20 (needs >= 80 or no cap)"
-            )
+        assert _limit_values_after_group(pipeline) == []
 
     def test_epss_pipeline_has_no_premature_mongo_skip(self):
         # a Mongo $skip would drop rows in finding_count order before the Python epss re-rank
