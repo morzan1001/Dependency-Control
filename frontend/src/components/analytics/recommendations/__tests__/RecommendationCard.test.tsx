@@ -5,7 +5,11 @@ import { describe, it, expect } from 'vitest'
 import { RecommendationCard } from '../RecommendationCard'
 import type { Recommendation, RecommendationAction } from '@/types/analytics'
 
-function makeRecommendation(action: RecommendationAction): Recommendation {
+const COMPONENTS_LISTED = 20
+const COMPONENTS_COVERED = 900
+const FILES_LISTED = 5
+
+function makeRecommendation(action: RecommendationAction, over: Partial<Recommendation> = {}): Recommendation {
   return {
     type: 'recurring_vulnerability',
     priority: 'high',
@@ -13,9 +17,15 @@ function makeRecommendation(action: RecommendationAction): Recommendation {
     description: 'A test recommendation',
     impact: { critical: 0, high: 1, medium: 0, low: 0, total: 1 },
     affected_components: [],
+    affected_components_total: 0,
     action,
     effort: 'medium',
+    ...over,
   }
+}
+
+function components(count: number): string[] {
+  return Array.from({ length: count }, (_, index) => `pkg${index}@1.0.0`)
 }
 
 function renderExpanded(recommendation: Recommendation) {
@@ -46,6 +56,33 @@ describe('RecommendationCard CVE rendering', () => {
       }),
     )
     expect(screen.getAllByText('CVE-2021-0002')).toHaveLength(1)
+  })
+
+  it('names the components the recommendation covers, not the ones it listed', () => {
+    renderExpanded(
+      makeRecommendation(
+        { type: 'update_dependency' },
+        {
+          affected_components: components(COMPONENTS_LISTED),
+          affected_components_total: COMPONENTS_COVERED,
+        },
+      ),
+    )
+    expect(
+      screen.getByText(`Affected Components (${COMPONENTS_LISTED} of ${COMPONENTS_COVERED.toLocaleString()})`),
+    ).toBeInTheDocument()
+  })
+
+  it('counts the unlisted files against the population, not against the sample it was given', () => {
+    const filesTotal = 900
+    renderExpanded(
+      makeRecommendation({
+        type: 'fix_code',
+        files: components(COMPONENTS_LISTED),
+        files_total: filesTotal,
+      }),
+    )
+    expect(screen.getByText(`...and ${(filesTotal - FILES_LISTED).toLocaleString()} more`)).toBeInTheDocument()
   })
 
   it('still renders the generic Related Vulnerabilities block for other action types', () => {

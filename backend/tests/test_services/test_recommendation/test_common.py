@@ -8,11 +8,14 @@ from app.schemas.recommendation import (
     RecommendationType,
 )
 from app.services.recommendation.common import (
+    AFFECTED_COMPONENTS_SHOWN,
     calculate_best_fix_version,
     calculate_score,
     extract_cve_id,
     get_attr,
+    name_some,
     parse_version_tuple,
+    sample_components,
     sort_key,
 )
 
@@ -466,3 +469,74 @@ class TestCalculateScore:
         )
         score = calculate_score(rec)
         assert isinstance(score, int)
+
+
+class TestSampleComponents:
+    """One cut, one count: the reader always learns the size of the population."""
+
+    def test_a_population_past_the_cap_is_counted_before_it_is_cut(self):
+        covered = AFFECTED_COMPONENTS_SHOWN * 45
+        shown, total = sample_components(f"pkg{index:04d}" for index in range(covered))
+
+        assert len(shown) == AFFECTED_COMPONENTS_SHOWN
+        assert total == covered
+
+    def test_duplicates_do_not_inflate_the_population(self):
+        shown, total = sample_components(["a", "b", "a", "b"])
+
+        assert shown == ["a", "b"]
+        assert total == 2
+
+    def test_the_callers_order_survives_so_a_ranked_population_keeps_its_ranking(self):
+        ranked = [f"pkg{index:04d}" for index in range(AFFECTED_COMPONENTS_SHOWN * 2)][::-1]
+
+        shown, _total = sample_components(ranked)
+
+        assert shown == ranked[:AFFECTED_COMPONENTS_SHOWN]
+
+    def test_blank_entries_are_neither_listed_nor_counted(self):
+        shown, total = sample_components(["a", "", "b"])
+
+        assert shown == ["a", "b"]
+        assert total == 2
+
+
+class TestNameSome:
+    def test_a_list_longer_than_the_prose_allows_says_how_many_it_left_out(self):
+        named = 3
+        values = [f"v{index}" for index in range(10)]
+
+        assert name_some(values, named) == "v0, v1, v2 and 7 more"
+
+    def test_a_list_the_prose_holds_whole_claims_nothing_more(self):
+        assert name_some(["v0", "v1"], 3) == "v0, v1"
+
+
+class TestRecommendationTotal:
+    """A generator that lists everything need not repeat the number."""
+
+    @staticmethod
+    def _rec_with(components: list[str], total: int) -> Recommendation:
+        return Recommendation(
+            type=RecommendationType.NO_FIX_AVAILABLE,
+            priority=Priority.HIGH,
+            title="Vulnerability with No Fix Available",
+            description="d",
+            impact={},
+            affected_components=components,
+            action={},
+            affected_components_total=total,
+        )
+
+    def test_a_complete_list_counts_itself(self):
+        rec = self._rec_with(["a", "b"], 0)
+
+        assert rec.affected_components_total == 2
+
+    def test_a_cut_list_reports_the_population_it_was_drawn_from(self):
+        covered = 900
+
+        rec = self._rec_with(["a", "b"], covered)
+
+        assert rec.affected_components_total == covered
+        assert rec.to_dict()["affected_components_total"] == covered

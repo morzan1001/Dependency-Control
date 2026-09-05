@@ -4,7 +4,15 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import ModelOrDict, extract_cve_id, get_attr
+from app.services.recommendation.common import (
+    ModelOrDict,
+    extract_cve_id,
+    get_attr,
+    name_some,
+    sample_components,
+)
+
+_CVES_NAMED = 5
 
 
 def process_malware(malware_findings: list[ModelOrDict]) -> list[Recommendation]:
@@ -12,7 +20,7 @@ def process_malware(malware_findings: list[ModelOrDict]) -> list[Recommendation]
     if not malware_findings:
         return []
 
-    affected_packages = list({get_attr(f, "component", "") for f in malware_findings})
+    affected_packages = sorted({get_attr(f, "component", "") for f in malware_findings})
 
     return [
         Recommendation(
@@ -137,8 +145,9 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
         _classify_vuln_finding(f, kev_vulns, ransomware_vulns, high_epss_vulns)
 
     if ransomware_vulns:
-        affected_packages = list({get_attr(f, "component", "") for f in ransomware_vulns})
-        cves = list({cve for f in ransomware_vulns if (cve := extract_cve_id(f))})
+        affected_packages = sorted({get_attr(f, "component", "") for f in ransomware_vulns})
+        packages_shown, packages_total = sample_components(affected_packages)
+        cves = sorted({cve for f in ransomware_vulns if (cve := extract_cve_id(f))})
 
         recommendations.append(
             Recommendation(
@@ -148,7 +157,7 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
                 description=(
                     f"Found {len(ransomware_vulns)} vulnerabilities known to be used in ransomware campaigns. "
                     f"These CVEs are actively targeted by ransomware groups and require immediate remediation. "
-                    f"Affected: {', '.join(cves[:5])}"
+                    f"Affected: {name_some(cves, _CVES_NAMED)}"
                 ),
                 impact={
                     "critical": len(ransomware_vulns),
@@ -158,7 +167,8 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
                     "total": len(ransomware_vulns),
                     "kev_ransomware_count": len(ransomware_vulns),
                 },
-                affected_components=affected_packages[:20],
+                affected_components=packages_shown,
+                affected_components_total=packages_total,
                 action={
                     "type": "fix_ransomware_vulns",
                     "cves": cves,
@@ -179,8 +189,9 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
         )
 
     if kev_vulns:
-        affected_packages = list({get_attr(f, "component", "") for f in kev_vulns})
-        cves = list({cve for f in kev_vulns if (cve := extract_cve_id(f))})
+        affected_packages = sorted({get_attr(f, "component", "") for f in kev_vulns})
+        packages_shown, packages_total = sample_components(affected_packages)
+        cves = sorted({cve for f in kev_vulns if (cve := extract_cve_id(f))})
 
         recommendations.append(
             Recommendation(
@@ -200,7 +211,8 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
                     "total": len(kev_vulns),
                     "kev_count": len(kev_vulns),
                 },
-                affected_components=affected_packages[:20],
+                affected_components=packages_shown,
+                affected_components_total=packages_total,
                 action={
                     "type": "fix_kev_vulns",
                     "cves": cves,
@@ -218,8 +230,9 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
         )
 
     if high_epss_vulns:
-        affected_packages = list({get_attr(f, "component", "") for f in high_epss_vulns})
-        cves = list({cve for f in high_epss_vulns if (cve := extract_cve_id(f))})
+        affected_packages = sorted({get_attr(f, "component", "") for f in high_epss_vulns})
+        packages_shown, packages_total = sample_components(affected_packages)
+        cves = sorted({cve for f in high_epss_vulns if (cve := extract_cve_id(f))})
 
         max_epss = max(
             (get_attr(f, "details", {}).get("epss_score", 0) if isinstance(get_attr(f, "details", {}), dict) else 0)
@@ -245,7 +258,8 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
                     "high_epss_count": len(high_epss_vulns),
                     "max_epss": max_epss,
                 },
-                affected_components=affected_packages[:20],
+                affected_components=packages_shown,
+                affected_components_total=packages_total,
                 action={
                     "type": "fix_high_epss_vulns",
                     "cves": cves,

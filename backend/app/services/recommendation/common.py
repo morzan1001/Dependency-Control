@@ -1,4 +1,5 @@
 import re
+from collections.abc import Iterable, Sequence
 from typing import Any
 
 from pydantic import BaseModel
@@ -14,6 +15,27 @@ from app.core.constants import (
 from app.schemas.recommendation import Priority, Recommendation
 
 ModelOrDict = BaseModel | dict[str, Any]
+
+# Components one recommendation lists. Every generator draws its evidence through
+# sample_components, so the cut is one number and the reader always gets the population.
+AFFECTED_COMPONENTS_SHOWN = 20
+
+
+def name_some(values: Sequence[str], shown: int) -> str:
+    """Prose list of the first `shown` values, saying how many it left unnamed."""
+    head = ", ".join(values[:shown])
+    remaining = len(values) - shown
+    return f"{head} and {remaining} more" if remaining > 0 else head
+
+
+def sample_components(components: Iterable[str]) -> tuple[list[str], int]:
+    """The components a recommendation lists, and how many it actually covers.
+
+    Order is the caller's, so a ranked population keeps its ranking; pass a sorted sequence
+    where the source is a set, whose iteration order changes between runs.
+    """
+    unique = list(dict.fromkeys(component for component in components if component))
+    return unique[:AFFECTED_COMPONENTS_SHOWN], len(unique)
 
 
 def get_attr(obj: ModelOrDict, key: str, default: Any = None) -> Any:

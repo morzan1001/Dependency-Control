@@ -282,6 +282,10 @@ class RecommendationResponse(BaseModel):
     description: str
     impact: dict[str, Any]
     affected_components: list[str]
+    affected_components_total: int = Field(
+        0,
+        description="Components the recommendation covers, counted before the list was cut",
+    )
     action: dict[str, Any]
     effort: str
 

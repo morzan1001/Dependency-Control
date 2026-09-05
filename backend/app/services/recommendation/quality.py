@@ -3,7 +3,7 @@ from typing import Any
 
 from app.core.constants import SCORECARD_LOW_THRESHOLD
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import ModelOrDict, get_attr, scorecard_details
+from app.services.recommendation.common import ModelOrDict, get_attr, sample_components, scorecard_details
 
 
 def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
@@ -62,6 +62,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
             check_name = check.get("name", "") if isinstance(check, dict) else check
             components_by_issue[f"check:{check_name}"].append(component)
 
+    unmaintained_shown, unmaintained_total = sample_components(p["component"] for p in unmaintained_packages)
     if unmaintained_packages:
         recommendations.append(
             Recommendation(
@@ -74,9 +75,10 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                 ),
                 impact={
                     "total": len(unmaintained_packages),
-                    "packages": [p["component"] for p in unmaintained_packages[:10]],
+                    "packages": unmaintained_shown,
                 },
-                affected_components=[p["component"] for p in unmaintained_packages],
+                affected_components=unmaintained_shown,
+                affected_components_total=unmaintained_total,
                 action={
                     "type": "replace_unmaintained",
                     "steps": [
@@ -100,6 +102,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
         )
 
     vuln_packages = components_by_issue.get("Vulnerabilities", [])
+    vuln_shown, vuln_total = sample_components(sorted(set(vuln_packages)))
     if vuln_packages:
         recommendations.append(
             Recommendation(
@@ -113,7 +116,8 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                 impact={
                     "total": len(vuln_packages),
                 },
-                affected_components=list(set(vuln_packages))[:20],
+                affected_components=vuln_shown,
+                affected_components_total=vuln_total,
                 action={
                     "type": "fix_scorecard_vulnerabilities",
                     "steps": [
@@ -127,6 +131,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
             )
         )
 
+    low_score_shown, low_score_total = sample_components(p["component"] for p in low_score_packages)
     # Skip when unmaintained packages already cover these.
     if low_score_packages and not unmaintained_packages:
         recommendations.append(
@@ -143,7 +148,8 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                     "total": len(low_score_packages),
                     "average_score": sum(p["score"] for p in low_score_packages) / len(low_score_packages),
                 },
-                affected_components=[p["component"] for p in low_score_packages],
+                affected_components=low_score_shown,
+                affected_components_total=low_score_total,
                 action={
                     "type": "review_quality",
                     "steps": [
@@ -166,6 +172,7 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
         )
 
     code_review_issues = components_by_issue.get("check:Code-Review", [])
+    review_shown, review_total = sample_components(sorted(set(code_review_issues)))
     if code_review_issues:
         recommendations.append(
             Recommendation(
@@ -177,7 +184,8 @@ def process_quality(findings: list[ModelOrDict]) -> list[Recommendation]:
                     "This increases the risk of unreviewed malicious or buggy changes."
                 ),
                 impact={"total": len(set(code_review_issues))},
-                affected_components=list(set(code_review_issues))[:15],
+                affected_components=review_shown,
+                affected_components_total=review_total,
                 action={
                     "type": "code_review_concern",
                     "steps": [

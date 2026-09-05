@@ -357,6 +357,8 @@ export interface RecommendationAction {
   line_number?: number;
   secret_type?: string;
   files?: string[];
+  // Files the recommendation covers, counted before `files` was cut.
+  files_total?: number;
   rule_ids?: string[];
   license_type?: string;
   components?: string[];
@@ -401,6 +403,8 @@ export interface Recommendation {
   description: string;
   impact: RecommendationImpact;
   affected_components: string[];
+  // Components the recommendation covers, counted before the list was cut.
+  affected_components_total: number;
   affected_projects?: Array<{ id: string; name: string }>;
   action: RecommendationAction;
   effort: 'low' | 'medium' | 'high';

@@ -8,7 +8,7 @@ from app.schemas.recommendation import (
     RecommendationType,
     VulnerabilityInfo,
 )
-from app.services.recommendation.common import ModelOrDict, calculate_best_fix_version, get_attr
+from app.services.recommendation.common import ModelOrDict, calculate_best_fix_version, get_attr, sample_components
 
 
 def process_vulnerabilities(
@@ -171,6 +171,7 @@ def _analyze_base_image_vulns(
         parts = source_target.rsplit(":", 1)
         image_name = parts[0]
 
+    packages_shown, packages_total = sample_components(sorted(affected_packages))
     return Recommendation(
         type=RecommendationType.BASE_IMAGE_UPDATE,
         priority=priority,
@@ -188,7 +189,8 @@ def _analyze_base_image_vulns(
             "low": severity_counts.get("LOW", 0),
             "total": total_vulns,
         },
-        affected_components=list(affected_packages)[:20],
+        affected_components=packages_shown,
+        affected_components_total=packages_total,
         action={
             "type": "update_base_image",
             "current_image": source_target,
@@ -476,6 +478,8 @@ def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation
     if not crit_high_vulns:
         return []
 
+    unfixable_shown, unfixable_total = sample_components(sorted({v.package_name for v in crit_high_vulns}))
+
     return [
         Recommendation(
             type=RecommendationType.NO_FIX_AVAILABLE,
@@ -492,7 +496,8 @@ def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation
                 "low": severity_counts.get("LOW", 0),
                 "total": len(vulns),
             },
-            affected_components=list({v.package_name for v in crit_high_vulns})[:20],
+            affected_components=unfixable_shown,
+            affected_components_total=unfixable_total,
             action={
                 "type": "consider_alternative",
                 "steps": [

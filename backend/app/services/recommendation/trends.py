@@ -10,7 +10,7 @@ from app.schemas.recommendation import (
 )
 from app.services.analytics.findings_delta import finding_identity_key
 from app.services.enrichment import canonical_cves
-from app.services.recommendation.common import ModelOrDict, get_attr
+from app.services.recommendation.common import ModelOrDict, get_attr, sample_components
 
 # What finding_identity_key reads; the scan-scoped ``_id`` stays out, it never matches across a pair.
 _IDENTITY_FIELDS = ("type", "component", "version", "details", "finding_id", "description", "found_in")
@@ -41,6 +41,10 @@ def analyze_regressions(
     new_critical = [f for f in new_vulns if get_attr(f, "severity") == "CRITICAL"]
     new_high = [f for f in new_vulns if get_attr(f, "severity") == "HIGH"]
 
+    regression_shown, regression_total = sample_components(
+        sorted({get_attr(f, "component", "unknown") for f in new_critical + new_high})
+    )
+
     finding_delta = len(current_findings) - len(previous_findings)
 
     if new_critical or new_high:
@@ -64,7 +68,8 @@ def analyze_regressions(
                     "low": len([f for f in new_vulns if get_attr(f, "severity") == "LOW"]),
                     "total": len(new_vulns),
                 },
-                affected_components=list({get_attr(f, "component", "unknown") for f in (new_critical + new_high)[:15]}),
+                affected_components=regression_shown,
+                affected_components_total=regression_total,
                 action={
                     "type": "investigate_regression",
                     # A record whose advisory list merely grew is new as a whole, so the CVEs the
@@ -162,6 +167,9 @@ def analyze_recurring_issues(
     )
 
     critical_count = _count_recurring_by_severity(recurring, "CRITICAL")
+    recurring_shown, recurring_total = sample_components(
+        f"{cve} ({row.component or 'unknown'}) - {len(row.scans)} scans" for cve, row in recurring
+    )
 
     return [
         Recommendation(
@@ -180,10 +188,8 @@ def analyze_recurring_issues(
                 "low": _count_recurring_by_severity(recurring, "LOW"),
                 "total": len(recurring),
             },
-            affected_components=[
-                f"{cve} ({row.component or 'unknown'}) - {len(row.scans)} scans"
-                for cve, row in recurring[:_RECURRING_ROWS_SHOWN]
-            ],
+            affected_components=recurring_shown,
+            affected_components_total=recurring_total,
             action={
                 "type": "address_recurring",
                 "cves": [cve for cve, _row in recurring[:_RECURRING_ROWS_SHOWN]],

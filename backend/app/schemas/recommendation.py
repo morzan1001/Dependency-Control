@@ -190,6 +190,12 @@ class Recommendation:
     affected_components: list[str]
     action: dict[str, Any]  # Specific action details
     effort: str = Effort.MEDIUM  # Accepts Effort enum or string for compatibility
+    affected_components_total: int = 0
+
+    def __post_init__(self) -> None:
+        # A generator that lists everything it covers need not repeat the number; one that cut
+        # its list must pass the population, and can never claim fewer than it listed.
+        self.affected_components_total = max(self.affected_components_total, len(self.affected_components))
 
     def to_dict(self) -> dict[str, Any]:
         effort_value = self.effort.value if isinstance(self.effort, Effort) else self.effort
@@ -200,6 +206,7 @@ class Recommendation:
             "description": self.description,
             "impact": self.impact,
             "affected_components": self.affected_components,
+            "affected_components_total": self.affected_components_total,
             "action": self.action,
             "effort": effort_value,
         }

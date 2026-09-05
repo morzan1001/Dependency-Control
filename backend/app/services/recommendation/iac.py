@@ -1,7 +1,7 @@
 from collections import defaultdict
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import ModelOrDict, get_attr
+from app.services.recommendation.common import ModelOrDict, get_attr, sample_components
 
 
 def process_iac(findings: list[ModelOrDict]) -> list[Recommendation]:
@@ -44,6 +44,7 @@ def process_iac(findings: list[ModelOrDict]) -> list[Recommendation]:
             severity_counts[get_attr(f, "severity", "UNKNOWN")] += 1
             files_affected.add(get_attr(f, "component", "unknown"))
 
+        files_shown, files_total = sample_components(sorted(files_affected))
         critical_high = severity_counts.get("CRITICAL", 0) + severity_counts.get("HIGH", 0)
 
         if critical_high < 1 and len(plat_findings) < 3:
@@ -75,11 +76,13 @@ def process_iac(findings: list[ModelOrDict]) -> list[Recommendation]:
                     "low": severity_counts.get("LOW", 0),
                     "total": len(plat_findings),
                 },
-                affected_components=list(files_affected)[:20],
+                affected_components=files_shown,
+                affected_components_total=files_total,
                 action={
                     "type": "fix_infrastructure",
                     "platform": platform,
-                    "files": list(files_affected)[:10],
+                    "files": files_shown,
+                    "files_total": files_total,
                     "common_issues": _get_common_iac_issues(plat_findings),
                 },
                 effort="medium",

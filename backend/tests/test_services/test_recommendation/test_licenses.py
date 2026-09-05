@@ -1,7 +1,7 @@
 """Tests for app.services.recommendation.licenses."""
 
 from app.schemas.recommendation import Priority, RecommendationType
-from app.services.recommendation.licenses import detect_license_drift, process_licenses
+from app.services.recommendation.licenses import _LICENSES_NAMED, detect_license_drift, process_licenses
 
 
 def _license(
@@ -123,16 +123,22 @@ class TestProcessLicensesGroupedByType:
         assert "AGPL-3.0" in licenses
         assert "SSPL" in licenses
 
-    def test_problematic_licenses_limited_to_ten(self):
-        findings = [_license(license_name=f"License-{i}", finding_id=f"l{i}") for i in range(15)]
-        rec = process_licenses(findings)[0]
-        assert len(rec.action["problematic_licenses"]) <= 10
+    def test_the_action_carries_every_problematic_license(self):
+        found = 15
+        findings = [_license(license_name=f"License-{i:02d}", finding_id=f"l{i}") for i in range(found)]
 
-    def test_description_limited_to_five_license_names(self):
-        findings = [_license(license_name=f"License-{i}", finding_id=f"l{i}") for i in range(8)]
         rec = process_licenses(findings)[0]
-        count = rec.description.count("License-")
-        assert count <= 5
+
+        assert len(rec.action["problematic_licenses"]) == found
+
+    def test_the_description_names_a_few_and_counts_the_rest(self):
+        found = 8
+        findings = [_license(license_name=f"License-{i:02d}", finding_id=f"l{i}") for i in range(found)]
+
+        rec = process_licenses(findings)[0]
+
+        assert rec.description.count("License-") == _LICENSES_NAMED
+        assert f"and {found - _LICENSES_NAMED} more" in rec.description
 
 
 class TestProcessLicensesComponentsTracked:

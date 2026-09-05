@@ -14,7 +14,7 @@ from app.schemas.recommendation import (
     RecommendationType,
 )
 from app.services.aggregation.components import build_component_index, lookup_component
-from app.services.recommendation.common import ModelOrDict, get_attr
+from app.services.recommendation.common import AFFECTED_COMPONENTS_SHOWN, ModelOrDict, get_attr, sample_components
 
 
 def _vuln_risk_severity(critical: int, high: int, kev: int) -> str:
@@ -480,6 +480,9 @@ def analyze_attack_surface(
         transitive_with_vulns.sort(key=lambda x: x["vuln_count"], reverse=True)
 
         total_vulns = sum(t["vuln_count"] for t in transitive_with_vulns)
+        transitive_shown, transitive_total = sample_components(
+            f"{t['name']}@{t['version']} (via {t['parent']})" for t in transitive_with_vulns
+        )
 
         recommendations.append(
             Recommendation(
@@ -499,12 +502,11 @@ def analyze_attack_surface(
                     "low": 0,
                     "total": total_vulns,
                 },
-                affected_components=[
-                    f"{t['name']}@{t['version']} (via {t['parent']})" for t in transitive_with_vulns[:10]
-                ],
+                affected_components=transitive_shown,
+                affected_components_total=transitive_total,
                 action={
                     "type": "reduce_attack_surface",
-                    "transitive_deps": transitive_with_vulns[:10],
+                    "transitive_deps": transitive_with_vulns[:AFFECTED_COMPONENTS_SHOWN],
                     "steps": [
                         "1. Review which parent dependencies introduce vulnerable transitives",
                         "2. Check if parent dependencies have updates that use fixed versions",

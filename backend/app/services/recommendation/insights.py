@@ -11,7 +11,13 @@ from app.schemas.recommendation import (
     RecommendationType,
 )
 from app.services.aggregation.components import build_component_index, lookup_component
-from app.services.recommendation.common import ModelOrDict, get_attr, parse_version_tuple, scorecard_details
+from app.services.recommendation.common import (
+    ModelOrDict,
+    get_attr,
+    parse_version_tuple,
+    sample_components,
+    scorecard_details,
+)
 
 
 def correlate_scorecard_with_vulnerabilities(
@@ -78,6 +84,11 @@ def correlate_scorecard_with_vulnerabilities(
     if high_risk_vulns:
         high_risk_vulns.sort(key=lambda x: (not x["unmaintained"], x["scorecard_score"]))
 
+        risky_shown, risky_total = sample_components(
+            f"{v['component']}@{v['version']} (score: {v['scorecard_score']:.1f}/10"
+            f"{', UNMAINTAINED' if v['unmaintained'] else ''})"
+            for v in high_risk_vulns
+        )
         unmaintained_count = sum(1 for v in high_risk_vulns if v["unmaintained"])
         low_score_count = len(high_risk_vulns) - unmaintained_count
 
@@ -101,14 +112,8 @@ def correlate_scorecard_with_vulnerabilities(
                     "total": len(high_risk_vulns),
                     "unmaintained_count": unmaintained_count,
                 },
-                affected_components=[
-                    (
-                        f"{v['component']}@{v['version']} "
-                        f"(score: {v['scorecard_score']:.1f}/10"
-                        f"{', UNMAINTAINED' if v['unmaintained'] else ''})"
-                    )
-                    for v in high_risk_vulns[:10]
-                ],
+                affected_components=risky_shown,
+                affected_components_total=risky_total,
                 action={
                     "type": "replace_risky_packages",
                     "packages": [
@@ -185,6 +190,9 @@ def analyze_cross_project_patterns(
 
     if widespread_cves:
         widespread_cves.sort(key=lambda x: cast(int, x["count"]), reverse=True)
+        widespread_shown, widespread_total = sample_components(
+            f"{c['cve']} ({c['count']}/{compared} projects compared)" for c in widespread_cves
+        )
 
         recommendations.append(
             Recommendation(
@@ -203,9 +211,8 @@ def analyze_cross_project_patterns(
                     "low": 0,
                     "total": len(widespread_cves),
                 },
-                affected_components=[
-                    f"{c['cve']} ({c['count']}/{compared} projects compared)" for c in widespread_cves[:10]
-                ],
+                affected_components=widespread_shown,
+                affected_components_total=widespread_total,
                 action={
                     "type": "fix_cross_project_vuln",
                     "cves": [
@@ -226,6 +233,10 @@ def analyze_cross_project_patterns(
     # row of every compared scan rather than a per-scan sample of them.
     inconsistent_packages: list[dict[str, Any]] = cross_project_data.get("shared_packages") or []
 
+    inconsistent_shown, inconsistent_total = sample_components(
+        f"{p['name']}: {p['version_count']} versions across {p['project_count']} projects"
+        for p in inconsistent_packages
+    )
     if inconsistent_packages:
         recommendations.append(
             Recommendation(
@@ -244,10 +255,8 @@ def analyze_cross_project_patterns(
                     "low": len([p for p in inconsistent_packages if int(cast(int, p["version_count"])) <= 2]),
                     "total": len(inconsistent_packages),
                 },
-                affected_components=[
-                    f"{p['name']}: {p['version_count']} versions across {p['project_count']} projects"
-                    for p in inconsistent_packages[:10]
-                ],
+                affected_components=inconsistent_shown,
+                affected_components_total=inconsistent_total,
                 action={
                     "type": "standardize_versions",
                     "packages": [
