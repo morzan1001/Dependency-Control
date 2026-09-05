@@ -2,24 +2,28 @@
 
 Against a live MongoDB, a project holding 20 050 findings — 50 of them criticals 400 days past
 their SLA — produced a report whose CVE-SLA-CRITICAL control read `passed`, because the 50 sat
-past the engine's 20 000-finding cap. Only the server log said so. The verdict is unchanged; what
-changes is that every renderer now states what it was computed over.
+past the engine's 20 000-finding cap. A verdict whose evidence is the absence of a match is
+withheld as `not_evaluated` once the finding set stops covering the scope; a failure stands,
+because a cut list can under-report a violation but cannot invent one.
 """
 
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
-from app.schemas.compliance import EvaluationCoverage, ReportFramework
+from app.models.crypto_asset import CryptoAsset
+from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
+from app.schemas.compliance import ControlResult, ControlStatus, EvaluationCoverage, ReportFramework
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance import engine as engine_module
 from app.services.compliance.engine import ComplianceReportEngine
 from app.services.compliance.frameworks.base import EvaluationInput
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
+from app.services.compliance.frameworks.fips_140_3 import Fips1403Framework
 from app.services.compliance.renderers.base import coverage_statement
 from app.services.compliance.renderers.csv_renderer import CsvRenderer
 from app.services.compliance.renderers.json_renderer import JsonRenderer
@@ -35,6 +39,7 @@ _TEMPLATE_DIR = Path(engine_module.__file__).resolve().parent / "templates"
 _EVALUATED = 20000
 _IN_SCOPE = 20050
 _MISSING = _IN_SCOPE - _EVALUATED
+_WITHHELD_STATEMENT = "no control below may report passed or waived"
 
 
 def _partial() -> EvaluationCoverage:
@@ -145,13 +150,13 @@ async def test_the_engine_hands_coverage_to_the_renderer_and_to_the_stored_repor
     assert update_status.call_args_list[-1].kwargs["coverage"] == _partial()
 
 
-def test_the_partial_statement_names_the_verdicts_it_undermines():
+def test_the_partial_statement_names_the_verdicts_it_withholds():
     statement = coverage_statement(_partial())
 
     assert str(_EVALUATED) in statement
     assert str(_IN_SCOPE) in statement
     assert str(_MISSING) in statement
-    assert "not evidence of compliance" in statement
+    assert _WITHHELD_STATEMENT in statement
 
 
 def test_the_complete_statement_says_the_scope_was_covered():
@@ -166,7 +171,7 @@ def test_json_carries_the_statement_and_the_numbers():
 
     assert payload["coverage"]["complete"] is False
     assert payload["coverage"]["findings_in_scope"] == _IN_SCOPE
-    assert "not evidence of compliance" in payload["coverage"]["statement"]
+    assert _WITHHELD_STATEMENT in payload["coverage"]["statement"]
 
 
 def test_csv_states_coverage_even_without_a_disclaimer():
@@ -180,7 +185,7 @@ def test_sarif_carries_the_statement_on_the_run():
     body, _, _ = SarifRenderer().render(_evaluation_with(_partial()), _report())
     payload = json.loads(body)
 
-    assert "not evidence of compliance" in payload["runs"][0]["properties"]["coverage"]
+    assert _WITHHELD_STATEMENT in payload["runs"][0]["properties"]["coverage"]
 
 
 def test_a_renderer_given_no_coverage_prints_nothing_about_it():
@@ -207,10 +212,170 @@ def test_the_pdf_cover_prints_the_coverage_banner(coverage, expects_alarm):
         disclaimer=None,
         coverage_statement=coverage_statement(coverage),
         coverage_complete=coverage.complete,
-        summary={"passed": 1, "failed": 0, "waived": 0, "not_applicable": 0, "total": 1},
+        summary={"passed": 0, "failed": 0, "waived": 0, "not_applicable": 0, "not_evaluated": 1, "total": 1},
         controls=[],
         residual_risks=[],
     )
 
     assert "Coverage:" in html
     assert ('class="coverage-partial"' in html) is expects_alarm
+
+
+_SLA_OVERDUE_DAYS = 400
+_WITHHELD_REASON_FRAGMENT = "would have rested on finding no match"
+
+
+def _sla_input(findings: list[dict], coverage: EvaluationCoverage) -> EvaluationInput:
+    return EvaluationInput(
+        resolved=ResolvedScope(scope="project", scope_id=_PROJECT, project_ids=[_PROJECT]),
+        scope_description=f"project '{_PROJECT}'",
+        crypto_assets=[],
+        findings=findings,
+        policy_rules=[],
+        policy_version=None,
+        iana_catalog_version=None,
+        scan_ids=[_SCAN],
+        coverage=coverage,
+    )
+
+
+def _overdue_critical(*, waived: bool = False) -> dict:
+    doc = _finding(0)
+    doc["first_seen_at"] = datetime.now(timezone.utc) - timedelta(days=_SLA_OVERDUE_DAYS)
+    doc["status"] = "open"
+    if waived:
+        doc["waived"] = True
+        doc["waiver_reason"] = "risk accepted"
+    return doc
+
+
+def _by_id(evaluation) -> dict[str, ControlResult]:
+    return {c.control_id: c for c in evaluation.controls}
+
+
+@pytest.mark.asyncio
+async def test_a_pass_over_a_truncated_finding_set_is_withheld():
+    evaluation = await CveRemediationSlaFramework().evaluate_async(_sla_input([], _partial()))
+
+    critical = _by_id(evaluation)["CVE-SLA-CRITICAL"]
+    assert critical.status == ControlStatus.NOT_EVALUATED.value
+    assert _WITHHELD_REASON_FRAGMENT in (critical.status_reason or "")
+    assert str(_MISSING) in (critical.status_reason or "")
+
+
+@pytest.mark.asyncio
+async def test_the_same_pass_stands_when_the_scope_was_fully_read():
+    evaluation = await CveRemediationSlaFramework().evaluate_async(_sla_input([], _complete()))
+
+    critical = _by_id(evaluation)["CVE-SLA-CRITICAL"]
+    assert critical.status == ControlStatus.PASSED.value
+    assert critical.status_reason is None
+
+
+@pytest.mark.asyncio
+async def test_a_failure_survives_truncation_because_a_cut_list_cannot_invent_a_finding():
+    evaluation = await CveRemediationSlaFramework().evaluate_async(_sla_input([_overdue_critical()], _partial()))
+
+    assert _by_id(evaluation)["CVE-SLA-CRITICAL"].status == ControlStatus.FAILED.value
+
+
+@pytest.mark.asyncio
+async def test_a_waived_verdict_is_withheld_because_it_rests_on_no_active_match():
+    evaluation = await CveRemediationSlaFramework().evaluate_async(
+        _sla_input([_overdue_critical(waived=True)], _partial())
+    )
+
+    assert _by_id(evaluation)["CVE-SLA-CRITICAL"].status == ControlStatus.NOT_EVALUATED.value
+
+
+@pytest.mark.asyncio
+async def test_the_summary_counts_the_withheld_verdicts():
+    evaluation = await CveRemediationSlaFramework().evaluate_async(_sla_input([], _partial()))
+
+    assert evaluation.summary["not_evaluated"] == evaluation.summary["total"]
+    assert evaluation.summary["passed"] == 0
+
+
+def test_a_verdict_read_from_the_asset_inventory_survives_a_truncated_finding_set():
+    """The findings cap says nothing about the crypto assets FIPS reads, so blanket-suppressing
+    every absence-backed status would claim the report skipped work it actually did."""
+    asset = CryptoAsset(
+        _id="a1",
+        project_id=_PROJECT,
+        scan_id=_SCAN,
+        bom_ref="ref-a",
+        name="AES",
+        asset_type=CryptoAssetType.ALGORITHM,
+        primitive=CryptoPrimitive.BLOCK_CIPHER,
+    )
+    data = _sla_input([], _partial())
+    data.crypto_assets = [asset]
+
+    evaluation = Fips1403Framework().evaluate(data)
+
+    assert _by_id(evaluation)["FIPS-140-3-SYMMETRIC_CIPHERS"].status == ControlStatus.PASSED.value
+
+
+@pytest.mark.asyncio
+async def test_sarif_reports_a_withheld_verdict_as_open_rather_than_pass():
+    evaluation = await CveRemediationSlaFramework().evaluate_async(_sla_input([], _partial()))
+    evaluation.coverage = _partial()
+
+    body, _, _ = SarifRenderer().render(evaluation, _report())
+    results = json.loads(body)["runs"][0]["results"]
+
+    assert {r["kind"] for r in results} == {"open"}
+    assert all(_WITHHELD_REASON_FRAGMENT in r["message"]["text"] for r in results)
+
+
+@pytest.mark.asyncio
+async def test_csv_and_json_carry_the_reason_beside_the_withheld_status():
+    evaluation = await CveRemediationSlaFramework().evaluate_async(_sla_input([], _partial()))
+    evaluation.coverage = _partial()
+
+    csv_body, _, _ = CsvRenderer().render(evaluation, _report())
+    json_body, _, _ = JsonRenderer().render(evaluation, _report())
+
+    assert "status_reason" in csv_body.decode().splitlines()[1]
+    assert _WITHHELD_REASON_FRAGMENT in csv_body.decode()
+    controls = json.loads(json_body)["controls"]
+    assert all(c["status"] == ControlStatus.NOT_EVALUATED.value for c in controls)
+    assert all(_WITHHELD_REASON_FRAGMENT in c["status_reason"] for c in controls)
+
+
+@pytest.mark.asyncio
+async def test_the_pdf_prints_the_withheld_count_and_the_per_control_reason():
+    evaluation = await CveRemediationSlaFramework().evaluate_async(_sla_input([], _partial()))
+    env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=select_autoescape(["html"]))
+    html = env.get_template("base_report.html").render(
+        framework_name="CVE Remediation SLA",
+        framework_version="1",
+        generated_at=datetime(2026, 9, 5, tzinfo=timezone.utc).isoformat(),
+        scope_description=f"project '{_PROJECT}'",
+        inputs_fingerprint="sha256:abc",
+        requested_by="u1",
+        disclaimer=None,
+        coverage_statement=coverage_statement(_partial()),
+        coverage_complete=False,
+        summary=evaluation.summary,
+        controls=[
+            {
+                "control_id": c.control_id,
+                "title": c.title,
+                "description": c.description,
+                "status": c.status,
+                "severity": c.severity,
+                "evidence_finding_ids": [],
+                "evidence_asset_bom_refs": [],
+                "waiver_reasons": [],
+                "remediation": c.remediation,
+                "status_reason": c.status_reason,
+            }
+            for c in evaluation.controls
+        ],
+        residual_risks=[],
+    )
+
+    assert "Not Evaluated" in html
+    assert 'class="status-reason"' in html
+    assert _WITHHELD_REASON_FRAGMENT in html

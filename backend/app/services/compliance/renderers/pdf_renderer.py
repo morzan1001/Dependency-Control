@@ -56,6 +56,7 @@ class PdfRenderer:
                     "evidence_asset_bom_refs": c.evidence_asset_bom_refs,
                     "waiver_reasons": c.waiver_reasons,
                     "remediation": c.remediation,
+                    "status_reason": c.status_reason,
                 }
                 for c in evaluation.controls
             ],

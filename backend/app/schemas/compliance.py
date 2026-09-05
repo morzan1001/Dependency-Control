@@ -43,6 +43,8 @@ class ControlStatus(str, Enum):
     FAILED = "failed"
     WAIVED = "waived"
     NOT_APPLICABLE = "not_applicable"
+    # The finding set the verdict would have rested on did not cover the scope.
+    NOT_EVALUATED = "not_evaluated"
 
 
 @dataclass
@@ -68,6 +70,8 @@ class ControlResult(BaseModel):
     evidence_asset_bom_refs: list[str] = Field(default_factory=list)
     waiver_reasons: list[str] = Field(default_factory=list)
     remediation: str
+    # Why NOT_EVALUATED was returned in place of a verdict.
+    status_reason: str | None = None
 
     model_config = ConfigDict(use_enum_values=True)
 

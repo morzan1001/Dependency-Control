@@ -1,7 +1,10 @@
 """`_classify` and `_waiver_reason` must be the single shared implementations in frameworks/base.py, imported by both license_audit and cve_remediation_sla."""
 
-from app.schemas.compliance import ControlStatus
+from app.schemas.compliance import ControlStatus, EvaluationCoverage
 from app.services.compliance.frameworks import base, cve_remediation_sla, license_audit
+
+_EVALUATED = 12
+_COMPLETE = EvaluationCoverage(findings_evaluated=_EVALUATED, findings_in_scope=_EVALUATED, limit=_EVALUATED)
 
 
 def test_classify_is_shared_from_base():
@@ -15,17 +18,17 @@ def test_waiver_reason_is_shared_from_base():
 
 
 def test_classify_behavior_preserved():
-    assert base._classify([]) == (ControlStatus.PASSED, [])
+    assert base._classify([], _COMPLETE) == (ControlStatus.PASSED, [], None)
 
     active = [{"_id": "a1", "waived": False}]
-    assert base._classify(active) == (ControlStatus.FAILED, ["a1"])
+    assert base._classify(active, _COMPLETE) == (ControlStatus.FAILED, ["a1"], None)
 
     waived = [{"id": "w1", "waived": True}]
-    assert base._classify(waived) == (ControlStatus.WAIVED, ["w1"])
+    assert base._classify(waived, _COMPLETE) == (ControlStatus.WAIVED, ["w1"], None)
 
     # Evidence is collected only for findings carrying an id/_id.
     mixed = [{"_id": "a1", "waived": True}, {"waived": True}]
-    assert base._classify(mixed) == (ControlStatus.WAIVED, ["a1"])
+    assert base._classify(mixed, _COMPLETE) == (ControlStatus.WAIVED, ["a1"], None)
 
 
 def test_waiver_reason_behavior_preserved():

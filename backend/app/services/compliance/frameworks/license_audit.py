@@ -86,7 +86,7 @@ class LicenseAuditFramework:
                 )
                 continue
             matching = [f for f in findings if _is_license_violation(f, cfg["categories"])]
-            status, evidence = _classify(matching)
+            status, evidence, status_reason = _classify(matching, data.coverage)
             controls.append(
                 ControlResult(
                     control_id=cfg["control_id"],
@@ -102,11 +102,12 @@ class LicenseAuditFramework:
                         "or explicitly flip the corresponding policy toggle if "
                         "the usage context permits."
                     ),
+                    status_reason=status_reason,
                 )
             )
 
         unknown = [f for f in findings if _is_license_violation(f, ["unknown"])]
-        status, evidence = _classify(unknown)
+        status, evidence, status_reason = _classify(unknown, data.coverage)
         controls.append(
             ControlResult(
                 control_id="LICENSE-AUDIT-LICENSE-IDENTIFIED",
@@ -122,6 +123,7 @@ class LicenseAuditFramework:
                     "pin to a versioned release with declared metadata, or "
                     "remove the dependency."
                 ),
+                status_reason=status_reason,
             )
         )
 

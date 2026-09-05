@@ -9,7 +9,7 @@ import { useDialogState } from "@/hooks/use-dialog-state";
 import { extractErrorMessage } from "@/lib/errors";
 import { formatDateTime } from "@/lib/utils";
 import { ReportStatusBadge } from "./ReportStatusBadge";
-import type { ComplianceReportMeta, EvaluationCoverage } from "@/types/compliance";
+import type { ComplianceReportMeta, ControlStatus, EvaluationCoverage } from "@/types/compliance";
 
 interface Props { report: ComplianceReportMeta | null; onClose: () => void; }
 
@@ -25,10 +25,24 @@ function CoverageNotice({ coverage }: { readonly coverage: EvaluationCoverage })
     <div className="rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
       Evaluated {coverage.findings_evaluated.toLocaleString()} of{" "}
       {coverage.findings_in_scope.toLocaleString()} findings in scope, a cap of{" "}
-      {coverage.limit.toLocaleString()} per report. A control below reported as passed was not
-      checked against the remaining{" "}
-      {(coverage.findings_in_scope - coverage.findings_evaluated).toLocaleString()} findings.
-      Narrow the scope and regenerate before handing this to an auditor.
+      {coverage.limit.toLocaleString()} per report. The remaining{" "}
+      {(coverage.findings_in_scope - coverage.findings_evaluated).toLocaleString()} were not read,
+      so no control reports passed or waived: every verdict that would have rested on finding no
+      match is reported as not_evaluated instead. Failures stand. Narrow the scope and regenerate
+      before handing this to an auditor.
+    </div>
+  );
+}
+
+const WITHHELD_KEY: ControlStatus = "not_evaluated";
+
+function SummaryRow({ label, value }: { readonly label: string; readonly value: number | undefined }) {
+  const withheld = label === WITHHELD_KEY && (value ?? 0) > 0;
+  const tone = withheld ? "text-amber-700 dark:text-amber-300 font-medium" : "";
+  return (
+    <div className="contents">
+      <dt className={`text-xs ${withheld ? tone : "text-muted-foreground"}`}>{label}</dt>
+      <dd className={`text-xs ${tone}`}>{String(value)}</dd>
     </div>
   );
 }
@@ -88,10 +102,7 @@ export function ReportDetailDrawer({ report, onClose }: Props) {
                 {Object.keys(report.summary || {}).length > 0 && (
                   <dl className="mt-3 grid grid-cols-2 gap-y-1">
                     {Object.entries(report.summary).map(([k, v]) => (
-                      <div key={k} className="contents">
-                        <dt className="text-muted-foreground text-xs">{k}</dt>
-                        <dd className="text-xs">{String(v)}</dd>
-                      </div>
+                      <SummaryRow key={k} label={k} value={v} />
                     ))}
                   </dl>
                 )}

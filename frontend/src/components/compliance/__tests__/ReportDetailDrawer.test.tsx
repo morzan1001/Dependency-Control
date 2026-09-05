@@ -33,10 +33,11 @@ const sampleReport: ComplianceReportMeta = {
 const EVALUATED = 20000;
 const IN_SCOPE = 20050;
 const NOT_EVALUATED = IN_SCOPE - EVALUATED;
-const PARTIAL_WARNING = /was not\s+checked against the remaining/i;
+const PARTIAL_WARNING = /no control reports passed or waived/i;
+const WITHHELD = 3;
 
 describe("ReportDetailDrawer", () => {
-  it("says a verdict computed over a subset was not checked against the rest", () => {
+  it("says no verdict over a subset may report passed or waived", () => {
     const partial: ComplianceReportMeta = {
       ...sampleReport,
       coverage: { findings_evaluated: EVALUATED, findings_in_scope: IN_SCOPE, limit: EVALUATED },
@@ -56,6 +57,19 @@ describe("ReportDetailDrawer", () => {
 
     expect(screen.getByText(/Evaluated all/i)).toBeInTheDocument();
     expect(screen.queryByText(PARTIAL_WARNING)).not.toBeInTheDocument();
+  });
+
+  it("shows how many verdicts the cap withheld", () => {
+    const withheld: ComplianceReportMeta = {
+      ...sampleReport,
+      coverage: { findings_evaluated: EVALUATED, findings_in_scope: IN_SCOPE, limit: EVALUATED },
+      summary: { passed: 0, failed: 0, waived: 0, not_applicable: 0, not_evaluated: WITHHELD, total: WITHHELD },
+    };
+    withClient(<ReportDetailDrawer report={withheld} onClose={() => {}} />);
+
+    const label = screen.getByText("not_evaluated");
+    expect(label).toBeInTheDocument();
+    expect(label.className).toMatch(/amber/);
   });
 
   it("renders a Delete report button and opens confirmation dialog", async () => {

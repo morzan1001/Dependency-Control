@@ -24,6 +24,30 @@ from app.services.analyzers.crypto.matcher import asset_in_rule_scope
 
 logger = logging.getLogger(__name__)
 
+# A verdict whose evidence is the absence of a matching finding cannot be read off a truncated
+# set. FAILED can: a cut list under-reports, it cannot invent a finding. NOT_APPLICABLE is
+# decided from the asset inventory and the policy, neither of which this cap touches.
+_ABSENCE_BACKED_STATUSES = frozenset({ControlStatus.PASSED, ControlStatus.WAIVED})
+
+_WITHHELD_REASON = (
+    "Withheld: {evaluated} of {in_scope} findings in scope were read, and this verdict would "
+    "have rested on finding no match among the {missing} that were not."
+)
+
+
+def findings_verdict(
+    status: ControlStatus,
+    coverage: EvaluationCoverage | None,
+) -> tuple[ControlStatus, str | None]:
+    """`status`, or NOT_EVALUATED and why, when the finding set did not cover the scope."""
+    if coverage is None or coverage.complete or status not in _ABSENCE_BACKED_STATUSES:
+        return status, None
+    return ControlStatus.NOT_EVALUATED, _WITHHELD_REASON.format(
+        evaluated=coverage.findings_evaluated,
+        in_scope=coverage.findings_in_scope,
+        missing=coverage.findings_in_scope - coverage.findings_evaluated,
+    )
+
 
 @dataclass
 class EvaluationInput:
@@ -80,6 +104,7 @@ def default_evaluator(
     else:
         status = ControlStatus.NOT_APPLICABLE
 
+    status, status_reason = findings_verdict(status, data.coverage)
     return ControlResult(
         control_id=control.control_id,
         title=control.title,
@@ -90,6 +115,7 @@ def default_evaluator(
         evidence_asset_bom_refs=_extract_bom_refs(matching),
         waiver_reasons=[(f.get("waiver_reason") or "") for f in waived_findings if f.get("waiver_reason")],
         remediation=control.remediation,
+        status_reason=status_reason,
     )
 
 
@@ -215,15 +241,20 @@ def extract_finding_id(finding: dict[str, Any]) -> str:
     return str(finding.get("_id") or finding.get("id") or "")
 
 
-def _classify(matching: list[dict[str, Any]]) -> tuple[ControlStatus, list[str]]:
-    """Map matched findings to (status, evidence_ids): empty -> PASSED, any active -> FAILED, else WAIVED."""
+def _classify(
+    matching: list[dict[str, Any]],
+    coverage: EvaluationCoverage | None,
+) -> tuple[ControlStatus, list[str], str | None]:
+    """Map matched findings to (status, evidence_ids, status_reason): empty -> PASSED, any active
+    -> FAILED, else WAIVED, with the absence-backed verdicts withheld on partial coverage."""
     if not matching:
-        return ControlStatus.PASSED, []
-    active = [f for f in matching if not f.get("waived")]
-    evidence_ids = [extract_finding_id(f) for f in matching if f.get("_id") or f.get("id")]
-    if active:
-        return ControlStatus.FAILED, evidence_ids
-    return ControlStatus.WAIVED, evidence_ids
+        status, evidence_ids = ControlStatus.PASSED, []
+    else:
+        active = [f for f in matching if not f.get("waived")]
+        evidence_ids = [extract_finding_id(f) for f in matching if f.get("_id") or f.get("id")]
+        status = ControlStatus.FAILED if active else ControlStatus.WAIVED
+    status, status_reason = findings_verdict(status, coverage)
+    return status, evidence_ids, status_reason
 
 
 def _waiver_reason(f: dict[str, Any]) -> str:
@@ -233,7 +264,14 @@ def _waiver_reason(f: dict[str, Any]) -> str:
 
 def build_summary(results: list[ControlResult]) -> dict[str, int]:
     """Count controls by status bucket."""
-    counts = {"passed": 0, "failed": 0, "waived": 0, "not_applicable": 0, "total": len(results)}
+    counts = {
+        "passed": 0,
+        "failed": 0,
+        "waived": 0,
+        "not_applicable": 0,
+        "not_evaluated": 0,
+        "total": len(results),
+    }
     for r in results:
         key = status_value(r.status)
         counts[key] = counts.get(key, 0) + 1

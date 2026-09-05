@@ -9,8 +9,9 @@ from app.schemas.compliance import EvaluationCoverage, FrameworkEvaluation, Repo
 _COVERAGE_COMPLETE = "Evaluated all {in_scope} findings in scope."
 _COVERAGE_PARTIAL = (
     "Evaluated {evaluated} of {in_scope} findings in scope, a cap of {limit} per report. "
-    "Every verdict below was computed over that subset: a control reported as passed was not "
-    "checked against the remaining {missing} findings and is not evidence of compliance. "
+    "The remaining {missing} were not read, so no control below may report passed or waived: "
+    "every verdict that would have rested on finding no match is reported as not_evaluated "
+    "instead. Failures stand — a subset can under-report a violation but cannot invent one. "
     "Narrow the scope and regenerate for a verdict that covers everything."
 )
 

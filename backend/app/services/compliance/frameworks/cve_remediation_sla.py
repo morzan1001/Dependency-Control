@@ -70,7 +70,7 @@ class CveRemediationSlaFramework:
             sla_days = self._sla_days[severity]
             title = _control_title(severity, sla_days)
             overdue = [f for f in findings if _is_overdue(f, severity, sla_days, now)]
-            status, evidence = _classify(overdue)
+            status, evidence, status_reason = _classify(overdue, data.coverage)
             controls.append(
                 ControlResult(
                     control_id=f"CVE-SLA-{severity.value.upper()}",
@@ -88,6 +88,7 @@ class CveRemediationSlaFramework:
                         "Upgrade affected components to their patched version, "
                         "or submit a waiver with documented compensating controls."
                     ),
+                    status_reason=status_reason,
                 )
             )
 
