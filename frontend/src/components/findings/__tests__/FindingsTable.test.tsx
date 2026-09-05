@@ -10,6 +10,7 @@ vi.mock("@/api/scans", () => ({
 
 import { scanApi } from "@/api/scans";
 import {
+  RELATED_FINDING_SEARCH_LIMIT,
   resolveRelatedFindingInRows,
   fetchRelatedFinding,
 } from "../related-finding-rows";
@@ -104,13 +105,13 @@ describe("fetchRelatedFinding", () => {
       size: 2,
       pages: 1,
     });
-    const found = await fetchRelatedFinding("scan1", "LIC-GPL-3.0");
-    expect(found?.id).toBe("LIC-GPL-3.0");
+    const outcome = await fetchRelatedFinding("scan1", "LIC-GPL-3.0");
+    expect(outcome).toEqual({ status: "found", finding: expect.objectContaining({ id: "LIC-GPL-3.0" }) });
     expect(getFindingsMock).toHaveBeenCalledWith("scan1", {
       type: "license",
       search: "LIC-GPL-3.0",
       skip: 0,
-      limit: 200,
+      limit: RELATED_FINDING_SEARCH_LIMIT,
     });
   });
 
@@ -122,13 +123,13 @@ describe("fetchRelatedFinding", () => {
       size: 1,
       pages: 1,
     });
-    const found = await fetchRelatedFinding("scan1", "OUTDATED-react");
-    expect(found?.id).toBe("u2");
+    const outcome = await fetchRelatedFinding("scan1", "OUTDATED-react");
+    expect(outcome).toEqual({ status: "found", finding: expect.objectContaining({ id: "u2" }) });
     expect(getFindingsMock).toHaveBeenCalledWith("scan1", {
       type: "outdated",
       search: "react",
       skip: 0,
-      limit: 200,
+      limit: RELATED_FINDING_SEARCH_LIMIT,
     });
   });
 
@@ -140,13 +141,42 @@ describe("fetchRelatedFinding", () => {
       size: 1,
       pages: 1,
     });
-    const found = await fetchRelatedFinding("scan1", "EOL-spring-boot-2");
-    expect(found?.id).toBe("e1");
+    const outcome = await fetchRelatedFinding("scan1", "EOL-spring-boot-2");
+    expect(outcome).toEqual({ status: "found", finding: expect.objectContaining({ id: "e1" }) });
     expect(getFindingsMock).toHaveBeenCalledWith("scan1", {
       type: "eol",
       search: "spring-boot",
       skip: 0,
-      limit: 200,
+      limit: RELATED_FINDING_SEARCH_LIMIT,
     });
+  });
+
+  it("separates a reference the scan does not hold from one the window did not reach", async () => {
+    const matched = RELATED_FINDING_SEARCH_LIMIT * 20;
+    getFindingsMock.mockResolvedValue({
+      items: [makeFinding({ id: "other", type: "vulnerability", component: "openssl", version: "1.1.1" })],
+      total: matched,
+      page: 1,
+      size: RELATED_FINDING_SEARCH_LIMIT,
+      pages: 20,
+    });
+
+    const outcome = await fetchRelatedFinding("scan1", "openssl:3.0.0");
+
+    expect(outcome).toEqual({ status: "beyond-window", searched: RELATED_FINDING_SEARCH_LIMIT, matched });
+  });
+
+  it("reports a genuine miss as missing rather than as a window that was too small", async () => {
+    getFindingsMock.mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      size: RELATED_FINDING_SEARCH_LIMIT,
+      pages: 0,
+    });
+
+    const outcome = await fetchRelatedFinding("scan1", "openssl:3.0.0");
+
+    expect(outcome).toEqual({ status: "missing" });
   });
 });
