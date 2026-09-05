@@ -11,6 +11,8 @@ Supported query operators
 - ``$regex`` (with ``$options: "i"`` for case-insensitive)
 - Range: ``$gt``, ``$gte``, ``$lt``, ``$lte``
 - Logical: top-level ``$or``, ``$and``
+- Anything else raises ``OperationFailure``, as the server does; matching on an
+  operator the fake cannot evaluate would report a wider scope than the query asks for.
 
 Supported update operators
 --------------------------
@@ -63,6 +65,8 @@ from datetime import timedelta as _timedelta
 from datetime import timezone as _timezone
 from typing import Any
 from unittest.mock import MagicMock
+
+from pymongo.errors import OperationFailure
 
 from app.core.init_db import RELEASES_UPSERT_KEY_FIELDS
 
@@ -274,8 +278,31 @@ def _in_allowed(value: Any, allowed: list) -> bool:
     return False
 
 
+_MATCH_TOP_LEVEL_OPERATORS = frozenset({"$or", "$and", "$expr"})
+_MATCH_FIELD_OPERATORS = frozenset({"$exists", "$in", "$nin", "$ne", "$regex", "$options", *_CMP})
+
+
+def _assert_known_operators(query: dict) -> None:
+    """Refuse an operator the fake does not implement.
+
+    Ignoring it would match every document, so a broken filter would return more rows than the
+    server does and the test would report a wider scope than the code actually selects.
+    """
+    for key, condition in query.items():
+        if key.startswith("$"):
+            if key not in _MATCH_TOP_LEVEL_OPERATORS:
+                raise OperationFailure(f"unknown top level operator: {key}")
+            for sub in condition if isinstance(condition, list) else []:
+                if isinstance(sub, dict):
+                    _assert_known_operators(sub)
+        elif isinstance(condition, dict):
+            for unknown in (k for k in condition if k.startswith("$") and k not in _MATCH_FIELD_OPERATORS):
+                raise OperationFailure(f"unknown operator: {unknown}")
+
+
 def _match_doc(doc: dict, query: dict) -> bool:
     """Return True if doc matches a MongoDB query."""
+    _assert_known_operators(query)
     for key, condition in query.items():
         if key == "$or":
             if not any(_match_doc(doc, sub) for sub in condition):
@@ -491,10 +518,10 @@ def _eval_expr(doc: dict, expr):
     for op in ("$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$and", "$or", "$in"):
         if op in expr:
             return _eval_bool(doc, expr)
+    for unknown in (k for k in expr if k.startswith("$")):
+        raise OperationFailure(f"Unrecognized expression '{unknown}'")
     # Operator-free dict: Mongo treats it as a document expression, so evaluate each value.
-    if expr and not any(k.startswith("$") for k in expr):
-        return {k: _eval_expr(doc, v) for k, v in expr.items()}
-    return expr
+    return {k: _eval_expr(doc, v) for k, v in expr.items()}
 
 
 def _truthy(value) -> bool:
