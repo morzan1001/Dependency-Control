@@ -71,6 +71,7 @@ class FoldedWindow:
         branch: str | None = None,
         slowest_packages: Sequence[SlowPackage] = (),
         upstream: UpstreamCadenceMetrics | None = None,
+        window_scan_cap: int | None = None,
     ) -> UpdateFrequencyMetrics:
         return UpdateFrequencyMetrics(
             project_id=project_id,
@@ -96,6 +97,7 @@ class FoldedWindow:
             trend_direction=self.trend_direction,
             trend_detail=self.trend_detail,
             dominant_ecosystem=self.dominant_ecosystem,
+            window_scan_cap=window_scan_cap,
             scan_timeline=self.scan_timeline,
             slowest_packages=list(slowest_packages),
             recent_updates=self.recent_updates,
@@ -118,6 +120,7 @@ class FoldedWindow:
         branch: str | None = None,
         window_days: int,
         data_status: Literal["ready", "partial"] = "ready",
+        window_scan_cap: int | None = None,
     ) -> ProjectUpdateSummary:
         """A row carrying the folded numbers.
 
@@ -139,6 +142,7 @@ class FoldedWindow:
             total_updates=self.total_updates,
             total_outdated=self.total_outdated_detected,
             last_scan_date=self.last_scan_date,
+            window_scan_cap=window_scan_cap,
         )
 
 

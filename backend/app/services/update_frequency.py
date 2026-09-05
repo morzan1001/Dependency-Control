@@ -401,6 +401,7 @@ def _aggregate_metrics(
     latest_outdated: set[str] | None = None,
     final_versions: dict[str, str] | None = None,
     window_days: int | None = None,
+    window_scan_cap: int | None = None,
 ) -> UpdateFrequencyMetrics:
     """Build the final metrics response from streamed counters."""
     downgrade_total = type_counter.get("downgrade", 0)
@@ -464,6 +465,7 @@ def _aggregate_metrics(
         update_coverage_pct=update_coverage_pct,
         trend_direction=trend_direction,
         trend_detail=trend_detail,
+        window_scan_cap=window_scan_cap,
         scan_timeline=bars,
         slowest_packages=slowest_packages,
         recent_updates=recent_events,
@@ -915,6 +917,7 @@ async def compute_update_frequency(
         latest_outdated=latest_outdated,
         final_versions=_final_versions_by_name(prev_deps),
         window_days=rate_days,
+        window_scan_cap=hard_limit if truncated else None,
     )
 
 
@@ -1079,6 +1082,7 @@ async def compute_update_frequency_comparison(
                 total_updates=metrics.total_updates,
                 total_outdated=metrics.total_outdated_detected,
                 last_scan_date=metrics.last_scan_date,
+                window_scan_cap=metrics.window_scan_cap,
             )
 
     results = await asyncio.gather(*[_compute_single(p) for p in projects], return_exceptions=True)

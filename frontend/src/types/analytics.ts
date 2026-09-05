@@ -517,6 +517,9 @@ export interface UpdateFrequencyMetrics {
     upstream_days_since_latest_release_median: number | null;
     adoption_latency_days_median: number | null;
     dominant_ecosystem: string | null;
+    // Scans the numbers cover when the branch holds more than either read path follows;
+    // null when the whole window was read.
+    window_scan_cap: number | null;
     scan_timeline: ScanTimelineEntry[];
     slowest_packages: SlowPackage[];
     recent_updates: DependencyUpdateEvent[];
@@ -545,6 +548,9 @@ export interface ProjectUpdateSummary {
     total_updates: number | null;
     last_scan_date: string | null;
     data_status: UpdateDataStatus;
+    // Scans the row covers when the branch holds more than either read path follows;
+    // null when the whole window was read.
+    window_scan_cap: number | null;
 }
 
 // projects holds every project in scope: the ranked ones first, then partial,

@@ -390,6 +390,10 @@ class UpdateFrequencyMetrics(BaseModel):
     # Dominant dep ecosystem ("pypi"/"npm"/...); "mixed" if none >=70%; None if empty.
     dominant_ecosystem: str | None = None
 
+    # Scans the numbers cover when the branch holds more than either read path follows;
+    # None when the whole window was read. scan_count counts timeline bars, not scans.
+    window_scan_cap: int | None = None
+
     scan_timeline: list[ScanTimelineEntry]
     slowest_packages: list[SlowPackage]
     recent_updates: list[DependencyUpdateEvent]
@@ -428,6 +432,10 @@ class ProjectUpdateSummary(BaseModel):
     total_updates: int | None = None
     total_outdated: int | None = None
     last_scan_date: str | None = None
+    # Scans the row's numbers cover when the branch holds more than either read path
+    # follows; None when the whole window was read. The rate is still comparable, because
+    # it divides by the stretch that was read rather than by the window.
+    window_scan_cap: int | None = None
 
 
 class UpdateFrequencyComparison(BaseModel):

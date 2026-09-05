@@ -1462,6 +1462,26 @@ class TestStreamingOrchestrator:
         )
         # Only the newest 100 scans should be analysed under the safety cap.
         assert m.scan_count == 100
+        # And the response says so: every number above covers 100 of the branch's 2500 scans.
+        assert m.window_scan_cap == 100
+
+    @pytest.mark.asyncio
+    async def test_a_window_read_whole_names_no_cap(self):
+        scans = _recent_scans(30)
+        deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(30)}
+
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+            max_scans=5,
+            window_days=3000,
+            hard_limit=100,
+        )
+
+        assert m.window_scan_cap is None
 
     @staticmethod
     def _two_scan_project(pid: str, pkg: str, versions: tuple[str, str]) -> tuple[list, dict]:

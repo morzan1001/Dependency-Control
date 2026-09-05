@@ -30,6 +30,9 @@ import { analyticsApi } from "@/api/analytics";
 
 const mockedFrequency = analyticsApi.getUpdateFrequency as ReturnType<typeof vi.fn>;
 
+// The cap the backend reports; the component only renders the number it is given.
+const WINDOW_SCAN_CAP = 1000;
+
 const metrics: UpdateFrequencyMetrics = {
   project_id: "p1",
   project_name: "proj",
@@ -57,6 +60,7 @@ const metrics: UpdateFrequencyMetrics = {
   upstream_days_between_releases_median: null,
   upstream_days_since_latest_release_median: null,
   adoption_latency_days_median: null,
+  window_scan_cap: null,
   dominant_ecosystem: "npm",
   scan_timeline: [],
   slowest_packages: [],
@@ -109,5 +113,20 @@ describe("UpdateFrequency", () => {
     await screen.findByText("Upstream Release Cadence");
     expect(screen.getByText("4.0")).toBeInTheDocument();
     expect(screen.queryByText(/no upstream release data/i)).not.toBeInTheDocument();
+  });
+
+  it("says so when the branch is busier than the analysis follows", async () => {
+    mockedFrequency.mockResolvedValue({ ...metrics, window_scan_cap: WINDOW_SCAN_CAP });
+    renderFrequency();
+
+    expect(await screen.findByText(new RegExp(`newest ${WINDOW_SCAN_CAP} scans`))).toBeInTheDocument();
+  });
+
+  it("says nothing when the whole window was read", async () => {
+    mockedFrequency.mockResolvedValue(metrics);
+    renderFrequency();
+
+    await screen.findByText("Update Timeline");
+    expect(screen.queryByText(/newest \d+ scans/)).not.toBeInTheDocument();
   });
 });

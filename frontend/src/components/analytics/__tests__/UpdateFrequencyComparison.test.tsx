@@ -49,6 +49,9 @@ import { analyticsApi } from "@/api/analytics";
 
 const mockedComparison = analyticsApi.getUpdateFrequencyComparison as ReturnType<typeof vi.fn>;
 
+// The cap the backend reports; the table only renders the number it is given.
+const WINDOW_SCAN_CAP = 1000;
+
 const makeProject = (idx: number): ProjectUpdateSummary => ({
   project_id: `p${idx}`,
   project_name: `project-${idx}`,
@@ -65,6 +68,7 @@ const makeProject = (idx: number): ProjectUpdateSummary => ({
   total_updates: idx * 2,
   last_scan_date: "2026-08-01T00:00:00Z",
   data_status: "ready",
+  window_scan_cap: null,
 });
 
 const makeUnmeasured = (
@@ -85,6 +89,7 @@ const makeUnmeasured = (
   total_updates: null,
   last_scan_date: null,
   data_status: status,
+  window_scan_cap: null,
 });
 
 const makePartial = (name: string): ProjectUpdateSummary => ({
@@ -362,5 +367,14 @@ describe("UpdateFrequencyComparison", () => {
 
     await waitFor(() => expect(mockedComparison).toHaveBeenCalledTimes(2));
     expect(await screen.findByText("Project Ranking")).toBeInTheDocument();
+  });
+
+  it("marks a row whose branch is busier than the analysis follows", async () => {
+    const capped = { ...makeProject(1), window_scan_cap: WINDOW_SCAN_CAP };
+    mockedComparison.mockResolvedValue(makeComparison(0, { projects: [capped] }));
+    renderComparison();
+    clickLoad();
+
+    expect(await screen.findByText(`Newest ${WINDOW_SCAN_CAP} scans`)).toBeInTheDocument();
   });
 });

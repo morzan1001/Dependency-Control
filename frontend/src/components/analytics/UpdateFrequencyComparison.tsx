@@ -156,6 +156,27 @@ function PartialBadge({ scanCount }: Readonly<{ scanCount: number | null }>) {
   )
 }
 
+function cappedHint(cap: number, windowDays: number): string {
+  return (
+    `This branch is busier than the analysis follows: the row covers its newest ${cap} scans, ` +
+    `not all of the last ${windowDays} days. The monthly rate divides by the stretch that was read, ` +
+    'so it stays comparable.'
+  )
+}
+
+function CappedBadge({ cap, windowDays }: Readonly<{ cap: number; windowDays: number }>) {
+  return (
+    <Badge
+      variant="outline"
+      className="gap-1 whitespace-nowrap font-normal bg-amber-500/10 text-amber-600 border-amber-500/20"
+      title={cappedHint(cap, windowDays)}
+    >
+      <Info className="h-3 w-3" />
+      Newest {cap} scans
+    </Badge>
+  )
+}
+
 function unmeasuredNote(data: Comparison): string | null {
   const parts = [
     data.partial_projects > 0 && `${data.partial_projects} on a partial window`,
@@ -429,6 +450,9 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                     <span className="inline-flex flex-wrap items-center gap-2">
                       {project.project_name}
                       {project.data_status === 'partial' && <PartialBadge scanCount={project.scan_count} />}
+                      {project.window_scan_cap !== null && (
+                        <CappedBadge cap={project.window_scan_cap} windowDays={project.window_days} />
+                      )}
                     </span>
                   </TableCell>
                   <TableCell className="text-muted-foreground">

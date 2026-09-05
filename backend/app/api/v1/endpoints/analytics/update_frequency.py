@@ -325,6 +325,8 @@ class _ResolvedWindow:
     # stretch actually read, not by a window whose older part was never looked at.
     measured_days: int | None = None
     bars: list[list[dict[str, Any]]] = field(default_factory=list)
+    # Scans the fold covered when the branch holds more than the cap follows.
+    window_scan_cap: int | None = None
 
 
 def _resolve_window(
@@ -361,7 +363,7 @@ def _fold_branch(branch: str, deltas: list[dict[str, Any]], activity: BranchWind
     # path reads, so comparing against it would demote exactly the busiest projects.
     status: UpdateDataStatus = "ready" if capped else commit_coverage(deltas, window, activity.scans_per_commit).status
     measured_days = _spanned_days(bars) if capped else None
-    return _ResolvedWindow(branch, window, status, measured_days, bars)
+    return _ResolvedWindow(branch, window, status, measured_days, bars, WINDOW_HARD_LIMIT if capped else None)
 
 
 def _spanned_days(bars: list[list[dict[str, Any]]]) -> int:
@@ -401,6 +403,7 @@ def _rollup_summary(
         branch=resolved.branch,
         window_days=window_days,
         data_status=resolved.status,
+        window_scan_cap=resolved.window_scan_cap,
     )
 
 
@@ -512,6 +515,7 @@ async def _rollup_project_metrics(
         project.get("name", "Unknown"),
         branch=resolved.branch,
         slowest_packages=await _rollup_slowest_packages(db, resolved.bars),
+        window_scan_cap=resolved.window_scan_cap,
     )
 
 
