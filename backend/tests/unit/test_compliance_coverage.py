@@ -2,9 +2,13 @@
 
 Against a live MongoDB, a project holding 20 050 findings — 50 of them criticals 400 days past
 their SLA — produced a report whose CVE-SLA-CRITICAL control read `passed`, because the 50 sat
-past the engine's 20 000-finding cap. A verdict whose evidence is the absence of a match is
-withheld as `not_evaluated` once the finding set stops covering the scope; a failure stands,
-because a cut list can under-report a violation but cannot invent one.
+past the engine's 20 000-finding cap. The same project holding 10 001 crypto assets, the last of
+them MD5, produced a FIPS-140-3 report whose hash-function control read `passed`.
+
+A verdict whose evidence is the absence of a match is withheld as `not_evaluated` once the input
+it rests on stops covering the scope; a failure stands, because a cut input can under-report a
+violation but cannot invent one. Which input a verdict rests on is per control, so a truncated
+finding set may not suppress a verdict read off a complete inventory, or the other way round.
 """
 
 import json
@@ -16,12 +20,20 @@ import pytest
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from app.models.crypto_asset import CryptoAsset
+from app.models.finding import FindingType, Severity
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.schemas.compliance import ControlResult, ControlStatus, EvaluationCoverage, ReportFramework
+from app.schemas.compliance import (
+    ControlDefinition,
+    ControlResult,
+    ControlStatus,
+    EvaluationCoverage,
+    InputCoverage,
+    ReportFramework,
+)
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance import engine as engine_module
 from app.services.compliance.engine import ComplianceReportEngine
-from app.services.compliance.frameworks.base import EvaluationInput
+from app.services.compliance.frameworks.base import EvaluationInput, default_evaluator
 from app.services.compliance.frameworks.cve_remediation_sla import CveRemediationSlaFramework
 from app.services.compliance.frameworks.fips_140_3 import Fips1403Framework
 from app.services.compliance.renderers.base import coverage_statement
@@ -39,15 +51,41 @@ _TEMPLATE_DIR = Path(engine_module.__file__).resolve().parent / "templates"
 _EVALUATED = 20000
 _IN_SCOPE = 20050
 _MISSING = _IN_SCOPE - _EVALUATED
-_WITHHELD_STATEMENT = "no control below may report passed or waived"
+_ASSET_CAP = 10000
+_ASSETS_IN_SCOPE = 10001
+_ASSETS_MISSING = _ASSETS_IN_SCOPE - _ASSET_CAP
+_WITHHELD_STATEMENT = "would have rested on finding no match in a capped input"
+
+
+def _findings_coverage(evaluated: int) -> InputCoverage:
+    return InputCoverage(evaluated=evaluated, in_scope=_IN_SCOPE, limit=_EVALUATED)
+
+
+def _assets_coverage(evaluated: int) -> InputCoverage:
+    return InputCoverage(evaluated=evaluated, in_scope=_ASSETS_IN_SCOPE, limit=_ASSET_CAP)
 
 
 def _partial() -> EvaluationCoverage:
-    return EvaluationCoverage(findings_evaluated=_EVALUATED, findings_in_scope=_IN_SCOPE, limit=_EVALUATED)
+    """The findings stop short of the scope; the inventory covers it."""
+    return EvaluationCoverage(
+        findings=_findings_coverage(_EVALUATED),
+        crypto_assets=_assets_coverage(_ASSETS_IN_SCOPE),
+    )
 
 
 def _complete() -> EvaluationCoverage:
-    return EvaluationCoverage(findings_evaluated=_IN_SCOPE, findings_in_scope=_IN_SCOPE, limit=_EVALUATED)
+    return EvaluationCoverage(
+        findings=_findings_coverage(_IN_SCOPE),
+        crypto_assets=_assets_coverage(_ASSETS_IN_SCOPE),
+    )
+
+
+def _assets_partial() -> EvaluationCoverage:
+    """The inventory stops short of the scope; the findings cover it."""
+    return EvaluationCoverage(
+        findings=_findings_coverage(_IN_SCOPE),
+        crypto_assets=_assets_coverage(_ASSET_CAP),
+    )
 
 
 def _finding(index: int) -> dict:
@@ -162,7 +200,17 @@ def test_the_partial_statement_names_the_verdicts_it_withholds():
 def test_the_complete_statement_says_the_scope_was_covered():
     statement = coverage_statement(_complete())
 
-    assert statement == f"Evaluated all {_IN_SCOPE} findings in scope."
+    assert statement == (
+        f"Evaluated all {_IN_SCOPE} findings in scope. Evaluated all {_ASSETS_IN_SCOPE} crypto assets in scope."
+    )
+
+
+def test_the_statement_names_whichever_input_was_capped():
+    statement = coverage_statement(_assets_partial())
+
+    assert f"Evaluated all {_IN_SCOPE} findings in scope." in statement
+    assert f"Evaluated {_ASSET_CAP} of {_ASSETS_IN_SCOPE} crypto assets" in statement
+    assert _WITHHELD_STATEMENT in statement
 
 
 def test_json_carries_the_statement_and_the_numbers():
@@ -170,7 +218,8 @@ def test_json_carries_the_statement_and_the_numbers():
     payload = json.loads(body)
 
     assert payload["coverage"]["complete"] is False
-    assert payload["coverage"]["findings_in_scope"] == _IN_SCOPE
+    assert payload["coverage"]["findings"]["in_scope"] == _IN_SCOPE
+    assert payload["coverage"]["crypto_assets"]["in_scope"] == _ASSETS_IN_SCOPE
     assert _WITHHELD_STATEMENT in payload["coverage"]["statement"]
 
 
@@ -314,6 +363,154 @@ def test_a_verdict_read_from_the_asset_inventory_survives_a_truncated_finding_se
     evaluation = Fips1403Framework().evaluate(data)
 
     assert _by_id(evaluation)["FIPS-140-3-SYMMETRIC_CIPHERS"].status == ControlStatus.PASSED.value
+
+
+def _algorithm(name: str, primitive: CryptoPrimitive) -> CryptoAsset:
+    return CryptoAsset(
+        _id=f"a-{name}",
+        project_id=_PROJECT,
+        scan_id=_SCAN,
+        bom_ref=f"ref-{name}",
+        name=name,
+        asset_type=CryptoAssetType.ALGORITHM,
+        primitive=primitive,
+    )
+
+
+def _fips_input(assets: list[CryptoAsset], coverage: EvaluationCoverage):
+    data = _sla_input([], coverage)
+    data.crypto_assets = assets
+    return Fips1403Framework().evaluate(data)
+
+
+def test_a_fips_pass_over_a_truncated_inventory_is_withheld():
+    """The verdict rests on no disallowed algorithm being present, and a cut inventory fakes that."""
+    evaluation = _fips_input([_algorithm("SHA-256", CryptoPrimitive.HASH)], _assets_partial())
+
+    control = _by_id(evaluation)["FIPS-140-3-HASH_FUNCTIONS"]
+    assert control.status == ControlStatus.NOT_EVALUATED.value
+    assert "crypto assets" in (control.status_reason or "")
+    assert str(_ASSETS_MISSING) in (control.status_reason or "")
+
+
+def test_a_fips_not_applicable_over_a_truncated_inventory_is_withheld():
+    evaluation = _fips_input([_algorithm("AES-256", CryptoPrimitive.BLOCK_CIPHER)], _assets_partial())
+
+    assert _by_id(evaluation)["FIPS-140-3-HASH_FUNCTIONS"].status == ControlStatus.NOT_EVALUATED.value
+
+
+def test_a_fips_failure_survives_a_truncated_inventory():
+    evaluation = _fips_input([_algorithm("MD5", CryptoPrimitive.HASH)], _assets_partial())
+
+    control = _by_id(evaluation)["FIPS-140-3-HASH_FUNCTIONS"]
+    assert control.status == ControlStatus.FAILED.value
+    assert control.status_reason is None
+
+
+def test_the_same_fips_pass_stands_when_the_inventory_covered_the_scope():
+    evaluation = _fips_input([_algorithm("SHA-256", CryptoPrimitive.HASH)], _partial())
+
+    assert _by_id(evaluation)["FIPS-140-3-HASH_FUNCTIONS"].status == ControlStatus.PASSED.value
+
+
+def _rule(*, enabled: bool, match_primitive: str | None = None) -> dict:
+    return {
+        "rule_id": "rule-1",
+        "name": "r",
+        "description": "d",
+        "finding_type": FindingType.CRYPTO_WEAK_ALGORITHM.value,
+        "default_severity": Severity.HIGH.value,
+        "match_primitive": match_primitive,
+        "enabled": enabled,
+        "source": "nist-sp-800-131a",
+    }
+
+
+def test_a_not_applicable_decided_by_the_policy_stands_over_a_truncated_inventory():
+    """Only the inventory-read answer is unsafe; a control whose backing rules are all disabled
+    cannot change whatever the unread assets hold."""
+    control = ControlDefinition(
+        control_id="C1",
+        title="t",
+        description="d",
+        severity=Severity.HIGH,
+        remediation="r",
+        maps_to_rule_ids=["rule-1"],
+        maps_to_finding_types=[FindingType.CRYPTO_WEAK_ALGORITHM],
+    )
+    data = _sla_input([], _assets_partial())
+    data.crypto_assets = [_algorithm("SHA-256", CryptoPrimitive.HASH)]
+    data.policy_rules = [_rule(enabled=False)]
+
+    result = default_evaluator(control, data)
+
+    assert result.status == ControlStatus.NOT_APPLICABLE.value
+    assert result.status_reason is None
+
+
+def test_a_not_applicable_read_off_the_inventory_is_withheld_over_a_truncated_one():
+    control = ControlDefinition(
+        control_id="C1",
+        title="t",
+        description="d",
+        severity=Severity.HIGH,
+        remediation="r",
+        maps_to_rule_ids=["rule-1"],
+        maps_to_finding_types=[FindingType.CRYPTO_WEAK_ALGORITHM],
+    )
+    data = _sla_input([], _assets_partial())
+    data.crypto_assets = [_algorithm("SHA-256", CryptoPrimitive.HASH)]
+    data.policy_rules = [_rule(enabled=True, match_primitive=CryptoPrimitive.BLOCK_CIPHER.value)]
+
+    result = default_evaluator(control, data)
+
+    assert result.status == ControlStatus.NOT_EVALUATED.value
+    assert "crypto assets" in (result.status_reason or "")
+
+
+@pytest.mark.asyncio
+async def test_the_asset_budget_spans_the_report_rather_than_each_scan(db, monkeypatch):
+    """A global-scope report over many scans would otherwise hold the per-scan cap times the
+    scan count, which bounds nothing."""
+    monkeypatch.setattr(engine_module, "_CRYPTO_ASSETS_LIMIT", _CAP)
+    scans = ["s1", "s2", "s3"]
+    for scan in scans:
+        for index in range(_POPULATION):
+            doc = {
+                "_id": f"{scan}-a{index}",
+                "project_id": _PROJECT,
+                "scan_id": scan,
+                "bom_ref": f"ref-{scan}-{index}",
+                "name": f"ALG-{index}",
+                "asset_type": CryptoAssetType.ALGORITHM.value,
+                "primitive": CryptoPrimitive.HASH.value,
+            }
+            db.crypto_assets._docs[doc["_id"]] = doc
+
+    assets, in_scope = await ComplianceReportEngine()._collect_crypto_assets(db, [(_PROJECT, scan) for scan in scans])
+
+    assert len(assets) == _CAP
+    assert in_scope == _POPULATION * len(scans)
+
+
+@pytest.mark.asyncio
+async def test_an_uncapped_asset_collection_counts_what_it_read(db):
+    for index in range(_POPULATION):
+        doc = {
+            "_id": f"a{index}",
+            "project_id": _PROJECT,
+            "scan_id": _SCAN,
+            "bom_ref": f"ref-{index}",
+            "name": f"ALG-{index}",
+            "asset_type": CryptoAssetType.ALGORITHM.value,
+            "primitive": CryptoPrimitive.HASH.value,
+        }
+        db.crypto_assets._docs[doc["_id"]] = doc
+
+    assets, in_scope = await ComplianceReportEngine()._collect_crypto_assets(db, [(_PROJECT, _SCAN)])
+
+    assert len(assets) == _POPULATION
+    assert in_scope == _POPULATION
 
 
 @pytest.mark.asyncio

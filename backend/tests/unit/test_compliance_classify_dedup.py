@@ -1,10 +1,11 @@
 """`_classify` and `_waiver_reason` must be the single shared implementations in frameworks/base.py, imported by both license_audit and cve_remediation_sla."""
 
-from app.schemas.compliance import ControlStatus, EvaluationCoverage
+from app.schemas.compliance import ControlStatus, EvaluationCoverage, InputCoverage
 from app.services.compliance.frameworks import base, cve_remediation_sla, license_audit
 
 _EVALUATED = 12
-_COMPLETE = EvaluationCoverage(findings_evaluated=_EVALUATED, findings_in_scope=_EVALUATED, limit=_EVALUATED)
+_WHOLE = InputCoverage(evaluated=_EVALUATED, in_scope=_EVALUATED, limit=_EVALUATED)
+_COMPLETE = EvaluationCoverage(findings=_WHOLE, crypto_assets=_WHOLE)
 
 
 def test_classify_is_shared_from_base():

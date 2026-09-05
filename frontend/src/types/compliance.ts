@@ -11,7 +11,7 @@ export type ReportFramework =
   | "cve-remediation-sla";
 
 // Mirrors backend ControlStatus. "not_evaluated" is returned in place of a verdict that would
-// have rested on the absence of a finding when the finding set did not cover the scope.
+// have rested on the absence of a match in an input that did not cover the scope.
 export type ControlStatus =
   | "passed"
   | "failed"
@@ -21,12 +21,17 @@ export type ControlStatus =
 
 export type ControlStatusCounts = Partial<Record<ControlStatus, number>> & { total?: number };
 
-// What the report's verdicts were computed over. findings_evaluated below findings_in_scope means
-// every absence-backed verdict was withheld as not_evaluated.
-export interface EvaluationCoverage {
-  findings_evaluated: number;
-  findings_in_scope: number;
+// evaluated below in_scope means every verdict resting on this input was withheld as not_evaluated.
+export interface InputCoverage {
+  evaluated: number;
+  in_scope: number;
   limit: number;
+}
+
+// What the report's verdicts were computed over, per input a verdict can rest on.
+export interface EvaluationCoverage {
+  findings: InputCoverage;
+  crypto_assets: InputCoverage;
 }
 
 export interface ComplianceReportMeta {

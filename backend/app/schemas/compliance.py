@@ -43,7 +43,7 @@ class ControlStatus(str, Enum):
     FAILED = "failed"
     WAIVED = "waived"
     NOT_APPLICABLE = "not_applicable"
-    # The finding set the verdict would have rested on did not cover the scope.
+    # The input the verdict would have rested on did not cover the scope.
     NOT_EVALUATED = "not_evaluated"
 
 
@@ -85,16 +85,27 @@ class ResidualRisk(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
 
-class EvaluationCoverage(BaseModel):
-    """What the control verdicts were actually computed over."""
+class InputCoverage(BaseModel):
+    """What one bounded input covers of what the scope holds."""
 
-    findings_evaluated: int
-    findings_in_scope: int
+    evaluated: int
+    in_scope: int
     limit: int
 
     @property
     def complete(self) -> bool:
-        return self.findings_evaluated >= self.findings_in_scope
+        return self.evaluated >= self.in_scope
+
+
+class EvaluationCoverage(BaseModel):
+    """What the control verdicts were actually computed over, per input a verdict can rest on."""
+
+    findings: InputCoverage
+    crypto_assets: InputCoverage
+
+    @property
+    def complete(self) -> bool:
+        return self.findings.complete and self.crypto_assets.complete
 
 
 class FrameworkEvaluation(BaseModel):

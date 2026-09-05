@@ -16,6 +16,7 @@ from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.compliance import (
     EvaluationCoverage,
     FrameworkEvaluation,
+    InputCoverage,
     ReportFormat,
     ReportFramework,
     ReportStatus,
@@ -31,6 +32,10 @@ logger = logging.getLogger(__name__)
 # Findings held in memory for one report. The projection measures 2.66 KiB per document and
 # MAX_CONCURRENT_COMPLIANCE_REPORTS reports can run at once, so this is ~530 MiB at saturation.
 _FINDINGS_LIMIT = 20000
+
+# Crypto assets held in memory for one report, across every scan in scope. A CryptoAsset measures
+# 3.74 KiB validated, so this is ~365 MiB once MAX_CONCURRENT_COMPLIANCE_REPORTS reports saturate it.
+_CRYPTO_ASSETS_LIMIT = 10000
 
 
 class ComplianceReportEngine:
@@ -109,7 +114,7 @@ class ComplianceReportEngine:
     ) -> EvaluationInput:
         scan_pairs = await self._pick_scan_ids(db, resolved)
         scan_ids = [sid for _, sid in scan_pairs]
-        assets = await self._collect_crypto_assets(db, scan_pairs)
+        assets, assets_in_scope = await self._collect_crypto_assets(db, scan_pairs)
         findings, findings_in_scope = await self._collect_findings(db, resolved, scan_ids, framework)
         policy_repo = CryptoPolicyRepository(db)
         system = await policy_repo.get_system_policy()
@@ -132,9 +137,16 @@ class ComplianceReportEngine:
             scan_ids=scan_ids,
             db=db,
             coverage=EvaluationCoverage(
-                findings_evaluated=len(findings),
-                findings_in_scope=findings_in_scope,
-                limit=_FINDINGS_LIMIT,
+                findings=InputCoverage(
+                    evaluated=len(findings),
+                    in_scope=findings_in_scope,
+                    limit=_FINDINGS_LIMIT,
+                ),
+                crypto_assets=InputCoverage(
+                    evaluated=len(assets),
+                    in_scope=assets_in_scope,
+                    limit=_CRYPTO_ASSETS_LIMIT,
+                ),
             ),
         )
 
@@ -144,15 +156,36 @@ class ComplianceReportEngine:
 
         return list((await resolve_scan_ids(db, resolved.project_ids)).items())
 
-    async def _collect_crypto_assets(self, db: AsyncIOMotorDatabase, scan_pairs: list[tuple[str, str]]) -> list[Any]:
+    async def _collect_crypto_assets(
+        self,
+        db: AsyncIOMotorDatabase,
+        scan_pairs: list[tuple[str, str]],
+    ) -> tuple[list[Any], int]:
+        """The inventory the controls are evaluated over, and how many assets the scope holds.
+        The budget spans the whole report, so a global scope cannot multiply it by its scan count;
+        a scan costs a count round trip only once the budget can no longer swallow it whole."""
         repo = CryptoAssetRepository(db)
         out: list[Any] = []
+        in_scope = 0
         for pid, sid in scan_pairs:
             if pid is None or sid is None:
                 continue
-            assets = await repo.list_by_scan(pid, sid, limit=10000)
-            out.extend(assets)
-        return out
+            remaining = _CRYPTO_ASSETS_LIMIT - len(out)
+            if remaining > 0:
+                assets = await repo.list_by_scan(pid, sid, limit=remaining)
+                out.extend(assets)
+                if len(assets) < remaining:
+                    in_scope += len(assets)
+                    continue
+            in_scope += await repo.count_by_scan(pid, sid)
+        if len(out) < in_scope:
+            logger.warning(
+                "Compliance evaluation hit crypto-asset cap (%d of %d); "
+                "inventory-backed verdicts are withheld — consider narrowing the scope",
+                _CRYPTO_ASSETS_LIMIT,
+                in_scope,
+            )
+        return out, in_scope
 
     async def _collect_findings(
         self,

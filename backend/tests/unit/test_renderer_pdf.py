@@ -49,12 +49,15 @@ def test_pdf_includes_disclaimer_when_provided():
 def test_pdf_renders_a_partial_coverage_report():
     """The renderer has to reach the template with the coverage; test_compliance_coverage.py checks
     what the template then prints, since it can run where WeasyPrint's native stack cannot."""
-    from app.schemas.compliance import EvaluationCoverage, ReportFormat
+    from app.schemas.compliance import EvaluationCoverage, InputCoverage, ReportFormat
     from app.services.compliance.renderers.pdf_renderer import PdfRenderer
     from tests.unit.test_renderer_json import _evaluation, _report
 
     evaluation = _evaluation()
-    evaluation.coverage = EvaluationCoverage(findings_evaluated=20000, findings_in_scope=20050, limit=20000)
+    evaluation.coverage = EvaluationCoverage(
+        findings=InputCoverage(evaluated=20000, in_scope=20050, limit=20000),
+        crypto_assets=InputCoverage(evaluated=10, in_scope=10, limit=10000),
+    )
     rep = _report()
     rep.format = ReportFormat.PDF
     out, _, _ = PdfRenderer().render(evaluation, rep)

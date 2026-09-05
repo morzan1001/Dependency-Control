@@ -9,26 +9,37 @@ import { useDialogState } from "@/hooks/use-dialog-state";
 import { extractErrorMessage } from "@/lib/errors";
 import { formatDateTime } from "@/lib/utils";
 import { ReportStatusBadge } from "./ReportStatusBadge";
-import type { ComplianceReportMeta, ControlStatus, EvaluationCoverage } from "@/types/compliance";
+import type { ComplianceReportMeta, ControlStatus, EvaluationCoverage, InputCoverage } from "@/types/compliance";
 
 interface Props { report: ComplianceReportMeta | null; onClose: () => void; }
 
+function isComplete(input: InputCoverage): boolean {
+  return input.evaluated >= input.in_scope;
+}
+
+function inputSentence(input: InputCoverage, subject: string): string {
+  if (isComplete(input)) {
+    return `Evaluated all ${input.in_scope.toLocaleString()} ${subject} in scope.`;
+  }
+  return (
+    `Evaluated ${input.evaluated.toLocaleString()} of ${input.in_scope.toLocaleString()} ${subject} ` +
+    `in scope, a cap of ${input.limit.toLocaleString()} per report; the remaining ` +
+    `${(input.in_scope - input.evaluated).toLocaleString()} were not read.`
+  );
+}
+
 function CoverageNotice({ coverage }: { readonly coverage: EvaluationCoverage }) {
-  if (coverage.findings_evaluated >= coverage.findings_in_scope) {
-    return (
-      <div className="text-xs text-muted-foreground">
-        Evaluated all {coverage.findings_in_scope.toLocaleString()} findings in scope.
-      </div>
-    );
+  const sentences = [
+    inputSentence(coverage.findings, "findings"),
+    inputSentence(coverage.crypto_assets, "crypto assets"),
+  ];
+  if (isComplete(coverage.findings) && isComplete(coverage.crypto_assets)) {
+    return <div className="text-xs text-muted-foreground">{sentences.join(" ")}</div>;
   }
   return (
     <div className="rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
-      Evaluated {coverage.findings_evaluated.toLocaleString()} of{" "}
-      {coverage.findings_in_scope.toLocaleString()} findings in scope, a cap of{" "}
-      {coverage.limit.toLocaleString()} per report. The remaining{" "}
-      {(coverage.findings_in_scope - coverage.findings_evaluated).toLocaleString()} were not read,
-      so no control reports passed or waived: every verdict that would have rested on finding no
-      match is reported as not_evaluated instead. Failures stand. Narrow the scope and regenerate
+      {sentences.join(" ")} Every verdict that would have rested on finding no match in a capped
+      input is reported as not_evaluated instead. Failures stand. Narrow the scope and regenerate
       before handing this to an auditor.
     </div>
   );
