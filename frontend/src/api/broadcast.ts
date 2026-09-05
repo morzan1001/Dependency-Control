@@ -1,5 +1,5 @@
 import { api } from '@/api/client';
-import { BroadcastRequest, BroadcastResult, BroadcastHistoryItem } from '@/types/broadcast';
+import { BroadcastRequest, BroadcastResult, BroadcastHistoryItem, PackageSuggestions } from '@/types/broadcast';
 
 export const broadcastApi = {
   send: async (data: BroadcastRequest): Promise<BroadcastResult> => {
@@ -10,8 +10,8 @@ export const broadcastApi = {
     const response = await api.get<BroadcastHistoryItem[]>('/notifications/history');
     return response.data;
   },
-  suggestPackages: async (q: string): Promise<string[]> => {
-    const response = await api.get<string[]>('/notifications/packages/suggest', { params: { q } });
+  suggestPackages: async (q: string): Promise<PackageSuggestions> => {
+    const response = await api.get<PackageSuggestions>('/notifications/packages/suggest', { params: { q } });
     return response.data;
   }
 };

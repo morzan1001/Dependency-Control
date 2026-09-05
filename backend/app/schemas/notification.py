@@ -38,3 +38,13 @@ class BroadcastHistoryItem(BaseModel):
     project_count: int
     unique_user_count: int = 0
     teams: list[str] | None = None
+
+
+class PackageSuggestions(BaseModel):
+    """Head of the alphabetical matches for a typeahead query."""
+
+    names: list[str] = Field(..., description="Alphabetical, at most the endpoint's suggestion limit")
+    more: bool = Field(
+        ...,
+        description="More packages match than are listed; the query has to narrow to reach them",
+    )

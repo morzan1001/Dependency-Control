@@ -29,6 +29,7 @@ from app.schemas.notification import (
     BroadcastHistoryItem,
     BroadcastRequest,
     BroadcastResult,
+    PackageSuggestions,
 )
 from app.services.notifications.mattermost_formatter import build_advisory_props as mm_advisory_props
 from app.services.notifications.service import notification_service
@@ -37,6 +38,8 @@ from app.services.notifications.templates import get_announcement_template
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
+
+_PACKAGE_SUGGESTION_LIMIT = 20
 
 
 @router.get("/history", responses=RESP_AUTH)
@@ -91,20 +94,28 @@ async def suggest_packages(
         User, Depends(deps.PermissionChecker([Permissions.NOTIFICATIONS_BROADCAST, Permissions.SYSTEM_MANAGE]))
     ],
     q: Annotated[str, Query(min_length=2, description="Search query for package name")],
-) -> list[str]:
-    """Suggest package names for advisories based on existing dependencies."""
+) -> PackageSuggestions:
+    """Suggest package names for advisories based on existing dependencies.
+
+    The field takes free text, so a short list costs nothing but a hint; one row past the
+    limit is read so the answer can say the query still has to narrow.
+    """
     dep_repo = DependencyRepository(db)
 
+    probe = _PACKAGE_SUGGESTION_LIMIT + 1
     pipeline: list[dict[str, Any]] = [
         {"$match": {"name": {"$regex": re.escape(q), "$options": "i"}}},
         {"$group": {"_id": "$name"}},
         {"$sort": {"_id": 1}},
-        {"$limit": 20},
+        {"$limit": probe},
         {"$project": {"_id": 0, "name": "$_id"}},
     ]
 
-    results = await dep_repo.aggregate(pipeline, limit=20)
-    return [r["name"] for r in results]
+    results = await dep_repo.aggregate(pipeline, limit=probe)
+    return PackageSuggestions(
+        names=[r["name"] for r in results[:_PACKAGE_SUGGESTION_LIMIT]],
+        more=len(results) > _PACKAGE_SUGGESTION_LIMIT,
+    )
 
 
 def _queue_announcement(
