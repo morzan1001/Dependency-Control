@@ -23,11 +23,13 @@ export function HotspotHeatmap({ scope, scopeId, groupBy, scanId }: Props) {
   if (isLoading) return <div className="p-4 text-sm text-muted-foreground">Loading heatmap…</div>;
   if (isError || !data) return <div className="p-4 text-sm text-destructive">Failed to load heatmap data.</div>;
 
+  const axis = scope === "project" ? "locations" : "projects";
+  const everyColumn = Array.from(
+    new Set(data.items.flatMap((e) => (scope === "project" ? e.locations : e.project_ids))),
+  );
   // Capped so a tenant with many projects/locations never renders an unbounded grid.
-  const columns =
-    scope === "project"
-      ? Array.from(new Set(data.items.flatMap((e) => e.locations))).slice(0, MAX_COLUMNS)
-      : Array.from(new Set(data.items.flatMap((e) => e.project_ids))).slice(0, MAX_COLUMNS);
+  const columns = everyColumn.slice(0, MAX_COLUMNS);
+  const sampledRows = scope === "project" ? data.items.filter((e) => !e.locations_complete).length : 0;
 
   const projectNameById = new Map((projectsData?.items ?? []).map((p) => [p.id, p.name]));
 
@@ -42,6 +44,13 @@ export function HotspotHeatmap({ scope, scopeId, groupBy, scanId }: Props) {
 
   return (
     <div className="overflow-auto">
+      {(columns.length < everyColumn.length || sampledRows > 0) && (
+        <p className="pb-2 text-xs text-muted-foreground">
+          {columns.length < everyColumn.length && `Showing ${columns.length} of ${everyColumn.length} ${axis}. `}
+          {sampledRows > 0 &&
+            `${sampledRows} row(s) list a sample of their locations — a "?" cell is unknown, not absent.`}
+        </p>
+      )}
       <table className="text-xs">
         <thead>
           <tr>
@@ -68,7 +77,7 @@ export function HotspotHeatmap({ scope, scopeId, groupBy, scanId }: Props) {
                 return (
                   <td
                     key={c}
-                    className={`p-1 text-center min-w-6 ${heatmapBgClass(cell.present, cell.intensityRatio)}`}
+                    className={`p-1 text-center min-w-6 ${heatmapBgClass(cell.state, cell.intensityRatio)}`}
                     title={cell.title}
                   >
                     {cell.label}

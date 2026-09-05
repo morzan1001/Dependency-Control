@@ -38,8 +38,8 @@ Server-side behaviour that tests rely on
 Supported aggregation stages
 ----------------------------
 - ``$match``, ``$sort``, ``$group``, ``$project``, ``$limit``, ``$unwind``
-- ``$group`` accumulators: ``$sum``, ``$avg``, ``$first``, ``$min``, ``$max``,
-  ``$addToSet``, ``$push``
+- ``$group`` accumulators: ``$sum``, ``$avg``, ``$first``, ``$firstN``, ``$min``,
+  ``$max``, ``$addToSet``, ``$push``
 - ``$dateTrunc`` truncates to the start of the unit (day/week/month/year; week
   starts Sunday, matching MongoDB's default), in both expressions and
   ``$group._id``, so trend bucketing is exercised end-to-end.
@@ -615,6 +615,12 @@ def _run_group(docs: list, group_spec: dict) -> list:
             elif op == "$first":
                 if is_new:
                     grp[acc_name] = val
+            elif op == "$firstN":
+                # Keeps the first n evaluations of `input`, so an array-valued input yields a
+                # list of arrays rather than n flattened elements.
+                bucket = grp.setdefault(acc_name, [])
+                if len(bucket) < arg.get("n", 0):
+                    bucket.append(_resolve_field(doc, arg.get("input")))
             elif op == "$addToSet":
                 # Real $addToSet dedupes by full value equality and accepts
                 # documents (unhashable in Python). Back it with a list +

@@ -5,7 +5,11 @@ import pytest
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.services.analytics.crypto_hotspots import CryptoHotspotService
+from app.services.analytics.crypto_hotspots import (
+    _LOCATION_SAMPLE_ASSETS,
+    _LOCATIONS_PER_ENTRY,
+    CryptoHotspotService,
+)
 from app.services.analytics.scopes import ResolvedScope
 
 
@@ -229,3 +233,64 @@ async def test_no_completed_scans_returns_empty_not_all_history(db):
 
     assert result.items == []
     assert result.total == 0
+
+
+_SHARED_LOCATION = "/shared.py"
+
+
+async def _seed_locations(db, *, project_id, scan_id, assets):
+    await CryptoAssetRepository(db).bulk_upsert(
+        project_id,
+        scan_id,
+        [
+            _variant_asset(
+                f"lk{index}",
+                "MD5",
+                None,
+                project_id=project_id,
+                scan_id=scan_id,
+                locations=[f"/f{index}.py", _SHARED_LOCATION],
+            )
+            for index in range(assets)
+        ],
+    )
+    await db.projects.insert_one({"_id": project_id, "name": project_id, "latest_scan_id": scan_id})
+    await db.scans.insert_one(
+        {"_id": scan_id, "project_id": project_id, "status": "completed", "created_at": datetime.now(timezone.utc)}
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_key_on_more_assets_than_the_sample_says_its_locations_are_not_the_whole_set(db):
+    await _seed_locations(db, project_id="pl", scan_id="sl", assets=_LOCATION_SAMPLE_ASSETS * 3)
+
+    resolved = ResolvedScope(scope="project", scope_id="pl", project_ids=["pl"])
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", limit=10)
+
+    entry = result.items[0]
+    assert entry.locations_complete is False
+    assert entry.asset_count == _LOCATION_SAMPLE_ASSETS * 3
+
+
+@pytest.mark.asyncio
+async def test_a_key_the_sample_covers_whole_claims_its_locations_are_the_whole_set(db):
+    await _seed_locations(db, project_id="pw", scan_id="sw", assets=3)
+
+    resolved = ResolvedScope(scope="project", scope_id="pw", project_ids=["pw"])
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", limit=10)
+
+    entry = result.items[0]
+    assert entry.locations_complete is True
+    assert entry.locations == ["/f0.py", _SHARED_LOCATION, "/f1.py", "/f2.py"]
+
+
+@pytest.mark.asyncio
+async def test_the_listed_locations_are_distinct_so_the_display_cap_bounds_columns(db):
+    await _seed_locations(db, project_id="pd", scan_id="sd", assets=_LOCATION_SAMPLE_ASSETS)
+
+    resolved = ResolvedScope(scope="project", scope_id="pd", project_ids=["pd"])
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", limit=10)
+
+    locations = result.items[0].locations
+    assert len(locations) == len(set(locations))
+    assert len(locations) <= _LOCATIONS_PER_ENTRY

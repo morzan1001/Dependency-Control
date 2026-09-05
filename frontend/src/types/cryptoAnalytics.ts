@@ -22,6 +22,8 @@ export interface HotspotEntry {
   finding_count: number;
   severity_mix: Record<string, number>;
   locations: string[];
+  // False means a location absent from the list is unknown rather than known not to hold the key.
+  locations_complete: boolean;
   project_ids: string[];
   first_seen: string;
   last_seen: string;

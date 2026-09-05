@@ -26,6 +26,7 @@ vi.mock("@/api/cryptoAnalytics", () => ({
             finding_count: 0,
             severity_mix: {},
             locations: ["/path/a"],
+            locations_complete: false,
             project_ids: ["p"],
             first_seen: "",
             last_seen: "",
@@ -48,6 +49,7 @@ vi.mock("@/api/cryptoAnalytics", () => ({
           finding_count: 0,
           severity_mix: {},
           locations: [],
+          locations_complete: false,
           project_ids: [OID_A, OID_B, ...manyProjectIds],
           first_seen: "",
           last_seen: "",
@@ -85,6 +87,12 @@ describe("HotspotHeatmap (org scope columns)", () => {
     expect(headerCells).toHaveLength(1 + 30);
   });
 
+  it("says how many of the columns it is showing", async () => {
+    renderWithClient(<HotspotHeatmap scope="global" groupBy="name" />);
+    await screen.findByText("RSA-2048");
+    expect(screen.getByText(/Showing 30 of 42 projects/)).toBeInTheDocument();
+  });
+
   it("resolves a project ObjectId to its name in the column header", async () => {
     renderWithClient(<HotspotHeatmap scope="global" groupBy="name" />);
     expect(await screen.findByText("Payments API")).toBeInTheDocument();
@@ -96,5 +104,13 @@ describe("HotspotHeatmap (org scope columns)", () => {
     expect(screen.queryByText(OID_B)).not.toBeInTheDocument();
     const truncated = screen.getByText(`${OID_B.slice(0, 8)}…`);
     expect(truncated).toHaveAttribute("title", OID_B);
+  });
+});
+
+describe("HotspotHeatmap (project scope locations)", () => {
+  it("says a row whose locations are a sample carries unknown cells rather than absent ones", async () => {
+    renderWithClient(<HotspotHeatmap scope="project" scopeId="p" groupBy="name" />);
+    await screen.findByText("MD5");
+    expect(screen.getByText(/list a sample of their locations/)).toBeInTheDocument();
   });
 });

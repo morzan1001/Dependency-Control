@@ -473,6 +473,11 @@ class HotspotEntry(BaseModel):
     finding_count: int = Field(..., ge=0)
     severity_mix: dict[str, int] = Field(default_factory=dict)
     locations: list[str] = Field(default_factory=list)
+    locations_complete: bool = Field(
+        ...,
+        description="Every location this key occurs in is listed; when false a location absent "
+        "from the list is unknown rather than known not to hold the key",
+    )
     project_ids: list[str] = Field(default_factory=list)
     first_seen: datetime
     last_seen: datetime
