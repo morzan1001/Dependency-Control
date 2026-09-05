@@ -1,13 +1,45 @@
-# Deploy runbook — release flag and the historical tag-build backfill
+# Deploy runbook — release flag, the historical tag-build backfill, and the ad-hoc analyze endpoint
 
 Prod context: `gke_rd-itsecurity-sboms-prod_europe-west1_prod-1`, namespace `dependency-control`.
 
-Run the backfill as a Kubernetes **Job**, never via `kubectl exec`: the autoscaler evicts backend
+Run every backfill as a Kubernetes **Job**, never via `kubectl exec`: the autoscaler evicts backend
 pods and a long exec dies with them. The Job manifest, its labels and its NetworkPolicy are in
 `README-deploy-waves-2-3.md` section 2 — nothing about them changes here.
 
-Order: indexes, then the rescan brake, then deploy, then the lineage collapse, then dry run,
-then execute.
+---
+
+## 0. The order to work in
+
+Every step is here, in the order it has to run. Sections 1–9 explain each one; this list is what you
+tick off. Nothing below is optional, and steps 6 and 8 have no script behind them.
+
+1. **Pause the scheduled rescanner** for the whole window (§2, Option A step 1), so the wave cannot
+   fire in the middle of a backfill.
+2. **Build the four indexes by hand** (§1) before rolling the image, so startup's `create_indexes`
+   finds them and is a no-op.
+3. **Size the change on production, before deciding anything** (§2 and §3). Five numbers:
+   the due-project count **plus the release-row count** against the worker's 1000-job recovery cap;
+   the dangling-pointer count; the no-pointer count; the `pointer_off_default_branch` count; and the
+   `head_moves_to_a_rescan` count. The last two are the populations whose headline numbers move
+   most, and neither is visible in the first two.
+4. **Deploy** (§3).
+5. **`backfill_rescan_lineage`** (§4) — dry run, `--execute`, then a **second `--execute`**. Chains
+   deeper than `MAX_RESCAN_HOPS = 10` need the second pass, because each pass shortens the chain
+   beneath them. Read the script's own exit code, not `tail`'s: `cmd | tail -8; echo $?` reports
+   tail's status and has already produced one wrong reading.
+6. **`backfill_release_flags`** (§5, §6) — dry run, `--execute`, then re-run and confirm a clean
+   `0 / 0 / 0` no-op.
+7. **Verify** (§7), including the two flag/row mismatch queries.
+8. **Repair stale `is_release` flags by hand** (§7, "Flags with no release row"). No script does
+   this. Such a scan is exempt from retention *and* from archival for good, and it sits in the
+   `scans_released_list` partial index answering the released-only filter with a release nobody
+   made. Run it before housekeeping is allowed to resume.
+9. **Re-stamp the waiver flags on released builds** (§8). One in-pod pass; without it a build in
+   production keeps answering through the waiver set of the day it was analysed.
+10. **Grant `analyze:adhoc`** (§9). Until someone does, **no user, including the platform admin,
+    can mint an ad-hoc key** — the permission is new and nothing backfills it onto existing users.
+11. **Re-enable the scheduler** (§2, Option A step 5) and watch the first two 300 s passes for
+    `Recovery limit (1000) reached`.
 
 ---
 
@@ -41,8 +73,7 @@ Verify: `db.releases.getIndexes()` lists both, `db.scans.getIndexes()` lists `sc
 
 The date-ordered picks tie-break on `_id`, so the trailing `_id: 1` is load-bearing: without it the
 scheduled-rescan tip pick becomes a blocking sort over every usable scan of the project, ~211k
-times a day. Confirm the plan before you deploy — `topStage` must be `LIMIT` with
-`docsExamined: 1`:
+times a day. Confirm the plan before you deploy:
 
 ```js
 db.scans.find(
@@ -50,6 +81,19 @@ db.scans.find(
     sbom_refs: { $exists: true, $ne: [] }, is_rescan: { $ne: true } }
 ).sort({ created_at: -1, _id: 1 }).limit(1).explain("executionStats")
 ```
+
+What to accept:
+
+* `topStage` is `LIMIT`, and **no `SORT` stage appears in the winning plan**. That is the property
+  the index buys. `SORT_MERGE` under the `FETCH` is *not* a blocking sort — it is the two branches
+  of the `status: {$in: [...]}` bound read in index order and interleaved — so a plan of
+  `LIMIT → FETCH → SORT_MERGE` is the healthy one.
+* `docsExamined` is **the number of rescans newer than the tip, plus one** — not 1. `is_rescan` and
+  `sbom_refs` are not in the index and a rescan carries `created_at = now`, so every rescan sitting
+  above the tip in index order is fetched and rejected before the tip is reached. Measured on a
+  project with one rescan of its tip: `topStage: LIMIT`, no `SORT`, `docsExamined: 2`,
+  `nReturned: 1`. Only a project that has never been rescanned reads 1, so testing against one is
+  how you get a criterion that fails on healthy data.
 
 Then drop the superseded 3-key index, `db.scans.dropIndex("project_id_1_status_1_created_at_-1")`.
 Startup does this itself, but doing it by hand keeps the rollout off the largest collection.
@@ -101,8 +145,33 @@ the deploy every project whose newest usable scan is older than 730 h is due at 
 
 `last_rescanned_at` is stamped on the source at creation time, before the job is handed to the
 worker. Each source therefore enqueues once per interval; the wave does not come back on the next
-300 s main-loop pass. Worst case is one job per project inside a single main-loop interval, which
-stays under the worker's 1000-job startup recovery cap.
+300 s main-loop pass.
+
+### How big the worst case actually is
+
+**Not one job per project.** `_rescan_targets` returns the branch tip **plus one target per release
+environment the project has**, and after the backfill every historical tag build is a release with
+an unstamped clock. The worst case inside a single main-loop interval is therefore
+
+```
+due_projects  +  release rows whose scan has no last_rescanned_at
+```
+
+against the worker's 1000-job startup recovery cap (`worker.py`). Step 4 of Option A already seeds
+the release population for this reason; the sum is what decides whether Option A is merely
+preferred or required. Count both halves in the same window — the second number is the one the
+per-project query below cannot see:
+
+```js
+db.scans.countDocuments({
+  _id: { $in: db.releases.distinct("scan_id") },
+  last_rescanned_at: null,
+  status: { $in: ["completed", "completed_with_errors"] },
+  sbom_refs: { $exists: true, $ne: [] }
+})
+```
+
+If `due_projects + that number` approaches 1000, Option A is required, not preferred.
 
 ### Count the real population — do not estimate it
 
@@ -290,19 +359,28 @@ and the rescan target query all read as "not a release". Existing data is noneth
 differently from the first request after the rollout, in four ways, none of which needs a release
 to be marked.
 
-* **Every project's representative scan is now validated, and a project without a stored pointer
-  gets one.** `get_latest_active_scan_ids` used to take `Project.latest_scan_id` on trust and skip
-  a project that had none. It now checks that the pointer still names a readable scan and falls
-  back to the project's newest usable scan when it does not, and it resolves a project with no
-  pointer the same way instead of dropping it. Both change *which* scan a project speaks for, fleet
-  wide and at once: analytics summary, top dependencies, hotspots, search, impact, risk, compliance
-  reports, and every chat and MCP tool. The numbers move because they were wrong, but they move.
+* **Every project's representative scan is now derived from one stated rule, and the stored pointer
+  is only a cache of it.** The rule lives in `app/repositories/scans.py`: *head is the freshest
+  readable analysis of the tip commit of the project's head branch*. Two steps. The head branch is
+  the default branch while the VCS still has one, else any branch it has not deleted; the tip commit
+  is the newest **build** on it, so a rescan — which carries `created_at = now` over an older commit
+  — never moves head onto another commit. Then that build's rescan lineage is followed to its newest
+  usable analysis, so the rescanner's fresh enrichment is what head reports about the commit the
+  builds chose. `Project.latest_scan_id` is that answer cached by ingest and is trusted only while
+  it names a readable scan on the head branch — and it goes through the lineage step like any other
+  candidate, so it cannot answer differently from the derived path.
 
-  Retention deletes a scan without clearing the pointer and defaults to 90 days, so the dangling
-  population is not hypothetical. Size both before deploying:
+  Before this release `get_latest_active_scan_ids` took `Project.latest_scan_id` on trust, skipped a
+  project that had none, and sorted its fallback on `created_at` alone. All of that changes *which*
+  scan a project speaks for, fleet wide and at once: analytics summary, top dependencies, hotspots,
+  search, impact, risk, compliance reports, the project page's branch tiles, and every chat and MCP
+  tool. The numbers move because they were wrong, but they move.
+
+  Four populations move, and the first two queries cannot see the last two. Size all four before
+  deploying:
 
   ```js
-  // pointers naming a scan that is gone or unreadable, on projects that took the trusted fast path
+  // 1. pointers naming a scan that is gone or unreadable, on projects that took the trusted fast path
   db.projects.aggregate([
     { $match: { latest_scan_id: { $ne: null }, deleted_branches: { $in: [null, []] } } },
     { $lookup: { from: "scans", localField: "latest_scan_id", foreignField: "_id", as: "cur" } },
@@ -312,7 +390,7 @@ to be marked.
     { $count: "dangling_pointers" }
   ])
 
-  // projects with no pointer that do have a usable scan — these appear in rollups for the first time
+  // 2. projects with no pointer that do have a usable scan — these appear in rollups for the first time
   db.projects.aggregate([
     { $match: { latest_scan_id: null } },
     { $lookup: {
@@ -329,10 +407,62 @@ to be marked.
   ])
   ```
 
+  **3. Pointers sitting on a branch that is not the default one.** Neither query above can see this
+  population, and it is the larger of the two pointer defects: the pointer is perfectly readable, so
+  the old fast path kept it, and the project has been reporting a feature branch's findings as its
+  own. Production carries it — `rewe/cicd/security-executor` has `default_branch: "main"`, an empty
+  `deleted_branches`, and `Project.stats` matching a `feature/DSM-959_…` scan at 5 critical /
+  49 findings / risk 58.2, while the newest `main` build that morning reads 6 / 63 / risk 63.2.
+
+  ```js
+  db.projects.aggregate([
+    { $match: { latest_scan_id: { $ne: null }, default_branch: { $ne: null } } },
+    { $lookup: { from: "scans", localField: "latest_scan_id", foreignField: "_id", as: "cur" } },
+    { $set: { cur: { $first: "$cur" } } },
+    // cur.branch rather than cur: a $first over an empty array is missing, not null, so an $expr
+    // guard on cur alone lets the dangling pointers of query 1 back in and double-counts them.
+    { $match: { "cur.branch": { $exists: true },
+                $expr: { $ne: ["$cur.branch", "$default_branch"] } } },
+    { $count: "pointer_off_default_branch" }
+  ])
+  ```
+
+  **4. Projects whose tip build has been rescanned since.** These are the ones the lineage step
+  moves: head stops reporting the original analysis and starts reporting the rescan of the same
+  commit, so newly published CVEs and newly listed KEV entries against unchanged dependencies reach
+  the dashboard for the first time. Counted here only where the answer actually changes — where the
+  stored pointer already names the rescan, nothing moves. `deleted_branches` is ignored, so on a
+  project whose default branch the VCS has deleted this is an over-count by one:
+
+  ```js
+  db.projects.aggregate([
+    { $lookup: {
+        from: "scans",
+        let: { pid: "$_id", def: "$default_branch" },
+        pipeline: [
+          { $match: { status: { $in: ["completed", "completed_with_errors"] },
+                      $expr: { $and: [ { $eq: ["$project_id", "$$pid"] },
+                                       { $ne: ["$is_rescan", true] },
+                                       { $or: [ { $eq: ["$$def", null] },
+                                                { $eq: ["$branch", "$$def"] } ] } ] } } },
+          { $sort: { created_at: -1, _id: 1 } },
+          { $limit: 1 },
+          { $project: { latest_rescan_id: 1 } } ],
+        as: "tip" } },
+    { $set: { tip: { $first: "$tip" } } },
+    { $match: { "tip.latest_rescan_id": { $ne: null } } },
+    { $lookup: { from: "scans", localField: "tip.latest_rescan_id", foreignField: "_id", as: "rescan" } },
+    { $set: { rescan: { $first: "$rescan" } } },
+    { $match: { "rescan.status": { $in: ["completed", "completed_with_errors"] },
+                $expr: { $ne: ["$rescan._id", "$latest_scan_id"] } } },
+    { $count: "head_moves_to_a_rescan" }
+  ])
+  ```
+
 * **Compliance reports, chat and crypto hotspots pick their scans through the same resolver.** They
-  used to take each project's newest usable scan outright; they now take the project pointer and
-  honour `deleted_branches`. **Report content changes for any project with a deleted branch**, where
-  a scan on that branch could previously represent the project and now cannot. Size it:
+  used to take each project's newest usable scan outright; they now obey the head rule above.
+  **Report content changes for any project with a deleted branch**, where a scan on that branch
+  could previously represent the project and now cannot. Size it:
 
   ```js
   db.projects.countDocuments({ deleted_branches: { $exists: true, $ne: [] } })
@@ -359,17 +489,25 @@ to be marked.
      newest usable scan. For a project whose configured default was never itself scanned, the tag
      names are now candidates and a recent one can win. This moves which branch the project view
      opens on; the stored `Project.default_branch` is untouched.
-  4. **A project's representative scan for all analytics can settle on a tag build.** Two writers
-     of `latest_scan_id` meet here. `get_latest_active_scan_ids` takes the stored pointer as its
-     fast path as soon as `deleted_branches` is empty, instead of recomputing with `$nin`. And
-     `sync_project_branches` repoints a pointer whose scan sits on a branch it has just filed as
-     deleted — a tag name is no longer such a branch, so the 6-hourly sync leaves a tag build in
-     the slot rather than moving the project onto its newest non-tag scan within a sync window.
+  4. **A project with no known default branch can settle on a tag build as its representative
+     scan.** Two writers of `latest_scan_id` meet here. `sync_project_branches` repoints a pointer
+     whose scan sits on a branch it has just filed as deleted — a tag name is no longer such a
+     branch, so the 6-hourly sync leaves a tag build in the slot rather than moving the project
+     onto its newest non-tag scan within a sync window. Head resolution then keeps that pointer,
+     because with no default branch every branch the VCS has not deleted is a head branch and a tag
+     name now counts as one.
+
+     Where `default_branch` **is** known this stops at the resolver: the pointer names a scan whose
+     branch is the tag rather than the default, so it is rejected and head is re-derived from the
+     default branch's tip. That is population 3 above, and it is the reason the same rollout that
+     creates this consequence also bounds it to projects the VCS integration never gave a default
+     branch for.
   5. **`Project.stats` and `Project.last_scan_at` follow the pointer.** That same repoint writes
      all three fields together, so wherever it no longer fires these two keep the tag build's
      numbers and date. Project lists, tiles and dashboards read them straight off the project
-     document without going through `get_latest_active_scan_ids`, so they follow a tag build even
-     where consequence 4's fast path is not involved.
+     document without going through the resolver, so they follow a tag build even on a project
+     where consequence 4 does not apply. They are corrected by the project's next ingest, not by a
+     read.
 
   Measured against `sync_project_branches` on one project with a tag build as its newest scan and
   its stored pointer, plus an older `main` scan, varying only whether the census counts the tag as
@@ -507,6 +645,13 @@ Read the report. `releases to record` is the number of historical tag builds; `p
 is how many projects carry the tag name of a released tag build in `deleted_branches`. The dry run
 computes the plan and stops; `--execute` applies that same plan, so the report is the change list.
 
+Write down the release count as it stands now — §7's first check needs it, and it cannot be
+recovered afterwards:
+
+```js
+db.releases.countDocuments({ environment: "production" })   // the "before" number for section 7
+```
+
 Cross-check the population independently:
 
 ```js
@@ -549,19 +694,49 @@ before the backfill, which is the same name the branch census would drop on its 
 ## 7. Verify
 
 ```js
-db.releases.countDocuments({ environment: "production" })   // == "releases to record"
+db.releases.countDocuments({ environment: "production" })
 db.releases.distinct("scan_id").length                       // == the next line
 db.scans.countDocuments({ is_release: true })
 ```
+
+The first is **not** equal to `releases to record`: a deploy job can mark a release through the API
+at any time, including four lines further down this runbook where that is explicitly allowed for. It
+must equal `production rows counted before the --execute pass` **plus** `releases to record`. Take
+the "before" number in the same window as the dry run and write it down; without it this line
+asserts nothing.
 
 The last two must be equal, and stay equal: a scan whose flag is set but whose row is missing
 resolves to nothing in `latest_release_scan` and the release list, and a scan with a row but no
 flag is missing from the `scans_released_list` index the released-only scan list reads, is not
 exempt from retention or archiving, and does not answer the "Releases only" filter.
 
-Only the second of those has a repair path, and re-running the backfill is it — the sweep covers
-every release row, however the row was marked. A flag whose row is missing needs the row written
-through `POST /api/v1/projects/{project_id}/releases` or the flag cleared by hand.
+A count is not a diagnosis, so name the offenders on both sides rather than inferring them from the
+difference — the two directions can cancel out.
+
+**Release rows with no flag.** Re-running the backfill repairs these; its sweep covers every release
+row, however the row was marked.
+
+```js
+const flagged = new Set(db.scans.distinct("_id", { is_release: true }));
+db.releases.distinct("scan_id").filter(id => !flagged.has(id))   // must be []
+```
+
+**Flags with no release row.** No script repairs these, and they are the dangerous direction: the
+retention and archival cursors filter on `is_release` *before* they consult `db.releases`, so such a
+scan is exempt from both **permanently**, and it poisons the `scans_released_list` partial index
+with a release nobody made. Review the list, then apply the update:
+
+```js
+const rows = new Set(db.releases.distinct("scan_id"));
+const stale = db.scans.find({ is_release: true }, { project_id: 1, branch: 1, created_at: 1 })
+  .toArray().filter(s => !rows.has(s._id));
+printjson(stale);                                     // review first
+// db.scans.updateMany({ _id: { $in: stale.map(s => s._id) } }, { $set: { is_release: false } })
+```
+
+Each one is either a scan whose release was withdrawn while the second write was lost, or a run
+killed between its two writes. If any of them *should* be a release, write the row through
+`POST /api/v1/projects/{project_id}/releases` instead of clearing the flag.
 
 ```js
 db.releases.find({}, { project_id: 1, scan_id: 1, version: 1, released_at: 1 }).limit(5)
@@ -575,10 +750,19 @@ no `version` at all — a deploy job that named neither a version nor a tag — 
 db.releases.countDocuments({ version: "" })   // must be 0
 ```
 
-Then confirm no project still hides a marked tag name:
+Then confirm no project still hides a marked tag name. A bare list of every project with a non-empty
+`deleted_branches` is not that check — most of those entries are ordinary deleted branches and the
+list is long enough to read as noise. Intersect against the tag names of the scans that were
+actually released:
 
 ```js
+const releasedTags = new Set(
+  db.scans.find({ _id: { $in: db.releases.distinct("scan_id") } }, { commit_tag: 1 })
+    .toArray().map(s => s.commit_tag).filter(t => t));
 db.projects.find({ deleted_branches: { $exists: true, $ne: [] } }, { name: 1, deleted_branches: 1 })
+  .toArray()
+  .map(p => ({ name: p.name, hidden: p.deleted_branches.filter(b => releasedTags.has(b)) }))
+  .filter(p => p.hidden.length > 0)      // must be []
 ```
 
 Finally, open a project that gained a release and check the Releases list renders it, and that the
@@ -607,6 +791,105 @@ db.releases.find({ released_at: { $gt: new Date(Date.now() - 24*60*60*1000) } })
 
 Release scans are exempt from retention and refuse to archive. A release that should age out has
 to be withdrawn first: `DELETE /api/v1/projects/{project_id}/scans/{scan_id}/release`.
+
+### Re-stamp the waiver flags on the builds that are in production
+
+A finding's `waived` flag is written onto the finding document when its scan is analysed, and until
+this release only the **head** scan was ever re-stamped when a waiver changed. A build that is in
+production therefore answers "what is in production" through the waiver set of the day it was
+analysed: revoke a waiver and the released build still hides the finding, so release-mode analytics
+can report **zero criticals against a build that has one**, with no waiver left in the system.
+
+From this release a recalculation covers the head scan **and** the scans release mode resolves to,
+so any later waiver change heals the project. Nothing heals the existing rows on its own — a
+project whose waivers never change again keeps the stale flags — so run one pass over the projects
+that have releases, as a Job, after the backfill:
+
+```
+python - <<'PY'
+import asyncio
+from app.db.mongodb import close_mongo_connection, connect_to_mongo, get_database
+from app.services.stats import recalculate_project_stats
+
+async def main():
+    await connect_to_mongo()
+    db = await get_database()
+    project_ids = await db.releases.distinct("project_id")
+    for project_id in project_ids:
+        await recalculate_project_stats(project_id, db)
+    print(f"re-stamped {len(project_ids)} project(s) with releases")
+    await close_mongo_connection()
+
+asyncio.run(main())
+PY
+```
+
+It takes a per-project distributed lock and is safe to re-run. Spot-check one project afterwards:
+switch the analytics scope to the release environment and confirm the severity counts match the
+released build's findings rather than reading zero.
+
+The release view also carries its own date now. `GET /api/v1/analytics/scope` returns
+`oldest_analysis_at`, and the control above every analytics tab renders it, because a release
+resolves to a build nobody rebuilt: vulnerabilities published since that analysis are absent from
+the answer by construction, and re-stamping waivers cannot change that. Expect support questions
+about the new line the first day; it is not an error state.
+
+---
+
+## 9. Teil B — the ad-hoc analyze endpoint
+
+`POST /api/v1/analyze` runs the analysis pipeline in memory and stores nothing. Three facts decide
+whether it works after the rollout.
+
+### Nothing has to precede the deploy
+
+`adhoc_api_keys` and its three indexes are created by startup's `create_indexes` on an empty
+collection, so unlike §1 there is no index to pre-build and no migration to run. The collection does
+not exist before the first key is minted.
+
+### `analyze:adhoc` must be granted explicitly, or nobody can use it
+
+This is the step that is easiest to miss and hardest to recover from. `analyze:adhoc` is a new
+entry in `ALL_PERMISSIONS` — 43 entries before this release, 44 after — and:
+
+* `has_permission` is plain list membership. There is **no wildcard escape**: measured,
+  `has_permission(["*"], Permissions.ANALYZE_ADHOC)` returns `False`.
+* `ALL_PERMISSIONS` is read only when `init_db` creates the *first* admin. Nothing backfills a new
+  permission onto user documents that already exist.
+
+So after the rollout **no existing user, including the platform admin, can mint an ad-hoc key** until
+someone grants the permission. Do it deliberately, to the identities that should have it, and only
+once the image carries the subprocess ceiling described below:
+
+```js
+db.users.updateMany(
+  { username: { $in: ["<the identities that should hold it>"] } },
+  { $addToSet: { permissions: "analyze:adhoc" } }
+)
+```
+
+Verify by minting a key through `POST /api/v1/analyze-keys/` as one of them, then calling
+`POST /api/v1/analyze` with it. The permission is re-checked on the owner at every request, so
+removing it later revokes every key that identity holds: `POST /analyze` then answers 403, not 401.
+
+### The rate limiter fails open
+
+The 5/min and 60/hour windows live in Redis. On a `RedisError` the endpoint **logs a warning and
+allows the request** — a Redis incident silently removes the limit rather than removing the
+endpoint. That is the deliberate trade (an outage should not stop analyses), but it means a Redis
+alert is also an ad-hoc rate-limit alert. Watch for `adhoc: Redis unavailable for rate limiting`
+in the backend logs.
+
+### Why the ordering with §0 step 10 matters
+
+A CLI scanner started by an ad-hoc request used to outlive the request's 504: `cli_timeout` is
+awaited inside the coroutine the deadline cancels, so cancelling the request cancelled the only
+ceiling the scanner had, and each retry started another one. Measured before the fix: four requests,
+four `sleep`-equivalent scanners still alive and parented to the API process 20 s after the last
+504. The analyzer now kills and reaps its subprocess on cancellation. Granting `analyze:adhoc`
+against an older image hands out that behaviour, which is why step 10 comes after the deploy.
+
+---
 
 ## Rollback
 
