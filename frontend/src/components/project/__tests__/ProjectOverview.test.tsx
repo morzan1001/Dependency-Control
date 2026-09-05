@@ -4,12 +4,14 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { ProjectOverview } from '../ProjectOverview'
 import type { LatestProjectRelease } from '@/hooks/queries/use-releases'
 import type { ReleaseItem } from '@/types/release'
-import type { EnhancedStats, ScanWithReleases } from '@/types/scan'
+import type { BranchTip, EnhancedStats, ProjectBranchTips, ScanWithReleases } from '@/types/scan'
 
 const PROJECT_ID = 'p1'
 const MAIN_BRANCH = 'main'
+const USABLE_STATUSES = ['completed', 'completed_with_errors']
 
 const mockUseProjectScans = vi.fn()
+const mockUseProjectBranchTips = vi.fn()
 const mockUseScan = vi.fn()
 const mockUseScanResults = vi.fn()
 const mockUseLatestProjectRelease = vi.fn()
@@ -18,6 +20,7 @@ const mockNavigate = vi.fn()
 
 vi.mock('@/hooks/queries/use-scans', () => ({
   useProjectScans: (...args: unknown[]) => mockUseProjectScans(...args),
+  useProjectBranchTips: (...args: unknown[]) => mockUseProjectBranchTips(...args),
   useScan: (...args: unknown[]) => mockUseScan(...args),
   useScanResults: (...args: unknown[]) => mockUseScanResults(...args),
 }))
@@ -78,14 +81,39 @@ function makeScan(overrides: Partial<ScanWithReleases>, stats: EnhancedStats): S
 const noReleases: LatestProjectRelease = { latestRelease: undefined, hasReleases: false, isLoading: false }
 const releasesUnknown: LatestProjectRelease = { latestRelease: undefined, hasReleases: false, isLoading: true }
 
+// The endpoint answers this over every scan the project holds; here it answers over the fixture,
+// so a test that says nothing about branch tips still gets the tips its scans imply.
+function deriveTips(scans: ScanWithReleases[]): ProjectBranchTips {
+  const byBranch = new Map<string, BranchTip>()
+  for (const scan of scans) {
+    const row: BranchTip = byBranch.get(scan.branch) ?? { branch: scan.branch, scan_count: 0, tip: null }
+    if (!scan.is_rescan) row.scan_count += 1
+    const beatsHeld =
+      USABLE_STATUSES.includes(scan.status) &&
+      (row.tip === null ||
+        (Boolean(scan.is_rescan) !== Boolean(row.tip.is_rescan)
+          ? !scan.is_rescan
+          : new Date(scan.created_at) > new Date(row.tip.created_at)))
+    if (beatsHeld) row.tip = scan
+    byBranch.set(scan.branch, row)
+  }
+  const flagged = scans.find((scan) => scan.is_release && USABLE_STATUSES.includes(scan.status))
+  return {
+    branches: [...byBranch.values()].sort((a, b) => a.branch.localeCompare(b.branch)),
+    flagged_release_scan: flagged ?? null,
+  }
+}
+
 function renderOverview(
   scans: ScanWithReleases[],
   selectedBranches: string[] = [MAIN_BRANCH],
   releases: LatestProjectRelease = noReleases,
   offPageScans: ScanWithReleases[] = [],
+  branchTips: ProjectBranchTips = deriveTips(scans),
 ) {
   const byId = new Map([...scans, ...offPageScans].map((scan) => [scan.id, scan]))
   mockUseProjectScans.mockReturnValue({ data: scans, isLoading: false })
+  mockUseProjectBranchTips.mockReturnValue({ data: branchTips, isLoading: false })
   mockUseScan.mockImplementation((scanId: string) => ({ data: byId.get(scanId) }))
   mockUseScanResults.mockReturnValue({ data: [] })
   mockUseLatestProjectRelease.mockReturnValue(releases)
@@ -231,6 +259,69 @@ describe('ProjectOverview - the branch headline is the branch tip', () => {
 
     expect(screen.getByText(String(TIP_CRITICAL))).toBeInTheDocument()
     expect(screen.queryByText(String(OLD_COMMIT_CRITICAL))).not.toBeInTheDocument()
+  })
+})
+
+describe('ProjectOverview - a project with more scans than the chart window holds', () => {
+  const BUSY_BRANCH = 'main'
+  const QUIET_BRANCH = 'release/2.0'
+  const BUSY_CRITICAL = 1
+  const QUIET_CRITICAL = 50
+  const BUSY_SCAN_COUNT = 120
+  const QUIET_SCAN_COUNT = 1
+  const FLAGGED_SCAN_ID = 's-quiet-tip'
+
+  const busyTip = makeScan({ id: 's-busy-tip', branch: BUSY_BRANCH }, { critical: BUSY_CRITICAL, risk_score: 11 })
+  const quietTip = makeScan(
+    { id: FLAGGED_SCAN_ID, branch: QUIET_BRANCH, created_at: '2026-01-01T00:00:00Z', is_release: true },
+    { critical: QUIET_CRITICAL, risk_score: 97 },
+  )
+  // The page of scans holds only the busy branch; the quiet branch's newest scan fell out of it.
+  const page = [busyTip]
+  const tips: ProjectBranchTips = {
+    branches: [
+      { branch: BUSY_BRANCH, scan_count: BUSY_SCAN_COUNT, tip: busyTip },
+      { branch: QUIET_BRANCH, scan_count: QUIET_SCAN_COUNT, tip: quietTip },
+    ],
+    flagged_release_scan: quietTip,
+  }
+  const selected = [BUSY_BRANCH, QUIET_BRANCH]
+
+  it('takes the headline from the worst branch even when its scans are off the page', () => {
+    renderOverview(page, selected, noReleases, [], tips)
+
+    expect(screen.getAllByText(/Branch release\/2\.0 —/).length).toBeGreaterThan(0)
+    expect(screen.getAllByText(String(QUIET_CRITICAL)).length).toBeGreaterThan(0)
+  })
+
+  it('counts every scan of the selected branches, not the ones that fit on the page', () => {
+    renderOverview(page, selected, noReleases, [], tips)
+
+    expect(screen.getByText(String(BUSY_SCAN_COUNT + QUIET_SCAN_COUNT))).toBeInTheDocument()
+  })
+
+  it('finds a release marked before the page begins', () => {
+    renderOverview(page, selected, noReleases, [], tips)
+
+    expect(screen.getByText('Latest Release')).toBeInTheDocument()
+  })
+})
+
+describe('ProjectOverview - the trend window', () => {
+  const scanAt = (index: number): ScanWithReleases =>
+    makeScan({ id: `s-${index}`, created_at: `2026-07-${String((index % 28) + 1).padStart(2, '0')}T00:00:00Z` }, { critical: 1 })
+  const BOUNDED_NOTE = /newest 100 scans — older ones are outside the plot/
+
+  it('says the plot stops at the window once the page is full', () => {
+    renderOverview(Array.from({ length: 100 }, (_unused, index) => scanAt(index)))
+
+    expect(screen.getByText(BOUNDED_NOTE)).toBeInTheDocument()
+  })
+
+  it('says nothing when every scan of the project is plotted', () => {
+    renderOverview(Array.from({ length: 99 }, (_unused, index) => scanAt(index)))
+
+    expect(screen.queryByText(BOUNDED_NOTE)).not.toBeInTheDocument()
   })
 })
 

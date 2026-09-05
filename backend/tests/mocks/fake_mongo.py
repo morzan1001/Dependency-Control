@@ -392,6 +392,8 @@ def _eval_expr(doc: dict, expr):
     if isinstance(expr, str):
         if expr == "$$REMOVE":
             return _REMOVE
+        if expr == "$$ROOT":
+            return doc
         if expr.startswith("$"):
             return _resolve_dotted(doc, expr[1:])
         return expr

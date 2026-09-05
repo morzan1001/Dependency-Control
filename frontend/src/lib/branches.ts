@@ -10,16 +10,6 @@ export function initialBranchSelection(branches: BranchInfo[]): string[] {
   return preferred ? [preferred.name] : []
 }
 
-/**
- * Whether a scan represents its branch better than the one already held. A rescan carries today's
- * date over an older commit, so it is the tip only once the branch holds nothing that was built.
- */
-export function outranksBranchTip(candidate: Scan, incumbent: Scan | undefined): boolean {
-  if (!incumbent) return true
-  if (Boolean(candidate.is_rescan) !== Boolean(incumbent.is_rescan)) return !candidate.is_rescan
-  return new Date(candidate.created_at) > new Date(incumbent.created_at)
-}
-
 function severityRank(scan: Scan): number[] {
   return [scan.stats?.risk_score ?? 0, scan.stats?.critical ?? 0, scan.stats?.high ?? 0]
 }

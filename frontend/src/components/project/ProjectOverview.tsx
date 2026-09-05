@@ -1,13 +1,12 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useProjectScans, useScan, useScanResults } from '@/hooks/queries/use-scans'
+import { useProjectBranchTips, useProjectScans, useScan, useScanResults } from '@/hooks/queries/use-scans'
 import { useLatestProjectRelease } from '@/hooks/queries/use-releases'
 import { useProjectWaivers } from '@/hooks/queries/use-waivers'
 import { Scan } from '@/types/scan'
 import { hasUnrecordedRelease } from '@/lib/releases'
 import { resolveRun } from '@/lib/scan-run'
-import { isScanUsable } from '@/lib/scan-status'
-import { highestRiskBranch, outranksBranchTip } from '@/lib/branches'
+import { highestRiskBranch } from '@/lib/branches'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
@@ -29,6 +28,7 @@ interface ProjectOverviewProps {
 
 const RELEASE_NOT_ANALYSED = 'Nothing in its rescan chain has finished analysing'
 const RELEASE_CHAIN_BOUNDED = 'Rescan chain longer than the walk follows — a newer analysis may exist'
+const TREND_WINDOW_BOUNDED = `newest ${MAX_SCANS_FOR_CHARTS} scans — older ones are outside the plot`
 
 function releaseHeadline(environment: string | null, branch: string): string {
   return environment ? `Release in ${environment} on ${branch}` : `Release on ${branch}`
@@ -36,27 +36,31 @@ function releaseHeadline(environment: string | null, branch: string): string {
 
 export function ProjectOverview({ projectId, selectedBranches }: ProjectOverviewProps) {
   const navigate = useNavigate()
-  const { data: scans, isLoading } = useProjectScans(projectId, { page: 1, limit: MAX_SCANS_FOR_CHARTS, excludeDeletedBranches: true })
+  // The trend line is the only consumer of this page: every branch-level number below comes
+  // from branch-tips, which reads the whole project rather than a page of it.
+  const { data: scans, isLoading: scansLoading } = useProjectScans(projectId, { page: 1, limit: MAX_SCANS_FOR_CHARTS, excludeDeletedBranches: true })
+  const { data: branchTips, isLoading: tipsLoading } = useProjectBranchTips(projectId)
 
   const { data: waivers } = useProjectWaivers(projectId)
 
+  const isLoading = scansLoading || tipsLoading
   const scanList = scans || []
+  const trendWindowBounded = scanList.length >= MAX_SCANS_FOR_CHARTS
 
   const filteredScans = scanList.filter((s: Scan) => selectedBranches.includes(s.branch))
 
-  const uniqueScansCount = filteredScans.filter((s: Scan) => !s.is_rescan).length
+  const selectedTips = useMemo(
+    () => (branchTips?.branches ?? []).filter((row) => selectedBranches.includes(row.branch)),
+    [branchTips, selectedBranches],
+  )
+
+  const uniqueScansCount = selectedTips.reduce((total, row) => total + row.scan_count, 0)
 
   const projectStats = useMemo(() => {
-      if (!filteredScans.length) return null;
-
       const latestScansByBranch: Record<string, Scan> = {};
 
-      filteredScans.forEach((scan: Scan) => {
-          if (!isScanUsable(scan.status)) return;
-
-          if (outranksBranchTip(scan, latestScansByBranch[scan.branch])) {
-              latestScansByBranch[scan.branch] = scan;
-          }
+      selectedTips.forEach((row) => {
+          if (row.tip) latestScansByBranch[row.branch] = row.tip;
       });
 
       const branchStatsData = Object.values(latestScansByBranch).map(scan => ({
@@ -70,7 +74,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       }));
 
       return { branchStats: branchStatsData, latestScansByBranch };
-  }, [filteredScans]);
+  }, [selectedTips]);
 
   const latestScansByBranch = useMemo(() => projectStats?.latestScansByBranch || {}, [projectStats]);
   const branchNames = Object.keys(latestScansByBranch);
@@ -85,10 +89,8 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
   const { latestRelease, isLoading: releasesLoading } = useLatestProjectRelease(projectId);
   const { data: markedReleaseScan } = useScan(latestRelease?.analysis_scan_id ?? '');
   // A release row is what the endpoint lists, so a scan holding only the flag reaches it no other way.
-  const flaggedScan = useMemo(
-    () => filteredScans.find((scan) => hasUnrecordedRelease(scan) && isScanUsable(scan.status)),
-    [filteredScans],
-  );
+  const candidate = branchTips?.flagged_release_scan;
+  const flaggedScan = candidate && hasUnrecordedRelease(candidate) ? candidate : undefined;
   const releaseScan = latestRelease ? markedReleaseScan : flaggedScan;
   const releaseEnvironment = latestRelease?.environment ?? null;
   // Hidden entirely on a project that reports no release: an empty tile reads as a missing report.
@@ -292,6 +294,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
                 <CardTitle>Vulnerability Trends</CardTitle>
                 <CardDescription>
                     {selectedBranches.length > 0 ? `Showing trends for: ${selectedBranches.join(', ')}` : 'Select branches to view trends'}
+                    {trendWindowBounded && ` · ${TREND_WINDOW_BOUNDED}`}
                 </CardDescription>
             </div>
           </CardHeader>

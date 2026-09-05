@@ -559,3 +559,15 @@ export interface ScanWithReleases extends Scan {
   // Newest first; empty for a scan that runs nowhere.
   releases: ScanReleaseRef[];
 }
+
+export interface BranchTip {
+  branch: string;
+  // Counted over the whole branch, so it does not shrink with the page size.
+  scan_count: number;
+  tip: Scan | null;
+}
+
+export interface ProjectBranchTips {
+  branches: BranchTip[];
+  flagged_release_scan: ScanWithReleases | null;
+}

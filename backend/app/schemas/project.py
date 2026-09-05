@@ -216,6 +216,31 @@ class ScanWithReleases(Scan):
     )
 
 
+class BranchTip(BaseModel):
+    """One branch of a project, with the scan whose numbers stand for it."""
+
+    branch: str = Field(..., description="Branch name")
+    scan_count: int = Field(
+        ...,
+        description="Non-rescan scans the branch holds, counted over the whole branch rather than over a page of scans",
+    )
+    tip: Scan | None = Field(
+        None,
+        description="Newest usable scan of the branch, a rescan only where nothing built is left; "
+        "None while the branch has produced no usable scan",
+    )
+
+
+class ProjectBranchTips(BaseModel):
+    """Every branch of a project, so no branch-level verdict is drawn from a page of scans."""
+
+    branches: list[BranchTip] = Field(..., description="Alphabetical by branch name")
+    flagged_release_scan: ScanWithReleases | None = Field(
+        None,
+        description="Newest usable scan carrying the release flag, whatever its age; None when the project has none",
+    )
+
+
 class DashboardStats(BaseModel):
     """Dashboard statistics for project overview."""
 

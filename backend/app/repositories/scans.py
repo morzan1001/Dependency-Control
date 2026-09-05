@@ -13,6 +13,7 @@ from app.schemas.projections import ScanMinimal, ScanWithStats
 
 _COL = "scans"
 _RESCAN_RANK = "_rescan_rank"
+_USABLE_RANK = "_usable_rank"
 
 _MINIMAL_PROJECTION = {
     "_id": 1,
@@ -80,6 +81,27 @@ def _head_pipeline(or_conditions: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # project's representative scan up to the server and it can change between requests.
         {"$sort": {_RESCAN_RANK: 1, "created_at": -1, "_id": 1}},
         {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
+    ]
+
+
+def _branch_tip_pipeline(match: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {"$match": match},
+        {
+            "$addFields": {
+                _RESCAN_RANK: {"$cond": [{"$eq": ["$is_rescan", True]}, 1, 0]},
+                _USABLE_RANK: {"$cond": [{"$in": ["$status", SCAN_USABLE_STATUSES]}, 1, 0]},
+            }
+        },
+        # Unusable scans sort last so they cannot become the tip, while still entering the count.
+        {"$sort": {_USABLE_RANK: -1, _RESCAN_RANK: 1, "created_at": -1, "_id": 1}},
+        {
+            "$group": {
+                "_id": "$branch",
+                "tip": {"$first": "$$ROOT"},
+                "scan_count": {"$sum": {"$cond": [{"$eq": ["$is_rescan", True]}, 0, 1]}},
+            }
+        },
     ]
 
 
@@ -158,6 +180,29 @@ class ScanRepository:
         if sort:
             return await self.collection.find_one(query, sort=sort)
         return await self.collection.find_one(query)
+
+    async def branch_tips(
+        self, project_id: str, deleted_branches: list[str] | None = None
+    ) -> list[tuple[str, int, dict[str, Any] | None]]:
+        """``(branch, scan_count, tip)`` per branch, over every scan the project holds.
+
+        The branch count bounds the answer, so a busy branch cannot push another branch's
+        tip out of it, and ``scan_count`` is grouped rather than counted off a page.
+        """
+        match: dict[str, Any] = {"project_id": project_id}
+        if deleted_branches:
+            match["branch"] = {"$nin": list(deleted_branches)}
+        rows = await self.aggregate(_branch_tip_pipeline(match))
+        tips: list[tuple[str, int, dict[str, Any] | None]] = []
+        for row in rows:
+            branch = row["_id"]
+            if not isinstance(branch, str) or not branch:
+                continue
+            tip = row.get("tip") or {}
+            usable = tip if tip.get("status") in SCAN_USABLE_STATUSES else None
+            tips.append((branch, int(row.get("scan_count", 0)), usable))
+        tips.sort(key=lambda row: row[0])
+        return tips
 
     async def find_many(
         self,

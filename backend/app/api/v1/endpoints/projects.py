@@ -61,8 +61,10 @@ from app.repositories import (
 from app.repositories.update_frequency import ScanOutdatedSetRepository, ScanUpdateDeltaRepository
 from app.schemas.project import (
     BranchInfo,
+    BranchTip,
     DashboardStats,
     ProjectApiKeyResponse,
+    ProjectBranchTips,
     ProjectCreate,
     ProjectListEnriched,
     ProjectMemberInvite,
@@ -767,6 +769,52 @@ async def read_project_scans(
         ScanWithReleases(**{**doc, "releases": _release_refs(releases_by_scan.get(doc["_id"], []))})
         for doc in scan_docs
     ]
+
+
+@router.get("/{project_id}/scans/branch-tips", summary="Branch tips and scan counts", responses=RESP_AUTH_404)
+async def read_project_branch_tips(
+    project_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+) -> ProjectBranchTips:
+    """Every branch's representative scan and scan count, plus the newest release-flagged scan.
+
+    A page of the scan list answers neither: a branch whose newest scan fell off the page
+    disappears from it, and a release marked before the page begins reads as no release.
+    """
+    await check_project_access(project_id, current_user, db, required_role="viewer")
+
+    project_repo = ProjectRepository(db)
+    project = await project_repo.get_by_id(project_id)
+    if not project:
+        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
+
+    deleted = list(project.deleted_branches or [])
+    scan_repo = ScanRepository(db)
+    tips = await scan_repo.branch_tips(project_id, deleted)
+
+    flagged_query: dict[str, Any] = {
+        "project_id": project_id,
+        "is_release": True,
+        "status": {"$in": SCAN_USABLE_STATUSES},
+    }
+    if deleted:
+        flagged_query["branch"] = {"$nin": deleted}
+    flagged_doc = await scan_repo.find_one(flagged_query, sort=[("created_at", -1), ("_id", 1)])
+
+    flagged: ScanWithReleases | None = None
+    if flagged_doc:
+        releases_by_scan = await ReleaseRepository(db).group_by_scan([flagged_doc["_id"]])
+        flagged = ScanWithReleases(
+            **{**flagged_doc, "releases": _release_refs(releases_by_scan.get(flagged_doc["_id"], []))}
+        )
+
+    return ProjectBranchTips(
+        branches=[
+            BranchTip(branch=branch, scan_count=count, tip=Scan(**tip) if tip else None) for branch, count, tip in tips
+        ],
+        flagged_release_scan=flagged,
+    )
 
 
 @router.post(

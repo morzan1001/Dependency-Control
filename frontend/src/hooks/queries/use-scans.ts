@@ -23,6 +23,7 @@ export const scanKeys = {
     list: (projectId: string, filters: ScanListFilters) => [...scanKeys.project(projectId), 'list', filters] as const,
     details: () => [...scanKeys.all, 'detail'] as const,
     detail: (scanId: string) => [...scanKeys.details(), scanId] as const,
+    branchTips: (projectId: string) => [...scanKeys.project(projectId), 'branch-tips'] as const,
     history: (projectId: string, scanId: string) => [...scanKeys.project(projectId), 'history', scanId] as const,
     findings: (scanId: string, filters: ScanFindingsParams) => [...scanKeys.detail(scanId), 'findings', filters] as const,
     results: (scanId: string) => [...scanKeys.detail(scanId), 'results'] as const,
@@ -51,6 +52,15 @@ export const useProjectScans = (
         }),
         enabled: !!projectId,
         placeholderData: keepPreviousData
+    });
+}
+
+// Every branch of the project, so a branch verdict never depends on how many scans fit on a page.
+export const useProjectBranchTips = (projectId: string) => {
+    return useQuery({
+        queryKey: scanKeys.branchTips(projectId),
+        queryFn: () => scanApi.getBranchTips(projectId),
+        enabled: !!projectId
     });
 }
 

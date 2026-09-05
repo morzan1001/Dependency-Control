@@ -1,6 +1,6 @@
 import { api } from '@/api/client';
 import { SMALL_PAGE_SIZE } from '@/lib/constants';
-import { Scan, ScanAnalysisResult, SbomResponse, ScanFindingsParams, ScanFindingsResponse, ScanStats, ScanWithReleases } from '@/types/scan';
+import { ProjectBranchTips, Scan, ScanAnalysisResult, SbomResponse, ScanFindingsParams, ScanFindingsResponse, ScanStats, ScanWithReleases } from '@/types/scan';
 
 export const scanApi = {
     getRecent: async (): Promise<Scan[]> => {
@@ -18,6 +18,11 @@ export const scanApi = {
         const response = await api.get<ScanWithReleases[]>(`/projects/${id}/scans`, {
           params: { skip, limit, branch, sort_by: sortBy, sort_order: sortOrder, exclude_rescans: excludeRescans, exclude_deleted_branches: excludeDeletedBranches, is_release: isRelease }
         });
+        return response.data;
+    },
+
+    getBranchTips: async (id: string): Promise<ProjectBranchTips> => {
+        const response = await api.get<ProjectBranchTips>(`/projects/${id}/scans/branch-tips`);
         return response.data;
     },
 
