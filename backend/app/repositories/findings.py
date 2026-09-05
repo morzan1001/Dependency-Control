@@ -136,10 +136,11 @@ class FindingRepository(BaseRepository[FindingRecord]):
     async def find_by_scan(
         self,
         scan_id: str,
+        limit: int,
         skip: int = 0,
-        limit: int = 1000,
         query_filter: dict[str, Any] | None = None,
     ) -> list[FindingRecord]:
+        """``limit`` is required: a default here is a cap the caller never chose and cannot see."""
         query: dict[str, Any] = {"scan_id": scan_id}
         if query_filter:
             query.update(query_filter)

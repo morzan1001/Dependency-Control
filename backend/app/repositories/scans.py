@@ -236,8 +236,12 @@ class ScanRepository:
     async def find_many_with_stats(
         self,
         query: dict[str, Any],
-        limit: int = 1000,
+        limit: int,
     ) -> list[ScanWithStats]:
+        # Callers derive the limit from the id list they are asking about, and Mongo reads
+        # limit(0) as unbounded, so an empty list has to answer before the query is built.
+        if limit <= 0:
+            return []
         cursor = self.collection.find(query, {"_id": 1, "stats": 1}).limit(limit)
         docs = await cursor.to_list(limit)
         return [ScanWithStats(**doc) for doc in docs]

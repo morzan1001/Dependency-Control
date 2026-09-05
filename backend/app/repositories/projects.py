@@ -168,6 +168,10 @@ class ProjectRepository:
         query: dict[str, Any],
         limit: int,
     ) -> list[ProjectWithScanId]:
+        # Callers derive the limit from the id list they are asking about, and Mongo reads
+        # limit(0) as unbounded, so an empty list has to answer before the query is built.
+        if limit <= 0:
+            return []
         cursor = self.collection.find(
             query, {"_id": 1, "name": 1, "latest_scan_id": 1, "deleted_branches": 1, "default_branch": 1}
         ).limit(limit)
