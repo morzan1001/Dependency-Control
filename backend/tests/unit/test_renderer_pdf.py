@@ -1,37 +1,42 @@
-import importlib
-
 import pytest
 
-_weasyprint_spec = importlib.util.find_spec("weasyprint")
-_weasyprint_usable = False
-if _weasyprint_spec is not None:
-    try:
-        # WeasyPrint's import dlopens Cairo/Pango; a missing native lib raises, so treat it as unusable.
-        importlib.import_module("weasyprint")
-        _weasyprint_usable = True
-    except Exception:  # pragma: no cover - environment-dependent
-        _weasyprint_usable = False
+from tests.conftest import WEASYPRINT_USABLE
 
 pytestmark = pytest.mark.skipif(
-    not _weasyprint_usable,
+    not WEASYPRINT_USABLE,
     reason="WeasyPrint not installed or native libs missing",
 )
 
+_MINIMUM_PDF_BYTES = 1000
 
-def test_pdf_renderer_produces_pdf_bytes():
+
+def _partial_coverage():
+    from app.schemas.compliance import EvaluationCoverage, InputCoverage
+
+    return EvaluationCoverage(
+        findings=InputCoverage(evaluated=20000, in_scope=20050, limit=20000),
+        crypto_assets=InputCoverage(evaluated=10, in_scope=10, limit=10000),
+    )
+
+
+@pytest.mark.parametrize("coverage_factory", [None, _partial_coverage])
+def test_pdf_renderer_produces_pdf_bytes(coverage_factory):
+    """A partial coverage object must reach the template; test_compliance_coverage.py checks what
+    the template then prints, since it can run where WeasyPrint's native stack cannot."""
+    from app.schemas.compliance import ReportFormat
     from app.services.compliance.renderers.pdf_renderer import PdfRenderer
     from tests.unit.test_renderer_json import _evaluation, _report
 
-    r = PdfRenderer()
+    evaluation = _evaluation()
+    if coverage_factory is not None:
+        evaluation.coverage = coverage_factory()
     rep = _report()
-    from app.schemas.compliance import ReportFormat
-
     rep.format = ReportFormat.PDF
-    out, filename, mime = r.render(_evaluation(), rep)
+    out, filename, mime = PdfRenderer().render(evaluation, rep)
     assert mime == "application/pdf"
     assert filename.endswith(".pdf")
     assert out[:4] == b"%PDF"
-    assert len(out) > 1000
+    assert len(out) > _MINIMUM_PDF_BYTES
 
 
 def test_pdf_includes_disclaimer_when_provided():
@@ -46,19 +51,3 @@ def test_pdf_includes_disclaimer_when_provided():
     assert out[:4] == b"%PDF"
 
 
-def test_pdf_renders_a_partial_coverage_report():
-    """The renderer has to reach the template with the coverage; test_compliance_coverage.py checks
-    what the template then prints, since it can run where WeasyPrint's native stack cannot."""
-    from app.schemas.compliance import EvaluationCoverage, InputCoverage, ReportFormat
-    from app.services.compliance.renderers.pdf_renderer import PdfRenderer
-    from tests.unit.test_renderer_json import _evaluation, _report
-
-    evaluation = _evaluation()
-    evaluation.coverage = EvaluationCoverage(
-        findings=InputCoverage(evaluated=20000, in_scope=20050, limit=20000),
-        crypto_assets=InputCoverage(evaluated=10, in_scope=10, limit=10000),
-    )
-    rep = _report()
-    rep.format = ReportFormat.PDF
-    out, _, _ = PdfRenderer().render(evaluation, rep)
-    assert out[:4] == b"%PDF"
