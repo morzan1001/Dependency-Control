@@ -14,7 +14,11 @@ from pydantic import BaseModel, Field
 
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.core.constants import MAX_CONCURRENT_COMPLIANCE_REPORTS, WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED
+from app.core.constants import (
+    MAX_COMPLIANCE_REPORT_PAGE,
+    MAX_CONCURRENT_COMPLIANCE_REPORTS,
+    WEBHOOK_EVENT_COMPLIANCE_REPORT_GENERATED,
+)
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
 from app.repositories.compliance_report import ComplianceReportRepository
@@ -154,7 +158,7 @@ async def list_reports(
     framework: ReportFramework | None = None,
     status: ReportStatus | None = None,
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_COMPLIANCE_REPORT_PAGE),
 ) -> dict[str, Any]:
     repo = ComplianceReportRepository(db)
     visibility = await _build_visibility_filter(db, current_user)

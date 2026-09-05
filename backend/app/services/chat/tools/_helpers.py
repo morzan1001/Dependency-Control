@@ -19,8 +19,16 @@ def _waiver_is_active(waiver: dict[str, Any], now: datetime | None = None) -> bo
     return bool(expiration > reference)
 
 
-MAX_TOOL_LIMIT = 200  # Hard cap on LLM-supplied limit arguments to prevent DoS.
 MAX_TOOL_RESULT_BYTES = 8_000  # Cap JSON size returned to the LLM per call.
+
+# Ceilings on an LLM-supplied limit, one per row shape, and every tool names the one it uses.
+# MAX_TOOL_RESULT_BYTES is what finally cuts a list — a serialized finding runs to ~850 bytes, so
+# roughly nine fill the budget — and _truncate_if_too_large says so when it does. These bound
+# what a call may cost before reaching that point.
+MAX_FINDING_ROWS = 25
+MAX_SUMMARY_ROWS = 50
+MAX_PLAN_STEPS = 25
+MAX_DAY_WINDOW = 365
 
 # details.exploit_maturity values meaning actively exploited in the wild.
 KEV_EQUIVALENT_MATURITY = ("active", "weaponized")
@@ -79,7 +87,7 @@ def clamped_limit_note() -> str | None:
     )
 
 
-def _clamp_limit(raw: Any, default: int, maximum: int = MAX_TOOL_LIMIT) -> int:
+def _clamp_limit(raw: Any, default: int, maximum: int) -> int:
     """Coerce LLM-supplied `limit` to a safe integer, clamped to [1, maximum].
 
     A clamp is recorded, because a caller that asked for 500 and received 200 otherwise

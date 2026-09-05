@@ -8,6 +8,7 @@ from fastapi import HTTPException, Query
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_400_403, RESP_403, RESP_404
+from app.core.constants import MAX_CRYPTO_HOTSPOT_PAGE
 from app.schemas.analytics import HotspotResponse, TrendSeries
 from app.services.analytics.crypto_hotspots import CryptoHotspotService, GroupBy
 from app.services.analytics.crypto_trends import Bucket, CryptoTrendService, Metric
@@ -28,7 +29,7 @@ async def get_hotspots(
     scope_id: str | None = Query(None),
     group_by: GroupBy = Query("name"),
     scan_id: str | None = Query(None),
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(100, ge=1, le=MAX_CRYPTO_HOTSPOT_PAGE),
 ) -> HotspotResponse:
     resolved = await ScopeResolver(db, current_user).resolve(
         scope=scope,

@@ -10,6 +10,13 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.v1.helpers.projects import build_user_project_query
+from app.core.constants import (
+    MAX_COMPLIANCE_REPORT_PAGE,
+    MAX_CRYPTO_ASSET_PAGE,
+    MAX_CRYPTO_HOTSPOT_PAGE,
+    MAX_POLICY_AUDIT_PAGE,
+    MAX_PQC_PLAN_ITEMS,
+)
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
@@ -24,6 +31,10 @@ from app.services.reachability_enrichment import reachability_display_tier
 from ._helpers import (
     _SEVERITY_RANK,
     KEV_EQUIVALENT_MATURITY,
+    MAX_DAY_WINDOW,
+    MAX_FINDING_ROWS,
+    MAX_PLAN_STEPS,
+    MAX_SUMMARY_ROWS,
     _breaking_risk,
     _clamp_limit,
     _clip_value,
@@ -259,7 +270,7 @@ class ChatToolRegistry:
             search = args.get("search")
             if search:
                 query["name"] = {"$regex": re.escape(search), "$options": "i"}
-            limit = _clamp_limit(args.get("limit"), 15, maximum=50)
+            limit = _clamp_limit(args.get("limit"), 15, maximum=MAX_SUMMARY_ROWS)
             cursor = db["projects"].find(query, sort=[("last_scan_at", -1)], limit=limit)
             projects = await cursor.to_list(length=limit)
             return {
@@ -307,7 +318,7 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
-            limit = _clamp_limit(args.get("limit"), 10)
+            limit = _clamp_limit(args.get("limit"), 10, maximum=MAX_SUMMARY_ROWS)
             # Newest-first across every branch and status, so the first row is a queued run on a
             # branch nobody ships as often as it is the build the project stands on.
             cursor = db["scans"].find({"project_id": args["project_id"]}, sort=[("created_at", -1)], limit=limit)
@@ -354,7 +365,7 @@ class ChatToolRegistry:
                 query["severity"] = args["severity"].upper()
             if args.get("type"):
                 query["type"] = args["type"]
-            limit = _clamp_limit(args.get("limit"), 10, maximum=25)
+            limit = _clamp_limit(args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
             findings, ranking_note = await _ranked_findings(db, query, limit)
             return {
                 "findings": [_serialize_finding_for_llm(f) for f in findings],
@@ -375,7 +386,7 @@ class ChatToolRegistry:
                 query["severity"] = args["severity"].upper()
             if args.get("type"):
                 query["type"] = args["type"]
-            limit = _clamp_limit(args.get("limit"), 10, maximum=25)
+            limit = _clamp_limit(args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
             findings, ranking_note = await _ranked_findings(db, query, limit)
             return {
                 "findings": [_serialize_finding_for_llm(f) for f in findings],
@@ -427,7 +438,7 @@ class ChatToolRegistry:
                 query["severity"] = args["severity"].upper()
             if args.get("type"):
                 query["type"] = args["type"]
-            limit = _clamp_limit(args.get("limit"), 10, maximum=25)
+            limit = _clamp_limit(args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
             cursor = db["findings"].find(query, limit=limit)
             findings = await cursor.to_list(length=limit)
             names = await self._project_names(db, list({_row_project_id(f) for f in findings}))
@@ -529,7 +540,7 @@ class ChatToolRegistry:
             return {"dependencies": [_serialize_doc(d) for d in deps]}
 
         if tool_name == "get_hotspots":
-            limit = _clamp_limit(args.get("limit"), 10)
+            limit = _clamp_limit(args.get("limit"), 10, maximum=MAX_SUMMARY_ROWS)
             head = await self._latest_scan_ids_for_user(user_project_query, None, db)
             stats_by_project = await self._head_scan_stats(db, head)
             ranked = sorted(head, key=lambda pid: (-_stat(stats_by_project.get(pid), "critical"), pid))[:limit]
@@ -642,7 +653,7 @@ class ChatToolRegistry:
             return {"waivers": [{**_serialize_doc(w), "is_active": _waiver_is_active(w, now)} for w in waivers]}
 
         if tool_name == "get_top_priority_findings":
-            limit = _clamp_limit(args.get("limit"), 5, maximum=20)
+            limit = _clamp_limit(args.get("limit"), 5, maximum=MAX_FINDING_ROWS)
             match: dict[str, Any] = {}
             if args.get("project_id"):
                 proj = await self._get_authorized_project(args["project_id"], user_project_query, db)
@@ -697,7 +708,7 @@ class ChatToolRegistry:
             if not head_scan_id:
                 return {"plan": [], "message": _ERR_NO_SCAN_DATA}
 
-            max_steps = _clamp_limit(args.get("max_steps"), 10, maximum=25)
+            max_steps = _clamp_limit(args.get("max_steps"), 10, maximum=MAX_PLAN_STEPS)
 
             # 500 is plenty — plans collapse to a handful of steps after grouping by component.
             cursor = db["findings"].find(
@@ -857,7 +868,7 @@ class ChatToolRegistry:
             latest = await self._latest_scan_ids_for_user(user_project_query, args.get("project_id"), db)
             if not latest:
                 return {"findings": [], "message": _ERR_NO_SCAN_DATA}
-            limit = _clamp_limit(args.get("limit"), 10, maximum=25)
+            limit = _clamp_limit(args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
             rows, ranking_note = await _ranked_findings(
                 db,
                 {
@@ -970,7 +981,7 @@ class ChatToolRegistry:
             latest = await self._latest_scan_ids_for_user(user_project_query, args.get("project_id"), db)
             if not latest:
                 return {"findings": [], "message": _ERR_NO_SCAN_DATA}
-            limit = _clamp_limit(args.get("limit"), 10, maximum=25)
+            limit = _clamp_limit(args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
             rows, ranking_note = await _ranked_findings(
                 db,
                 {
@@ -1110,8 +1121,8 @@ class ChatToolRegistry:
             from datetime import timedelta as _td
             from datetime import timezone as _tz
 
-            days = _clamp_limit(args.get("days_open"), 30, maximum=365)
-            limit = _clamp_limit(args.get("limit"), 10, maximum=25)
+            days = _clamp_limit(args.get("days_open"), 30, maximum=MAX_DAY_WINDOW)
+            limit = _clamp_limit(args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
             sev_min = (args.get("severity_min") or "HIGH").upper()
             allowed_sev = [
                 s
@@ -1159,7 +1170,7 @@ class ChatToolRegistry:
             latest = await self._latest_scan_ids_for_user(user_project_query, args.get("project_id"), db)
             if not latest:
                 return {"findings": [], "message": _ERR_NO_SCAN_DATA}
-            limit = _clamp_limit(args.get("limit"), 10, maximum=25)
+            limit = _clamp_limit(args.get("limit"), 10, maximum=MAX_FINDING_ROWS)
             rows, ranking_note = await _ranked_findings(
                 db,
                 {"scan_id": {"$in": list(latest.values())}, "type": "license"},
@@ -1182,7 +1193,7 @@ class ChatToolRegistry:
             from datetime import timedelta as _td
             from datetime import timezone as _tz
 
-            days = _clamp_limit(args.get("days"), 30, maximum=365)
+            days = _clamp_limit(args.get("days"), 30, maximum=MAX_DAY_WINDOW)
             project_ids = await self._get_authorized_project_ids(user_project_query, db)
             now = _dt.now(_tz.utc)
             cutoff = now + _td(days=days)
@@ -1258,8 +1269,8 @@ class ChatToolRegistry:
             from datetime import timedelta as _td
             from datetime import timezone as _tz
 
-            days = _clamp_limit(args.get("days"), 14, maximum=365)
-            limit = _clamp_limit(args.get("limit"), 10, maximum=50)
+            days = _clamp_limit(args.get("days"), 14, maximum=MAX_DAY_WINDOW)
+            limit = _clamp_limit(args.get("limit"), 10, maximum=MAX_SUMMARY_ROWS)
             cutoff = _dt.now(_tz.utc) - _td(days=days)
             query = {
                 "$or": [
@@ -1323,7 +1334,7 @@ class ChatToolRegistry:
             elif not has_permission(user.permissions, Permissions.ARCHIVE_READ_ALL):
                 project_ids = await self._get_authorized_project_ids(user_project_query, db)
                 query["project_id"] = {"$in": project_ids}
-            limit = _clamp_limit(args.get("limit"), 20)
+            limit = _clamp_limit(args.get("limit"), 20, maximum=MAX_SUMMARY_ROWS)
             cursor = db["archive_metadata"].find(query, sort=[("archived_at", -1)], limit=limit)
             archives = await cursor.to_list(length=limit)
             return {"archives": [_serialize_doc(a) for a in archives]}
@@ -1385,7 +1396,7 @@ class ChatToolRegistry:
                 primitive=args.get("primitive"),
                 name_search=args.get("name_search"),
                 skip=int(args.get("skip") or 0),
-                limit=_clamp_limit(args.get("limit"), 100, 500),
+                limit=_clamp_limit(args.get("limit"), 100, MAX_CRYPTO_ASSET_PAGE),
             )
             return {**assets, "scan": build}
 
@@ -1432,7 +1443,7 @@ class ChatToolRegistry:
                 db,
                 project_id=args["project_id"],
                 group_by=args.get("group_by", "name"),
-                limit=_clamp_limit(args.get("limit"), 20, 100),
+                limit=_clamp_limit(args.get("limit"), 20, MAX_CRYPTO_HOTSPOT_PAGE),
             )
 
         if tool_name == "get_crypto_trends":
@@ -1475,7 +1486,7 @@ class ChatToolRegistry:
                 db,
                 user=user,
                 project_id=args["project_id"],
-                limit=_clamp_limit(args.get("limit"), 500, 2000),
+                limit=_clamp_limit(args.get("limit"), 500, MAX_PQC_PLAN_ITEMS),
             )
 
         if tool_name == "list_compliance_reports":
@@ -1488,7 +1499,7 @@ class ChatToolRegistry:
                     db,
                     project_id=project_id,
                     framework=args.get("framework"),
-                    limit=_clamp_limit(args.get("limit"), 10, 50),
+                    limit=_clamp_limit(args.get("limit"), 10, MAX_COMPLIANCE_REPORT_PAGE),
                 )
             # No project_id: restrict to the caller's visibility, else the repo
             # query is unfiltered and leaks every scope's reports org-wide.
@@ -1505,7 +1516,7 @@ class ChatToolRegistry:
                     fw = None
             reports = await _pkg.ComplianceReportRepository(db).list(
                 framework=fw,
-                limit=_clamp_limit(args.get("limit"), 10, 50),
+                limit=_clamp_limit(args.get("limit"), 10, MAX_COMPLIANCE_REPORT_PAGE),
                 extra_filter=visibility,
             )
             return {"reports": [r.model_dump(by_alias=True) for r in reports]}
@@ -1524,7 +1535,7 @@ class ChatToolRegistry:
                 db,
                 policy_scope=args["policy_scope"],
                 project_id=project_id,
-                limit=_clamp_limit(args.get("limit"), 20, 100),
+                limit=_clamp_limit(args.get("limit"), 20, MAX_POLICY_AUDIT_PAGE),
             )
 
         if tool_name == "get_framework_evaluation_summary":

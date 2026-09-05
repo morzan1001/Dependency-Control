@@ -417,6 +417,14 @@ SCAN_DEPENDENCY_READ_LIMIT: int = 10_000
 # Used to prevent memory issues with large datasets
 ANALYTICS_MAX_QUERY_LIMIT: int = 100000
 
+# Page ceilings for services reachable both through their REST endpoint and through a chat tool.
+# One name per concept, so the two entry points cannot bound the same read at different numbers.
+MAX_CRYPTO_ASSET_PAGE: int = 500
+MAX_CRYPTO_HOTSPOT_PAGE: int = 500
+MAX_PQC_PLAN_ITEMS: int = 2000
+MAX_COMPLIANCE_REPORT_PAGE: int = 200
+MAX_POLICY_AUDIT_PAGE: int = 200
+
 # The /impact and /hotspots $group stages must not cap per-group arrays with a
 # post-$group $slice: it can't shrink a materialized accumulator, and capping in
 # MATCH order would drop high-EPSS/KEV CVEs. They keep the working set small via
@@ -941,9 +949,6 @@ AGG_KEY_SAST = "SAST-AGG"
 # Cross-linking is pairwise, so a component carrying thousands of findings costs O(n^2) to
 # produce a related-findings list no reader can use. Above this the group is left unlinked.
 MAX_CROSS_LINK_GROUP_SIZE: int = 100
-
-# Limits for waiver queries
-WAIVER_QUERY_LIMIT = 1000
 
 # Waiver status values
 WAIVER_STATUS_ACCEPTED_RISK = "accepted_risk"

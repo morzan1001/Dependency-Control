@@ -1,7 +1,7 @@
 """A model that asked for more than a chat tool grants must be told it was given less.
 
-The clamp is silent otherwise: the tool answers with 200 rows and the model relays them as the
-whole of what it asked about.
+The clamp is silent otherwise: the tool answers with the ceiling's worth of rows and the model
+relays them as the whole of what it asked about.
 """
 
 from datetime import datetime, timezone
@@ -10,14 +10,15 @@ import pytest
 
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
-from app.services.chat.tools._helpers import MAX_TOOL_LIMIT, _clamp_limit, begin_limit_ledger, clamped_limit_note
+from app.services.chat.tools._helpers import MAX_SUMMARY_ROWS, _clamp_limit, begin_limit_ledger, clamped_limit_note
 from tests.helpers.permission_presets import PRESET_ADMIN
 
 _NOW = datetime(2026, 9, 5, 12, 0, tzinfo=timezone.utc)
 _PROJECT = "checkout-service"
 _SCAN = "scan-head"
 _DEFAULT = 10
-_ASKED_FOR = MAX_TOOL_LIMIT * 3
+_CEILING = MAX_SUMMARY_ROWS
+_ASKED_FOR = _CEILING * 3
 
 
 @pytest.fixture
@@ -43,26 +44,26 @@ class TestLedger:
     def test_a_clamped_request_is_recorded(self):
         begin_limit_ledger()
 
-        assert _clamp_limit(_ASKED_FOR, _DEFAULT) == MAX_TOOL_LIMIT
-        assert f"{_ASKED_FOR} to {MAX_TOOL_LIMIT}" in (clamped_limit_note() or "")
+        assert _clamp_limit(_ASKED_FOR, _DEFAULT, _CEILING) == _CEILING
+        assert f"{_ASKED_FOR} to {_CEILING}" in (clamped_limit_note() or "")
 
     def test_a_request_inside_the_range_is_not_recorded(self):
         begin_limit_ledger()
 
-        assert _clamp_limit(MAX_TOOL_LIMIT - 1, _DEFAULT) == MAX_TOOL_LIMIT - 1
+        assert _clamp_limit(_CEILING - 1, _DEFAULT, _CEILING) == _CEILING - 1
         assert clamped_limit_note() is None
 
     def test_falling_back_to_the_default_is_not_a_clamp(self):
         """Nothing was asked for, so nothing was refused."""
         begin_limit_ledger()
 
-        assert _clamp_limit(None, _DEFAULT) == _DEFAULT
+        assert _clamp_limit(None, _DEFAULT, _CEILING) == _DEFAULT
         assert clamped_limit_note() is None
 
     def test_a_request_below_the_floor_is_recorded_too(self):
         begin_limit_ledger()
 
-        assert _clamp_limit(0, _DEFAULT) == 1
+        assert _clamp_limit(0, _DEFAULT, _CEILING) == 1
         assert "0 to 1" in (clamped_limit_note() or "")
 
 
@@ -73,7 +74,7 @@ async def test_the_tool_result_says_the_request_was_reduced(seeded, admin_user):
     )
 
     assert result["_limit_clamped"] is True
-    assert f"{_ASKED_FOR} to {MAX_TOOL_LIMIT}" in result["_limit_clamp_note"]
+    assert f"{_ASKED_FOR} to {_CEILING}" in result["_limit_clamp_note"]
 
 
 @pytest.mark.asyncio

@@ -14,7 +14,6 @@ from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
 
 from ._helpers import (
     KEV_EQUIVALENT_MATURITY,
-    MAX_TOOL_LIMIT,
     MAX_TOOL_RESULT_BYTES,
     _breaking_risk,
     _clamp_limit,
@@ -47,7 +46,6 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "FRAMEWORK_REGISTRY",
     "KEV_EQUIVALENT_MATURITY",
-    "MAX_TOOL_LIMIT",
     "MAX_TOOL_RESULT_BYTES",
     "TOOL_DEFINITIONS",
     "TOOL_PERMISSIONS",

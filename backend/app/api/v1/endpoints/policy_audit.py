@@ -20,6 +20,7 @@ from app.api.v1.helpers.responses import (
     RESP_404,
 )
 from app.core.config import settings
+from app.core.constants import MAX_POLICY_AUDIT_PAGE
 from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
@@ -38,7 +39,7 @@ async def list_system_audit(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_POLICY_AUDIT_PAGE),
 ) -> dict[str, Any]:
     _require_admin(current_user)
     entries = await PolicyAuditRepository(db).list(
@@ -121,7 +122,7 @@ async def list_project_audit(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_POLICY_AUDIT_PAGE),
 ) -> dict[str, Any]:
     await check_project_access(project_id, current_user, db, required_role="viewer")
     entries = await PolicyAuditRepository(db).list(
@@ -201,7 +202,7 @@ async def list_project_license_audit(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     skip: int = Query(0, ge=0),
-    limit: int = Query(50, ge=1, le=200),
+    limit: int = Query(50, ge=1, le=MAX_POLICY_AUDIT_PAGE),
 ) -> dict[str, Any]:
     """List license-policy audit entries for a project (viewer+ role)."""
     await check_project_access(project_id, current_user, db, required_role="viewer")
