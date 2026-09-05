@@ -9,6 +9,7 @@ from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.constants import (
     ANALYZER_TIMEOUTS,
     TOP_PYPI_PACKAGES_URL,
+    TYPOSQUATTING_POPULAR_PACKAGE_RANKS,
     TYPOSQUATTING_SIMILARITY_THRESHOLD,
 )
 from app.core.http_utils import InstrumentedAsyncClient
@@ -115,23 +116,35 @@ class TyposquattingAnalyzer(Analyzer):
         cache_key = CacheKeys.popular_packages("pypi")
         timeout = ANALYZER_TIMEOUTS.get("typosquatting", ANALYZER_TIMEOUTS["default"])
 
+        reason = "unexpected status"
         try:
-            async with InstrumentedAsyncClient("PyPI API", timeout=timeout) as client:
+            # The corpus has moved host before, and a 301 that is not followed leaves the
+            # detector comparing against the handful of names below.
+            async with InstrumentedAsyncClient("PyPI API", timeout=timeout, follow_redirects=True) as client:
                 resp = await client.get(TOP_PYPI_PACKAGES_URL)
                 if resp.status_code == 200:
                     data = resp.json()
-                    packages = {row["project"].lower() for row in data.get("rows", [])[:5000]}
+                    rows = data.get("rows", [])[:TYPOSQUATTING_POPULAR_PACKAGE_RANKS]
+                    packages = {row["project"].lower() for row in rows}
                     await cache_service.set(cache_key, list(packages), CacheTTL.POPULAR_PACKAGES)
                     logger.info(f"Loaded {len(packages)} popular PyPI packages (cached in Redis)")
                     return packages
+                reason = f"HTTP {resp.status_code}"
         except httpx.TimeoutException:
-            logger.debug("Timeout fetching PyPI top packages, using fallback")
+            reason = "timeout"
         except httpx.ConnectError:
-            logger.debug("Connection error fetching PyPI top packages, using fallback")
+            reason = "connection error"
         except Exception as e:
-            logger.debug(f"Failed to fetch PyPI top packages: {type(e).__name__}")
+            reason = type(e).__name__
 
         packages = self._get_static_pypi()
+        # A corpus this small is a detector that finds almost nothing, so it is not a debug note.
+        logger.warning(
+            "PyPI popular-package corpus unavailable (%s); comparing against %d built-in names instead of %d ranks",
+            reason,
+            len(packages),
+            TYPOSQUATTING_POPULAR_PACKAGE_RANKS,
+        )
         await cache_service.set(cache_key, list(packages), CacheTTL.POPULAR_PACKAGES)
         return packages
 
@@ -236,7 +249,14 @@ class TyposquattingAnalyzer(Analyzer):
             if issue is not None:
                 issues.append(issue)
 
-        return {"typosquatting_issues": issues}
+        # A name similar to a package outside this corpus produces no finding, so the corpus
+        # the comparison ran against travels with the result.
+        return {
+            "typosquatting_issues": issues,
+            "popular_packages_compared": {
+                ecosystem: len(names) for ecosystem, names in sorted(popular_packages.items())
+            },
+        }
 
     def _scan_component(
         self,

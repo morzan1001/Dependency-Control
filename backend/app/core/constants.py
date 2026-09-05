@@ -348,8 +348,11 @@ STALE_PACKAGE_WARNING_DAYS: int = 365  # 1 year = warning
 
 # Typosquatting detection threshold (similarity ratio 0-1)
 TYPOSQUATTING_SIMILARITY_THRESHOLD: float = 0.82
-# Maximum popular packages to cache (prevent memory issues)
-TYPOSQUATTING_MAX_FALLBACK_PACKAGES: int = 10000
+# Download-rank depth of the corpus a package name is compared against. The upstream list serves
+# 15 000 ranks and every 1 000 of them costs ~3 ms per unrecognised component, so the depth is a
+# scan-time budget: 5 000 ranks is ~15 ms per component. The analyzer result reports the depth,
+# because a name similar to a package below it is not flagged.
+TYPOSQUATTING_POPULAR_PACKAGE_RANKS: int = 5000
 
 # Analyzer batch sizes for API rate limiting
 ANALYZER_BATCH_SIZES: dict[str, int] = {
@@ -474,7 +477,7 @@ NPM_REGISTRY_URL = "https://registry.npmjs.org"
 # Other service APIs
 EOL_API_URL = "https://endoflife.date/api"
 MALWARE_API_URL = "https://api.opensourcemalware.com/functions/v1/check-malicious"
-TOP_PYPI_PACKAGES_URL = "https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.json"
+TOP_PYPI_PACKAGES_URL = "https://hugovk.dev/top-pypi-packages/top-pypi-packages-30-days.json"
 GITHUB_API_URL = "https://api.github.com"
 
 # Mapping from package/component names to endoflife.date product IDs
