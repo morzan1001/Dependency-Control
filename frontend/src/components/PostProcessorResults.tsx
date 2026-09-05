@@ -33,7 +33,7 @@ import { getSeverityBadgeVariant } from "@/lib/finding-utils";
 import { formatDateTime } from "@/lib/utils";
 import { ReachabilitySummary } from "@/types/scan";
 
-interface EPSSKEVSummary {
+export interface EPSSKEVSummary {
   total_vulnerabilities: number;
   epss_enriched: number;
   kev_matches: number;

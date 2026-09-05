@@ -1,8 +1,9 @@
 import { render, screen } from "@testing-library/react";
 import { describe, it, expect } from "vitest";
 import { EPSSKEVResults, ReachabilityResults } from "../PostProcessorResults";
+import type { EPSSKEVSummary } from "../PostProcessorResults";
 
-const baseData = {
+const baseData: EPSSKEVSummary = {
   total_vulnerabilities: 100,
   epss_enriched: 100,
   kev_matches: 0,
@@ -114,7 +115,7 @@ const HIGH_RISK_ROWS_SHOWN = 10;
 const HIGH_RISK_IN_PAYLOAD = 20;
 const HIGH_RISK_TOTAL = 35;
 
-function highRiskCve(index: number): (typeof baseData)["high_risk_cves"][number] {
+function highRiskCve(index: number): EPSSKEVSummary["high_risk_cves"][number] {
   return {
     cve: `CVE-2026-${7000 + index}`,
     component: `pkg-${index}`,
