@@ -44,6 +44,7 @@ const release: ReleaseItem = {
   released_at: '2026-01-01T00:00:00Z',
   scan_status: 'completed',
   analysis_scan_id: RELEASE_SCAN_ID,
+  analysis_chain_bounded: false,
 }
 
 function getOne(id: string): Promise<ScanWithReleases> {

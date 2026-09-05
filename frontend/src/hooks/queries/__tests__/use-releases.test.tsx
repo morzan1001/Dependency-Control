@@ -107,6 +107,7 @@ describe("useProjectReleases", () => {
           branch: null,
           scan_status: null,
           analysis_scan_id: null,
+          analysis_chain_bounded: false,
         },
       ],
       total: SINGLE_ITEM_TOTAL,
@@ -139,6 +140,7 @@ describe("useLatestProjectRelease", () => {
         branch: BRANCH,
         scan_status: SCAN_STATUS_COMPLETED,
         analysis_scan_id: SCAN_ID,
+        analysis_chain_bounded: false,
       },
     ],
     total: SINGLE_ITEM_TOTAL,
@@ -222,6 +224,7 @@ describe("release mutations", () => {
       branch: BRANCH,
       scan_status: SCAN_STATUS_COMPLETED,
       analysis_scan_id: SCAN_ID,
+      analysis_chain_bounded: false,
     });
     const invalidate = vi.spyOn(client, "invalidateQueries");
 

@@ -1,6 +1,8 @@
 """Release lookup and the single resolver for 'which scan counts for this project'."""
 
+import logging
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
@@ -12,6 +14,8 @@ from app.core.init_db import RELEASES_LATEST_SORT
 from app.repositories import ProjectRepository, ScanRepository
 from app.schemas.projections import ProjectWithScanId
 from app.services.analytics.scopes import ensure_whole_scope, scope_probe_limit
+
+logger = logging.getLogger(__name__)
 
 _CHAIN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1, "created_at": 1}
 _UNDATED = datetime.min.replace(tzinfo=timezone.utc)
@@ -31,18 +35,30 @@ def _is_fresher(doc: dict[str, Any], incumbent: dict[str, Any]) -> bool:
     return str(doc["_id"]) < str(incumbent["_id"])
 
 
-async def effective_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Iterable[str]) -> dict[str, str]:
+@dataclass(frozen=True)
+class EffectiveScan:
+    """The analysis a release resolves to, and whether the walk that found it ran out."""
+
+    scan_id: str
+    # True when the chain still had links at MAX_RESCAN_HOPS, so a fresher analysis may exist.
+    chain_bounded: bool
+
+
+async def effective_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Iterable[str]) -> dict[str, EffectiveScan]:
     """The freshest readable analysis of each released artefact.
 
     Rescans chain — a rescan of a release is created from the marked scan (_rescan_targets), so the
     released scan's latest_rescan_id is overwritten rather than extended and never advances past the
     first link — and the walk follows unusable links too, or a failed rescan would hide the good one
-    behind it. Bounded, so a cyclic pointer cannot hang a request. A release with no usable scan in
-    its chain, like one whose scan retention deleted, is absent rather than a misleading id.
+    behind it. Bounded, so a cyclic pointer cannot hang a request; a release whose chain was still
+    going at the bound is marked, because the answer is then the freshest within ten hops rather
+    than the freshest there is. A release with no usable scan in its chain, like one whose scan
+    retention deleted, is absent rather than a misleading id.
     """
     frontier: dict[str, str] = {scan_id: scan_id for scan_id in scan_ids}
     visited: set[str] = set()
     freshest: dict[str, dict[str, Any]] = {}
+    bounded: set[str] = set()
 
     for _hop in range(MAX_RESCAN_HOPS + 1):
         if not frontier:
@@ -60,7 +76,18 @@ async def effective_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Iterable[str]) 
                 next_frontier[rescan_id] = released_id
         frontier = next_frontier
 
-    return {released_id: doc["_id"] for released_id, doc in freshest.items()}
+    if frontier:
+        bounded = set(frontier.values())
+        logger.warning(
+            "Rescan lineage still had links at the %d-hop bound for %d release(s); the resolved analysis may be stale",
+            MAX_RESCAN_HOPS,
+            len(bounded),
+        )
+
+    return {
+        released_id: EffectiveScan(scan_id=doc["_id"], chain_bounded=released_id in bounded)
+        for released_id, doc in freshest.items()
+    }
 
 
 async def release_protected_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Sequence[str]) -> set[str]:
@@ -97,7 +124,8 @@ async def latest_release_scan(db: AsyncIOMotorDatabase, project_id: str, environ
     )
     if row is None:
         return None
-    return (await effective_scan_ids(db, [row["scan_id"]])).get(row["scan_id"])
+    resolved = (await effective_scan_ids(db, [row["scan_id"]])).get(row["scan_id"])
+    return resolved.scan_id if resolved else None
 
 
 async def released_scan_ids(db: AsyncIOMotorDatabase, project_id: str) -> dict[str, str]:
@@ -134,7 +162,7 @@ async def _release_scan_ids(
     if not released:
         return {}
     effective = await effective_scan_ids(db, set(released.values()))
-    return {project_id: effective[scan_id] for project_id, scan_id in released.items() if scan_id in effective}
+    return {project_id: effective[scan_id].scan_id for project_id, scan_id in released.items() if scan_id in effective}
 
 
 async def resolve_scan_ids(

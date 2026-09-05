@@ -61,7 +61,7 @@ const oneRelease: ReleaseListResponse = {
   items: [{
     scan_id: RELEASE_SCAN_ID, project_id: PROJECT_ID, environment: PRODUCTION, version: RELEASE_VERSION,
     commit_hash: `c-${RELEASE_SCAN_ID}`, branch: 'main', released_at: '2026-01-01T00:00:00Z',
-    scan_status: COMPLETED, analysis_scan_id: RELEASE_SCAN_ID,
+    scan_status: COMPLETED, analysis_scan_id: RELEASE_SCAN_ID, analysis_chain_bounded: false,
   }],
   total: 1, page: FIRST_PAGE, size: LATEST_RELEASE_LIMIT,
 }

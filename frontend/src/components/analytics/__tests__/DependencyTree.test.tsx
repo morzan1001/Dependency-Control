@@ -34,6 +34,14 @@ function node(id: string, over: Partial<DependencyTreeNode> = {}): DependencyTre
   };
 }
 
+const READ = 10000;
+const TOTAL = 42317;
+const TRUNCATION_NOTE = /Built from/i;
+
+function graph(nodes: DependencyTreeNode[], roots: string[], total = nodes.length): DependencyGraph {
+  return { nodes, roots, dependencies_read: nodes.length, dependencies_total: total };
+}
+
 function renderTree(graph: DependencyGraph): void {
   getTree.mockResolvedValue(graph);
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -54,7 +62,7 @@ describe("DependencyTree lazy expansion + cycle handling", () => {
   beforeEach(() => getTree.mockReset());
 
   it("resolves child_ids from the node map only on expand (lazy render)", async () => {
-    renderTree({ nodes: [node("a", { direct: true, child_ids: ["b"] }), node("b")], roots: ["a"] });
+    renderTree(graph([node("a", { direct: true, child_ids: ["b"] }), node("b")], ["a"]));
 
     await screen.findByText("a");
     expect(screen.queryByText("b")).toBeNull(); // child not in the DOM until expanded
@@ -63,10 +71,7 @@ describe("DependencyTree lazy expansion + cycle handling", () => {
   });
 
   it("renders a back-edge as a cycle leaf instead of recursing forever", async () => {
-    renderTree({
-      nodes: [node("a", { direct: true, child_ids: ["b"] }), node("b", { child_ids: ["a"] })],
-      roots: ["a"],
-    });
+    renderTree(graph([node("a", { direct: true, child_ids: ["b"] }), node("b", { child_ids: ["a"] })], ["a"]));
 
     await screen.findByText("a");
     expandRow("a");
@@ -76,9 +81,23 @@ describe("DependencyTree lazy expansion + cycle handling", () => {
   });
 
   it("counts direct vs transitive straight from the flat node list", async () => {
-    renderTree({ nodes: [node("a", { direct: true, child_ids: ["b"] }), node("b")], roots: ["a"] });
+    renderTree(graph([node("a", { direct: true, child_ids: ["b"] }), node("b")], ["a"]));
 
     expect(await screen.findByText("1 direct dependencies")).toBeInTheDocument();
     expect(screen.getByText("1 transitive dependencies")).toBeInTheDocument();
+  });
+
+  it("says how much of the scan the tree was built from when the read was capped", async () => {
+    renderTree({ nodes: [], roots: [], dependencies_read: READ, dependencies_total: TOTAL });
+
+    expect(await screen.findByText(TRUNCATION_NOTE)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(TOTAL.toLocaleString()))).toBeInTheDocument();
+  });
+
+  it("stays quiet when the whole scan was read", async () => {
+    renderTree(graph([node("a", { direct: true })], ["a"]));
+
+    await screen.findByText("a");
+    expect(screen.queryByText(TRUNCATION_NOTE)).toBeNull();
   });
 });

@@ -16,6 +16,7 @@ import { FindingDetailsModal } from "../FindingDetailsModal";
 
 const OMITTED = 1234;
 const SIBLING_ID = "SAST-2";
+const PROJECT_ID = "p1";
 
 function makeFinding(overrides: Partial<Finding>): Finding {
   return {
@@ -38,7 +39,7 @@ function renderModal(finding: Finding) {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
-        <FindingDetailsModal finding={finding} isOpen onClose={() => {}} />
+        <FindingDetailsModal finding={finding} isOpen onClose={() => {}} projectId={PROJECT_ID} />
       </MemoryRouter>
     </QueryClientProvider>,
   );

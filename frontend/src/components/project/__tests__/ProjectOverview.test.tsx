@@ -264,6 +264,7 @@ describe('ProjectOverview - release tile', () => {
   const SHOW_HEAD_BUTTON = 'Show HEAD numbers'
   const RELEASE_TILE_TITLE = 'Latest Release'
   const NOT_ANALYSED_TEXT = 'Nothing in its rescan chain has finished analysing'
+  const CHAIN_BOUNDED_TEXT = 'Rescan chain longer than the walk follows — a newer analysis may exist'
   const GENERIC_RELEASE_LABEL = 'Release'
 
   function findingsUrl(scanId: string, severity: string): string {
@@ -281,6 +282,7 @@ describe('ProjectOverview - release tile', () => {
       branch: MAIN_BRANCH,
       scan_status: 'completed',
       analysis_scan_id: RELEASE_SCAN_ID,
+      analysis_chain_bounded: false,
       ...overrides,
     }
     return { latestRelease: item, hasReleases: true, isLoading: false }
@@ -389,6 +391,13 @@ describe('ProjectOverview - release tile', () => {
     renderOverview([head, release], [MAIN_BRANCH], releaseList())
 
     expect(screen.getByText(RELEASE_TILE_TITLE)).toBeInTheDocument()
+    expect(screen.queryByText(CHAIN_BOUNDED_TEXT)).not.toBeInTheDocument()
+  })
+
+  it('says the analysis may be stale when the rescan walk stopped at its bound', () => {
+    renderOverview([head, release], [MAIN_BRANCH], releaseList({ analysis_chain_bounded: true }))
+
+    expect(screen.getByText(CHAIN_BOUNDED_TEXT)).toBeInTheDocument()
   })
 
   it('offers no numbers for a release whose analysis has not finished', () => {

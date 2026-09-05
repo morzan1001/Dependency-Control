@@ -9,6 +9,7 @@ from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, MAX_RESCAN_HOPS
 from app.repositories.projects import ProjectRepository
 from app.repositories.scans import ScanRepository
 from app.services.releases import (
+    EffectiveScan,
     effective_scan_ids,
     latest_release_scan,
     released_scan_ids,
@@ -260,6 +261,28 @@ async def test_a_chain_longer_than_the_bound_stops_at_the_bound(db):
     resolved = await latest_release_scan(db, _PROJECT_A, _PRODUCTION)
 
     assert resolved == chain[MAX_RESCAN_HOPS - 1], "the walk stops at the bound instead of running the chain out"
+
+
+@pytest.mark.asyncio
+async def test_a_chain_stopped_at_the_bound_says_the_answer_may_be_stale(db):
+    """The freshest scan within ten hops is not the freshest scan, and a caller reading only the
+    id cannot tell the two apart."""
+    await db.scans.insert_one(_scan("released", _PROJECT_A))
+    await _seed_rescan_chain(db, _PROJECT_A, "released", [_COMPLETED] * _CHAIN_BEYOND_THE_BOUND)
+
+    resolved = await effective_scan_ids(db, ["released"])
+
+    assert resolved["released"].chain_bounded is True
+
+
+@pytest.mark.asyncio
+async def test_a_chain_that_ran_out_before_the_bound_says_nothing_of_the_sort(db):
+    await db.scans.insert_one(_scan("released", _PROJECT_A))
+    await _seed_rescan_chain(db, _PROJECT_A, "released", [_COMPLETED, _COMPLETED])
+
+    resolved = await effective_scan_ids(db, ["released"])
+
+    assert resolved["released"].chain_bounded is False
 
 
 @pytest.mark.asyncio
@@ -526,7 +549,7 @@ async def test_effective_scan_ids_breaks_a_created_at_tie_on_the_scan_id(db):
 
     resolved = await effective_scan_ids(db, [_TIED_SCAN_HIGH_ROW_ID])
 
-    assert resolved == {_TIED_SCAN_HIGH_ROW_ID: _TIED_SCAN_LOW_ROW_ID}
+    assert resolved == {_TIED_SCAN_HIGH_ROW_ID: EffectiveScan(scan_id=_TIED_SCAN_LOW_ROW_ID, chain_bounded=False)}
 
 
 @pytest.mark.asyncio

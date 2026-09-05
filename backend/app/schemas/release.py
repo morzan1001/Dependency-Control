@@ -37,6 +37,11 @@ class ReleaseItem(BaseModel):
         description="Scan whose analysis represents this release, following re-scans; "
         "null while nothing in its chain has finished analysing",
     )
+    analysis_chain_bounded: bool = Field(
+        False,
+        description="The rescan chain still had links at the walk's hop bound, so the analysis "
+        "above is the freshest found within it rather than the freshest that exists",
+    )
 
 
 class ReleaseListResponse(BaseModel):

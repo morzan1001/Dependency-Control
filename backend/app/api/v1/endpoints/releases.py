@@ -18,7 +18,7 @@ from app.core.init_db import RELEASES_LATEST_SORT
 from app.models.release import Release
 from app.repositories import ReleaseRepository
 from app.schemas.release import ReleaseItem, ReleaseListResponse, ReleaseMarkRequest, ReleaseUnmarkResponse
-from app.services.releases import effective_scan_ids
+from app.services.releases import EffectiveScan, effective_scan_ids
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ _EnvironmentQuery = Annotated[str, Query(pattern=RELEASE_ENVIRONMENT_PATTERN)]
 _OptionalEnvironmentQuery = Annotated[str | None, Query(pattern=RELEASE_ENVIRONMENT_PATTERN)]
 
 
-def _to_item(row: dict[str, Any], scan: dict[str, Any], analysis_scan_id: str | None) -> ReleaseItem:
+def _to_item(row: dict[str, Any], scan: dict[str, Any], analysis: EffectiveScan | None) -> ReleaseItem:
     return ReleaseItem(
         scan_id=row["scan_id"],
         project_id=row["project_id"],
@@ -43,7 +43,8 @@ def _to_item(row: dict[str, Any], scan: dict[str, Any], analysis_scan_id: str | 
         commit_hash=scan.get("commit_hash"),
         branch=scan.get("branch"),
         scan_status=scan.get("status"),
-        analysis_scan_id=analysis_scan_id,
+        analysis_scan_id=analysis.scan_id if analysis else None,
+        analysis_chain_bounded=bool(analysis and analysis.chain_bounded),
     )
 
 

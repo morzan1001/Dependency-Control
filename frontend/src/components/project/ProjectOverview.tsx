@@ -28,6 +28,7 @@ interface ProjectOverviewProps {
 }
 
 const RELEASE_NOT_ANALYSED = 'Nothing in its rescan chain has finished analysing'
+const RELEASE_CHAIN_BOUNDED = 'Rescan chain longer than the walk follows — a newer analysis may exist'
 
 function releaseHeadline(environment: string | null, branch: string): string {
   return environment ? `Release in ${environment} on ${branch}` : `Release on ${branch}`
@@ -216,6 +217,9 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
                 </button>
               ) : (
                 <p className="text-xs text-muted-foreground">{RELEASE_NOT_ANALYSED}</p>
+              )}
+              {latestRelease?.analysis_chain_bounded && (
+                <p className="text-xs text-amber-700 dark:text-amber-300">{RELEASE_CHAIN_BOUNDED}</p>
               )}
             </CardContent>
           </Card>

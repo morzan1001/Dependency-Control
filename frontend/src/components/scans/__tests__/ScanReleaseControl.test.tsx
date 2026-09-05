@@ -68,6 +68,7 @@ function markResponse(scanId: string): ReleaseItem {
     branch: 'main',
     scan_status: 'completed',
     analysis_scan_id: scanId,
+    analysis_chain_bounded: false,
   }
 }
 
