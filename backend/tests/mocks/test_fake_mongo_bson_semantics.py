@@ -16,6 +16,7 @@ _INTEGER_TRUE = 1
 _SUB_MILLISECOND = datetime(2026, 3, 1, 12, 0, 0, 123456, tzinfo=timezone.utc)
 _SAME_MILLISECOND = datetime(2026, 3, 1, 12, 0, 0, 123999, tzinfo=timezone.utc)
 _TRUNCATED_MICROSECONDS = 123000
+_INVALID_SORT_DIRECTION = 2
 
 
 async def _seed_mixed(db):
@@ -292,3 +293,15 @@ async def test_a_query_bound_is_truncated_the_way_the_stored_value_was():
     matched = {doc["_id"] for doc in await db.scans.find({"created_at": {"$gt": _SAME_MILLISECOND}}).to_list(None)}
 
     assert matched == set()
+
+
+@pytest.mark.asyncio
+async def test_a_sort_direction_the_server_rejects_is_rejected_here_too():
+    """A typo in a sort spec must not read as ascending; the server refuses the whole aggregation."""
+    from pymongo.errors import OperationFailure
+
+    db = FakeDatabase()
+    await db.scans.insert_one({"_id": "s1", "created_at": _EARLY})
+
+    with pytest.raises(OperationFailure):
+        await db.scans.aggregate([{"$sort": {"created_at": _INVALID_SORT_DIRECTION}}]).to_list(None)

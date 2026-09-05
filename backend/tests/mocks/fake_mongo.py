@@ -10,13 +10,17 @@ Supported query operators
 - ``$in``, ``$nin``, ``$ne``, ``$exists``
 - ``$regex`` (with ``$options: "i"`` for case-insensitive)
 - Range: ``$gt``, ``$gte``, ``$lt``, ``$lte``
-- Logical: top-level ``$or``, ``$and``
+- ``$elemMatch`` (every clause has to hold on one array element)
+- Logical: top-level ``$or``, ``$and``, ``$nor``
 - Anything else raises ``OperationFailure``, as the server does; matching on an
   operator the fake cannot evaluate would report a wider scope than the query asks for.
 
 Supported update operators
 --------------------------
-- ``$set``, ``$setOnInsert``, ``$inc``, ``$addToSet``
+- ``$set`` (including ``a.$[ident].b`` paths with ``array_filters``), ``$setOnInsert``,
+  ``$unset``, ``$inc``, ``$addToSet``, ``$push``, ``$pull``
+- Anything else raises ``OperationFailure``; silently ignoring a modifier turns a write
+  into a no-op the test then reports as success.
 
 Server-side behaviour that tests rely on
 ----------------------------------------
@@ -39,7 +43,7 @@ Server-side behaviour that tests rely on
 
 Supported aggregation stages
 ----------------------------
-- ``$match``, ``$sort``, ``$group``, ``$project``, ``$limit``, ``$unwind``
+- ``$match``, ``$sort`` (direction must be 1 or -1), ``$group``, ``$project``, ``$limit``, ``$unwind``
 - ``$group`` accumulators: ``$sum``, ``$avg``, ``$first``, ``$firstN``, ``$min``,
   ``$max``, ``$addToSet``, ``$push``
 - ``$dateTrunc`` truncates to the start of the unit (day/week/month/year; week
@@ -173,9 +177,18 @@ def _bson_sort_key(value: Any) -> tuple[int, Any]:
     return (rank, str(value))
 
 
+_SORT_DIRECTIONS = frozenset({1, -1})
+
+
 def _sort_docs(docs: list, sort_spec) -> list:
-    """Sort in place by a ``[(field, direction)]`` spec, using BSON ordering."""
+    """Sort in place by a ``[(field, direction)]`` spec, using BSON ordering.
+
+    A direction outside 1/-1 raises, as the server does; treating 2 as ascending would let a typo
+    in a sort spec pass here and fail the query in production.
+    """
     for key, direction in reversed(list(sort_spec)):
+        if direction not in _SORT_DIRECTIONS:
+            raise OperationFailure(f"$sort key ordering must be 1 (for ascending) or -1 (for descending), got {key}")
         docs.sort(key=lambda d, k=key: _bson_sort_key(_resolve_dotted(d, k)), reverse=direction < 0)
     return docs
 
