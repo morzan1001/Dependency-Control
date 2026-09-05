@@ -163,6 +163,10 @@ def _process_finding_risk(
         summary["high_risk_cves"].append(high_risk_cve)
 
 
+# The high-risk list is a UI sample of the highest scores; high_risk_total carries the real count.
+_HIGH_RISK_SAMPLE_CAP = 20
+
+
 def build_epss_kev_summary(findings: list[dict[str, Any]]) -> EPSSKEVSummary:
     """Build a summary of EPSS/KEV enrichment for the raw data view."""
     epss_scores_counts: EPSSScoreCounts = {"high": 0, "medium": 0, "low": 0}
@@ -189,6 +193,7 @@ def build_epss_kev_summary(findings: list[dict[str, Any]]) -> EPSSKEVSummary:
         "max_risk_score": None,
         "kev_details": [],
         "high_risk_cves": [],
+        "high_risk_total": 0,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -218,7 +223,8 @@ def build_epss_kev_summary(findings: list[dict[str, Any]]) -> EPSSKEVSummary:
         summary["max_risk_score"] = round(max(risk_scores), 1)
 
     summary["high_risk_cves"].sort(key=lambda x: x["risk_score"], reverse=True)
-    summary["high_risk_cves"] = summary["high_risk_cves"][:20]
+    summary["high_risk_total"] = len(summary["high_risk_cves"])
+    summary["high_risk_cves"] = summary["high_risk_cves"][:_HIGH_RISK_SAMPLE_CAP]
 
     return summary
 

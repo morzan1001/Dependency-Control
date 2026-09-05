@@ -21,6 +21,8 @@ interface DependencyStatsProps {
 
 const DEP_STATS_SKELETON_IDS = ['ds1', 'ds2', 'ds3', 'ds4', 'ds5']
 
+const VERSION_BADGES_SHOWN = 3
+
 export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
   const [selectedType, setSelectedType] = useState<string | undefined>(undefined)
   const [limit, setLimit] = useState(20)
@@ -114,11 +116,13 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
                   <TableCell className="text-center">{dep.total_occurrences}</TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
-                      {dep.versions.slice(0, 3).map((v) => (
+                      {dep.versions.slice(0, VERSION_BADGES_SHOWN).map((v) => (
                         <Badge key={v} variant="outline" className="text-xs">{v}</Badge>
                       ))}
-                      {dep.versions.length > 3 && (
-                        <Badge variant="outline" className="text-xs">+{dep.versions.length - 3}</Badge>
+                      {dep.version_count > VERSION_BADGES_SHOWN && (
+                        <Badge variant="outline" className="text-xs">
+                          +{dep.version_count - VERSION_BADGES_SHOWN}
+                        </Badge>
                       )}
                     </div>
                   </TableCell>

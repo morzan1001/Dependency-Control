@@ -10,6 +10,7 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.constants import (
     ANALYTICS_MAX_QUERY_LIMIT,
     BLAST_RADIUS_THRESHOLD,
+    CROSS_PROJECT_MIN_OCCURRENCES,
     DAYS_KNOWN_OVERDUE_THRESHOLD,
     EPSS_HIGH_BOOST,
     EPSS_HIGH_THRESHOLD,
@@ -40,6 +41,10 @@ from app.services.recommendation.common import get_attr
 
 MONGO_MATCH = "$match"
 MONGO_GROUP = "$group"
+
+# Other projects a project's recommendations are compared against. Each one costs a scan
+# resolution plus its share of two aggregations; the response reports how many were reached.
+_CROSS_PROJECT_COMPARISON_LIMIT = 20
 
 ReleaseEnvironmentQuery = Annotated[
     str | None,
@@ -453,6 +458,42 @@ def cross_project_cve_pipeline(scan_ids: list[str]) -> list[dict[str, Any]]:
     ]
 
 
+def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> list[dict[str, Any]]:
+    """Packages carrying more than one version across the compared scans.
+
+    Grouped in Mongo rather than by pushing each scan's package list to the caller: the answer is
+    a version count per package name, and a per-scan sample of the input cannot produce it.
+    Names are lower-cased because that is the identity the recommendation reports under.
+    """
+    return [
+        {MONGO_MATCH: {"scan_id": {"$in": scan_ids}, "name": {"$nin": [None, ""]}}},
+        {
+            "$project": {
+                "package": {"$toLower": "$name"},
+                "package_version": {"$ifNull": ["$version", "unknown"]},
+                "project_id": 1,
+            }
+        },
+        {
+            MONGO_GROUP: {
+                "_id": "$package",
+                "versions": {"$addToSet": "$package_version"},
+                "project_ids": {"$addToSet": "$project_id"},
+            }
+        },
+        {
+            "$project": {
+                "name": "$_id",
+                "versions": 1,
+                "version_count": {"$size": "$versions"},
+                "project_count": {"$size": "$project_ids"},
+            }
+        },
+        {MONGO_MATCH: {"version_count": {"$gt": 1}, "project_count": {"$gte": min_projects}}},
+        {"$sort": {"version_count": -1, "name": 1}},
+    ]
+
+
 async def gather_cross_project_data(
     user_project_ids: list[str],
     current_project_id: str,
@@ -479,11 +520,15 @@ async def gather_cross_project_data(
 
     cross_project_data: dict[str, Any] = {
         "projects": [],
+        "shared_packages": [],
         "total_projects": len(user_project_ids),
+        # A CVE count out of total_projects would claim a comparison that never ran.
+        "projects_compared": 0,
     }
 
-    # Cap at 20 other projects for performance
-    other_project_ids = [pid for pid in user_project_ids if pid != current_project_id][:20]
+    other_project_ids = [pid for pid in user_project_ids if pid != current_project_id][
+        :_CROSS_PROJECT_COMPARISON_LIMIT
+    ]
 
     other_projects = await project_repo.find_many_with_scan_id(
         {"_id": {"$in": other_project_ids}},
@@ -511,18 +556,9 @@ async def gather_cross_project_data(
     cve_results = await finding_repo.aggregate(cross_project_cve_pipeline(other_scan_ids))
     scan_cves_map = {r["_id"]: [c for c in r["cves"] if c] for r in cve_results}
 
-    pkg_pipeline: list[dict[str, Any]] = [
-        {MONGO_MATCH: {"scan_id": {"$in": other_scan_ids}}},
-        {
-            MONGO_GROUP: {
-                "_id": "$scan_id",
-                "packages": {"$push": {"name": "$name", "version": "$version"}},
-            }
-        },
-        {"$project": {"_id": 1, "packages": {"$slice": ["$packages", 100]}}},
-    ]
-    pkg_results = await dep_repo.aggregate(pkg_pipeline)
-    scan_pkgs_map = {r["_id"]: r["packages"] for r in pkg_results}
+    cross_project_data["shared_packages"] = await dep_repo.aggregate(
+        cross_project_package_pipeline(other_scan_ids, CROSS_PROJECT_MIN_OCCURRENCES)
+    )
 
     for scan_id, proj_id in scan_id_to_project.items():
         proj_info = project_info_map.get(proj_id)
@@ -533,10 +569,10 @@ async def gather_cross_project_data(
                 "project_id": proj_id,
                 "project_name": proj_info.name if proj_info else "Unknown",
                 "cves": scan_cves_map.get(scan_id, []),
-                "packages": scan_pkgs_map.get(scan_id, []),
                 "total_critical": stats.critical if stats else 0,
                 "total_high": stats.high if stats else 0,
             }
         )
 
+    cross_project_data["projects_compared"] = len(cross_project_data["projects"])
     return cross_project_data

@@ -37,7 +37,9 @@ class DependencyUsage(BaseModel):
 
     name: str
     type: str
+    # The newest versions in use; version_count is how many distinct ones the estate holds.
     versions: list[str]
+    version_count: int
     project_count: int
     total_occurrences: int
     has_vulnerabilities: bool

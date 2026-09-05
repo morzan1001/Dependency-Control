@@ -36,7 +36,10 @@ class MigrationItem(BaseModel):
 
 
 class MigrationPlanSummary(BaseModel):
+    """Counted over every migratable group; `items_returned` is how many of them the response carries."""
+
     total_items: int
+    items_returned: int
     status_counts: dict[str, int] = Field(default_factory=dict)
     earliest_deadline: str | None = None
 

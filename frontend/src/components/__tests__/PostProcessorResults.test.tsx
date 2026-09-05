@@ -22,6 +22,7 @@ const baseData = {
   max_risk_score: null,
   kev_details: [],
   high_risk_cves: [],
+  high_risk_total: 0,
   timestamp: "2026-07-07T00:00:00Z",
 };
 
@@ -106,5 +107,56 @@ describe("ReachabilityResults truncated lists", () => {
 
     expect(screen.getByText("Packages in coverage")).toBeInTheDocument();
     expect(screen.getByText("87")).toBeInTheDocument();
+  });
+});
+
+const HIGH_RISK_ROWS_SHOWN = 10;
+const HIGH_RISK_IN_PAYLOAD = 20;
+const HIGH_RISK_TOTAL = 35;
+
+function highRiskCve(index: number): (typeof baseData)["high_risk_cves"][number] {
+  return {
+    cve: `CVE-2026-${7000 + index}`,
+    component: `pkg-${index}`,
+    version: "1.0.0",
+    risk_score: 99 - index,
+    epss_score: null,
+    in_kev: false,
+    exploit_maturity: "unknown",
+  };
+}
+
+describe("EPSSKEVResults high-risk list", () => {
+  it("names the population the card was cut from, not the rows it shows", () => {
+    // The server keeps the top 20 of 35 and the card renders 10 of those, so neither array
+    // length is the answer to "how many high-risk vulnerabilities are there".
+    render(
+      <EPSSKEVResults
+        data={{
+          ...baseData,
+          high_risk_cves: Array.from({ length: HIGH_RISK_IN_PAYLOAD }, (_, i) => highRiskCve(i)),
+          high_risk_total: HIGH_RISK_TOTAL,
+        }}
+      />,
+    );
+
+    expect(screen.getByText(new RegExp(`High Risk Vulnerabilities .*\\(${HIGH_RISK_TOTAL}\\)`))).toBeInTheDocument();
+    expect(
+      screen.getByText(`Showing ${HIGH_RISK_ROWS_SHOWN} of ${HIGH_RISK_TOTAL}`),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about a cut when every high-risk finding is on screen", () => {
+    render(
+      <EPSSKEVResults
+        data={{
+          ...baseData,
+          high_risk_cves: [highRiskCve(0)],
+          high_risk_total: 1,
+        }}
+      />,
+    );
+
+    expect(screen.queryByText(/Showing \d+ of/)).toBeNull();
   });
 });

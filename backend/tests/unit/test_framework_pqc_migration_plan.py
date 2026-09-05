@@ -68,6 +68,7 @@ def _plan():
         ],
         summary=MigrationPlanSummary(
             total_items=2,
+            items_returned=2,
             status_counts={"migrate_now": 1, "monitor": 1},
             earliest_deadline=None,
         ),

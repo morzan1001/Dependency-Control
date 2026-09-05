@@ -39,6 +39,10 @@ export interface ReachabilityInfo {
   confidence_score?: number;
   call_path?: string[];
   matched_symbols?: string[];
+  message?: string;
+  // import_locations is a sample; import_location_count is the total it was cut from.
+  import_locations?: string[];
+  import_location_count?: number;
 }
 
 export interface NestedVulnerability {

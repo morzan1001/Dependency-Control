@@ -221,10 +221,12 @@ class ReachabilityResult(TypedDict, total=False):
     analysis_level: str
     matched_symbols: list[str]
     import_locations: list[str]
+    import_location_count: int
     message: str
     extraction_method: str
     extraction_confidence: str
     vulnerable_symbols: list[str]
+    vulnerable_symbol_count: int
 
 
 async def _fetch_callgraphs(
@@ -433,6 +435,19 @@ async def enrich_findings_with_reachability(
     return enrich_findings_from_callgraphs(findings, prepared_graphs, component_languages)
 
 
+# Evidence samples kept on the finding document; the sibling *_count fields carry the totals.
+_IMPORT_LOCATION_SAMPLE = 10
+_VULNERABLE_SYMBOL_SAMPLE = 10
+_MESSAGE_SYMBOL_SAMPLE = 5
+
+
+def _named_sample(symbols: list[str]) -> str:
+    """The first few symbol names, followed by how many the sentence does not name."""
+    shown = ", ".join(symbols[:_MESSAGE_SYMBOL_SAMPLE])
+    unnamed = len(symbols) - _MESSAGE_SYMBOL_SAMPLE
+    return shown if unnamed <= 0 else f"{shown} and {unnamed} more"
+
+
 def _analyze_reachability(
     finding: dict[str, Any],
     component: str,
@@ -445,14 +460,15 @@ def _analyze_reachability(
     """
     usage = _find_usage(prepared, component)
     locations = usage.get("import_locations") or [] if usage else _find_import_locations(prepared, component)
-    import_count = len(locations[:10])
+    import_count = len(locations)
 
     result: ReachabilityResult = {
         "is_reachable": True,
         "confidence_score": REACHABILITY_CONFIDENCE_IMPORTED_NO_SYMBOLS,
         "analysis_level": REACHABILITY_LEVEL_IMPORT,
         "matched_symbols": [],
-        "import_locations": locations[:10],
+        "import_locations": locations[:_IMPORT_LOCATION_SAMPLE],
+        "import_location_count": import_count,
         "message": (
             f"Package is imported in {import_count} file(s). Could not determine specific vulnerable functions."
         ),
@@ -462,20 +478,23 @@ def _analyze_reachability(
     if not extracted.symbols:
         return result
 
+    # get_symbols_for_finding unions across vulnerabilities through a set, so impose an order
+    # before any sample is taken from it.
+    vulnerable_symbols = sorted(extracted.symbols)
     used_symbols = usage.get("used_symbols", []) if usage else []
-    matched_symbols = _match_symbols(extracted.symbols, used_symbols)
+    matched_symbols = _match_symbols(vulnerable_symbols, used_symbols)
 
     if matched_symbols:
         result["confidence_score"] = _calculate_confidence(extracted.confidence, "matched")
         result["analysis_level"] = REACHABILITY_LEVEL_SYMBOL
         result["matched_symbols"] = matched_symbols
-        result["message"] = f"Vulnerable function(s) {', '.join(matched_symbols[:5])} are used in the codebase."
+        result["message"] = f"Vulnerable function(s) {_named_sample(matched_symbols)} are used in the codebase."
     elif used_symbols:
         # Symbols were searched and not found: import-level evidence only, never "confirmed".
         result["confidence_score"] = _calculate_confidence(extracted.confidence, "partial")
         result["message"] = (
             f"Package is imported but extracted vulnerable functions "
-            f"({', '.join(extracted.symbols[:3])}) were not found in direct usage. "
+            f"({_named_sample(vulnerable_symbols)}) were not found in direct usage. "
             f"May still be reachable through indirect calls."
         )
     else:
@@ -484,7 +503,8 @@ def _analyze_reachability(
 
     result["extraction_method"] = extracted.extraction_method
     result["extraction_confidence"] = extracted.confidence
-    result["vulnerable_symbols"] = extracted.symbols[:10]
+    result["vulnerable_symbols"] = vulnerable_symbols[:_VULNERABLE_SYMBOL_SAMPLE]
+    result["vulnerable_symbol_count"] = len(vulnerable_symbols)
 
     return result
 

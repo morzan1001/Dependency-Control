@@ -35,7 +35,10 @@ export function PQCMigrationPanel() {
       )}
       <div className="flex items-center gap-3">
         <div className="text-sm text-muted-foreground">
-          {data.items.length} item(s) • mappings v{data.mappings_version}
+          {s.items_returned < s.total_items
+            ? `Showing ${s.items_returned} of ${s.total_items} item(s)`
+            : `${s.total_items} item(s)`}{" "}
+          • mappings v{data.mappings_version}
         </div>
         <div className="ml-auto">
           <ExportAsReportButton />

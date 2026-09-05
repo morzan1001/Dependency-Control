@@ -8,6 +8,7 @@ from app.core.constants import REACHABILITY_LEVEL_IMPORT, REACHABILITY_LEVEL_SYM
 from app.core.risk_scoring import CONFIRMED_REACHABLE_RISK_MODIFIER, UNREACHABLE_RISK_MODIFIER
 from app.models.stats import Stats
 from app.services.analysis.stats import (
+    _HIGH_RISK_SAMPLE_CAP,
     _format_datetime,
     _numeric,
     _reach_modifier,
@@ -17,6 +18,8 @@ from app.services.analysis.stats import (
     compute_stats,
 )
 from tests.mocks.fake_mongo import FakeDatabase
+
+_HIGH_RISK_POPULATION = _HIGH_RISK_SAMPLE_CAP + 5
 
 # ---------------------------------------------------------------------------
 # _format_datetime
@@ -249,9 +252,19 @@ class TestBuildEpssKevSummaryRisk:
         assert scores == sorted(scores, reverse=True)
 
     def test_high_risk_cves_limited_to_20(self):
-        findings = [_make_finding(finding_id=f"CVE-{i}", risk_score=71.0 + i) for i in range(25)]
+        findings = [_make_finding(finding_id=f"CVE-{i}", risk_score=71.0 + i) for i in range(_HIGH_RISK_POPULATION)]
         result = build_epss_kev_summary(findings)
-        assert len(result["high_risk_cves"]) == 20
+        assert len(result["high_risk_cves"]) == _HIGH_RISK_SAMPLE_CAP
+
+    def test_the_high_risk_total_counts_past_the_sample(self):
+        """The card header and its 'showing n of total' line read this, not len(the list)."""
+        findings = [_make_finding(finding_id=f"CVE-{i}", risk_score=71.0 + i) for i in range(_HIGH_RISK_POPULATION)]
+        result = build_epss_kev_summary(findings)
+        assert result["high_risk_total"] == _HIGH_RISK_POPULATION
+
+    def test_the_high_risk_total_is_zero_when_nothing_clears_the_threshold(self):
+        result = build_epss_kev_summary([_make_finding(risk_score=10.0)])
+        assert result["high_risk_total"] == 0
 
     def test_no_risk_scores_gives_none(self):
         findings = [_make_finding(risk_score=None)]

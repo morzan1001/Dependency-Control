@@ -169,3 +169,26 @@ async def test_generate_alias_resolution():
     assert len(resp.items) == 1
     assert resp.items[0].source_family == "DH"
     assert resp.items[0].recommended_pqc == "ML-KEM-768"
+
+
+_GROUPS_BEYOND_LIMIT = 12
+_PLAN_LIMIT = 5
+
+
+@pytest.mark.asyncio
+async def test_the_summary_counts_every_migratable_group_not_the_page_it_returns():
+    """A migration plan that under-counts the work is a planning document wrong in the direction
+    that matters."""
+    db = MagicMock()
+    gen = PQCMigrationPlanGenerator(db)
+    assets = [_asset(bom_ref=f"r{index}") for index in range(_GROUPS_BEYOND_LIMIT)]
+    with patch.object(gen, "_list_vulnerable_assets", new=AsyncMock(return_value=assets)):
+        resp = await gen.generate(
+            resolved=ResolvedScope(scope="project", scope_id="p1", project_ids=["p1"]),
+            limit=_PLAN_LIMIT,
+        )
+
+    assert len(resp.items) == _PLAN_LIMIT
+    assert resp.summary.items_returned == _PLAN_LIMIT
+    assert resp.summary.total_items == _GROUPS_BEYOND_LIMIT
+    assert sum(resp.summary.status_counts.values()) == _GROUPS_BEYOND_LIMIT

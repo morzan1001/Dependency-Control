@@ -41,7 +41,11 @@ class ReachabilityInfo(_DetailsModel):
     confidence_score: float | None = None
     analysis_level: str | None = None
     matched_symbols: list[Any] = []
+    # The two lists are samples; the counts beside them are the totals they were cut from.
     import_locations: list[Any] = []
+    import_location_count: int | None = None
+    vulnerable_symbols: list[Any] = []
+    vulnerable_symbol_count: int | None = None
     message: str | None = None
 
 

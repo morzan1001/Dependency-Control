@@ -146,16 +146,12 @@ def _build_cve_project_map(projects: list[dict[str, Any]]) -> dict[str, list[str
     return cve_project_map
 
 
-def _build_package_usage(projects: list[dict[str, Any]]) -> dict[str, dict[str, Any]]:
-    """Build package usage map across projects."""
-    package_usage: dict[str, dict[str, Any]] = defaultdict(lambda: {"versions": set(), "projects": []})
-    for proj in projects:
-        for pkg in proj.get("packages", []):
-            name = pkg.get("name", "").lower()
-            if name:
-                cast(set, package_usage[name]["versions"]).add(pkg.get("version", "unknown"))
-                cast(list, package_usage[name]["projects"]).append(proj.get("project_name"))
-    return package_usage
+# Versions named per package in the standardize_versions action; version_count carries the total.
+_ACTION_VERSION_SAMPLE = 5
+
+
+def _newest_first(versions: list[Any]) -> list[str]:
+    return sorted((str(v) for v in versions), key=parse_version_tuple, reverse=True)
 
 
 def analyze_cross_project_patterns(
@@ -171,6 +167,13 @@ def analyze_cross_project_patterns(
 
     projects = cross_project_data["projects"]
     total_projects = cross_project_data.get("total_projects", len(projects))
+    # The comparison covers the projects that were read, not every project the user can see.
+    compared = cross_project_data.get("projects_compared", len(projects))
+    scope_note = (
+        f"compared across {compared} of your {total_projects} projects"
+        if compared < total_projects
+        else f"compared across all {total_projects} of your projects"
+    )
 
     cve_project_map = _build_cve_project_map(projects)
 
@@ -189,7 +192,7 @@ def analyze_cross_project_patterns(
                 priority=(Priority.HIGH if len(widespread_cves) > 5 else Priority.MEDIUM),
                 title=f"{len(widespread_cves)} vulnerabilities affect multiple projects",
                 description=(
-                    f"These CVEs appear in {len(widespread_cves)} or more of your projects. "
+                    f"These CVEs appear in {len(widespread_cves)} or more of your projects, {scope_note}. "
                     "Fixing them once (e.g., in a shared package or template) "
                     "could benefit all affected projects."
                 ),
@@ -201,7 +204,7 @@ def analyze_cross_project_patterns(
                     "total": len(widespread_cves),
                 },
                 affected_components=[
-                    f"{c['cve']} ({c['count']}/{total_projects} projects)" for c in widespread_cves[:10]
+                    f"{c['cve']} ({c['count']}/{compared} projects compared)" for c in widespread_cves[:10]
                 ],
                 action={
                     "type": "fix_cross_project_vuln",
@@ -219,30 +222,19 @@ def analyze_cross_project_patterns(
             )
         )
 
-    package_usage = _build_package_usage(projects)
-
-    inconsistent_packages: list[dict[str, Any]] = [
-        {
-            "name": name,
-            "versions": list(data["versions"]),
-            "project_count": len(set(data["projects"])),
-            "version_count": len(data["versions"]),
-        }
-        for name, data in package_usage.items()
-        if len(data["versions"]) > 1 and len(set(data["projects"])) >= CROSS_PROJECT_MIN_OCCURRENCES
-    ]
+    # Counted and ordered by the cross-project package aggregation, which sees every dependency
+    # row of every compared scan rather than a per-scan sample of them.
+    inconsistent_packages: list[dict[str, Any]] = cross_project_data.get("shared_packages") or []
 
     if inconsistent_packages:
-        inconsistent_packages.sort(key=lambda x: int(cast(int, x["version_count"])), reverse=True)
-
         recommendations.append(
             Recommendation(
                 type=RecommendationType.CROSS_PROJECT_PATTERN,
                 priority=Priority.LOW,
                 title=f"Version inconsistency across {len(inconsistent_packages)} shared packages",
                 description=(
-                    "These packages are used across multiple projects but with "
-                    "different versions. Standardizing versions can simplify "
+                    f"These packages are used across multiple projects but with "
+                    f"different versions, {scope_note}. Standardizing versions can simplify "
                     "maintenance and reduce security gaps."
                 ),
                 impact={
@@ -253,7 +245,7 @@ def analyze_cross_project_patterns(
                     "total": len(inconsistent_packages),
                 },
                 affected_components=[
-                    f"{p['name']}: {len(p['versions'])} versions across {p['project_count']} projects"
+                    f"{p['name']}: {p['version_count']} versions across {p['project_count']} projects"
                     for p in inconsistent_packages[:10]
                 ],
                 action={
@@ -261,11 +253,11 @@ def analyze_cross_project_patterns(
                     "packages": [
                         {
                             "name": p["name"],
-                            "versions": p["versions"][:5],
-                            "suggestion": max(
-                                (str(v) for v in p["versions"]),
-                                key=lambda v: parse_version_tuple(v),
-                            ),
+                            # $addToSet has no order, so rank before sampling: the newest versions
+                            # are the ones a reader standardising on one needs to see.
+                            "versions": _newest_first(p["versions"])[:_ACTION_VERSION_SAMPLE],
+                            "version_count": p["version_count"],
+                            "suggestion": _newest_first(p["versions"])[0],
                             "project_count": p["project_count"],
                         }
                         for p in inconsistent_packages[:10]

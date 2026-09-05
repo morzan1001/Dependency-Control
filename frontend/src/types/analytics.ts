@@ -34,7 +34,9 @@ export interface SearchResult {
 export interface DependencyUsage {
   name: string;
   type: string;
+  // The newest versions in use; version_count is how many distinct ones the estate holds.
   versions: string[];
+  version_count: number;
   project_count: number;
   total_occurrences: number;
   has_vulnerabilities: boolean;

@@ -47,14 +47,16 @@ class PQCMigrationPlanGenerator:
         groups = self._group_assets(assets)
         items = [item for key, group in groups.items() if (item := self._build_item(key, group, now)) is not None]
         items.sort(key=lambda i: i.priority_score, reverse=True)
-        items = items[:limit]
+        returned = items[:limit]
 
         return MigrationPlanResponse(
             scope=resolved.scope,
             scope_id=resolved.scope_id,
             generated_at=now,
-            items=items,
-            summary=self._summarise(items),
+            items=returned,
+            # Summarised over every migratable group: a plan that under-counts the work is a
+            # planning document wrong in the direction that matters.
+            summary=self._summarise(items, items_returned=len(returned)),
             mappings_version=CURRENT_MAPPINGS_VERSION,
         )
 
@@ -113,7 +115,7 @@ class PQCMigrationPlanGenerator:
         )
 
     @staticmethod
-    def _summarise(items: list[MigrationItem]) -> MigrationPlanSummary:
+    def _summarise(items: list[MigrationItem], *, items_returned: int) -> MigrationPlanSummary:
         status_counts: dict[str, int] = {}
         for item in items:
             key = item.status if isinstance(item.status, str) else item.status.value
@@ -122,6 +124,7 @@ class PQCMigrationPlanGenerator:
         earliest = min(deadlines) if deadlines else None
         return MigrationPlanSummary(
             total_items=len(items),
+            items_returned=items_returned,
             status_counts=status_counts,
             earliest_deadline=earliest,
         )

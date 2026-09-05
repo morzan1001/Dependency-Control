@@ -23,6 +23,7 @@ import { AdditionalDetailsView } from './details/AdditionalDetailsView'
 import { WaiverForm } from './details/WaiverForm'
 import { SastDetailsView, ScanContext } from './details/SastDetailsView'
 import { DetailSection, FileLocation, BadgeList } from './details/shared'
+import { ReachabilityEvidence } from './details/ReachabilityEvidence'
 import {
   getFindingId,
   getFindingPackage,
@@ -524,6 +525,9 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                             })()}
                                                             {(vuln.reachability?.matched_symbols ?? finding.details?.reachability?.matched_symbols ?? []).length > 0 && (
                                                                 <MatchedSymbolsList symbols={vuln.reachability?.matched_symbols ?? finding.details?.reachability?.matched_symbols ?? []} />
+                                                            )}
+                                                            {(vuln.reachability?.message ?? finding.details?.reachability?.message) && (
+                                                                <ReachabilityEvidence reachability={(vuln.reachability ?? finding.details?.reachability)!} />
                                                             )}
                                                             {(vuln.kev_required_action || finding.details?.kev_required_action) && (
                                                                 <div className="flex items-center gap-2 w-full">

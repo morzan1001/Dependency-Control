@@ -29,8 +29,12 @@ from app.schemas.analytics import (
     SeverityBreakdown,
 )
 from app.services.aggregation.components import lookup_component
+from app.services.recommendation.common import parse_version_tuple
 
 router = CustomAPIRouter()
+
+# Versions listed per component; version_count beside them carries the distinct total.
+_VERSION_SAMPLE = 10
 
 
 @router.get("/scope", responses=RESP_AUTH)
@@ -186,6 +190,7 @@ async def get_top_dependencies(
                 "name": "$_id",
                 "type": 1,
                 "versions": 1,
+                "version_count": {"$size": "$versions"},
                 "project_count": {"$size": "$project_ids"},
                 "total_occurrences": 1,
             }
@@ -208,7 +213,9 @@ async def get_top_dependencies(
             DependencyUsage(
                 name=dep["name"],
                 type=dep.get("type", "unknown"),
-                versions=dep["versions"][:10],
+                # $addToSet has no order, so rank before sampling.
+                versions=sorted(dep["versions"], key=parse_version_tuple, reverse=True)[:_VERSION_SAMPLE],
+                version_count=dep["version_count"],
                 project_count=dep["project_count"],
                 total_occurrences=dep["total_occurrences"],
                 has_vulnerabilities=vuln_count > 0,
