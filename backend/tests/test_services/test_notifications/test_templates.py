@@ -133,6 +133,7 @@ class TestGetVulnerabilityFoundTemplate:
             "project_name": "TestProject",
             "project_name_scanned": "my-app",
             "vulnerabilities": [{"id": "CVE-2024-001", "severity": "HIGH"}],
+            "critical_count": 1,
         }
         defaults.update(overrides)
         return get_vulnerability_found_template(**defaults)
@@ -151,6 +152,17 @@ class TestGetVulnerabilityFoundTemplate:
     def test_contains_scanned_project_name(self):
         result = self._render(project_name_scanned="vuln-target")
         assert "vuln-target" in result
+
+    def test_a_table_shorter_than_the_alert_says_how_much_shorter(self):
+        listed = 10
+        found = 431
+
+        result = self._render(
+            vulnerabilities=[{"id": f"CVE-2024-{index:04d}", "severity": "HIGH"} for index in range(listed)],
+            critical_count=found,
+        )
+
+        assert f"{listed} of {found} critical/high" in result
 
 
 class TestGetAnalysisCompletedTemplate:

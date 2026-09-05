@@ -2,6 +2,9 @@
 
 from typing import Any
 
+_AFFECTED_PROJECTS_SHOWN = 15
+_PROJECT_FINDINGS_SHOWN = 5
+
 _COLOR_SUCCESS = "#36a64f"
 _COLOR_DANGER = "#dc3545"
 _COLOR_WARNING = "#ffc107"
@@ -118,8 +121,9 @@ def build_vulnerability_found_props(
     text = f"Security scan detected critical vulnerabilities in **{project_name}**."
 
     if top_vulns:
-        vuln_lines = [_format_vuln_line(i, v) for i, v in enumerate(top_vulns[:10], 1)]
-        text += "\n\n**Top Priority Vulnerabilities**\n" + "\n".join(vuln_lines)
+        vuln_lines = [_format_vuln_line(i, v) for i, v in enumerate(top_vulns, 1)]
+        text += f"\n\n**Top Priority Vulnerabilities ({len(top_vulns)} of {critical_count})**\n"
+        text += "\n".join(vuln_lines)
 
     text += f"\n\n[View Full Report \u2192]({scan_link})"
 
@@ -146,14 +150,17 @@ def build_advisory_props(
     text = message
 
     if affected_projects:
+        shown = affected_projects[:_AFFECTED_PROJECTS_SHOWN]
         project_lines = []
-        for p in affected_projects[:15]:
-            findings_str = ", ".join(p.get("findings", [])[:5])
-            if len(p.get("findings", [])) > 5:
-                findings_str += f", +{len(p['findings']) - 5} more"
+        for p in shown:
+            findings = p.get("findings", [])
+            findings_str = ", ".join(findings[:_PROJECT_FINDINGS_SHOWN])
+            if len(findings) > _PROJECT_FINDINGS_SHOWN:
+                findings_str += f", +{len(findings) - _PROJECT_FINDINGS_SHOWN} more"
             project_lines.append(f"- **{p['name']}**: {findings_str}")
 
-        text += f"\n\n**Affected Projects ({len(affected_projects)})**\n" + "\n".join(project_lines)
+        text += f"\n\n**Affected Projects ({len(shown)} of {len(affected_projects)})**\n"
+        text += "\n".join(project_lines)
 
     if dashboard_link:
         text += f"\n\n[View Dashboard \u2192]({dashboard_link})"
