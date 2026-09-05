@@ -216,6 +216,17 @@ class ScanWithReleases(Scan):
     )
 
 
+class ScanHistoryResponse(BaseModel):
+    """A scan's lineage: the original run plus its re-scans, newest first."""
+
+    runs: list[Scan] = Field(..., description="Newest first, at most ``page_size`` of them")
+    total: int = Field(
+        ...,
+        description="Runs the lineage holds, counted over the whole lineage rather than over the returned page",
+    )
+    page_size: int = Field(..., description="Runs a single response can carry")
+
+
 class BranchTip(BaseModel):
     """One branch of a project, with the scan whose numbers stand for it."""
 

@@ -549,6 +549,14 @@ export interface Scan {
   };
 }
 
+export interface ScanHistoryResponse {
+  // Newest first, at most page_size of them.
+  runs: Scan[];
+  // Runs the lineage holds, counted over the lineage rather than over the returned page.
+  total: number;
+  page_size: number;
+}
+
 export interface ScanReleaseRef {
   environment: string;
   version: string | null;

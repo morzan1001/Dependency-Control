@@ -221,20 +221,25 @@ export default function ScanDetails() {
             </div>
         </div>
         <div className="flex items-center gap-2">
-            {scanHistory && scanHistory.length > 1 && (
-                <Select 
-                    value={scanId} 
+            {scanHistory && scanHistory.total > 1 && (
+                <Select
+                    value={scanId}
                     onValueChange={(value) => navigate(`/projects/${projectId}/scans/${value}`)}
                 >
                     <SelectTrigger className="w-[250px]">
                         <SelectValue placeholder="Select version" />
                     </SelectTrigger>
                     <SelectContent>
-                        {scanHistory.map((h: ScanHistoryItem) => (
+                        {scanHistory.runs.map((h: ScanHistoryItem) => (
                             <SelectItem key={h.id} value={h.id}>
                                 {h.is_rescan ? 'Re-scan' : 'Original'} - {formatDateTime(h.created_at)}
                             </SelectItem>
                         ))}
+                        {scanHistory.total > scanHistory.runs.length && (
+                            <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                                {`Newest ${scanHistory.runs.length} of ${scanHistory.total} runs`}
+                            </p>
+                        )}
                     </SelectContent>
                 </Select>
             )}

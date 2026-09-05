@@ -75,6 +75,7 @@ from app.schemas.project import (
     RecentScan,
     RiskyProject,
     ScanFindingsResponse,
+    ScanHistoryResponse,
     ScanReleaseRef,
     ScanWithReleases,
 )
@@ -93,6 +94,8 @@ MONGO_GROUP = "$group"
 _MSG_PROJECT_NOT_FOUND = "Project not found"
 _MSG_SCAN_NOT_FOUND = "Scan not found"
 _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
+
+_SCAN_HISTORY_PAGE_SIZE = 100
 
 
 def _release_refs(releases: list[Release]) -> list[ScanReleaseRef]:
@@ -900,8 +903,12 @@ async def read_scan_history(
     scan_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-) -> list[Scan]:
-    """Get a scan's history (original plus all re-scans), sorted by date."""
+) -> ScanHistoryResponse:
+    """Get a scan's history (original plus all re-scans), newest first.
+
+    Housekeeping re-scans a branch tip every ``global_rescan_interval`` hours, so a
+    long-lived scan outgrows one page; ``total`` is counted over the lineage.
+    """
     await check_project_access(project_id, current_user, db, required_role="viewer")
 
     scan_repo = ScanRepository(db)
@@ -911,17 +918,16 @@ async def read_scan_history(
         raise HTTPException(status_code=404, detail=_MSG_SCAN_NOT_FOUND)
 
     root_id = scan.get("original_scan_id") or scan_id
+    lineage: dict[str, Any] = {
+        "project_id": project_id,
+        "$or": [{"_id": root_id}, {"original_scan_id": root_id}],
+    }
 
-    history = await scan_repo.find_many(
-        {
-            "project_id": project_id,
-            "$or": [{"_id": root_id}, {"original_scan_id": root_id}],
-        },
-        sort=[("created_at", -1)],
-        limit=100,
+    return ScanHistoryResponse(
+        runs=await scan_repo.find_many(lineage, sort=[("created_at", -1)], limit=_SCAN_HISTORY_PAGE_SIZE),
+        total=await scan_repo.count(lineage),
+        page_size=_SCAN_HISTORY_PAGE_SIZE,
     )
-
-    return history
 
 
 @router.put(
