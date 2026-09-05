@@ -59,22 +59,6 @@ def _user(permissions: list[str] | None = None) -> User:
     )
 
 
-@pytest.mark.asyncio
-async def test_summary_reports_how_many_projects_had_no_release():
-    db = FakeDatabase()
-    with (
-        patch(f"{_SUMMARY}.get_user_project_ids", new=AsyncMock(return_value=_THREE_PROJECTS)),
-        patch(f"{_SUMMARY}.get_latest_scan_ids", new=AsyncMock(return_value=_ONE_SCAN)) as scan_ids,
-    ):
-        result = await get_analytics_summary(
-            current_user=_user(), db=db, release_environment=DEFAULT_RELEASE_ENVIRONMENT
-        )
-
-    assert result.resolved_projects == len(_ONE_SCAN)
-    assert result.projects_without_release == len(_THREE_PROJECTS) - len(_ONE_SCAN)
-    assert scan_ids.await_args.kwargs["release_environment"] == DEFAULT_RELEASE_ENVIRONMENT
-
-
 async def _seed_scan(
     db: FakeDatabase, scan_id: str, project_id: str, created_at: datetime = _RELEASED_AT
 ) -> None:

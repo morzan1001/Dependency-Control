@@ -1,11 +1,16 @@
 """Tests for incident detection: malware, typosquatting, and known exploits."""
 
+from app.core.constants import EPSS_VERY_HIGH_THRESHOLD
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.incidents import (
     detect_known_exploits,
     process_malware,
     process_typosquatting,
 )
+
+
+# The smallest EPSS decrement that stays on the other side of the threshold.
+_EPSS_STEP = 0.01
 
 
 def _malware_finding(component):
@@ -266,16 +271,16 @@ class TestDetectKnownExploitsHighEPSS:
         assert "90.0%" in rec.description
 
 
-class TestDetectKnownExploitsNoKevLowEpss:
-    def test_no_kev_low_epss_returns_empty(self):
-        findings = [_vuln("pkg", is_kev=False, epss_score=0.01)]
+class TestDetectKnownExploitsEpssThreshold:
+    def test_a_score_below_the_threshold_returns_empty(self):
+        findings = [_vuln("pkg", is_kev=False, epss_score=EPSS_VERY_HIGH_THRESHOLD - _EPSS_STEP)]
         result = detect_known_exploits(findings)
         assert result == []
 
-    def test_no_kev_zero_epss_returns_empty(self):
-        findings = [_vuln("pkg", is_kev=False, epss_score=0.0)]
+    def test_the_threshold_itself_is_reported(self):
+        findings = [_vuln("pkg", is_kev=False, epss_score=EPSS_VERY_HIGH_THRESHOLD)]
         result = detect_known_exploits(findings)
-        assert result == []
+        assert [r.type for r in result] == [RecommendationType.ACTIVELY_EXPLOITED]
 
 
 class TestDetectKnownExploitsMix:
@@ -338,13 +343,6 @@ class TestDetectKnownExploitsImpactSeverityCounts:
         assert kev_rec.impact["high"] == 1
         assert kev_rec.impact["medium"] == 1
         assert kev_rec.impact["total"] == 3
-
-
-class TestDetectKnownExploitsKevIsHighPriority:
-    def test_kev_with_is_kev_false_not_included(self):
-        findings = [_vuln("pkg", is_kev=False, epss_score=0.0)]
-        result = detect_known_exploits(findings)
-        assert result == []
 
 
 class TestDetectKnownExploitsEffort:

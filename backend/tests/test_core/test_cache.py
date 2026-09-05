@@ -77,9 +77,6 @@ class TestCacheKeysKevCatalog:
     def test_returns_fixed_string(self):
         assert CacheKeys.kev_catalog() == "kev:catalog"
 
-    def test_returns_string_type(self):
-        assert isinstance(CacheKeys.kev_catalog(), str)
-
 
 class TestCacheKeysEpss:
     def test_basic_cve_id(self):
