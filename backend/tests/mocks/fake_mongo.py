@@ -48,9 +48,12 @@ Supported aggregation stages
 
 Supported aggregation expression operators (in ``$project`` / accumulator args)
 ------------------------------------------------------------------------------
-- ``$ifNull``, ``$cond``, ``$switch``, ``$toDouble``, ``$toLower``
+- ``$ifNull``, ``$cond``, ``$switch``, ``$toDouble``, ``$toLower``, ``$toString``
 - Comparison: ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``
 - Logical: ``$and``, ``$or``
+- ``$map``, ``$filter``, ``$let``, ``$mergeObjects``, ``$literal``. A bound ``$$var`` is
+  substituted; every other reference still resolves against the root document, as it does
+  on the server, so the team-enrichment ``$lookup`` runs here byte-for-byte as it does there.
 - ``$$REMOVE`` (field is omitted; mirrors Mongo's $push semantics)
 """
 
@@ -388,16 +391,20 @@ def _to_number(value):
         return None
 
 
-def _bind_map_var(expr, item, prefix: str):
-    """Resolve ``$$var``/``$$var.path`` references inside a $map ``in`` expression."""
-    if isinstance(expr, str) and expr.startswith(prefix):
+def _substitute_var(expr, prefix: str, value):
+    """Replace ``$$var`` / ``$$var.path`` references with a literal.
+
+    Every other reference is left alone so it still resolves against the root document, which is
+    what ``$$CURRENT`` stays bound to inside ``$map``, ``$filter`` and ``$let``.
+    """
+    if isinstance(expr, str) and (expr == prefix or expr.startswith(f"{prefix}.")):
         tail = expr[len(prefix) :].lstrip(".")
-        return _resolve_dotted(item, tail) if tail else item
+        return {"$literal": _resolve_dotted(value, tail) if tail else value}
     if isinstance(expr, dict):
-        return {k: _bind_map_var(v, item, prefix) for k, v in expr.items()}
+        return {k: _substitute_var(v, prefix, value) for k, v in expr.items()}
     if isinstance(expr, list):
-        return [_bind_map_var(e, item, prefix) for e in expr]
-    return _eval_expr(item, expr) if isinstance(item, dict) else expr
+        return [_substitute_var(e, prefix, value) for e in expr]
+    return expr
 
 
 def _eval_map(doc: dict, spec: dict):
@@ -405,7 +412,22 @@ def _eval_map(doc: dict, spec: dict):
     if not isinstance(items, list):
         return []
     prefix = f"$${spec.get('as', 'this')}"
-    return [_bind_map_var(spec.get("in"), item, prefix) for item in items]
+    return [_eval_expr(doc, _substitute_var(spec.get("in"), prefix, item)) for item in items]
+
+
+def _eval_filter(doc: dict, spec: dict):
+    items = _eval_expr(doc, spec.get("input"))
+    if not isinstance(items, list):
+        return []
+    prefix = f"$${spec.get('as', 'this')}"
+    return [item for item in items if _eval_bool(doc, _substitute_var(spec.get("cond"), prefix, item))]
+
+
+def _eval_let(doc: dict, spec: dict):
+    body = spec.get("in")
+    for var, value_expr in (spec.get("vars") or {}).items():
+        body = _substitute_var(body, f"$${var}", _eval_expr(doc, value_expr))
+    return _eval_expr(doc, body)
 
 
 def _eval_expr(doc: dict, expr):
@@ -427,8 +449,24 @@ def _eval_expr(doc: dict, expr):
     if not isinstance(expr, dict):
         return expr
 
+    if "$literal" in expr:
+        return expr["$literal"]
     if "$map" in expr:
         return _eval_map(doc, expr["$map"])
+    if "$filter" in expr:
+        return _eval_filter(doc, expr["$filter"])
+    if "$let" in expr:
+        return _eval_let(doc, expr["$let"])
+    if "$mergeObjects" in expr:
+        merged: dict = {}
+        for operand in expr["$mergeObjects"]:
+            value = _eval_expr(doc, operand)
+            if isinstance(value, dict):
+                merged.update(value)
+        return merged
+    if "$toString" in expr:
+        value = _eval_expr(doc, expr["$toString"])
+        return None if value is None else str(value)
     if "$dateTrunc" in expr:
         spec = expr["$dateTrunc"]
         return _truncate_date(_eval_expr(doc, spec.get("date")), spec.get("unit", "day"))
