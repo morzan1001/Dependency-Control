@@ -14,9 +14,12 @@ from app.services.analyzers.license_compliance.normalizer import tokenize_licens
 LICENSE_COLUMNS = ["license", "category", "risks", "component_count", "components"]
 
 UNKNOWN_LICENSE = "unknown"
-# Category/risks are identical for every package under the same SPDX id;
-# a handful of sample purls per license is enough for the enrichment lookup.
-_SAMPLE_PURLS_PER_LICENSE = 5
+# Category and risks are identical for every package under the same SPDX id, so the first
+# enrichment document found answers the whole group. The sample only decides how many purls
+# one round trip tries before the walk falls back to the rest of them.
+_FIRST_PASS_PURLS_PER_LICENSE = 5
+# Bounds the width of one $in, not how far the walk goes.
+_ENRICHMENT_LOOKUP_CHUNK = 500
 
 
 def _add_to_group(
@@ -29,19 +32,62 @@ def _add_to_group(
     single_token: bool,
 ) -> None:
     group = groups.setdefault(
-        license_id, {"components": [], "component_names": set(), "purls": [], "category": None, "risks": []}
+        license_id,
+        {
+            "components": [],
+            "component_names": set(),
+            "purls": [],
+            "purl_names": set(),
+            "category": None,
+            "risks": [],
+        },
     )
     if component not in group["component_names"]:
         group["component_names"].add(component)
         group["components"].append(component)
     # A composite expression's purl reflects the worst-member license, not any single token,
     # so it must not seed the enrichment lookup for its constituent groups.
-    if single_token and purl and len(group["purls"]) < _SAMPLE_PURLS_PER_LICENSE:
+    if single_token and purl and purl not in group["purl_names"]:
+        group["purl_names"].add(purl)
         group["purls"].append(purl)
     group["category"] = group["category"] or category
     for risk in risks or []:
         if risk not in group["risks"]:
             group["risks"].append(risk)
+
+
+def _answered(group: dict[str, Any], enrichment: dict[str, dict[str, Any]]) -> bool:
+    return any(purl in enrichment for purl in group["purls"])
+
+
+async def _load_enrichment(
+    repo: DependencyEnrichmentRepository,
+    groups: dict[str, dict[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Enrichment documents for the groups the dependency rows left uncategorised.
+
+    A first pass samples every such group in one round trip; only a license whose sample
+    carries no enrichment at all walks the rest of its purls, so an uncategorised row means
+    the estate has no answer rather than that the lookup stopped early.
+    """
+    pending = [group for group in groups.values() if not group["category"] or not group["risks"]]
+    if not pending:
+        return {}
+
+    sample = [purl for group in pending for purl in group["purls"][:_FIRST_PASS_PURLS_PER_LICENSE]]
+    enrichment = await repo.get_many_by_purls(sample)
+
+    for group in pending:
+        if _answered(group, enrichment):
+            continue
+        rest = group["purls"][_FIRST_PASS_PURLS_PER_LICENSE:]
+        for start in range(0, len(rest), _ENRICHMENT_LOOKUP_CHUNK):
+            found = await repo.get_many_by_purls(rest[start : start + _ENRICHMENT_LOOKUP_CHUNK])
+            if found:
+                enrichment.update(found)
+                break
+
+    return enrichment
 
 
 def _aggregate_category_risks(group: dict[str, Any], enrichment: dict[str, Any]) -> tuple[str | None, list[str]]:
@@ -81,9 +127,7 @@ async def build_license_rows(db: AsyncIOMotorDatabase, scan: Scan) -> list[Licen
                 single_token,
             )
 
-    # Skip the enrichment lookup entirely for groups the dependency docs already fully cover.
-    sample_purls = [p for g in groups.values() if not g["category"] or not g["risks"] for p in g["purls"]]
-    enrichment = await DependencyEnrichmentRepository(db).get_many_by_purls(sample_purls)
+    enrichment = await _load_enrichment(DependencyEnrichmentRepository(db), groups)
 
     items: list[LicenseItem] = []
     for license_id, group in groups.items():
