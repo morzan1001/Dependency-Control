@@ -10,6 +10,7 @@ from datetime import datetime
 from itertools import dropwhile, pairwise
 from typing import Any, Literal
 
+from app.core.constants import RECENT_UPDATES_LIMIT
 from app.schemas.analytics import (
     DependencyUpdateEvent,
     ProjectUpdateSummary,
@@ -32,7 +33,6 @@ from app.services.update_frequency import (
 logger = logging.getLogger(__name__)
 
 _UPDATE_KINDS = ("patch", "minor", "major", "unknown")
-_RECENT_UPDATES_LIMIT = 30
 _NOT_ENOUGH_SCANS = "Not enough scans to analyze (need at least 2)"
 
 
@@ -424,6 +424,6 @@ def _recent_updates(deltas: Sequence[dict[str, Any]]) -> list[DependencyUpdateEv
                     was_outdated=bool(sample["wo"]),
                 )
             )
-            if len(events) == _RECENT_UPDATES_LIMIT:
+            if len(events) == RECENT_UPDATES_LIMIT:
                 return events
     return events

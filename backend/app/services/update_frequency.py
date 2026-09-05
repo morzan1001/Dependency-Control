@@ -10,11 +10,12 @@ from collections import Counter, defaultdict, deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from itertools import chain, islice
 from typing import Any, Literal
 
 from packaging.version import InvalidVersion, Version
 
-from app.core.constants import SCAN_USABLE_STATUSES
+from app.core.constants import RECENT_UPDATES_LIMIT, SCAN_USABLE_STATUSES, UPDATE_SAMPLE_RANK
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
@@ -225,6 +226,11 @@ async def _load_outdated_for_scan(
 
 def _measured_count(outdated: set[str] | None) -> int | None:
     return None if outdated is None else len(outdated)
+
+
+def _update_sample_order(event: DependencyUpdateEvent) -> tuple[int, str, str]:
+    """The order the delta writer sorts its samples in, so both paths cut a scan the same way."""
+    return (UPDATE_SAMPLE_RANK[event.update_type], event.package_name, event.new_version)
 
 
 def _compare_scan_pair(
@@ -556,8 +562,6 @@ def _empty_metrics(
     )
 
 
-_RECENT_EVENTS_BUFFER_SIZE = 30
-
 # Bounds the (package, version) -> first_scan_date map used for adoption-latency.
 # Far above realistic projects; protects against pathological version churn.
 _MAX_OBSERVATIONS = 10_000
@@ -585,8 +589,10 @@ class _AccumulatorState:
     """Streaming-loop state, bundled so each helper takes a single argument."""
 
     type_counter: Counter = field(default_factory=Counter)
-    recent_events_buffer: deque[DependencyUpdateEvent] = field(
-        default_factory=lambda: deque(maxlen=_RECENT_EVENTS_BUFFER_SIZE)
+    # One rank-ordered list per scan that produced changes, so the newest-first read below
+    # keeps the same events out of a busy scan as the delta writer's samples do.
+    recent_events_by_scan: deque[list[DependencyUpdateEvent]] = field(
+        default_factory=lambda: deque(maxlen=RECENT_UPDATES_LIMIT)
     )
     scan_timeline: list[ScanTimelineEntry] = field(default_factory=list)
     package_outdated_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
@@ -639,11 +645,17 @@ class _AccumulatorState:
     def absorb_events(self, events: list[tuple[DependencyUpdateEvent, str]], curr_scan_date: datetime) -> None:
         for e, identity in events:
             self.type_counter[e.update_type] += 1
-            self.recent_events_buffer.append(e)
             if len(self.first_seen_versions) < _MAX_OBSERVATIONS:
                 key = (identity, e.new_version)
                 if key not in self.first_seen_versions:
                     self.first_seen_versions[key] = curr_scan_date
+        if events:
+            ranked = sorted((e for e, _identity in events), key=_update_sample_order)
+            self.recent_events_by_scan.append(ranked[:RECENT_UPDATES_LIMIT])
+
+    def recent_events(self) -> list[DependencyUpdateEvent]:
+        """Newest scan first, rank-ordered within a scan, cut at the shared limit."""
+        return list(islice(chain.from_iterable(reversed(self.recent_events_by_scan)), RECENT_UPDATES_LIMIT))
 
 
 def as_utc(dt: datetime) -> datetime:
@@ -911,7 +923,7 @@ async def compute_update_frequency(
         project_id,
         project_name,
         type_counter=state.type_counter,
-        recent_events=list(state.recent_events_buffer)[::-1],  # newest first
+        recent_events=state.recent_events(),
         upstream=upstream,
         branch=analyzed_branch,
         latest_outdated=latest_outdated,

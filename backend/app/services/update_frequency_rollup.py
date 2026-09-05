@@ -11,7 +11,7 @@ from datetime import datetime
 from typing import Any
 
 from app.core.config import settings
-from app.core.constants import SCAN_USABLE_STATUSES
+from app.core.constants import RECENT_UPDATES_LIMIT, SCAN_USABLE_STATUSES, UPDATE_SAMPLE_RANK
 from app.core.metrics import update_frequency_delta_writes_total
 from app.models.update_frequency import ScanOutdatedSet, ScanUpdateDelta, UpdateCounts, UpdateSample
 from app.repositories.analysis_results import AnalysisResultRepository
@@ -38,8 +38,6 @@ _SCAN_PROJECTION = {
 # An outdated_packages document averages 48 KB; only the component names are needed.
 _OUTDATED_PROJECTION = {"result.outdated_dependencies.component": 1}
 
-_UPDATES_SAMPLE_CAP = 20
-_SAMPLE_RANK = {"major": 0, "minor": 1, "patch": 2, "unknown": 3, "downgrade": 4}
 _ERROR_MESSAGE_CAP = 300
 _STALE_DEPENDENCIES_ERROR = "StaleDelta: the scan's dependencies changed after this delta was written"
 # Bounds the self-healing walks along a branch timeline.
@@ -262,8 +260,8 @@ def _diff_scans(
         )
 
     # Mongo document order is unstable, so the cap needs a total order of its own.
-    samples.sort(key=lambda sample: (_SAMPLE_RANK[sample.k], sample.n, sample.nv))
-    diff = _Diff(counts=counts, samples=samples[:_UPDATES_SAMPLE_CAP])
+    samples.sort(key=lambda sample: (UPDATE_SAMPLE_RANK[sample.k], sample.n, sample.nv))
+    diff = _Diff(counts=counts, samples=samples[:RECENT_UPDATES_LIMIT])
     # Without a measurement of this scan any outdated movement would be invented.
     if curr_outdated is None:
         return diff

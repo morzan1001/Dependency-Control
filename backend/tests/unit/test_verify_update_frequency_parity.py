@@ -12,6 +12,7 @@ from typing import Any
 import pytest
 
 from app.api.v1.endpoints.analytics.update_frequency import _rollup_project_metrics
+from app.core.constants import RECENT_UPDATES_LIMIT
 from app.schemas.analytics import ProjectUpdateSummary
 from app.services.update_frequency import rank_summaries
 from scripts import verify_update_frequency_parity as parity
@@ -331,10 +332,12 @@ class TestStatusDifference:
 
 class TestKnownDeviations:
     @pytest.mark.asyncio
-    async def test_a_scan_above_the_sample_cap_only_excuses_recent_updates(self):
+    async def test_a_scan_with_more_changes_than_the_limit_still_agrees(self):
+        """Writer and readers share one limit and one order, so a busy scan is cut alike."""
+        changed = RECENT_UPDATES_LIMIT + 10
         db = FakeDatabase()
-        before = {f"pkg{i:02d}": "1.0.0" for i in range(25)}
-        after = {f"pkg{i:02d}": "1.0.1" for i in range(25)}
+        before = {f"pkg{i:02d}": "1.0.0" for i in range(changed)}
+        after = {f"pkg{i:02d}": "1.0.1" for i in range(changed)}
         await _seed_scan(db, "s1", _days_ago(60), before, ())
         await _seed_scan(db, "s2", _days_ago(50), after, ())
         await _build_ledger(db)
@@ -342,11 +345,7 @@ class TestKnownDeviations:
 
         report = await verify_project(db, project, WINDOW_DAYS)
 
-        assert [d.field for d in report.deviations] == ["recent_updates"]
-        assert report.unexplained == ()
-        assert "at most 20 samples per scan" in report.deviations[0].reason
-        assert len(report.deviations[0].live) == 25
-        assert len(report.deviations[0].rollup) == 20
+        assert report.deviations == ()
 
     @pytest.mark.asyncio
     async def test_a_mixed_ecosystem_project_only_excuses_the_dominant_ecosystem(self):
@@ -534,17 +533,28 @@ class TestExitCodes:
     @pytest.mark.asyncio
     async def test_a_deviation_with_a_named_cause_exits_zero_but_is_printed(self, monkeypatch, capsys):
         db = FakeDatabase()
-        before = {f"pkg{i:02d}": "1.0.0" for i in range(25)}
-        after = {f"pkg{i:02d}": "1.0.1" for i in range(25)}
-        await _seed_scan(db, "s1", _days_ago(60), before, ())
-        await _seed_scan(db, "s2", _days_ago(50), after, ())
+        await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ())
+        await _seed_scan(db, "s2", _days_ago(50), {"requests": "2.1.0"}, ())
         await _build_ledger(db)
+        # Only the newest scan's composition reaches the ledger, so a type the older scan
+        # alone carried moves the live verdict but not the rolled-up one.
+        await db.dependencies.insert_one(
+            {
+                "_id": "s1:left",
+                "scan_id": "s1",
+                "project_id": PROJECT,
+                "name": "left-pad",
+                "version": "1.0.0",
+                "type": "library",
+                "purl": "pkg:npm/left-pad@1.0.0",
+            }
+        )
         await _seed_project(db)
         monkeypatch.setattr(parity, "AsyncIOMotorClient", lambda _url: _FakeClient(db))
 
         assert await run(_args()) == 0
         out = capsys.readouterr().out
-        assert "known    recent_updates" in out
+        assert "known    dominant_ecosystem" in out
         assert "only known deviations:     1" in out
 
     @pytest.mark.asyncio

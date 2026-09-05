@@ -19,6 +19,7 @@ from app.repositories.update_frequency import (
 )
 from app.schemas.analytics import ScanTimelineEntry, UpdateFrequencyMetrics
 from app.services.release_history import ReleaseHistory, ReleaseInfo
+from app.core.constants import RECENT_UPDATES_LIMIT
 from app.services.update_frequency import (
     _COMPARISON_CONCURRENCY,
     READY_COVERAGE_RATIO,
@@ -1920,3 +1921,50 @@ class TestWindowCutoff:
         result = window_cutoff(3650)
         assert result is not None
         assert result.year < datetime.now(tz=timezone.utc).year
+
+
+class TestRecentUpdatesSelection:
+    """One limit and one order for the list, so the walk and the ledger keep the same events."""
+
+    @staticmethod
+    async def _compute(scans, deps):
+        return await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_scan_with_more_changes_than_the_limit_keeps_the_ranked_ones(self):
+        changed = RECENT_UPDATES_LIMIT + 10
+        scans = [_make_scan("s0", 0), _make_scan("s1", 1)]
+        deps = {
+            "s0": [_make_dep("s0", f"pkg{i:03d}", "1.0.0") for i in range(changed)],
+            # The last package by name takes a major bump; ranking has to pull it to the
+            # front, past the limit that document order alone would have dropped it behind.
+            "s1": [_make_dep("s1", f"pkg{i:03d}", "2.0.0" if i == changed - 1 else "1.0.1") for i in range(changed)],
+        }
+
+        m = await self._compute(scans, deps)
+
+        assert len(m.recent_updates) == RECENT_UPDATES_LIMIT
+        assert m.recent_updates[0].package_name == f"pkg{changed - 1:03d}"
+        assert m.recent_updates[0].update_type == "major"
+        assert [event.package_name for event in m.recent_updates[1:]] == [
+            f"pkg{i:03d}" for i in range(RECENT_UPDATES_LIMIT - 1)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_the_newest_scan_comes_first(self):
+        scans = [_make_scan("s0", 0), _make_scan("s1", 1), _make_scan("s2", 2)]
+        deps = {
+            "s0": [_make_dep("s0", "pkg-a", "1.0.0")],
+            "s1": [_make_dep("s1", "pkg-a", "1.0.1")],
+            "s2": [_make_dep("s2", "pkg-a", "1.0.2")],
+        }
+
+        m = await self._compute(scans, deps)
+
+        assert [event.new_version for event in m.recent_updates] == ["1.0.2", "1.0.1"]

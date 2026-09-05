@@ -284,13 +284,15 @@ function SlowPackagesTable({ data }: Readonly<{ data: UpdateFrequencyMetrics }>)
 
 function RecentUpdatesTable({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
   if (data.recent_updates.length === 0) return null
+  // Downgrades are version changes too, and the list carries them; total_updates leaves them out.
+  const versionChanges = data.total_updates + data.downgrade_updates
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Recent Updates</CardTitle>
         <CardDescription>
-          Latest dependency version changes detected across scans
+          {`Showing ${data.recent_updates.length} of ${versionChanges} version changes, newest scans first`}
         </CardDescription>
       </CardHeader>
       <CardContent>

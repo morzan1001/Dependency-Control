@@ -826,6 +826,14 @@ SCAN_USABLE_STATUSES = [
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
 ]
 
+# Version changes the "recent updates" list answers with, and the samples the delta writer keeps
+# per scan. One number for both: a writer keeping fewer than the readers show leaves a busy scan
+# unable to fill the list on its own, and the two read paths then answer with different events.
+RECENT_UPDATES_LIMIT: int = 30
+# The order the cut is taken in, so a scan with more changes than the limit loses the same ones
+# on every path. Downgrades rank last: they are recorded but are not update activity.
+UPDATE_SAMPLE_RANK: dict[str, int] = {"major": 0, "minor": 1, "patch": 2, "unknown": 3, "downgrade": 4}
+
 # Bound on the pointer hops a rescan-lineage walk follows, so a cyclic pointer cannot hang a
 # request. A walk whose first iteration reads the starting scan spends that one on zero hops.
 MAX_RESCAN_HOPS: int = 10

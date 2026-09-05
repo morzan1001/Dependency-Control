@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { UpdateFrequencyMetrics } from "@/types/analytics";
+import type { DependencyUpdateEvent, UpdateFrequencyMetrics } from "@/types/analytics";
 import { UpdateFrequency } from "../UpdateFrequency";
 
 vi.mock("@/api/analytics", () => ({
@@ -32,6 +32,22 @@ const mockedFrequency = analyticsApi.getUpdateFrequency as ReturnType<typeof vi.
 
 // The cap the backend reports; the component only renders the number it is given.
 const WINDOW_SCAN_CAP = 1000;
+
+// A window holding far more version changes than the list can show.
+const TOTAL_UPDATES = 240;
+const DOWNGRADES = 3;
+const RECENT_EVENT: DependencyUpdateEvent = {
+  package_name: "libfoo",
+  package_type: "pypi",
+  purl: "pkg:pypi/libfoo",
+  old_version: "1.0.0",
+  new_version: "1.1.0",
+  update_type: "minor",
+  scan_date: "2026-08-01T00:00:00Z",
+  previous_scan_date: "2026-07-01T00:00:00Z",
+  days_between_scans: 31,
+  was_outdated: false,
+};
 
 const metrics: UpdateFrequencyMetrics = {
   project_id: "p1",
@@ -128,5 +144,19 @@ describe("UpdateFrequency", () => {
 
     await screen.findByText("Update Timeline");
     expect(screen.queryByText(/newest \d+ scans/)).not.toBeInTheDocument();
+  });
+
+  it("says how many of the window's version changes the recent list shows", async () => {
+    mockedFrequency.mockResolvedValue({
+      ...metrics,
+      total_updates: TOTAL_UPDATES,
+      downgrade_updates: DOWNGRADES,
+      recent_updates: [RECENT_EVENT],
+    });
+    renderFrequency();
+
+    expect(
+      await screen.findByText(`Showing 1 of ${TOTAL_UPDATES + DOWNGRADES} version changes, newest scans first`),
+    ).toBeInTheDocument();
   });
 });
