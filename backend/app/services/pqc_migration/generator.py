@@ -5,7 +5,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import SCAN_USABLE_STATUSES
+from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN, SCAN_USABLE_STATUSES
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoPrimitive
@@ -145,7 +145,7 @@ class PQCMigrationPlanGenerator:
         repo = CryptoAssetRepository(self.db)
         canonical_families = {m.source_family for m in self.mappings.mappings}
         for pid, scan_id in (await resolve_scan_ids(self.db, project_ids)).items():
-            assets = await repo.list_by_scan(pid, scan_id, limit=10000)
+            assets = await repo.list_by_scan(pid, scan_id, limit=MAX_CRYPTO_ASSETS_PER_SCAN)
             out.extend(self._filter_vulnerable(assets, canonical_families))
         return out
 

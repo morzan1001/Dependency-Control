@@ -7,6 +7,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType
 from app.repositories.crypto_asset import CryptoAssetRepository
@@ -51,7 +52,7 @@ class CryptoRuleAnalyzer(Analyzer):
             return {"findings": []}
 
         try:
-            assets = await CryptoAssetRepository(db).list_by_scan(project_id, scan_id, limit=50_000)
+            assets = await CryptoAssetRepository(db).list_by_scan(project_id, scan_id, limit=MAX_CRYPTO_ASSETS_PER_SCAN)
             effective = await CryptoPolicyResolver(db).resolve(project_id)
             relevant_finding_types = {ft.value if hasattr(ft, "value") else ft for ft in self.finding_types}
             rules = [
