@@ -8,7 +8,7 @@ enforced here so that individual query functions stay scope-agnostic.
 
 import logging
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Literal, TypeVar
 
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -16,7 +16,15 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, PERMISSION_ANALYTICS_GLOBAL
 
 logger = logging.getLogger(__name__)
-_USER_PROJECT_SCOPE_LIMIT = 10000
+
+_SCOPE_TOO_LARGE = (
+    "This scope holds more than {limit} projects. Analytics is answered over a materialised "
+    "project list and nothing in the response can name the projects a longer one would drop, "
+    "so the request is refused rather than answered over an arbitrary subset. Query a team or "
+    "a single project."
+)
+
+_T = TypeVar("_T")
 
 if TYPE_CHECKING:
     from app.models.user import User
@@ -26,6 +34,27 @@ Scope = Literal["project", "team", "global", "user"]
 
 class ScopeResolutionError(PermissionError):
     """Raised when the caller is not allowed to query the requested scope."""
+
+
+class ScopeTooLargeError(Exception):
+    """Raised when a scope holds more projects than analytics can materialise as one id list."""
+
+
+def scope_probe_limit() -> int:
+    """One past the ceiling, so a scope sitting exactly on it is answered instead of refused."""
+    return ANALYTICS_MAX_QUERY_LIMIT + 1
+
+
+def ensure_whole_scope(rows: list[_T]) -> list[_T]:
+    """``rows``, or a refusal when the read that produced them came back over the ceiling.
+
+    Measured at 120 000 projects against MongoDB 7: the id list costs 60 ms and ~40 MiB, and the
+    ``$in`` it becomes downstream encodes to 4.8 MiB against the 16 MB BSON command limit, so the
+    ceiling sits roughly a factor of four below where the query would fail on its own.
+    """
+    if len(rows) > ANALYTICS_MAX_QUERY_LIMIT:
+        raise ScopeTooLargeError(_SCOPE_TOO_LARGE.format(limit=ANALYTICS_MAX_QUERY_LIMIT))
+    return rows
 
 
 @dataclass
@@ -88,8 +117,8 @@ class ScopeResolver:
 
     async def _list_all_project_ids(self) -> list[str]:
         """Return every project_id in the database — super-user escape hatch."""
-        cursor = self.db.projects.find({}, {"_id": 1}).limit(ANALYTICS_MAX_QUERY_LIMIT)
-        docs = await cursor.to_list(length=ANALYTICS_MAX_QUERY_LIMIT)
+        cursor = self.db.projects.find({}, {"_id": 1}).limit(scope_probe_limit())
+        docs = ensure_whole_scope(await cursor.to_list(length=scope_probe_limit()))
         return [str(d["_id"]) for d in docs]
 
     async def _check_project_member(self, project_id: str) -> bool:
@@ -116,8 +145,8 @@ class ScopeResolver:
     async def _list_team_project_ids(self, team_id: str) -> list[str]:
         from app.repositories.projects import ProjectRepository
 
-        projects = await ProjectRepository(self.db).find_many_minimal({"team_id": team_id}, limit=1000)
-        return [str(p.id) for p in projects]
+        projects = await ProjectRepository(self.db).find_many_minimal({"team_id": team_id}, limit=scope_probe_limit())
+        return [str(p.id) for p in ensure_whole_scope(projects)]
 
     async def _list_user_project_ids(self) -> list[str]:
         """Return all project IDs the current user has any access to."""
@@ -133,13 +162,6 @@ class ScopeResolver:
                 {"team_id": {"$in": team_ids}},
             ]
         }
-        cursor = self.db.projects.find(query, {"_id": 1}).limit(_USER_PROJECT_SCOPE_LIMIT)
-        docs = await cursor.to_list(length=_USER_PROJECT_SCOPE_LIMIT)
-        if len(docs) >= _USER_PROJECT_SCOPE_LIMIT:
-            logger.warning(
-                "User %s has at least %d accessible projects; analytics scope is "
-                "truncated. Increase _USER_PROJECT_SCOPE_LIMIT or paginate.",
-                self.user.id,
-                _USER_PROJECT_SCOPE_LIMIT,
-            )
+        cursor = self.db.projects.find(query, {"_id": 1}).limit(scope_probe_limit())
+        docs = ensure_whole_scope(await cursor.to_list(length=scope_probe_limit()))
         return [str(d["_id"]) for d in docs]

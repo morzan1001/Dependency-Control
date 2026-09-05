@@ -77,6 +77,7 @@ from app.schemas.project import (
     ScanWithReleases,
 )
 from app.services.aggregation.components import component_match_expr
+from app.services.analytics.scopes import ensure_whole_scope, scope_probe_limit
 from app.services.branches import resolve_default_branch
 from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.findings_export import FINDINGS_COLUMNS, iter_findings_rows
@@ -365,10 +366,8 @@ async def read_all_scans(
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     permission_query = await build_user_project_query(current_user, team_repo)
-    projects = await project_repo.find_many_minimal(permission_query)
-
-    project_map: dict[str, str] = {str(p.id): str(p.name) for p in projects}
-    project_ids = list(project_map.keys())
+    projects = ensure_whole_scope(await project_repo.find_many_minimal(permission_query, limit=scope_probe_limit()))
+    project_ids = [str(p.id) for p in projects]
 
     if not project_ids:
         return []

@@ -14,12 +14,6 @@ from app.models.stats import Stats
 from app.models.types import PyObjectId
 
 
-class ProjectIdOnly(BaseModel):
-    """Project with only ID field."""
-
-    id: PyObjectId = Field(validation_alias="_id", serialization_alias="_id")
-
-
 class ProjectMinimal(BaseModel):
     """Project with ID and name only (for lookups/maps)."""
 

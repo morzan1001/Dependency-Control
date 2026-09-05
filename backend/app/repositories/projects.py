@@ -8,7 +8,7 @@ from pymongo import ReadPreference, ReturnDocument
 
 from app.core.metrics import track_db_operation
 from app.models.project import Project
-from app.schemas.projections import ProjectIdOnly, ProjectMinimal, ProjectWithScanId
+from app.schemas.projections import ProjectMinimal, ProjectWithScanId
 
 _COL = "projects"
 
@@ -163,19 +163,10 @@ class ProjectRepository:
             cursor = self.collection.find(query, projection).sort(sort_by, sort_order).skip(skip).limit(limit)
             return await cursor.to_list(limit)
 
-    async def find_many_ids(
-        self,
-        query: dict[str, Any],
-        limit: int = 1000,
-    ) -> list[ProjectIdOnly]:
-        cursor = self.collection.find(query, {"_id": 1}).limit(limit)
-        docs = await cursor.to_list(limit)
-        return [ProjectIdOnly(**doc) for doc in docs]
-
     async def find_many_with_scan_id(
         self,
         query: dict[str, Any],
-        limit: int = 1000,
+        limit: int,
     ) -> list[ProjectWithScanId]:
         cursor = self.collection.find(
             query, {"_id": 1, "name": 1, "latest_scan_id": 1, "deleted_branches": 1, "default_branch": 1}
@@ -186,7 +177,7 @@ class ProjectRepository:
     async def find_many_minimal(
         self,
         query: dict[str, Any],
-        limit: int = 1000,
+        limit: int,
     ) -> list[ProjectMinimal]:
         cursor = self.collection.find(query, {"_id": 1, "name": 1}).limit(limit)
         docs = await cursor.to_list(limit)

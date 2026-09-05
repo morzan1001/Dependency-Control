@@ -7,10 +7,11 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core import ensure_utc
-from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, MAX_RESCAN_HOPS, SCAN_USABLE_STATUSES
+from app.core.constants import MAX_RESCAN_HOPS, SCAN_USABLE_STATUSES
 from app.core.init_db import RELEASES_LATEST_SORT
 from app.repositories import ProjectRepository, ScanRepository
 from app.schemas.projections import ProjectWithScanId
+from app.services.analytics.scopes import ensure_whole_scope, scope_probe_limit
 
 _CHAIN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1, "created_at": 1}
 _UNDATED = datetime.min.replace(tzinfo=timezone.utc)
@@ -155,5 +156,7 @@ async def resolve_scan_ids(
 
     if projects is None:
         query: dict[str, Any] = {} if project_ids is None else {"_id": {"$in": list(project_ids)}}
-        projects = await ProjectRepository(db).find_many_with_scan_id(query, limit=ANALYTICS_MAX_QUERY_LIMIT)
+        projects = ensure_whole_scope(
+            await ProjectRepository(db).find_many_with_scan_id(query, limit=scope_probe_limit())
+        )
     return await ScanRepository(db).get_latest_active_scan_ids(list(projects))
