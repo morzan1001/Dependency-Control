@@ -954,18 +954,14 @@ async def update_notification_settings(
 
     project_repo = ProjectRepository(db)
 
+    member_fields = {"notification_preferences": settings.notification_preferences}
+    is_member = any(member.user_id == str(current_user.id) for member in project.members)
+
     if is_admin:
         # Persist enforcement changes and the admin's own per-project preferences.
         if update_data:
             await project_repo.update(project_id, update_data)
-        for i, member in enumerate(project.members):
-            if member.user_id == str(current_user.id):
-                await project_repo.update_member(
-                    project_id,
-                    str(current_user.id),
-                    {f"members.{i}.notification_preferences": settings.notification_preferences},
-                )
-                break
+        await project_repo.update_member(project_id, str(current_user.id), member_fields)
     else:
         if project.enforce_notification_settings and not has_update_perm:
             raise HTTPException(
@@ -973,30 +969,19 @@ async def update_notification_settings(
                 detail="Notification settings are enforced by the project admin",
             )
 
-        member_found = False
-        for i, member in enumerate(project.members):
-            if member.user_id == str(current_user.id):
-                if update_data:
-                    await project_repo.update(project_id, update_data)
-
-                await project_repo.update_member(
-                    project_id,
-                    str(current_user.id),
-                    {f"members.{i}.notification_preferences": settings.notification_preferences},
-                )
-                member_found = True
-                break
-
-        if not member_found:
+        if is_member:
+            if update_data:
+                await project_repo.update(project_id, update_data)
+            await project_repo.update_member(project_id, str(current_user.id), member_fields)
+        elif has_update_perm:
             # A superuser who is not a member can still update enforcement, not preferences.
-            if has_update_perm:
-                if update_data:
-                    await project_repo.update(project_id, update_data)
-            else:
-                raise HTTPException(
-                    status_code=400,
-                    detail="You must be a member or admin to set notification preferences",
-                )
+            if update_data:
+                await project_repo.update(project_id, update_data)
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="You must be a member or admin to set notification preferences",
+            )
 
     updated_project = await project_repo.get_by_id(project_id)
     if updated_project:
@@ -1435,11 +1420,11 @@ async def get_scan_stats(
     return aggregate_stats_by_category(results)
 
 
-def _find_project_member_index(project: Project, user_id: str) -> int:
-    """Return the index of ``user_id`` within ``project.members`` or raise 404."""
-    for i, member in enumerate(project.members):
+def _project_member_role(project: Project, user_id: str) -> str:
+    """Return ``user_id``'s role within ``project.members`` or raise 404."""
+    for member in project.members:
         if member.user_id == user_id:
-            return i
+            return member.role
     raise HTTPException(status_code=404, detail="User is not a member of this project")
 
 
@@ -1456,13 +1441,12 @@ async def _count_team_admins(project: Project, db: Any) -> int:
 
 async def _assert_not_demoting_last_admin(
     project: Project,
-    member_index: int,
+    current_role: str,
     member_in: ProjectMemberUpdate,
     db: Any,
 ) -> None:
     """Refuse to demote the final admin across direct and team membership."""
-    current_member = project.members[member_index]
-    is_demotion = current_member.role == "admin" and member_in.role and member_in.role != "admin"
+    is_demotion = current_role == "admin" and member_in.role and member_in.role != "admin"
     if not is_demotion:
         return
     direct_admin_count = sum(1 for m in project.members if m.role == "admin")
@@ -1474,16 +1458,13 @@ async def _assert_not_demoting_last_admin(
         )
 
 
-def _build_member_update_fields(
-    member_index: int,
-    member_in: ProjectMemberUpdate,
-) -> dict[str, Any]:
-    """Compose the Mongo ``$set`` payload for an in-place member update."""
+def _build_member_update_fields(member_in: ProjectMemberUpdate) -> dict[str, Any]:
+    """Compose the member fields an in-place member update writes."""
     update_fields: dict[str, Any] = {}
     if member_in.role:
-        update_fields[f"members.{member_index}.role"] = member_in.role
+        update_fields["role"] = member_in.role
     if member_in.notification_preferences:
-        update_fields[f"members.{member_index}.notification_preferences"] = member_in.notification_preferences
+        update_fields["notification_preferences"] = member_in.notification_preferences
     return update_fields
 
 
@@ -1502,10 +1483,10 @@ async def update_project_member(
     """Update the role of a project member. Requires 'admin' role."""
     project = await check_project_access(project_id, current_user, db, required_role="admin")
 
-    member_index = _find_project_member_index(project, user_id)
-    await _assert_not_demoting_last_admin(project, member_index, member_in, db)
+    current_role = _project_member_role(project, user_id)
+    await _assert_not_demoting_last_admin(project, current_role, member_in, db)
 
-    update_fields = _build_member_update_fields(member_index, member_in)
+    update_fields = _build_member_update_fields(member_in)
     project_repo = ProjectRepository(db)
     if update_fields:
         await project_repo.update_member(project_id, user_id, update_fields)

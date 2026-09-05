@@ -8,7 +8,8 @@ from motor.motor_asyncio import AsyncIOMotorDatabase
 from app.core.metrics import track_db_operation
 from app.models.team import Team
 
-_MEMBERS_USER_ID = "members.user_id"
+_USER_ID = "user_id"
+_MEMBERS_USER_ID = f"members.{_USER_ID}"
 _COL = "teams"
 
 
@@ -81,10 +82,12 @@ class TeamRepository:
     async def remove_member(self, team_id: str, user_id: str) -> None:
         await self.collection.update_one({"_id": team_id}, {"$pull": {"members": {"user_id": user_id}}})
 
-    async def update_member_role(self, team_id: str, user_id: str, role: str) -> None:
+    async def update_member_role(self, team_id: str, user_id: str, role: str, updated_at: datetime) -> None:
+        # Address the member by identity: a concurrent $pull shifts array indices under a positional write.
         await self.collection.update_one(
-            {"_id": team_id, _MEMBERS_USER_ID: user_id},
-            {"$set": {"members.$.role": role}},
+            {"_id": team_id},
+            {"$set": {"members.$[m].role": role, "updated_at": updated_at}},
+            array_filters=[{f"m.{_USER_ID}": user_id}],
         )
 
     async def set_members(self, team_id: str, members: list[dict[str, Any]], updated_at: datetime) -> None:

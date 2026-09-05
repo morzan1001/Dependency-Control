@@ -358,45 +358,6 @@ class TestAddTeamMember:
 
 
 class TestUpdateTeamMember:
-    def test_success_updates_role(self, admin_user):
-        from app.api.v1.endpoints.teams import update_team_member
-        from app.schemas.team import TeamMemberUpdate, TeamResponse
-
-        team = _make_team(
-            members=[
-                TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN),
-                TeamMember(user_id="target-user", role=TEAM_ROLE_MEMBER),
-            ]
-        )
-        enriched = TeamResponse(
-            _id="team-1",
-            name="Test Team",
-            members=[
-                {"user_id": "admin-1", "role": "owner", "username": "admin"},
-                {"user_id": "target-user", "role": "admin", "username": "target"},
-            ],
-            created_at="2024-01-01T00:00:00",
-            updated_at="2024-01-01T00:00:00",
-        )
-
-        mock_repo = MagicMock()
-        mock_repo.update_raw = AsyncMock()
-
-        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=team):
-            with patch(f"{MODULE}.TeamRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.fetch_and_enrich_team", new_callable=AsyncMock, return_value=enriched):
-                    asyncio.run(
-                        update_team_member(
-                            team_id="team-1",
-                            user_id="target-user",
-                            member_in=TeamMemberUpdate(role=TEAM_ROLE_ADMIN),
-                            current_user=admin_user,
-                            db=MagicMock(),
-                        )
-                    )
-
-        mock_repo.update_raw.assert_called_once()
-
     def test_raises_404_when_user_not_in_team(self, admin_user):
         from app.api.v1.endpoints.teams import update_team_member
         from app.schemas.team import TeamMemberUpdate
@@ -671,3 +632,38 @@ class TestTeamScopingAndRolePersistence:
         stored = await db.teams.find_one({"_id": "team-1"})
         roles = {member["user_id"]: member["role"] for member in stored["members"]}
         assert roles[target] == TEAM_ROLE_ADMIN
+
+    @pytest.mark.asyncio
+    async def test_a_removal_landing_between_the_read_and_the_write_cannot_redirect_the_role(self, admin_user):
+        from app.api.v1.endpoints.teams import update_team_member
+        from app.schemas.team import TeamMemberUpdate
+
+        earlier, target, bystander = "earlier-user", "target-user", "bystander-user"
+        db = await self._seeded(
+            teams=[self._team_doc("team-1", "Test Team", [str(admin_user.id), earlier, target, bystander])],
+            users=[{"_id": uid, "username": uid} for uid in (earlier, target, bystander)],
+        )
+
+        write = db.teams.update_one
+
+        async def remove_earlier_then_write(*args, **kwargs):
+            db.teams.update_one = write
+            await write({"_id": "team-1"}, {"$pull": {"members": {"user_id": earlier}}})
+            return await write(*args, **kwargs)
+
+        db.teams.update_one = remove_earlier_then_write
+
+        await update_team_member(
+            team_id="team-1",
+            user_id=target,
+            member_in=TeamMemberUpdate(role=TEAM_ROLE_ADMIN),
+            current_user=admin_user,
+            db=db,
+        )
+
+        stored = await db.teams.find_one({"_id": "team-1"})
+        assert {member["user_id"]: member["role"] for member in stored["members"]} == {
+            str(admin_user.id): TEAM_ROLE_MEMBER,
+            target: TEAM_ROLE_ADMIN,
+            bystander: TEAM_ROLE_MEMBER,
+        }

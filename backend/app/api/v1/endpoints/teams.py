@@ -208,23 +208,15 @@ async def update_team_member(
 
     team = await get_team_with_access(team_id, current_user, db)
 
-    member_index = find_member_in_team(team, user_id)
-    if member_index is None:
+    target_role = get_member_role(team, user_id)
+    if target_role is None:
         raise HTTPException(status_code=404, detail="User not in team")
 
     # Modifying an admin member requires admin access.
-    if team.members[member_index].role == TEAM_ROLE_ADMIN:
+    if target_role == TEAM_ROLE_ADMIN:
         await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
 
-    await team_repo.update_raw(
-        team_id,
-        {
-            "$set": {
-                f"members.{member_index}.role": member_in.role,
-                "updated_at": datetime.now(timezone.utc),
-            }
-        },
-    )
+    await team_repo.update_member_role(team_id, user_id, member_in.role, datetime.now(timezone.utc))
 
     return await fetch_and_enrich_team(team_id, db)
 

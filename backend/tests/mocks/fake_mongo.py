@@ -297,6 +297,7 @@ def _in_allowed(value: Any, allowed: list) -> bool:
     return False
 
 
+_PULL_ELEMENT = "__element__"
 _MATCH_TOP_LEVEL_OPERATORS = frozenset({"$or", "$and", "$expr"})
 _MATCH_FIELD_OPERATORS = frozenset({"$exists", "$in", "$nin", "$ne", "$regex", "$options", *_CMP})
 
@@ -317,6 +318,15 @@ def _assert_known_operators(query: dict) -> None:
         elif isinstance(condition, dict):
             for unknown in (k for k in condition if k.startswith("$") and k not in _MATCH_FIELD_OPERATORS):
                 raise OperationFailure(f"unknown operator: {unknown}")
+
+
+def _pull_matches(item: Any, condition: Any) -> bool:
+    """$pull's condition is a query document against each element, or a literal to equal."""
+    if isinstance(condition, dict) and isinstance(item, dict):
+        return _match_doc(item, condition)
+    if isinstance(condition, dict):
+        return _match_doc({_PULL_ELEMENT: item}, {_PULL_ELEMENT: condition})
+    return bool(_bson_equal(item, condition))
 
 
 def _match_doc(doc: dict, query: dict) -> bool:
@@ -1074,12 +1084,12 @@ class FakeCollection:
         self._docs[doc["_id"]] = _bsonify(doc)
         return self._docs[doc["_id"]]
 
-    async def update_one(self, query, update, upsert: bool = False):
+    async def update_one(self, query, update, array_filters=None, upsert: bool = False):
         matched = _matched_key(self._docs, query)
         modified = 0
         if matched is not None:
             before = _copy.deepcopy(self._docs[matched])
-            self._apply_update(self._docs[matched], update)
+            self._apply_update(self._docs[matched], update, array_filters=array_filters)
             modified = int(self._docs[matched] != before)
         elif upsert:
             self._insert_upserted(query, update)
@@ -1127,9 +1137,9 @@ class FakeCollection:
             if op == "$set":
                 for k, v in payload.items():
                     FakeCollection._set_dotted(target, k, v, filters)
-            elif op == "$setOnInsert" and not skip_set_on_insert:
+            elif op == "$setOnInsert":
                 # only applied when called outside upsert insert path
-                for k, v in payload.items():
+                for k, v in payload.items() if not skip_set_on_insert else ():
                     target.setdefault(k, v)
             elif op == "$unset":
                 for field in payload:
@@ -1143,6 +1153,16 @@ class FakeCollection:
                     bucket = target.setdefault(field, [])
                     if value not in bucket:
                         bucket.append(value)
+            elif op == "$push":
+                for field, value in payload.items():
+                    parent, leaf = FakeCollection._resolve_parent(target, field)
+                    parent.setdefault(leaf, []).append(value)
+            elif op == "$pull":
+                for field, condition in payload.items():
+                    parent, leaf = FakeCollection._resolve_parent(target, field)
+                    parent[leaf] = [item for item in parent.get(leaf, []) if not _pull_matches(item, condition)]
+            else:
+                raise OperationFailure(f"Unknown modifier: {op}")
 
     @staticmethod
     def _resolve_parent(target: dict, dotted_key: str) -> tuple[Any, Any]:

@@ -207,9 +207,16 @@ class ProjectRepository:
     async def remove_member(self, project_id: str, user_id: str) -> None:
         await self.collection.update_one({"_id": project_id}, {"$pull": {"members": {"user_id": user_id}}})
 
-    async def update_member(self, project_id: str, user_id: str, update_data: dict[str, Any]) -> None:
-        """update_data uses full field paths, e.g. {'members.0.role': 'admin'}."""
-        await self.collection.update_one({"_id": project_id, "members.user_id": user_id}, {"$set": update_data})
+    async def update_member(self, project_id: str, user_id: str, member_fields: dict[str, Any]) -> None:
+        """member_fields are plain member field names, e.g. {'role': 'admin'}.
+
+        The member is addressed by identity because a concurrent $pull shifts array indices.
+        """
+        await self.collection.update_one(
+            {"_id": project_id},
+            {"$set": {f"members.$[m].{field}": value for field, value in member_fields.items()}},
+            array_filters=[{"m.user_id": user_id}],
+        )
 
     async def iterate(
         self, query: dict[str, Any] | None = None, projection: dict[str, int] | None = None

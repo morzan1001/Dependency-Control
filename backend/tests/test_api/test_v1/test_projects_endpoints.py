@@ -61,7 +61,7 @@ class TestUpdateNotificationSettingsAdmin:
         args = project_repo.update_member.await_args.args
         assert args[0] == "proj-1"
         assert args[1] == user.id
-        assert args[2] == {"members.0.notification_preferences": {"analysis_completed": ["email", "slack"]}}
+        assert args[2] == {"notification_preferences": {"analysis_completed": ["email", "slack"]}}
 
     def test_admin_preferences_only_no_enforcement_is_not_a_noop(self):
         """With no enforcement change, update_data is empty; prefs must still persist."""
@@ -81,7 +81,7 @@ class TestUpdateNotificationSettingsAdmin:
         project_repo.update.assert_not_awaited()
         project_repo.update_member.assert_awaited_once()
         assert project_repo.update_member.await_args.args[2] == {
-            "members.0.notification_preferences": {"vulnerability_found": ["slack"]}
+            "notification_preferences": {"vulnerability_found": ["slack"]}
         }
 
     def test_admin_enforcement_and_preferences_both_persisted(self):
@@ -150,3 +150,83 @@ class TestScanHistoryLineage:
         self._run(scan_repo)
 
         assert scan_repo.count.await_args.args[0] == scan_repo.find_many.await_args.args[0]
+
+
+class TestProjectMemberWritesAddressTheMemberByIdentity:
+    """A concurrent removal shifts the member array, so a positional write lands on a bystander."""
+
+    _CALLER = "caller-user"
+    _EARLIER = "earlier-user"
+    _TARGET = "target-user"
+    _BYSTANDER = "bystander-user"
+
+    def _db(self):
+        from tests.mocks.fake_mongo import FakeDatabase
+
+        db = FakeDatabase()
+        project = Project(
+            id="proj-1",
+            name="Demo",
+            members=[
+                ProjectMember(user_id=self._CALLER, role="admin"),
+                ProjectMember(user_id=self._EARLIER, role="viewer"),
+                ProjectMember(user_id=self._TARGET, role="viewer"),
+                ProjectMember(user_id=self._BYSTANDER, role="viewer"),
+            ],
+        )
+        db.projects._docs["proj-1"] = project.model_dump(by_alias=True)
+        return db
+
+    @staticmethod
+    def _remove_between_read_and_write(db, user_id):
+        write = db.projects.update_one
+
+        async def remove_then_write(*args, **kwargs):
+            db.projects.update_one = write
+            await write({"_id": "proj-1"}, {"$pull": {"members": {"user_id": user_id}}})
+            return await write(*args, **kwargs)
+
+        db.projects.update_one = remove_then_write
+
+    @staticmethod
+    def _caller(user_id):
+        return User(id=user_id, username="caller", email="caller@test.com", permissions=["project:update"])
+
+    def test_a_removal_landing_between_the_read_and_the_write_cannot_redirect_the_role(self):
+        from app.api.v1.endpoints.projects import update_project_member
+        from app.schemas.project import ProjectMemberUpdate
+
+        db = self._db()
+        self._remove_between_read_and_write(db, self._EARLIER)
+
+        asyncio.run(
+            update_project_member(
+                project_id="proj-1",
+                user_id=self._TARGET,
+                member_in=ProjectMemberUpdate(role="admin"),
+                current_user=self._caller(self._CALLER),
+                db=db,
+            )
+        )
+
+        roles = {m["user_id"]: m["role"] for m in db.projects._docs["proj-1"]["members"]}
+        assert roles == {self._CALLER: "admin", self._TARGET: "admin", self._BYSTANDER: "viewer"}
+
+    def test_a_removal_landing_between_the_read_and_the_write_cannot_redirect_preferences(self):
+        from app.api.v1.endpoints.projects import update_notification_settings
+
+        db = self._db()
+        self._remove_between_read_and_write(db, self._EARLIER)
+        preferences = {"analysis_completed": ["slack"]}
+
+        asyncio.run(
+            update_notification_settings(
+                project_id="proj-1",
+                settings=ProjectNotificationSettings(notification_preferences=preferences),
+                current_user=self._caller(self._TARGET),
+                db=db,
+            )
+        )
+
+        stored = {m["user_id"]: m["notification_preferences"] for m in db.projects._docs["proj-1"]["members"]}
+        assert stored == {self._CALLER: {}, self._TARGET: preferences, self._BYSTANDER: {}}
