@@ -1,7 +1,7 @@
 """Tests for optimization recommendations: identify_quick_wins."""
 
 from app.schemas.recommendation import Priority, RecommendationType
-from app.services.recommendation.optimization import identify_quick_wins
+from app.services.recommendation.optimization import QUICK_WINS_SHOWN, identify_quick_wins
 
 
 def _vuln(component, severity="HIGH", version="1.0", fixed_version="2.0", is_kev=False, finding_id="CVE-2024-001"):
@@ -313,3 +313,29 @@ class TestIdentifyQuickWinsAffectedComponents:
         deps = [_dep("my-lib", version="1.2.3")]
         result = identify_quick_wins(vulns, deps)
         assert result[0].affected_components == ["my-lib@1.2.3"]
+
+
+class TestQuickWinsSayHowManyWereRankedOut:
+    """Five quick-win cards read as the whole backlog unless each names its rank."""
+
+    def test_candidates_beyond_the_cap_are_counted_on_every_card(self):
+        candidates = QUICK_WINS_SHOWN + 4
+        findings = []
+        for index in range(candidates):
+            findings += [
+                _vuln(f"pkg-{index}", finding_id=f"CVE-2024-{index}-1"),
+                _vuln(f"pkg-{index}", finding_id=f"CVE-2024-{index}-2"),
+            ]
+
+        result = identify_quick_wins(findings, [])
+
+        assert len(result) == QUICK_WINS_SHOWN
+        assert [r.rank for r in result] == list(range(1, QUICK_WINS_SHOWN + 1))
+        assert {r.ranked_out_of for r in result} == {candidates}
+
+    def test_candidates_within_the_cap_claim_no_rank(self):
+        findings = [_vuln("pkg", finding_id="CVE-2024-001"), _vuln("pkg", finding_id="CVE-2024-002")]
+
+        result = identify_quick_wins(findings, [])
+
+        assert [(r.rank, r.ranked_out_of) for r in result] == [(0, 0)]

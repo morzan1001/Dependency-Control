@@ -38,6 +38,17 @@ def sample_components(components: Iterable[str]) -> tuple[list[str], int]:
     return unique[:AFFECTED_COMPONENTS_SHOWN], len(unique)
 
 
+def take_top(candidates: Sequence[Any], cap: int) -> list[tuple[int, Any, int]]:
+    """The highest-ranked `cap` candidates as (rank, candidate, population).
+
+    Rank and population are both 0 while everything ranked is emitted; past the cap a generator
+    passes them on so a reader who sees `cap` recommendations of one kind knows more were ranked.
+    """
+    cut = len(candidates) > cap
+    population = len(candidates) if cut else 0
+    return [(rank if cut else 0, candidate, population) for rank, candidate in enumerate(candidates[:cap], start=1)]
+
+
 def get_attr(obj: ModelOrDict, key: str, default: Any = None) -> Any:
     """Standard model-or-dict accessor used by all recommendation modules."""
     if isinstance(obj, BaseModel):

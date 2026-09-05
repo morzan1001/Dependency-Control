@@ -89,6 +89,11 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
               <Badge variant="secondary" className="shrink-0">
                 {typeInfo.label}
               </Badge>
+              {recommendation.ranked_out_of > 0 && (
+                <Badge variant="outline" className="shrink-0 text-muted-foreground">
+                  Ranked {recommendation.rank} of {recommendation.ranked_out_of.toLocaleString()}
+                </Badge>
+              )}
             </div>
 
             <p className="text-sm text-muted-foreground line-clamp-2">

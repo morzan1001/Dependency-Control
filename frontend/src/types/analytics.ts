@@ -405,6 +405,10 @@ export interface Recommendation {
   affected_components: string[];
   // Components the recommendation covers, counted before the list was cut.
   affected_components_total: number;
+  // Position in the ranked list this came from and how many were ranked; both 0 unless the
+  // generator cut that list.
+  rank: number;
+  ranked_out_of: number;
   affected_projects?: Array<{ id: string; name: string }>;
   action: RecommendationAction;
   effort: 'low' | 'medium' | 'high';

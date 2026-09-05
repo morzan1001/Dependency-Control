@@ -8,6 +8,8 @@ import type { Recommendation, RecommendationAction } from '@/types/analytics'
 const COMPONENTS_LISTED = 20
 const COMPONENTS_COVERED = 900
 const FILES_LISTED = 5
+const RANK = 3
+const RANKED_OUT_OF = 43
 
 function makeRecommendation(action: RecommendationAction, over: Partial<Recommendation> = {}): Recommendation {
   return {
@@ -18,6 +20,8 @@ function makeRecommendation(action: RecommendationAction, over: Partial<Recommen
     impact: { critical: 0, high: 1, medium: 0, low: 0, total: 1 },
     affected_components: [],
     affected_components_total: 0,
+    rank: 0,
+    ranked_out_of: 0,
     action,
     effort: 'medium',
     ...over,
@@ -83,6 +87,26 @@ describe('RecommendationCard CVE rendering', () => {
       }),
     )
     expect(screen.getByText(`...and ${(filesTotal - FILES_LISTED).toLocaleString()} more`)).toBeInTheDocument()
+  })
+
+  it('says a card is one of a ranked list that was cut', () => {
+    render(
+      <MemoryRouter>
+        <RecommendationCard
+          recommendation={makeRecommendation({ type: 'update_dependency' }, { rank: RANK, ranked_out_of: RANKED_OUT_OF })}
+        />
+      </MemoryRouter>,
+    )
+    expect(screen.getByText(`Ranked ${RANK} of ${RANKED_OUT_OF}`)).toBeInTheDocument()
+  })
+
+  it('says nothing about rank when the generator emitted its whole list', () => {
+    render(
+      <MemoryRouter>
+        <RecommendationCard recommendation={makeRecommendation({ type: 'update_dependency' })} />
+      </MemoryRouter>,
+    )
+    expect(screen.queryByText(/^Ranked /)).not.toBeInTheDocument()
   })
 
   it('still renders the generic Related Vulnerabilities block for other action types', () => {

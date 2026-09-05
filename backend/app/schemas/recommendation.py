@@ -191,6 +191,10 @@ class Recommendation:
     action: dict[str, Any]  # Specific action details
     effort: str = Effort.MEDIUM  # Accepts Effort enum or string for compatibility
     affected_components_total: int = 0
+    # Where this sat in the ranked list its generator emitted, and how many were ranked; both 0
+    # unless that list was cut, in which case they are what says the rest exist.
+    rank: int = 0
+    ranked_out_of: int = 0
 
     def __post_init__(self) -> None:
         # A generator that lists everything it covers need not repeat the number; one that cut
@@ -207,6 +211,8 @@ class Recommendation:
             "impact": self.impact,
             "affected_components": self.affected_components,
             "affected_components_total": self.affected_components_total,
+            "rank": self.rank,
+            "ranked_out_of": self.ranked_out_of,
             "action": self.action,
             "effort": effort_value,
         }

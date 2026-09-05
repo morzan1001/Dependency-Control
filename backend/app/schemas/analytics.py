@@ -286,6 +286,8 @@ class RecommendationResponse(BaseModel):
         0,
         description="Components the recommendation covers, counted before the list was cut",
     )
+    rank: int = Field(0, description="Position in the ranked list this recommendation came from, 0 if it was whole")
+    ranked_out_of: int = Field(0, description="Candidates ranked for that list, 0 if none were ranked out")
     action: dict[str, Any]
     effort: str
 

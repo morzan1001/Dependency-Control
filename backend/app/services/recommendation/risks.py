@@ -14,7 +14,18 @@ from app.schemas.recommendation import (
     RecommendationType,
 )
 from app.services.aggregation.components import build_component_index, lookup_component
-from app.services.recommendation.common import AFFECTED_COMPONENTS_SHOWN, ModelOrDict, get_attr, sample_components
+from app.services.recommendation.common import (
+    AFFECTED_COMPONENTS_SHOWN,
+    ModelOrDict,
+    get_attr,
+    sample_components,
+    take_top,
+)
+
+# Hotspots and toxic packages are one recommendation each, so these bound the advice feed
+# rather than a list inside one card; each emitted card carries the rank it was cut at.
+CRITICAL_HOTSPOTS_SHOWN = 10
+TOXIC_DEPENDENCIES_SHOWN = 5
 
 
 def _vuln_risk_severity(critical: int, high: int, kev: int) -> str:
@@ -211,7 +222,7 @@ def _build_hotspot(pkg_name: str, pkg_data: dict[str, Any], reasons: list[str]) 
     )
 
 
-def _build_hotspot_recommendation(hotspot: PackageHotspot) -> Recommendation:
+def _build_hotspot_recommendation(hotspot: PackageHotspot, rank: int, ranked_out_of: int) -> Recommendation:
     """Build a recommendation from an identified hotspot."""
     priority = (
         Priority.CRITICAL
@@ -254,6 +265,8 @@ def _build_hotspot_recommendation(hotspot: PackageHotspot) -> Recommendation:
             "steps": get_hotspot_remediation_steps(hotspot),
         },
         effort="low" if hotspot.fixed_versions else "high",
+        rank=rank,
+        ranked_out_of=ranked_out_of,
     )
 
 
@@ -279,7 +292,10 @@ def detect_critical_hotspots(
         reverse=True,
     )
 
-    return [_build_hotspot_recommendation(h) for h in hotspots[:10]]
+    return [
+        _build_hotspot_recommendation(hotspot, rank, population)
+        for rank, hotspot, population in take_top(hotspots, CRITICAL_HOTSPOTS_SHOWN)
+    ]
 
 
 def _record_quality_risk(pkg: dict[str, Any], details: Any) -> None:
@@ -383,7 +399,7 @@ def _append_vuln_risk_factor(pkg: dict[str, Any]) -> None:
     pkg["total_score"] += critical * 50 + high * 20 + vuln_count * 5 + kev * 100
 
 
-def _build_toxic_recommendation(component: str, pkg: dict[str, Any]) -> Recommendation:
+def _build_toxic_recommendation(component: str, pkg: dict[str, Any], rank: int, ranked_out_of: int) -> Recommendation:
     """Build a toxic-dependency recommendation."""
     risk_descriptions = [r["description"] for r in pkg["risk_factors"]]
     version = pkg["version"]
@@ -421,6 +437,8 @@ def _build_toxic_recommendation(component: str, pkg: dict[str, Any]) -> Recommen
             ],
         },
         effort="high",
+        rank=rank,
+        ranked_out_of=ranked_out_of,
     )
 
 
@@ -440,7 +458,10 @@ def detect_toxic_dependencies(
     toxic_packages = [(c, p) for c, p in package_risks.items() if len(p["risk_factors"]) >= 2]
     toxic_packages.sort(key=lambda x: x[1]["total_score"], reverse=True)
 
-    return [_build_toxic_recommendation(component, pkg) for component, pkg in toxic_packages[:5]]
+    return [
+        _build_toxic_recommendation(component, pkg, rank, population)
+        for rank, (component, pkg), population in take_top(toxic_packages, TOXIC_DEPENDENCIES_SHOWN)
+    ]
 
 
 def analyze_attack_surface(
