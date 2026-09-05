@@ -5,7 +5,7 @@ from typing import Any
 
 from pymongo import UpdateOne
 
-from app.core.constants import CRYPTO_ASSET_BULK_CHUNK_SIZE, CRYPTO_ASSET_MAX_LIST_LIMIT
+from app.core.constants import CRYPTO_ASSET_BULK_CHUNK_SIZE
 from app.core.metrics import track_db_operation
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.base import BaseRepository
@@ -72,7 +72,8 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
         primitive: CryptoPrimitive | None = None,
         name_search: str | None = None,
     ) -> list[CryptoAsset]:
-        limit = min(limit, CRYPTO_ASSET_MAX_LIST_LIMIT)
+        """A scan's assets, name-ascending. ``limit`` is the caller's own budget and is applied
+        as given, so a short list means the scan is short and a caller can say so."""
         query = _scan_query(project_id, scan_id, asset_type, primitive, name_search)
         with track_db_operation(self.collection_name, "find"):
             cursor = self.collection.find(query).sort("name", 1).skip(skip).limit(limit)

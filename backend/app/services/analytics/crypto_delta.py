@@ -4,7 +4,7 @@
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import CRYPTO_ASSET_MAX_LIST_LIMIT
+from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.scan_delta import (
@@ -54,8 +54,8 @@ async def _side_assets(
 ) -> tuple[list[CryptoAsset], int]:
     """The side's assets and how many it holds. ``list_by_scan`` orders by name, so a capped side
     is cut at the same alphabetical point on both sides."""
-    assets = await repo.list_by_scan(project_id, scan_id, limit=CRYPTO_ASSET_MAX_LIST_LIMIT)
-    if len(assets) < CRYPTO_ASSET_MAX_LIST_LIMIT:
+    assets = await repo.list_by_scan(project_id, scan_id, limit=MAX_CRYPTO_ASSETS_PER_SCAN)
+    if len(assets) < MAX_CRYPTO_ASSETS_PER_SCAN:
         return assets, len(assets)
     return assets, await repo.count_by_scan(project_id, scan_id)
 
@@ -108,7 +108,7 @@ async def compute_crypto_delta_envelope(
         from_reachability=await side_reachability(db, from_scan),
         to_reachability=await side_reachability(db, to_scan),
         truncation=delta_truncation(
-            CRYPTO_ASSET_MAX_LIST_LIMIT,
+            MAX_CRYPTO_ASSETS_PER_SCAN,
             from_compared=len(from_assets),
             from_total=from_total,
             to_compared=len(to_assets),
