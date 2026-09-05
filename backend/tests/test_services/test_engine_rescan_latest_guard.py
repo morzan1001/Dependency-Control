@@ -1,4 +1,10 @@
-"""A rescan carries created_at = now, so without a lineage guard it always wins the latest-scan slot."""
+"""A rescan carries created_at = now, so without a lineage guard it always wins the latest-scan slot.
+
+The slot the guard writes is the cached form of the head rule stated in
+``app/repositories/scans.py``: the tip build picks the commit, its freshest analysis picks the
+numbers. So a rescan of the current tip takes the slot — it is the same commit, freshly analysed —
+while a rescan of an older release does not.
+"""
 
 from datetime import datetime, timedelta, timezone
 
@@ -106,6 +112,24 @@ async def test_a_rescan_of_the_current_latest_still_updates_it(db):
     scan_doc = _ScanDoc(_NOW + _LATER, is_rescan=True, original_scan_id=_HEAD_SCAN_ID)
 
     assert await _decide(db, _INCOMING_RESCAN_ID, scan_doc) is True
+
+
+@pytest.mark.asyncio
+async def test_the_guard_and_the_head_resolver_name_the_same_scan_either_side_of_the_write(db):
+    """The guard caches head and the resolver derives it. Two rules would show as the pointer and
+    the derived answer disagreeing over the identical two-scan branch."""
+    await _seed(db, _HEAD_SCAN_ID)
+    await _insert_scan(db, _INCOMING_RESCAN_ID, _NOW + _LATER, is_rescan=True, original_scan_id=_HEAD_SCAN_ID)
+    await db.scans.update_one({"_id": _HEAD_SCAN_ID}, {"$set": {"latest_rescan_id": _INCOMING_RESCAN_ID}})
+    scan_doc = _ScanDoc(_NOW + _LATER, is_rescan=True, original_scan_id=_HEAD_SCAN_ID)
+    scan_repo = ScanRepository(db)
+
+    assert await _decide(db, _INCOMING_RESCAN_ID, scan_doc) is True
+    before = await scan_repo.get_latest_active_scan_ids([await db.projects.find_one({"_id": _PROJECT_ID})])
+    await db.projects.update_one({"_id": _PROJECT_ID}, {"$set": {"latest_scan_id": _INCOMING_RESCAN_ID}})
+    after = await scan_repo.get_latest_active_scan_ids([await db.projects.find_one({"_id": _PROJECT_ID})])
+
+    assert before == after == {_PROJECT_ID: _INCOMING_RESCAN_ID}
 
 
 @pytest.mark.asyncio

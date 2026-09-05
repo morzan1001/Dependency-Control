@@ -255,9 +255,10 @@ async def _create_rescan_for_project(
 
 
 async def _branch_tip(project: Project, tip_source: dict[str, Any], db: Any) -> dict | None:
-    """The newest build that stands for the project's branch tip, resolved the way analytics
-    resolves head: the default branch while the VCS still has one, else any branch it has not
-    deleted.
+    """The newest build that stands for the project's branch tip, picked the way the head rule
+    picks its commit: the default branch while the VCS still has one, else any branch it has not
+    deleted. The rule's second step is deliberately left out — a rescan target has to be the build,
+    or each interval would rescan the previous interval's output.
 
     A tag pipeline names its tag as its branch, so it can hold a release slot but never the tip
     slot — otherwise a project that tags every release stops having its default branch

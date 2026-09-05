@@ -7,10 +7,8 @@ import pytest
 
 from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, MAX_RESCAN_HOPS
 from app.repositories.projects import ProjectRepository
-from app.repositories.scans import ScanRepository
+from app.repositories.scans import LineageAnalysis, ScanRepository
 from app.services.releases import (
-    EffectiveScan,
-    effective_scan_ids,
     latest_release_scan,
     released_scan_ids,
     resolve_scan_ids,
@@ -38,9 +36,17 @@ _ONE_PROJECT = 1
 _MANY_PROJECTS = 50
 _COUNTED_COLLECTIONS = ("projects", "scans", "releases")
 _COUNTED_OPERATIONS = ("find", "find_one", "aggregate", "distinct")
-_HEAD_QUERIES = {"projects.find": 1, "scans.aggregate": 1}
-_HEAD_QUERIES_POINTERS_ONLY = {"projects.find": 1, "scans.find": 1}
-_HEAD_QUERIES_WITH_A_DANGLING_POINTER = {"projects.find": 1, "scans.find": 1, "scans.aggregate": 1}
+# Head resolution's second step walks the rescan lineage of the tip it picked: one read for the
+# whole scope, plus one per extra link, never one per project.
+_LINEAGE_READS = 1
+_POINTER_READS = 1
+_HEAD_QUERIES = {"projects.find": 1, "scans.aggregate": 1, "scans.find": _LINEAGE_READS}
+_HEAD_QUERIES_POINTERS_ONLY = {"projects.find": 1, "scans.find": _POINTER_READS + _LINEAGE_READS}
+_HEAD_QUERIES_WITH_A_DANGLING_POINTER = {
+    "projects.find": 1,
+    "scans.find": _POINTER_READS + _LINEAGE_READS,
+    "scans.aggregate": 1,
+}
 _RELEASE_QUERIES = {"releases.aggregate": 1, "scans.find": 1}
 _RELEASE_QUERIES_WITH_RESCANS = {"releases.aggregate": 1, "scans.find": 2}
 _RELEASE_QUERIES_WITH_A_CHAIN = {"releases.aggregate": 1, "scans.find": 4}
@@ -49,7 +55,7 @@ _CHAIN_BEYOND_THE_BOUND = MAX_RESCAN_HOPS + 5
 _NO_RELEASES: dict[str, str] = {}
 _CYCLE_QUERIES = {"releases.find_one": 1, "scans.find": 2}
 _NO_QUERIES: dict[str, int] = {}
-_NAMES_AND_HEAD_QUERIES = {"projects.find": 1, "scans.find": 1}
+_NAMES_AND_HEAD_QUERIES = {"projects.find": 1, "scans.find": _POINTER_READS + _LINEAGE_READS}
 _NAMES_AND_RELEASE_QUERIES = {"projects.find": 1, "releases.aggregate": 1, "scans.find": 1}
 _RETENTION_DELETED = "head-deleted-by-retention"
 _EXEMPTED_RELEASE = "exempted-release"
@@ -270,7 +276,7 @@ async def test_a_chain_stopped_at_the_bound_says_the_answer_may_be_stale(db):
     await db.scans.insert_one(_scan("released", _PROJECT_A))
     await _seed_rescan_chain(db, _PROJECT_A, "released", [_COMPLETED] * _CHAIN_BEYOND_THE_BOUND)
 
-    resolved = await effective_scan_ids(db, ["released"])
+    resolved = await ScanRepository(db).freshest_in_lineage(["released"])
 
     assert resolved["released"].chain_bounded is True
 
@@ -280,7 +286,7 @@ async def test_a_chain_that_ran_out_before_the_bound_says_nothing_of_the_sort(db
     await db.scans.insert_one(_scan("released", _PROJECT_A))
     await _seed_rescan_chain(db, _PROJECT_A, "released", [_COMPLETED, _COMPLETED])
 
-    resolved = await effective_scan_ids(db, ["released"])
+    resolved = await ScanRepository(db).freshest_in_lineage(["released"])
 
     assert resolved["released"].chain_bounded is False
 
@@ -416,7 +422,8 @@ async def test_resolve_scan_ids_head_matches_the_repository(db):
     )
     expected = await ScanRepository(db).get_latest_active_scan_ids(projects)
 
-    assert expected == {"with-pointer": "pointed-at", "no-pointer": "newest", "deleted-branch": "still-alive"}
+    # The pointer names the build; head reports the rescan of it, which is the same commit.
+    assert expected == {"with-pointer": "a-usable-rescan", "no-pointer": "newest", "deleted-branch": "still-alive"}
     assert await resolve_scan_ids(db, project_ids) == expected
 
 
@@ -541,15 +548,15 @@ async def test_latest_release_scan_breaks_the_tie_the_way_the_analytics_path_doe
 
 
 @pytest.mark.asyncio
-async def test_effective_scan_ids_breaks_a_created_at_tie_on_the_scan_id(db):
+async def test_the_lineage_walk_breaks_a_created_at_tie_on_the_scan_id(db):
     """A rescan stamped in the same millisecond as its source leaves the walk with two candidates
     of equal date; whichever the server hands over first must not decide the answer."""
     await db.scans.insert_one(_scan(_TIED_SCAN_HIGH_ROW_ID, _PROJECT_A, latest_rescan_id=_TIED_SCAN_LOW_ROW_ID))
     await db.scans.insert_one(_scan(_TIED_SCAN_LOW_ROW_ID, _PROJECT_A))
 
-    resolved = await effective_scan_ids(db, [_TIED_SCAN_HIGH_ROW_ID])
+    resolved = await ScanRepository(db).freshest_in_lineage([_TIED_SCAN_HIGH_ROW_ID])
 
-    assert resolved == {_TIED_SCAN_HIGH_ROW_ID: EffectiveScan(scan_id=_TIED_SCAN_LOW_ROW_ID, chain_bounded=False)}
+    assert resolved == {_TIED_SCAN_HIGH_ROW_ID: LineageAnalysis(scan_id=_TIED_SCAN_LOW_ROW_ID, chain_bounded=False)}
 
 
 @pytest.mark.asyncio

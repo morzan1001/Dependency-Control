@@ -1,8 +1,11 @@
 """Tests for the one head resolver on ScanRepository and its delegators.
 
-Head is the newest usable build on the project's default branch, falling back to any branch the
-VCS still has; a rescan ranks behind the build it re-analysed, and ``latest_scan_id`` is that
-answer cached and trusted only while it names a readable scan on the head branch.
+The rule these assert is stated once, in ``app/repositories/scans.py``: head is the freshest
+readable analysis of the tip commit of the project's head branch. Two steps — the newest build
+picks the commit, its rescan lineage picks the analysis — so a rescan reaches head with its
+enrichment without moving head onto the commit it re-analysed. ``latest_scan_id`` is that answer
+cached, trusted only while it names a readable scan on the head branch, and it goes through the
+lineage step like any other candidate.
 """
 
 import asyncio
@@ -17,6 +20,11 @@ from tests.mocks.fake_mongo import FakeDatabase
 
 _NOW = datetime(2026, 9, 1, 12, 0, tzinfo=timezone.utc)
 _HEAD = "head"
+# One read validates every pointer in the scope; one more walks the lineage of every tip it
+# picked. Both are per scope, never per project.
+_POINTER_READS = 1
+_LINEAGE_READS = 1
+_NO_AGGREGATION = 0
 
 
 def _project(project_id: str, **overrides) -> dict:
@@ -42,6 +50,11 @@ async def _seeded(scans: list[dict]) -> FakeDatabase:
     db = FakeDatabase()
     for scan in scans:
         await db.scans.insert_one(scan)
+    # Both rescan creators stamp the forward link on the source as they insert the rescan, so a
+    # fixture carrying only original_scan_id is a lineage no writer in this codebase produces.
+    for scan in scans:
+        if scan.get("original_scan_id"):
+            await db.scans.update_one({"_id": scan["original_scan_id"]}, {"$set": {"latest_rescan_id": scan["_id"]}})
     return db
 
 
@@ -129,7 +142,8 @@ class TestGetLatestActiveScan:
 
         single, bulk = asyncio.run(run())
 
-        assert single is not None and bulk == {"p1": single.id}
+        assert single is not None and single.id == "rescan"
+        assert bulk == {"p1": single.id}
 
     def test_deleted_branches_argument_overrides_the_projects_own_set(self):
         """Housekeeping passes the freshly-computed set before it is persisted."""
@@ -180,8 +194,8 @@ class TestGetLatestActiveScanIds:
         )
 
         assert result == {"p1": "scan-latest"}
-        # A usable pointer answers the whole scope with one read and no aggregation.
-        assert (reads.finds, reads.aggregates) == (1, 0)
+        # A usable pointer answers the whole scope without re-deriving the tip.
+        assert (reads.finds, reads.aggregates) == (_POINTER_READS + _LINEAGE_READS, _NO_AGGREGATION)
 
     def test_keeps_the_pointer_when_the_deleted_branch_is_not_its_own(self):
         """deleted_branches is the steady state of any VCS-integrated project, and an unrelated
@@ -198,7 +212,7 @@ class TestGetLatestActiveScanIds:
 
         assert result == {"p2": "tip"}
         # The pointer is still the cached answer here, so nothing has to be re-derived.
-        assert reads.aggregates == 0
+        assert reads.aggregates == _NO_AGGREGATION
 
     def test_aggregates_when_the_pointer_is_on_a_deleted_branch(self):
         result, reads = asyncio.run(
@@ -277,21 +291,21 @@ class TestGetLatestActiveScanIds:
         )
 
         assert result == {"pa": "live-a", "pb": "live-b"}
-        assert (reads.finds, reads.aggregates) == (1, 0)
+        assert (reads.finds, reads.aggregates) == (_POINTER_READS + _LINEAGE_READS, _NO_AGGREGATION)
 
-    def test_reads_nothing_when_no_project_carries_a_pointer(self):
+    def test_skips_the_pointer_read_when_no_project_carries_a_pointer(self):
         result, reads = asyncio.run(
             _resolve([_scan("found-by-query", "p9", "main", 1)], [_project("p9")]),
         )
 
         assert result == {"p9": "found-by-query"}
-        assert reads.finds == 0
+        assert reads.finds == _LINEAGE_READS
 
     def test_skips_projects_with_falsy_id(self):
         result, reads = asyncio.run(_resolve([], [_project("")]))
 
         assert result == {}
-        assert reads.aggregates == 0
+        assert (reads.finds, reads.aggregates) == (0, _NO_AGGREGATION)
 
     def test_mixed_projects(self):
         result, _ = asyncio.run(
@@ -339,7 +353,9 @@ class TestHeadIsTheDefaultBranch:
 
         assert result == {"p1": "develop-tip"}
 
-    def test_a_rescan_does_not_take_the_tip_from_the_build_it_re_analysed(self):
+    def test_head_is_the_rescan_of_the_tip_build_rather_than_the_analysis_it_replaced(self):
+        """Second step of the rule: the build picked the commit, so the rescan of that same commit
+        is what head reports — otherwise the rescanner's fresh enrichment never reaches a reader."""
         result, _ = asyncio.run(
             _resolve(
                 [
@@ -350,7 +366,21 @@ class TestHeadIsTheDefaultBranch:
             )
         )
 
-        assert result == {"p1": "build"}
+        assert result == {"p1": "rescan"}
+
+    def test_every_pointer_over_one_rescanned_build_resolves_to_the_same_scan(self):
+        """The two doors into the identical two-scan branch — pointer set, pointer stale, no
+        pointer — cannot answer differently, or which rule fired is decided by the pointer."""
+        scans = [
+            _scan("build", "p1", "main", 5),
+            _scan("rescan", "p1", "main", 0, is_rescan=True, original_scan_id="build"),
+        ]
+        answers = [
+            asyncio.run(_resolve(scans, [_project("p1", default_branch="main", latest_scan_id=pointer)]))[0]
+            for pointer in ("rescan", "build", None)
+        ]
+
+        assert answers == [{"p1": "rescan"}] * len(answers)
 
     def test_a_branch_left_with_only_a_rescan_still_resolves_to_it(self):
         result, _ = asyncio.run(

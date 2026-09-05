@@ -1,93 +1,17 @@
 """Release lookup and the single resolver for 'which scan counts for this project'."""
 
 import logging
-from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
-from datetime import datetime, timezone
+from collections.abc import Sequence
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core import ensure_utc
-from app.core.constants import MAX_RESCAN_HOPS, SCAN_USABLE_STATUSES
 from app.core.init_db import RELEASES_LATEST_SORT
 from app.repositories import ProjectRepository, ScanRepository
 from app.schemas.projections import ProjectWithScanId
 from app.services.analytics.scopes import ensure_whole_scope, scope_probe_limit
 
 logger = logging.getLogger(__name__)
-
-_CHAIN_PROJECTION = {"_id": 1, "latest_rescan_id": 1, "status": 1, "created_at": 1}
-_UNDATED = datetime.min.replace(tzinfo=timezone.utc)
-
-
-def _created_at(doc: dict[str, Any]) -> datetime:
-    # A scan with no created_at sorts oldest, so it wins only when its chain holds nothing else.
-    return ensure_utc(doc.get("created_at")) or _UNDATED
-
-
-def _is_fresher(doc: dict[str, Any], incumbent: dict[str, Any]) -> bool:
-    """Newer wins; on a tie the lower _id does, because BSON dates are milliseconds and two links
-    stamped inside one cannot be told apart by their date alone."""
-    doc_at, incumbent_at = _created_at(doc), _created_at(incumbent)
-    if doc_at != incumbent_at:
-        return doc_at > incumbent_at
-    return str(doc["_id"]) < str(incumbent["_id"])
-
-
-@dataclass(frozen=True)
-class EffectiveScan:
-    """The analysis a release resolves to, and whether the walk that found it ran out."""
-
-    scan_id: str
-    # True when the chain still had links at MAX_RESCAN_HOPS, so a fresher analysis may exist.
-    chain_bounded: bool
-
-
-async def effective_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Iterable[str]) -> dict[str, EffectiveScan]:
-    """The freshest readable analysis of each released artefact.
-
-    Rescans chain — a rescan of a release is created from the marked scan (_rescan_targets), so the
-    released scan's latest_rescan_id is overwritten rather than extended and never advances past the
-    first link — and the walk follows unusable links too, or a failed rescan would hide the good one
-    behind it. Bounded, so a cyclic pointer cannot hang a request; a release whose chain was still
-    going at the bound is marked, because the answer is then the freshest within ten hops rather
-    than the freshest there is. A release with no usable scan in its chain, like one whose scan
-    retention deleted, is absent rather than a misleading id.
-    """
-    frontier: dict[str, str] = {scan_id: scan_id for scan_id in scan_ids}
-    visited: set[str] = set()
-    freshest: dict[str, dict[str, Any]] = {}
-    bounded: set[str] = set()
-
-    for _hop in range(MAX_RESCAN_HOPS + 1):
-        if not frontier:
-            break
-        visited.update(frontier)
-        next_frontier: dict[str, str] = {}
-        async for doc in db.scans.find({"_id": {"$in": list(frontier)}}, _CHAIN_PROJECTION):
-            released_id = frontier[doc["_id"]]
-            if doc.get("status") in SCAN_USABLE_STATUSES:
-                incumbent = freshest.get(released_id)
-                if incumbent is None or _is_fresher(doc, incumbent):
-                    freshest[released_id] = doc
-            rescan_id = doc.get("latest_rescan_id")
-            if rescan_id and rescan_id not in visited:
-                next_frontier[rescan_id] = released_id
-        frontier = next_frontier
-
-    if frontier:
-        bounded = set(frontier.values())
-        logger.warning(
-            "Rescan lineage still had links at the %d-hop bound for %d release(s); the resolved analysis may be stale",
-            MAX_RESCAN_HOPS,
-            len(bounded),
-        )
-
-    return {
-        released_id: EffectiveScan(scan_id=doc["_id"], chain_bounded=released_id in bounded)
-        for released_id, doc in freshest.items()
-    }
 
 
 async def release_protected_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Sequence[str]) -> set[str]:
@@ -102,7 +26,7 @@ async def release_protected_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Sequenc
         return set()
     candidate_set = set(candidates)
     # Both rescan creators re-root original_scan_id at the lineage root, so a release's chain is one
-    # link deep and one backward hop reaches every scan effective_scan_ids can answer with.
+    # link deep and one backward hop reaches every scan freshest_in_lineage can answer with.
     chain_parents = await db.scans.distinct("_id", {"latest_rescan_id": {"$in": candidates}})
     marked = set(await db.releases.distinct("scan_id", {"scan_id": {"$in": candidates + chain_parents}}))
     protected = candidate_set & marked
@@ -124,7 +48,7 @@ async def latest_release_scan(db: AsyncIOMotorDatabase, project_id: str, environ
     )
     if row is None:
         return None
-    resolved = (await effective_scan_ids(db, [row["scan_id"]])).get(row["scan_id"])
+    resolved = (await ScanRepository(db).freshest_in_lineage([row["scan_id"]])).get(row["scan_id"])
     return resolved.scan_id if resolved else None
 
 
@@ -161,7 +85,7 @@ async def _release_scan_ids(
     released = {row["_id"]: row["scan_id"] async for row in db.releases.aggregate(pipeline)}
     if not released:
         return {}
-    effective = await effective_scan_ids(db, set(released.values()))
+    effective = await ScanRepository(db).freshest_in_lineage(set(released.values()))
     return {project_id: effective[scan_id].scan_id for project_id, scan_id in released.items() if scan_id in effective}
 
 

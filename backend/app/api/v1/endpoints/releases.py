@@ -16,9 +16,9 @@ from app.core import ensure_utc
 from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, PROJECT_ROLE_VIEWER, RELEASE_ENVIRONMENT_PATTERN
 from app.core.init_db import RELEASES_LATEST_SORT
 from app.models.release import Release
-from app.repositories import ReleaseRepository
+from app.repositories import ReleaseRepository, ScanRepository
+from app.repositories.scans import LineageAnalysis
 from app.schemas.release import ReleaseItem, ReleaseListResponse, ReleaseMarkRequest, ReleaseUnmarkResponse
-from app.services.releases import EffectiveScan, effective_scan_ids
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +33,7 @@ _EnvironmentQuery = Annotated[str, Query(pattern=RELEASE_ENVIRONMENT_PATTERN)]
 _OptionalEnvironmentQuery = Annotated[str | None, Query(pattern=RELEASE_ENVIRONMENT_PATTERN)]
 
 
-def _to_item(row: dict[str, Any], scan: dict[str, Any], analysis: EffectiveScan | None) -> ReleaseItem:
+def _to_item(row: dict[str, Any], scan: dict[str, Any], analysis: LineageAnalysis | None) -> ReleaseItem:
     return ReleaseItem(
         scan_id=row["scan_id"],
         project_id=row["project_id"],
@@ -54,7 +54,7 @@ async def _to_items(db: AsyncIOMotorDatabase, rows: list[dict[str, Any]]) -> lis
     scan_ids = {row["scan_id"] for row in rows}
     scans = {doc["_id"]: doc async for doc in db.scans.find({"_id": {"$in": list(scan_ids)}}, _SCAN_FIELDS)}
     # The resolver's own chain walk, so a release names the scan analytics actually reports.
-    analysis = await effective_scan_ids(db, scan_ids)
+    analysis = await ScanRepository(db).freshest_in_lineage(scan_ids)
     return [_to_item(row, scans.get(row["scan_id"], {}), analysis.get(row["scan_id"])) for row in rows]
 
 
@@ -114,7 +114,7 @@ async def mark_release(
     row = await db.releases.find_one({"project_id": project_id, "environment": environment, "scan_id": scan_id})
     if row is None:
         raise HTTPException(status_code=409, detail=f"The release of {scan_id} to {environment} was withdrawn")
-    return _to_item(row, scan, (await effective_scan_ids(db, [scan_id])).get(scan_id))
+    return _to_item(row, scan, (await ScanRepository(db).freshest_in_lineage([scan_id])).get(scan_id))
 
 
 @router.delete(
