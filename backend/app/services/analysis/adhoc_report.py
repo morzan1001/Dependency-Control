@@ -16,7 +16,8 @@ _TEMPLATE_NAME = "adhoc_report.html"
 # comes out of a posted SBOM, so renaming the file must not be able to turn escaping off.
 _ENV = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=True)
 
-# Rows shown in the findings table; the JSON response carries the full set.
+# Rows shown in the tables; the JSON response carries the full set, and each heading
+# names how many of the total it is showing.
 _FINDING_ROW_CAP = 500
 _RECOMMENDATION_ROW_CAP = 50
 _DESCRIPTION_CHARS = 300
@@ -50,6 +51,8 @@ def render_adhoc_html(result: AdhocAnalyzeResponse) -> str:
         findings_shown=min(len(rows), _FINDING_ROW_CAP),
         dependencies_total=len(result.dependencies),
         recommendations=result.recommendations[:_RECOMMENDATION_ROW_CAP],
+        recommendations_total=len(result.recommendations),
+        recommendations_shown=min(len(result.recommendations), _RECOMMENDATION_ROW_CAP),
         analyzers=result.analyzers,
         epss_kev_summary=result.epss_kev_summary,
         reachability_summary=result.reachability_summary,

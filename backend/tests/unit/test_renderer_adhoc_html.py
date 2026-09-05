@@ -4,7 +4,7 @@ from markupsafe import escape
 
 from app.schemas.adhoc import AdhocAnalyzeResponse, AdhocTruncation, AnalyzerReport
 from app.services.analysis.adhoc import _STAGE_NOTES
-from app.services.analysis.adhoc_report import _FINDING_ROW_CAP, render_adhoc_html
+from app.services.analysis.adhoc_report import _FINDING_ROW_CAP, _RECOMMENDATION_ROW_CAP, render_adhoc_html
 
 _HOSTILE_COMPONENT = "<script>alert('xss')</script>"
 _HOSTILE_DESCRIPTION = "<img src=x onerror=alert(1)>"
@@ -16,6 +16,7 @@ _SECOND_FAILURE = "SBOM #2: 503 from upstream"
 _PARSE_FAILURE = "could not be parsed: unsupported document"
 _WAIVED_COUNT = 2
 _OVER_THE_CAP = _FINDING_ROW_CAP + 1
+_RECOMMENDATIONS_OVER_THE_CAP = _RECOMMENDATION_ROW_CAP + 3
 
 _DROPPED_SECRETS = 7
 _DROPPED_LOW = 7
@@ -136,6 +137,19 @@ def test_a_findings_table_cut_to_the_row_cap_says_so():
     html = render_adhoc_html(result)
 
     assert f"Findings ({_FINDING_ROW_CAP} of {_OVER_THE_CAP})" in html
+
+
+def test_a_recommendation_table_cut_to_the_row_cap_says_so():
+    result = _result(
+        recommendations=[
+            {"priority": "high", "title": f"fix {index}", "effort": "low"}
+            for index in range(_RECOMMENDATIONS_OVER_THE_CAP)
+        ]
+    )
+
+    html = render_adhoc_html(result)
+
+    assert f"Recommendations ({_RECOMMENDATION_ROW_CAP} of {_RECOMMENDATIONS_OVER_THE_CAP})" in html
 
 
 def test_findings_are_ordered_most_severe_first():
