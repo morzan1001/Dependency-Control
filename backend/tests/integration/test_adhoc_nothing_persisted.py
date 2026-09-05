@@ -225,6 +225,15 @@ _SCANNER_PAYLOADS = {"trufflehog": _TRUFFLEHOG, "opengrep": _OPENGREP, "bearer":
 # rest fan out to package registries, so both are resolved away before they can run.
 _ANALYZERS = ["license_compliance", "typosquatting"]
 
+# The set above pins the CLI analyzers as skipped, so the one ad-hoc path that writes a file and
+# forks a process is the one the nets never reach. It gets its own case below.
+_CLI_ANALYZER = "grype"
+# The real binary is absent here and the image's is not reproducible; what the case proves is that
+# the request ends whatever it forked, which any long-running executable stands in for.
+_HANGING_SCANNER = ["sleep", "400"]
+_CANCEL_AFTER_SECONDS = 0.5
+_ONE_SCANNER = 1
+
 # Every net below is only as wide as the run that exercises it, so the run's own reach is
 # asserted by equality rather than by truthiness.
 _EXPECTED_RAN = frozenset(_ANALYZERS) | frozenset(_SCANNER_PAYLOADS) | {_ENRICHMENT, _REACHABILITY, _CRYPTO_RULES}
@@ -768,6 +777,44 @@ async def test_the_endpoint_persists_nothing(
     # The one thing the HTTP layer is allowed to leave in a datastore, named rather than excused.
     assert redis_keys, "the rate-limit window must reach Redis, or this net is vacuous"
     assert all(key.startswith(_RATE_LIMIT_PREFIX) for key in redis_keys), redis_keys
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_cli_analyzer_leaves_no_scanner_running_and_no_file(
+    monkeypatch, bypass_attempts, recording_cache, filesystem_watch
+):
+    """The deadline that cancels an ad-hoc request cancels the scanner's own ``cli_timeout`` with
+    it, so nothing downstream is left to bound the process — and the semaphore is released, so a
+    retry starts another one."""
+    from app.services.analysis import registry
+
+    analyzer = registry.analyzers[_CLI_ANALYZER]
+    monkeypatch.setattr(analyzer, "is_tool_available", lambda: True)
+    monkeypatch.setattr(analyzer, "_build_command_args", lambda _path, _settings: list(_HANGING_SCANNER))
+
+    spawned: list[Any] = []
+    start_process = asyncio.create_subprocess_exec
+
+    async def _recorded(*args: Any, **kwargs: Any) -> Any:
+        process = await start_process(*args, **kwargs)
+        spawned.append(process)
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _recorded)
+
+    db = _WriteRecordingDatabase()
+    request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=[_CLI_ANALYZER])
+
+    with pytest.raises(TimeoutError):
+        await asyncio.wait_for(run_adhoc_analysis(request, db), timeout=_CANCEL_AFTER_SECONDS)
+
+    assert len(spawned) == _ONE_SCANNER, "the CLI path has to actually fork, or this case proves nothing"
+    assert spawned[0].returncode is not None, "the scanner outlived the request that started it"
+    assert_no_files_left_behind(filesystem_watch)
+    assert_no_write_calls(db)
+    await assert_nothing_persisted(db)
+    assert bypass_attempts == []
+    assert recording_cache.writes == []
 
 
 @pytest.mark.asyncio

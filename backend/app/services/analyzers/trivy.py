@@ -7,7 +7,7 @@ from typing import Any
 from app.core.config import settings
 
 from .base import map_vendor_severity
-from .cli_base import CLIAnalyzer
+from .cli_base import CLIAnalyzer, kill_and_reap
 
 logger = logging.getLogger(__name__)
 
@@ -20,6 +20,9 @@ class TrivyAnalyzer(CLIAnalyzer):
     # Retry transient Trivy server errors (e.g. layer cache miss after a DB update).
     max_retries = 3
     retry_delay = 3.0
+    # Format conversion reads one file and writes one file, so a syft that is still going after
+    # this is stuck rather than busy, and Trivy reads the original format well enough to continue.
+    syft_convert_timeout = 120
 
     _RETRYABLE_PATTERNS = (
         "layer cache missing",
@@ -77,7 +80,18 @@ class TrivyAnalyzer(CLIAnalyzer):
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await convert_process.communicate()
+        try:
+            stdout, stderr = await asyncio.wait_for(convert_process.communicate(), timeout=self.syft_convert_timeout)
+        except asyncio.TimeoutError:
+            await kill_and_reap(convert_process)
+            logger.warning(
+                "Syft conversion did not finish within %ss. Proceeding with original file.",
+                self.syft_convert_timeout,
+            )
+            return tmp_sbom_path, []
+        except asyncio.CancelledError:
+            await kill_and_reap(convert_process)
+            raise
 
         if convert_process.returncode == 0:
             await asyncio.to_thread(Path(converted_sbom_path).write_bytes, stdout)
