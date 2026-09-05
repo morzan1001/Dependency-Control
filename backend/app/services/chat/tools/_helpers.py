@@ -1,5 +1,6 @@
 """Stateless helpers for chat tool registry and crypto/compliance tool wrappers."""
 
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
@@ -57,13 +58,43 @@ _SEVERITY_RANK = {
 }
 
 
+# Clamps applied while one tool call runs, so the answer can say it was not the one asked for.
+_CLAMPED_LIMITS: ContextVar[list[tuple[int, int]] | None] = ContextVar("chat_tool_clamped_limits", default=None)
+
+
+def begin_limit_ledger() -> None:
+    """Start recording clamps for one tool call."""
+    _CLAMPED_LIMITS.set([])
+
+
+def clamped_limit_note() -> str | None:
+    """What this call asked for against what it was given, or None when the two agree."""
+    clamps = _CLAMPED_LIMITS.get()
+    if not clamps:
+        return None
+    pairs = ", ".join(f"{requested} to {granted}" for requested, granted in clamps)
+    return (
+        f"A numeric argument was outside this tool's range and was changed ({pairs}). "
+        "The answer covers the reduced amount; narrow the filter to see the rest."
+    )
+
+
 def _clamp_limit(raw: Any, default: int, maximum: int = MAX_TOOL_LIMIT) -> int:
-    """Coerce LLM-supplied `limit` to a safe integer, clamped to [1, maximum]."""
+    """Coerce LLM-supplied `limit` to a safe integer, clamped to [1, maximum].
+
+    A clamp is recorded, because a caller that asked for 500 and received 200 otherwise
+    reads the answer as the whole of what it asked about.
+    """
     try:
-        value = int(raw) if raw is not None else default
+        requested = int(raw) if raw is not None else None
     except (TypeError, ValueError):
-        value = default
-    return max(1, min(value, maximum))
+        requested = None
+    value = default if requested is None else requested
+    clamped = max(1, min(value, maximum))
+    ledger = _CLAMPED_LIMITS.get()
+    if requested is not None and clamped != requested and ledger is not None:
+        ledger.append((requested, clamped))
+    return clamped
 
 
 def _ensure_list(value: Any) -> list[Any] | None:

@@ -34,6 +34,8 @@ from ._helpers import (
     _serialize_finding_for_llm,
     _truncate_if_too_large,
     _waiver_is_active,
+    begin_limit_ledger,
+    clamped_limit_note,
 )
 from .crypto_tools import (
     generate_pqc_migration_plan,
@@ -221,6 +223,7 @@ class ChatToolRegistry:
             return {"error": f"You don't have permission to use {tool_name}"}
 
         start = time.time()
+        begin_limit_ledger()
         try:
             result = await self._dispatch(tool_name, arguments, user, db)
             duration = time.time() - start
@@ -228,6 +231,10 @@ class ChatToolRegistry:
             chat_tool_duration_seconds.labels(tool_name=tool_name).observe(duration)
             if isinstance(result, dict):
                 _inject_urls(result)
+                note = clamped_limit_note()
+                if note:
+                    result["_limit_clamped"] = True
+                    result["_limit_clamp_note"] = note
             # Cap JSON size so a large dump can't blow the LLM's context budget.
             return _truncate_if_too_large(result) if isinstance(result, dict) else result
         except Exception as e:
