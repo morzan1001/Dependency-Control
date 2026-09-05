@@ -3,6 +3,11 @@
 from app.api.v1.endpoints.analytics.dependencies import _build_dependency_graph
 
 
+def _graph(dependencies, findings_map):
+    """Every case here reads a whole scan, so the row count is the total."""
+    return _build_dependency_graph(dependencies, findings_map, len(dependencies))
+
+
 def _dep(name, version="1.0.0", direct=False, parents=None, direct_inferred=False):
     return {
         "purl": f"pkg:pypi/{name}@{version}",
@@ -54,7 +59,7 @@ class TestDependencyGraphBuilder:
         a = _dep("a", direct=True)
         b = _dep("b", parents=[a["purl"]])
 
-        graph = _build_dependency_graph([a, b], {})
+        graph = _graph([a, b], {})
 
         assert set(_root_names(graph)) == {"a"}
         assert _child_names(graph, _by_name(graph)["a"]) == ["b"]
@@ -65,7 +70,7 @@ class TestDependencyGraphBuilder:
         c = _dep("c", direct=True)
         b = _dep("b", parents=[a["purl"], c["purl"]])
 
-        graph = _build_dependency_graph([a, c, b], {})
+        graph = _graph([a, c, b], {})
 
         assert set(_root_names(graph)) == {"a", "c"}
         by_name = _by_name(graph)
@@ -77,7 +82,7 @@ class TestDependencyGraphBuilder:
         a = _dep("a", direct=True, parents=["pkg:pypi/b@1.0.0"])
         b = _dep("b", parents=[a["purl"]])
 
-        graph = _build_dependency_graph([a, b], {})
+        graph = _graph([a, b], {})
 
         assert set(_root_names(graph)) == {"a"}
         by_name = _by_name(graph)
@@ -90,7 +95,7 @@ class TestDependencyGraphBuilder:
         b = _dep("b", parents=[a["purl"]])
         c = _dep("c", parents=[b["purl"]])
 
-        graph = _build_dependency_graph([a, b, c], {})
+        graph = _graph([a, b, c], {})
 
         assert len(graph.roots) == 1  # one entry for the component, not every node
         assert _reachable_ids(graph) == {n.id for n in graph.nodes}
@@ -99,7 +104,7 @@ class TestDependencyGraphBuilder:
         a = _dep("a", direct=True)
         b = _dep("b", parents=["pkg:npm/does-not-exist@9.9.9"])
 
-        graph = _build_dependency_graph([a, b], {})
+        graph = _graph([a, b], {})
 
         assert set(_root_names(graph)) == {"a", "b"}
         orphan = _by_name(graph)["b"]
@@ -109,7 +114,7 @@ class TestDependencyGraphBuilder:
     def test_sbom_without_graph_is_all_flat_inferred_roots(self):
         deps = [_dep(n, direct=True, direct_inferred=True) for n in ("a", "b", "c")]
 
-        graph = _build_dependency_graph(deps, {})
+        graph = _graph(deps, {})
 
         assert set(_root_names(graph)) == {"a", "b", "c"}
         assert all(n.direct_inferred for n in graph.nodes)
@@ -118,7 +123,7 @@ class TestDependencyGraphBuilder:
     def test_findings_are_mapped_onto_nodes(self):
         a = _dep("a", direct=True)
 
-        graph = _build_dependency_graph([a], {"a": _findings(total=3, critical=1, high=2)})
+        graph = _graph([a], {"a": _findings(total=3, critical=1, high=2)})
 
         node = _by_name(graph)["a"]
         assert node.has_findings is True
@@ -130,7 +135,7 @@ class TestDependencyGraphBuilder:
         low = _dep("low", direct=True)
         high = _dep("high", direct=True)
 
-        graph = _build_dependency_graph([low, high], {"low": _findings(total=1), "high": _findings(total=5)})
+        graph = _graph([low, high], {"low": _findings(total=1), "high": _findings(total=5)})
 
         assert _root_names(graph) == ["high", "low"]
 
@@ -139,7 +144,7 @@ class TestDependencyGraphBuilder:
         low = _dep("low", parents=[a["purl"]])
         high = _dep("high", parents=[a["purl"]])
 
-        graph = _build_dependency_graph([a, low, high], {"low": _findings(total=1), "high": _findings(total=9)})
+        graph = _graph([a, low, high], {"low": _findings(total=1), "high": _findings(total=9)})
 
         assert _child_names(graph, _by_name(graph)["a"]) == ["high", "low"]
 
@@ -148,7 +153,7 @@ class TestDependencyGraphBuilder:
         a = {"id": "uuid-a", "name": "a", "version": "1", "type": "pypi", "direct": True, "parent_components": []}
         b = {"id": "uuid-b", "name": "b", "version": "1", "type": "pypi", "direct": True, "parent_components": []}
 
-        graph = _build_dependency_graph([a, b], {})
+        graph = _graph([a, b], {})
 
         assert sorted(n.id for n in graph.nodes) == ["uuid-a", "uuid-b"]
         assert set(graph.roots) == {"uuid-a", "uuid-b"}
@@ -159,7 +164,7 @@ class TestDependencyGraphBuilder:
         c = _dep("c", parents=[b["purl"]])
         orphan = _dep("orphan", parents=["pkg:npm/x@9"])
 
-        graph = _build_dependency_graph([a, b, c, orphan], {})
+        graph = _graph([a, b, c, orphan], {})
 
         assert _reachable_ids(graph) == {n.id for n in graph.nodes}
         # Resolvable transitives (b, c) must not leak into roots.
@@ -174,7 +179,7 @@ class TestDependencyGraphBuilder:
         b = _dep("b", parents=[a["purl"]])
         c = _dep("c", parents=[b["purl"]])
 
-        graph = _build_dependency_graph([d, a, b, c], {})
+        graph = _graph([d, a, b, c], {})
 
         assert len(graph.roots) == 1
         assert "d" not in _root_names(graph)
@@ -188,7 +193,7 @@ class TestDependencyGraphBuilder:
         x_from_sbom1 = _dep("x", parents=[a["purl"]])
         x_from_sbom2 = _dep("x", parents=[c["purl"]])
 
-        graph = _build_dependency_graph([a, c, x_from_sbom1, x_from_sbom2], {})
+        graph = _graph([a, c, x_from_sbom1, x_from_sbom2], {})
 
         by_name = _by_name(graph)
         assert sum(1 for n in graph.nodes if n.name == "x") == 1  # x deduped to one node
@@ -196,7 +201,7 @@ class TestDependencyGraphBuilder:
         assert _child_names(graph, by_name["c"]) == ["x"]
 
     def test_findings_absent_yields_no_severity(self):
-        node = _by_name(_build_dependency_graph([_dep("a", direct=True)], {}))["a"]
+        node = _by_name(_graph([_dep("a", direct=True)], {}))["a"]
 
         assert node.has_findings is False
         assert node.findings_count == 0

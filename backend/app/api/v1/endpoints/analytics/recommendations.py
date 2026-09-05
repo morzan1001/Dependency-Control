@@ -19,6 +19,7 @@ from app.core.constants import (
     ANALYTICS_MAX_QUERY_LIMIT,
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
+    SCAN_DEPENDENCY_READ_LIMIT,
 )
 from app.core.permissions import Permissions
 from app.repositories import (
@@ -124,7 +125,7 @@ async def get_project_recommendations(
     findings = await finding_repo.find_by_scan(scan_id, limit=ANALYTICS_MAX_QUERY_LIMIT)
     await _apply_live_threat_intel(findings)
 
-    dependencies = await dep_repo.find_by_scan(scan_id)
+    dependencies, dependencies_total = await dep_repo.find_by_scan(scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT)
 
     for dep in dependencies:
         if dep.source_target:
@@ -252,6 +253,8 @@ async def get_project_recommendations(
         total_vulnerabilities=vuln_count,
         recommendations=[RecommendationResponse(**r.to_dict()) for r in recommendations],
         summary=summary,
+        dependencies_read=len(dependencies),
+        dependencies_total=dependencies_total,
     )
     # mode="json" so a cache hit reconstructs the same shape as a miss (enums/datetimes).
     await cache_service.set(cache_key, response.model_dump(mode="json"), ttl_seconds=CacheTTL.RECOMMENDATIONS)

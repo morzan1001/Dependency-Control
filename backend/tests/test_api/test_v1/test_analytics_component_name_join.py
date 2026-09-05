@@ -14,6 +14,11 @@ from app.services.aggregation.components import component_match_query
 from tests.mocks.fake_mongo import FakeDatabase
 
 
+def _graph(dependencies, findings_map):
+    """Every case here reads a whole scan, so the row count is the total."""
+    return _build_dependency_graph(dependencies, findings_map, len(dependencies))
+
+
 def _finding(component, severity="HIGH"):
     return {"component": component, "severity": severity}
 
@@ -35,7 +40,7 @@ class TestBareDependencyNameResolvesQualifiedFinding:
             [_finding("com.fasterxml.jackson.core:jackson-databind", "CRITICAL")]
         )
 
-        graph = _build_dependency_graph([_dep("jackson-databind")], findings_map)
+        graph = _graph([_dep("jackson-databind")], findings_map)
 
         node = graph.nodes[0]
         assert node.findings_count == 1
@@ -51,7 +56,7 @@ class TestBareDependencyNameResolvesQualifiedFinding:
             ]
         )
 
-        graph = _build_dependency_graph(
+        graph = _graph(
             [_dep("@angular-devkit/core", "19.2.15", purl="pkg:npm/%40angular-devkit/core@19.2.15")],
             findings_map,
         )
@@ -65,7 +70,7 @@ class TestBareDependencyNameResolvesQualifiedFinding:
         """Three packages end in 'core'; a bare 'core' dependency must not inherit one of them."""
         findings_map = build_findings_severity_map([_finding("@angular/core"), _finding("@messageformat/core")])
 
-        graph = _build_dependency_graph([_dep("core", "21.1.5", purl="pkg:npm/%40angular/core@21.1.5")], findings_map)
+        graph = _graph([_dep("core", "21.1.5", purl="pkg:npm/%40angular/core@21.1.5")], findings_map)
 
         node = graph.nodes[0]
         assert node.findings_count == 0
@@ -108,9 +113,7 @@ class TestAliasLookupIsCaseInsensitive:
     def test_mixed_case_maven_artifact_resolves_its_qualified_finding(self):
         findings_map = build_findings_severity_map([_finding("xerces:xercesImpl", "HIGH")])
 
-        graph = _build_dependency_graph(
-            [_dep("xercesImpl", "2.12.2", purl="pkg:maven/xerces/xercesImpl@2.12.2")], findings_map
-        )
+        graph = _graph([_dep("xercesImpl", "2.12.2", purl="pkg:maven/xerces/xercesImpl@2.12.2")], findings_map)
 
         assert graph.nodes[0].findings_count == 1
 

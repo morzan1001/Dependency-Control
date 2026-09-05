@@ -15,7 +15,7 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
-from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, SCAN_DEPENDENCY_READ_LIMIT
 from app.core.permissions import Permissions
 from app.repositories import (
     DependencyEnrichmentRepository,
@@ -108,7 +108,11 @@ def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> Depen
     )
 
 
-def _build_dependency_graph(dependencies: list[Any], findings_map: dict[str, dict[str, int]]) -> DependencyGraph:
+def _build_dependency_graph(
+    dependencies: list[Any],
+    findings_map: dict[str, dict[str, int]],
+    dependencies_total: int,
+) -> DependencyGraph:
     """Flatten deps into unique nodes + per-node child_ids and roots so the client nests lazily."""
     node_by_key: dict[str, DependencyTreeNode] = {}
     order: list[str] = []
@@ -172,6 +176,8 @@ def _build_dependency_graph(dependencies: list[Any], findings_map: dict[str, dic
     return DependencyGraph(
         nodes=[node_by_key[key] for key in order],
         roots=[node_by_key[key].id for key in root_keys],
+        dependencies_read=len(dependencies),
+        dependencies_total=dependencies_total,
     )
 
 
@@ -198,7 +204,7 @@ async def get_dependency_tree(
     if not scan_id:
         return DependencyGraph()
 
-    dependencies = await dep_repo.find_by_scan(scan_id)
+    dependencies, dependencies_total = await dep_repo.find_by_scan(scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT)
 
     if not dependencies:
         return DependencyGraph()
@@ -209,7 +215,7 @@ async def get_dependency_tree(
     )
     findings_map = build_findings_severity_map(findings)
 
-    return _build_dependency_graph(dependencies, findings_map)
+    return _build_dependency_graph(dependencies, findings_map, dependencies_total)
 
 
 @router.get("/component-findings", responses=RESP_AUTH)

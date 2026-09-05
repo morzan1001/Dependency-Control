@@ -405,6 +405,11 @@ EXPLOIT_MATURITY_BOOST: dict[str, float] = {
     "unknown": 1.0,
 }
 
+# Dependency rows one request holds in memory for a single scan. Measured against MongoDB 7:
+# 10 000 rows cost 0.32 s and 52 MiB peak through the graph builder, 50 000 cost 1.96 s and
+# 261 MiB, and 200 000 cost 9.25 s and 1.04 GiB against a 2 GiB pod.
+SCAN_DEPENDENCY_READ_LIMIT: int = 10_000
+
 # Maximum items returned by analytics aggregation queries
 # Used to prevent memory issues with large datasets
 ANALYTICS_MAX_QUERY_LIMIT: int = 100000

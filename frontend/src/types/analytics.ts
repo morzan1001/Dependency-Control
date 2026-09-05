@@ -64,6 +64,9 @@ export interface DependencyTreeNode {
 export interface DependencyGraph {
   nodes: DependencyTreeNode[];
   roots: string[];
+  // Rows the graph was built from against what the scan holds; equal unless the read saturated.
+  dependencies_read: number;
+  dependencies_total: number;
 }
 
 export interface ImpactAnalysisResult {
@@ -429,6 +432,9 @@ export interface RecommendationsResponse {
   total_vulnerabilities: number;
   recommendations: Recommendation[];
   summary: RecommendationsSummary;
+  // Dependency rows the engine reasoned over against what the scan holds.
+  dependencies_read: number;
+  dependencies_total: number;
 }
 
 export interface AdvancedSearchOptions {

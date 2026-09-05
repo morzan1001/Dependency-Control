@@ -35,7 +35,15 @@ export function SummaryCard({ data }: { data: RecommendationsResponse }) {
           }
         </CardDescription>
       </CardHeader>
-      <CardContent className="space-y-4">        {(data.total_vulnerabilities || 0) > 0 && (
+      <CardContent className="space-y-4">
+        {data.dependencies_read < data.dependencies_total && (
+          <div className="rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            Reasoned over {data.dependencies_read.toLocaleString()} of {data.dependencies_total.toLocaleString()}{" "}
+            dependency rows in this scan. Advice that counts components — fragmentation, outdated packages,
+            license drift — is scoped to those rows and under-reports the rest.
+          </div>
+        )}
+        {(data.total_vulnerabilities || 0) > 0 && (
           <div>
             <h4 className="text-sm font-medium mb-2 flex items-center gap-2">
               <ShieldAlert className="h-4 w-4" />

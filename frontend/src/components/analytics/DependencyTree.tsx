@@ -236,6 +236,13 @@ export function DependencyTree({ onSelectNode }: Readonly<DependencyTreeProps>) 
         </div>
       </CardHeader>
       <CardContent>
+        {graph && graph.dependencies_read < graph.dependencies_total && (
+          <div className="mb-4 rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+            Built from {graph.dependencies_read.toLocaleString()} of {graph.dependencies_total.toLocaleString()}{" "}
+            dependency rows in this scan. The rest are not in the tree below, so a package missing here
+            may still be in the scan.
+          </div>
+        )}
         {(() => {
           if (!selectedProjectId) {
             return (

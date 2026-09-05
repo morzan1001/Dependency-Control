@@ -73,6 +73,9 @@ class DependencyGraph(BaseModel):
     # otherwise-disconnected component), so the graph is rendered whole without server nesting.
     nodes: list[DependencyTreeNode] = []
     roots: list[str] = []
+    # Rows the graph was built from against what the scan holds; equal unless the read saturated.
+    dependencies_read: int = 0
+    dependencies_total: int = 0
 
 
 class ImpactAnalysisResult(BaseModel):
@@ -293,6 +296,10 @@ class RecommendationsResponse(BaseModel):
     total_vulnerabilities: int
     recommendations: list[RecommendationResponse]
     summary: dict[str, Any]
+    # Dependency rows the engine reasoned over against what the scan holds; equal unless the
+    # read saturated, in which case component-wide advice is scoped to the rows that were read.
+    dependencies_read: int = 0
+    dependencies_total: int = 0
 
 
 # --- Update Frequency Analysis ---
