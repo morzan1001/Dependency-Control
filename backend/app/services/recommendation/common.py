@@ -13,6 +13,7 @@ from app.core.constants import (
     RECOMMENDATION_TYPE_BONUSES,
 )
 from app.schemas.recommendation import Priority, Recommendation
+from app.services.enrichment import canonical_cves
 
 ModelOrDict = BaseModel | dict[str, Any]
 
@@ -85,27 +86,15 @@ def group_findings_by_field(
     return grouped
 
 
-def extract_cve_id(finding: ModelOrDict) -> str | None:
-    """Return the first CVE-XXXX-XXXXX id found in finding.id, details.cve_id, or aliases."""
-    finding_id = get_attr(finding, "id") or get_attr(finding, "finding_id")
-    if finding_id and str(finding_id).startswith("CVE-"):
-        return str(finding_id)
+def finding_cve_ids(finding: ModelOrDict) -> list[str]:
+    """Every advisory a stored vulnerability finding names, collapsed to its CVE identity.
 
+    Aggregation groups one record per (component, version) and its top-level ``id`` is that pair,
+    so the advisory identity only ever lives in ``details.vulnerabilities`` — the same place the
+    scan delta reads its identity from.
+    """
     details = get_attr(finding, "details", {})
-    if isinstance(details, dict):
-        cve_id = details.get("cve_id")
-        if cve_id and str(cve_id).startswith("CVE-"):
-            return str(cve_id)
-
-    aliases = get_attr(finding, "aliases", [])
-    if not aliases and isinstance(details, dict):
-        aliases = details.get("aliases", [])
-
-    for alias in aliases or []:
-        if alias and str(alias).startswith("CVE-"):
-            return str(alias)
-
-    return None
+    return canonical_cves([details]) if isinstance(details, dict) else []
 
 
 def parse_version_tuple(version: str) -> tuple:

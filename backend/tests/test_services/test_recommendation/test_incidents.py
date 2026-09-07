@@ -36,18 +36,23 @@ def _typosquat_finding(component, imitated_package=None):
     }
 
 
+_COMPONENT_VERSION = "1.0.0"
+
+
 def _vuln(component, severity="CRITICAL", is_kev=False, kev_ransomware=False, epss_score=0.0, cve_id="CVE-2024-001"):
+    """Aggregator shape: the document id is component:version and the CVE lives one level down."""
     return {
         "type": "vulnerability",
         "severity": severity,
         "component": component,
+        "version": _COMPONENT_VERSION,
         "details": {
             "in_kev": is_kev,
             "kev_ransomware_use": kev_ransomware,
             "epss_score": epss_score,
-            "cve_id": cve_id,
+            "vulnerabilities": [{"id": cve_id}],
         },
-        "id": cve_id,
+        "id": f"{component}:{_COMPONENT_VERSION}",
         "aliases": [],
     }
 

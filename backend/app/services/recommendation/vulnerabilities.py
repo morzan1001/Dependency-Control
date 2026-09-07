@@ -8,7 +8,17 @@ from app.schemas.recommendation import (
     RecommendationType,
     VulnerabilityInfo,
 )
-from app.services.recommendation.common import ModelOrDict, calculate_best_fix_version, get_attr, sample_components
+from app.services.recommendation.common import (
+    ModelOrDict,
+    calculate_best_fix_version,
+    finding_cve_ids,
+    get_attr,
+    sample_components,
+)
+
+_CVE_PREFIX = "CVE-"
+# Shown where a finding names no advisory at all; VulnerabilityInfo.cve_id is not optional.
+_UNRESOLVED_CVE_ID = "unknown"
 
 
 def process_vulnerabilities(
@@ -48,14 +58,13 @@ def _resolve_dep(
 
 
 def _resolve_cve_id(f: ModelOrDict) -> str:
-    """Resolve the CVE id for a finding, checking aliases as a fallback."""
-    cve_id_val = get_attr(f, "id")
-    if not cve_id_val or not str(cve_id_val).startswith("CVE-"):
-        for alias in get_attr(f, "aliases", []) or []:
-            if alias.startswith("CVE-"):
-                cve_id_val = alias
-                break
-    return str(cve_id_val) if cve_id_val else "unknown"
+    """The advisory a finding is shown under: a CVE where its group names one, else the first
+    advisory id (GHSA-only ecosystems)."""
+    advisories = finding_cve_ids(f)
+    cve = next((a for a in advisories if a.startswith(_CVE_PREFIX)), None)
+    if cve:
+        return cve
+    return advisories[0] if advisories else _UNRESOLVED_CVE_ID
 
 
 def _build_vuln_info(f: ModelOrDict) -> VulnerabilityInfo:

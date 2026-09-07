@@ -20,8 +20,10 @@ def _make_finding(
     finding_type="vulnerability",
     kev_ransomware=False,
 ):
+    """Aggregator shape: the document id is component:version and every advisory lives in
+    details.vulnerabilities, so ``finding_id`` names the advisory, not the document."""
     return {
-        "id": finding_id,
+        "id": f"{component}:{version}",
         "type": finding_type,
         "severity": severity,
         "component": component,
@@ -31,10 +33,11 @@ def _make_finding(
             "in_kev": is_kev,
             "epss_score": epss_score,
             "kev_ransomware_use": kev_ransomware,
+            "vulnerabilities": [{"id": finding_id, "aliases": aliases or []}],
         },
         "reachable": reachable,
         "reachability_level": reachability_level,
-        "aliases": aliases or [],
+        "aliases": [],
     }
 
 
@@ -708,3 +711,36 @@ class TestLookupFallback:
         result = process_vulnerabilities([finding], dep_by_nv, [dep], None)
 
         assert len(result) >= 1
+
+
+class TestCveIdOnTheStoredShape:
+    def test_action_cves_never_carry_the_component_version_pair(self):
+        finding = _make_finding(finding_id="CVE-2024-7777", component="log4j-core", version="2.14.1")
+        dep = _make_dependency(name="log4j-core", version="2.14.1")
+        dep_by_nv = _build_lookup_maps([dep])
+
+        result = process_vulnerabilities([finding], dep_by_nv, [dep], None)
+
+        direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
+        assert direct_recs[0].action["cves"] == ["CVE-2024-7777"]
+
+    def test_ghsa_entry_is_shown_under_its_cve_alias(self):
+        finding = _make_finding(finding_id="GHSA-jfh8-c2jp-5v3q", aliases=["CVE-2021-44228"])
+        dep = _make_dependency()
+        dep_by_nv = _build_lookup_maps([dep])
+
+        result = process_vulnerabilities([finding], dep_by_nv, [dep], None)
+
+        direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
+        assert direct_recs[0].action["cves"] == ["CVE-2021-44228"]
+
+    def test_a_finding_naming_no_advisory_is_not_shown_under_its_component(self):
+        finding = _make_finding()
+        finding["details"]["vulnerabilities"] = []
+        dep = _make_dependency()
+        dep_by_nv = _build_lookup_maps([dep])
+
+        result = process_vulnerabilities([finding], dep_by_nv, [dep], None)
+
+        direct_recs = [r for r in result if r.type == RecommendationType.DIRECT_DEPENDENCY_UPDATE]
+        assert direct_recs[0].action["cves"] == ["unknown"]
