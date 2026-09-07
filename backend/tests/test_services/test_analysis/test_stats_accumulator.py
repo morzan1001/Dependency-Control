@@ -132,9 +132,9 @@ class TestEpssTyping:
         assert t.max_epss_score is None
         assert t.active_exploitation_count == 0
 
-    def test_non_numeric_epss_leaves_the_finding_deprioritized(self):
+    def test_non_numeric_epss_leaves_the_finding_in_neither_bucket(self):
         p = compute_stats([_finding(epss_score="0.9")], {}).prioritized
-        assert p.deprioritized_count == 1
+        assert p.deprioritized_count == 0
         assert p.actionable_total == 0
 
     @pytest.mark.parametrize("details", [{"epss_score": None}, {}])
@@ -145,7 +145,7 @@ class TestEpssTyping:
         assert stats.threat_intel.max_epss_score is None
         assert (stats.threat_intel.high_epss_count, stats.threat_intel.medium_epss_count) == (0, 0)
         assert stats.threat_intel.active_exploitation_count == 0
-        assert stats.prioritized.deprioritized_count == 1
+        assert stats.prioritized.deprioritized_count == 0
 
     def test_zero_epss_is_a_real_value_not_a_missing_one(self):
         t = compute_stats([_finding(epss_score=0.0)], {}).threat_intel

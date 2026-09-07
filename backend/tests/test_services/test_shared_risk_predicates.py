@@ -47,8 +47,11 @@ class TestDeprioritized:
         # Surprising but load-bearing: unreachability outranks KEV in this predicate.
         assert is_deprioritized_vulnerability(epss_score=0.9, is_kev=True, reachable=False) is True
 
-    def test_missing_epss_without_kev_is_deprioritized(self):
-        assert is_deprioritized_vulnerability(epss_score=None, is_kev=False, reachable=None) is True
+    def test_missing_epss_is_not_evidence_of_low_likelihood(self):
+        assert is_deprioritized_vulnerability(epss_score=None, is_kev=False, reachable=None) is False
+
+    def test_measured_low_epss_without_kev_is_deprioritized(self):
+        assert is_deprioritized_vulnerability(epss_score=0.001, is_kev=False, reachable=None) is True
 
     def test_epss_on_the_medium_threshold_is_not_deprioritized(self):
         assert is_deprioritized_vulnerability(epss_score=0.01, is_kev=False, reachable=None) is False

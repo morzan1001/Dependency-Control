@@ -66,10 +66,14 @@ def is_actionable_vulnerability(*, epss_score: float | None, is_kev: bool, reach
 
 
 def is_deprioritized_vulnerability(*, epss_score: float | None, is_kev: bool, reachable: bool | None) -> bool:
-    """Proven unreachable, or too unlikely to be exploited to compete for attention."""
+    """Proven unreachable, or measured too unlikely to be exploited to compete for attention.
+
+    An absent EPSS score means the CVE is not in the dataset, not that its exploitation is
+    unlikely, so it decides nothing here — as an absent reachability verdict decides nothing above.
+    """
     if reachable is False:
         return True
-    return not is_kev and (epss_score is None or epss_score < EPSS_MEDIUM_THRESHOLD)
+    return not is_kev and epss_score is not None and epss_score < EPSS_MEDIUM_THRESHOLD
 
 
 def is_deprioritized_secret(verified: bool | None, in_current_tree: bool | None) -> bool:
