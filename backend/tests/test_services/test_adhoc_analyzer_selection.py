@@ -6,7 +6,8 @@ from app.services.analysis.adhoc import (
     ADHOC_SKIP_REASONS,
     resolve_adhoc_analyzers,
 )
-from app.services.analysis.registry import analyzers
+from app.services.analysis.registry import analyzer_factories
+from tests.helpers.analyzers import build_analyzer
 
 _OSV = "osv"
 _LICENSE = "license_compliance"
@@ -51,7 +52,7 @@ def test_every_registered_analyzer_is_either_selected_or_given_a_reason():
 
     selected = resolve_adhoc_analyzers(None, report)
 
-    assert set(selected) | set(report.skipped) == set(analyzers)
+    assert set(selected) | set(report.skipped) == set(analyzer_factories)
     assert not set(selected) & set(report.skipped)
 
 
@@ -62,7 +63,7 @@ def test_cli_scanners_are_off_by_default_and_quote_their_real_timeout():
 
     for name in (_TRIVY, _GRYPE):
         assert report.skipped[name] == ADHOC_SKIP_REASONS[name]
-        assert str(analyzers[name].cli_timeout) in report.skipped[name]
+        assert str(build_analyzer(name).cli_timeout) in report.skipped[name]
 
 
 def test_registry_fanout_analyzers_are_off_by_default_with_an_uncached_reason():
@@ -131,4 +132,4 @@ def test_empty_explicit_list_runs_nothing():
     report = AnalyzerReport()
 
     assert resolve_adhoc_analyzers([], report) == []
-    assert set(report.skipped) == set(analyzers)
+    assert set(report.skipped) == set(analyzer_factories)

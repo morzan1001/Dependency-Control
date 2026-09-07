@@ -1,12 +1,8 @@
 from app.services.analysis.engine import run_analysis
 from app.services.analysis.registry import (
     VULNERABILITY_ANALYZERS,
-    analyzers,
-    get_all_analyzer_names,
-    get_analyzer,
-    is_post_processor,
-    is_vulnerability_analyzer,
-    post_processors,
+    analyzer_factories,
+    post_processor_factories,
 )
 from app.services.analysis.stats import (
     build_epss_kev_summary,
@@ -32,14 +28,10 @@ __all__ = [
     "ScanDict",
     "SystemSettingsDict",
     "WaiverDict",
-    "analyzers",
+    "analyzer_factories",
     "build_epss_kev_summary",
     "build_reachability_summary",
     "calculate_comprehensive_stats",
-    "get_all_analyzer_names",
-    "get_analyzer",
-    "is_post_processor",
-    "is_vulnerability_analyzer",
-    "post_processors",
+    "post_processor_factories",
     "run_analysis",
 ]

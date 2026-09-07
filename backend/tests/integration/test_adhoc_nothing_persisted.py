@@ -22,8 +22,9 @@ from app.core.config import settings
 from app.db import mongodb
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse
 from app.services.analysis.adhoc import run_adhoc_analysis
-from app.services.analysis.registry import analyzers
+from app.services.analysis.registry import analyzer_factories
 from tests.mocks.fake_mongo import FakeCollection, FakeDatabase
+from tests.helpers.analyzers import build_analyzer, serve_analyzer
 
 # The scan-backed pipeline's collections plus the GridFS indexes. A floor, not a closed set:
 # the runtime sweep below also covers whatever the run vivified that nobody listed here.
@@ -237,7 +238,7 @@ _ONE_SCANNER = 1
 # Every net below is only as wide as the run that exercises it, so the run's own reach is
 # asserted by equality rather than by truthiness.
 _EXPECTED_RAN = frozenset(_ANALYZERS) | frozenset(_SCANNER_PAYLOADS) | {_ENRICHMENT, _REACHABILITY, _CRYPTO_RULES}
-_EXPECTED_SKIPPED = frozenset(analyzers) - frozenset(_ANALYZERS)
+_EXPECTED_SKIPPED = frozenset(analyzer_factories) - frozenset(_ANALYZERS)
 
 
 # ── Net 1: every call the run makes on a collection
@@ -606,7 +607,6 @@ async def test_adhoc_analysis_persists_nothing(bypass_attempts, recording_cache,
 async def test_adhoc_analysis_persists_nothing_when_an_analyzer_fails(
     monkeypatch, bypass_attempts, recording_cache, filesystem_watch
 ):
-    from app.services.analysis import registry
 
     class _Boom:
         name = _FAILING_ANALYZER
@@ -614,7 +614,7 @@ async def test_adhoc_analysis_persists_nothing_when_an_analyzer_fails(
         async def analyze(self, sbom, settings=None, parsed_components=None):
             raise RuntimeError("upstream exploded")
 
-    monkeypatch.setitem(registry.analyzers, _FAILING_ANALYZER, _Boom())
+    serve_analyzer(monkeypatch, _FAILING_ANALYZER, _Boom())
 
     db = _WriteRecordingDatabase()
 
@@ -639,7 +639,6 @@ async def test_an_analyzer_that_caches_publishes_nothing_through_this_path(
     monkeypatch, bypass_attempts, recording_cache, filesystem_watch
 ):
     """The guarantee has to hold for any analyzer, not only for the ones the defaults allow."""
-    from app.services.analysis import registry
 
     fetched: list[str] = []
 
@@ -657,7 +656,7 @@ async def test_an_analyzer_that_caches_publishes_nothing_through_this_path(
             await cache_service.delete(_UPSTREAM_NPM_KEY)
             return {"findings": []}
 
-    monkeypatch.setitem(registry.analyzers, _CACHING_ANALYZER, _Caching())
+    serve_analyzer(monkeypatch, _CACHING_ANALYZER, _Caching())
 
     db = _WriteRecordingDatabase()
 
@@ -786,11 +785,10 @@ async def test_a_cancelled_cli_analyzer_leaves_no_scanner_running_and_no_file(
     """The deadline that cancels an ad-hoc request cancels the scanner's own ``cli_timeout`` with
     it, so nothing downstream is left to bound the process — and the semaphore is released, so a
     retry starts another one."""
-    from app.services.analysis import registry
-
-    analyzer = registry.analyzers[_CLI_ANALYZER]
+    analyzer = build_analyzer(_CLI_ANALYZER)
     monkeypatch.setattr(analyzer, "is_tool_available", lambda: True)
     monkeypatch.setattr(analyzer, "_build_command_args", lambda _path, _settings: list(_HANGING_SCANNER))
+    serve_analyzer(monkeypatch, _CLI_ANALYZER, analyzer)
 
     spawned: list[Any] = []
     start_process = asyncio.create_subprocess_exec

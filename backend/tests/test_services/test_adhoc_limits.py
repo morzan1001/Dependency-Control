@@ -15,6 +15,7 @@ from app.services.analysis import adhoc
 from app.services.analysis.adhoc import AdhocInputTooLarge, run_adhoc_analysis
 from app.services.sbom_parser import MAX_COMPONENT_NESTING_DEPTH
 from tests.mocks.fake_mongo import FakeDatabase
+from tests.helpers.analyzers import serve_analyzer
 
 _OSV = "osv"
 _FIRST_SBOM_LABEL = "sbom#1"
@@ -140,9 +141,8 @@ class _FakeOsv:
 
 @pytest.fixture
 def _osv(monkeypatch):
-    from app.services.analysis import registry
 
-    monkeypatch.setitem(registry.analyzers, _OSV, _FakeOsv())
+    serve_analyzer(monkeypatch, _OSV, _FakeOsv())
 
 
 async def _run(request: AdhocAnalyzeRequest):

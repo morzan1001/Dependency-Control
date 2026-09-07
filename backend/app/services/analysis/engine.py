@@ -58,7 +58,12 @@ from app.schemas.sbom import ParsedDependency
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.integrations import decorate_gitlab_mr
 from app.services.analysis.notifications import send_scan_notifications
-from app.services.analysis.registry import CRYPTO_ANALYZERS, VULNERABILITY_ANALYZERS, analyzers, is_crypto_analyzer
+from app.services.analysis.registry import (
+    CRYPTO_ANALYZERS,
+    VULNERABILITY_ANALYZERS,
+    analyzer_factories,
+    is_crypto_analyzer,
+)
 from app.services.analysis.stats import (
     build_epss_kev_summary,
     build_reachability_summary,
@@ -112,7 +117,7 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"],
     logger.info(f"Rescan detected. Carrying over external results from {original_scan_id} to {scan_id}")
 
     # Internal analyzers and post-processors are regenerated per run, never carried over.
-    excluded_names = list(analyzers.keys()) + list(_POST_PROCESSOR_ANALYZERS)
+    excluded_names = list(analyzer_factories) + list(_POST_PROCESSOR_ANALYZERS)
 
     from app.repositories import AnalysisResultRepository
 
@@ -463,7 +468,7 @@ async def _process_sbom(
     tasks = [
         process_analyzer(
             analyzer_name,
-            analyzers[analyzer_name],
+            analyzer_factories[analyzer_name](),
             current_sbom,
             scan_id,
             db,
@@ -474,7 +479,7 @@ async def _process_sbom(
             project_id=project_id,
         )
         for analyzer_name in effective_analyzers
-        if analyzer_name in analyzers
+        if analyzer_name in analyzer_factories
     ]
 
     batch_results = await asyncio.gather(*tasks)
@@ -762,7 +767,7 @@ async def _aggregate_external_results(
     external_results = await result_repo.find_by_scan(scan_id, limit=10000)
     for res in external_results:
         # Skip post-processor rows: they are engine outputs, not external scanner results.
-        if res.analyzer_name not in analyzers and res.analyzer_name not in _POST_PROCESSOR_ANALYZERS:
+        if res.analyzer_name not in analyzer_factories and res.analyzer_name not in _POST_PROCESSOR_ANALYZERS:
             try:
                 aggregator.aggregate(res.analyzer_name, res.result)
                 if isinstance(res.result, dict) and res.result.get("error"):
@@ -799,7 +804,7 @@ def _cleanup_analyzer_names(active_analyzers: list[str]) -> list[str]:
     Crypto/post-processor rows are regenerated per run and can exist independently of
     active_analyzers (crypto auto-added by an embedded CBOM), so they must be purged explicitly.
     """
-    internal_analyzers = [name for name in active_analyzers if name in analyzers]
+    internal_analyzers = [name for name in active_analyzers if name in analyzer_factories]
     return sorted(set(internal_analyzers) | set(_POST_PROCESSOR_ANALYZERS) | set(CRYPTO_ANALYZERS))
 
 

@@ -346,6 +346,10 @@ SCORECARD_UNMAINTAINED_THRESHOLD: float = 5.0  # Used for critical risk correlat
 STALE_PACKAGE_THRESHOLD_DAYS: int = 730  # 2 years = potentially abandoned
 STALE_PACKAGE_WARNING_DAYS: int = 365  # 1 year = warning
 
+# Days past an end-of-life date at which the finding is raised to HIGH, then to MEDIUM.
+EOL_HIGH_AFTER_DAYS: int = 365
+EOL_MEDIUM_AFTER_DAYS: int = 180
+
 # Typosquatting detection threshold (similarity ratio 0-1)
 TYPOSQUATTING_SIMILARITY_THRESHOLD: float = 0.82
 # Download-rank depth of the corpus a package name is compared against. The upstream list serves

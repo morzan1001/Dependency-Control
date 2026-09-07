@@ -7,6 +7,7 @@ from app.models.waiver import Waiver
 from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.services.analysis.adhoc import apply_global_waivers_in_memory, run_adhoc_analysis
 from tests.mocks.fake_mongo import FakeDatabase
+from tests.helpers.analyzers import serve_analyzer
 
 _OSV = "osv"
 _COMPONENT = "requests"
@@ -85,9 +86,8 @@ class _FakeOsv:
 
 @pytest.fixture
 def _osv(monkeypatch):
-    from app.services.analysis import registry
 
-    monkeypatch.setitem(registry.analyzers, _OSV, _FakeOsv())
+    serve_analyzer(monkeypatch, _OSV, _FakeOsv())
 
 
 def _waiver(**fields) -> Waiver:

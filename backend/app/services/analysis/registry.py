@@ -1,4 +1,12 @@
-"""Central registry of analyzers and post-processors with name-based lookup."""
+"""Central registry of analyzers and post-processors with name-based lookup.
+
+Each entry is a factory, not an instance: an analyzer that binds the calling project's settings to
+``self`` would otherwise let one project's thresholds decide another project's severities whenever
+two scans overlap.
+"""
+
+from collections.abc import Callable
+from functools import partial
 
 from app.models.finding import FindingType
 from app.services.analyzers import (
@@ -21,38 +29,43 @@ from app.services.analyzers import (
     TyposquattingAnalyzer,
 )
 
-analyzers: dict[str, Analyzer] = {
-    "end_of_life": EndOfLifeAnalyzer(),
-    "os_malware": OpenSourceMalwareAnalyzer(),
-    "trivy": TrivyAnalyzer(),
-    "osv": OSVAnalyzer(),
-    "deps_dev": DepsDevAnalyzer(),
-    "license_compliance": LicenseAnalyzer(),
-    "grype": GrypeAnalyzer(),
-    "outdated_packages": OutdatedAnalyzer(),
-    "typosquatting": TyposquattingAnalyzer(),
-    "hash_verification": HashVerificationAnalyzer(),
-    "maintainer_risk": MaintainerRiskAnalyzer(),
-    "crypto_weak_algorithm": CryptoRuleAnalyzer(
+AnalyzerFactory = Callable[[], Analyzer]
+
+analyzer_factories: dict[str, AnalyzerFactory] = {
+    "end_of_life": EndOfLifeAnalyzer,
+    "os_malware": OpenSourceMalwareAnalyzer,
+    "trivy": TrivyAnalyzer,
+    "osv": OSVAnalyzer,
+    "deps_dev": DepsDevAnalyzer,
+    "license_compliance": LicenseAnalyzer,
+    "grype": GrypeAnalyzer,
+    "outdated_packages": OutdatedAnalyzer,
+    "typosquatting": TyposquattingAnalyzer,
+    "hash_verification": HashVerificationAnalyzer,
+    "maintainer_risk": MaintainerRiskAnalyzer,
+    "crypto_weak_algorithm": partial(
+        CryptoRuleAnalyzer,
         name="crypto_weak_algorithm",
         finding_types={FindingType.CRYPTO_WEAK_ALGORITHM},
     ),
-    "crypto_weak_key": CryptoRuleAnalyzer(
+    "crypto_weak_key": partial(
+        CryptoRuleAnalyzer,
         name="crypto_weak_key",
         finding_types={FindingType.CRYPTO_WEAK_KEY},
     ),
-    "crypto_quantum_vulnerable": CryptoRuleAnalyzer(
+    "crypto_quantum_vulnerable": partial(
+        CryptoRuleAnalyzer,
         name="crypto_quantum_vulnerable",
         finding_types={FindingType.CRYPTO_QUANTUM_VULNERABLE},
     ),
-    "crypto_certificate_lifecycle": CertificateLifecycleAnalyzer(),
-    "crypto_protocol_cipher": ProtocolCipherSuiteAnalyzer(),
+    "crypto_certificate_lifecycle": CertificateLifecycleAnalyzer,
+    "crypto_protocol_cipher": ProtocolCipherSuiteAnalyzer,
 }
 
 # Post-processors enrich existing findings; they run after analyzers and don't see SBOMs.
-post_processors: dict[str, Analyzer] = {
-    "epss_kev": EPSSKEVAnalyzer(),
-    "reachability": ReachabilityAnalyzer(),
+post_processor_factories: dict[str, AnalyzerFactory] = {
+    "epss_kev": EPSSKEVAnalyzer,
+    "reachability": ReachabilityAnalyzer,
 }
 
 # Vulnerability scanners — post-processors depend on these.
@@ -67,26 +80,5 @@ CRYPTO_ANALYZERS: set[str] = {
 }
 
 
-def get_analyzer(name: str) -> Analyzer | None:
-    """Look up an analyzer in either the analyzer or post-processor maps."""
-    if name in analyzers:
-        return analyzers[name]
-    if name in post_processors:
-        return post_processors[name]
-    return None
-
-
-def get_all_analyzer_names() -> list[str]:
-    return list(analyzers.keys()) + list(post_processors.keys())
-
-
-def is_vulnerability_analyzer(name: str) -> bool:
-    return name in VULNERABILITY_ANALYZERS
-
-
 def is_crypto_analyzer(name: str) -> bool:
     return name in CRYPTO_ANALYZERS
-
-
-def is_post_processor(name: str) -> bool:
-    return name in post_processors

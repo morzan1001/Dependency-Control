@@ -5,6 +5,7 @@ import pytest
 from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.services.analysis.adhoc import run_adhoc_analysis
 from tests.mocks.fake_mongo import FakeDatabase
+from tests.helpers.analyzers import serve_analyzer
 
 _OSV = "osv"
 _REACHABILITY = "reachability"
@@ -83,16 +84,14 @@ class _FakeOsv:
 
 @pytest.fixture
 def _osv(monkeypatch):
-    from app.services.analysis import registry
 
-    monkeypatch.setitem(registry.analyzers, _OSV, _FakeOsv())
+    serve_analyzer(monkeypatch, _OSV, _FakeOsv())
 
 
 @pytest.fixture
 def _osv_on_the_unused_package(monkeypatch):
-    from app.services.analysis import registry
 
-    monkeypatch.setitem(registry.analyzers, _OSV, _FakeOsv(_ANALYZED_BUT_UNUSED_PACKAGE, "2.1.0"))
+    serve_analyzer(monkeypatch, _OSV, _FakeOsv(_ANALYZED_BUT_UNUSED_PACKAGE, "2.1.0"))
 
 
 def _vulnerabilities(response):

@@ -4,8 +4,9 @@ import pytest
 
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocLicensePolicy
 from app.services.analysis.adhoc import run_adhoc_analysis
-from app.services.analysis.registry import analyzers
+from app.services.analysis.registry import analyzer_factories
 from tests.mocks.fake_mongo import FakeDatabase
+from tests.helpers.analyzers import serve_analyzer
 
 _SECRET_FILE = "app/config.py"
 _SBOM_LABEL = "sbom#1"
@@ -264,13 +265,12 @@ async def test_unknown_analyzer_name_is_reported_not_silently_dropped():
 
     assert response.analyzers.skipped[_UNKNOWN_NAME] == _UNKNOWN_ANALYZER
     # Every registered analyzer the request left out is accounted for alongside it.
-    assert set(response.analyzers.skipped) == set(analyzers) | {_UNKNOWN_NAME, _REACHABILITY, _CRYPTO_RULES}
+    assert set(response.analyzers.skipped) == set(analyzer_factories) | {_UNKNOWN_NAME, _REACHABILITY, _CRYPTO_RULES}
     assert response.analyzers.ran == [_ENRICHMENT]
 
 
 @pytest.mark.asyncio
 async def test_failing_analyzer_is_reported_and_not_turned_into_a_system_warning(monkeypatch):
-    from app.services.analysis import registry
 
     class _Boom:
         name = "osv"
@@ -278,7 +278,7 @@ async def test_failing_analyzer_is_reported_and_not_turned_into_a_system_warning
         async def analyze(self, sbom, settings=None, parsed_components=None):
             raise RuntimeError(_ANALYZER_ERROR)
 
-    monkeypatch.setitem(registry.analyzers, "osv", _Boom())
+    serve_analyzer(monkeypatch, "osv", _Boom())
 
     request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["osv"], apply_global_waivers=False)
     response = await run_adhoc_analysis(request, FakeDatabase())
@@ -290,7 +290,6 @@ async def test_failing_analyzer_is_reported_and_not_turned_into_a_system_warning
 
 @pytest.mark.asyncio
 async def test_error_shaped_analyzer_result_is_reported_not_aggregated(monkeypatch):
-    from app.services.analysis import registry
 
     class _Timeout:
         name = "osv"
@@ -298,7 +297,7 @@ async def test_error_shaped_analyzer_result_is_reported_not_aggregated(monkeypat
         async def analyze(self, sbom, settings=None, parsed_components=None):
             return {"error": _ANALYZER_TIMEOUT, "vulnerabilities": []}
 
-    monkeypatch.setitem(registry.analyzers, "osv", _Timeout())
+    serve_analyzer(monkeypatch, "osv", _Timeout())
 
     request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["osv"], apply_global_waivers=False)
     response = await run_adhoc_analysis(request, FakeDatabase())
@@ -321,7 +320,7 @@ async def test_unparseable_sbom_is_reported_without_aborting_the_run():
 
     assert _SBOM_LABEL in response.analyzers.skipped_inputs
     # ``skipped`` is keyed by analyzer name; an input label in there is unreadable for consumers.
-    assert set(response.analyzers.skipped) == set(analyzers) | {_REACHABILITY, _CRYPTO_RULES}
+    assert set(response.analyzers.skipped) == set(analyzer_factories) | {_REACHABILITY, _CRYPTO_RULES}
     assert len(_findings_of_type(response, _TYPE_SECRET)) == _EXPECTED_SECRET_FINDINGS
 
 
@@ -454,13 +453,12 @@ async def test_empty_posted_payload_is_skipped_rather_than_reported_as_ran():
     response = await run_adhoc_analysis(request, FakeDatabase())
 
     assert response.analyzers.skipped[_TRUFFLEHOG_NAME] == _EMPTY_PAYLOAD
-    assert set(response.analyzers.skipped) == set(analyzers) | {_TRUFFLEHOG_NAME, _REACHABILITY, _CRYPTO_RULES}
+    assert set(response.analyzers.skipped) == set(analyzer_factories) | {_TRUFFLEHOG_NAME, _REACHABILITY, _CRYPTO_RULES}
     assert response.analyzers.ran == [_ENRICHMENT]
 
 
 @pytest.mark.asyncio
 async def test_blank_error_string_is_reported_not_aggregated(monkeypatch):
-    from app.services.analysis import registry
 
     class _Blank:
         name = "osv"
@@ -468,7 +466,7 @@ async def test_blank_error_string_is_reported_not_aggregated(monkeypatch):
         async def analyze(self, sbom, settings=None, parsed_components=None):
             return {"error": ""}
 
-    monkeypatch.setitem(registry.analyzers, "osv", _Blank())
+    serve_analyzer(monkeypatch, "osv", _Blank())
 
     request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["osv"], apply_global_waivers=False)
     response = await run_adhoc_analysis(request, FakeDatabase())
@@ -480,7 +478,6 @@ async def test_blank_error_string_is_reported_not_aggregated(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_an_analyzer_that_failed_on_one_sbom_is_not_also_reported_as_ran(monkeypatch):
-    from app.services.analysis import registry
 
     class _Flaky:
         name = "osv"
@@ -494,7 +491,7 @@ async def test_an_analyzer_that_failed_on_one_sbom_is_not_also_reported_as_ran(m
                 return {"vulnerabilities": []}
             raise RuntimeError(_ANALYZER_ERROR)
 
-    monkeypatch.setitem(registry.analyzers, "osv", _Flaky())
+    serve_analyzer(monkeypatch, "osv", _Flaky())
 
     request = AdhocAnalyzeRequest(sboms=[_SBOM, _SBOM], analyzers=["osv"], apply_global_waivers=False)
     response = await run_adhoc_analysis(request, FakeDatabase())
@@ -565,9 +562,8 @@ class _BrokenOsv:
 @pytest.mark.parametrize("analyzer", [_FakeOsv(), _BrokenOsv()])
 async def test_the_stages_that_left_the_process_are_named_whether_or_not_they_succeeded(monkeypatch, analyzer):
     """Storing nothing is not sending nothing, and a failed upstream call still sent the query."""
-    from app.services.analysis import registry
 
-    monkeypatch.setitem(registry.analyzers, _OSV_NAME, analyzer)
+    serve_analyzer(monkeypatch, _OSV_NAME, analyzer)
     request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=[_OSV_NAME], apply_global_waivers=False)
 
     response = await run_adhoc_analysis(request, FakeDatabase())
@@ -648,7 +644,6 @@ async def test_one_malformed_sub_field_rejects_the_whole_input_and_says_so():
 
 @pytest.mark.asyncio
 async def test_every_failure_reason_is_kept_and_attributed_to_its_input(monkeypatch):
-    from app.services.analysis import registry
 
     class _Flaky:
         name = "osv"
@@ -662,7 +657,7 @@ async def test_every_failure_reason_is_kept_and_attributed_to_its_input(monkeypa
                 return {"osv_vulnerabilities": []}
             raise RuntimeError(f"{_ANALYZER_ERROR} {self.calls}")
 
-    monkeypatch.setitem(registry.analyzers, "osv", _Flaky())
+    serve_analyzer(monkeypatch, "osv", _Flaky())
 
     request = AdhocAnalyzeRequest(sboms=[_SBOM, _SBOM, _SBOM], analyzers=["osv"], apply_global_waivers=False)
     response = await run_adhoc_analysis(request, FakeDatabase())
@@ -675,7 +670,6 @@ async def test_every_failure_reason_is_kept_and_attributed_to_its_input(monkeypa
 
 @pytest.mark.asyncio
 async def test_a_normalizer_that_cannot_read_an_analyzer_result_is_reported_not_raised(monkeypatch):
-    from app.services.analysis import registry
 
     class _Reshaped:
         name = "osv"
@@ -684,7 +678,7 @@ async def test_a_normalizer_that_cannot_read_an_analyzer_result_is_reported_not_
             # The normalizers dereference analyzer output without type checks.
             return {"osv_vulnerabilities": [None]}
 
-    monkeypatch.setitem(registry.analyzers, "osv", _Reshaped())
+    serve_analyzer(monkeypatch, "osv", _Reshaped())
 
     request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=["osv"], apply_global_waivers=False)
     response = await run_adhoc_analysis(request, FakeDatabase())
@@ -695,7 +689,6 @@ async def test_a_normalizer_that_cannot_read_an_analyzer_result_is_reported_not_
 
 
 def _partial_osv(monkeypatch, result):
-    from app.services.analysis import registry
 
     class _Partial:
         name = _OSV_NAME
@@ -703,7 +696,7 @@ def _partial_osv(monkeypatch, result):
         async def analyze(self, sbom, settings=None, parsed_components=None):
             return result
 
-    monkeypatch.setitem(registry.analyzers, _OSV_NAME, _Partial())
+    serve_analyzer(monkeypatch, _OSV_NAME, _Partial())
 
 
 @pytest.mark.parametrize(

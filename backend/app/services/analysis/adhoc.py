@@ -29,7 +29,7 @@ from app.schemas.sbom import ParsedSBOM
 from app.schemas.trufflehog import TruffleHogFinding
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.engine import _build_settings_resolver, _partial_result_reason
-from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzers, post_processors
+from app.services.analysis.registry import CRYPTO_ANALYZERS, analyzer_factories, post_processor_factories
 from app.services.analysis.stats import build_epss_kev_summary, build_reachability_summary, compute_stats
 from app.services.analysis.types import Database
 from app.services.analyzers import Analyzer
@@ -141,12 +141,16 @@ _CRYPTO_ANALYZER_NO_EQUIVALENT: dict[str, str] = {
 # The finding types the registered rule-driven analyzers own. A seeded rule outside them belongs
 # to an analyzer with its own grading logic: the certificate-lifecycle rule constrains nothing,
 # so the matcher alone would fire it on every asset in the CBOM.
-_RULE_DRIVEN_FINDING_TYPES: frozenset[str] = frozenset(
-    finding_type.value
-    for analyzer in analyzers.values()
-    if isinstance(analyzer, CryptoRuleAnalyzer)
-    for finding_type in analyzer.finding_types
-)
+def _rule_driven_finding_types() -> frozenset[str]:
+    types: set[str] = set()
+    for factory in analyzer_factories.values():
+        analyzer = factory()
+        if isinstance(analyzer, CryptoRuleAnalyzer):
+            types.update(finding_type.value for finding_type in analyzer.finding_types)
+    return frozenset(types)
+
+
+_RULE_DRIVEN_FINDING_TYPES: frozenset[str] = _rule_driven_finding_types()
 
 # What a stage that ran does not otherwise reveal. ``osv`` is in the defaults, so a caller who
 # named no analyzer still has to be told their package list left the process, and the crypto
@@ -562,18 +566,18 @@ def resolve_adhoc_analyzers(requested: list[str] | None, report: AnalyzerReport)
 
     resolved: list[str] = []
     for name in selected:
-        if name in post_processors:
+        if name in post_processor_factories:
             # Stages rather than selectable analyzers: they report their own outcome, so a
             # skip note here would contradict the same report.
             continue
         if name in CRYPTO_ANALYZERS:
             report.skipped[name] = _CRYPTO_ANALYZER_NO_EQUIVALENT.get(name, _CRYPTO_ANALYZER_REPLACED)
-        elif name not in analyzers:
+        elif name not in analyzer_factories:
             report.skipped[name] = _UNKNOWN_ANALYZER
         else:
             resolved.append(name)
 
-    for name in analyzers:
+    for name in analyzer_factories:
         if name in resolved or name in report.skipped:
             continue
         if name in CRYPTO_ANALYZERS:
@@ -837,7 +841,7 @@ async def _analyze(request: AdhocAnalyzeRequest, db: Database) -> AdhocAnalyzeRe
         for name in requested:
             await _run_one_analyzer(
                 name,
-                analyzers[name],
+                analyzer_factories[name](),
                 parsed_input.sbom,
                 settings_for(name),
                 parsed_input.components or None,

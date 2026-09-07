@@ -9,6 +9,7 @@ from app.models.project import Project, Scan
 from app.repositories.findings import FindingRepository
 from app.services.analysis import engine
 from app.services.analysis.engine import run_analysis
+from tests.helpers.analyzers import serve_analyzer
 
 _PROJECT_ID = "test-project-id"
 
@@ -136,7 +137,7 @@ class _PartialResultAnalyzer:
 
 @pytest.mark.asyncio
 async def test_w12_failed_analyzer_marks_scan_completed_with_errors(db, _gridfs_patched, monkeypatch):
-    monkeypatch.setitem(engine.analyzers, "boom", _FailingAnalyzer())
+    serve_analyzer(monkeypatch, "boom", _FailingAnalyzer())
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
@@ -155,7 +156,7 @@ async def test_w12_failed_analyzer_marks_scan_completed_with_errors(db, _gridfs_
 @pytest.mark.asyncio
 async def test_w12_cli_error_result_marks_scan_completed_with_errors(db, _gridfs_patched, monkeypatch):
     """CLI analyzers (grype/trivy) report timeouts as error dicts, not exceptions — 95% of prod failures."""
-    monkeypatch.setitem(engine.analyzers, "grype", _CliTimeoutAnalyzer())
+    serve_analyzer(monkeypatch, "grype", _CliTimeoutAnalyzer())
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
@@ -203,7 +204,7 @@ async def test_enrichment_failure_is_recorded_on_the_scan(db, _gridfs_patched, m
         raise RuntimeError("EPSS feed unreachable")
 
     monkeypatch.setattr("app.services.analysis.engine.enrich_vulnerability_findings", _enrichment_outage)
-    monkeypatch.setitem(engine.analyzers, "grype", _GrypeVulnAnalyzer())
+    serve_analyzer(monkeypatch, "grype", _GrypeVulnAnalyzer())
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
@@ -218,7 +219,7 @@ async def test_enrichment_failure_is_recorded_on_the_scan(db, _gridfs_patched, m
 
 @pytest.mark.asyncio
 async def test_a_clean_scan_records_no_enrichment_failures(db, _gridfs_patched, monkeypatch):
-    monkeypatch.setitem(engine.analyzers, "grype", _GrypeVulnAnalyzer())
+    serve_analyzer(monkeypatch, "grype", _GrypeVulnAnalyzer())
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
@@ -230,7 +231,7 @@ async def test_a_clean_scan_records_no_enrichment_failures(db, _gridfs_patched, 
 
 @pytest.mark.asyncio
 async def test_w12_scan_with_errors_still_becomes_project_latest(db, _gridfs_patched, monkeypatch):
-    monkeypatch.setitem(engine.analyzers, "boom", _FailingAnalyzer())
+    serve_analyzer(monkeypatch, "boom", _FailingAnalyzer())
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
@@ -242,7 +243,7 @@ async def test_w12_scan_with_errors_still_becomes_project_latest(db, _gridfs_pat
 
 @pytest.mark.asyncio
 async def test_w15_partial_analyzer_result_marks_scan_completed_with_errors(db, _gridfs_patched, monkeypatch):
-    monkeypatch.setitem(engine.analyzers, "osv", _PartialResultAnalyzer())
+    serve_analyzer(monkeypatch, "osv", _PartialResultAnalyzer())
     await _seed_project(db)
     scan_id = await _seed_scan(db, [_gridfs_ref(_FILE_ID_A)])
 
@@ -292,7 +293,7 @@ async def test_k9_all_gridfs_failures_still_mark_scan_failed(db, _gridfs_patched
 
 @pytest.mark.asyncio
 async def test_k8_partial_findings_persistence_is_surfaced(db, _gridfs_patched, monkeypatch):
-    monkeypatch.setitem(engine.analyzers, "stub", _ErrorResultAnalyzer())
+    serve_analyzer(monkeypatch, "stub", _ErrorResultAnalyzer())
 
     async def _drop_all_docs(self, docs):
         return 0

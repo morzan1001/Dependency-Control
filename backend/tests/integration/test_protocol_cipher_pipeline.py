@@ -7,12 +7,12 @@ from app.models.crypto_policy import CryptoPolicy
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.cbom import CryptoAssetType
-from app.services.analysis.registry import analyzers
+from tests.helpers.analyzers import build_analyzer
 
 
 @pytest.mark.asyncio
 async def test_protocol_cipher_registered_and_runs(db):
-    analyzer = analyzers["crypto_protocol_cipher"]
+    analyzer = build_analyzer("crypto_protocol_cipher")
     await CryptoAssetRepository(db).bulk_upsert(
         "p",
         "s",

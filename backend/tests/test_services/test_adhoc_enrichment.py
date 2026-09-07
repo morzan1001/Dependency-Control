@@ -7,6 +7,7 @@ import pytest
 from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.services.analysis.adhoc import run_adhoc_analysis
 from tests.mocks.fake_mongo import FakeDatabase
+from tests.helpers.analyzers import serve_analyzer
 
 _ENRICHMENT = "epss_kev"
 _TRUFFLEHOG_NAME = "trufflehog"
@@ -128,7 +129,6 @@ async def test_naming_the_stage_does_not_report_it_as_both_run_and_skipped(monke
 
 @pytest.mark.asyncio
 async def test_only_vulnerability_records_are_handed_to_the_service(monkeypatch):
-    from app.services.analysis import registry
 
     class _Vulnerable:
         name = "osv"
@@ -144,7 +144,7 @@ async def test_only_vulnerability_records_are_handed_to_the_service(monkeypatch)
                 ]
             }
 
-    monkeypatch.setitem(registry.analyzers, "osv", _Vulnerable())
+    serve_analyzer(monkeypatch, "osv", _Vulnerable())
     monkeypatch.setattr(_SERVICE_ATTRIBUTE, _SpyService)
 
     request = AdhocAnalyzeRequest(

@@ -155,8 +155,8 @@ class _FakeResult:
 
 class TestAggregateExternalSkipsPostProcessors:
     def test_epss_kev_and_reachability_not_aggregated(self, monkeypatch):
-        # analyzers empty -> only _POST_PROCESSOR_ANALYZERS membership can exclude these.
-        monkeypatch.setattr("app.services.analysis.engine.analyzers", {})
+        # No registered analyzer -> only _POST_PROCESSOR_ANALYZERS membership can exclude these.
+        monkeypatch.setattr("app.services.analysis.engine.analyzer_factories", {})
         aggregator = ResultAggregator()
 
         calls = []
