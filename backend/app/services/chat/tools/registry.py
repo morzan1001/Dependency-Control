@@ -46,6 +46,8 @@ from ._helpers import (
     _truncate_if_too_large,
     _waiver_is_active,
     begin_limit_ledger,
+    bounded_read,
+    bounded_read_note,
     clamped_limit_note,
 )
 from .crypto_tools import (
@@ -96,6 +98,21 @@ _RANKING_SAMPLED = (
 # How many projects the summary names as the worst; projects tie on their critical count often
 # enough that the id has to break it, or the same estate ranks differently request to request.
 _TOP_RISKY = 3
+
+# Read ceilings for the tools that answer from a whole collection rather than from a ranked page.
+# Every answer built on one of these carries the population it was cut from.
+_DEPENDENCY_TREE_READ = 200
+_TEAM_PROJECT_READ = 50
+_WAIVER_READ = 100
+_WEBHOOK_READ = 20
+_WEBHOOK_DELIVERY_READ = 20
+_TREND_SCAN_READ = 500
+_REMEDIATION_FINDING_READ = 500
+_COMPONENT_USAGE_READ = 100
+_CVE_OCCURRENCE_READ = 25
+_EXPIRING_WAIVER_READ = 25
+_TEAM_RISK_PROJECT_READ = 500
+_AUTHORIZED_PROJECT_READ = 1000
 
 # A callgraph's `imports`/`calls` arrays run into the megabytes; the tool answers from the
 # aggregates only.
@@ -246,6 +263,10 @@ class ChatToolRegistry:
                 if note:
                     result["_limit_clamped"] = True
                     result["_limit_clamp_note"] = note
+                saturated = bounded_read_note()
+                if saturated:
+                    result["_bounded_read"] = True
+                    result["_bounded_read_note"] = saturated
             # Cap JSON size so a large dump can't blow the LLM's context budget.
             return _truncate_if_too_large(result) if isinstance(result, dict) else result
         except Exception as e:
@@ -520,13 +541,18 @@ class ChatToolRegistry:
                 if args["project_id"] not in project_ids:
                     return {"error": _ERR_PROJECT_NOT_FOUND}
                 match_query["project_id"] = args["project_id"]
-            pipeline = [
-                {"$match": match_query},
-                {"$sort": {"created_at": 1}},
-                {"$project": {"_id": 1, "project_id": 1, "stats": 1, "created_at": 1}},
-            ]
-            scans = await db["scans"].aggregate(pipeline).to_list(length=500)
-            return {"trend_data": [_serialize_doc(s) for s in scans]}
+            scans, scans_total = await bounded_read(
+                db["scans"],
+                match_query,
+                subject="scans in the window",
+                limit=_TREND_SCAN_READ,
+                sort=[("created_at", 1)],
+                projection={"_id": 1, "project_id": 1, "stats": 1, "created_at": 1},
+            )
+            return {
+                "trend_data": [_serialize_doc(s) for s in scans],
+                "trend_data_total": scans_total,
+            }
 
         if tool_name == "get_dependency_tree":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
@@ -535,9 +561,16 @@ class ChatToolRegistry:
             head_scan_id = await self._head_scan_id(project, db)
             if not head_scan_id:
                 return {"dependencies": []}
-            cursor = db["dependencies"].find({"scan_id": head_scan_id}, limit=200)
-            deps = await cursor.to_list(length=200)
-            return {"dependencies": [_serialize_doc(d) for d in deps]}
+            deps, deps_total = await bounded_read(
+                db["dependencies"],
+                {"scan_id": head_scan_id},
+                subject="dependencies",
+                limit=_DEPENDENCY_TREE_READ,
+            )
+            return {
+                "dependencies": [_serialize_doc(d) for d in deps],
+                "dependencies_total": deps_total,
+            }
 
         if tool_name == "get_hotspots":
             limit = _clamp_limit(args.get("limit"), 10, maximum=MAX_SUMMARY_ROWS)
@@ -596,9 +629,13 @@ class ChatToolRegistry:
             ):
                 return {"error": _ERR_ACCESS_DENIED}
             query = {**user_project_query, "team_id": args["team_id"]}
-            cursor = db["projects"].find(query, limit=50)
-            projects = await cursor.to_list(length=50)
-            return {"projects": [_serialize_doc(p, ["_id", "name", "stats", "last_scan_at"]) for p in projects]}
+            projects, projects_total = await bounded_read(
+                db["projects"], query, subject="team projects", limit=_TEAM_PROJECT_READ
+            )
+            return {
+                "projects": [_serialize_doc(p, ["_id", "name", "stats", "last_scan_at"]) for p in projects],
+                "projects_total": projects_total,
+            }
 
         if tool_name == "get_waiver_status":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
@@ -642,15 +679,23 @@ class ChatToolRegistry:
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
             now = datetime.now(timezone.utc)
-            cursor = db["waivers"].find({"project_id": args["project_id"]}, limit=100)
-            waivers = await cursor.to_list(length=100)
-            return {"waivers": [{**_serialize_doc(w), "is_active": _waiver_is_active(w, now)} for w in waivers]}
+            waivers, waivers_total = await bounded_read(
+                db["waivers"], {"project_id": args["project_id"]}, subject="waivers", limit=_WAIVER_READ
+            )
+            return {
+                "waivers": [{**_serialize_doc(w), "is_active": _waiver_is_active(w, now)} for w in waivers],
+                "waivers_total": waivers_total,
+            }
 
         if tool_name == "list_global_waivers":
             now = datetime.now(timezone.utc)
-            cursor = db["waivers"].find({"project_id": None}, limit=100)
-            waivers = await cursor.to_list(length=100)
-            return {"waivers": [{**_serialize_doc(w), "is_active": _waiver_is_active(w, now)} for w in waivers]}
+            waivers, waivers_total = await bounded_read(
+                db["waivers"], {"project_id": None}, subject="global waivers", limit=_WAIVER_READ
+            )
+            return {
+                "waivers": [{**_serialize_doc(w), "is_active": _waiver_is_active(w, now)} for w in waivers],
+                "waivers_total": waivers_total,
+            }
 
         if tool_name == "get_top_priority_findings":
             limit = _clamp_limit(args.get("limit"), 5, maximum=MAX_FINDING_ROWS)
@@ -710,16 +755,16 @@ class ChatToolRegistry:
 
             max_steps = _clamp_limit(args.get("max_steps"), 10, maximum=MAX_PLAN_STEPS)
 
-            # 500 is plenty — plans collapse to a handful of steps after grouping by component.
-            cursor = db["findings"].find(
+            findings, findings_total = await bounded_read(
+                db["findings"],
                 {
                     "scan_id": head_scan_id,
                     "severity": {"$in": ["CRITICAL", "HIGH"]},
                     "waived": {"$ne": True},
                 },
-                limit=500,
+                subject="unwaived CRITICAL/HIGH findings",
+                limit=_REMEDIATION_FINDING_READ,
             )
-            findings = await cursor.to_list(length=500)
             if not findings:
                 return {
                     "plan": [],
@@ -1020,9 +1065,12 @@ class ChatToolRegistry:
             }
             if args.get("version"):
                 dep_query["version"] = args["version"]
-            cursor = db["dependencies"].find(
+            rows, rows_total = await bounded_read(
+                db["dependencies"],
                 dep_query,
-                {
+                subject="dependency rows naming this component",
+                limit=_COMPONENT_USAGE_READ,
+                projection={
                     "name": 1,
                     "version": 1,
                     "project_id": 1,
@@ -1031,9 +1079,7 @@ class ChatToolRegistry:
                     "purl": 1,
                     "license": 1,
                 },
-                limit=100,
             )
-            rows = await cursor.to_list(length=100)
             names = await self._project_names(db, list({_row_project_id(r) for r in rows}))
             matches = []
             for r in rows:
@@ -1049,21 +1095,22 @@ class ChatToolRegistry:
                         "license": r.get("license"),
                     }
                 )
-            return {"matches": matches, "count": len(matches)}
+            return {"matches": matches, "count": len(matches), "matches_total": rows_total}
 
         if tool_name == "get_findings_by_cve":
             cve = args["cve_id"].strip().upper()
             latest = await self._latest_scan_ids_for_user(user_project_query, None, db)
             if not latest:
                 return {"findings": [], "message": _ERR_NO_SCAN_DATA}
-            cursor = db["findings"].find(
+            rows, rows_total = await bounded_read(
+                db["findings"],
                 {
                     "scan_id": {"$in": list(latest.values())},
                     _FIELD_VULN_ID: cve,
                 },
-                limit=25,
+                subject=f"findings naming {cve}",
+                limit=_CVE_OCCURRENCE_READ,
             )
-            rows = await cursor.to_list(length=25)
             names = await self._project_names(db, list({_row_project_id(f) for f in rows}))
             by_project: dict[str, dict[str, Any]] = {}
             for f in rows:
@@ -1080,8 +1127,11 @@ class ChatToolRegistry:
             return {
                 "cve_id": cve,
                 "affected_projects": list(by_project.values()),
+                # Projects and occurrences among the rows read; total_occurrences is the whole
+                # population, so the two disagree exactly when the read saturated.
                 "project_count": len(by_project),
-                "total_occurrences": len(rows),
+                "occurrences_read": len(rows),
+                "total_occurrences": rows_total,
             }
 
         if tool_name == "get_cve_details":
@@ -1197,7 +1247,8 @@ class ChatToolRegistry:
             project_ids = await self._get_authorized_project_ids(user_project_query, db)
             now = _dt.now(_tz.utc)
             cutoff = now + _td(days=days)
-            cursor = db["waivers"].find(
+            rows, rows_total = await bounded_read(
+                db["waivers"],
                 {
                     "$or": [
                         {"project_id": {"$in": project_ids}},
@@ -1205,10 +1256,10 @@ class ChatToolRegistry:
                     ],
                     "expiration_date": {"$gte": now, "$lte": cutoff},
                 },
+                subject="waivers expiring in the window",
+                limit=_EXPIRING_WAIVER_READ,
                 sort=[("expiration_date", 1)],
-                limit=25,
             )
-            rows = await cursor.to_list(length=25)
             names = await self._project_names(db, list({_row_project_id(r) for r in rows}))
             out = []
             for w in rows:
@@ -1224,7 +1275,7 @@ class ChatToolRegistry:
                         "package": f"{w.get('package_name', '')}@{w.get('package_version', '')}",
                     }
                 )
-            return {"waivers": out, "count": len(out), "window_days": days}
+            return {"waivers": out, "count": len(out), "waivers_total": rows_total, "window_days": days}
 
         if tool_name == "get_team_risk_overview":
             team = await team_repo.get_by_id(args["team_id"])
@@ -1234,10 +1285,13 @@ class ChatToolRegistry:
                 user.permissions, Permissions.TEAM_READ_ALL
             ):
                 return {"error": _ERR_ACCESS_DENIED}
-            cursor = db["projects"].find(
-                {"team_id": args["team_id"]}, {"_id": 1, "name": 1, "stats": 1, "last_scan_at": 1}
+            projects, projects_total = await bounded_read(
+                db["projects"],
+                {"team_id": args["team_id"]},
+                subject="team projects",
+                limit=_TEAM_RISK_PROJECT_READ,
+                projection={"_id": 1, "name": 1, "stats": 1, "last_scan_at": 1},
             )
-            projects = await cursor.to_list(length=500)
             totals: dict[str, int] = {}
             risky = []
             for p in projects:
@@ -1259,7 +1313,10 @@ class ChatToolRegistry:
             return {
                 "team_id": args["team_id"],
                 "team_name": getattr(team, "name", ""),
-                "project_count": len(projects),
+                # Totals are summed over the projects read; project_count is the team's whole
+                # holding, so the two disagree exactly when the read saturated.
+                "projects_summed": len(projects),
+                "project_count": projects_total,
                 "severity_totals": totals,
                 "top_risky_projects": top3,
             }
@@ -1353,9 +1410,13 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
             if not project:
                 return {"error": _ERR_PROJECT_NOT_FOUND}
-            cursor = db["webhooks"].find({"project_id": args["project_id"]}, limit=20)
-            webhooks = await cursor.to_list(length=20)
-            return {"webhooks": [_serialize_doc(w) for w in webhooks]}
+            webhooks, webhooks_total = await bounded_read(
+                db["webhooks"], {"project_id": args["project_id"]}, subject="webhooks", limit=_WEBHOOK_READ
+            )
+            return {
+                "webhooks": [_serialize_doc(w) for w in webhooks],
+                "webhooks_total": webhooks_total,
+            }
 
         if tool_name == "get_webhook_deliveries":
             webhook = await db["webhooks"].find_one({"_id": args["webhook_id"]})
@@ -1364,11 +1425,17 @@ class ChatToolRegistry:
             project = await self._get_authorized_project(webhook.get("project_id", ""), user_project_query, db)
             if not project:
                 return {"error": _ERR_ACCESS_DENIED}
-            cursor = db["webhook_deliveries"].find(
-                {"webhook_id": args["webhook_id"]}, sort=[("timestamp", -1)], limit=20
+            deliveries, deliveries_total = await bounded_read(
+                db["webhook_deliveries"],
+                {"webhook_id": args["webhook_id"]},
+                subject="webhook deliveries",
+                limit=_WEBHOOK_DELIVERY_READ,
+                sort=[("timestamp", -1)],
             )
-            deliveries = await cursor.to_list(length=20)
-            return {"deliveries": [_serialize_doc(d) for d in deliveries]}
+            return {
+                "deliveries": [_serialize_doc(d) for d in deliveries],
+                "deliveries_total": deliveries_total,
+            }
 
         if tool_name == "get_system_settings":
             doc = await db["system_settings"].find_one({"_id": "current"})
@@ -1601,8 +1668,15 @@ class ChatToolRegistry:
     async def _get_authorized_project_ids(
         self, user_project_query: dict[str, Any], db: AsyncIOMotorDatabase
     ) -> list[str]:
-        cursor = db["projects"].find(user_project_query, projection={"_id": 1})
-        projects = await cursor.to_list(length=1000)
+        """Every accessible project id, up to the read ceiling. A cut here narrows every
+        estate-wide answer built on it, so it is recorded for the call's disclosure."""
+        projects, _total = await bounded_read(
+            db["projects"],
+            user_project_query,
+            subject="accessible projects",
+            limit=_AUTHORIZED_PROJECT_READ,
+            projection={"_id": 1},
+        )
         return [p["_id"] for p in projects]
 
     async def _head_scan_id(self, project: dict[str, Any], db: AsyncIOMotorDatabase) -> str | None:
