@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 
 _LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "static", "logo.png")
 
+# A permission fan-out has no response to disclose a cut in, so the ceiling bounds how many
+# recipients are held at once rather than how many are reached.
+_FAN_OUT_BATCH_SIZE = 500
+
 
 class NotificationService:
     def __init__(self) -> None:
@@ -141,24 +145,27 @@ class NotificationService:
         if not perms:
             return
 
-        cursor = db.users.find({"permissions": {"$in": perms}, "is_active": True})
-        # Bounded fetch: safe ceiling on the admin-scale result set.
-        user_docs = await cursor.to_list(length=1000)
-        if not user_docs:
-            return
+        async def flush(batch: list[User]) -> None:
+            await self.notify_users(
+                batch,
+                event_type=event_type,
+                subject=subject,
+                message=message,
+                db=db,
+                forced_channels=forced_channels,
+                html_message=html_message,
+                slack_blocks=slack_blocks,
+                mattermost_props=mattermost_props,
+            )
 
-        users = [User(**u) for u in user_docs]
-        await self.notify_users(
-            users,
-            event_type=event_type,
-            subject=subject,
-            message=message,
-            db=db,
-            forced_channels=forced_channels,
-            html_message=html_message,
-            slack_blocks=slack_blocks,
-            mattermost_props=mattermost_props,
-        )
+        pending: list[User] = []
+        async for user_doc in db.users.find({"permissions": {"$in": perms}, "is_active": True}):
+            pending.append(User(**user_doc))
+            if len(pending) >= _FAN_OUT_BATCH_SIZE:
+                await flush(pending)
+                pending = []
+        if pending:
+            await flush(pending)
 
     async def notify_project_members(
         self,

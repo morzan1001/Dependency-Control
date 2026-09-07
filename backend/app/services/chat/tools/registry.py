@@ -25,6 +25,7 @@ from app.repositories.teams import TeamRepository
 from app.services.aggregation.components import artifact_segment, build_component_index, lookup_component
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
 from app.services.analytics.findings_delta import FINDING_IDENTITY_PROJECTION, compute_findings_delta
+from app.services.analytics.scopes import ScopeTooLargeError, ensure_whole_scope, scope_probe_limit
 from app.services.analyzers.purl_utils import canonical_purl
 from app.services.reachability_enrichment import reachability_display_tier
 
@@ -113,7 +114,6 @@ _COMPONENT_USAGE_READ = 100
 _CVE_OCCURRENCE_READ = 25
 _EXPIRING_WAIVER_READ = 25
 _TEAM_RISK_PROJECT_READ = 500
-_AUTHORIZED_PROJECT_READ = 1000
 
 # A callgraph's `imports`/`calls` arrays run into the megabytes; the tool answers from the
 # aggregates only.
@@ -270,6 +270,10 @@ class ChatToolRegistry:
                     result["_bounded_read_note"] = saturated
             # Cap JSON size so a large dump can't blow the LLM's context budget.
             return _truncate_if_too_large(result) if isinstance(result, dict) else result
+        except ScopeTooLargeError as e:
+            chat_tool_duration_seconds.labels(tool_name=tool_name).observe(time.time() - start)
+            chat_tool_calls_total.labels(tool_name=tool_name, status="refused").inc()
+            return {"error": str(e)}
         except Exception as e:
             duration = time.time() - start
             chat_tool_calls_total.labels(tool_name=tool_name, status="error").inc()
@@ -1672,15 +1676,10 @@ class ChatToolRegistry:
     async def _get_authorized_project_ids(
         self, user_project_query: dict[str, Any], db: AsyncIOMotorDatabase
     ) -> list[str]:
-        """Every accessible project id, up to the read ceiling. A cut here narrows every
-        estate-wide answer built on it, so it is recorded for the call's disclosure."""
-        projects, _total = await bounded_read(
-            db["projects"],
-            user_project_query,
-            subject="accessible projects",
-            limit=_AUTHORIZED_PROJECT_READ,
-            projection={"_id": 1},
-        )
+        """Every accessible project id, on the ceiling analytics answers the same question under.
+        A cut here changes which projects an answer covers without changing how the answer reads."""
+        cursor = db["projects"].find(user_project_query, {"_id": 1}, limit=scope_probe_limit())
+        projects = ensure_whole_scope(await cursor.to_list(length=scope_probe_limit()))
         return [p["_id"] for p in projects]
 
     async def _head_scan_id(self, project: dict[str, Any], db: AsyncIOMotorDatabase) -> str | None:
