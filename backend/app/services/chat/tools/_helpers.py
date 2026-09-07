@@ -5,6 +5,9 @@ from datetime import datetime, timezone
 from typing import Any
 
 from app.core.config import settings
+from app.services.aggregation.components import extract_artifact_name
+from app.services.analytics.findings_delta import finding_identity_key
+from app.services.recommendation.common import finding_cve_ids
 
 
 def _waiver_is_active(waiver: dict[str, Any], now: datetime | None = None) -> bool:
@@ -147,6 +150,26 @@ def _clamp_limit(raw: Any, default: int, maximum: int) -> int:
     if requested is not None and clamped != requested and ledger is not None:
         ledger.append((requested, clamped))
     return clamped
+
+
+_VULNERABILITY = "vulnerability"
+
+
+def staleness_identities(finding: dict[str, Any]) -> set[tuple[str, str, str]]:
+    """What a finding must still be for its "days open" clock to keep running.
+
+    A vulnerability record is keyed once per advisory on the folded component name. The scan
+    delta's identity carries ``version`` on purpose — a bump is a change it must report — but
+    reusing it here would restart the clock the moment an unrelated upgrade lands, and a
+    long-lived unfixed advisory is the one that most deserves attention. Every other type's
+    identity is already version-free, so it is taken as the delta computes it.
+    """
+    if (finding.get("type") or "") == _VULNERABILITY:
+        component = extract_artifact_name(finding.get("component") or "")
+        advisories = finding_cve_ids(finding)
+        if advisories:
+            return {(_VULNERABILITY, component, advisory) for advisory in advisories}
+    return {finding_identity_key(finding)}
 
 
 def _ensure_list(value: Any) -> list[Any] | None:

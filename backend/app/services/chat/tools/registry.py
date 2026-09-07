@@ -24,7 +24,7 @@ from app.repositories.scans import ScanRepository
 from app.repositories.teams import TeamRepository
 from app.services.aggregation.components import artifact_segment, build_component_index, lookup_component
 from app.services.analytics.crypto_delta import compute_crypto_delta_envelope
-from app.services.analytics.findings_delta import compute_findings_delta
+from app.services.analytics.findings_delta import FINDING_IDENTITY_PROJECTION, compute_findings_delta
 from app.services.analyzers.purl_utils import canonical_purl
 from app.services.reachability_enrichment import reachability_display_tier
 
@@ -49,6 +49,7 @@ from ._helpers import (
     bounded_read,
     bounded_read_note,
     clamped_limit_note,
+    staleness_identities,
 )
 from .crypto_tools import (
     generate_pqc_migration_plan,
@@ -1184,20 +1185,23 @@ class ChatToolRegistry:
                 return {"findings": [], "message": _ERR_NO_SCAN_DATA}
             cutoff = _dt.now(_tz.utc) - _td(days=days)
             project_ids = list(latest.keys())
-            old_keys: set = set()
+            old_keys: set[tuple[str, tuple[str, str, str]]] = set()
             async for f in db["findings"].find(
                 {"project_id": {"$in": project_ids}, "created_at": {"$lt": cutoff}},
-                {"project_id": 1, "finding_id": 1},
+                {**FINDING_IDENTITY_PROJECTION, "project_id": 1},
             ):
-                if f.get("project_id") and f.get("finding_id"):
-                    old_keys.add((f["project_id"], f["finding_id"]))
+                project_id = f.get("project_id")
+                if project_id:
+                    old_keys.update((project_id, identity) for identity in staleness_identities(f))
             if not old_keys:
                 return {"findings": [], "message": f"No findings older than {days} days"}
             stale, ranking_note = await _ranked_findings(
                 db,
                 {"scan_id": {"$in": list(latest.values())}, "severity": {"$in": allowed_sev}},
                 limit,
-                keep=lambda f: (f.get("project_id"), f.get("finding_id")) in old_keys,
+                keep=lambda f: any(
+                    (_row_project_id(f), identity) in old_keys for identity in staleness_identities(f)
+                ),
             )
             names = await self._project_names(db, list({_row_project_id(f) for f in stale}))
             out = []

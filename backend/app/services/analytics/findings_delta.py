@@ -143,18 +143,16 @@ def finding_identity_key(finding: dict[str, Any], *, include_waived: bool = Fals
     return (ftype, component, identifier)
 
 
-# Fields consumed by finding_identity_key and _to_item. Projecting
-# details.vulnerabilities to .id avoids pulling the full per-CVE payload (hundreds of
-# MB on large scans) into the worker. All keys are inclusions (valid Mongo projection).
-_FETCH_PROJECTION: dict[str, int] = {
+# Fields consumed by finding_identity_key. Projecting details.vulnerabilities to .id avoids
+# pulling the full per-CVE payload (hundreds of MB on large scans) into the worker. All keys are
+# inclusions (valid Mongo projection).
+FINDING_IDENTITY_PROJECTION: dict[str, int] = {
     "type": 1,
     "component": 1,
     "version": 1,
-    "severity": 1,
     "description": 1,
     "found_in": 1,
     "finding_id": 1,
-    "scan_created_at": 1,
     "details.vulnerabilities.id": 1,
     "details.vulnerabilities.waived": 1,
     "details.sast_findings.id": 1,
@@ -166,6 +164,13 @@ _FETCH_PROJECTION: dict[str, int] = {
     "details.reference": 1,
     "details.eol_date": 1,
     "details.fixed_version": 1,
+}
+
+# The identity fields plus what _to_item renders.
+_FETCH_PROJECTION: dict[str, int] = {
+    **FINDING_IDENTITY_PROJECTION,
+    "severity": 1,
+    "scan_created_at": 1,
 }
 
 
