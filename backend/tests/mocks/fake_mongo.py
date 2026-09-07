@@ -936,7 +936,10 @@ class _FakeCursor:
         return results
 
     async def to_list(self, length=None) -> list:
-        return self._filtered()
+        results = self._filtered()
+        # The server caps the batch at ``length``; a fake that ignores it makes every test of a
+        # saturated read pass without the read ever saturating.
+        return results if length is None else results[:length]
 
     def __aiter__(self):
         self._iter = iter(self._filtered())

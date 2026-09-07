@@ -20,7 +20,7 @@ const EXPIRES_AT = "2026-10-01T10:00:00Z";
 
 const mocked = (fn: unknown) => fn as unknown as ReturnType<typeof vi.fn>;
 
-const emptyList: AdhocApiKeyListResponse = { keys: [] };
+const emptyList: AdhocApiKeyListResponse = { keys: [], truncated: null };
 
 const createdKey: AdhocApiKeyCreateResponse = {
   id: KEY_ID,

@@ -1,3 +1,5 @@
+import type { KeyListTruncation } from '@/types/apiKey';
+
 export interface MCPApiKey {
   id: string;
   name: string;
@@ -15,6 +17,7 @@ export interface MCPApiKeyCreateResponse extends MCPApiKey {
 
 export interface MCPApiKeyListResponse {
   keys: MCPApiKey[];
+  truncated: KeyListTruncation | null;
 }
 
 export interface MCPApiKeyCreatePayload {

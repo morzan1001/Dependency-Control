@@ -5,6 +5,7 @@ from jose import jwt
 
 from app.core.config import settings
 from app.core.permissions import Permissions
+from app.repositories.adhoc_api_keys import LIST_LIMIT, AdhocApiKeyRepository
 
 _BASE = "/api/v1/analyze-keys"
 
@@ -22,6 +23,7 @@ _NOT_FOUND = 404
 
 _NO_KEYS = 0
 _ONE_KEY = 1
+_OVER_THE_PAGE = 3
 
 
 def _headers(permissions, subject=_OWNER):
@@ -116,3 +118,33 @@ async def test_revoking_own_key_without_permission_is_403(client, db):
     assert revoked.status_code == _FORBIDDEN, revoked.text
     still_live = await client.get(f"{_BASE}/", headers=_headers([Permissions.ANALYZE_ADHOC]))
     assert still_live.json()["keys"][0]["revoked_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_saturated_listing_names_the_keys_it_did_not_show(client, db):
+    """A key the owner cannot see is a key they cannot revoke."""
+    headers = _headers([Permissions.ANALYZE_ADHOC])
+    repo = AdhocApiKeyRepository(db)
+    for index in range(LIST_LIMIT + _OVER_THE_PAGE):
+        await repo.create(_OWNER, f"{_KEY_NAME}-{index}", _EXPIRY_DAYS)
+
+    listed = await client.get(f"{_BASE}/", headers=headers)
+
+    assert listed.status_code == _OK, listed.text
+    body = listed.json()
+    assert len(body["keys"]) == LIST_LIMIT
+    assert body["truncated"] == {
+        "limit": LIST_LIMIT,
+        "returned": LIST_LIMIT,
+        "total": LIST_LIMIT + _OVER_THE_PAGE,
+    }
+
+
+@pytest.mark.asyncio
+async def test_a_complete_listing_declares_no_truncation(client, db):
+    headers = _headers([Permissions.ANALYZE_ADHOC])
+    await AdhocApiKeyRepository(db).create(_OWNER, _KEY_NAME, _EXPIRY_DAYS)
+
+    listed = await client.get(f"{_BASE}/", headers=headers)
+
+    assert listed.json()["truncated"] is None

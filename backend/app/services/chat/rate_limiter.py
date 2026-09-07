@@ -6,8 +6,24 @@ Callers should pass the runtime SystemSettings (MongoDB) values, not the startup
 import time
 
 import redis.asyncio as redis
+from prometheus_client import Counter, Gauge
 
-from app.core.metrics import chat_rate_limit_remaining, chat_rate_limited_total
+from app.core.metrics import (
+    adhoc_rate_limit_remaining,
+    adhoc_rate_limited_total,
+    chat_rate_limit_remaining,
+    chat_rate_limited_total,
+)
+
+SURFACE_CHAT = "chat"
+SURFACE_ADHOC = "adhoc"
+
+# One metric pair per surface: the two are read by different dashboards, so a denial on one
+# must not move the other's series.
+_SURFACE_METRICS: dict[str, tuple[Counter, Gauge]] = {
+    SURFACE_CHAT: (chat_rate_limited_total, chat_rate_limit_remaining),
+    SURFACE_ADHOC: (adhoc_rate_limited_total, adhoc_rate_limit_remaining),
+}
 
 
 class ChatRateLimiter:
@@ -44,9 +60,10 @@ redis.call('EXPIRE', KEYS[1], math.floor(window * 2))
 return {1, max_reqs - count - 1}
 """
 
-    def __init__(self, redis_client: redis.Redis, prefix: str = "dc:chat:rl:"):
+    def __init__(self, redis_client: redis.Redis, prefix: str = "dc:chat:rl:", surface: str = SURFACE_CHAT):
         self.redis = redis_client
         self.prefix = prefix
+        self._denied, self._remaining = _SURFACE_METRICS[surface]
 
     async def check_rate_limit(self, user_id: str, per_minute: int, per_hour: int) -> tuple[bool, int]:
         """Return (allowed, retry_after_seconds).
@@ -62,16 +79,16 @@ return {1, max_reqs - count - 1}
         result = await self.redis.eval(self._WINDOW_LUA, 1, minute_key, str(now), "60", str(per_minute), member)  # type: ignore[misc]
         allowed, retry_or_remaining = int(result[0]), int(result[1])
         if not allowed:
-            chat_rate_limited_total.inc()
+            self._denied.inc()
             return False, retry_or_remaining
-        chat_rate_limit_remaining.labels(user_id=user_id, window="minute").set(retry_or_remaining)
+        self._remaining.labels(user_id=user_id, window="minute").set(retry_or_remaining)
 
         hour_key = f"{self.prefix}{user_id}:hour"
         result = await self.redis.eval(self._WINDOW_LUA, 1, hour_key, str(now), "3600", str(per_hour), member)  # type: ignore[misc]
         allowed, retry_or_remaining = int(result[0]), int(result[1])
         if not allowed:
-            chat_rate_limited_total.inc()
+            self._denied.inc()
             return False, retry_or_remaining
-        chat_rate_limit_remaining.labels(user_id=user_id, window="hour").set(retry_or_remaining)
+        self._remaining.labels(user_id=user_id, window="hour").set(retry_or_remaining)
 
         return True, 0

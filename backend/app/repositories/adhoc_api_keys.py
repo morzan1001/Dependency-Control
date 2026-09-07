@@ -21,7 +21,7 @@ _PREFIX_BODY_CHARS = 8
 
 _MIN_EXPIRY_DAYS = 1
 _MAX_EXPIRY_DAYS = 365
-_LIST_LIMIT = 100
+LIST_LIMIT = 100
 
 
 def generate_plaintext_token() -> str:
@@ -59,11 +59,17 @@ class AdhocApiKeyRepository:
             await self.collection.insert_one(doc)
         return doc, token
 
-    async def list_for_user(self, user_id: str) -> list[dict[str, Any]]:
+    async def list_for_user(self, user_id: str) -> tuple[list[dict[str, Any]], int]:
+        """The newest page of the user's keys and how many they hold; the count costs a round
+        trip only once the page saturates, which is the only time the two differ."""
+        query = {"user_id": user_id}
         with track_db_operation(_COL, "find"):
-            cursor = self.collection.find({"user_id": user_id}, sort=[("created_at", -1)])
-            docs: list[dict[str, Any]] = await cursor.to_list(length=_LIST_LIMIT)
-            return docs
+            cursor = self.collection.find(query, sort=[("created_at", -1)])
+            docs: list[dict[str, Any]] = await cursor.to_list(length=LIST_LIMIT)
+        if len(docs) < LIST_LIMIT:
+            return docs, len(docs)
+        with track_db_operation(_COL, "count"):
+            return docs, await self.collection.count_documents(query)
 
     async def get_by_plaintext(self, plaintext: str) -> dict[str, Any] | None:
         if not plaintext.startswith(_TOKEN_PREFIX):

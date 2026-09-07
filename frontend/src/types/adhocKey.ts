@@ -1,3 +1,5 @@
+import type { KeyListTruncation } from '@/types/apiKey';
+
 export interface AdhocApiKey {
   id: string;
   name: string;
@@ -14,6 +16,7 @@ export interface AdhocApiKeyCreateResponse extends AdhocApiKey {
 
 export interface AdhocApiKeyListResponse {
   keys: AdhocApiKey[];
+  truncated: KeyListTruncation | null;
 }
 
 export interface AdhocApiKeyCreatePayload {

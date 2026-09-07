@@ -25,7 +25,7 @@ from app.core.constants import (
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse
 from app.services.analysis.adhoc import ADHOC_SLOTS, AdhocInputTooLarge, run_adhoc_analysis
 from app.services.analysis.adhoc_report import render_adhoc_html
-from app.services.chat.rate_limiter import ChatRateLimiter
+from app.services.chat.rate_limiter import SURFACE_ADHOC, ChatRateLimiter
 
 logger = logging.getLogger(__name__)
 
@@ -71,14 +71,15 @@ def _parse_request(raw: bytes) -> AdhocAnalyzeRequest:
         raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail=detail) from exc
 
 
-async def _enforce_rate_limit(token_prefix: str) -> None:
-    """Sliding window keyed on the token's visible prefix, which Mongo already stores and the key
-    list already shows. A Redis outage degrades to no limit rather than to no analysis."""
+async def _enforce_rate_limit(owner_id: str) -> None:
+    """Sliding window keyed on the token owner: a caller may mint as many keys as they like, and
+    keying on any of them would let one budget be spent several times over. A Redis outage
+    degrades to no limit rather than to no analysis."""
     try:
         async with redis.from_url(settings.REDIS_URL) as redis_client:
-            limiter = ChatRateLimiter(redis_client, prefix=_RATE_LIMIT_PREFIX)
+            limiter = ChatRateLimiter(redis_client, prefix=_RATE_LIMIT_PREFIX, surface=SURFACE_ADHOC)
             allowed, retry_after = await limiter.check_rate_limit(
-                token_prefix,
+                owner_id,
                 per_minute=ADHOC_RATE_LIMIT_PER_MINUTE,
                 per_hour=ADHOC_RATE_LIMIT_PER_HOUR,
             )
@@ -108,7 +109,7 @@ async def analyze(
     _key: AdhocKeyDep,
 ) -> Response:
     """Run the analysis pipeline in memory and return the result. Persists nothing."""
-    await _enforce_rate_limit(_key["prefix"])
+    await _enforce_rate_limit(_key["user_id"])
     payload = _parse_request(await read_body_within_limit(request, MAX_ADHOC_BODY_BYTES))
 
     async def _run() -> AdhocAnalyzeResponse:

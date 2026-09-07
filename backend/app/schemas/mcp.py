@@ -5,6 +5,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.schemas.api_keys import KeyListTruncation
+
 
 class MCPKeyCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
@@ -38,6 +40,8 @@ class MCPKeyCreateResponse(MCPKeyResponse):
 
 class MCPKeyListResponse(BaseModel):
     keys: list[MCPKeyResponse]
+    # Null when the whole list is returned, so a caller never has to compare two numbers.
+    truncated: KeyListTruncation | None = None
 
 
 # ── MCP JSON-RPC 2.0 envelope types ─────────────────────────────────────

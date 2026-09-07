@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.models.stats import Stats
+from app.schemas.api_keys import KeyListTruncation
 from app.schemas.project import LicensePolicySchema
 
 MAX_ADHOC_SBOMS: int = 10
@@ -130,3 +131,5 @@ class AdhocKeyCreateResponse(AdhocKeyResponse):
 
 class AdhocKeyListResponse(BaseModel):
     keys: list[AdhocKeyResponse]
+    # Null when the whole list is returned, so a caller never has to compare two numbers.
+    truncated: KeyListTruncation | None = None

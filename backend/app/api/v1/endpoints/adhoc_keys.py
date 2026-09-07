@@ -7,13 +7,14 @@ from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
-from app.repositories.adhoc_api_keys import AdhocApiKeyRepository
+from app.repositories.adhoc_api_keys import LIST_LIMIT, AdhocApiKeyRepository
 from app.schemas.adhoc import (
     AdhocKeyCreate,
     AdhocKeyCreateResponse,
     AdhocKeyListResponse,
     AdhocKeyResponse,
 )
+from app.schemas.api_keys import key_list_truncation
 
 router = CustomAPIRouter()
 
@@ -80,8 +81,11 @@ async def list_adhoc_keys(
 ) -> AdhocKeyListResponse:
     _check_adhoc_access(current_user)
     repo = AdhocApiKeyRepository(db)
-    keys = await repo.list_for_user(str(current_user.id))
-    return AdhocKeyListResponse(keys=[_to_response(k) for k in keys])
+    keys, total = await repo.list_for_user(str(current_user.id))
+    return AdhocKeyListResponse(
+        keys=[_to_response(k) for k in keys],
+        truncated=key_list_truncation(returned=len(keys), total=total, limit=LIST_LIMIT),
+    )
 
 
 @router.delete(

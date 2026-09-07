@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from app.repositories.adhoc_api_keys import AdhocApiKeyRepository, hash_token
+from app.repositories.adhoc_api_keys import LIST_LIMIT, AdhocApiKeyRepository, hash_token
 from tests.mocks.fake_mongo import FakeDatabase
 
 _COL = "adhoc_api_keys"
@@ -19,6 +19,7 @@ _MAX_EXPIRY_DAYS = 365
 _TOKEN_PREFIX = "dca_"
 _PREFIX_LENGTH = 12
 _FOREIGN_PREFIX = "mcp_"
+_OVER_THE_PAGE = 3
 
 
 @pytest.mark.asyncio
@@ -114,5 +115,21 @@ async def test_list_for_user_is_scoped():
     repo = AdhocApiKeyRepository(db)
     await repo.create(_OWNER, _KEY_NAME, _EXPIRY_DAYS)
     await repo.create(_STRANGER, _OTHER_KEY_NAME, _EXPIRY_DAYS)
-    keys = await repo.list_for_user(_OWNER)
+    keys, total = await repo.list_for_user(_OWNER)
     assert [k["name"] for k in keys] == [_KEY_NAME]
+    assert total == 1
+
+
+@pytest.mark.asyncio
+async def test_list_for_user_reports_the_population_behind_a_saturated_page():
+    """Returning LIST_LIMIT rows and calling that the whole holding hides keys the owner
+    still has to revoke."""
+    db = FakeDatabase()
+    repo = AdhocApiKeyRepository(db)
+    for index in range(LIST_LIMIT + _OVER_THE_PAGE):
+        await repo.create(_OWNER, f"{_KEY_NAME}-{index}", _EXPIRY_DAYS)
+
+    keys, total = await repo.list_for_user(_OWNER)
+
+    assert len(keys) == LIST_LIMIT
+    assert total == LIST_LIMIT + _OVER_THE_PAGE

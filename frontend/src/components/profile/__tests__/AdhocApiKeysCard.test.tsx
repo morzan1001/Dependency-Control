@@ -2,6 +2,7 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 import type {
+  AdhocApiKey,
   AdhocApiKeyCreateResponse,
   AdhocApiKeyListResponse,
 } from "@/types/adhocKey";
@@ -16,18 +17,20 @@ const DEFAULT_EXPIRY_DAYS = 90;
 const CREATED_AT = "2026-09-01T10:00:00Z";
 const EXPIRES_AT = "2026-12-01T10:00:00Z";
 const NOT_CALLED = 0;
+const LIST_PAGE = 100;
+const TOTAL_KEYS = 103;
 const CALLED_ONCE = 1;
 
-const { createMutate, createReset, revokeMutate } = vi.hoisted(() => ({
+const { createMutate, createReset, revokeMutate, listed } = vi.hoisted(() => ({
   createMutate: vi.fn(),
   createReset: vi.fn(),
   revokeMutate: vi.fn(),
+  listed: { current: null as unknown },
 }));
 
 vi.mock("@/hooks/queries/use-adhoc-keys", () => {
-  const noKeys: AdhocApiKeyListResponse = { keys: [] };
   return {
-    useAdhocKeys: () => ({ data: noKeys, isLoading: false }),
+    useAdhocKeys: () => ({ data: listed.current, isLoading: false }),
     useCreateAdhocKey: () => ({
       mutateAsync: createMutate,
       reset: createReset,
@@ -36,6 +39,17 @@ vi.mock("@/hooks/queries/use-adhoc-keys", () => {
     useRevokeAdhocKey: () => ({ mutateAsync: revokeMutate, isPending: false }),
   };
 });
+
+const noKeys: AdhocApiKeyListResponse = { keys: [], truncated: null };
+
+const storedKey: AdhocApiKey = {
+  id: KEY_ID,
+  name: KEY_NAME,
+  prefix: KEY_PREFIX,
+  created_at: CREATED_AT,
+  expires_at: EXPIRES_AT,
+  revoked_at: null,
+};
 
 const createdKey: AdhocApiKeyCreateResponse = {
   id: KEY_ID,
@@ -72,6 +86,7 @@ async function expectTokenForgotten() {
 describe("AdhocApiKeysCard", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    listed.current = noKeys;
     createMutate.mockResolvedValue(createdKey);
   });
 
@@ -95,6 +110,29 @@ describe("AdhocApiKeysCard", () => {
     fireEvent.keyDown(document, { key: "Escape" });
 
     await expectTokenForgotten();
+  });
+
+  it("says how many keys the listing left out when its page saturated", () => {
+    listed.current = {
+      keys: [storedKey],
+      truncated: { limit: LIST_PAGE, returned: LIST_PAGE, total: TOTAL_KEYS },
+    } satisfies AdhocApiKeyListResponse;
+
+    render(<AdhocApiKeysCard />);
+
+    expect(
+      screen.getByText(
+        new RegExp(`Showing the newest ${LIST_PAGE} of ${TOTAL_KEYS} keys`),
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("says nothing about truncation when the whole list came back", () => {
+    listed.current = { keys: [storedKey], truncated: null };
+
+    render(<AdhocApiKeysCard />);
+
+    expect(screen.queryByText(/Showing the newest/)).not.toBeInTheDocument();
   });
 
   it("refuses to mint a nameless key", () => {

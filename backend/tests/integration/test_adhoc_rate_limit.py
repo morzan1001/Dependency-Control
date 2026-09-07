@@ -1,10 +1,11 @@
-"""The ad-hoc endpoint is rate limited per token prefix, and a Redis outage does not block it."""
+"""The ad-hoc endpoint is rate limited per token owner, and a Redis outage does not block it."""
 
 from typing import Any
 
 import pytest
 import redis.asyncio as redis
 
+from app.core.metrics import REGISTRY
 from app.repositories.adhoc_api_keys import AdhocApiKeyRepository
 
 _ANALYZE = "/api/v1/analyze"
@@ -12,23 +13,38 @@ _RATE_LIMIT_PREFIX = "dc:adhoc:rl:"
 _CHAT_PREFIX = "dc:chat:rl:"
 _RETRY_AFTER_SECONDS = 42
 _ALLOWED = 1
+_DENIED = 0
+# The minute window; the hour window is only reached once the minute one admits the request.
+_WINDOWS_PER_REQUEST = 2
 _SBOM = {"bomFormat": "CycloneDX", "specVersion": "1.5", "components": []}
 _BODY = {"sboms": [_SBOM], "analyzers": [], "apply_global_waivers": False}
+_OWNER = "adhoc-user"
 
 
-async def _issue_key(db):
-    doc, plaintext = await AdhocApiKeyRepository(db).create("adhoc-user", "ci", 30)
-    await db.users.insert_one(
+async def _issue_key(db, name="ci"):
+    doc, plaintext = await AdhocApiKeyRepository(db).create(_OWNER, name, 30)
+    await db.users.update_one(
+        {"_id": _OWNER},
         {
-            "_id": "adhoc-user",
-            "username": "adhoc-user",
-            "email": "adhoc@example.com",
-            "permissions": ["analyze:adhoc"],
-            "is_active": True,
-            "hashed_password": "x",
-        }
+            "$set": {
+                "username": _OWNER,
+                "email": "adhoc@example.com",
+                "permissions": ["analyze:adhoc"],
+                "is_active": True,
+                "hashed_password": "x",
+            }
+        },
+        upsert=True,
     )
     return doc, plaintext
+
+
+_CHAT_DENIALS = "dc_chat_rate_limited_total"
+_ADHOC_DENIALS = "dc_adhoc_rate_limited_total"
+
+
+def _denials(metric_name: str) -> float:
+    return REGISTRY.get_sample_value(metric_name) or 0.0
 
 
 def _bearer(token):
@@ -61,6 +77,19 @@ class _FakeRedisCtx:
         return [_ALLOWED, 0]
 
 
+class _DenyingRedisCtx:
+    """Answers the sliding-window script with a refusal, so the real limiter runs its denial path."""
+
+    async def __aenter__(self) -> "_DenyingRedisCtx":
+        return self
+
+    async def __aexit__(self, *_exc: Any) -> bool:
+        return False
+
+    async def eval(self, *_args: Any) -> list[int]:
+        return [_DENIED, _RETRY_AFTER_SECONDS]
+
+
 class _BrokenRedisCtx:
     def __init__(self, opened: list[str]) -> None:
         self._opened = opened
@@ -90,7 +119,7 @@ async def test_denied_request_is_429_with_retry_after(client, db, monkeypatch):
 
     assert resp.status_code == 429, resp.text
     assert resp.headers["Retry-After"] == str(_RETRY_AFTER_SECONDS)
-    assert limiter.seen_key == doc["prefix"]
+    assert limiter.seen_key == doc["user_id"]
 
 
 @pytest.mark.asyncio
@@ -104,8 +133,38 @@ async def test_the_window_lives_in_its_own_namespace(client, db, monkeypatch):
 
     assert resp.status_code == 200, resp.text
     assert keys, "the request must reach the window, or nothing here is being tested"
-    assert all(key.startswith(f"{_RATE_LIMIT_PREFIX}{doc['prefix']}:") for key in keys), keys
+    assert all(key.startswith(f"{_RATE_LIMIT_PREFIX}{doc['user_id']}:") for key in keys), keys
     assert not any(key.startswith(_CHAT_PREFIX) for key in keys)
+
+
+@pytest.mark.asyncio
+async def test_a_second_key_of_the_same_owner_spends_the_same_window(client, db, monkeypatch):
+    """Minting is uncapped, so a window keyed on the token would be one budget per key."""
+    first, first_token = await _issue_key(db)
+    second, second_token = await _issue_key(db, name="ci-2")
+    assert first["prefix"] != second["prefix"]
+    keys: list[str] = []
+    _patch_from_url(monkeypatch, lambda: _FakeRedisCtx(keys))
+
+    for token in (first_token, second_token):
+        assert (await client.post(_ANALYZE, json=_BODY, headers=_bearer(token))).status_code == 200
+
+    assert len(set(keys)) == _WINDOWS_PER_REQUEST, keys
+
+
+@pytest.mark.asyncio
+async def test_an_adhoc_denial_leaves_the_chat_dashboard_counter_alone(client, db, monkeypatch):
+    """A live Grafana panel sums dc_chat_rate_limited_total unfiltered."""
+    _, token = await _issue_key(db)
+    _patch_from_url(monkeypatch, lambda: _DenyingRedisCtx())
+    chat_before = _denials(_CHAT_DENIALS)
+    adhoc_before = _denials(_ADHOC_DENIALS)
+
+    resp = await client.post(_ANALYZE, json=_BODY, headers=_bearer(token))
+
+    assert resp.status_code == 429, resp.text
+    assert _denials(_CHAT_DENIALS) == chat_before
+    assert _denials(_ADHOC_DENIALS) == adhoc_before + 1
 
 
 @pytest.mark.asyncio
