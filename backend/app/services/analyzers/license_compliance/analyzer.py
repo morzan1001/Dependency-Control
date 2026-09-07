@@ -112,11 +112,14 @@ class LicenseAnalyzer(Analyzer):
         spdx_expr = normalizer.has_spdx_expression(component)
         if spdx_expr:
             or_groups = normalizer.parse_spdx_expression(spdx_expr)
+            unparseable: list[str] = []
             # The effective classification is the least-restrictive OR alternative.
             for lic_id in compatibility.least_restrictive_group(or_groups):
                 normalized = normalizer.normalize_license(lic_id)
                 info = LICENSE_DATABASE.get(normalized)
                 if not info:
+                    stats["unknown"] += 1
+                    unparseable.append(normalized)
                     continue
                 stat_key = CATEGORY_STAT_KEY.get(info.category)
                 if stat_key:
@@ -136,6 +139,10 @@ class LicenseAnalyzer(Analyzer):
                 evaluator.apply_transitive_adjustment(issue, is_transitive)
                 if evaluator.should_include_finding(issue, is_transitive):
                     issues.append(issue)
+            if unparseable:
+                # An expression the analyzer cannot read is the same fact as a licence it does
+                # not know, arriving through a different door: the SBOM does not determine it.
+                issues.append(evaluator.create_undeterminable_issue(comp_name, comp_version, comp_purl, unparseable))
             return
 
         licenses = normalizer.extract_licenses(component)

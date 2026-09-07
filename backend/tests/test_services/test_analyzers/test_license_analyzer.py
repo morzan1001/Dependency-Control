@@ -787,6 +787,13 @@ class TestTransitiveDirectness:
         assert "is_transitive" not in issues[0]
 
 
+_UNREADABLE_ALTERNATIVE = "Acme-1.0"
+_UNREADABLE_OR_EXPRESSION = f"{_UNREADABLE_ALTERNATIVE} OR Widget-2.0"
+_READABLE_OR_EXPRESSION = "MIT OR Apache-2.0"
+# least_restrictive_group returns one OR alternative, so one component contributes one count.
+_ONE_ALTERNATIVE_RESOLVED = 1
+
+
 class TestUndeterminableLicense:
     """A component the SBOM does not let us classify must reach the audit control as a finding."""
 
@@ -861,3 +868,36 @@ class TestUndeterminableLicense:
     async def test_unrecognised_name_is_quoted_in_the_explanation(self):
         result = await self._run([self.UNDETERMINABLE_SHAPES[4]])
         assert "Acme Custom EULA 1.0" in self._unknown_issues(result)[0]["explanation"]
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_spdx_expression_is_undeterminable_too(self):
+        """The OR-expression path resolves an alternative before classifying it, so an expression
+        naming nothing we know reached neither the unknown count nor a finding."""
+        component = {
+            "type": "library",
+            "name": "expression-lib",
+            "version": "1.0.0",
+            "licenses": [{"expression": _UNREADABLE_OR_EXPRESSION}],
+        }
+
+        result = await self._run([component])
+
+        assert result["summary"]["unknown"] == _ONE_ALTERNATIVE_RESOLVED
+        issues = self._unknown_issues(result)
+        assert len(issues) == 1
+        assert issues[0]["severity"] == Severity.INFO.value
+        assert _UNREADABLE_ALTERNATIVE in issues[0]["explanation"]
+
+    @pytest.mark.asyncio
+    async def test_a_readable_spdx_expression_stays_determinable(self):
+        component = {
+            "type": "library",
+            "name": "dual-licensed",
+            "version": "1.0.0",
+            "licenses": [{"expression": _READABLE_OR_EXPRESSION}],
+        }
+
+        result = await self._run([component])
+
+        assert result["summary"]["unknown"] == 0
+        assert self._unknown_issues(result) == []
