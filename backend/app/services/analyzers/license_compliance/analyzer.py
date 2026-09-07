@@ -141,18 +141,21 @@ class LicenseAnalyzer(Analyzer):
         licenses = normalizer.extract_licenses(component)
         if not licenses:
             stats["unknown"] += 1
+            issues.append(evaluator.create_undeterminable_issue(comp_name, comp_version, comp_purl, []))
             return
 
         # AND/WITH/comma composites reach this path member-by-member; keep the raw
         # expression on each issue so the declared license survives enrichment.
         raw_expression = normalizer.composite_license_expression(component)
 
+        unrecognized: list[str] = []
         for lic_id, lic_url in licenses:
             normalized = normalizer.normalize_license(lic_id)
             license_info = LICENSE_DATABASE.get(normalized)
 
             if not license_info:
                 stats["unknown"] += 1
+                unrecognized.append(normalized)
                 continue
 
             stat_key = CATEGORY_STAT_KEY.get(license_info.category)
@@ -177,6 +180,11 @@ class LicenseAnalyzer(Analyzer):
                 evaluator.apply_transitive_adjustment(issue, is_transitive)
                 if evaluator.should_include_finding(issue, is_transitive):
                     issues.append(issue)
+
+        if unrecognized:
+            # Neither adjusted nor filtered by transitivity: the audit control reads presence, so
+            # dropping the transitive ones would let it pass over components it cannot audit.
+            issues.append(evaluator.create_undeterminable_issue(comp_name, comp_version, comp_purl, unrecognized))
 
     @staticmethod
     def _classification_entry(

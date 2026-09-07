@@ -785,3 +785,79 @@ class TestTransitiveDirectness:
         assert len(issues) == 1
         assert issues[0]["severity"] == Severity.HIGH.value
         assert "is_transitive" not in issues[0]
+
+
+class TestUndeterminableLicense:
+    """A component the SBOM does not let us classify must reach the audit control as a finding."""
+
+    UNDETERMINABLE_SHAPES = [
+        {"type": "library", "name": "no-licenses-key", "version": "1.0.0"},
+        {"type": "library", "name": "empty-licenses-list", "version": "1.0.0", "licenses": []},
+        {
+            "type": "library",
+            "name": "noassertion-lib",
+            "version": "1.0.0",
+            "licenses": [{"license": {"id": "NOASSERTION"}}],
+        },
+        {
+            "type": "library",
+            "name": "see-license-file",
+            "version": "1.0.0",
+            "licenses": [{"license": {"name": "SEE LICENSE IN LICENSE.txt"}}],
+        },
+        {
+            "type": "library",
+            "name": "custom-eula-lib",
+            "version": "1.0.0",
+            "licenses": [{"license": {"name": "Acme Custom EULA 1.0"}}],
+        },
+    ]
+
+    @staticmethod
+    async def _run(components):
+        return await LicenseAnalyzer().analyze({"components": components})
+
+    @staticmethod
+    def _unknown_issues(result):
+        return [i for i in result["license_issues"] if i["category"] == LicenseCategory.UNKNOWN.value]
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("component", UNDETERMINABLE_SHAPES, ids=lambda c: c["name"])
+    async def test_each_undeterminable_shape_emits_one_finding(self, component):
+        result = await self._run([component])
+        issues = self._unknown_issues(result)
+        assert len(issues) == 1
+        assert issues[0]["component"] == component["name"]
+
+    @pytest.mark.asyncio
+    async def test_unknown_count_and_emitted_findings_agree(self):
+        result = await self._run(self.UNDETERMINABLE_SHAPES)
+        assert result["summary"]["unknown"] == len(self.UNDETERMINABLE_SHAPES)
+        assert len(self._unknown_issues(result)) == len(self.UNDETERMINABLE_SHAPES)
+
+    @pytest.mark.asyncio
+    async def test_finding_is_informational_so_it_moves_no_risk_score(self):
+        result = await self._run([self.UNDETERMINABLE_SHAPES[0]])
+        assert self._unknown_issues(result)[0]["severity"] == Severity.INFO.value
+
+    @pytest.mark.asyncio
+    async def test_transitive_component_still_emits_the_finding(self):
+        component = {**self.UNDETERMINABLE_SHAPES[0], "direct": False}
+        result = await LicenseAnalyzer().analyze(
+            {"components": [component]},
+            settings={"ignore_transitive": False},
+            parsed_components=[{"name": component["name"], "version": "1.0.0", "direct": False}],
+        )
+        assert len(self._unknown_issues(result)) == 1
+
+    @pytest.mark.asyncio
+    async def test_recognised_license_emits_no_undeterminable_finding(self):
+        component = {"type": "library", "name": "mit-lib", "version": "1.0.0", "licenses": [{"license": {"id": "MIT"}}]}
+        result = await self._run([component])
+        assert result["summary"]["unknown"] == 0
+        assert self._unknown_issues(result) == []
+
+    @pytest.mark.asyncio
+    async def test_unrecognised_name_is_quoted_in_the_explanation(self):
+        result = await self._run([self.UNDETERMINABLE_SHAPES[4]])
+        assert "Acme Custom EULA 1.0" in self._unknown_issues(result)[0]["explanation"]
