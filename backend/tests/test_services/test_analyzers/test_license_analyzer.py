@@ -11,10 +11,14 @@ from app.models.license import (
     LicensePolicy,
 )
 from app.services.analyzers.license_compliance import LicenseAnalyzer
-from app.services.analyzers.license_compliance.compatibility import check_license_compatibility
+from app.services.analyzers.license_compliance.compatibility import (
+    check_license_compatibility,
+    partition_or_groups,
+)
 from app.services.analyzers.license_compliance.evaluator import (
     apply_transitive_adjustment,
     evaluate_license,
+    is_acceptable_under_policy,
     should_include_finding,
 )
 from app.services.analyzers.license_compliance.normalizer import (
@@ -560,14 +564,18 @@ class TestSpdxExpressionEvaluation:
     def test_evaluate_or_picks_least_restrictive(self):
         policy = LicensePolicy()
         or_groups = [["MIT"], ["GPL-3.0"]]
-        result = self.analyzer._evaluate_expression("test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy)
+        _, result = self.analyzer._select_or_alternative(
+            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
+        )
         # MIT is permissive -> no issue, the least restrictive alternative.
         assert result is None
 
     def test_evaluate_or_gpl_or_lgpl_picks_lgpl(self):
         policy = LicensePolicy()
         or_groups = [["GPL-3.0"], ["LGPL-3.0"]]
-        result = self.analyzer._evaluate_expression("test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy)
+        _, result = self.analyzer._select_or_alternative(
+            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
+        )
         assert result is not None
         assert result["severity"] == Severity.INFO.value
         assert result["license"] == "LGPL-3.0"
@@ -575,20 +583,26 @@ class TestSpdxExpressionEvaluation:
     def test_evaluate_and_picks_most_restrictive(self):
         policy = LicensePolicy()
         or_groups = [["MIT", "GPL-3.0"]]
-        result = self.analyzer._evaluate_expression("test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy)
+        _, result = self.analyzer._select_or_alternative(
+            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
+        )
         assert result is not None
         assert result["severity"] == Severity.HIGH.value
 
     def test_evaluate_or_all_permissive(self):
         policy = LicensePolicy()
         or_groups = [["MIT"], ["Apache-2.0"]]
-        result = self.analyzer._evaluate_expression("test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy)
+        _, result = self.analyzer._select_or_alternative(
+            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
+        )
         assert result is None
 
     def test_evaluate_or_respects_policy(self):
         policy = LicensePolicy(distribution_model=DistributionModel.INTERNAL_ONLY)
         or_groups = [["GPL-3.0"], ["AGPL-3.0"]]
-        result = self.analyzer._evaluate_expression("test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy)
+        _, result = self.analyzer._select_or_alternative(
+            "test-pkg", "1.0.0", "pkg:pypi/test-pkg@1.0.0", or_groups, policy
+        )
         # Both become INFO with internal_only, but GPL is evaluated first.
         assert result is not None
         assert result["severity"] == Severity.INFO.value
@@ -901,3 +915,141 @@ class TestUndeterminableLicense:
 
         assert result["summary"]["unknown"] == 0
         assert self._unknown_issues(result) == []
+
+
+_PERMISSIVE_ID = "MIT"
+_STRONG_COPYLEFT_ID = "GPL-3.0-only"
+_CONFLICTING_ID = "CDDL-1.0"
+_INCOMPATIBILITY_CATEGORY = "license_incompatibility"
+_UNREADABLE_OR_COPYLEFT = f"{_UNREADABLE_ALTERNATIVE} OR {_STRONG_COPYLEFT_ID}"
+_UNREADABLE_OR_PERMISSIVE = f"{_UNREADABLE_ALTERNATIVE} OR {_PERMISSIVE_ID}"
+_UNREADABLE_CONJUNCT_OR_COPYLEFT = f"({_PERMISSIVE_ID} AND {_UNREADABLE_ALTERNATIVE}) OR {_STRONG_COPYLEFT_ID}"
+_CONJUNCTION_WITH_UNREADABLE = f"{_PERMISSIVE_ID} AND {_UNREADABLE_ALTERNATIVE}"
+_NO_FINDINGS = 0
+_ONE_FINDING = 1
+
+
+class TestUnreadableOrAlternative:
+    """An alternative we cannot read is not a choice we can rank, so it must not shadow one we can."""
+
+    @staticmethod
+    async def _analyze(expression, settings=None):
+        component = {
+            "type": "library",
+            "name": "dual-licensed",
+            "version": "1.0.0",
+            "purl": "pkg:pypi/dual-licensed@1.0.0",
+            "licenses": [{"expression": expression}],
+        }
+        return await LicenseAnalyzer().analyze({"components": [component]}, settings or {})
+
+    @staticmethod
+    def _by_category(result, category):
+        return [issue for issue in result["license_issues"] if issue["category"] == category]
+
+    @pytest.mark.asyncio
+    async def test_unreadable_alternative_no_longer_shadows_a_permissive_one(self):
+        result = await self._analyze(_UNREADABLE_OR_PERMISSIVE)
+
+        assert self._by_category(result, LicenseCategory.UNKNOWN.value) == []
+        assert result["summary"]["permissive"] == _ONE_ALTERNATIVE_RESOLVED
+        assert [entry["license"] for entry in result["component_licenses"]] == [_PERMISSIVE_ID]
+
+    @pytest.mark.asyncio
+    async def test_unreadable_beside_an_unacceptable_licence_is_undeterminable(self):
+        result = await self._analyze(_UNREADABLE_OR_COPYLEFT)
+
+        assert self._by_category(result, LicenseCategory.STRONG_COPYLEFT.value) == []
+        undeterminable = self._by_category(result, LicenseCategory.UNKNOWN.value)
+        assert len(undeterminable) == _ONE_FINDING
+        assert undeterminable[0]["severity"] == Severity.INFO.value
+
+    @pytest.mark.asyncio
+    async def test_the_undeterminable_verdict_names_the_alternative_it_rejected(self):
+        result = await self._analyze(_UNREADABLE_OR_COPYLEFT)
+
+        explanation = self._by_category(result, LicenseCategory.UNKNOWN.value)[0]["explanation"]
+        assert _UNREADABLE_ALTERNATIVE in explanation
+        assert _STRONG_COPYLEFT_ID in explanation
+
+    @pytest.mark.asyncio
+    async def test_an_acceptable_known_alternative_settles_the_licence(self):
+        result = await self._analyze(_UNREADABLE_OR_COPYLEFT, {"allow_strong_copyleft": True})
+
+        assert self._by_category(result, LicenseCategory.UNKNOWN.value) == []
+        allowed = self._by_category(result, LicenseCategory.STRONG_COPYLEFT.value)
+        assert len(allowed) == _ONE_FINDING
+        assert allowed[0]["license"] == _STRONG_COPYLEFT_ID
+        assert result["summary"]["strong_copyleft"] == _ONE_ALTERNATIVE_RESOLVED
+
+    @pytest.mark.asyncio
+    async def test_an_unreadable_conjunct_disqualifies_its_whole_alternative(self):
+        result = await self._analyze(_UNREADABLE_CONJUNCT_OR_COPYLEFT)
+
+        assert result["component_licenses"] == []
+        assert len(self._by_category(result, LicenseCategory.UNKNOWN.value)) == _ONE_FINDING
+
+    @pytest.mark.asyncio
+    async def test_a_conjunction_reports_every_term_that_binds(self):
+        """AND offers no choice, so the readable term is classified and the unreadable one is disclosed."""
+        result = await self._analyze(_CONJUNCTION_WITH_UNREADABLE)
+
+        assert [entry["license"] for entry in result["component_licenses"]] == [_PERMISSIVE_ID]
+        assert len(self._by_category(result, LicenseCategory.UNKNOWN.value)) == _ONE_FINDING
+
+    @pytest.mark.asyncio
+    async def test_a_shadowed_alternative_still_reaches_the_conflict_check(self):
+        components = [
+            {
+                "name": "dual-licensed",
+                "version": "1.0.0",
+                "purl": "pkg:pypi/dual-licensed@1.0.0",
+                "licenses": [{"expression": _UNREADABLE_OR_COPYLEFT}],
+            },
+            {
+                "name": "cddl-lib",
+                "version": "1.0.0",
+                "purl": "pkg:pypi/cddl-lib@1.0.0",
+                "licenses": [{"license": {"id": _CONFLICTING_ID}}],
+            },
+        ]
+
+        result = await LicenseAnalyzer().analyze({"components": components})
+
+        conflicts = self._by_category(result, _INCOMPATIBILITY_CATEGORY)
+        assert len(conflicts) == _ONE_FINDING
+        assert _STRONG_COPYLEFT_ID in conflicts[0]["license"]
+
+
+class TestPolicyAcceptability:
+    """The line between a licence a consumer could take and one policy refuses."""
+
+    def test_no_finding_is_acceptable(self):
+        assert is_acceptable_under_policy(None) is True
+
+    @pytest.mark.parametrize("severity", [Severity.INFO, Severity.LOW, Severity.MEDIUM])
+    def test_a_softened_verdict_is_acceptable(self, severity):
+        assert is_acceptable_under_policy({"severity": severity.value}) is True
+
+    @pytest.mark.parametrize("severity", [Severity.HIGH, Severity.CRITICAL])
+    def test_an_unsoftened_verdict_is_not_acceptable(self, severity):
+        assert is_acceptable_under_policy({"severity": severity.value}) is False
+
+
+class TestPartitionOrGroups:
+    """Splitting OR-alternatives into the readable ones and what made the rest unreadable."""
+
+    def test_a_group_with_an_unreadable_member_is_not_readable(self):
+        readable, unreadable = partition_or_groups([[_PERMISSIVE_ID, _UNREADABLE_ALTERNATIVE], [_STRONG_COPYLEFT_ID]])
+        assert readable == [[_STRONG_COPYLEFT_ID]]
+        assert unreadable == [_UNREADABLE_ALTERNATIVE]
+
+    def test_an_identifier_is_reported_once_across_alternatives(self):
+        readable, unreadable = partition_or_groups([[_UNREADABLE_ALTERNATIVE], [_UNREADABLE_ALTERNATIVE]])
+        assert readable == []
+        assert len(unreadable) == _ONE_FINDING
+
+    def test_all_readable_leaves_nothing_unreadable(self):
+        readable, unreadable = partition_or_groups([[_PERMISSIVE_ID], [_STRONG_COPYLEFT_ID]])
+        assert readable == [[_PERMISSIVE_ID], [_STRONG_COPYLEFT_ID]]
+        assert len(unreadable) == _NO_FINDINGS

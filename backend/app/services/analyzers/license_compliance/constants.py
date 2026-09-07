@@ -70,6 +70,9 @@ SEVERITY_RANK: dict[str | None, int] = {
     Severity.CRITICAL.value: 5,
 }
 
+# Every policy escape in evaluate_license lands below HIGH, so HIGH is the first rank policy did not soften.
+POLICY_VIOLATION_MIN_RANK = SEVERITY_RANK[Severity.HIGH.value]
+
 
 LICENSE_DATABASE: dict[str, LicenseInfo] = {
     "MIT": LicenseInfo(

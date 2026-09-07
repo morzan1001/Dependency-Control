@@ -19,16 +19,29 @@ from .normalizer import (
 )
 
 
+def partition_or_groups(or_groups: list[list[str]]) -> tuple[list[list[str]], list[str]]:
+    """Split OR-alternatives into the readable ones and the unrecognised identifiers that made the rest unreadable."""
+    readable: list[list[str]] = []
+    unreadable: list[str] = []
+    for group in or_groups:
+        # AND binds every member, so one unrecognised member leaves the whole alternative unreadable.
+        missing = [lic for lic in (normalize_license(member) for member in group) if lic not in LICENSE_DATABASE]
+        if missing:
+            unreadable.extend(lic for lic in missing if lic not in unreadable)
+        else:
+            readable.append(group)
+    return readable, unreadable
+
+
 def least_restrictive_group(or_groups: list[list[str]]) -> list[str]:
-    """Pick the OR-alternative with the lowest restrictiveness (ranked by its most-restrictive AND-member)."""
+    """Pick the lowest-restrictiveness readable OR-alternative, ranked by its most-restrictive AND-member."""
+    readable, _ = partition_or_groups(or_groups)
     best_rank: int | None = None
     best_group: list[str] = []
-    for group in or_groups:
-        worst_rank = 0
-        for lic_id in group:
-            info = LICENSE_DATABASE.get(normalize_license(lic_id))
-            if info:
-                worst_rank = max(worst_rank, CATEGORY_RESTRICTIVENESS.get(info.category, 5))
+    for group in readable:
+        worst_rank = max(
+            CATEGORY_RESTRICTIVENESS[LICENSE_DATABASE[normalize_license(lic_id)].category] for lic_id in group
+        )
         if best_rank is None or worst_rank < best_rank:
             best_rank = worst_rank
             best_group = group

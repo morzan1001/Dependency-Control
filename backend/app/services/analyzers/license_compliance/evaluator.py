@@ -14,7 +14,19 @@ from app.models.license import (
     LicensePolicy,
 )
 
-from .constants import UNDETERMINED_LICENSE_ID, UNDETERMINED_LICENSE_MESSAGE
+from .constants import (
+    POLICY_VIOLATION_MIN_RANK,
+    SEVERITY_RANK,
+    UNDETERMINED_LICENSE_ID,
+    UNDETERMINED_LICENSE_MESSAGE,
+)
+
+
+def is_acceptable_under_policy(issue: dict[str, Any] | None) -> bool:
+    """Whether a consumer could actually take this licence: no finding, or one a policy escape already softened."""
+    if issue is None:
+        return True
+    return SEVERITY_RANK[issue["severity"]] < POLICY_VIOLATION_MIN_RANK
 
 
 def evaluate_license(
@@ -312,6 +324,7 @@ def create_undeterminable_issue(
     version: str,
     purl: str,
     unrecognized: list[str],
+    rejected_alternatives: list[str] | None = None,
 ) -> dict[str, Any]:
     """A component whose licence the SBOM does not let us determine: none declared, or declared
     under an identifier we do not know. Neither is auditable, which is what the audit control means.
@@ -327,6 +340,11 @@ def create_undeterminable_issue(
     else:
         explanation = (
             "The SBOM carries no license information for this component, so its obligations cannot be evaluated."
+        )
+    if rejected_alternatives:
+        explanation += (
+            f" The alternatives this expression offers that we can read ({', '.join(rejected_alternatives)}) "
+            "are not acceptable under the current license policy, so no readable and acceptable choice remains."
         )
     return create_issue(
         component=component,

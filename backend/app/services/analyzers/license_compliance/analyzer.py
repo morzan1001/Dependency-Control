@@ -111,38 +111,17 @@ class LicenseAnalyzer(Analyzer):
 
         spdx_expr = normalizer.has_spdx_expression(component)
         if spdx_expr:
-            or_groups = normalizer.parse_spdx_expression(spdx_expr)
-            unparseable: list[str] = []
-            # The effective classification is the least-restrictive OR alternative.
-            for lic_id in compatibility.least_restrictive_group(or_groups):
-                normalized = normalizer.normalize_license(lic_id)
-                info = LICENSE_DATABASE.get(normalized)
-                if not info:
-                    stats["unknown"] += 1
-                    unparseable.append(normalized)
-                    continue
-                stat_key = CATEGORY_STAT_KEY.get(info.category)
-                if stat_key:
-                    stats[stat_key] += 1
-                component_licenses.append(
-                    self._classification_entry(comp_name, comp_version, comp_purl, normalized, info, spdx_expr)
-                )
-            issue = self._evaluate_expression(
+            self._analyze_or_expression(
                 comp_name,
                 comp_version,
                 comp_purl,
-                or_groups,
-                policy,
+                spdx_expr,
+                stats,
+                issues,
+                component_licenses,
+                is_transitive=is_transitive,
+                policy=policy,
             )
-            if issue:
-                issue["spdx_expression"] = spdx_expr
-                evaluator.apply_transitive_adjustment(issue, is_transitive)
-                if evaluator.should_include_finding(issue, is_transitive):
-                    issues.append(issue)
-            if unparseable:
-                # An expression the analyzer cannot read is the same fact as a licence it does
-                # not know, arriving through a different door: the SBOM does not determine it.
-                issues.append(evaluator.create_undeterminable_issue(comp_name, comp_version, comp_purl, unparseable))
             return
 
         licenses = normalizer.extract_licenses(component)
@@ -217,43 +196,78 @@ class LicenseAnalyzer(Analyzer):
             entry["spdx_expression"] = spdx_expression
         return entry
 
-    def _evaluate_expression(
+    def _analyze_or_expression(
         self,
         comp_name: str,
         comp_version: str,
         comp_purl: str,
-        or_groups: list[list[str]],
+        spdx_expr: str,
+        stats: dict[str, int],
+        issues: list[dict[str, Any]],
+        component_licenses: list[dict[str, Any]],
+        *,
+        is_transitive: bool,
         policy: LicensePolicy,
-    ) -> dict[str, Any] | None:
-        """Evaluate an SPDX expression: lowest-severity OR-alternative, highest-severity AND-member."""
-        best_issue: dict[str, Any] | None = None
-        best_severity_rank = 999
+    ) -> None:
+        """Resolve an OR-expression to the alternative a consumer would take, or report it undeterminable."""
+        or_groups = normalizer.parse_spdx_expression(spdx_expr)
+        readable_groups, unreadable = compatibility.partition_or_groups(or_groups)
+        selected, issue = self._select_or_alternative(comp_name, comp_version, comp_purl, readable_groups, policy)
 
-        for and_group in or_groups:
-            worst_issue: dict[str, Any] | None = None
-            worst_rank = -1
+        if selected is None or (unreadable and not evaluator.is_acceptable_under_policy(issue)):
+            # No alternative is both readable and acceptable, so the expression settles nothing:
+            # an acceptable licence may sit behind the identifier we do not recognise.
+            stats["unknown"] += 1
+            rejected = [normalizer.normalize_license(lic_id) for group in readable_groups for lic_id in group]
+            issues.append(
+                evaluator.create_undeterminable_issue(comp_name, comp_version, comp_purl, unreadable, rejected)
+            )
+            return
 
+        for lic_id in selected:
+            normalized = normalizer.normalize_license(lic_id)
+            info = LICENSE_DATABASE[normalized]
+            stat_key = CATEGORY_STAT_KEY.get(info.category)
+            if stat_key:
+                stats[stat_key] += 1
+            component_licenses.append(
+                self._classification_entry(comp_name, comp_version, comp_purl, normalized, info, spdx_expr)
+            )
+
+        if issue:
+            issue["spdx_expression"] = spdx_expr
+            evaluator.apply_transitive_adjustment(issue, is_transitive)
+            if evaluator.should_include_finding(issue, is_transitive):
+                issues.append(issue)
+
+    @staticmethod
+    def _select_or_alternative(
+        comp_name: str,
+        comp_version: str,
+        comp_purl: str,
+        readable_groups: list[list[str]],
+        policy: LicensePolicy,
+    ) -> tuple[list[str] | None, dict[str, Any] | None]:
+        """Choose the OR-alternative a consumer would take: lowest-severity group, each ranked by its worst
+        AND-member. Returns the chosen group and its verdict, or (None, None) when nothing is readable."""
+        candidates: list[tuple[int, list[str], dict[str, Any] | None]] = []
+
+        for and_group in readable_groups:
+            evaluated: list[tuple[int, dict[str, Any] | None]] = []
             for lic_id in and_group:
-                normalized = normalizer.normalize_license(lic_id)
-                license_info = LICENSE_DATABASE.get(normalized)
-                if not license_info:
-                    continue
-
                 issue = evaluator.evaluate_license(
                     component=comp_name,
                     version=comp_version,
-                    license_info=license_info,
+                    license_info=LICENSE_DATABASE[normalizer.normalize_license(lic_id)],
                     lic_url=None,
                     purl=comp_purl,
                     policy=policy,
                 )
-                rank = SEVERITY_RANK.get(issue["severity"] if issue else None, 0)
-                if rank > worst_rank:
-                    worst_rank = rank
-                    worst_issue = issue
+                evaluated.append((SEVERITY_RANK[issue["severity"] if issue else None], issue))
+            worst_rank, worst_issue = max(evaluated, key=lambda pair: pair[0])
+            candidates.append((worst_rank, and_group, worst_issue))
 
-            if worst_rank < best_severity_rank:
-                best_severity_rank = worst_rank
-                best_issue = worst_issue
-
-        return best_issue
+        if not candidates:
+            return None, None
+        _, best_group, best_issue = min(candidates, key=lambda candidate: candidate[0])
+        return best_group, best_issue
