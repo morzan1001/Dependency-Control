@@ -1,7 +1,12 @@
 from collections import defaultdict
 from typing import Any
 
-from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, OS_PACKAGE_TYPES
+from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
+    DETAILS_KEY_KEV_RANSOMWARE,
+    EPSS_HIGH_THRESHOLD,
+    OS_PACKAGE_TYPES,
+)
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
@@ -14,7 +19,12 @@ from app.services.recommendation.common import (
     finding_cve_ids,
     get_attr,
     sample_components,
+    sampled,
 )
+
+# Evidence samples inside the update action; each is paired with its population by `sampled`.
+_CVES_SAMPLED = 10
+_MARKED_CVES_SAMPLED = 5
 
 _CVE_PREFIX = "CVE-"
 # Shown where a finding names no advisory at all; VulnerabilityInfo.cve_id is not optional.
@@ -356,9 +366,13 @@ def _build_direct_recommendation(
             "package": component,
             "current_version": current_version,
             "target_version": best_fix,
-            "cves": stats["cves"][:10],
-            "kev_cves": [v.cve_id for v in component_vulns if v.is_kev][:5],
-            "high_epss_cves": [v.cve_id for v in component_vulns if v.epss_score and v.epss_score >= 0.1][:5],
+            **sampled("cves", stats["cves"], _CVES_SAMPLED),
+            **sampled("kev_cves", [v.cve_id for v in component_vulns if v.is_kev], _MARKED_CVES_SAMPLED),
+            **sampled(
+                "high_epss_cves",
+                [v.cve_id for v in component_vulns if v.epss_score and v.epss_score >= EPSS_HIGH_THRESHOLD],
+                _MARKED_CVES_SAMPLED,
+            ),
         },
         effort="low",
     )

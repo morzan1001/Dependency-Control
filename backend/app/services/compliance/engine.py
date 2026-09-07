@@ -60,8 +60,9 @@ class ComplianceReportEngine:
             else:
                 evaluation = framework.evaluate(inputs)
             # Every framework builds its own FrameworkEvaluation, so the engine is the one place
-            # that can guarantee no renderer receives a verdict without its coverage.
-            evaluation.coverage = inputs.coverage
+            # that can guarantee no renderer receives a verdict without its coverage. A framework
+            # bounded by an input the engine does not gather widens it and keeps its own.
+            evaluation.coverage = evaluation.coverage or inputs.coverage
             artifact_bytes, filename, mime = self._render(
                 report.format,
                 framework,

@@ -12,12 +12,25 @@ from app.schemas.recommendation import (
 )
 from app.services.aggregation.components import build_component_index, lookup_component
 from app.services.recommendation.common import (
+    ACTION_VERSION_SAMPLE,
     ModelOrDict,
     get_attr,
-    parse_version_tuple,
+    newest_first,
     sample_components,
+    sampled,
     scorecard_details,
 )
+
+# Advisories named per risky package, and packages detailed in the replace action; each is
+# paired with its population by `sampled` or by an explicit total.
+_RISKY_PACKAGE_CVES_SAMPLED = 3
+_RISKY_PACKAGES_SAMPLED = 10
+
+
+def _advisories(details: Any) -> list[dict[str, Any]]:
+    if not isinstance(details, dict):
+        return []
+    return [v for v in details.get("vulnerabilities") or [] if isinstance(v, dict)]
 
 
 def correlate_scorecard_with_vulnerabilities(
@@ -73,10 +86,11 @@ def correlate_scorecard_with_vulnerabilities(
                     "vuln_severity": severity,
                     "scorecard_score": score,
                     "unmaintained": is_unmaintained,
-                    "cves": [
-                        v.get("id")
-                        for v in (vf_details.get("vulnerabilities", []) if isinstance(vf_details, dict) else [])[:3]
-                    ],
+                    **sampled(
+                        "cves",
+                        [v.get("id") for v in _advisories(vf_details)],
+                        _RISKY_PACKAGE_CVES_SAMPLED,
+                    ),
                     "project_url": scorecard.get("project_url"),
                 }
             )
@@ -123,10 +137,12 @@ def correlate_scorecard_with_vulnerabilities(
                             "scorecard_score": v["scorecard_score"],
                             "unmaintained": v["unmaintained"],
                             "cves": v["cves"],
+                            "cves_total": v["cves_total"],
                             "project_url": v["project_url"],
                         }
-                        for v in high_risk_vulns[:10]
+                        for v in high_risk_vulns[:_RISKY_PACKAGES_SAMPLED]
                     ],
+                    "packages_total": len(high_risk_vulns),
                     "steps": [
                         "1. PRIORITY: Find and migrate to actively maintained alternatives",
                         "2. If no alternative exists, evaluate forking the package",
@@ -151,12 +167,11 @@ def _build_cve_project_map(projects: list[dict[str, Any]]) -> dict[str, list[str
     return cve_project_map
 
 
-# Versions named per package in the standardize_versions action; version_count carries the total.
-_ACTION_VERSION_SAMPLE = 5
-
-
-def _newest_first(versions: list[Any]) -> list[str]:
-    return sorted((str(v) for v in versions), key=parse_version_tuple, reverse=True)
+# Projects named per shared CVE; total_affected carries the population.
+_AFFECTED_PROJECTS_SAMPLED = 5
+# Packages the two cross-project cards detail, paired with a packages_total.
+_WIDESPREAD_CVES_SAMPLED = 5
+_INCONSISTENT_PACKAGES_SAMPLED = 10
 
 
 def analyze_cross_project_patterns(
@@ -218,11 +233,12 @@ def analyze_cross_project_patterns(
                     "cves": [
                         {
                             "cve": c["cve"],
-                            "affected_projects": cast(list, c["projects"])[:5],
+                            "affected_projects": cast(list, c["projects"])[:_AFFECTED_PROJECTS_SAMPLED],
                             "total_affected": c["count"],
                         }
-                        for c in widespread_cves[:5]
+                        for c in widespread_cves[:_WIDESPREAD_CVES_SAMPLED]
                     ],
+                    "cves_total": len(widespread_cves),
                     "suggestion": "Consider creating a shared fix or updating your project templates",
                 },
                 effort="medium",
@@ -264,13 +280,14 @@ def analyze_cross_project_patterns(
                             "name": p["name"],
                             # $addToSet has no order, so rank before sampling: the newest versions
                             # are the ones a reader standardising on one needs to see.
-                            "versions": _newest_first(p["versions"])[:_ACTION_VERSION_SAMPLE],
+                            "versions": newest_first(p["versions"])[:ACTION_VERSION_SAMPLE],
                             "version_count": p["version_count"],
-                            "suggestion": _newest_first(p["versions"])[0],
+                            "suggestion": newest_first(p["versions"])[0],
                             "project_count": p["project_count"],
                         }
-                        for p in inconsistent_packages[:10]
+                        for p in inconsistent_packages[:_INCONSISTENT_PACKAGES_SAMPLED]
                     ],
+                    "packages_total": len(inconsistent_packages),
                     "suggestions": [
                         "Create a shared package.json or requirements.txt template",
                         "Use a monorepo with shared dependencies",

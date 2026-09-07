@@ -6,6 +6,11 @@ from app.schemas.recommendation import (
 )
 from app.services.recommendation.common import ModelOrDict, get_attr, sample_components
 
+# Chains detailed in the action, and parents previewed per chain; each is paired with the
+# population it was taken from.
+_DEEPEST_CHAINS_SAMPLED = 5
+_PARENTS_SAMPLED = 3
+
 
 def analyze_deep_dependency_chains(
     dependencies: list[ModelOrDict], max_dependency_depth: int = 8
@@ -134,7 +139,7 @@ def analyze_deep_dependency_chains(
                     "name": get_attr(dep, "name"),
                     "version": get_attr(dep, "version"),
                     "depth": depth,
-                    "parents": get_attr(dep, "parent_components", [])[:3],
+                    "parents": get_attr(dep, "parent_components", []) or [],
                 }
             )
 
@@ -176,10 +181,12 @@ def analyze_deep_dependency_chains(
                         {
                             "package": d["name"],
                             "depth": d["depth"],
-                            "chain_preview": " → ".join(d["parents"][:3]),
+                            "chain_preview": " → ".join(d["parents"][:_PARENTS_SAMPLED]),
+                            "parents_total": len(d["parents"]),
                         }
-                        for d in deep_deps[:5]
+                        for d in deep_deps[:_DEEPEST_CHAINS_SAMPLED]
                     ],
+                    "deepest_chains_total": len(deep_deps),
                 },
                 effort="high",
             )

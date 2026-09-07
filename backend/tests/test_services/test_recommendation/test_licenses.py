@@ -221,6 +221,9 @@ class TestProcessLicensesPriorityLow:
 
 # --- License Drift Detection ---
 
+_BARE_NAME = "jackson-databind"
+_QUALIFIED_NAME = "com.fasterxml.jackson.core:jackson-databind"
+
 
 def _drift_finding(component, version, license_name, category="permissive"):
     return {
@@ -273,3 +276,20 @@ class TestDetectLicenseDrift:
         assert "lodash" in result[0].affected_components[0]
         assert "MIT" in result[0].affected_components[0]
         assert "GPL-3.0" in result[0].affected_components[0]
+
+    def test_a_requalified_component_is_still_matched_against_its_previous_licence(self):
+        """Scanners disagree on how far a package name is qualified; an unfolded key makes the
+        previous licence unfindable, so a real drift reads as no drift."""
+        prev = [_drift_finding(_BARE_NAME, "2.13.0", "Apache-2.0", "permissive")]
+        curr = [_drift_finding(_QUALIFIED_NAME, "2.13.0", "GPL-3.0", "strong_copyleft")]
+
+        result = detect_license_drift(curr, prev)
+
+        assert len(result) == 1
+        assert result[0].priority == Priority.HIGH
+
+    def test_two_different_packages_are_not_folded_together(self):
+        prev = [_drift_finding("lodash", "1.0", "MIT", "permissive")]
+        curr = [_drift_finding("underscore", "1.0", "GPL-3.0", "strong_copyleft")]
+
+        assert detect_license_drift(curr, prev) == []

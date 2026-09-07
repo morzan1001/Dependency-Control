@@ -12,10 +12,11 @@ from app.schemas.recommendation import (
     RecommendationType,
 )
 from app.services.recommendation.common import (
+    ACTION_VERSION_SAMPLE,
     AFFECTED_COMPONENTS_SHOWN,
     ModelOrDict,
     get_attr,
-    parse_version_tuple,
+    newest_first,
     sample_components,
 )
 
@@ -195,12 +196,15 @@ def analyze_version_fragmentation(
                     "packages": [
                         {
                             "name": f["name"],
-                            "versions": f["versions"][:5],
+                            # A set has no order, so rank before sampling: the newest versions are
+                            # what a reader pinning to one needs to see.
+                            "versions": newest_first(f["versions"])[:ACTION_VERSION_SAMPLE],
                             "version_count": f["count"],
-                            "suggestion": f"Pin to {max(f['versions'], key=lambda v: parse_version_tuple(v))}",
+                            "suggestion": f"Pin to {newest_first(f['versions'])[0]}",
                         }
                         for f in top_fragmented
                     ],
+                    "packages_total": len(significant_fragmented),
                     "commands": [
                         "# For npm: npm dedupe",
                         "# For yarn: yarn dedupe",

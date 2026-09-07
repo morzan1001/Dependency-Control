@@ -1,10 +1,19 @@
 """The ad-hoc HTML report escapes untrusted SBOM content and hides no input from the reader."""
 
+import pytest
+from jinja2 import UndefinedError
 from markupsafe import escape
 
 from app.schemas.adhoc import AdhocAnalyzeResponse, AdhocTruncation, AnalyzerReport
 from app.services.analysis.adhoc import _STAGE_NOTES
-from app.services.analysis.adhoc_report import _FINDING_ROW_CAP, _RECOMMENDATION_ROW_CAP, render_adhoc_html
+from app.services.analysis.adhoc_report import (
+    _DERIVED_FIELDS,
+    _ENV,
+    _FINDING_ROW_CAP,
+    _RECOMMENDATION_ROW_CAP,
+    render_adhoc_html,
+    report_context,
+)
 
 _HOSTILE_COMPONENT = "<script>alert('xss')</script>"
 _HOSTILE_DESCRIPTION = "<img src=x onerror=alert(1)>"
@@ -190,3 +199,29 @@ def test_a_hostile_severity_cannot_escape_its_class_attribute():
 
 def test_empty_result_renders():
     assert "<!DOCTYPE html>" in render_adhoc_html(AdhocAnalyzeResponse())
+
+
+def test_every_response_field_reaches_the_template():
+    """Hand-listing the render arguments let a schema field be added without the report showing
+    it, and renamed without the report noticing."""
+    context = report_context(AdhocAnalyzeResponse())
+
+    unreached = {
+        name for name in AdhocAnalyzeResponse.model_fields if name not in _DERIVED_FIELDS and name not in context
+    }
+
+    assert unreached == set()
+
+
+def test_a_derived_field_is_still_presented_under_a_name_of_its_own():
+    context = report_context(AdhocAnalyzeResponse())
+
+    assert {f"{name}_total" for name in _DERIVED_FIELDS} <= set(context)
+
+
+def test_a_template_name_the_context_does_not_carry_raises():
+    """Rendering an unknown name as empty is how a report silently loses a section."""
+    template = _ENV.from_string("{{ epss_kev_summary }}{{ a_name_that_does_not_exist }}")
+
+    with pytest.raises(UndefinedError):
+        template.render(**report_context(AdhocAnalyzeResponse()))

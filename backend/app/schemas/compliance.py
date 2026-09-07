@@ -102,10 +102,13 @@ class EvaluationCoverage(BaseModel):
 
     findings: InputCoverage
     crypto_assets: InputCoverage
+    # Set only by a framework that builds one control per row of a bounded plan.
+    plan_items: InputCoverage | None = None
 
     @property
     def complete(self) -> bool:
-        return self.findings.complete and self.crypto_assets.complete
+        plan_complete = self.plan_items is None or self.plan_items.complete
+        return self.findings.complete and self.crypto_assets.complete and plan_complete
 
 
 class FrameworkEvaluation(BaseModel):

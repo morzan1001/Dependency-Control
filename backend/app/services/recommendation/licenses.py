@@ -2,6 +2,7 @@ from collections import defaultdict
 from typing import Any
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
+from app.services.aggregation.components import extract_artifact_name
 from app.services.recommendation.common import ModelOrDict, get_attr, name_some, sample_components
 
 _LICENSES_NAMED = 5
@@ -83,7 +84,10 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
 
 
 def _license_key(f: ModelOrDict) -> str:
-    return f"{get_attr(f, 'component', '')}@{get_attr(f, 'version', '')}"
+    """Drift is about the licence, so the key stays component-shaped — but scanners disagree on
+    how far a package name is qualified, and an unfolded name makes the previous licence
+    unfindable, which reads as no drift."""
+    return f"{extract_artifact_name(get_attr(f, 'component', '') or '')}@{get_attr(f, 'version', '')}"
 
 
 def _license_info(f: ModelOrDict) -> dict[str, Any]:

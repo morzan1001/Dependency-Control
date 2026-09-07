@@ -38,6 +38,8 @@ def coverage_statement(coverage: EvaluationCoverage | None) -> str | None:
         _input_statement(coverage.findings, "findings"),
         _input_statement(coverage.crypto_assets, "crypto assets"),
     ]
+    if coverage.plan_items is not None:
+        parts.append(_input_statement(coverage.plan_items, "migration plan items"))
     if not coverage.complete:
         parts.append(_WITHHELD_EXPLANATION)
     return " ".join(parts)

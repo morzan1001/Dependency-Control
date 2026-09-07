@@ -123,6 +123,17 @@ _WRONG_SHAPED_ENTRIES = [
         {"findings": [{"check_id": "python.rule.0", "path": _SECRET_FILE, "start": {"line": 1}}]},
         "end",
     ),
+    # Bearer groups its findings under a severity key, so the entry check has to reach inside it.
+    (
+        "bearer",
+        {"findings": {"critical": [{"detector": "AWS", "raw": "AKIAIOSFODNN7EXAMPLE"}]}},
+        "id",
+    ),
+    (
+        "bearer",
+        {"findings": [{"detector": "AWS", "raw": "AKIAIOSFODNN7EXAMPLE"}]},
+        "id",
+    ),
 ]
 
 # Shapes a caller reaches this endpoint with by accident: an error body, a wrapper around the

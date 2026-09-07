@@ -39,6 +39,15 @@ def sample_components(components: Iterable[str]) -> tuple[list[str], int]:
     return unique[:AFFECTED_COMPONENTS_SHOWN], len(unique)
 
 
+def sampled(name: str, values: Sequence[Any], cap: int) -> dict[str, Any]:
+    """A sample of `values` under `name`, alongside how many there are under "<name>_total".
+
+    Evidence inside an ``action`` block is read as the whole of what a card found; the population
+    is what tells a reader that the list they are acting on is a sample of it.
+    """
+    return {name: list(values[:cap]), f"{name}_total": len(values)}
+
+
 def take_top(candidates: Sequence[Any], cap: int) -> list[tuple[int, Any, int]]:
     """The highest-ranked `cap` candidates as (rank, candidate, population).
 
@@ -115,6 +124,16 @@ def parse_version_tuple(version: str) -> tuple:
     """Naive numeric tuple — sufficient for picking the highest of a candidate list."""
     parts = re.findall(r"\d+", version)
     return tuple(int(p) for p in parts)
+
+
+# Versions named per package inside an action block; version_count carries the population.
+ACTION_VERSION_SAMPLE = 5
+
+
+def newest_first(versions: Iterable[Any]) -> list[str]:
+    """Versions ranked newest first. A set-derived list carries no order of its own, so a sample
+    taken off one is a different five between runs."""
+    return sorted((str(v) for v in versions), key=parse_version_tuple, reverse=True)
 
 
 def calculate_best_fix_version(versions: list[str]) -> str:

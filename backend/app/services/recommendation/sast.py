@@ -1,7 +1,10 @@
 from collections import defaultdict
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import ModelOrDict, get_attr, sample_components
+from app.services.recommendation.common import ModelOrDict, get_attr, sample_components, sampled
+
+# Rules named per category card; `sampled` pairs the sample with its population.
+_RULES_SAMPLED = 10
 
 
 def _sast_entries(details: ModelOrDict) -> list[dict]:
@@ -101,7 +104,7 @@ def process_sast(findings: list[ModelOrDict]) -> list[Recommendation]:
                     "category": category,
                     "files": files_shown,
                     "files_total": files_total,
-                    "rules": list(rule_ids)[:10],
+                    **sampled("rules", sorted(rule_ids), _RULES_SAMPLED),
                 },
                 effort="medium" if len(cat_findings) < 10 else "high",
             )

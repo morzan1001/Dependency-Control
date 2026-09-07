@@ -55,6 +55,9 @@ _ASSET_CAP = 10000
 _ASSETS_IN_SCOPE = 10001
 _ASSETS_MISSING = _ASSETS_IN_SCOPE - _ASSET_CAP
 _WITHHELD_STATEMENT = "would have rested on finding no match in a capped input"
+_PLAN_ITEMS_EVALUATED = 1000
+_PLAN_ITEMS_IN_SCOPE = 4200
+_PLAN_ITEM_STATEMENT = f"Evaluated {_PLAN_ITEMS_EVALUATED} of {_PLAN_ITEMS_IN_SCOPE} migration plan items"
 
 
 def _findings_coverage(evaluated: int) -> InputCoverage:
@@ -77,6 +80,14 @@ def _complete() -> EvaluationCoverage:
     return EvaluationCoverage(
         findings=_findings_coverage(_IN_SCOPE),
         crypto_assets=_assets_coverage(_ASSETS_IN_SCOPE),
+    )
+
+
+def _plan_items_coverage() -> InputCoverage:
+    return InputCoverage(
+        evaluated=_PLAN_ITEMS_EVALUATED,
+        in_scope=_PLAN_ITEMS_IN_SCOPE,
+        limit=_PLAN_ITEMS_EVALUATED,
     )
 
 
@@ -186,6 +197,58 @@ async def test_the_engine_hands_coverage_to_the_renderer_and_to_the_stored_repor
 
     assert rendered["coverage"] == _partial()
     assert update_status.call_args_list[-1].kwargs["coverage"] == _partial()
+
+
+@pytest.mark.asyncio
+async def test_a_framework_bounded_by_its_own_input_keeps_the_coverage_it_built():
+    """The PQC framework builds one control per plan item, a bound the engine cannot see; a
+    blanket overwrite would drop the only record that the control list is a cut."""
+    report = _report()
+    report.framework = ReportFramework.NIST_SP_800_131A
+    inputs = EvaluationInput(
+        resolved=ResolvedScope(scope="project", scope_id=_PROJECT, project_ids=[_PROJECT]),
+        scope_description=f"project '{_PROJECT}'",
+        crypto_assets=[],
+        findings=[],
+        policy_rules=[],
+        policy_version=1,
+        iana_catalog_version=2,
+        scan_ids=[_SCAN],
+        coverage=_complete(),
+    )
+    widened = _complete().model_copy(update={"plan_items": _plan_items_coverage()})
+    evaluation = _evaluation_with(widened)
+    framework = MagicMock(spec=["evaluate"])
+    framework.evaluate = MagicMock(return_value=evaluation)
+    engine = ComplianceReportEngine()
+    rendered: dict = {}
+
+    def capture_render(fmt, fw, ev, rep):
+        rendered["coverage"] = ev.coverage
+        return b"{}", "x.json", "application/json"
+
+    with (
+        patch(
+            "app.services.compliance.engine.ComplianceReportRepository",
+            return_value=MagicMock(update_status=AsyncMock()),
+        ),
+        patch(
+            "app.services.compliance.engine.ScopeResolver",
+            return_value=MagicMock(resolve=AsyncMock(return_value=inputs.resolved)),
+        ),
+        patch.dict(
+            "app.services.compliance.engine.FRAMEWORK_REGISTRY",
+            {ReportFramework.NIST_SP_800_131A: framework},
+            clear=False,
+        ),
+        patch.object(engine, "_gather_inputs", new=AsyncMock(return_value=inputs)),
+        patch.object(engine, "_render", side_effect=capture_render),
+        patch.object(engine, "_store_artifact", new=AsyncMock(return_value="gs-1")),
+    ):
+        await engine.generate(report=report, db=MagicMock(), user=MagicMock(id="u1", permissions=frozenset()))
+
+    assert rendered["coverage"].plan_items == _plan_items_coverage()
+    assert _PLAN_ITEM_STATEMENT in (coverage_statement(rendered["coverage"]) or "")
 
 
 def test_the_partial_statement_names_the_verdicts_it_withholds():

@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.schemas.compliance import ReportFramework
+from app.schemas.compliance import EvaluationCoverage, InputCoverage, ReportFramework
 from app.schemas.pqc_migration import (
     MigrationItem,
     MigrationItemStatus,
@@ -17,7 +17,12 @@ from app.services.compliance.frameworks.pqc_migration_plan import (
 )
 
 
-def _input(db=None):
+_COMPLETE_INPUT = InputCoverage(evaluated=0, in_scope=0, limit=1)
+_PLAN_ITEMS_BUILT = 2
+_ITEMS_IN_SCOPE = 4200
+
+
+def _input(db=None, coverage=None):
     return EvaluationInput(
         resolved=ResolvedScope(scope="user", scope_id=None, project_ids=["p"]),
         scope_description="user",
@@ -28,10 +33,11 @@ def _input(db=None):
         iana_catalog_version=1,
         scan_ids=["s1"],
         db=db,
+        coverage=coverage,
     )
 
 
-def _plan():
+def _plan(total_items=_PLAN_ITEMS_BUILT, items_returned=_PLAN_ITEMS_BUILT):
     return MigrationPlanResponse(
         scope="user",
         scope_id=None,
@@ -67,13 +73,48 @@ def _plan():
             ),
         ],
         summary=MigrationPlanSummary(
-            total_items=2,
-            items_returned=2,
+            total_items=total_items,
+            items_returned=items_returned,
             status_counts={"migrate_now": 1, "monitor": 1},
             earliest_deadline=None,
         ),
         mappings_version=1,
     )
+
+
+def _engine_coverage():
+    return EvaluationCoverage(findings=_COMPLETE_INPUT, crypto_assets=_COMPLETE_INPUT)
+
+
+async def _evaluate(plan, coverage=None):
+    with patch(
+        "app.services.compliance.frameworks.pqc_migration_plan.PQCMigrationPlanGenerator",
+    ) as gen_cls:
+        gen_cls.return_value = MagicMock(generate=AsyncMock(return_value=plan))
+        return await PQCMigrationPlanFramework().evaluate_async(_input(db=MagicMock(), coverage=coverage))
+
+
+@pytest.mark.asyncio
+async def test_a_control_list_cut_at_the_plan_ceiling_says_what_it_left_out():
+    """One control per plan item, so past the ceiling the control list and the plan summary
+    disagree with nothing to say which is right."""
+    plan = _plan(total_items=_ITEMS_IN_SCOPE, items_returned=_PLAN_ITEMS_BUILT)
+
+    result = await _evaluate(plan, coverage=_engine_coverage())
+
+    assert result.coverage is not None
+    assert result.coverage.plan_items is not None
+    assert result.coverage.plan_items.in_scope == _ITEMS_IN_SCOPE
+    assert result.coverage.plan_items.evaluated == _PLAN_ITEMS_BUILT
+    assert result.coverage.complete is False
+
+
+@pytest.mark.asyncio
+async def test_a_complete_plan_reports_complete_coverage():
+    result = await _evaluate(_plan(), coverage=_engine_coverage())
+
+    assert result.coverage is not None
+    assert result.coverage.complete is True
 
 
 def test_framework_identity():

@@ -22,6 +22,7 @@ from app.models.match_signature import MatchSignature
 from app.models.system import SystemSettings
 from app.models.waiver import Waiver
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse, AdhocTruncation, AnalyzerReport
+from app.schemas.bearer import BearerFinding
 from app.schemas.kics import KicsQuery
 from app.schemas.opengrep import OpenGrepFinding
 from app.schemas.projections import CallgraphMinimal
@@ -69,19 +70,22 @@ _UNRECOGNISED_PAYLOAD = "unrecognised payload shape: expected {keys}"
 
 # The top-level key each normalizer reads. A payload carrying none of them is a shape the
 # pipeline cannot read, which must not be reported as coverage over zero findings.
+_BEARER = "bearer"
+
 _SCANNER_RESULT_KEYS: dict[str, tuple[str, ...]] = {
     "trufflehog": ("findings",),
     "opengrep": ("findings", "results"),
-    "bearer": ("findings",),
+    _BEARER: ("findings",),
     "kics": ("queries",),
 }
 
-# The typed entry the ingest routes validate each scanner's list against. An entry the
-# normalizer cannot read contributes no finding, which must not be reported as coverage.
-# Bearer is absent because its ingest model types the container and not the entries.
+# The typed entry each scanner's list is validated against. An entry the normalizer cannot
+# read contributes no finding, or a placeholder one naming no rule and no file, and neither may
+# be reported as coverage.
 _SCANNER_ENTRY_MODELS: dict[str, type[BaseModel]] = {
     "trufflehog": TruffleHogFinding,
     "opengrep": OpenGrepFinding,
+    _BEARER: BearerFinding,
     "kics": KicsQuery,
 }
 _UNREADABLE_ENTRIES = "{unreadable} of {total} '{key}' entries could not be read ({reason})"
@@ -241,11 +245,24 @@ def _evidence_entries(component: dict[str, Any]) -> int:
     return total + (len(occurrences) if isinstance(occurrences, list) else 0)
 
 
+def _posted_entries(name: str, payload: dict[str, Any], key: str) -> list[Any] | None:
+    """The entry list under `key`, or None when the payload carries no readable list there.
+
+    Bearer groups its findings under a severity key, so the normalizer's own flattening has to
+    be mirrored here or its entries would be neither counted nor validated."""
+    container = payload.get(key)
+    if isinstance(container, list):
+        return container
+    if name == _BEARER and isinstance(container, dict):
+        return [entry for items in container.values() if isinstance(items, list) for entry in items]
+    return None
+
+
 def _posted_finding_count(name: str, payload: dict[str, Any]) -> int:
     total = 0
     for key in _SCANNER_RESULT_KEYS[name]:
-        items = payload.get(key)
-        if not isinstance(items, list):
+        items = _posted_entries(name, payload, key)
+        if items is None:
             continue
         total += len(items)
         # KICS nests one entry per hit inside the query that produced it.
@@ -450,8 +467,8 @@ def _entry_shortfall(name: str, payload: dict[str, Any]) -> str | None:
     if model is None:
         return None
     for key in _SCANNER_RESULT_KEYS[name]:
-        entries = payload.get(key)
-        if not isinstance(entries, list) or not entries:
+        entries = _posted_entries(name, payload, key)
+        if not entries:
             continue
         unreadable = 0
         first_reason = ""
