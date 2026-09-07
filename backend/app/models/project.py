@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.constants import PROJECT_ROLE_VIEWER, PROJECT_ROLES
+from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, PROJECT_ROLE_VIEWER, PROJECT_ROLES
 from app.core.notification_prefs import sanitize_notification_preferences
 from app.models.base import CreatedAtModel
 from app.models.finding import Finding
@@ -40,7 +40,7 @@ class Project(MongoDocument, CreatedAtModel):
     team_source: Literal["gitlab", "manual"] | None = None
     members: list[ProjectMember] = Field(default_factory=list)
     api_key_hash: str | None = Field(None, exclude=True)
-    active_analyzers: list[str] = Field(default_factory=lambda: ["trivy", "osv", "license_compliance", "end_of_life"])
+    active_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))
     stats: Stats | None = None
     last_scan_at: datetime | None = None
     latest_scan_id: str | None = None

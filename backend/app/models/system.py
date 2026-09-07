@@ -1,5 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.constants import DEFAULT_ACTIVE_ANALYZERS
+
 
 class SystemSettings(BaseModel):
     id: str = Field(default="current", validation_alias="_id", serialization_alias="_id")
@@ -75,7 +77,7 @@ class SystemSettings(BaseModel):
     global_rescan_interval: int = 24  # Hours
 
     # Default Analyzers for auto-created projects
-    default_active_analyzers: list[str] = ["trivy", "osv", "license_compliance", "end_of_life"]
+    default_active_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))
 
     # Retention
     retention_mode: str = "project"  # "project" or "global"

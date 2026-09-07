@@ -354,6 +354,17 @@ TYPOSQUATTING_SIMILARITY_THRESHOLD: float = 0.82
 # because a name similar to a package below it is not flagged.
 TYPOSQUATTING_POPULAR_PACKAGE_RANKS: int = 5000
 
+# Analyzers a project runs unless it overrides them. epss_kev is the only caller of the
+# enrichment service, so without it a scan writes no in_kev, epss_score or enrichment
+# risk_score and every surface reading those reports zero.
+DEFAULT_ACTIVE_ANALYZERS: tuple[str, ...] = (
+    "trivy",
+    "osv",
+    "license_compliance",
+    "end_of_life",
+    "epss_kev",
+)
+
 # Analyzer batch sizes for API rate limiting
 ANALYZER_BATCH_SIZES: dict[str, int] = {
     "osv": 500,

@@ -1,6 +1,6 @@
 """Tests for Project, Scan, and AnalysisResult models."""
 
-from app.core.constants import PROJECT_ROLE_VIEWER
+from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, PROJECT_ROLE_VIEWER
 from app.models.project import AnalysisResult, Project, ProjectMember, Scan
 
 
@@ -13,7 +13,7 @@ class TestProjectModel:
     def test_defaults(self):
         project = Project(name="test", owner_id="user-1")
         assert project.retention_days == 90
-        assert project.active_analyzers == ["trivy", "osv", "license_compliance", "end_of_life"]
+        assert project.active_analyzers == list(DEFAULT_ACTIVE_ANALYZERS)
         assert project.members == []
         assert project.stats is None
         assert project.team_id is None
