@@ -154,6 +154,28 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"],
         logger.exception("Failed to bulk carry over external results: %s", e)
 
 
+async def _carry_over_crypto_assets(scan_id: str, scan_doc: Optional["Scan"], db: Database) -> None:
+    """Re-key the original scan's crypto assets onto a rescan.
+
+    A CBOM posted to /ingest/cbom is not stored in GridFS, so a rescan cannot re-derive the assets
+    it described and every crypto surface would read the rescan as having no cryptography at all.
+    """
+    if not (scan_doc and scan_doc.is_rescan and scan_doc.original_scan_id and scan_doc.project_id):
+        return
+
+    from app.repositories.crypto_asset import CryptoAssetRepository
+
+    try:
+        carried = await CryptoAssetRepository(db).carry_over_to_scan(
+            scan_doc.project_id, scan_doc.original_scan_id, scan_id
+        )
+    except Exception as e:
+        logger.exception("Failed to carry over crypto assets to rescan %s: %s", scan_id, e)
+        return
+    if carried:
+        logger.info("Carried over %d crypto assets from %s to rescan %s", carried, scan_doc.original_scan_id, scan_id)
+
+
 # Analyzer result keys reporting incomplete coverage, with how to phrase each.
 _PARTIAL_RESULT_KEYS: tuple[tuple[str, str], ...] = (
     ("partial_components_skipped", "{count} component(s) were not scanned"),
@@ -1191,7 +1213,9 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
     if scan_doc.is_rescan and analysis_rescan_operations_total:
         analysis_rescan_operations_total.inc()
 
+    # Before the SBOM loop: an embedded CBOM re-persists over the carried copy of the same asset.
     await _carry_over_external_results(scan_id, scan_doc, db)
+    await _carry_over_crypto_assets(scan_id, scan_doc, db)
 
     settings_repo = SystemSettingsRepository(db)
     system_settings = await settings_repo.get()

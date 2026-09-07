@@ -5,7 +5,7 @@ from typing import Any
 
 from pymongo import UpdateOne
 
-from app.core.constants import CRYPTO_ASSET_BULK_CHUNK_SIZE
+from app.core.constants import CRYPTO_ASSET_BULK_CHUNK_SIZE, MAX_CRYPTO_ASSETS_PER_SCAN
 from app.core.metrics import track_db_operation
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.base import BaseRepository
@@ -61,6 +61,25 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
                 await self.collection.bulk_write(ops, ordered=False)
             total += len(ops)
         return total
+
+    async def carry_over_to_scan(
+        self,
+        project_id: str,
+        from_scan_id: str,
+        to_scan_id: str,
+        limit: int = MAX_CRYPTO_ASSETS_PER_SCAN,
+    ) -> int:
+        """Re-key one scan's assets onto another. Assets ingested through /ingest/cbom have no
+        stored SBOM to re-derive them from, so a rescan reports none unless they are copied.
+
+        Upserts on (project_id, scan_id, bom_ref), so an asset the rescan does re-derive from an
+        embedded CBOM overwrites the carried copy rather than duplicating it.
+        """
+        with track_db_operation(self.collection_name, "find"):
+            cursor = self.collection.find({"project_id": project_id, "scan_id": from_scan_id}).limit(limit)
+            docs = await cursor.to_list(length=limit)
+        assets = [CryptoAsset.model_validate({**doc, "scan_id": to_scan_id}) for doc in docs]
+        return await self.bulk_upsert(project_id, to_scan_id, assets)
 
     async def list_by_scan(
         self,
