@@ -6,11 +6,21 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pymongo import ReadPreference, ReturnDocument
 
+from app.core.constants import PROJECT_ROLE_ADMIN
 from app.core.metrics import track_db_operation
 from app.models.project import Project
 from app.schemas.projections import ProjectMinimal, ProjectWithScanId
 
 _COL = "projects"
+_MEMBERS_USER_ID = "members.user_id"
+
+
+def _surviving_admin_filter(user_id: str, required: bool) -> dict[str, Any]:
+    """Match only while a member other than ``user_id`` is an admin, so a write that would take
+    the last one finds nothing to write to instead of racing a count from an earlier read."""
+    if not required:
+        return {}
+    return {"members": {"$elemMatch": {"user_id": {"$ne": user_id}, "role": PROJECT_ROLE_ADMIN}}}
 
 
 class ProjectRepository:
@@ -201,22 +211,41 @@ class ProjectRepository:
             result = await self.collection.update_many(query, {"$set": update_data})
         return result.modified_count
 
-    async def add_member(self, project_id: str, member_data: dict[str, Any]) -> None:
-        await self.collection.update_one({"_id": project_id}, {"$push": {"members": member_data}})
+    async def add_member(self, project_id: str, member_data: dict[str, Any]) -> bool:
+        """False when the user is already a member; the filter decides, not an earlier read."""
+        result = await self.collection.update_one(
+            {"_id": project_id, _MEMBERS_USER_ID: {"$ne": member_data["user_id"]}},
+            {"$push": {"members": member_data}},
+        )
+        return bool(result.matched_count)
 
-    async def remove_member(self, project_id: str, user_id: str) -> None:
-        await self.collection.update_one({"_id": project_id}, {"$pull": {"members": {"user_id": user_id}}})
+    async def remove_member(self, project_id: str, user_id: str, *, require_another_admin: bool = False) -> bool:
+        """False when require_another_admin holds and no other member is an admin."""
+        result = await self.collection.update_one(
+            {"_id": project_id, **_surviving_admin_filter(user_id, require_another_admin)},
+            {"$pull": {"members": {"user_id": user_id}}},
+        )
+        return bool(result.matched_count)
 
-    async def update_member(self, project_id: str, user_id: str, member_fields: dict[str, Any]) -> None:
+    async def update_member(
+        self,
+        project_id: str,
+        user_id: str,
+        member_fields: dict[str, Any],
+        *,
+        require_another_admin: bool = False,
+    ) -> bool:
         """member_fields are plain member field names, e.g. {'role': 'admin'}.
 
         The member is addressed by identity because a concurrent $pull shifts array indices.
+        False when require_another_admin holds and no other member is an admin.
         """
-        await self.collection.update_one(
-            {"_id": project_id},
+        result = await self.collection.update_one(
+            {"_id": project_id, **_surviving_admin_filter(user_id, require_another_admin)},
             {"$set": {f"members.$[m].{field}": value for field, value in member_fields.items()}},
             array_filters=[{"m.user_id": user_id}],
         )
+        return bool(result.matched_count)
 
     async def iterate(
         self, query: dict[str, Any] | None = None, projection: dict[str, int] | None = None

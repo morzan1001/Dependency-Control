@@ -76,7 +76,6 @@ from app.api.v1.helpers.teams import (
     check_team_access,
     enrich_team_with_usernames,
     fetch_and_enrich_team,
-    find_member_in_team,
     get_member_role,
     get_team_with_access,
 )
@@ -149,7 +148,6 @@ __all__ = [
     "extract_slack_tokens",
     "fetch_and_enrich_team",
     "fetch_updated_user",
-    "find_member_in_team",
     "gather_cross_project_data",
     "generate_project_api_key",
     # System helpers

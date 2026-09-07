@@ -338,30 +338,26 @@ class TestAddTeamMember:
         assert exc_info.value.status_code == 404
 
     def test_raises_400_when_already_member(self, admin_user):
+        """The refusal comes from the push's own filter, so a second add cannot duplicate the row."""
         from app.api.v1.endpoints.teams import add_team_member
         from app.schemas.team import TeamMemberAdd
 
-        team = _make_team(members=[TeamMember(user_id="existing-id", role=TEAM_ROLE_MEMBER)])
-        user_doc = {"_id": "existing-id", "username": "existing", "email": "e@test.com"}
+        db = _fake_db_with_team([("admin-1", TEAM_ROLE_ADMIN), ("existing-id", TEAM_ROLE_MEMBER)])
+        asyncio.run(db.users.update_one({"_id": "existing-id"}, {"$set": {"email": "e@test.com"}}))
 
-        mock_team_repo = MagicMock()
-        mock_user_repo = MagicMock()
-        mock_user_repo.get_raw_by_email = AsyncMock(return_value=user_doc)
-
-        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=team):
-            with patch(f"{MODULE}.TeamRepository", return_value=mock_team_repo):
-                with patch(f"{MODULE}.UserRepository", return_value=mock_user_repo):
-                    with pytest.raises(HTTPException) as exc_info:
-                        asyncio.run(
-                            add_team_member(
-                                team_id="team-1",
-                                member_in=TeamMemberAdd(email="e@test.com"),
-                                current_user=admin_user,
-                                db=MagicMock(),
-                            )
-                        )
+        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=_stored_team(db)):
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(
+                    add_team_member(
+                        team_id="team-1",
+                        member_in=TeamMemberAdd(email="e@test.com"),
+                        current_user=admin_user,
+                        db=db,
+                    )
+                )
         assert exc_info.value.status_code == 400
         assert "already" in exc_info.value.detail.lower()
+        assert _stored_roles(db) == {"admin-1": TEAM_ROLE_ADMIN, "existing-id": TEAM_ROLE_MEMBER}
 
 
 class TestUpdateTeamMember:
@@ -410,31 +406,25 @@ class TestRemoveTeamMember:
         assert _stored_roles(db) == {"admin-1": TEAM_ROLE_ADMIN, "stay": TEAM_ROLE_MEMBER}
 
     def test_raises_400_when_removing_last_admin_self(self, admin_user):
+        """admin_user (id="admin-1") is the only admin; the pull's filter is what refuses."""
         from app.api.v1.endpoints.teams import remove_team_member
 
-        # admin_user (id="admin-1") is the only admin, triggering the last-admin removal guard
-        team = _make_team(
-            members=[
-                TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN),
-                TeamMember(user_id="other-user", role=TEAM_ROLE_MEMBER),
-            ]
-        )
+        db = _fake_db_with_team([("admin-1", TEAM_ROLE_ADMIN), ("other-user", TEAM_ROLE_MEMBER)])
 
-        mock_repo = MagicMock()
-
-        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=team):
-            with patch(f"{MODULE}.TeamRepository", return_value=mock_repo):
+        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=_stored_team(db)):
+            with patch(f"{MODULE}.check_team_access", new_callable=AsyncMock, return_value=_stored_team(db)):
                 with pytest.raises(HTTPException) as exc_info:
                     asyncio.run(
                         remove_team_member(
                             team_id="team-1",
                             user_id="admin-1",
                             current_user=admin_user,
-                            db=MagicMock(),
+                            db=db,
                         )
                     )
         assert exc_info.value.status_code == 400
         assert "admin" in exc_info.value.detail.lower()
+        assert _stored_roles(db) == {"admin-1": TEAM_ROLE_ADMIN, "other-user": TEAM_ROLE_MEMBER}
 
     def test_raises_404_when_not_member(self, admin_user):
         from app.api.v1.endpoints.teams import remove_team_member

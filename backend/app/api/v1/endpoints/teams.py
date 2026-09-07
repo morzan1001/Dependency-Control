@@ -12,7 +12,6 @@ from app.api.v1.helpers import (
     build_team_enrichment_pipeline,
     check_team_access,
     fetch_and_enrich_team,
-    find_member_in_team,
     get_member_role,
     get_team_with_access,
 )
@@ -33,6 +32,9 @@ from app.schemas.team import (
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
+
+_MSG_ALREADY_IN_TEAM = "User already in team"
+_MSG_LAST_ADMIN = "Cannot remove the last admin. Add another admin first."
 
 
 @router.post("/", response_model=TeamResponse, status_code=status.HTTP_201_CREATED, responses=RESP_AUTH)
@@ -171,26 +173,16 @@ async def add_team_member(
     team_repo = TeamRepository(db)
     user_repo = UserRepository(db)
 
-    team = await get_team_with_access(team_id, current_user, db)
+    await get_team_with_access(team_id, current_user, db)
 
     user_to_add = await user_repo.get_raw_by_email(member_in.email)
     if not user_to_add:
         raise HTTPException(status_code=404, detail="User with this email not found")
 
-    user_id = str(user_to_add["_id"])
+    new_member = TeamMember(user_id=str(user_to_add["_id"]), role=member_in.role)
 
-    if find_member_in_team(team, user_id) is not None:
-        raise HTTPException(status_code=400, detail="User already in team")
-
-    new_member = TeamMember(user_id=user_id, role=member_in.role)
-
-    await team_repo.update_raw(
-        team_id,
-        {
-            "$push": {"members": new_member.model_dump()},
-            "$set": {"updated_at": datetime.now(timezone.utc)},
-        },
-    )
+    if not await team_repo.add_member(team_id, new_member.model_dump(), datetime.now(timezone.utc)):
+        raise HTTPException(status_code=400, detail=_MSG_ALREADY_IN_TEAM)
 
     return await fetch_and_enrich_team(team_id, db)
 
@@ -237,17 +229,9 @@ async def remove_team_member(
         raise HTTPException(status_code=404, detail="User not in team")
 
     if target_role == TEAM_ROLE_ADMIN:
-        admin_count = sum(1 for m in team.members if m.role == TEAM_ROLE_ADMIN)
-        if admin_count <= 1:
-            raise HTTPException(status_code=400, detail="Cannot remove the last admin. Add another admin first.")
         await check_team_access(team_id, current_user, db, required_role=TEAM_ROLE_ADMIN)
 
-    await team_repo.update_raw(
-        team_id,
-        {
-            "$pull": {"members": {"user_id": user_id}},
-            "$set": {"updated_at": datetime.now(timezone.utc)},
-        },
-    )
+    if not await team_repo.remove_member(team_id, user_id, datetime.now(timezone.utc)):
+        raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN)
 
     return await fetch_and_enrich_team(team_id, db)

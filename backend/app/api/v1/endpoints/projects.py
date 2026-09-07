@@ -35,7 +35,7 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
     RESP_AUTH_404_500,
 )
-from app.core.constants import SCAN_USABLE_STATUSES
+from app.core.constants import PROJECT_ROLE_ADMIN, SCAN_USABLE_STATUSES
 from app.core.permissions import Permissions, has_permission
 from app.core.risk_scoring import risk_score_expr
 from app.core.trufflehog import SECRET_DESCRIPTION_PREFIX, resolve_detector_name
@@ -92,6 +92,9 @@ MONGO_GROUP = "$group"
 _MSG_PROJECT_NOT_FOUND = "Project not found"
 _MSG_SCAN_NOT_FOUND = "Scan not found"
 _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
+_MSG_ALREADY_A_MEMBER = "User already a member"
+_MSG_LAST_ADMIN_REMOVE = "Cannot remove the last admin. Add another admin first."
+_MSG_LAST_ADMIN_DEMOTE = "Cannot demote the last admin. Add another admin first."
 
 _SCAN_HISTORY_PAGE_SIZE = 100
 
@@ -1011,11 +1014,8 @@ async def invite_user(
 
     member = ProjectMember(user_id=str(user_to_add["_id"]), role=invite_in.role)
 
-    for m in project.members:
-        if m.user_id == member.user_id:
-            raise HTTPException(status_code=400, detail="User already a member")
-
-    await project_repo.add_member(project_id, member.model_dump())
+    if not await project_repo.add_member(project_id, member.model_dump()):
+        raise HTTPException(status_code=400, detail=_MSG_ALREADY_A_MEMBER)
 
     try:
         system_config = await deps.get_system_settings(db)
@@ -1437,23 +1437,15 @@ async def _count_team_admins(project: Project, db: Any) -> int:
     return sum(1 for m in team.get("members", []) if m.get("role") == "admin")
 
 
-async def _assert_not_demoting_last_admin(
-    project: Project,
-    current_role: str,
-    member_in: ProjectMemberUpdate,
-    db: Any,
-) -> None:
-    """Refuse to demote the final admin across direct and team membership."""
-    is_demotion = current_role == "admin" and member_in.role and member_in.role != "admin"
-    if not is_demotion:
-        return
-    direct_admin_count = sum(1 for m in project.members if m.role == "admin")
-    team_admin_count = await _count_team_admins(project, db)
-    if direct_admin_count + team_admin_count <= 1:
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot demote the last admin. Add another admin first.",
-        )
+async def _needs_a_surviving_direct_admin(project: Project, member_role: str, db: Any) -> bool:
+    """Whether the write about to run is the one that could take the project's last admin.
+
+    The owning team can supply one, and that half cannot be guarded in the same statement, so the
+    conditional write is asked for only when the direct members are the project's only admins.
+    """
+    if member_role != PROJECT_ROLE_ADMIN:
+        return False
+    return await _count_team_admins(project, db) == 0
 
 
 def _build_member_update_fields(member_in: ProjectMemberUpdate) -> dict[str, Any]:
@@ -1482,12 +1474,15 @@ async def update_project_member(
     project = await check_project_access(project_id, current_user, db, required_role="admin")
 
     current_role = _project_member_role(project, user_id)
-    await _assert_not_demoting_last_admin(project, current_role, member_in, db)
+    is_demotion = bool(member_in.role) and member_in.role != PROJECT_ROLE_ADMIN
+    require_another_admin = is_demotion and await _needs_a_surviving_direct_admin(project, current_role, db)
 
     update_fields = _build_member_update_fields(member_in)
     project_repo = ProjectRepository(db)
-    if update_fields:
-        await project_repo.update_member(project_id, user_id, update_fields)
+    if update_fields and not await project_repo.update_member(
+        project_id, user_id, update_fields, require_another_admin=require_another_admin
+    ):
+        raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_DEMOTE)
 
     updated_project = await project_repo.get_by_id(project_id)
     if not updated_project:
@@ -1509,31 +1504,12 @@ async def remove_project_member(
     """Remove a user from the project. Requires 'admin' role."""
     project = await check_project_access(project_id, current_user, db, required_role="admin")
 
-    member_exists = False
-    for member in project.members:
-        if member.user_id == user_id:
-            member_exists = True
-            break
-
-    if not member_exists:
-        raise HTTPException(status_code=404, detail="User is not a member of this project")
-
-    # Block removing the last admin, counting both direct and team admins.
-    member_role = next((m.role for m in project.members if m.user_id == user_id), None)
-    if member_role == "admin":
-        direct_admin_count = sum(1 for m in project.members if m.role == "admin")
-        team_admin_count = 0
-        if project.team_id:
-            team_repo = TeamRepository(db)
-            team = await team_repo.get_raw_by_id(project.team_id)
-            if team:
-                team_admin_count = sum(1 for m in team.get("members", []) if m.get("role") in ("admin"))
-        total_admins = direct_admin_count + team_admin_count
-        if total_admins <= 1:
-            raise HTTPException(status_code=400, detail="Cannot remove the last admin. Add another admin first.")
+    member_role = _project_member_role(project, user_id)
+    require_another_admin = await _needs_a_surviving_direct_admin(project, member_role, db)
 
     project_repo = ProjectRepository(db)
-    await project_repo.remove_member(project_id, user_id)
+    if not await project_repo.remove_member(project_id, user_id, require_another_admin=require_another_admin):
+        raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_REMOVE)
 
     updated_project = await project_repo.get_by_id(project_id)
     if updated_project:
