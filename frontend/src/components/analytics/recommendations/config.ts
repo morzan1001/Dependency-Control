@@ -53,7 +53,7 @@ export const typeConfig: Record<string, { icon: typeof Container; label: string;
   },
   no_fix_available: {
     icon: ShieldX,
-    label: 'No Fix Available',
+    label: 'No Known Fix',
     color: 'text-gray-500',
     bgColor: 'bg-gray-500/10',
   },

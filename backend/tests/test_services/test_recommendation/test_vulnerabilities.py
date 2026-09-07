@@ -483,6 +483,27 @@ class TestNoFixAvailable:
         no_fix_recs = [r for r in result if r.type == RecommendationType.NO_FIX_AVAILABLE]
         assert "vulnerable-lib" in no_fix_recs[0].affected_components
 
+    def test_the_card_claims_only_what_the_advisory_records(self):
+        """A missing fixed_version is the absence of a recorded fix, and the card recommends
+        replacing a component, so it must not present that absence as proof none exists."""
+        finding = _make_finding(severity="CRITICAL", fixed_version=None)
+        dep = _make_dependency()
+        dep_by_nv = _build_lookup_maps([dep])
+
+        result = process_vulnerabilities([finding], dep_by_nv, [dep], None)
+
+        card = next(r for r in result if r.type == RecommendationType.NO_FIX_AVAILABLE)
+        assert _UNSUPPORTED_NO_FIX_CLAIM not in card.description
+        assert _ADVISORY_ATTRIBUTION in card.description
+        assert any(_UPSTREAM_STEP in step for step in card.action["steps"])
+
+
+# The claim the data cannot support, the attribution that replaces it, and the step that
+# follows from the distinction.
+_UNSUPPORTED_NO_FIX_CLAIM = "have no fix available"
+_ADVISORY_ATTRIBUTION = "no fixed version in their advisories"
+_UPSTREAM_STEP = "Check the upstream project"
+
 
 class TestKevVulnerabilities:
     def test_kev_vuln_is_critical_priority(self):

@@ -100,6 +100,8 @@ def _build_vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
 
 def _classify_category(vuln_info: VulnerabilityInfo, dep: ModelOrDict | None) -> str:
     """Determine which category a vulnerability belongs to."""
+    # An advisory that records no fixed version does not say a fix is absent, only that it does
+    # not name one, so this bucket is "no fix known" and the card it produces says as much.
     if not vuln_info.fixed_version:
         return "no_fix"
     if not dep:
@@ -483,7 +485,7 @@ def _analyze_transitive_dependencies(
 
 
 def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation]:
-    """Analyze vulnerabilities with no available fix."""
+    """Analyze vulnerabilities whose advisories name no fixed version."""
 
     if not vulns:
         return []
@@ -507,10 +509,11 @@ def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation
         Recommendation(
             type=RecommendationType.NO_FIX_AVAILABLE,
             priority=Priority.HIGH,
-            title="Vulnerability with No Fix Available",
+            title="Vulnerability with No Known Fix",
             description=(
-                f"{len(crit_high_vulns)} Critical/High vulnerabilities used in your project "
-                "have no fix available. Consider switching components."
+                f"{len(crit_high_vulns)} Critical/High vulnerabilities used in your project have "
+                "no fixed version in their advisories. That is the absence of a recorded fix, not "
+                "proof that none exists, so confirm upstream before replacing a component."
             ),
             impact={
                 "critical": severity_counts.get("CRITICAL", 0),
@@ -524,6 +527,7 @@ def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation
             action={
                 "type": "consider_alternative",
                 "steps": [
+                    "Check the upstream project for a release the advisory has not recorded yet",
                     "Check if the vulnerability actually affects your usage of the component",
                     "Look for alternative libraries that provide similar functionality",
                     "Apply mitigating controls (WAF, network segmentation)",
