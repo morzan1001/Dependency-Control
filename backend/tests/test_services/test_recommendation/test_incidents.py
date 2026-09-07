@@ -12,6 +12,10 @@ from app.services.recommendation.incidents import (
 # The smallest EPSS decrement that stays on the other side of the threshold.
 _EPSS_STEP = 0.01
 
+_RANSOMWARE_CVE = "CVE-2021-44228"
+_KEV_ONLY_CVE = "CVE-2022-22965"
+_EPSS_CVE = "CVE-2023-0001"
+
 
 def _malware_finding(component):
     return {
@@ -407,3 +411,62 @@ class TestIncidentCardsNameOnlyTheFlaggedAdvisories:
         finding["details"]["vulnerabilities"] = [{"id": "CVE-2021-44228"}, {"id": "CVE-2021-44832"}]
         card = self._card(finding, RecommendationType.RANSOMWARE_RISK)
         assert card.action["cves"] == ["CVE-2021-44228", "CVE-2021-44832"]
+
+
+class TestIncidentCardsBucketPerAdvisory:
+    """Aggregation groups one record per (component, version), so one record can be about
+    several cards; a record bucketed whole leaves every other advisory in no card at all."""
+
+    @staticmethod
+    def _mixed():
+        finding = _vuln("log4j-core", is_kev=True, kev_ransomware=True)
+        finding["details"]["vulnerabilities"] = [
+            {"id": _RANSOMWARE_CVE, "in_kev": True, "kev_ransomware_use": True},
+            {"id": _KEV_ONLY_CVE, "in_kev": True, "kev_ransomware_use": False},
+        ]
+        return finding
+
+    def _cards(self, finding):
+        return {r.type: r for r in detect_known_exploits([finding])}
+
+    def test_a_kev_only_advisory_sharing_a_record_with_ransomware_still_gets_a_card(self):
+        cards = self._cards(self._mixed())
+
+        assert RecommendationType.KNOWN_EXPLOIT in cards
+        assert cards[RecommendationType.KNOWN_EXPLOIT].action["cves"] == [_KEV_ONLY_CVE]
+
+    def test_the_ransomware_card_is_unchanged_by_the_kev_only_advisory(self):
+        cards = self._cards(self._mixed())
+
+        assert cards[RecommendationType.RANSOMWARE_RISK].action["cves"] == [_RANSOMWARE_CVE]
+
+    def test_a_high_epss_advisory_sharing_a_record_with_kev_gets_its_own_card(self):
+        finding = _vuln("struts2-core", is_kev=True)
+        finding["details"]["vulnerabilities"] = [
+            {"id": _KEV_ONLY_CVE, "in_kev": True},
+            {"id": _EPSS_CVE, "epss_score": EPSS_VERY_HIGH_THRESHOLD},
+        ]
+
+        cards = self._cards(finding)
+
+        assert cards[RecommendationType.ACTIVELY_EXPLOITED].action["cves"] == [_EPSS_CVE]
+        assert cards[RecommendationType.KNOWN_EXPLOIT].action["cves"] == [_KEV_ONLY_CVE]
+
+    def test_a_kev_advisory_is_not_repeated_in_the_epss_card(self):
+        """Confirmed exploitation outranks a prediction about the same advisory."""
+        finding = _vuln("pkg", is_kev=True)
+        finding["details"]["vulnerabilities"] = [
+            {"id": _KEV_ONLY_CVE, "in_kev": True, "epss_score": EPSS_VERY_HIGH_THRESHOLD}
+        ]
+
+        cards = self._cards(finding)
+
+        assert RecommendationType.ACTIVELY_EXPLOITED not in cards
+
+    def test_a_document_only_flag_lands_in_one_card_as_before(self):
+        finding = _vuln("log4j-core", is_kev=True, kev_ransomware=True)
+        finding["details"]["vulnerabilities"] = [{"id": _RANSOMWARE_CVE}]
+
+        cards = self._cards(finding)
+
+        assert set(cards) == {RecommendationType.RANSOMWARE_RISK}

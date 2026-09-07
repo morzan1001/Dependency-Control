@@ -30,6 +30,16 @@ def _advisory_has_very_high_epss(advisory: dict[str, Any]) -> bool:
     return epss is not None and epss >= EPSS_VERY_HIGH_THRESHOLD
 
 
+def _advisory_is_kev_only(advisory: dict[str, Any]) -> bool:
+    """A KEV advisory the ransomware card is not already about."""
+    return _advisory_is_kev(advisory) and not _advisory_is_ransomware(advisory)
+
+
+def _advisory_is_epss_only(advisory: dict[str, Any]) -> bool:
+    """A high-EPSS advisory that is not in KEV; confirmed exploitation outranks a prediction."""
+    return _advisory_has_very_high_epss(advisory) and not _advisory_is_kev(advisory)
+
+
 def process_malware(malware_findings: list[ModelOrDict]) -> list[Recommendation]:
     """Process malware detection findings."""
     if not malware_findings:
@@ -125,26 +135,36 @@ def process_typosquatting(
     ]
 
 
+def _card_advisories(details: dict[str, Any]) -> list[dict[str, Any]]:
+    """The marked advisories a record carries. A live enrichment refresh marks the document
+    without rewriting its advisories, so an unmarked group falls back to the document."""
+    advisories = [a for a in details.get("vulnerabilities") or [] if isinstance(a, dict)]
+    marked = [a for a in advisories if _advisory_is_kev(a) or _advisory_has_very_high_epss(a)]
+    return marked or [details]
+
+
 def _classify_vuln_finding(
     f: ModelOrDict,
     kev_vulns: list[ModelOrDict],
     ransomware_vulns: list[ModelOrDict],
     high_epss_vulns: list[ModelOrDict],
 ) -> None:
-    """Classify a single vulnerability finding into KEV, ransomware, or high EPSS."""
+    """Route a finding to every card one of its advisories is about.
+
+    Aggregation groups one record per (component, version), so a group holding both a ransomware
+    advisory and a KEV-only one belongs in both cards; bucketing on the document alone puts it
+    wholly in the first and leaves the other advisory in no card at all.
+    """
     details = get_attr(f, "details", {})
     if not isinstance(details, dict):
         return
 
-    if details.get(DETAILS_KEY_IN_KEV):
-        if details.get(DETAILS_KEY_KEV_RANSOMWARE):
-            ransomware_vulns.append(f)
-        else:
-            kev_vulns.append(f)
-        return
-
-    epss = details.get("epss_score")
-    if epss is not None and epss >= EPSS_VERY_HIGH_THRESHOLD:
+    advisories = _card_advisories(details)
+    if any(_advisory_is_ransomware(a) for a in advisories):
+        ransomware_vulns.append(f)
+    if any(_advisory_is_kev_only(a) for a in advisories):
+        kev_vulns.append(f)
+    if any(_advisory_is_epss_only(a) for a in advisories):
         high_epss_vulns.append(f)
 
 
@@ -206,7 +226,7 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
     if kev_vulns:
         affected_packages = sorted({get_attr(f, "component", "") for f in kev_vulns})
         packages_shown, packages_total = sample_components(affected_packages)
-        cves = sorted({cve for f in kev_vulns for cve in finding_cve_ids(f, _advisory_is_kev)})
+        cves = sorted({cve for f in kev_vulns for cve in finding_cve_ids(f, _advisory_is_kev_only)})
 
         recommendations.append(
             Recommendation(
@@ -247,7 +267,7 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
     if high_epss_vulns:
         affected_packages = sorted({get_attr(f, "component", "") for f in high_epss_vulns})
         packages_shown, packages_total = sample_components(affected_packages)
-        cves = sorted({cve for f in high_epss_vulns for cve in finding_cve_ids(f, _advisory_has_very_high_epss)})
+        cves = sorted({cve for f in high_epss_vulns for cve in finding_cve_ids(f, _advisory_is_epss_only)})
 
         max_epss = max(
             (get_attr(f, "details", {}).get("epss_score", 0) if isinstance(get_attr(f, "details", {}), dict) else 0)
