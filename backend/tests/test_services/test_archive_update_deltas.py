@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.core.housekeeping import _delete_scans_and_related_data
+from app.services.scan_cascade import delete_scans_and_related_data
 from app.services.archive import archive_scan, restore_scan
 from app.services.update_frequency_rollup import record_scan_update_delta
 from tests.mocks.fake_mongo import FakeDatabase
@@ -84,7 +84,7 @@ async def test_restore_rebuilds_the_delta_and_repoints_the_successor(archive_env
     assert meta is not None
 
     with patch("app.services.gridfs_maintenance.AsyncIOMotorGridFSBucket", return_value=AsyncMock()):
-        await _delete_scans_and_related_data(db, ["scan-1"])
+        await delete_scans_and_related_data(db, ["scan-1"])
     assert await db.scan_update_deltas.find_one({"_id": "scan-1"}) is None
 
     # The successor arrives while the predecessor is archived, so it can only be a baseline.

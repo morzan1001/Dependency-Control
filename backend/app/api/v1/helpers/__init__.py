@@ -67,7 +67,6 @@ from app.api.v1.helpers.sorting import (
     parse_sort_direction,
 )
 from app.api.v1.helpers.storage import (
-    delete_gridfs_files,
     load_from_gridfs,
     resolve_sbom_refs,
 )
@@ -143,7 +142,6 @@ __all__ = [
     "check_webhook_permission",
     "count_severities",
     # Storage helpers
-    "delete_gridfs_files",
     "detect_format",
     "enrich_team_with_usernames",
     "exchange_slack_code_for_token",

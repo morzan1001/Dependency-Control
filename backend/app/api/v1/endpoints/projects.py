@@ -19,7 +19,6 @@ from app.api.v1.helpers import (
     build_pagination_response,
     build_user_project_query,
     check_project_access,
-    delete_gridfs_files,
     generate_project_api_key,
     get_category_type_filter,
     get_sort_field,
@@ -48,7 +47,6 @@ from app.models.user import User
 from app.repositories import (
     AnalysisResultRepository,
     CallgraphRepository,
-    DependencyRepository,
     FindingRepository,
     InvitationRepository,
     ProjectRepository,
@@ -58,7 +56,6 @@ from app.repositories import (
     UserRepository,
     WaiverRepository,
 )
-from app.repositories.update_frequency import ScanOutdatedSetRepository, ScanUpdateDeltaRepository
 from app.schemas.project import (
     BranchInfo,
     BranchTip,
@@ -85,6 +82,7 @@ from app.services.branches import resolve_default_branch
 from app.services.inventory.csv_stream import csv_response, export_filename
 from app.services.inventory.findings_export import FINDINGS_COLUMNS, iter_findings_rows
 from app.services.inventory.scan_resolution import latest_completed_scans_by_branch
+from app.services.scan_cascade import delete_scans_and_related_data
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
@@ -1621,36 +1619,15 @@ async def delete_project(
 
     project_repo = ProjectRepository(db)
     scan_repo = ScanRepository(db)
-    analysis_repo = AnalysisResultRepository(db)
-    finding_repo = FindingRepository(db)
-    dep_repo = DependencyRepository(db)
     waiver_repo = WaiverRepository(db)
     invitation_repo = InvitationRepository(db)
     callgraph_repo = CallgraphRepository(db)
-    delta_repo = ScanUpdateDeltaRepository(db)
-    outdated_set_repo = ScanOutdatedSetRepository(db)
     release_repo = ReleaseRepository(db)
 
-    # Stream scans to collect IDs and GridFS files without loading them all at once.
-    scan_ids = []
-    gridfs_ids = []
-    async for scan in scan_repo.iterate({"project_id": project_id}, {"_id": 1, "sbom_refs": 1}):
-        scan_ids.append(scan["_id"])
-        for ref in scan.get("sbom_refs", []):
-            file_id = ref.get("file_id") or ref.get("gridfs_id")
-            if file_id:
-                gridfs_ids.append(file_id)
+    # Streamed rather than read whole; the shared cascade owns which collections a scan takes with it.
+    scan_ids = [scan["_id"] async for scan in scan_repo.iterate({"project_id": project_id}, {"_id": 1})]
+    await delete_scans_and_related_data(db, scan_ids)
 
-    if scan_ids:
-        await analysis_repo.delete_many({"scan_id": {"$in": scan_ids}})
-        await finding_repo.delete_many({"scan_id": {"$in": scan_ids}})
-        await dep_repo.delete_many({"scan_id": {"$in": scan_ids}})
-        # The update-frequency rollups are keyed by scan id, not by a scan_id field.
-        await delta_repo.delete_many({"_id": {"$in": scan_ids}})
-        await outdated_set_repo.delete_many({"_id": {"$in": scan_ids}})
-
-    await scan_repo.delete_many({"project_id": project_id})
-    await delete_gridfs_files(db, gridfs_ids)
     await waiver_repo.delete_many({"project_id": project_id})
     await release_repo.delete_many({"project_id": project_id})
     await invitation_repo.delete_project_invitations_by_project(project_id)

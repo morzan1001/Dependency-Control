@@ -40,8 +40,9 @@ from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.services.audit.retention import prune_old_audit_entries
 from app.services.compliance.retention import sweep_expired_compliance_reports
-from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs, reap_orphan_gridfs_files
+from app.services.gridfs_maintenance import reap_orphan_gridfs_files
 from app.services.releases import reconcile_release_flags, release_protected_scan_ids
+from app.services.scan_cascade import delete_scans_and_related_data
 from app.services.update_frequency_reconcile import run_update_frequency_reconcile
 
 if TYPE_CHECKING:
@@ -65,41 +66,6 @@ async def _referenced_scan_ids(db: Any, scan_ids: list[str]) -> set[str]:
         if original_id:
             referenced.add(original_id)
     return referenced
-
-
-async def _collect_gridfs_ids(db: Any, scan_ids: list[str]) -> list[str]:
-    """Collect all GridFS IDs referenced by the given scans."""
-    gridfs_ids: list[str] = []
-    async for scan_doc in db.scans.find({"_id": {"$in": scan_ids}}, {"sbom_refs": 1}):
-        gridfs_ids.extend(extract_gridfs_ids_from_refs(scan_doc.get("sbom_refs", [])))
-    return gridfs_ids
-
-
-async def _delete_scans_and_related_data(db: Any, scan_ids: list[str], label: str = "") -> int:
-    """Delete scans and all associated data (findings, dependencies, GridFS SBOMs, callgraphs)."""
-    if not scan_ids:
-        return 0
-
-    gridfs_ids = await _collect_gridfs_ids(db, scan_ids)
-
-    await db.analysis_results.delete_many({"scan_id": {"$in": scan_ids}})
-    await db.findings.delete_many({"scan_id": {"$in": scan_ids}})
-    await db.finding_records.delete_many({"scan_id": {"$in": scan_ids}})
-    await db.dependencies.delete_many({"scan_id": {"$in": scan_ids}})
-    await db.callgraphs.delete_many({"scan_id": {"$in": scan_ids}})
-    await db.crypto_assets.delete_many({"scan_id": {"$in": scan_ids}})
-    # The update-frequency rollups are keyed by scan id, not by a scan_id field.
-    await db.scan_update_deltas.delete_many({"_id": {"$in": scan_ids}})
-    await db.scan_outdated_sets.delete_many({"_id": {"$in": scan_ids}})
-    result = await db.scans.delete_many({"_id": {"$in": scan_ids}})
-
-    await cleanup_gridfs_files(db, gridfs_ids, deleted_scan_ids=scan_ids)
-
-    if label:
-        logger.info(f"{label}: Deleted {result.deleted_count} scans ({len(gridfs_ids)} GridFS files).")
-
-    count: int = result.deleted_count
-    return count
 
 
 async def _reap_orphan_callgraphs(db: Any, batch_size: int = ARCHIVE_BATCH_SIZE) -> int:
@@ -490,7 +456,7 @@ async def _archive_scans_and_delete(db: Any, scan_ids: list[str], label: str = "
 
     successfully_archived = [sid for sid in scan_ids if sid not in failed_ids]
 
-    deleted = await _delete_scans_and_related_data(db, successfully_archived, label)
+    deleted = await delete_scans_and_related_data(db, successfully_archived, label)
 
     if label:
         logger.info(f"{label}: Archived {archived_count} scans, deleted {deleted} from MongoDB.")
@@ -506,7 +472,7 @@ async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, la
     if action == RETENTION_ACTION_ARCHIVE and is_archive_enabled():
         await _archive_scans_and_delete(db, scan_ids, label)
     elif action == RETENTION_ACTION_DELETE:
-        await _delete_scans_and_related_data(db, scan_ids, label)
+        await delete_scans_and_related_data(db, scan_ids, label)
     elif action == RETENTION_ACTION_ARCHIVE:
         logger.warning(
             f"{label}: Retention action is 'archive' but S3 is not configured. "

@@ -17,9 +17,11 @@ from pymongo.errors import DuplicateKeyError, PyMongoError
 
 from app.core.config import settings
 from app.core.constants import (
+    ARCHIVE_GRIDFS_FRAME,
     ARCHIVE_PATH_TEMPLATE,
     ENCRYPTION_MAGIC,
     RESTORE_INSERT_BATCH_SIZE,
+    SCAN_SCOPED_COLLECTIONS,
 )
 from app.core.encryption import EncryptionStreamWriter, decrypt_stream, is_encryption_enabled
 from app.core.metrics import (
@@ -49,17 +51,7 @@ _ARCHIVE_LOCK_TTL_SECONDS = 600
 
 # Collections a bundle may restore into. Marker names are attacker-influenceable (footer
 # is a plain sha256, not an HMAC), so any name outside this set must abort the restore.
-_RESTORABLE_COLLECTIONS = frozenset(
-    {
-        "findings",
-        "finding_records",
-        "dependencies",
-        "analysis_results",
-        "callgraphs",
-        "crypto_assets",
-        "gridfs_sboms",
-    }
-)
+_RESTORABLE_COLLECTIONS = frozenset({*SCAN_SCOPED_COLLECTIONS, ARCHIVE_GRIDFS_FRAME})
 
 
 class _ArchiveSourceReadError(Exception):
@@ -199,13 +191,8 @@ def _build_archive_payload(
     frames = BundleFrames.write(
         scan_doc=scan_doc,
         collections={
-            "findings": _stream_collection(db.findings, scan_id),
-            "finding_records": _stream_collection(db.finding_records, scan_id),
-            "dependencies": _stream_collection(db.dependencies, scan_id),
-            "analysis_results": _stream_collection(db.analysis_results, scan_id),
-            "callgraphs": _stream_collection(db.callgraphs, scan_id),
-            "crypto_assets": _stream_collection(db.crypto_assets, scan_id),
-            "gridfs_sboms": _stream_gridfs_sboms(db, scan_doc),
+            **{name: _stream_collection(getattr(db, name), scan_id) for name in SCAN_SCOPED_COLLECTIONS},
+            ARCHIVE_GRIDFS_FRAME: _stream_gridfs_sboms(db, scan_doc),
         },
         stats=stats,
     )
@@ -496,7 +483,7 @@ async def _handle_doc_event(
         # Marker names come from unauthenticated bundle content (footer is a plain sha256,
         # not an HMAC); refuse unknown names so a crafted marker can't write into arbitrary collections.
         raise ValueError(f"Unexpected collection in bundle: {_sanitize_for_log(coll)}")
-    if coll == "gridfs_sboms":
+    if coll == ARCHIVE_GRIDFS_FRAME:
         gridfs_entries.append(event["data"])
         return
     batch_by_collection.setdefault(coll, []).append(event["data"])
@@ -706,7 +693,7 @@ async def _run_restore_pipeline(
         archive_operations_total.labels(operation="restore", status="failure").inc()
         return None
     if gridfs_entries:
-        collections_restored.append("gridfs_sboms")
+        collections_restored.append(ARCHIVE_GRIDFS_FRAME)
 
     # The restored scan re-enters its branch timeline, so the rollup also re-points the successor.
     await record_scan_update_delta(db, scan_id)

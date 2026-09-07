@@ -1058,6 +1058,24 @@ RESTORE_INSERT_BATCH_SIZE = 1000
 # Housekeeping
 ARCHIVE_BATCH_SIZE = 50
 
+# Everything a scan owns, addressed by a scan_id field. Deletion, archival and restore all read
+# this: a second hand-kept copy is how crypto_assets came to outlive the project it belonged to.
+SCAN_SCOPED_COLLECTIONS: tuple[str, ...] = (
+    "analysis_results",
+    "findings",
+    "finding_records",
+    "dependencies",
+    "callgraphs",
+    "crypto_assets",
+)
+
+# The update-frequency rollups are keyed by scan id, not by a scan_id field, and an archive bundle
+# does not carry them: the restore recomputes them.
+SCAN_KEYED_COLLECTIONS: tuple[str, ...] = ("scan_update_deltas", "scan_outdated_sets")
+
+# The bundle frame holding the scan's GridFS SBOMs, alongside the scan-scoped collections.
+ARCHIVE_GRIDFS_FRAME = "gridfs_sboms"
+
 # BSON int32 is a different type from bool, so a flag written outside the model as 1 satisfies
 # {"$ne": True} and the scan is deleted for good. The retention guards spell out both spellings.
 RETENTION_PROTECTED_FLAG_VALUES: list[object] = [True, 1]
