@@ -90,6 +90,7 @@ class ImpactAnalysisResult(BaseModel):
     fix_impact_score: float
     affected_project_names: list[str]
     max_epss_score: float | None = None
+    fix_version_count: int = 0
     epss_percentile: float | None = None
     has_kev: bool = False
     kev_count: int = 0
@@ -113,6 +114,9 @@ class VulnerabilityHotspot(BaseModel):
     finding_count: int
     severity_breakdown: SeverityBreakdown
     affected_projects: list[str]
+    affected_project_count: int = 0
+    fix_version_count: int = 0
+    cve_count: int = 0
     first_seen: str
     max_epss_score: float | None = None
     epss_percentile: float | None = None

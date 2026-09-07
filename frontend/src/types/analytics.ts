@@ -90,6 +90,7 @@ export interface ImpactAnalysisResult {
   days_known?: number;
   has_fix?: boolean;
   fix_versions?: string[];
+  fix_version_count?: number;
   priority_reasons?: string[];
 }
 
@@ -100,6 +101,9 @@ export interface VulnerabilityHotspot {
   finding_count: number;
   severity_breakdown: SeverityBreakdown;
   affected_projects: string[];
+  affected_project_count?: number;
+  fix_version_count?: number;
+  cve_count?: number;
   first_seen: string;
   max_epss_score?: number;
   epss_percentile?: number;

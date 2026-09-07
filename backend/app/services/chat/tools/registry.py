@@ -19,6 +19,7 @@ from app.core.constants import (
 )
 from app.core.metrics import chat_tool_calls_total, chat_tool_duration_seconds
 from app.core.permissions import Permissions, has_permission
+from app.models.finding import FindingType, Severity
 from app.models.user import User
 from app.repositories.scans import ScanRepository
 from app.repositories.teams import TeamRepository
@@ -114,6 +115,11 @@ _COMPONENT_USAGE_READ = 100
 _CVE_OCCURRENCE_READ = 25
 _EXPIRING_WAIVER_READ = 25
 _TEAM_RISK_PROJECT_READ = 500
+
+# A breakdown groups over a closed enum, so its read bound is the size of that enum: any smaller
+# number returns some of the buckets under a key that reads as all of them.
+_SEVERITY_BUCKETS = len(Severity)
+_FINDING_TYPE_BUCKETS = len(FindingType)
 
 # A callgraph's `imports`/`calls` arrays run into the megabytes; the tool answers from the
 # aggregates only.
@@ -486,7 +492,7 @@ class ChatToolRegistry:
                 {"$match": {"scan_id": head_scan_id}},
                 {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
             ]
-            results = await db["findings"].aggregate(pipeline).to_list(length=10)
+            results = await db["findings"].aggregate(pipeline).to_list(length=_SEVERITY_BUCKETS)
             return {"breakdown": {r["_id"]: r["count"] for r in results}}
 
         if tool_name == "get_findings_by_type":
@@ -500,7 +506,7 @@ class ChatToolRegistry:
                 {"$match": {"scan_id": head_scan_id}},
                 {"$group": {"_id": "$type", "count": {"$sum": 1}}},
             ]
-            results = await db["findings"].aggregate(pipeline).to_list(length=20)
+            results = await db["findings"].aggregate(pipeline).to_list(length=_FINDING_TYPE_BUCKETS)
             return {"breakdown": {r["_id"]: r["count"] for r in results}}
 
         if tool_name == "get_analytics_summary":
@@ -513,7 +519,7 @@ class ChatToolRegistry:
                 {"$match": {"scan_id": {"$in": list(head.values())}}},
                 {"$group": {"_id": "$severity", "count": {"$sum": 1}}},
             ]
-            sev_results = await db["findings"].aggregate(sev_pipeline).to_list(length=10)
+            sev_results = await db["findings"].aggregate(sev_pipeline).to_list(length=_SEVERITY_BUCKETS)
             ranked = sorted(head, key=lambda pid: (-_stat(stats_by_project.get(pid), "critical"), pid))[:_TOP_RISKY]
             project_names_map = await self._project_names(db, ranked)
             top3 = [
