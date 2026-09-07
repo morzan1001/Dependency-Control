@@ -296,6 +296,31 @@ async def test_a_query_bound_is_truncated_the_way_the_stored_value_was():
 
 
 @pytest.mark.asyncio
+async def test_setting_a_boolean_over_the_integer_counts_as_a_modification():
+    """The server compares BSON types, so 1 -> true is a write; Python's == would call it a no-op."""
+    db = FakeDatabase()
+    await db.scans.insert_one({"_id": "s1", "is_release": _INTEGER_TRUE})
+
+    result = await db.scans.update_one({"_id": "s1"}, {"$set": {"is_release": True}})
+
+    assert result.modified_count == 1
+    assert result.matched_count == 1
+
+
+@pytest.mark.asyncio
+async def test_update_one_reports_a_filter_miss_and_a_no_op_apart():
+    """A conditional write reads matched_count: 0 means the guard refused, 1 means nothing changed."""
+    db = FakeDatabase()
+    await db.scans.insert_one({"_id": "s1", "is_release": True})
+
+    missed = await db.scans.update_one({"_id": "s1", "is_release": False}, {"$set": {"is_release": True}})
+    no_op = await db.scans.update_one({"_id": "s1"}, {"$set": {"is_release": True}})
+
+    assert (missed.matched_count, missed.modified_count) == (0, 0)
+    assert (no_op.matched_count, no_op.modified_count) == (1, 0)
+
+
+@pytest.mark.asyncio
 async def test_a_sort_direction_the_server_rejects_is_rejected_here_too():
     """A typo in a sort spec must not read as ascending; the server refuses the whole aggregation."""
     from pymongo.errors import OperationFailure

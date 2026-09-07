@@ -1,11 +1,12 @@
 """Release lookup and the single resolver for 'which scan counts for this project'."""
 
 import logging
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import RELEASE_FLAG_RECONCILE_BATCH_SIZE
 from app.core.init_db import RELEASES_LATEST_SORT
 from app.repositories import ProjectRepository, ScanRepository
 from app.schemas.projections import ProjectWithScanId
@@ -35,6 +36,50 @@ async def release_protected_scan_ids(db: AsyncIOMotorDatabase, scan_ids: Sequenc
         return protected
     current_analysis = await db.scans.distinct("latest_rescan_id", {"_id": {"$in": released_parents}})
     return protected | (candidate_set & set(current_analysis))
+
+
+async def _batched(cursor: Any, field: str) -> AsyncIterator[list[str]]:
+    batch: list[str] = []
+    async for doc in cursor:
+        value = doc.get(field)
+        if value is None:
+            continue
+        batch.append(str(value))
+        if len(batch) >= RELEASE_FLAG_RECONCILE_BATCH_SIZE:
+            yield batch
+            batch = []
+    if batch:
+        yield batch
+
+
+async def reconcile_release_flags(db: AsyncIOMotorDatabase) -> tuple[int, int]:
+    """Bring Scan.is_release back to what db.releases says. Returns (cleared, restored).
+
+    Every writer records the row and then the flag, so either half can be the one lost. Both
+    directions are reconciled, so a clear that races an in-flight mark is itself repaired on the
+    next pass instead of becoming the next divergence.
+    """
+    cleared = 0
+    # Exactly true, so the scans_released_list partial index serves the sweep; another spelling
+    # costs a listing row, not a scan, because retention keys its exemption on db.releases.
+    flagged = db.scans.find({"is_release": True}, {"_id": 1})
+    async for scan_ids in _batched(flagged, "_id"):
+        released = set(await db.releases.distinct("scan_id", {"scan_id": {"$in": scan_ids}}))
+        stale = [scan_id for scan_id in scan_ids if scan_id not in released]
+        if stale:
+            result = await db.scans.update_many({"_id": {"$in": stale}}, {"$set": {"is_release": False}})
+            cleared += result.modified_count
+
+    restored = 0
+    async for scan_ids in _batched(db.releases.find({}, {"scan_id": 1}), "scan_id"):
+        result = await db.scans.update_many(
+            {"_id": {"$in": scan_ids}, "is_release": {"$ne": True}}, {"$set": {"is_release": True}}
+        )
+        restored += result.modified_count
+
+    if cleared or restored:
+        logger.info("release flag reconcile: cleared %d, restored %d", cleared, restored)
+    return cleared, restored
 
 
 async def latest_release_scan(db: AsyncIOMotorDatabase, project_id: str, environment: str) -> str | None:

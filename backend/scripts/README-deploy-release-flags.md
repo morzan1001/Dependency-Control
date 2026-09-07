@@ -11,7 +11,7 @@ pods and a long exec dies with them. The Job manifest, its labels and its Networ
 ## 0. The order to work in
 
 Every step is here, in the order it has to run. Sections 1–9 explain each one; this list is what you
-tick off. Nothing below is optional, and steps 6 and 8 have no script behind them.
+tick off. Nothing below is optional, and steps 8 and 9 have no script behind them.
 
 1. **Pause the scheduled rescanner** for the whole window (§2, Option A step 1), so the wave cannot
    fire in the middle of a backfill.
@@ -30,15 +30,11 @@ tick off. Nothing below is optional, and steps 6 and 8 have no script behind the
 6. **`backfill_release_flags`** (§5, §6) — dry run, `--execute`, then re-run and confirm a clean
    `0 / 0 / 0` no-op.
 7. **Verify** (§7), including the two flag/row mismatch queries.
-8. **Repair stale `is_release` flags by hand** (§7, "Flags with no release row"). No script does
-   this. Such a scan is exempt from retention *and* from archival for good, and it sits in the
-   `scans_released_list` partial index answering the released-only filter with a release nobody
-   made. Run it before housekeeping is allowed to resume.
-9. **Re-stamp the waiver flags on released builds** (§8). One in-pod pass; without it a build in
+8. **Re-stamp the waiver flags on released builds** (§8). One in-pod pass; without it a build in
    production keeps answering through the waiver set of the day it was analysed.
-10. **Grant `analyze:adhoc`** (§9). Until someone does, **no user, including the platform admin,
-    can mint an ad-hoc key** — the permission is new and nothing backfills it onto existing users.
-11. **Re-enable the scheduler** (§2, Option A step 5) and watch the first two 300 s passes for
+9. **Grant `analyze:adhoc`** (§9). Until someone does, **no user, including the platform admin,
+   can mint an ad-hoc key** — the permission is new and nothing backfills it onto existing users.
+10. **Re-enable the scheduler** (§2, Option A step 5) and watch the first two 300 s passes for
     `Recovery limit (1000) reached`.
 
 ---
@@ -705,38 +701,28 @@ must equal `production rows counted before the --execute pass` **plus** `release
 the "before" number in the same window as the dry run and write it down; without it this line
 asserts nothing.
 
-The last two must be equal, and stay equal: a scan whose flag is set but whose row is missing
-resolves to nothing in `latest_release_scan` and the release list, and a scan with a row but no
-flag is missing from the `scans_released_list` index the released-only scan list reads, is not
-exempt from retention or archiving, and does not answer the "Releases only" filter.
+The last two must be equal, and stay equal: a scan whose flag is set but whose row is missing sits
+in the `scans_released_list` partial index answering the released-only filter with a release nobody
+made, and a scan with a row but no flag is missing from that index and from the "Releases only"
+filter. Retention and archiving read `db.releases` and neither direction changes what they keep.
 
 A count is not a diagnosis, so name the offenders on both sides rather than inferring them from the
 difference — the two directions can cancel out.
 
-**Release rows with no flag.** Re-running the backfill repairs these; its sweep covers every release
-row, however the row was marked.
-
 ```js
 const flagged = new Set(db.scans.distinct("_id", { is_release: true }));
-db.releases.distinct("scan_id").filter(id => !flagged.has(id))   // must be []
-```
-
-**Flags with no release row.** No script repairs these, and they are the dangerous direction: the
-retention and archival cursors filter on `is_release` *before* they consult `db.releases`, so such a
-scan is exempt from both **permanently**, and it poisons the `scans_released_list` partial index
-with a release nobody made. Review the list, then apply the update:
-
-```js
 const rows = new Set(db.releases.distinct("scan_id"));
-const stale = db.scans.find({ is_release: true }, { project_id: 1, branch: 1, created_at: 1 })
-  .toArray().filter(s => !rows.has(s._id));
-printjson(stale);                                     // review first
-// db.scans.updateMany({ _id: { $in: stale.map(s => s._id) } }, { $set: { is_release: false } })
+db.releases.distinct("scan_id").filter(id => !flagged.has(id))          // rows with no flag
+db.scans.distinct("_id", { is_release: true }).filter(id => !rows.has(id))  // flags with no row
 ```
 
-Each one is either a scan whose release was withdrawn while the second write was lost, or a run
-killed between its two writes. If any of them *should* be a release, write the row through
-`POST /api/v1/projects/{project_id}/releases` instead of clearing the flag.
+Both lists must be `[]`. Each housekeeping pass reconciles both directions from `db.releases`, and
+re-running the backfill repairs the row-with-no-flag direction immediately; a non-empty list here
+before the first pass is expected rather than an incident. A flag with no row is a scan whose
+release was withdrawn while the second write was lost, or a run killed between its two writes — if
+one of them *should* be a release, write the row through
+`POST /api/v1/projects/{project_id}/releases` rather than setting the flag, or the next reconcile
+clears it again.
 
 ```js
 db.releases.find({}, { project_id: 1, scan_id: 1, version: 1, released_at: 1 }).limit(5)

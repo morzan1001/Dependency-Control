@@ -327,10 +327,10 @@ async def test_housekeeping_global_skips_in_progress_scans(monkeypatch):
 
     await run_housekeeping()
 
-    assert len(captured_queries) >= 1
-    q = captured_queries[0]
-    assert "status" in q, f"Expected status filter in query, got: {q}"
-    assert q["status"] == {"$nin": ["pending", "processing"]}
+    retention_cursors = [q for q in captured_queries if "created_at" in q]
+    assert retention_cursors, captured_queries
+    for q in retention_cursors:
+        assert q["status"] == {"$nin": ["pending", "processing"]}, q
 
 
 @pytest.mark.asyncio

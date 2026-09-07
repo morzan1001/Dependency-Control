@@ -121,6 +121,15 @@ def _bson_equal(left: Any, right: Any) -> bool:
     return bool(_naive_utc(left) == _naive_utc(right))
 
 
+def _bson_identical(left: Any, right: Any) -> bool:
+    """Deep equality under BSON's type ranking, so a $set turning ``1`` into ``True`` is a change."""
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(_bson_identical(left[key], right[key]) for key in left)
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(_bson_identical(a, b) for a, b in zip(left, right))
+    return _bson_equal(left, right)
+
+
 def _bsonify(value: Any) -> Any:
     if isinstance(value, dict):
         return {k: _bsonify(v) for k, v in value.items()}
@@ -1112,11 +1121,13 @@ class FakeCollection:
         if matched is not None:
             before = _copy.deepcopy(self._docs[matched])
             self._apply_update(self._docs[matched], update, array_filters=array_filters)
-            modified = int(self._docs[matched] != before)
+            modified = int(not _bson_identical(self._docs[matched], before))
         elif upsert:
             self._insert_upserted(query, update)
         result = MagicMock()
         result.modified_count = modified
+        # A conditional write tells a filter miss apart from a no-op on matched_count alone.
+        result.matched_count = int(matched is not None)
         return result
 
     async def update_many(self, query, update, array_filters=None, upsert: bool = False):
@@ -1126,7 +1137,7 @@ class FakeCollection:
             before = _copy.deepcopy(self._docs[k])
             self._apply_update(self._docs[k], update, array_filters=array_filters)
             # Real Mongo does not count a $set that changes nothing.
-            modified += self._docs[k] != before
+            modified += not _bson_identical(self._docs[k], before)
         if not matched and upsert:
             self._insert_upserted(query, update)
         result = MagicMock()

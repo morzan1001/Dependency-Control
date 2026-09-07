@@ -41,7 +41,7 @@ from app.repositories.system_settings import SystemSettingsRepository
 from app.services.audit.retention import prune_old_audit_entries
 from app.services.compliance.retention import sweep_expired_compliance_reports
 from app.services.gridfs_maintenance import cleanup_gridfs_files, extract_gridfs_ids_from_refs, reap_orphan_gridfs_files
-from app.services.releases import release_protected_scan_ids
+from app.services.releases import reconcile_release_flags, release_protected_scan_ids
 from app.services.update_frequency_reconcile import run_update_frequency_reconcile
 
 if TYPE_CHECKING:
@@ -547,6 +547,11 @@ async def run_housekeeping() -> None:
     try:
         db = await get_database()
 
+        try:
+            await reconcile_release_flags(db)
+        except Exception as e:
+            logger.exception("Housekeeping: release flag reconcile failed: %s", e)
+
         repo = SystemSettingsRepository(db)
         system_settings = await repo.get()
 
@@ -565,9 +570,6 @@ async def run_housekeeping() -> None:
                     {
                         "created_at": {"$lt": cutoff_date},
                         "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
-                        # Keeps flagged releases out of the candidate stream; the exemption that
-                        # decides is _unreferenced, which reads db.releases rather than this flag.
-                        "is_release": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
                         "status": {"$nin": ["pending", "processing"]},
                     },
                     {"_id": 1},
@@ -615,7 +617,6 @@ async def run_housekeeping() -> None:
                         "project_id": {"$in": project_ids},
                         "created_at": {"$lt": cutoff_date},
                         "pinned": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
-                        "is_release": {"$nin": RETENTION_PROTECTED_FLAG_VALUES},
                         "status": {"$nin": ["pending", "processing"]},
                     },
                     {"_id": 1},

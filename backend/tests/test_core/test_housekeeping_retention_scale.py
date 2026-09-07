@@ -25,6 +25,8 @@ _RESCAN_ID = "rescan-of-the-source"
 _INT_FLAGGED_RELEASE = "release-flagged-with-one"
 _INT_PINNED = "pinned-with-one"
 _BOOL_FLAGGED_RELEASE = "release-flagged-with-true"
+_UNFLAGGED_RELEASE = "release-with-no-flag"
+_ENVIRONMENT = "production"
 _INT_TRUE = 1
 _NOTHING_LEFT: list[str] = []
 
@@ -121,17 +123,51 @@ async def test_the_rescan_lookup_asks_about_one_batch_at_a_time(monkeypatch: pyt
 
 
 @pytest.mark.asyncio
-async def test_a_release_flagged_with_an_integer_is_not_deleted(monkeypatch: pytest.MonkeyPatch) -> None:
-    """BSON int32 is not bool: a flag a migration or a mongosh one-liner wrote as 1 passes
-    {"$ne": True}, and retention deletes the scan the release resolver points at."""
+async def test_a_scan_pinned_with_an_integer_is_not_deleted(monkeypatch: pytest.MonkeyPatch) -> None:
+    """BSON int32 is not bool: a pin a migration or a mongosh one-liner wrote as 1 passes
+    {"$ne": True}, and retention deletes a scan the operator asked it to keep."""
     db = FakeDatabase()
     await _seed(db)
-    await db.scans.insert_one(_scan_doc(_INT_FLAGGED_RELEASE, is_release=_INT_TRUE))
     await db.scans.insert_one(_scan_doc(_INT_PINNED, pinned=_INT_TRUE))
-    await db.scans.insert_one(_scan_doc(_BOOL_FLAGGED_RELEASE, is_release=True))
+
+    await _run(db, monkeypatch)
+
+    assert await _surviving_ids(db) == sorted([_candidate_id(_RESCAN_SOURCE_INDEX), _INT_PINNED])
+
+
+@pytest.mark.asyncio
+async def test_a_release_row_protects_a_scan_whatever_its_flag_spelling(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The row decides, so neither spelling of the flag nor its absence changes the answer."""
+    db = FakeDatabase()
+    await _seed(db)
+    for scan_id, flag in ((_INT_FLAGGED_RELEASE, _INT_TRUE), (_BOOL_FLAGGED_RELEASE, True), (_UNFLAGGED_RELEASE, None)):
+        overrides = {} if flag is None else {"is_release": flag}
+        await db.scans.insert_one(_scan_doc(scan_id, **overrides))
+        await db.releases.insert_one(
+            {
+                "_id": f"row-{scan_id}",
+                "project_id": _PROJECT_ID,
+                "environment": _ENVIRONMENT,
+                "scan_id": scan_id,
+                "released_at": _NOW,
+            }
+        )
 
     await _run(db, monkeypatch)
 
     assert await _surviving_ids(db) == sorted(
-        [_candidate_id(_RESCAN_SOURCE_INDEX), _INT_FLAGGED_RELEASE, _INT_PINNED, _BOOL_FLAGGED_RELEASE]
+        [_candidate_id(_RESCAN_SOURCE_INDEX), _INT_FLAGGED_RELEASE, _BOOL_FLAGGED_RELEASE, _UNFLAGGED_RELEASE]
     )
+
+
+@pytest.mark.asyncio
+async def test_a_flag_no_release_row_names_does_not_exempt_the_scan(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A flag whose row was never written, or was withdrawn, is not a release: exempting on it is
+    an exemption nothing can ever lift."""
+    db = FakeDatabase()
+    await _seed(db)
+    await db.scans.insert_one(_scan_doc(_BOOL_FLAGGED_RELEASE, is_release=True))
+
+    await _run(db, monkeypatch)
+
+    assert await _surviving_ids(db) == [_candidate_id(_RESCAN_SOURCE_INDEX)]

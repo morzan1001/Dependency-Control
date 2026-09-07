@@ -1058,6 +1058,9 @@ ARCHIVE_BATCH_SIZE = 50
 # {"$ne": True} and the scan is deleted for good. The retention guards spell out both spellings.
 RETENTION_PROTECTED_FLAG_VALUES: list[object] = [True, 1]
 
+# Scan ids per round trip of the release-flag reconcile; both directions splice one into an $in.
+RELEASE_FLAG_RECONCILE_BATCH_SIZE = 1000
+
 # Orphan reaper: only delete S3 objects older than this without metadata
 ARCHIVE_ORPHAN_MIN_AGE_HOURS = 24
 

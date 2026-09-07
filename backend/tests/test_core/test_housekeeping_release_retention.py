@@ -6,12 +6,10 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.core.constants import RETENTION_PROTECTED_FLAG_VALUES
 from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.core.housekeeping"
 
-_NOT_A_RELEASE = {"$nin": RETENTION_PROTECTED_FLAG_VALUES}
 _RETENTION_DAYS = 30
 _RETENTION_ACTION = "delete"
 _PROJECT_ID = "p1"
@@ -46,8 +44,15 @@ def _capturing_db(captured):
     return db
 
 
+def _retention_cursors(captured):
+    """The age-bounded candidate cursors, told apart from the reconcile's own scan read."""
+    return [query for query in captured if "created_at" in query]
+
+
 @pytest.mark.asyncio
-async def test_global_retention_cursor_excludes_releases(monkeypatch):
+async def test_global_retention_cursor_does_not_key_on_the_release_flag(monkeypatch):
+    """A term in the candidate cursor decides ahead of _unreferenced, so a drifted flag would be an
+    exemption no release row can lift and no pass can clear."""
     from app.core.housekeeping import run_housekeeping
 
     captured: list[dict] = []
@@ -62,12 +67,13 @@ async def test_global_retention_cursor_excludes_releases(monkeypatch):
 
     await run_housekeeping()
 
-    assert captured, "global retention never opened a scan cursor"
-    assert captured[0]["is_release"] == _NOT_A_RELEASE, captured[0]
+    cursors = _retention_cursors(captured)
+    assert cursors, captured
+    assert all("is_release" not in query for query in cursors), cursors
 
 
 @pytest.mark.asyncio
-async def test_project_retention_cursor_excludes_releases(monkeypatch):
+async def test_project_retention_cursor_does_not_key_on_the_release_flag(monkeypatch):
     from app.core.housekeeping import run_housekeeping
 
     captured: list[dict] = []
@@ -85,7 +91,9 @@ async def test_project_retention_cursor_excludes_releases(monkeypatch):
 
     await run_housekeeping()
 
-    assert any(q.get("is_release") == _NOT_A_RELEASE for q in captured), captured
+    cursors = _retention_cursors(captured)
+    assert cursors, captured
+    assert all("is_release" not in query for query in cursors), cursors
 
 
 def _expired_scan(scan_id: str, **overrides) -> dict:
