@@ -1,5 +1,5 @@
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 from pydantic import BaseModel
@@ -86,15 +86,29 @@ def group_findings_by_field(
     return grouped
 
 
-def finding_cve_ids(finding: ModelOrDict) -> list[str]:
+def finding_cve_ids(
+    finding: ModelOrDict,
+    advisory_filter: Callable[[dict[str, Any]], bool] | None = None,
+) -> list[str]:
     """Every advisory a stored vulnerability finding names, collapsed to its CVE identity.
 
     Aggregation groups one record per (component, version) and its top-level ``id`` is that pair,
     so the advisory identity only ever lives in ``details.vulnerabilities`` — the same place the
     scan delta reads its identity from.
+
+    ``advisory_filter`` narrows the list to the advisories a card is actually about, so a group of
+    seven log4j CVEs is not presented as seven ransomware CVEs. Enrichment marks each advisory and
+    the document, but a live refresh writes the document only, so a finding whose advisories carry
+    no mark falls back to naming the whole group rather than nothing.
     """
     details = get_attr(finding, "details", {})
-    return canonical_cves([details]) if isinstance(details, dict) else []
+    if not isinstance(details, dict):
+        return []
+    if advisory_filter is not None:
+        entries = [e for e in details.get("vulnerabilities") or [] if isinstance(e, dict) and advisory_filter(e)]
+        if entries:
+            return canonical_cves([{"vulnerabilities": entries}])
+    return canonical_cves([details])
 
 
 def parse_version_tuple(version: str) -> tuple:

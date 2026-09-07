@@ -360,3 +360,50 @@ class TestDetectKnownExploitsEffort:
         result = detect_known_exploits(findings)
         for rec in result:
             assert rec.effort == "low"
+
+
+class TestIncidentCardsNameOnlyTheFlaggedAdvisories:
+    """The ransomware headline claims the named CVEs are targeted by ransomware groups."""
+
+    @staticmethod
+    def _grouped(**doc_flags):
+        finding = _vuln("log4j-core", is_kev=True, **doc_flags)
+        finding["details"]["vulnerabilities"] = [
+            {"id": "CVE-2021-44228", "in_kev": True, "kev_ransomware_use": True, "epss_score": 0.99},
+            {"id": "CVE-2021-44832", "epss_score": 0.01},
+            {"id": "CVE-2021-45105", "epss_score": 0.02},
+        ]
+        return finding
+
+    def _card(self, finding, rec_type):
+        recs = detect_known_exploits([finding])
+        return next(r for r in recs if r.type == rec_type)
+
+    def test_ransomware_card_names_only_the_ransomware_advisory(self):
+        card = self._card(self._grouped(kev_ransomware=True), RecommendationType.RANSOMWARE_RISK)
+        assert card.action["cves"] == ["CVE-2021-44228"]
+        assert "CVE-2021-44832" not in card.description
+
+    def test_kev_card_names_only_the_kev_advisory(self):
+        finding = _vuln("struts2-core", is_kev=True, kev_ransomware=False)
+        finding["details"]["vulnerabilities"] = [
+            {"id": "CVE-2017-5638", "in_kev": True, "kev_ransomware_use": False},
+            {"id": "CVE-2016-1181"},
+        ]
+        card = self._card(finding, RecommendationType.KNOWN_EXPLOIT)
+        assert card.action["cves"] == ["CVE-2017-5638"]
+
+    def test_high_epss_card_names_only_the_high_epss_advisory(self):
+        finding = _vuln("pkg", is_kev=False, epss_score=0.99)
+        finding["details"]["vulnerabilities"] = [
+            {"id": "CVE-2022-0001", "epss_score": 0.99},
+            {"id": "CVE-2022-0002", "epss_score": 0.01},
+        ]
+        card = self._card(finding, RecommendationType.ACTIVELY_EXPLOITED)
+        assert card.action["cves"] == ["CVE-2022-0001"]
+
+    def test_a_document_only_flag_still_names_the_group(self):
+        finding = _vuln("log4j-core", is_kev=True, kev_ransomware=True)
+        finding["details"]["vulnerabilities"] = [{"id": "CVE-2021-44228"}, {"id": "CVE-2021-44832"}]
+        card = self._card(finding, RecommendationType.RANSOMWARE_RISK)
+        assert card.action["cves"] == ["CVE-2021-44228", "CVE-2021-44832"]

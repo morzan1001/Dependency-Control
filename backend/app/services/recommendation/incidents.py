@@ -1,3 +1,5 @@
+from typing import Any
+
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, EPSS_VERY_HIGH_THRESHOLD
 from app.schemas.recommendation import (
     Priority,
@@ -13,6 +15,19 @@ from app.services.recommendation.common import (
 )
 
 _CVES_NAMED = 5
+
+
+def _advisory_is_ransomware(advisory: dict[str, Any]) -> bool:
+    return bool(advisory.get(DETAILS_KEY_KEV_RANSOMWARE))
+
+
+def _advisory_is_kev(advisory: dict[str, Any]) -> bool:
+    return bool(advisory.get(DETAILS_KEY_IN_KEV))
+
+
+def _advisory_has_very_high_epss(advisory: dict[str, Any]) -> bool:
+    epss = advisory.get("epss_score")
+    return epss is not None and epss >= EPSS_VERY_HIGH_THRESHOLD
 
 
 def process_malware(malware_findings: list[ModelOrDict]) -> list[Recommendation]:
@@ -147,7 +162,7 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
     if ransomware_vulns:
         affected_packages = sorted({get_attr(f, "component", "") for f in ransomware_vulns})
         packages_shown, packages_total = sample_components(affected_packages)
-        cves = sorted({cve for f in ransomware_vulns for cve in finding_cve_ids(f)})
+        cves = sorted({cve for f in ransomware_vulns for cve in finding_cve_ids(f, _advisory_is_ransomware)})
 
         recommendations.append(
             Recommendation(
@@ -191,7 +206,7 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
     if kev_vulns:
         affected_packages = sorted({get_attr(f, "component", "") for f in kev_vulns})
         packages_shown, packages_total = sample_components(affected_packages)
-        cves = sorted({cve for f in kev_vulns for cve in finding_cve_ids(f)})
+        cves = sorted({cve for f in kev_vulns for cve in finding_cve_ids(f, _advisory_is_kev)})
 
         recommendations.append(
             Recommendation(
@@ -232,7 +247,7 @@ def detect_known_exploits(vuln_findings: list[ModelOrDict]) -> list[Recommendati
     if high_epss_vulns:
         affected_packages = sorted({get_attr(f, "component", "") for f in high_epss_vulns})
         packages_shown, packages_total = sample_components(affected_packages)
-        cves = sorted({cve for f in high_epss_vulns for cve in finding_cve_ids(f)})
+        cves = sorted({cve for f in high_epss_vulns for cve in finding_cve_ids(f, _advisory_has_very_high_epss)})
 
         max_epss = max(
             (get_attr(f, "details", {}).get("epss_score", 0) if isinstance(get_attr(f, "details", {}), dict) else 0)

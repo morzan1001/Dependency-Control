@@ -142,9 +142,7 @@ class TestFindingCveIds:
         assert finding_cve_ids(finding) == ["GHSA-only-1234"]
 
     def test_a_cve_named_by_two_entries_is_listed_once(self):
-        finding = _stored_vuln(
-            [{"id": "CVE-2021-44228"}, {"id": "GHSA-jfh8-c2jp-5v3q", "aliases": ["CVE-2021-44228"]}]
-        )
+        finding = _stored_vuln([{"id": "CVE-2021-44228"}, {"id": "GHSA-jfh8-c2jp-5v3q", "aliases": ["CVE-2021-44228"]}])
         assert finding_cve_ids(finding) == ["CVE-2021-44228"]
 
     def test_empty_advisory_list_names_nothing(self):
@@ -537,3 +535,29 @@ class TestRecommendationTotal:
 
         assert rec.affected_components_total == covered
         assert rec.to_dict()["affected_components_total"] == covered
+
+
+class TestFindingCveIdsAdvisoryFilter:
+    """A card names the advisories it is about; a seven-CVE component group is not seven KEV CVEs."""
+
+    def _mixed(self):
+        return _stored_vuln(
+            [
+                {"id": "CVE-2021-44228", "in_kev": True, "kev_ransomware_use": True},
+                {"id": "CVE-2021-44832"},
+                {"id": "CVE-2021-45046", "in_kev": True, "kev_ransomware_use": True},
+                {"id": "CVE-2021-45105"},
+            ]
+        )
+
+    def test_only_the_marked_advisories_are_named(self):
+        marked = finding_cve_ids(self._mixed(), lambda a: bool(a.get("kev_ransomware_use")))
+        assert marked == ["CVE-2021-44228", "CVE-2021-45046"]
+
+    def test_an_unmarked_group_falls_back_to_every_cve(self):
+        finding = _stored_vuln([{"id": "CVE-2021-44228"}, {"id": "CVE-2021-44832"}])
+        finding["details"]["kev_ransomware_use"] = True
+
+        marked = finding_cve_ids(finding, lambda a: bool(a.get("kev_ransomware_use")))
+
+        assert marked == ["CVE-2021-44228", "CVE-2021-44832"]
