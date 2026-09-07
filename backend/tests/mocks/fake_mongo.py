@@ -40,6 +40,25 @@ Server-side behaviour that tests rely on
   element, so ``$ne: []`` excludes the empty array.
 - Only false, null and zero are false to ``$cond``/``$switch``; ``""`` and
   ``[]`` are true.
+- A cursor is consumed as it is read: ``to_list(length=n)`` hands back the next
+  n documents and finally an empty list, and iterating a drained cursor yields
+  nothing, so a paging loop terminates here as it does there.
+- ``insert_one``/``insert_many`` stamp a generated ``ObjectId`` onto the caller's
+  document, so code that reads the new id back without a round trip works, and a
+  later insert never reuses the key of a deleted one.
+- ``bulk_write`` reports matched, modified and upserted counts, and does not count
+  an update that changed nothing.
+
+Known divergences, none of which the application issues
+-------------------------------------------------------
+- ``distinct`` resolves only top-level scalar fields: it does not follow a dotted
+  path and does not flatten an array-valued one.
+- ``$push`` takes a plain value; the ``$each``/``$slice``/``$sort`` modifiers are
+  appended verbatim instead of being applied.
+- ``$addToSet`` writes a dotted path as a literal key rather than descending it.
+- ``count_documents`` ignores ``skip``.
+- A ``$group`` ``$push`` over a field the document lacks pushes null, where the
+  server pushes nothing.
 
 Supported aggregation stages
 ----------------------------
@@ -73,6 +92,7 @@ from datetime import timezone as _timezone
 from typing import Any
 from unittest.mock import MagicMock
 
+from bson import ObjectId
 from pymongo.errors import OperationFailure
 
 from app.core.init_db import RELEASES_UPSERT_KEY_FIELDS
@@ -896,7 +916,9 @@ class _AsyncIter:
         return item
 
     async def to_list(self, length=None):
-        return self._items if length is None else self._items[:length]
+        batch = self._items[self._idx :] if length is None else self._items[self._idx : self._idx + length]
+        self._idx += len(batch)
+        return batch
 
 
 class _FakeCursor:
@@ -909,7 +931,7 @@ class _FakeCursor:
         self._skip_n = skip
         self._limit_n = limit
         self._projection = projection
-        self._iter = None
+        self._remaining: list | None = None
 
     def skip(self, n: int) -> _FakeCursor:
         self._skip_n = n
@@ -935,24 +957,30 @@ class _FakeCursor:
             return [_apply_projection(doc, self._projection) for doc in results]
         return results
 
+    def _unread(self) -> list:
+        if self._remaining is None:
+            self._remaining = self._filtered()
+        return self._remaining
+
     async def to_list(self, length=None) -> list:
-        results = self._filtered()
-        # The server caps the batch at ``length``; a fake that ignores it makes every test of a
-        # saturated read pass without the read ever saturating.
-        return results if length is None else results[:length]
+        # The server caps the batch at ``length`` and consumes it, so a paging loop terminates here
+        # too and a test of a saturated read cannot pass by re-reading the same first page.
+        remaining = self._unread()
+        batch = list(remaining) if length is None else remaining[:length]
+        del remaining[: len(batch)]
+        return batch
 
     def __aiter__(self):
-        self._iter = iter(self._filtered())
         return self
 
     async def __anext__(self):
-        try:
-            return next(self._iter)  # type: ignore[arg-type]
-        except StopIteration:
+        remaining = self._unread()
+        if not remaining:
             raise StopAsyncIteration
+        return remaining.pop(0)
 
     async def close(self) -> None:
-        self._iter = None
+        self._remaining = []
 
 
 # ---------------------------------------------------------------------------
@@ -1067,10 +1095,12 @@ class FakeCollection:
         collision = self._duplicate_key(doc)
         if collision is not None:
             raise DuplicateKeyError(f"E11000 duplicate key error: {collision}")
-        key = doc.get("_id") or str(len(self._docs))
-        self._docs[key] = _bsonify(doc)
+        # The driver stamps the _id onto the caller's document, which is how code that needs the
+        # new id reads it back without a round trip.
+        doc.setdefault("_id", ObjectId())
+        self._docs[doc["_id"]] = _bsonify(doc)
         result = MagicMock()
-        result.inserted_id = key
+        result.inserted_id = doc["_id"]
         return result
 
     async def insert_many(self, docs: list, ordered: bool = True):
@@ -1088,9 +1118,9 @@ class FakeCollection:
                 if ordered:
                     break
                 continue
-            key = doc.get("_id") or str(len(self._docs))
-            self._docs[key] = _bsonify(doc)
-            inserted.append(key)
+            doc.setdefault("_id", ObjectId())
+            self._docs[doc["_id"]] = _bsonify(doc)
+            inserted.append(doc["_id"])
         if write_errors:
             raise BulkWriteError({"writeErrors": write_errors, "nInserted": len(inserted)})
         result = MagicMock()
@@ -1111,7 +1141,7 @@ class FakeCollection:
         doc = {k: v for k, v in query.items() if not isinstance(v, dict) and not k.startswith("$")}
         doc.update(update.get(_SET_ON_INSERT, {}))
         self._apply_update(doc, update, skip_set_on_insert=True)
-        doc["_id"] = doc.get("_id") or str(len(self._docs))
+        doc.setdefault("_id", ObjectId())
         collision = self._duplicate_key(doc)
         if collision is not None:
             raise DuplicateKeyError(f"E11000 duplicate key error: {collision}")
@@ -1273,6 +1303,8 @@ class FakeCollection:
 
     async def bulk_write(self, ops, ordered: bool = True):
         modified = 0
+        matched = 0
+        upserted = 0
         for op in ops:
             flt = op._filter
             upd = op._doc
@@ -1282,10 +1314,13 @@ class FakeCollection:
                 # UpdateMany touches every match; UpdateOne only the first (Mongo semantics).
                 if type(op).__name__ != "UpdateMany":
                     matched_keys = matched_keys[:1]
+                matched += len(matched_keys)
                 for key in matched_keys:
+                    before = _copy.deepcopy(self._docs[key])
                     self._apply_update(self._docs[key], upd)
-                    modified += 1
+                    modified += not _bson_identical(self._docs[key], before)
             elif upsert:
+                upserted += 1
                 doc: dict = {}
                 doc.update(upd.get(_SET_ON_INSERT, {}))
                 doc.update(upd.get("$set", {}))
@@ -1300,6 +1335,8 @@ class FakeCollection:
                 self._docs[doc["_id"]] = _bsonify(doc)
         result = MagicMock()
         result.modified_count = modified
+        result.matched_count = matched
+        result.upserted_count = upserted
         return result
 
     async def create_index(self, keys, **kwargs):
