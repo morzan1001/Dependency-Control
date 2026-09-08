@@ -55,6 +55,18 @@ async def test_enabling_is_allowed_and_persisted_when_the_instance_has_a_token(c
 
 
 @pytest.mark.asyncio
+async def test_an_unrelated_edit_is_refused_while_the_stored_toggle_is_on(client, db, owner_auth_headers_proj):
+    """Falling back to the stored value locks the project out of every edit until decoration is turned off."""
+    await _link_github(db, access_token=None)
+    await db.projects.update_one({"_id": "p"}, {"$set": {"github_pr_comments_enabled": True}})
+
+    resp = await client.put("/api/v1/projects/p", json={"name": "renamed"}, headers=owner_auth_headers_proj)
+
+    assert resp.status_code == 400, resp.text
+    assert (await db.projects.find_one({"_id": "p"}))["name"] != "renamed"
+
+
+@pytest.mark.asyncio
 async def test_disabling_is_never_refused(client, db, owner_auth_headers_proj):
     await _link_github(db, access_token=None)
 

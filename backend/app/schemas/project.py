@@ -123,7 +123,6 @@ class ProjectCreate(BaseModel):
         RETENTION_ACTION_DELETE,
         description="Action when retention period expires: delete, archive, or none",
     )
-    github_pr_comments_enabled: bool = Field(False, description="Post scan results as PR comments on GitHub")
     license_policy: LicensePolicySchema | None = Field(
         None, description="License compliance policy controlling copyleft finding severity"
     )

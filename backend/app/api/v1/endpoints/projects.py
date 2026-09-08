@@ -249,7 +249,6 @@ async def create_project(
         api_key_hash=api_key_hash,
         active_analyzers=project_in.active_analyzers,
         retention_days=(project_in.retention_days if project_in.retention_days is not None else 90),
-        github_pr_comments_enabled=project_in.github_pr_comments_enabled,
         members=[ProjectMember(user_id=str(current_user.id), role="admin")],
     )
 
