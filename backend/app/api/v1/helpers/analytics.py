@@ -1,14 +1,16 @@
 """Helper functions for analytics endpoints."""
 
+from collections.abc import Sequence
 from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import HTTPException
+from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.constants import (
     ANALYTICS_MAX_QUERY_LIMIT,
     BLAST_RADIUS_THRESHOLD,
+    CROSS_PROJECT_MIN_OCCURRENCES,
     DAYS_KNOWN_OVERDUE_THRESHOLD,
     EPSS_HIGH_BOOST,
     EPSS_HIGH_THRESHOLD,
@@ -27,17 +29,51 @@ from app.core.constants import (
     KEV_DUE_SOON_DAYS,
     KEV_OVERDUE_BOOST,
     KEV_RANSOMWARE_BOOST,
+    RELEASE_ENVIRONMENT_PATTERN,
     SEVERITY_WEIGHTS,
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
-from app.repositories import ProjectRepository, ScanRepository
+from app.repositories import ProjectRepository
 from app.schemas.analytics import CVEEnrichmentResult
 from app.services.aggregation.components import build_component_index
 from app.services.recommendation.common import get_attr
 
 MONGO_MATCH = "$match"
 MONGO_GROUP = "$group"
+
+# Other projects a project's recommendations are compared against. Each one costs a scan
+# resolution plus its share of two aggregations; the response reports how many were reached.
+_CROSS_PROJECT_COMPARISON_LIMIT = 20
+
+ReleaseEnvironmentQuery = Annotated[
+    str | None,
+    Query(
+        pattern=RELEASE_ENVIRONMENT_PATTERN,
+        description="Report the release of this environment instead of the branch tip",
+    ),
+]
+
+
+_ANALYTICS_FEATURE_PERMISSIONS = [
+    Permissions.ANALYTICS_READ,
+    Permissions.ANALYTICS_SUMMARY,
+    Permissions.ANALYTICS_DEPENDENCIES,
+    Permissions.ANALYTICS_TREE,
+    Permissions.ANALYTICS_IMPACT,
+    Permissions.ANALYTICS_HOTSPOTS,
+    Permissions.ANALYTICS_SEARCH,
+    Permissions.ANALYTICS_RECOMMENDATIONS,
+]
+
+
+def require_any_analytics_permission(user: User) -> None:
+    """Raise 403 unless the user holds a permission that opens some analytics feature."""
+    if not has_permission(user.permissions, _ANALYTICS_FEATURE_PERMISSIONS):
+        raise HTTPException(
+            status_code=403,
+            detail=f"Analytics permission required: one of {', '.join(_ANALYTICS_FEATURE_PERMISSIONS)}.",
+        )
 
 
 def require_analytics_permission(user: User, permission: str) -> None:
@@ -61,38 +97,45 @@ async def get_user_project_ids(user: User, db: AsyncIOMotorDatabase) -> list[str
     return resolved.project_ids or []
 
 
-async def _resolve_active_scan_ids(
-    projects: list[Any],
+async def get_latest_scan_ids(
+    project_ids: list[str],
     db: AsyncIOMotorDatabase,
-) -> dict[str, str]:
-    """Resolve latest scan ID per project, excluding scans from deleted branches."""
-    return await ScanRepository(db).get_latest_active_scan_ids(projects)
+    *,
+    release_environment: str | None = None,
+) -> list[str]:
+    """Scan IDs representing the given projects; the branch tip, or their release when asked."""
+    from app.services.releases import resolve_scan_ids
 
-
-async def get_latest_scan_ids(project_ids: list[str], db: AsyncIOMotorDatabase) -> list[str]:
-    """Get latest scan IDs for given projects, excluding scans from deleted branches."""
-    project_repo = ProjectRepository(db)
-    projects = await project_repo.find_many_with_scan_id(
-        {"_id": {"$in": project_ids}},
-        limit=ANALYTICS_MAX_QUERY_LIMIT,
-    )
-
-    resolved = await _resolve_active_scan_ids(projects, db)
+    resolved = await resolve_scan_ids(db, project_ids, release_environment=release_environment)
     return list(resolved.values())
 
 
-async def get_projects_with_scans(project_ids: list[str], db: AsyncIOMotorDatabase) -> tuple[dict[str, str], list[str]]:
-    """Return (project_name_map, scan_ids), excluding scans from deleted branches."""
-    project_repo = ProjectRepository(db)
-    projects = await project_repo.find_many_with_scan_id(
+async def get_projects_with_scans(
+    project_ids: list[str],
+    db: AsyncIOMotorDatabase,
+    *,
+    release_environment: str | None = None,
+) -> tuple[dict[str, str], list[str]]:
+    """Return (project_name_map, scan_ids) for the given projects."""
+    from app.services.releases import resolve_scan_ids
+
+    projects = await ProjectRepository(db).find_many_with_scan_id(
         {"_id": {"$in": project_ids}},
         limit=ANALYTICS_MAX_QUERY_LIMIT,
     )
-
     project_name_map = {p.id: p.name for p in projects}
-    resolved = await _resolve_active_scan_ids(projects, db)
+    resolved = await resolve_scan_ids(db, project_ids, release_environment=release_environment, projects=projects)
 
     return project_name_map, list(resolved.values())
+
+
+def scope_resolution_counts(project_ids: Sequence[str], scan_ids: Sequence[str]) -> tuple[int, int]:
+    """(projects that contributed, projects in scope with no resolvable scan). The resolver
+    returns one scan per project, so the scan count is the contributing-project count.
+    Without a release filter the second value counts projects with no usable scan at all, so the
+    projects_without_release field it feeds reads as "no scan" on a head-mode request."""
+    resolved = len(scan_ids)
+    return resolved, len(project_ids) - resolved
 
 
 async def historical_first_seen(
@@ -415,6 +458,42 @@ def cross_project_cve_pipeline(scan_ids: list[str]) -> list[dict[str, Any]]:
     ]
 
 
+def cross_project_package_pipeline(scan_ids: list[str], min_projects: int) -> list[dict[str, Any]]:
+    """Packages carrying more than one version across the compared scans.
+
+    Grouped in Mongo rather than by pushing each scan's package list to the caller: the answer is
+    a version count per package name, and a per-scan sample of the input cannot produce it.
+    Names are lower-cased because that is the identity the recommendation reports under.
+    """
+    return [
+        {MONGO_MATCH: {"scan_id": {"$in": scan_ids}, "name": {"$nin": [None, ""]}}},
+        {
+            "$project": {
+                "package": {"$toLower": "$name"},
+                "package_version": {"$ifNull": ["$version", "unknown"]},
+                "project_id": 1,
+            }
+        },
+        {
+            MONGO_GROUP: {
+                "_id": "$package",
+                "versions": {"$addToSet": "$package_version"},
+                "project_ids": {"$addToSet": "$project_id"},
+            }
+        },
+        {
+            "$project": {
+                "name": "$_id",
+                "versions": 1,
+                "version_count": {"$size": "$versions"},
+                "project_count": {"$size": "$project_ids"},
+            }
+        },
+        {MONGO_MATCH: {"version_count": {"$gt": 1}, "project_count": {"$gte": min_projects}}},
+        {"$sort": {"version_count": -1, "name": 1}},
+    ]
+
+
 async def gather_cross_project_data(
     user_project_ids: list[str],
     current_project_id: str,
@@ -441,11 +520,15 @@ async def gather_cross_project_data(
 
     cross_project_data: dict[str, Any] = {
         "projects": [],
+        "shared_packages": [],
         "total_projects": len(user_project_ids),
+        # A CVE count out of total_projects would claim a comparison that never ran.
+        "projects_compared": 0,
     }
 
-    # Cap at 20 other projects for performance
-    other_project_ids = [pid for pid in user_project_ids if pid != current_project_id][:20]
+    other_project_ids = [pid for pid in user_project_ids if pid != current_project_id][
+        :_CROSS_PROJECT_COMPARISON_LIMIT
+    ]
 
     other_projects = await project_repo.find_many_with_scan_id(
         {"_id": {"$in": other_project_ids}},
@@ -453,7 +536,7 @@ async def gather_cross_project_data(
     )
     project_info_map = {p.id: p for p in other_projects}
 
-    resolved_scans = await _resolve_active_scan_ids(other_projects, db)
+    resolved_scans = await scan_repo.get_latest_active_scan_ids(other_projects)
 
     scan_id_to_project: dict[str, str] = {}
     for proj_id, scan_id in resolved_scans.items():
@@ -473,18 +556,9 @@ async def gather_cross_project_data(
     cve_results = await finding_repo.aggregate(cross_project_cve_pipeline(other_scan_ids))
     scan_cves_map = {r["_id"]: [c for c in r["cves"] if c] for r in cve_results}
 
-    pkg_pipeline: list[dict[str, Any]] = [
-        {MONGO_MATCH: {"scan_id": {"$in": other_scan_ids}}},
-        {
-            MONGO_GROUP: {
-                "_id": "$scan_id",
-                "packages": {"$push": {"name": "$name", "version": "$version"}},
-            }
-        },
-        {"$project": {"_id": 1, "packages": {"$slice": ["$packages", 100]}}},
-    ]
-    pkg_results = await dep_repo.aggregate(pkg_pipeline)
-    scan_pkgs_map = {r["_id"]: r["packages"] for r in pkg_results}
+    cross_project_data["shared_packages"] = await dep_repo.aggregate(
+        cross_project_package_pipeline(other_scan_ids, CROSS_PROJECT_MIN_OCCURRENCES)
+    )
 
     for scan_id, proj_id in scan_id_to_project.items():
         proj_info = project_info_map.get(proj_id)
@@ -495,10 +569,10 @@ async def gather_cross_project_data(
                 "project_id": proj_id,
                 "project_name": proj_info.name if proj_info else "Unknown",
                 "cves": scan_cves_map.get(scan_id, []),
-                "packages": scan_pkgs_map.get(scan_id, []),
                 "total_critical": stats.critical if stats else 0,
                 "total_high": stats.high if stats else 0,
             }
         )
 
+    cross_project_data["projects_compared"] = len(cross_project_data["projects"])
     return cross_project_data

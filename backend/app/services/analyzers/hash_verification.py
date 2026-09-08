@@ -8,7 +8,7 @@ from typing import Any, ClassVar
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.constants import ANALYZER_TIMEOUTS, NPM_REGISTRY_URL, PYPI_API_URL
+from app.core.constants import ANALYZER_BATCH_SIZES, ANALYZER_TIMEOUTS, NPM_REGISTRY_URL, PYPI_API_URL
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
@@ -20,6 +20,8 @@ logger = logging.getLogger(__name__)
 
 class HashVerificationAnalyzer(Analyzer):
     name = "hash_verification"
+
+    MAX_CONCURRENT = ANALYZER_BATCH_SIZES.get("hash_verification", 10)
 
     # Maven Central omitted: its checksums are served as separate files, not inline.
     REGISTRY_APIS: ClassVar[dict[str, str]] = {
@@ -42,10 +44,10 @@ class HashVerificationAnalyzer(Analyzer):
         fetched_hashes = {}  # package@version -> {alg: hash}
         timeout = ANALYZER_TIMEOUTS.get("hash_verification", ANALYZER_TIMEOUTS["default"])
 
+        semaphore = asyncio.Semaphore(self.MAX_CONCURRENT)
+
         async with InstrumentedAsyncClient("Package Registry API", timeout=timeout) as client:
-            tasks = []
-            for component in components:
-                tasks.append(self._verify_component(client, component))
+            tasks = [self._verify_component_with_limit(semaphore, client, component) for component in components]
 
             results = await asyncio.gather(*tasks)
 
@@ -117,6 +119,13 @@ class HashVerificationAnalyzer(Analyzer):
                         sbom_hashes[alg] = h["content"]
 
         return sbom_hashes
+
+    async def _verify_component_with_limit(
+        self, semaphore: asyncio.Semaphore, client: InstrumentedAsyncClient, component: dict[str, Any]
+    ) -> dict[str, Any] | None:
+        """One registry request per component, so the fan-out has to be bounded, not just gathered."""
+        async with semaphore:
+            return await self._verify_component(client, component)
 
     async def _verify_component(
         self, client: InstrumentedAsyncClient, component: dict[str, Any]

@@ -206,8 +206,6 @@ async def test_coverable_count_excludes_os_packages(db):
     Without this figure a team cannot tell "reachability found nothing yet" from "reachability
     can never say anything here", and enables callgraph jobs that cannot help them.
     """
-    from app.services.reachability_enrichment import count_coverable_findings
-
     await db.dependencies.insert_many(
         [
             {"scan_id": _SCAN_ID, "name": "libssl3", "type": "deb", "purl": "pkg:deb/debian/libssl3@3.5.5"},
@@ -224,12 +222,12 @@ async def test_coverable_count_excludes_os_packages(db):
     ):
         await db.findings.insert_one(_finding(finding_id, component))
 
-    assert await count_coverable_findings(db, _SCAN_ID) == 1
+    stats = await calculate_comprehensive_stats(db, _SCAN_ID)
+    assert stats.reachability.coverable_count == 1
 
 
 @pytest.mark.asyncio
 async def test_coverable_count_is_zero_without_dependencies(db):
-    from app.services.reachability_enrichment import count_coverable_findings
-
     await db.findings.insert_one(_finding("CVE-1", "libssl3"))
-    assert await count_coverable_findings(db, _SCAN_ID) == 0
+    stats = await calculate_comprehensive_stats(db, _SCAN_ID)
+    assert stats.reachability.coverable_count == 0

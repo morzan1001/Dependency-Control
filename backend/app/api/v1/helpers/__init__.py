@@ -67,7 +67,6 @@ from app.api.v1.helpers.sorting import (
     parse_sort_direction,
 )
 from app.api.v1.helpers.storage import (
-    delete_gridfs_files,
     load_from_gridfs,
     resolve_sbom_refs,
 )
@@ -77,7 +76,6 @@ from app.api.v1.helpers.teams import (
     check_team_access,
     enrich_team_with_usernames,
     fetch_and_enrich_team,
-    find_member_in_team,
     get_member_role,
     get_team_with_access,
 )
@@ -143,7 +141,6 @@ __all__ = [
     "check_webhook_permission",
     "count_severities",
     # Storage helpers
-    "delete_gridfs_files",
     "detect_format",
     "enrich_team_with_usernames",
     "exchange_slack_code_for_token",
@@ -151,7 +148,6 @@ __all__ = [
     "extract_slack_tokens",
     "fetch_and_enrich_team",
     "fetch_updated_user",
-    "find_member_in_team",
     "gather_cross_project_data",
     "generate_project_api_key",
     # System helpers

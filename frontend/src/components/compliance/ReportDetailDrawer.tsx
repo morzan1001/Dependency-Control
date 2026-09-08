@@ -9,9 +9,54 @@ import { useDialogState } from "@/hooks/use-dialog-state";
 import { extractErrorMessage } from "@/lib/errors";
 import { formatDateTime } from "@/lib/utils";
 import { ReportStatusBadge } from "./ReportStatusBadge";
-import type { ComplianceReportMeta } from "@/types/compliance";
+import type { ComplianceReportMeta, ControlStatus, EvaluationCoverage, InputCoverage } from "@/types/compliance";
 
 interface Props { report: ComplianceReportMeta | null; onClose: () => void; }
+
+function isComplete(input: InputCoverage): boolean {
+  return input.evaluated >= input.in_scope;
+}
+
+function inputSentence(input: InputCoverage, subject: string): string {
+  if (isComplete(input)) {
+    return `Evaluated all ${input.in_scope.toLocaleString()} ${subject} in scope.`;
+  }
+  return (
+    `Evaluated ${input.evaluated.toLocaleString()} of ${input.in_scope.toLocaleString()} ${subject} ` +
+    `in scope, a cap of ${input.limit.toLocaleString()} per report; the remaining ` +
+    `${(input.in_scope - input.evaluated).toLocaleString()} were not read.`
+  );
+}
+
+function CoverageNotice({ coverage }: { readonly coverage: EvaluationCoverage }) {
+  const sentences = [
+    inputSentence(coverage.findings, "findings"),
+    inputSentence(coverage.crypto_assets, "crypto assets"),
+  ];
+  if (isComplete(coverage.findings) && isComplete(coverage.crypto_assets)) {
+    return <div className="text-xs text-muted-foreground">{sentences.join(" ")}</div>;
+  }
+  return (
+    <div className="rounded border border-amber-400 bg-amber-50 p-2 text-xs text-amber-900 dark:bg-amber-950 dark:text-amber-200">
+      {sentences.join(" ")} Every verdict that would have rested on finding no match in a capped
+      input is reported as not_evaluated instead. Failures stand. Narrow the scope and regenerate
+      before handing this to an auditor.
+    </div>
+  );
+}
+
+const WITHHELD_KEY: ControlStatus = "not_evaluated";
+
+function SummaryRow({ label, value }: { readonly label: string; readonly value: number | undefined }) {
+  const withheld = label === WITHHELD_KEY && (value ?? 0) > 0;
+  const tone = withheld ? "text-amber-700 dark:text-amber-300 font-medium" : "";
+  return (
+    <div className="contents">
+      <dt className={`text-xs ${withheld ? tone : "text-muted-foreground"}`}>{label}</dt>
+      <dd className={`text-xs ${tone}`}>{String(value)}</dd>
+    </div>
+  );
+}
 
 export function ReportDetailDrawer({ report, onClose }: Props) {
   const qc = useQueryClient();
@@ -64,13 +109,11 @@ export function ReportDetailDrawer({ report, onClose }: Props) {
                     {report.error_message}
                   </div>
                 )}
+                {report.coverage && <CoverageNotice coverage={report.coverage} />}
                 {Object.keys(report.summary || {}).length > 0 && (
                   <dl className="mt-3 grid grid-cols-2 gap-y-1">
                     {Object.entries(report.summary).map(([k, v]) => (
-                      <div key={k} className="contents">
-                        <dt className="text-muted-foreground text-xs">{k}</dt>
-                        <dd className="text-xs">{String(v)}</dd>
-                      </div>
+                      <SummaryRow key={k} label={k} value={v} />
                     ))}
                   </dl>
                 )}

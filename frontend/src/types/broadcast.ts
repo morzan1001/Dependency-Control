@@ -37,3 +37,10 @@ export interface BroadcastHistoryItem {
   unique_user_count?: number;
   teams?: string[];
 }
+
+export interface PackageSuggestions {
+  // Alphabetical, at most the endpoint's suggestion limit.
+  names: string[];
+  // More packages match than are listed; the query has to narrow to reach them.
+  more: boolean;
+}

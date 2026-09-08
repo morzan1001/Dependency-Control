@@ -4,13 +4,22 @@ from datetime import datetime, timezone
 
 import pytest
 
+from app.core.constants import REACHABILITY_LEVEL_IMPORT, REACHABILITY_LEVEL_SYMBOL
+from app.core.risk_scoring import CONFIRMED_REACHABLE_RISK_MODIFIER, UNREACHABLE_RISK_MODIFIER
+from app.models.stats import Stats
 from app.services.analysis.stats import (
+    _HIGH_RISK_SAMPLE_CAP,
     _format_datetime,
+    _numeric,
+    _reach_modifier,
     build_epss_kev_summary,
     build_reachability_summary,
     calculate_comprehensive_stats,
+    compute_stats,
 )
 from tests.mocks.fake_mongo import FakeDatabase
+
+_HIGH_RISK_POPULATION = _HIGH_RISK_SAMPLE_CAP + 5
 
 # ---------------------------------------------------------------------------
 # _format_datetime
@@ -74,6 +83,10 @@ def _make_finding(
 # ---------------------------------------------------------------------------
 # build_epss_kev_summary
 # ---------------------------------------------------------------------------
+
+# What a corrupt enrichment leaves in details.epss_score; True passes isinstance(int) and would
+# otherwise be reported as a certainty of 1.0.
+_NON_NUMERIC_EPSS_VALUES = (True, [0.5], "0.5")
 
 
 class TestBuildEpssKevSummaryEmpty:
@@ -156,6 +169,14 @@ class TestBuildEpssKevSummaryEpss:
         assert result["epss_enriched"] == 0
         assert result["avg_epss_score"] is None
 
+    @pytest.mark.parametrize("raw_epss", _NON_NUMERIC_EPSS_VALUES)
+    def test_non_numeric_epss_is_dropped(self, raw_epss):
+        """The raw-data view must agree with the Stats block, which drops these through the same guard."""
+        result = build_epss_kev_summary([_make_finding(epss_score=raw_epss)])
+        assert result["epss_enriched"] == 0
+        assert result["max_epss_score"] is None
+        assert result["avg_epss_score"] is None
+
 
 class TestBuildEpssKevSummaryKev:
     def test_kev_match_counted(self):
@@ -231,9 +252,19 @@ class TestBuildEpssKevSummaryRisk:
         assert scores == sorted(scores, reverse=True)
 
     def test_high_risk_cves_limited_to_20(self):
-        findings = [_make_finding(finding_id=f"CVE-{i}", risk_score=71.0 + i) for i in range(25)]
+        findings = [_make_finding(finding_id=f"CVE-{i}", risk_score=71.0 + i) for i in range(_HIGH_RISK_POPULATION)]
         result = build_epss_kev_summary(findings)
-        assert len(result["high_risk_cves"]) == 20
+        assert len(result["high_risk_cves"]) == _HIGH_RISK_SAMPLE_CAP
+
+    def test_the_high_risk_total_counts_past_the_sample(self):
+        """The card header and its 'showing n of total' line read this, not len(the list)."""
+        findings = [_make_finding(finding_id=f"CVE-{i}", risk_score=71.0 + i) for i in range(_HIGH_RISK_POPULATION)]
+        result = build_epss_kev_summary(findings)
+        assert result["high_risk_total"] == _HIGH_RISK_POPULATION
+
+    def test_the_high_risk_total_is_zero_when_nothing_clears_the_threshold(self):
+        result = build_epss_kev_summary([_make_finding(risk_score=10.0)])
+        assert result["high_risk_total"] == 0
 
     def test_no_risk_scores_gives_none(self):
         findings = [_make_finding(risk_score=None)]
@@ -750,338 +781,69 @@ class TestRiskScoreSaturatingExposure:
         assert await _risk_score(plain) == await _risk_score(enriched)
 
 
-class TestAdjustedRiskScoreReachability:
-    @pytest.mark.asyncio
-    async def test_no_reachability_info_adjusted_equals_base(self):
-        findings = [_w5_finding("c1", "CRITICAL"), _w5_finding("h1", "HIGH")]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.adjusted_risk_score == stats.risk_score
-
-    @pytest.mark.asyncio
-    async def test_all_unreachable_adjusted_below_base(self):
-        findings = [_w5_finding(f"c{i}", "CRITICAL", reachable=False, reachability_level="none") for i in range(3)]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert 0.0 < stats.adjusted_risk_score < stats.risk_score
-
-    @pytest.mark.asyncio
-    async def test_confirmed_reachable_adjusted_at_least_base(self):
-        findings = [_w5_finding("c1", "CRITICAL", reachable=True, reachability_level="symbol")]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.risk_score <= stats.adjusted_risk_score <= 100.0
+# ---------------------------------------------------------------------------
+# _numeric
+# ---------------------------------------------------------------------------
 
 
-class TestPrioritizedVulnerabilityGate:
-    """prioritized.* counts vulnerabilities only; other finding types must not leak in."""
+class TestNumeric:
+    def test_bool_is_not_a_number(self):
+        # The reason the helper exists: Mongo sorts bool above every numeric type, so a
+        # persisted `epss_score: False` would otherwise outrank the highest threshold.
+        assert _numeric(True) is None
+        assert _numeric(False) is None
 
-    @staticmethod
-    def _typed(_id, finding_type, severity="MEDIUM", details=None):
-        return {
-            "_id": _id,
-            "finding_id": _id,
-            "scan_id": _W5_SCAN,
-            "type": finding_type,
-            "severity": severity,
-            "component": "pkg",
-            "version": "1.0.0",
-            "details": details or {},
-            "waived": False,
-        }
+    def test_int_becomes_float(self):
+        assert _numeric(1) == 1.0
 
-    @pytest.mark.asyncio
-    async def test_zero_vulns_scan_has_zero_deprioritized(self):
-        """Secrets/SAST/outdated findings carry no EPSS data and must not count as deprioritized vulns."""
-        findings = [_secret_finding(f"s{i}", verified=False, in_current_tree=True) for i in range(3)]
-        findings = [{**f, "scan_id": _W5_SCAN} for f in findings]
-        findings += [self._typed(f"sast{i}", "sast", severity="HIGH") for i in range(4)]
-        findings += [self._typed(f"out{i}", "outdated", severity="INFO") for i in range(10)]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.prioritized.deprioritized_count == 0
-        assert stats.prioritized.actionable_total == 0
-        assert stats.prioritized.total == 0
+    def test_numeric_string_is_rejected(self):
+        assert _numeric("0.5") is None
 
-    @pytest.mark.asyncio
-    async def test_deprioritized_counts_only_vulnerabilities(self):
+    def test_missing_value_is_none(self):
+        assert _numeric(None) is None
+
+
+# ---------------------------------------------------------------------------
+# _reach_modifier
+# ---------------------------------------------------------------------------
+
+
+class TestReachModifier:
+    def test_unreachable_applies_unreachable_modifier(self):
+        assert _reach_modifier(False, "any_level") == UNREACHABLE_RISK_MODIFIER
+        assert _reach_modifier(False, None) == UNREACHABLE_RISK_MODIFIER
+
+    def test_confirmed_reachable_applies_confirmed_modifier(self):
+        assert _reach_modifier(True, REACHABILITY_LEVEL_SYMBOL) == CONFIRMED_REACHABLE_RISK_MODIFIER
+
+    def test_likely_reachable_defaults_to_one(self):
+        assert _reach_modifier(True, REACHABILITY_LEVEL_IMPORT) == 1.0
+
+    def test_untiered_reachable_defaults_to_one(self):
+        assert _reach_modifier(True, None) == 1.0
+
+    def test_unanalyzed_defaults_to_one(self):
+        assert _reach_modifier(None, REACHABILITY_LEVEL_SYMBOL) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# compute_stats  –  waiver and empty-scan branches
+# ---------------------------------------------------------------------------
+
+
+class TestComputeStatsWaiverAndEmptyScan:
+    def test_no_findings_yields_the_bare_default(self):
+        assert compute_stats([], {}) == Stats()
+
+    def test_fully_waived_scan_is_indistinguishable_from_an_empty_one(self):
+        findings = [{"severity": "CRITICAL", "type": "vulnerability", "waived": True}]
+        assert compute_stats(findings, {}) == Stats()
+
+    def test_absent_and_false_waived_flags_both_count(self):
         findings = [
-            self._typed("v1", "vulnerability", severity="LOW", details={"epss_score": 0.001}),
-            self._typed("v2", "vulnerability", severity="MEDIUM"),  # no EPSS -> deprioritized
+            {"severity": "CRITICAL", "type": "vulnerability", "waived": False},
+            {"severity": "CRITICAL", "type": "vulnerability"},
+            {"severity": "HIGH", "type": "vulnerability", "waived": True},
         ]
-        findings += [self._typed(f"out{i}", "outdated", severity="INFO") for i in range(5)]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.prioritized.deprioritized_count == 2
-
-    @pytest.mark.asyncio
-    async def test_prioritized_totals_and_severity_buckets_are_vuln_only(self):
-        findings = [
-            self._typed("v1", "vulnerability", severity="CRITICAL"),
-            self._typed("q1", "quality", severity="CRITICAL"),
-            self._typed("q2", "quality", severity="HIGH"),
-        ]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.prioritized.total == 1
-        assert stats.prioritized.critical == 1
-        assert stats.prioritized.high == 0
-        # the all-findings severity buckets are untouched by the gate
-        assert stats.critical == 2
-        assert stats.high == 1
-
-    @pytest.mark.asyncio
-    async def test_actionable_counts_gated_to_vulnerabilities(self):
-        findings = [
-            self._typed("v1", "vulnerability", severity="CRITICAL", details={"epss_score": 0.5}),
-        ]
-        findings += [self._typed(f"out{i}", "outdated", severity="INFO") for i in range(3)]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.prioritized.actionable_critical == 1
-        assert stats.prioritized.actionable_total == 1
-
-
-class TestSeverityBucketsComplete:
-    """Every persisted severity lands in exactly one bucket, so buckets sum to the finding total."""
-
-    @pytest.mark.asyncio
-    async def test_negligible_bucket_counted(self):
-        findings = [
-            _w5_finding("c1", "CRITICAL"),
-            _w5_finding("n1", "NEGLIGIBLE"),
-            _w5_finding("n2", "NEGLIGIBLE"),
-        ]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.negligible == 2
-
-    @pytest.mark.asyncio
-    async def test_buckets_sum_to_total_finding_count(self):
-        findings = [
-            _w5_finding("c1", "CRITICAL"),
-            _w5_finding("h1", "HIGH"),
-            _w5_finding("m1", "MEDIUM"),
-            _w5_finding("l1", "LOW"),
-            _w5_finding("i1", "INFO"),
-            _w5_finding("u1", "UNKNOWN"),
-            _w5_finding("n1", "NEGLIGIBLE"),
-        ]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        bucket_sum = (
-            stats.critical + stats.high + stats.medium + stats.low + stats.info + stats.unknown + stats.negligible
-        )
-        assert bucket_sum == len(findings)
-
-    @pytest.mark.asyncio
-    async def test_unmapped_severity_lands_in_unknown(self):
-        findings = [_w5_finding("w1", "WEIRD"), _w5_finding("u1", "UNKNOWN")]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.unknown == 2
-
-
-# calculate_comprehensive_stats must read KEV state from details.in_kev /
-# details.kev_ransomware_use (the keys the enrichment writer persists).
-
-
-def _kev_finding(_id, *, in_kev=False, kev_ransomware_use=False):
-    details: dict = {}
-    if in_kev:
-        details["in_kev"] = True
-    if kev_ransomware_use:
-        details["kev_ransomware_use"] = True
-    return {
-        "_id": _id,
-        "finding_id": _id,
-        "scan_id": _W5_SCAN,
-        "type": "vulnerability",
-        "severity": "HIGH",
-        "component": "pkg",
-        "version": "1.0.0",
-        "details": details,
-        "waived": False,
-    }
-
-
-class TestComprehensiveStatsReachabilityTiers:
-    """Reachability tiers derive from (reachable, analysis_level): symbol->confirmed, import->likely."""
-
-    @pytest.mark.asyncio
-    async def test_import_level_reachable_counts_as_likely(self):
-        findings = [_w5_finding("i1", "HIGH", reachable=True, reachability_level="import")]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.reachability.likely_reachable_count == 1
-
-    @pytest.mark.asyncio
-    async def test_symbol_level_reachable_is_not_likely(self):
-        findings = [_w5_finding("s1", "HIGH", reachable=True, reachability_level="symbol")]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        # symbol-level is the stronger 'confirmed' tier, not 'likely'
-        assert stats.reachability.likely_reachable_count == 0
-
-    @pytest.mark.asyncio
-    async def test_confirmed_vs_total_reachable_counts(self):
-        """confirmed_reachable_count = symbol-level; reachable_count = total (confirmed + likely)."""
-        findings = [
-            _w5_finding("s1", "HIGH", reachable=True, reachability_level="symbol"),
-            _w5_finding("i1", "HIGH", reachable=True, reachability_level="import"),
-        ]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.reachability.confirmed_reachable_count == 1
-        assert stats.reachability.likely_reachable_count == 1
-        assert stats.reachability.reachable_count == 2
-
-
-class TestComprehensiveStatsEpssZero:
-    """A legitimate EPSS of 0.0 must be reported as 0.0, not dropped to None by a truthiness guard."""
-
-    @staticmethod
-    def _epss_finding(_id, epss):
-        return {
-            "_id": _id,
-            "finding_id": _id,
-            "scan_id": _W5_SCAN,
-            "type": "vulnerability",
-            "severity": "HIGH",
-            "component": "pkg",
-            "version": "1.0.0",
-            "details": {"epss_score": epss},
-            "waived": False,
-        }
-
-    @pytest.mark.asyncio
-    async def test_all_zero_epss_reports_zero_not_none(self):
-        findings = [self._epss_finding("z1", 0.0), self._epss_finding("z2", 0.0)]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.threat_intel.avg_epss_score == 0.0
-        assert stats.threat_intel.max_epss_score == 0.0
-
-
-class TestComprehensiveStatsUnknownReachability:
-    """unknown_count must be vuln_total - reachability_analyzed, so non-vuln findings aren't counted as unknown-reachability vulns."""
-
-    @staticmethod
-    def _typed_finding(_id, finding_type, *, reachable=None, reachability_level="unknown"):
-        doc = {
-            "_id": _id,
-            "finding_id": _id,
-            "scan_id": _W5_SCAN,
-            "type": finding_type,
-            "severity": "HIGH",
-            "component": "pkg",
-            "version": "1.0.0",
-            "details": {},
-            "waived": False,
-        }
-        if reachable is not None:
-            doc["reachable"] = reachable
-            doc["reachability_level"] = reachability_level
-        return doc
-
-    @pytest.mark.asyncio
-    async def test_non_vuln_findings_not_counted_as_unknown_reachability(self):
-        findings = [self._typed_finding(f"lic{i}", "license") for i in range(5)]
-        findings += [self._typed_finding(f"sast{i}", "sast") for i in range(3)]
-        findings += [
-            self._typed_finding("v1", "vulnerability", reachable=True, reachability_level="symbol"),
-            self._typed_finding("v2", "vulnerability", reachable=False, reachability_level="none"),
-        ]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        # both vulns analyzed -> 0 unknown
-        assert stats.reachability.unknown_count == 0
-
-    @pytest.mark.asyncio
-    async def test_unknown_count_is_unanalyzed_vulns_only(self):
-        findings = [self._typed_finding(f"lic{i}", "license") for i in range(10)]
-        findings += [
-            self._typed_finding("v1", "vulnerability", reachable=True, reachability_level="symbol"),
-            self._typed_finding("v2", "vulnerability"),  # no reachable verdict -> unknown
-            self._typed_finding("v3", "vulnerability"),  # no reachable verdict -> unknown
-        ]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.reachability.analyzed_count == 1
-        assert stats.reachability.unknown_count == 2
-
-
-class TestComprehensiveStatsKev:
-    @pytest.mark.asyncio
-    async def test_kev_count_reads_persisted_in_kev_key(self):
-        findings = [
-            _kev_finding("k1", in_kev=True),
-            _kev_finding("k2", in_kev=True, kev_ransomware_use=True),
-            _kev_finding("n1"),  # not in KEV
-        ]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.threat_intel.kev_count == 2
-        assert stats.threat_intel.kev_ransomware_count == 1
-
-
-_SECRET_SCAN = "scan-secret-priority"
-
-
-def _secret_finding(_id, *, verified=None, in_current_tree=None, waived=False):
-    details = {}
-    if verified is not None:
-        details["verified"] = verified
-    if in_current_tree is not None:
-        details["in_current_tree"] = in_current_tree
-    return {
-        "_id": _id,
-        "finding_id": _id,
-        "scan_id": _SECRET_SCAN,
-        "type": "secret",
-        "severity": "CRITICAL",
-        "component": "config/aws.env",
-        "version": "",
-        "details": details,
-        "waived": waived,
-    }
-
-
-class TestComprehensiveStatsSecretPriority:
-    @pytest.mark.asyncio
-    async def test_counts_by_verified_and_tree_status(self):
-        findings = [
-            _secret_finding("s1", verified=True, in_current_tree=True),
-            _secret_finding("s2", verified=True, in_current_tree=False),
-            _secret_finding("s3", verified=False, in_current_tree=True),
-            _secret_finding("s4", verified=False, in_current_tree=False),
-            _secret_finding("s5"),  # unknown/unknown
-        ]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _SECRET_SCAN)
-        assert stats.secret_priority is not None
-        assert stats.secret_priority.total == 5
-        assert stats.secret_priority.verified_count == 2
-        assert stats.secret_priority.in_current_tree_count == 2
-        assert stats.secret_priority.historical_only_count == 2
-        assert stats.secret_priority.unknown_tree_count == 1
-        assert stats.secret_priority.actionable_count == 1
-        assert stats.secret_priority.deprioritized_count == 1
-
-    @pytest.mark.asyncio
-    async def test_waived_secrets_are_excluded(self):
-        # All findings waived -> $match yields zero docs -> $group yields no rows,
-        # so the whole stats_result gate stays empty: prioritized/threat_intel/
-        # reachability/secret_priority are all None here, same as an empty scan.
-        findings = [_secret_finding("s1", verified=True, in_current_tree=True, waived=True)]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _SECRET_SCAN)
-        assert stats.secret_priority is None
-
-    @pytest.mark.asyncio
-    async def test_no_secrets_yields_zeroed_secret_priority(self):
-        findings = [_w5_finding("v1", "CRITICAL")]
-        db = await _seed(findings)
-        stats = await calculate_comprehensive_stats(db, _W5_SCAN)
-        assert stats.secret_priority is not None
-        assert stats.secret_priority.total == 0
+        stats = compute_stats(findings, {})
+        assert (stats.critical, stats.high) == (2, 0)

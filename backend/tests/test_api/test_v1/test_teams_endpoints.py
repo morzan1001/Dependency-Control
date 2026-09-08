@@ -1,6 +1,7 @@
 """Tests for team API endpoints."""
 
 import asyncio
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,14 +9,38 @@ from fastapi import HTTPException
 
 from app.core.constants import TEAM_ROLE_ADMIN, TEAM_ROLE_MEMBER
 from app.models.team import Team, TeamMember
+from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.api.v1.endpoints.teams"
+_TEAM_TIMESTAMP = datetime(2026, 1, 1, tzinfo=timezone.utc)
 
 
 def _make_team(id="team-1", name="Test Team", members=None):
     if members is None:
         members = [TeamMember(user_id="user-1", role=TEAM_ROLE_ADMIN)]
     return Team(id=id, name=name, members=members)
+
+
+def _fake_db_with_team(members) -> FakeDatabase:
+    db = FakeDatabase()
+    db.teams._docs["team-1"] = {
+        "_id": "team-1",
+        "name": "Test Team",
+        "members": [{"user_id": user_id, "role": role} for user_id, role in members],
+        "created_at": _TEAM_TIMESTAMP,
+        "updated_at": _TEAM_TIMESTAMP,
+    }
+    for user_id, _role in members:
+        db.users._docs[user_id] = {"_id": user_id, "username": user_id}
+    return db
+
+
+def _stored_team(db: FakeDatabase) -> Team:
+    return Team(**db.teams._docs["team-1"])
+
+
+def _stored_roles(db: FakeDatabase) -> dict[str, str]:
+    return {member["user_id"]: member["role"] for member in db.teams._docs["team-1"]["members"]}
 
 
 class TestCreateTeam:
@@ -268,41 +293,26 @@ class TestDeleteTeam:
 class TestAddTeamMember:
     def test_success_adds_member(self, admin_user):
         from app.api.v1.endpoints.teams import add_team_member
-        from app.schemas.team import TeamMemberAdd, TeamResponse
+        from app.schemas.team import TeamMemberAdd
 
-        team = _make_team(members=[TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN)])
-        user_doc = {"_id": "new-user-id", "username": "newuser", "email": "new@test.com"}
-        enriched = TeamResponse(
-            _id="team-1",
-            name="Test Team",
-            members=[
-                {"user_id": "admin-1", "role": "owner", "username": "admin"},
-                {"user_id": "new-user-id", "role": "member", "username": "newuser"},
-            ],
-            created_at="2024-01-01T00:00:00",
-            updated_at="2024-01-01T00:00:00",
-        )
+        db = _fake_db_with_team([("admin-1", TEAM_ROLE_ADMIN)])
+        asyncio.run(db.users.insert_one({"_id": "new-user-id", "username": "newuser", "email": "new@test.com"}))
 
-        mock_team_repo = MagicMock()
-        mock_team_repo.update_raw = AsyncMock()
-        mock_user_repo = MagicMock()
-        mock_user_repo.get_raw_by_email = AsyncMock(return_value=user_doc)
+        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=_stored_team(db)):
+            result = asyncio.run(
+                add_team_member(
+                    team_id="team-1",
+                    member_in=TeamMemberAdd(email="new@test.com"),
+                    current_user=admin_user,
+                    db=db,
+                )
+            )
 
-        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=team):
-            with patch(f"{MODULE}.TeamRepository", return_value=mock_team_repo):
-                with patch(f"{MODULE}.UserRepository", return_value=mock_user_repo):
-                    with patch(f"{MODULE}.fetch_and_enrich_team", new_callable=AsyncMock, return_value=enriched):
-                        result = asyncio.run(
-                            add_team_member(
-                                team_id="team-1",
-                                member_in=TeamMemberAdd(email="new@test.com"),
-                                current_user=admin_user,
-                                db=MagicMock(),
-                            )
-                        )
-
-        assert len(result.members) == 2
-        mock_team_repo.update_raw.assert_called_once()
+        assert [(m.user_id, m.role) for m in result.members] == [
+            ("admin-1", TEAM_ROLE_ADMIN),
+            ("new-user-id", TEAM_ROLE_MEMBER),
+        ]
+        assert _stored_roles(db) == {"admin-1": TEAM_ROLE_ADMIN, "new-user-id": TEAM_ROLE_MEMBER}
 
     def test_raises_404_when_user_not_found(self, admin_user):
         from app.api.v1.endpoints.teams import add_team_member
@@ -328,72 +338,29 @@ class TestAddTeamMember:
         assert exc_info.value.status_code == 404
 
     def test_raises_400_when_already_member(self, admin_user):
+        """The refusal comes from the push's own filter, so a second add cannot duplicate the row."""
         from app.api.v1.endpoints.teams import add_team_member
         from app.schemas.team import TeamMemberAdd
 
-        team = _make_team(members=[TeamMember(user_id="existing-id", role=TEAM_ROLE_MEMBER)])
-        user_doc = {"_id": "existing-id", "username": "existing", "email": "e@test.com"}
+        db = _fake_db_with_team([("admin-1", TEAM_ROLE_ADMIN), ("existing-id", TEAM_ROLE_MEMBER)])
+        asyncio.run(db.users.update_one({"_id": "existing-id"}, {"$set": {"email": "e@test.com"}}))
 
-        mock_team_repo = MagicMock()
-        mock_user_repo = MagicMock()
-        mock_user_repo.get_raw_by_email = AsyncMock(return_value=user_doc)
-
-        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=team):
-            with patch(f"{MODULE}.TeamRepository", return_value=mock_team_repo):
-                with patch(f"{MODULE}.UserRepository", return_value=mock_user_repo):
-                    with pytest.raises(HTTPException) as exc_info:
-                        asyncio.run(
-                            add_team_member(
-                                team_id="team-1",
-                                member_in=TeamMemberAdd(email="e@test.com"),
-                                current_user=admin_user,
-                                db=MagicMock(),
-                            )
-                        )
+        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=_stored_team(db)):
+            with pytest.raises(HTTPException) as exc_info:
+                asyncio.run(
+                    add_team_member(
+                        team_id="team-1",
+                        member_in=TeamMemberAdd(email="e@test.com"),
+                        current_user=admin_user,
+                        db=db,
+                    )
+                )
         assert exc_info.value.status_code == 400
         assert "already" in exc_info.value.detail.lower()
+        assert _stored_roles(db) == {"admin-1": TEAM_ROLE_ADMIN, "existing-id": TEAM_ROLE_MEMBER}
 
 
 class TestUpdateTeamMember:
-    def test_success_updates_role(self, admin_user):
-        from app.api.v1.endpoints.teams import update_team_member
-        from app.schemas.team import TeamMemberUpdate, TeamResponse
-
-        team = _make_team(
-            members=[
-                TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN),
-                TeamMember(user_id="target-user", role=TEAM_ROLE_MEMBER),
-            ]
-        )
-        enriched = TeamResponse(
-            _id="team-1",
-            name="Test Team",
-            members=[
-                {"user_id": "admin-1", "role": "owner", "username": "admin"},
-                {"user_id": "target-user", "role": "admin", "username": "target"},
-            ],
-            created_at="2024-01-01T00:00:00",
-            updated_at="2024-01-01T00:00:00",
-        )
-
-        mock_repo = MagicMock()
-        mock_repo.update_raw = AsyncMock()
-
-        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=team):
-            with patch(f"{MODULE}.TeamRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.fetch_and_enrich_team", new_callable=AsyncMock, return_value=enriched):
-                    asyncio.run(
-                        update_team_member(
-                            team_id="team-1",
-                            user_id="target-user",
-                            member_in=TeamMemberUpdate(role=TEAM_ROLE_ADMIN),
-                            current_user=admin_user,
-                            db=MagicMock(),
-                        )
-                    )
-
-        mock_repo.update_raw.assert_called_once()
-
     def test_raises_404_when_user_not_in_team(self, admin_user):
         from app.api.v1.endpoints.teams import update_team_member
         from app.schemas.team import TeamMemberUpdate
@@ -420,65 +387,44 @@ class TestUpdateTeamMember:
 class TestRemoveTeamMember:
     def test_success_removes_member(self, admin_user):
         from app.api.v1.endpoints.teams import remove_team_member
-        from app.schemas.team import TeamResponse
 
-        team = _make_team(
-            members=[
-                TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN),
-                TeamMember(user_id="to-remove", role=TEAM_ROLE_MEMBER),
-            ]
-        )
-        enriched = TeamResponse(
-            _id="team-1",
-            name="Test Team",
-            members=[{"user_id": "admin-1", "role": "owner", "username": "admin"}],
-            created_at="2024-01-01T00:00:00",
-            updated_at="2024-01-01T00:00:00",
+        db = _fake_db_with_team(
+            [("admin-1", TEAM_ROLE_ADMIN), ("to-remove", TEAM_ROLE_MEMBER), ("stay", TEAM_ROLE_MEMBER)]
         )
 
-        mock_repo = MagicMock()
-        mock_repo.update_raw = AsyncMock()
+        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=_stored_team(db)):
+            result = asyncio.run(
+                remove_team_member(
+                    team_id="team-1",
+                    user_id="to-remove",
+                    current_user=admin_user,
+                    db=db,
+                )
+            )
 
-        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=team):
-            with patch(f"{MODULE}.TeamRepository", return_value=mock_repo):
-                with patch(f"{MODULE}.fetch_and_enrich_team", new_callable=AsyncMock, return_value=enriched):
-                    asyncio.run(
-                        remove_team_member(
-                            team_id="team-1",
-                            user_id="to-remove",
-                            current_user=admin_user,
-                            db=MagicMock(),
-                        )
-                    )
-
-        mock_repo.update_raw.assert_called_once()
+        assert [m.user_id for m in result.members] == ["admin-1", "stay"]
+        assert _stored_roles(db) == {"admin-1": TEAM_ROLE_ADMIN, "stay": TEAM_ROLE_MEMBER}
 
     def test_raises_400_when_removing_last_admin_self(self, admin_user):
+        """admin_user (id="admin-1") is the only admin; the pull's filter is what refuses."""
         from app.api.v1.endpoints.teams import remove_team_member
 
-        # admin_user (id="admin-1") is the only admin, triggering the last-admin removal guard
-        team = _make_team(
-            members=[
-                TeamMember(user_id="admin-1", role=TEAM_ROLE_ADMIN),
-                TeamMember(user_id="other-user", role=TEAM_ROLE_MEMBER),
-            ]
-        )
+        db = _fake_db_with_team([("admin-1", TEAM_ROLE_ADMIN), ("other-user", TEAM_ROLE_MEMBER)])
 
-        mock_repo = MagicMock()
-
-        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=team):
-            with patch(f"{MODULE}.TeamRepository", return_value=mock_repo):
+        with patch(f"{MODULE}.get_team_with_access", new_callable=AsyncMock, return_value=_stored_team(db)):
+            with patch(f"{MODULE}.check_team_access", new_callable=AsyncMock, return_value=_stored_team(db)):
                 with pytest.raises(HTTPException) as exc_info:
                     asyncio.run(
                         remove_team_member(
                             team_id="team-1",
                             user_id="admin-1",
                             current_user=admin_user,
-                            db=MagicMock(),
+                            db=db,
                         )
                     )
         assert exc_info.value.status_code == 400
         assert "admin" in exc_info.value.detail.lower()
+        assert _stored_roles(db) == {"admin-1": TEAM_ROLE_ADMIN, "other-user": TEAM_ROLE_MEMBER}
 
     def test_raises_404_when_not_member(self, admin_user):
         from app.api.v1.endpoints.teams import remove_team_member
@@ -588,3 +534,118 @@ class TestUpdateTeamMemberOwnerProtection:
         assert exc_info.value.status_code == 403
         call_kwargs = mock_access.call_args
         assert call_kwargs.kwargs["required_role"] == TEAM_ROLE_ADMIN
+
+
+class TestTeamScopingAndRolePersistence:
+    """FakeDatabase-backed: the query and the write are the behaviour, so a mock that answers
+    every query the same way cannot see either of them."""
+
+    @staticmethod
+    async def _seeded(teams, users=()):
+        db = FakeDatabase()
+        for user in users:
+            await db.users.insert_one(user)
+        for team in teams:
+            await db.teams.insert_one(team)
+        return db
+
+    @staticmethod
+    def _team_doc(team_id, name, member_ids):
+        return {
+            "_id": team_id,
+            "name": name,
+            "members": [{"user_id": uid, "role": TEAM_ROLE_MEMBER} for uid in member_ids],
+            "created_at": _TEAM_TIMESTAMP,
+            "updated_at": _TEAM_TIMESTAMP,
+        }
+
+    @pytest.mark.asyncio
+    async def test_a_team_read_user_sees_only_the_teams_holding_them(self, regular_user):
+        from app.api.v1.endpoints.teams import read_teams
+
+        caller = str(regular_user.id)
+        db = await self._seeded(
+            teams=[
+                self._team_doc("t-mine", "Mine", [caller]),
+                self._team_doc("t-theirs", "Theirs", ["someone-else"]),
+                self._team_doc("t-empty", "Empty", []),
+            ],
+            users=[{"_id": caller, "username": regular_user.username}],
+        )
+
+        teams = await read_teams(search=None, sort_by="name", sort_order="asc", current_user=regular_user, db=db)
+
+        assert [team["_id"] for team in teams] == ["t-mine"]
+
+    @pytest.mark.asyncio
+    async def test_a_read_all_user_sees_every_team(self, admin_user):
+        from app.api.v1.endpoints.teams import read_teams
+
+        db = await self._seeded(
+            teams=[
+                self._team_doc("t-mine", "Mine", [str(admin_user.id)]),
+                self._team_doc("t-theirs", "Theirs", ["someone-else"]),
+            ]
+        )
+
+        teams = await read_teams(search=None, sort_by="name", sort_order="asc", current_user=admin_user, db=db)
+
+        assert sorted(team["_id"] for team in teams) == ["t-mine", "t-theirs"]
+
+    @pytest.mark.asyncio
+    async def test_the_requested_role_is_the_one_persisted(self, admin_user):
+        from app.api.v1.endpoints.teams import update_team_member
+        from app.schemas.team import TeamMemberUpdate
+
+        target = "target-user"
+        db = await self._seeded(
+            teams=[self._team_doc("team-1", "Test Team", [str(admin_user.id), target])],
+            users=[{"_id": target, "username": "target"}],
+        )
+
+        await update_team_member(
+            team_id="team-1",
+            user_id=target,
+            member_in=TeamMemberUpdate(role=TEAM_ROLE_ADMIN),
+            current_user=admin_user,
+            db=db,
+        )
+
+        stored = await db.teams.find_one({"_id": "team-1"})
+        roles = {member["user_id"]: member["role"] for member in stored["members"]}
+        assert roles[target] == TEAM_ROLE_ADMIN
+
+    @pytest.mark.asyncio
+    async def test_a_removal_landing_between_the_read_and_the_write_cannot_redirect_the_role(self, admin_user):
+        from app.api.v1.endpoints.teams import update_team_member
+        from app.schemas.team import TeamMemberUpdate
+
+        earlier, target, bystander = "earlier-user", "target-user", "bystander-user"
+        db = await self._seeded(
+            teams=[self._team_doc("team-1", "Test Team", [str(admin_user.id), earlier, target, bystander])],
+            users=[{"_id": uid, "username": uid} for uid in (earlier, target, bystander)],
+        )
+
+        write = db.teams.update_one
+
+        async def remove_earlier_then_write(*args, **kwargs):
+            db.teams.update_one = write
+            await write({"_id": "team-1"}, {"$pull": {"members": {"user_id": earlier}}})
+            return await write(*args, **kwargs)
+
+        db.teams.update_one = remove_earlier_then_write
+
+        await update_team_member(
+            team_id="team-1",
+            user_id=target,
+            member_in=TeamMemberUpdate(role=TEAM_ROLE_ADMIN),
+            current_user=admin_user,
+            db=db,
+        )
+
+        stored = await db.teams.find_one({"_id": "team-1"})
+        assert {member["user_id"]: member["role"] for member in stored["members"]} == {
+            str(admin_user.id): TEAM_ROLE_MEMBER,
+            target: TEAM_ROLE_ADMIN,
+            bystander: TEAM_ROLE_MEMBER,
+        }

@@ -1,7 +1,10 @@
 from collections import defaultdict
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import ModelOrDict, get_attr
+from app.services.recommendation.common import ModelOrDict, get_attr, sample_components, sampled
+
+# Rules named per category card; `sampled` pairs the sample with its population.
+_RULES_SAMPLED = 10
 
 
 def _sast_entries(details: ModelOrDict) -> list[dict]:
@@ -55,6 +58,7 @@ def process_sast(findings: list[ModelOrDict]) -> list[Recommendation]:
             severity_counts[get_attr(f, "severity", "UNKNOWN")] += 1
             files_affected.add(get_attr(f, "component", "unknown"))
 
+        files_shown, files_total = sample_components(sorted(files_affected))
         critical_high = severity_counts.get("CRITICAL", 0) + severity_counts.get("HIGH", 0)
 
         if critical_high < 1 and len(cat_findings) < 3:
@@ -93,12 +97,14 @@ def process_sast(findings: list[ModelOrDict]) -> list[Recommendation]:
                     "low": severity_counts.get("LOW", 0),
                     "total": len(cat_findings),
                 },
-                affected_components=list(files_affected)[:20],
+                affected_components=files_shown,
+                affected_components_total=files_total,
                 action={
                     "type": "fix_code",
                     "category": category,
-                    "files": list(files_affected)[:10],
-                    "rules": list(rule_ids)[:10],
+                    "files": files_shown,
+                    "files_total": files_total,
+                    **sampled("rules", sorted(rule_ids), _RULES_SAMPLED),
                 },
                 effort="medium" if len(cat_findings) < 10 else "high",
             )

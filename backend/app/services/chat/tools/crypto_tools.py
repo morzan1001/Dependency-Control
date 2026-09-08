@@ -10,6 +10,11 @@ from typing import Any, Literal, cast
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.models.user import User
+from app.services.compliance.renderers.base import coverage_statement
+
+_NOISY_RULE_SAMPLE = 10
+# $facet collapses its input to a single document.
+_ONE_FACET_DOCUMENT = 1
 
 
 def _pkg() -> Any:
@@ -112,13 +117,22 @@ async def suggest_crypto_policy_override(
         [
             {"$match": {"project_id": project_id, "scan_id": scan_id, "type": {"$regex": "^crypto_"}}},
             {"$group": {"_id": "$details.rule_id", "count": {"$sum": 1}}},
-            {"$sort": {"count": -1}},
-            {"$limit": 10},
+            {
+                "$facet": {
+                    # Counts tie often, so the rule id breaks them: without it the same scan
+                    # names a different ten each call.
+                    "top": [{"$sort": {"count": -1, "_id": 1}}, {"$limit": _NOISY_RULE_SAMPLE}],
+                    "population": [{"$count": "rules"}],
+                }
+            },
         ]
     )
-    top = [{"rule_id": row["_id"], "findings": row["count"]} async for row in cursor]
+    faceted = await cursor.to_list(length=_ONE_FACET_DOCUMENT)
+    top_rows = faceted[0]["top"] if faceted else []
+    population_rows = faceted[0]["population"] if faceted else []
     return {
-        "top_noisy_rules": top,
+        "top_noisy_rules": [{"rule_id": row["_id"], "findings": row["count"]} for row in top_rows],
+        "top_noisy_rules_total": population_rows[0]["rules"] if population_rows else 0,
         "advice": (
             "Rules producing many findings may be candidates for project-scoped "
             "overrides (disable or adjust severity) if the codebase has accepted "
@@ -258,8 +272,10 @@ async def get_framework_evaluation_summary(
         eval_result = await framework_obj.evaluate_async(inputs)
     else:
         eval_result = framework_obj.evaluate(inputs)
+    coverage = coverage_statement(inputs.coverage)
     return {
         "framework": framework,
         "framework_name": eval_result.framework_name,
         "summary": eval_result.summary,
+        **({"coverage": coverage} if coverage else {}),
     }

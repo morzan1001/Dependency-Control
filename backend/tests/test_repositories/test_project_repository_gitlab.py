@@ -1,102 +1,82 @@
-"""Tests for ProjectRepository GitLab multi-instance methods with mocked MongoDB."""
+"""ProjectRepository's GitLab multi-instance lookups, driven through FakeDatabase."""
 
-import asyncio
+import pytest
 
 from app.repositories.projects import ProjectRepository
-from tests.mocks.mongodb import create_mock_collection, create_mock_db
+from tests.mocks.fake_mongo import FakeDatabase
+
+_INSTANCE_A = "instance-a"
+_INSTANCE_B = "instance-b"
+_GITLAB_PROJECT_ID = 12345
+_INSTANCE_A_PROJECTS = 3
+
+
+def _project_doc(project_id, instance_id, gitlab_project_id):
+    return {
+        "_id": project_id,
+        "name": project_id,
+        "owner_id": "u1",
+        "gitlab_instance_id": instance_id,
+        "gitlab_project_id": gitlab_project_id,
+    }
+
+
+@pytest.fixture
+def db():
+    database = FakeDatabase()
+    for index in range(_INSTANCE_A_PROJECTS):
+        database.projects._docs[f"a-{index}"] = _project_doc(f"a-{index}", _INSTANCE_A, _GITLAB_PROJECT_ID + index)
+    # Same numeric project id on a second instance: the composite key is what tells them apart.
+    database.projects._docs["b-0"] = _project_doc("b-0", _INSTANCE_B, _GITLAB_PROJECT_ID)
+    return database
 
 
 class TestCompositeKeyLookup:
-    def test_queries_both_fields(self):
-        collection = create_mock_collection(find_one=None)
-        db = create_mock_db({"projects": collection})
+    @pytest.mark.asyncio
+    async def test_the_instance_id_decides_between_two_rows_sharing_a_gitlab_project_id(self, db):
         repo = ProjectRepository(db)
 
-        asyncio.run(repo.get_by_gitlab_composite_key("instance-a", 12345))
+        found = await repo.get_by_gitlab_composite_key(_INSTANCE_B, _GITLAB_PROJECT_ID)
 
-        collection.find_one.assert_called_once_with(
-            {
-                "gitlab_instance_id": "instance-a",
-                "gitlab_project_id": 12345,
-            }
-        )
+        assert found is not None
+        assert found.id == "b-0"
 
-    def test_returns_project_when_found(self):
-        doc = {
-            "_id": "proj-id",
-            "name": "Test Project",
-            "owner_id": "user-1",
-            "gitlab_instance_id": "instance-a",
-            "gitlab_project_id": 12345,
-        }
-        collection = create_mock_collection(find_one=doc)
-        db = create_mock_db({"projects": collection})
+    @pytest.mark.asyncio
+    async def test_an_unknown_pair_resolves_to_nothing(self, db):
         repo = ProjectRepository(db)
 
-        result = asyncio.run(repo.get_by_gitlab_composite_key("instance-a", 12345))
-        assert result is not None
-        assert result.name == "Test Project"
-        assert result.gitlab_instance_id == "instance-a"
+        assert await repo.get_by_gitlab_composite_key(_INSTANCE_A, 99999) is None
+        assert await repo.get_raw_by_gitlab_composite_key("absent", _GITLAB_PROJECT_ID) is None
 
-    def test_returns_none_when_not_found(self):
-        collection = create_mock_collection(find_one=None)
-        db = create_mock_db({"projects": collection})
+    @pytest.mark.asyncio
+    async def test_the_raw_lookup_returns_the_stored_document(self, db):
         repo = ProjectRepository(db)
 
-        result = asyncio.run(repo.get_by_gitlab_composite_key("wrong", 99999))
-        assert result is None
+        raw = await repo.get_raw_by_gitlab_composite_key(_INSTANCE_A, _GITLAB_PROJECT_ID)
 
-    def test_raw_returns_dict(self):
-        doc = {
-            "_id": "proj-id",
-            "name": "Test",
-            "owner_id": "user-1",
-            "gitlab_instance_id": "instance-a",
-            "gitlab_project_id": 12345,
-        }
-        collection = create_mock_collection(find_one=doc)
-        db = create_mock_db({"projects": collection})
-        repo = ProjectRepository(db)
-
-        result = asyncio.run(repo.get_raw_by_gitlab_composite_key("instance-a", 12345))
-        assert isinstance(result, dict)
-        assert result["gitlab_instance_id"] == "instance-a"
-        assert result["gitlab_project_id"] == 12345
+        assert raw == _project_doc("a-0", _INSTANCE_A, _GITLAB_PROJECT_ID)
 
 
 class TestInstanceQueries:
-    def test_list_by_instance_filters_correctly(self):
-        docs = [
-            {"_id": "1", "name": "P1", "owner_id": "u1", "gitlab_instance_id": "instance-a"},
-            {"_id": "2", "name": "P2", "owner_id": "u1", "gitlab_instance_id": "instance-a"},
-        ]
-        collection = create_mock_collection(find=docs)
-        db = create_mock_db({"projects": collection})
+    @pytest.mark.asyncio
+    async def test_list_by_instance_returns_that_instance_only(self, db):
         repo = ProjectRepository(db)
 
-        result = asyncio.run(repo.list_by_instance("instance-a"))
+        listed = await repo.list_by_instance(_INSTANCE_A)
 
-        collection.find.assert_called_once_with({"gitlab_instance_id": "instance-a"})
-        assert len(result) == 2
+        assert [project.id for project in listed] == [f"a-{i}" for i in range(_INSTANCE_A_PROJECTS)]
 
-    def test_list_by_instance_pagination(self):
-        collection = create_mock_collection(find=[])
-        db = create_mock_db({"projects": collection})
+    @pytest.mark.asyncio
+    async def test_list_by_instance_pages_from_the_requested_offset(self, db):
         repo = ProjectRepository(db)
 
-        asyncio.run(repo.list_by_instance("instance-a", skip=10, limit=5))
+        page = await repo.list_by_instance(_INSTANCE_A, skip=1, limit=1)
 
-        collection.find.assert_called_once_with({"gitlab_instance_id": "instance-a"})
-        cursor = collection.find.return_value
-        cursor.skip.assert_called_once_with(10)
-        cursor.limit.assert_called_once_with(5)
+        assert [project.id for project in page] == ["a-1"]
 
-    def test_count_by_instance(self):
-        collection = create_mock_collection(count_documents=3)
-        db = create_mock_db({"projects": collection})
+    @pytest.mark.asyncio
+    async def test_count_by_instance_counts_that_instance_only(self, db):
         repo = ProjectRepository(db)
 
-        result = asyncio.run(repo.count_by_instance("instance-a"))
-
-        assert result == 3
-        collection.count_documents.assert_called_once_with({"gitlab_instance_id": "instance-a"})
+        assert await repo.count_by_instance(_INSTANCE_A) == _INSTANCE_A_PROJECTS
+        assert await repo.count_by_instance(_INSTANCE_B) == 1

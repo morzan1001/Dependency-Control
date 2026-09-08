@@ -4,6 +4,23 @@ import asyncio
 
 import pytest
 
+from tests.conftest import WEASYPRINT_USABLE
+
+_POLL_ATTEMPTS = 50
+_PDF_POLL_ATTEMPTS = 100
+_POLL_INTERVAL_SECONDS = 0.1
+_TERMINAL_STATUSES = ("completed", "failed")
+
+
+async def _poll_until_terminal(client, report_id, headers, attempts=_POLL_ATTEMPTS):
+    for _ in range(attempts):
+        resp = await client.get(f"/api/v1/compliance/reports/{report_id}", headers=headers)
+        assert resp.status_code == 200, resp.text
+        if resp.json()["status"] in _TERMINAL_STATUSES:
+            return resp
+        await asyncio.sleep(_POLL_INTERVAL_SECONDS)
+    raise AssertionError(f"report {report_id} never reached a terminal status")
+
 
 def _install_fake_pipeline(monkeypatch):
     """Common monkeypatch setup: fake gather_inputs + fake GridFS store."""
@@ -105,18 +122,8 @@ async def test_each_format_renders(
     assert resp.status_code == 202, resp.text
     report_id = resp.json()["report_id"]
 
-    g = None
-    for _ in range(50):
-        g = await client.get(
-            f"/api/v1/compliance/reports/{report_id}",
-            headers=owner_auth_headers_proj,
-        )
-        if g.json()["status"] in ("completed", "failed"):
-            break
-        await asyncio.sleep(0.1)
-
-    if g is None or g.json().get("status") != "completed":
-        pytest.skip(f"fake DB limitation: engine could not complete ({g.json() if g else 'no response'})")
+    g = await _poll_until_terminal(client, report_id, owner_auth_headers_proj)
+    assert g.json()["status"] == "completed", g.json()
 
     dl = await client.get(
         f"/api/v1/compliance/reports/{report_id}/download",
@@ -128,6 +135,7 @@ async def test_each_format_renders(
     assert len(dl.content) > 0
 
 
+@pytest.mark.skipif(not WEASYPRINT_USABLE, reason="WeasyPrint not installed or native libs missing")
 @pytest.mark.asyncio
 async def test_pdf_format_if_weasyprint_available(
     client,
@@ -135,11 +143,6 @@ async def test_pdf_format_if_weasyprint_available(
     owner_auth_headers_proj,
     monkeypatch,
 ):
-    try:
-        import weasyprint  # noqa: F401
-    except Exception:
-        pytest.skip("WeasyPrint unavailable")
-
     _install_fake_pipeline(monkeypatch)
 
     resp = await client.post(
@@ -150,18 +153,8 @@ async def test_pdf_format_if_weasyprint_available(
     assert resp.status_code == 202, resp.text
     report_id = resp.json()["report_id"]
 
-    g = None
-    for _ in range(100):
-        g = await client.get(
-            f"/api/v1/compliance/reports/{report_id}",
-            headers=owner_auth_headers_proj,
-        )
-        if g.json()["status"] in ("completed", "failed"):
-            break
-        await asyncio.sleep(0.1)
-
-    if g is None or g.json().get("status") != "completed":
-        pytest.skip(f"fake DB limitation: PDF generation could not complete ({g.json() if g else 'no response'})")
+    g = await _poll_until_terminal(client, report_id, owner_auth_headers_proj, attempts=_PDF_POLL_ATTEMPTS)
+    assert g.json()["status"] == "completed", g.json()
 
     dl = await client.get(
         f"/api/v1/compliance/reports/{report_id}/download",

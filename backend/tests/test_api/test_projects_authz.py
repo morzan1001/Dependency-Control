@@ -174,10 +174,8 @@ class TestDeleteProjectRoutesThroughGate:
         repos = {
             "ProjectRepository": MagicMock(),
             "ScanRepository": MagicMock(),
-            "AnalysisResultRepository": MagicMock(),
-            "FindingRepository": MagicMock(),
-            "DependencyRepository": MagicMock(),
             "WaiverRepository": MagicMock(),
+            "ReleaseRepository": MagicMock(),
             "InvitationRepository": MagicMock(),
             "CallgraphRepository": MagicMock(),
         }
@@ -188,20 +186,17 @@ class TestDeleteProjectRoutesThroughGate:
             yield  # pragma: no cover
 
         scan_repo.iterate = _empty_iter
-        scan_repo.delete_many = AsyncMock(return_value=None)
-        repos["AnalysisResultRepository"].delete_many = AsyncMock(return_value=None)
-        repos["FindingRepository"].delete_many = AsyncMock(return_value=None)
-        repos["DependencyRepository"].delete_many = AsyncMock(return_value=None)
         repos["WaiverRepository"].delete_many = AsyncMock(return_value=None)
+        repos["ReleaseRepository"].delete_many = AsyncMock(return_value=None)
         repos["InvitationRepository"].delete_project_invitations_by_project = AsyncMock(return_value=None)
         repos["CallgraphRepository"].delete_by_project = AsyncMock(return_value=None)
         repos["ProjectRepository"].delete = AsyncMock(return_value=None)
 
         patches = [patch(f"{ENDPOINTS}.{name}", return_value=repo) for name, repo in repos.items()]
         gate = patch(f"{ENDPOINTS}.check_project_access", new_callable=AsyncMock, return_value=project)
-        gridfs = patch(f"{ENDPOINTS}.delete_gridfs_files", new_callable=AsyncMock, return_value=None)
+        cascade = patch(f"{ENDPOINTS}.delete_scans_and_related_data", new_callable=AsyncMock, return_value=0)
 
-        with gate as mock_gate, gridfs:
+        with gate as mock_gate, cascade:
             for p in patches:
                 p.start()
             try:

@@ -30,7 +30,7 @@ export function FindingsDeltaTab({
   projectId,
   fromScanId,
   toScanId,
-  onCountLoaded,
+  onLoaded,
 }: DeltaTabProps) {
   const [severity, setSeverity] = useState<string[]>([]);
   const [types, setTypes] = useState<string[]>([]);
@@ -51,8 +51,8 @@ export function FindingsDeltaTab({
   const { data, isLoading, isError } = query;
 
   useEffect(() => {
-    if (data) onCountLoaded(data.totals.added + data.totals.removed);
-  }, [data, onCountLoaded]);
+    if (data) onLoaded(data);
+  }, [data, onLoaded]);
 
   if (isError) return <DeltaError category="findings" />;
 

@@ -5,10 +5,11 @@ import json
 from app.models.compliance_report import ComplianceReport
 from app.models.finding import Severity
 from app.schemas.compliance import (
+    ControlStatus,
     FrameworkEvaluation,
     ReportFormat,
 )
-from app.services.compliance.renderers.base import build_filename
+from app.services.compliance.renderers.base import build_filename, coverage_statement
 
 _SEVERITY_TO_LEVEL = {
     Severity.CRITICAL.value: "error",
@@ -18,6 +19,15 @@ _SEVERITY_TO_LEVEL = {
     Severity.NEGLIGIBLE.value: "note",
     Severity.INFO.value: "note",
     Severity.UNKNOWN.value: "warning",
+}
+
+# SARIF result properties per non-failing control status. "open" is SARIF's kind for a rule that
+# was evaluated with insufficient information to decide whether a problem exists.
+_STATUS_TO_RESULT: dict[str, dict[str, str]] = {
+    ControlStatus.PASSED.value: {"kind": "pass"},
+    ControlStatus.WAIVED.value: {"kind": "pass", "baselineState": "unchanged"},
+    ControlStatus.NOT_APPLICABLE.value: {"kind": "notApplicable"},
+    ControlStatus.NOT_EVALUATED.value: {"kind": "open"},
 }
 
 
@@ -55,19 +65,15 @@ class SarifRenderer:
             )
 
             status_val = ctrl.status if isinstance(ctrl.status, str) else ctrl.status.value
+            message = ctrl.description if not ctrl.status_reason else f"{ctrl.description} {ctrl.status_reason}"
             result_entry = {
                 "ruleId": ctrl.control_id,
-                "message": {"text": ctrl.description},
+                "message": {"text": message},
             }
             if status_val == "failed":
                 result_entry["level"] = _SEVERITY_TO_LEVEL.get(sev_val, "warning")
-            elif status_val == "passed":
-                result_entry["kind"] = "pass"
-            elif status_val == "waived":
-                result_entry["kind"] = "pass"
-                result_entry["baselineState"] = "unchanged"
-            elif status_val == "not_applicable":
-                result_entry["kind"] = "notApplicable"
+            else:
+                result_entry.update(_STATUS_TO_RESULT.get(status_val, {}))
             results.append(result_entry)
 
         fw_name = evaluation.framework_name
@@ -94,6 +100,11 @@ class SarifRenderer:
                     "properties": {
                         "generated_at": evaluation.generated_at.isoformat(),
                         "scope_description": evaluation.scope_description,
+                        **(
+                            {"coverage": coverage_statement(evaluation.coverage)}
+                            if evaluation.coverage is not None
+                            else {}
+                        ),
                     },
                 },
             ],

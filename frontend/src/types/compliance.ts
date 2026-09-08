@@ -10,6 +10,30 @@ export type ReportFramework =
   | "license-audit"
   | "cve-remediation-sla";
 
+// Mirrors backend ControlStatus. "not_evaluated" is returned in place of a verdict that would
+// have rested on the absence of a match in an input that did not cover the scope.
+export type ControlStatus =
+  | "passed"
+  | "failed"
+  | "waived"
+  | "not_applicable"
+  | "not_evaluated";
+
+export type ControlStatusCounts = Partial<Record<ControlStatus, number>> & { total?: number };
+
+// evaluated below in_scope means every verdict resting on this input was withheld as not_evaluated.
+export interface InputCoverage {
+  evaluated: number;
+  in_scope: number;
+  limit: number;
+}
+
+// What the report's verdicts were computed over, per input a verdict can rest on.
+export interface EvaluationCoverage {
+  findings: InputCoverage;
+  crypto_assets: InputCoverage;
+}
+
 export interface ComplianceReportMeta {
   _id: string;
   scope: "project" | "team" | "global" | "user";
@@ -23,7 +47,8 @@ export interface ComplianceReportMeta {
   artifact_filename: string | null;
   artifact_size_bytes: number | null;
   artifact_mime_type: string | null;
-  summary: Record<string, unknown>;
+  summary: ControlStatusCounts;
+  coverage?: EvaluationCoverage | null;
   error_message: string | null;
   expires_at: string | null;
 }

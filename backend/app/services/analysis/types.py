@@ -65,7 +65,9 @@ class EPSSKEVSummary(TypedDict):
     avg_risk_score: float | None
     max_risk_score: float | None
     kev_details: list[KEVDetail]
+    # high_risk_cves is the top-scoring sample; high_risk_total is how many cleared the threshold.
     high_risk_cves: list[HighRiskCVE]
+    high_risk_total: int
     timestamp: str
 
 
@@ -136,6 +138,7 @@ class FindingDict(TypedDict, total=False):
     found_in: list[str]
     aliases: list[str]
     related_findings: list[str]
+    related_findings_omitted: int | None
     waived: bool
     waiver_reason: str | None
     reachable: bool | None

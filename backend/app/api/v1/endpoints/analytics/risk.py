@@ -10,6 +10,7 @@ from fastapi import Query
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
+    ReleaseEnvironmentQuery,
     build_hotspot_priority_reasons,
     build_priority_reasons,
     calculate_days_known,
@@ -42,6 +43,7 @@ from app.services.aggregation.components import (
 )
 from app.services.analytics.cache import get_analytics_cache
 from app.services.enrichment import canonical_cve, canonical_cves, get_cve_enrichment
+from app.services.recommendation.common import newest_first
 
 logger = logging.getLogger(__name__)
 
@@ -59,6 +61,13 @@ def _scope_digest(project_ids: list[str], scan_ids: list[str]) -> str:
 
 _SEVERITY_BUCKETS = ("critical", "high", "medium", "low")
 _SEVERITY_RANK = {"critical": 4, "high": 3, "medium": 2, "low": 1}
+
+# Samples named on a card; each is returned beside the population it was drawn from, so a reader
+# acting on the list knows whether it is the whole of what the row found.
+_AFFECTED_PROJECTS_SHOWN = 5
+_HOTSPOT_PROJECTS_SHOWN = 10
+_FIX_VERSIONS_SHOWN = 3
+_CVES_SHOWN = 5
 
 
 def _worst_severity_by_cve(details_list: list[Any]) -> dict[str, str]:
@@ -115,6 +124,7 @@ async def get_impact_analysis(
     current_user: CurrentUserDep,
     db: DatabaseDep,
     limit: Annotated[int, Query(ge=1, le=100)] = 20,
+    release_environment: ReleaseEnvironmentQuery = None,
 ) -> list[ImpactAnalysisResult]:
     """Analyze which dependency fixes would have the highest impact across projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_IMPACT)
@@ -125,7 +135,9 @@ async def get_impact_analysis(
     if not project_ids:
         return []
 
-    project_name_map, scan_ids = await get_projects_with_scans(project_ids, db)
+    project_name_map, scan_ids = await get_projects_with_scans(
+        project_ids, db, release_environment=release_environment
+    )
     if not scan_ids:
         return []
 
@@ -234,7 +246,8 @@ async def get_impact_analysis(
                 findings_by_severity=SeverityBreakdown(**severity_counts),
                 fix_impact_score=base_impact,
                 affected_project_names=[
-                    project_name_map.get(pid, "Unknown") for pid in accessible_impact_project_ids[:5]
+                    project_name_map.get(pid, "Unknown")
+                    for pid in accessible_impact_project_ids[:_AFFECTED_PROJECTS_SHOWN]
                 ],
                 max_epss_score=enrichment_data.max_epss,
                 epss_percentile=enrichment_data.max_percentile,
@@ -247,7 +260,8 @@ async def get_impact_analysis(
                 max_risk_score=enrichment_data.max_risk,
                 days_known=days_known,
                 has_fix=has_fix,
-                fix_versions=list(fix_versions)[:3],
+                fix_versions=newest_first(fix_versions)[:_FIX_VERSIONS_SHOWN],
+                fix_version_count=len(fix_versions),
                 priority_reasons=priority_reasons,
             )
         )
@@ -284,7 +298,7 @@ def _build_hotspot(
     days_known = calculate_days_known(r.get("first_seen"))
 
     cves = canonical_cves(details_list)
-    top_cves = cves[:5]
+    top_cves = cves[:_CVES_SHOWN]
 
     enrichment_data = process_cve_enrichments(cves, enrichments)
     days_until_due = calculate_days_until_due(enrichment_data.kev_due_date)
@@ -298,7 +312,11 @@ def _build_hotspot(
         type=dep_type,
         finding_count=sum(severity_counts.values()),
         severity_breakdown=SeverityBreakdown(**severity_counts),
-        affected_projects=[project_name_map.get(pid, "Unknown") for pid in accessible_affected_projects[:10]],
+        affected_projects=[
+            project_name_map.get(pid, "Unknown")
+            for pid in accessible_affected_projects[:_HOTSPOT_PROJECTS_SHOWN]
+        ],
+        affected_project_count=len(accessible_affected_projects),
         first_seen=first_seen_str,
         max_epss_score=enrichment_data.max_epss,
         epss_percentile=enrichment_data.max_percentile,
@@ -311,8 +329,10 @@ def _build_hotspot(
         max_risk_score=enrichment_data.max_risk,
         days_known=days_known,
         has_fix=has_fix,
-        fix_versions=list(fix_versions)[:3],
+        fix_versions=newest_first(fix_versions)[:_FIX_VERSIONS_SHOWN],
+        fix_version_count=len(fix_versions),
         top_cves=top_cves,
+        cve_count=len(cves),
         priority_reasons=priority_reasons,
     )
 
@@ -328,6 +348,7 @@ async def get_vulnerability_hotspots(
         Query(description="Sort field: finding_count, component, first_seen, epss, risk"),
     ] = "finding_count",
     sort_order: Annotated[str, Query(description="Sort order: asc, desc")] = "desc",
+    release_environment: ReleaseEnvironmentQuery = None,
 ) -> list[VulnerabilityHotspot]:
     """Get dependencies with the most vulnerabilities (hotspots)."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_HOTSPOTS)
@@ -339,7 +360,9 @@ async def get_vulnerability_hotspots(
     if not project_ids:
         return []
 
-    project_name_map, scan_ids = await get_projects_with_scans(project_ids, db)
+    project_name_map, scan_ids = await get_projects_with_scans(
+        project_ids, db, release_environment=release_environment
+    )
     if not scan_ids:
         return []
 

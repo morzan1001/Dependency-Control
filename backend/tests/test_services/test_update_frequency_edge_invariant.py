@@ -38,10 +38,12 @@ from tests.mocks.fake_mongo import FakeDatabase
 PROJECT = "proj-1"
 BRANCH = "main"
 WINDOW_DAYS = 90
-NOW = datetime.now(tz=timezone.utc)
+# BSON dates are int64 milliseconds, so an instant with microseconds reads back as a different
+# value than the one an assertion recomputes.
+NOW = datetime.now(tz=timezone.utc).replace(microsecond=0)
 
-# The gate excuses these three by name; nothing here may hide behind them.
-_NO_KNOWN_CAUSES = KnownCauses(capped_sample_scans=0, live_updates_saturated=False, slowest_packages_capped=False)
+# The gate excuses one field by name; nothing here may hide behind it.
+_NO_KNOWN_CAUSES = KnownCauses()
 
 
 def _days_ago(days: float) -> datetime:
@@ -591,6 +593,38 @@ class TestCappedRate:
         # a2 to b2 is 45 days; the runs' first members span only 40.
         assert resolved.measured_days == 45
         assert round(folded.time_range_days) == resolved.measured_days
+
+    @pytest.mark.asyncio
+    async def test_a_capped_fold_names_the_scans_its_numbers_cover(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "a1", _days_ago(60), {"p": "1.0.0"}, commit_hash="cA")
+        await _seed_scan(db, "b1", _days_ago(50), {"p": "1.1.0"}, commit_hash="cB")
+        await _seed_scan(db, "c1", _days_ago(40), {"p": "1.2.0"}, commit_hash="cC")
+        await _build_ledger(db)
+        deltas = await _deltas(db)
+
+        with patch.object(endpoint, "WINDOW_HARD_LIMIT", len(deltas)):
+            resolved = _fold_branch(BRANCH, deltas, _activity(deltas))
+        folded = fold_window(resolved.window, None, resolved.measured_days)
+
+        assert resolved.window_scan_cap == len(deltas)
+        assert folded.to_metrics(PROJECT, "Project One", window_scan_cap=resolved.window_scan_cap).window_scan_cap
+        summary = folded.to_summary(
+            PROJECT, "Project One", window_days=WINDOW_DAYS, window_scan_cap=resolved.window_scan_cap
+        )
+        assert summary.window_scan_cap == len(deltas)
+
+    @pytest.mark.asyncio
+    async def test_a_fold_that_read_the_whole_window_names_no_cap(self):
+        db = FakeDatabase()
+        await _seed_scan(db, "a1", _days_ago(60), {"p": "1.0.0"}, commit_hash="cA")
+        await _seed_scan(db, "b1", _days_ago(50), {"p": "1.1.0"}, commit_hash="cB")
+        await _build_ledger(db)
+        deltas = await _deltas(db)
+
+        resolved = _fold_branch(BRANCH, deltas, _activity(deltas))
+
+        assert resolved.window_scan_cap is None
 
 
 class TestWindowCapCutsMidRun:

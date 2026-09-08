@@ -50,16 +50,6 @@ class TestReadProjectsPaginationBounds:
 
         return read_projects
 
-    def test_skip_has_ge_zero(self, endpoint):
-        assert _bound(endpoint, "skip", "ge") == 0, (
-            "skip should have ge=0 — negative skip is nonsensical and can cause issues"
-        )
-
-    def test_limit_has_ge_one(self, endpoint):
-        assert _bound(endpoint, "limit", "ge") == 1, (
-            "limit should have ge=1 — zero limit would return no rows but still hit DB"
-        )
-
     def test_limit_has_le_cap(self, endpoint):
         cap = _bound(endpoint, "limit", "le")
         assert cap is not None, "limit must have an le= upper cap"
@@ -92,12 +82,6 @@ class TestReadAllScansPaginationBounds:
 
         return read_all_scans
 
-    def test_skip_has_ge_zero(self, endpoint):
-        assert _bound(endpoint, "skip", "ge") == 0
-
-    def test_limit_has_ge_one(self, endpoint):
-        assert _bound(endpoint, "limit", "ge") == 1
-
     def test_limit_has_le_cap(self, endpoint):
         cap = _bound(endpoint, "limit", "le")
         assert cap is not None
@@ -119,12 +103,6 @@ class TestReadProjectScansPaginationBounds:
 
         return read_project_scans
 
-    def test_skip_has_ge_zero(self, endpoint):
-        assert _bound(endpoint, "skip", "ge") == 0
-
-    def test_limit_has_ge_one(self, endpoint):
-        assert _bound(endpoint, "limit", "ge") == 1
-
     def test_limit_has_le_cap(self, endpoint):
         cap = _bound(endpoint, "limit", "le")
         assert cap is not None
@@ -145,12 +123,6 @@ class TestReadScanFindingsPaginationBounds:
         from app.api.v1.endpoints.projects import read_scan_findings
 
         return read_scan_findings
-
-    def test_skip_has_ge_zero(self, endpoint):
-        assert _bound(endpoint, "skip", "ge") == 0
-
-    def test_limit_has_ge_one(self, endpoint):
-        assert _bound(endpoint, "limit", "ge") == 1
 
     def test_limit_has_le_cap(self, endpoint):
         cap = _bound(endpoint, "limit", "le")

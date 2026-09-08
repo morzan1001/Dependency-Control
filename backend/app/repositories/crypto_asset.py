@@ -5,7 +5,7 @@ from typing import Any
 
 from pymongo import UpdateOne
 
-from app.core.constants import CRYPTO_ASSET_BULK_CHUNK_SIZE, CRYPTO_ASSET_MAX_LIST_LIMIT
+from app.core.constants import CRYPTO_ASSET_BULK_CHUNK_SIZE, MAX_CRYPTO_ASSETS_PER_SCAN
 from app.core.metrics import track_db_operation
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.base import BaseRepository
@@ -62,6 +62,25 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
             total += len(ops)
         return total
 
+    async def carry_over_to_scan(
+        self,
+        project_id: str,
+        from_scan_id: str,
+        to_scan_id: str,
+        limit: int = MAX_CRYPTO_ASSETS_PER_SCAN,
+    ) -> int:
+        """Re-key one scan's assets onto another. Assets ingested through /ingest/cbom have no
+        stored SBOM to re-derive them from, so a rescan reports none unless they are copied.
+
+        Upserts on (project_id, scan_id, bom_ref), so an asset the rescan does re-derive from an
+        embedded CBOM overwrites the carried copy rather than duplicating it.
+        """
+        with track_db_operation(self.collection_name, "find"):
+            cursor = self.collection.find({"project_id": project_id, "scan_id": from_scan_id}).limit(limit)
+            docs = await cursor.to_list(length=limit)
+        assets = [CryptoAsset.model_validate({**doc, "scan_id": to_scan_id}) for doc in docs]
+        return await self.bulk_upsert(project_id, to_scan_id, assets)
+
     async def list_by_scan(
         self,
         project_id: str,
@@ -72,7 +91,8 @@ class CryptoAssetRepository(BaseRepository[CryptoAsset]):
         primitive: CryptoPrimitive | None = None,
         name_search: str | None = None,
     ) -> list[CryptoAsset]:
-        limit = min(limit, CRYPTO_ASSET_MAX_LIST_LIMIT)
+        """A scan's assets, name-ascending. ``limit`` is the caller's own budget and is applied
+        as given, so a short list means the scan is short and a caller can say so."""
         query = _scan_query(project_id, scan_id, asset_type, primitive, name_search)
         with track_db_operation(self.collection_name, "find"):
             cursor = self.collection.find(query).sort("name", 1).skip(skip).limit(limit)

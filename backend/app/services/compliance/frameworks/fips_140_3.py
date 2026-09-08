@@ -16,6 +16,7 @@ from app.schemas.compliance import (
 )
 from app.services.compliance.frameworks.base import (
     EvaluationInput,
+    crypto_assets_verdict,
     evaluate_framework,
 )
 
@@ -135,12 +136,13 @@ def _make_disallowed_evaluator(
                     hits_bom_refs.append(bom_ref)
         # only applicable when an asset of this category exists
         category_present = any(_asset_primitive_value(asset) in relevant_primitives for asset in data.crypto_assets)
+        status_reason: str | None = None
         if hits_names:
             status = ControlStatus.FAILED
-        elif category_present:
-            status = ControlStatus.PASSED
         else:
-            status = ControlStatus.NOT_APPLICABLE
+            # Both remaining verdicts read the absence of an asset off the inventory.
+            unflagged = ControlStatus.PASSED if category_present else ControlStatus.NOT_APPLICABLE
+            status, status_reason = crypto_assets_verdict(unflagged, data.coverage)
         return ControlResult(
             control_id=control_id,
             title=title,
@@ -153,6 +155,7 @@ def _make_disallowed_evaluator(
             evidence_asset_bom_refs=sorted(set(hits_bom_refs)),
             waiver_reasons=[],
             remediation=(f"Replace disallowed {category} algorithms with members of the approved set."),
+            status_reason=status_reason,
         )
 
     return evaluator

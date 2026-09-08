@@ -17,14 +17,6 @@ from app.services.notifications.templates import (
 
 
 class TestGetVerificationEmailTemplate:
-    def test_renders_without_error(self):
-        result = get_verification_email_template("https://example.com/verify?token=abc")
-        assert isinstance(result, str)
-
-    def test_returns_non_empty(self):
-        result = get_verification_email_template("https://example.com/verify?token=abc")
-        assert len(result) > 0
-
     def test_contains_verification_link(self):
         link = "https://example.com/verify?token=abc123"
         result = get_verification_email_template(link)
@@ -50,14 +42,6 @@ class TestGetPasswordResetTemplate:
         defaults.update(overrides)
         return get_password_reset_template(**defaults)
 
-    def test_renders_without_error(self):
-        result = self._render()
-        assert isinstance(result, str)
-
-    def test_returns_non_empty(self):
-        result = self._render()
-        assert len(result) > 0
-
     def test_contains_reset_link(self):
         link = "https://example.com/reset?token=unique"
         result = self._render(link=link)
@@ -78,13 +62,6 @@ class TestGetInvitationTemplate:
         }
         defaults.update(overrides)
         return get_invitation_template(**defaults)
-
-    def test_renders_without_error(self):
-        result = self._render()
-        assert isinstance(result, str)
-
-    def test_returns_non_empty(self):
-        assert len(self._render()) > 0
 
     def test_contains_invitation_link(self):
         link = "https://example.com/invite?token=unique"
@@ -110,12 +87,6 @@ class TestGetSystemInvitationTemplate:
         defaults.update(overrides)
         return get_system_invitation_template(**defaults)
 
-    def test_renders_without_error(self):
-        assert isinstance(self._render(), str)
-
-    def test_returns_non_empty(self):
-        assert len(self._render()) > 0
-
     def test_contains_invitation_link(self):
         link = "https://example.com/sys-invite?token=xyz"
         result = self._render(invitation_link=link)
@@ -133,15 +104,10 @@ class TestGetVulnerabilityFoundTemplate:
             "project_name": "TestProject",
             "project_name_scanned": "my-app",
             "vulnerabilities": [{"id": "CVE-2024-001", "severity": "HIGH"}],
+            "critical_count": 1,
         }
         defaults.update(overrides)
         return get_vulnerability_found_template(**defaults)
-
-    def test_renders_without_error(self):
-        assert isinstance(self._render(), str)
-
-    def test_returns_non_empty(self):
-        assert len(self._render()) > 0
 
     def test_contains_report_link(self):
         link = "https://example.com/report/456"
@@ -151,6 +117,17 @@ class TestGetVulnerabilityFoundTemplate:
     def test_contains_scanned_project_name(self):
         result = self._render(project_name_scanned="vuln-target")
         assert "vuln-target" in result
+
+    def test_a_table_shorter_than_the_alert_says_how_much_shorter(self):
+        listed = 10
+        found = 431
+
+        result = self._render(
+            vulnerabilities=[{"id": f"CVE-2024-{index:04d}", "severity": "HIGH"} for index in range(listed)],
+            critical_count=found,
+        )
+
+        assert f"{listed} of {found} critical/high" in result
 
 
 class TestGetAnalysisCompletedTemplate:
@@ -163,12 +140,6 @@ class TestGetAnalysisCompletedTemplate:
         }
         defaults.update(overrides)
         return get_analysis_completed_template(**defaults)
-
-    def test_renders_without_error(self):
-        assert isinstance(self._render(), str)
-
-    def test_returns_non_empty(self):
-        assert len(self._render()) > 0
 
     def test_contains_analysis_link(self):
         link = "https://example.com/analysis/999"
@@ -192,12 +163,6 @@ class TestGetAdvisoryTemplate:
         defaults.update(overrides)
         return get_advisory_template(**defaults)
 
-    def test_renders_without_error(self):
-        assert isinstance(self._render(), str)
-
-    def test_returns_non_empty(self):
-        assert len(self._render()) > 0
-
     def test_contains_project_link(self):
         link = "https://example.com/project/42"
         result = self._render(project_link=link)
@@ -209,14 +174,6 @@ class TestGetAdvisoryTemplate:
 
 
 class TestGetAnnouncementTemplate:
-    def test_renders_without_error(self):
-        result = get_announcement_template(message="System maintenance scheduled")
-        assert isinstance(result, str)
-
-    def test_returns_non_empty(self):
-        result = get_announcement_template(message="Scheduled downtime")
-        assert len(result) > 0
-
     def test_contains_message(self):
         result = get_announcement_template(message="Platform upgrade complete")
         assert "Platform upgrade complete" in result
@@ -236,12 +193,6 @@ class TestGetPasswordChangedTemplate:
         defaults.update(overrides)
         return get_password_changed_template(**defaults)
 
-    def test_renders_without_error(self):
-        assert isinstance(self._render(), str)
-
-    def test_returns_non_empty(self):
-        assert len(self._render()) > 0
-
     def test_contains_login_link(self):
         link = "https://example.com/signin"
         result = self._render(login_link=link)
@@ -249,28 +200,12 @@ class TestGetPasswordChangedTemplate:
 
 
 class TestGet2faEnabledTemplate:
-    def test_renders_without_error(self):
-        result = get_2fa_enabled_template(username="alice", project_name="TestProject")
-        assert isinstance(result, str)
-
-    def test_returns_non_empty(self):
-        result = get_2fa_enabled_template(username="alice", project_name="TestProject")
-        assert len(result) > 0
-
     def test_contains_project_name(self):
         result = get_2fa_enabled_template(username="alice", project_name="SecureApp")
         assert "SecureApp" in result
 
 
 class TestGet2faDisabledTemplate:
-    def test_renders_without_error(self):
-        result = get_2fa_disabled_template(username="bob", project_name="TestProject")
-        assert isinstance(result, str)
-
-    def test_returns_non_empty(self):
-        result = get_2fa_disabled_template(username="bob", project_name="TestProject")
-        assert len(result) > 0
-
     def test_contains_project_name(self):
         result = get_2fa_disabled_template(username="bob", project_name="SafeApp")
         assert "SafeApp" in result
@@ -286,12 +221,6 @@ class TestGetProjectMemberAddedTemplate:
         }
         defaults.update(overrides)
         return get_project_member_added_template(**defaults)
-
-    def test_renders_without_error(self):
-        assert isinstance(self._render(), str)
-
-    def test_returns_non_empty(self):
-        assert len(self._render()) > 0
 
     def test_contains_project_link(self):
         link = "https://example.com/project/other"

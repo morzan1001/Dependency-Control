@@ -1,6 +1,6 @@
 """Tests for JWT token creation/verification and password hashing."""
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 from app.core.security import (
     create_access_token,
@@ -12,6 +12,9 @@ from app.core.security import (
     verify_password,
     verify_password_reset_token,
 )
+
+# JWT exp is a whole-second timestamp, and the token is minted a moment after the test reads the clock.
+_EXPIRY_TOLERANCE = timedelta(seconds=5)
 
 
 class TestPasswordHashing:
@@ -37,14 +40,19 @@ class TestPasswordHashing:
 
 
 class TestAccessToken:
-    def test_create_returns_string(self):
-        token = create_access_token("user123")
-        assert isinstance(token, str)
-        assert len(token) > 0
+    def test_a_caller_supplied_expiry_is_the_one_encoded(self):
+        from jose import jwt
 
-    def test_create_with_custom_expiry(self):
-        token = create_access_token("user123", expires_delta=timedelta(hours=1))
-        assert isinstance(token, str)
+        from app.core.config import settings
+
+        delta = timedelta(hours=1)
+        before = datetime.now(timezone.utc)
+
+        token = create_access_token("user123", expires_delta=delta)
+
+        payload = jwt.decode(token, settings.SECRET_KEY, algorithms=[settings.ALGORITHM])
+        expiry = datetime.fromtimestamp(payload["exp"], tz=timezone.utc)
+        assert delta - _EXPIRY_TOLERANCE <= expiry - before <= delta + _EXPIRY_TOLERANCE
 
     def test_decode_contains_subject(self):
         from jose import jwt
@@ -84,10 +92,6 @@ class TestAccessToken:
 
 
 class TestRefreshToken:
-    def test_create_returns_string(self):
-        token = create_refresh_token("user123")
-        assert isinstance(token, str)
-
     def test_decode_type_is_refresh(self):
         from jose import jwt
 

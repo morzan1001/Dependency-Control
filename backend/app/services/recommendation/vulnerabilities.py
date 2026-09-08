@@ -1,14 +1,34 @@
 from collections import defaultdict
 from typing import Any
 
-from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, OS_PACKAGE_TYPES
+from app.core.constants import (
+    DETAILS_KEY_IN_KEV,
+    DETAILS_KEY_KEV_RANSOMWARE,
+    EPSS_HIGH_THRESHOLD,
+    OS_PACKAGE_TYPES,
+)
 from app.schemas.recommendation import (
     Priority,
     Recommendation,
     RecommendationType,
     VulnerabilityInfo,
 )
-from app.services.recommendation.common import ModelOrDict, calculate_best_fix_version, get_attr
+from app.services.recommendation.common import (
+    ModelOrDict,
+    calculate_best_fix_version,
+    finding_cve_ids,
+    get_attr,
+    sample_components,
+    sampled,
+)
+
+# Evidence samples inside the update action; each is paired with its population by `sampled`.
+_CVES_SAMPLED = 10
+_MARKED_CVES_SAMPLED = 5
+
+_CVE_PREFIX = "CVE-"
+# Shown where a finding names no advisory at all; VulnerabilityInfo.cve_id is not optional.
+_UNRESOLVED_CVE_ID = "unknown"
 
 
 def process_vulnerabilities(
@@ -48,14 +68,13 @@ def _resolve_dep(
 
 
 def _resolve_cve_id(f: ModelOrDict) -> str:
-    """Resolve the CVE id for a finding, checking aliases as a fallback."""
-    cve_id_val = get_attr(f, "id")
-    if not cve_id_val or not str(cve_id_val).startswith("CVE-"):
-        for alias in get_attr(f, "aliases", []) or []:
-            if alias.startswith("CVE-"):
-                cve_id_val = alias
-                break
-    return str(cve_id_val) if cve_id_val else "unknown"
+    """The advisory a finding is shown under: a CVE where its group names one, else the first
+    advisory id (GHSA-only ecosystems)."""
+    advisories = finding_cve_ids(f)
+    cve = next((a for a in advisories if a.startswith(_CVE_PREFIX)), None)
+    if cve:
+        return cve
+    return advisories[0] if advisories else _UNRESOLVED_CVE_ID
 
 
 def _build_vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
@@ -81,6 +100,8 @@ def _build_vuln_info(f: ModelOrDict) -> VulnerabilityInfo:
 
 def _classify_category(vuln_info: VulnerabilityInfo, dep: ModelOrDict | None) -> str:
     """Determine which category a vulnerability belongs to."""
+    # An advisory that records no fixed version does not say a fix is absent, only that it does
+    # not name one, so this bucket is "no fix known" and the card it produces says as much.
     if not vuln_info.fixed_version:
         return "no_fix"
     if not dep:
@@ -171,6 +192,7 @@ def _analyze_base_image_vulns(
         parts = source_target.rsplit(":", 1)
         image_name = parts[0]
 
+    packages_shown, packages_total = sample_components(sorted(affected_packages))
     return Recommendation(
         type=RecommendationType.BASE_IMAGE_UPDATE,
         priority=priority,
@@ -188,7 +210,8 @@ def _analyze_base_image_vulns(
             "low": severity_counts.get("LOW", 0),
             "total": total_vulns,
         },
-        affected_components=list(affected_packages)[:20],
+        affected_components=packages_shown,
+        affected_components_total=packages_total,
         action={
             "type": "update_base_image",
             "current_image": source_target,
@@ -345,9 +368,13 @@ def _build_direct_recommendation(
             "package": component,
             "current_version": current_version,
             "target_version": best_fix,
-            "cves": stats["cves"][:10],
-            "kev_cves": [v.cve_id for v in component_vulns if v.is_kev][:5],
-            "high_epss_cves": [v.cve_id for v in component_vulns if v.epss_score and v.epss_score >= 0.1][:5],
+            **sampled("cves", stats["cves"], _CVES_SAMPLED),
+            **sampled("kev_cves", [v.cve_id for v in component_vulns if v.is_kev], _MARKED_CVES_SAMPLED),
+            **sampled(
+                "high_epss_cves",
+                [v.cve_id for v in component_vulns if v.epss_score and v.epss_score >= EPSS_HIGH_THRESHOLD],
+                _MARKED_CVES_SAMPLED,
+            ),
         },
         effort="low",
     )
@@ -458,7 +485,7 @@ def _analyze_transitive_dependencies(
 
 
 def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation]:
-    """Analyze vulnerabilities with no available fix."""
+    """Analyze vulnerabilities whose advisories name no fixed version."""
 
     if not vulns:
         return []
@@ -476,14 +503,17 @@ def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation
     if not crit_high_vulns:
         return []
 
+    unfixable_shown, unfixable_total = sample_components(sorted({v.package_name for v in crit_high_vulns}))
+
     return [
         Recommendation(
             type=RecommendationType.NO_FIX_AVAILABLE,
             priority=Priority.HIGH,
-            title="Vulnerability with No Fix Available",
+            title="Vulnerability with No Known Fix",
             description=(
-                f"{len(crit_high_vulns)} Critical/High vulnerabilities used in your project "
-                "have no fix available. Consider switching components."
+                f"{len(crit_high_vulns)} Critical/High vulnerabilities used in your project have "
+                "no fixed version in their advisories. That is the absence of a recorded fix, not "
+                "proof that none exists, so confirm upstream before replacing a component."
             ),
             impact={
                 "critical": severity_counts.get("CRITICAL", 0),
@@ -492,10 +522,12 @@ def _analyze_no_fix_vulns(vulns: list[VulnerabilityInfo]) -> list[Recommendation
                 "low": severity_counts.get("LOW", 0),
                 "total": len(vulns),
             },
-            affected_components=list({v.package_name for v in crit_high_vulns})[:20],
+            affected_components=unfixable_shown,
+            affected_components_total=unfixable_total,
             action={
                 "type": "consider_alternative",
                 "steps": [
+                    "Check the upstream project for a release the advisory has not recorded yet",
                     "Check if the vulnerability actually affects your usage of the component",
                     "Look for alternative libraries that provide similar functionality",
                     "Apply mitigating controls (WAF, network segmentation)",

@@ -7,7 +7,13 @@ from urllib.parse import quote
 import httpx
 
 from app.core.cache import CacheKeys, CacheTTL, cache_service
-from app.core.constants import ANALYZER_TIMEOUTS, EOL_API_URL, NAME_TO_EOL_MAPPING
+from app.core.constants import (
+    ANALYZER_TIMEOUTS,
+    EOL_API_URL,
+    EOL_HIGH_AFTER_DAYS,
+    EOL_MEDIUM_AFTER_DAYS,
+    NAME_TO_EOL_MAPPING,
+)
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.finding import Severity
 
@@ -64,6 +70,8 @@ def collect_products_to_check(
 class EndOfLifeAnalyzer(Analyzer):
     name = "end_of_life"
     api_url = EOL_API_URL
+    _high_after_days = EOL_HIGH_AFTER_DAYS
+    _medium_after_days = EOL_MEDIUM_AFTER_DAYS
 
     async def analyze(
         self,
@@ -90,10 +98,10 @@ class EndOfLifeAnalyzer(Analyzer):
         return {"eol_issues": results}
 
     def _apply_settings(self, settings: dict[str, Any] | None) -> None:
-        """Stash configurable thresholds on the instance."""
+        """Bind this project's thresholds to this run's instance."""
         s = settings or {}
-        self._high_after_days = int(s.get("eol_high_after_days", 365))
-        self._medium_after_days = int(s.get("eol_medium_after_days", 180))
+        self._high_after_days = int(s.get("eol_high_after_days", EOL_HIGH_AFTER_DAYS))
+        self._medium_after_days = int(s.get("eol_medium_after_days", EOL_MEDIUM_AFTER_DAYS))
 
     def _emit_for_versions(
         self,
@@ -187,11 +195,9 @@ class EndOfLifeAnalyzer(Analyzer):
             try:
                 eol_dt = datetime.strptime(eol_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
                 days_past_eol = (datetime.now(timezone.utc) - eol_dt).days
-                high_after = getattr(self, "_high_after_days", 365)
-                medium_after = getattr(self, "_medium_after_days", 180)
-                if days_past_eol >= high_after:
+                if days_past_eol >= self._high_after_days:
                     severity = Severity.HIGH.value
-                elif days_past_eol >= medium_after:
+                elif days_past_eol >= self._medium_after_days:
                     severity = Severity.MEDIUM.value
                 else:
                     severity = Severity.LOW.value

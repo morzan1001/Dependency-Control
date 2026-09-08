@@ -49,7 +49,6 @@ from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.api.v1.endpoints.analytics.update_frequency import (
     _DEFAULT_COMPARISON_WINDOW_DAYS,
-    _SLOWEST_PACKAGES_LIMIT,
     _compute_comparison,
     _compute_comparison_from_rollup,
     _rollup_project_metrics,
@@ -63,8 +62,7 @@ from app.services.update_frequency import (
     compute_update_frequency,
     window_cutoff,
 )
-from app.services.update_frequency_fold import _RECENT_UPDATES_LIMIT, select_window
-from app.services.update_frequency_rollup import _UPDATES_SAMPLE_CAP
+from app.services.update_frequency_fold import select_window
 
 DEFAULT_SAMPLE = 20
 
@@ -124,10 +122,7 @@ _COMPARISON_TOTAL_FIELDS = (
 
 _ROW_ORDER_FIELD = "row order"
 
-_SAMPLE_CAP_REASON = f"the writer keeps at most {_UPDATES_SAMPLE_CAP} samples per scan"
-_SATURATED_REASON = f"the live list hit its {_RECENT_UPDATES_LIMIT}-event cap, so the two truncate differently"
 _ECOSYSTEM_REASON = "the live path folds every scan's dependency types, the ledger the newest scan's"
-_SLOWEST_CAP_REASON = f"the list hit its {_SLOWEST_PACKAGES_LIMIT}-entry cap, whose tie-break neither path defines"
 
 _ABSENCE_NO_DELTA = "no delta written yet"
 _ABSENCE_WRITER_ERROR = "its delta records a writer failure"
@@ -155,21 +150,8 @@ class Deviation:
 class KnownCauses:
     """Conditions under which one named field is meant to differ between the paths."""
 
-    capped_sample_scans: int
-    live_updates_saturated: bool
-    slowest_packages_capped: bool
-
     def reason_for(self, field: str) -> str | None:
-        if field == "dominant_ecosystem":
-            return _ECOSYSTEM_REASON
-        if field == "recent_updates":
-            if self.capped_sample_scans:
-                return _SAMPLE_CAP_REASON
-            if self.live_updates_saturated:
-                return _SATURATED_REASON
-        if field == "slowest_packages" and self.slowest_packages_capped:
-            return _SLOWEST_CAP_REASON
-        return None
+        return _ECOSYSTEM_REASON if field == "dominant_ecosystem" else None
 
 
 @dataclass(frozen=True)
@@ -278,22 +260,6 @@ def compare_comparisons(live: dict[str, Any], rollup: dict[str, Any]) -> list[De
     return deviations
 
 
-async def known_causes(
-    db: Any, project_id: str, branch: str | None, since: datetime, live: UpdateFrequencyMetrics
-) -> KnownCauses:
-    docs = await db.scan_update_deltas.find(
-        {"project_id": project_id, "branch": branch, "scan_created_at": {"$gte": since}},
-        {"updates": 1},
-    ).to_list(None)
-    # The sample array is written before the cap, so its pre-cap length is the full update count.
-    capped = sum(1 for doc in docs if sum((doc.get("updates") or {}).values()) > _UPDATES_SAMPLE_CAP)
-    return KnownCauses(
-        capped_sample_scans=capped,
-        live_updates_saturated=len(live.recent_updates) >= _RECENT_UPDATES_LIMIT,
-        slowest_packages_capped=len(live.slowest_packages) >= _SLOWEST_PACKAGES_LIMIT,
-    )
-
-
 async def scan_set_diff(db: Any, project_id: str, branch: str, since: datetime) -> ScanSetDiff:
     """Which scans only one path selects, and why the ledger has no usable delta for each.
 
@@ -387,7 +353,7 @@ async def verify_project(db: Any, project: dict[str, Any], window_days: int) -> 
             declined=await _decline_reason(db, project_id, live.branch, since),
         )
 
-    causes = await known_causes(db, project_id, rollup.branch, since, live)
+    causes = KnownCauses()
     return ProjectReport(
         project_id=project_id,
         project_name=project_name,

@@ -8,6 +8,7 @@ from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.projects import check_project_access
 from app.api.v1.helpers.responses import RESP_404
+from app.core.constants import MAX_CRYPTO_ASSET_PAGE
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
 
@@ -26,7 +27,7 @@ async def list_crypto_assets(
     primitive: CryptoPrimitive | None = Query(None),
     name_search: str | None = Query(None),
     skip: int = Query(0, ge=0),
-    limit: int = Query(100, ge=1, le=500),
+    limit: int = Query(100, ge=1, le=MAX_CRYPTO_ASSET_PAGE),
 ) -> dict[str, Any]:
     """List crypto assets for a scan with pagination and optional filtering."""
     await check_project_access(project_id, current_user, db, required_role="viewer")

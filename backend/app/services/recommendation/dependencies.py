@@ -11,7 +11,14 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import ModelOrDict, get_attr, parse_version_tuple
+from app.services.recommendation.common import (
+    ACTION_VERSION_SAMPLE,
+    AFFECTED_COMPONENTS_SHOWN,
+    ModelOrDict,
+    get_attr,
+    newest_first,
+    sample_components,
+)
 
 
 def analyze_outdated_dependencies(
@@ -44,7 +51,9 @@ def analyze_outdated_dependencies(
 
     direct_outdated = [d for d in outdated_deps if d.get("direct")]
     transitive_outdated = [d for d in outdated_deps if not d.get("direct")]
+    transitive_shown, transitive_total = sample_components(f"{d['name']}@{d['version']}" for d in transitive_outdated)
 
+    direct_shown, direct_total = sample_components(f"{d['name']}@{d['version']}" for d in direct_outdated)
     if direct_outdated:
         recommendations.append(
             Recommendation(
@@ -63,7 +72,8 @@ def analyze_outdated_dependencies(
                     "low": 0,
                     "total": len(direct_outdated),
                 },
-                affected_components=[f"{d['name']}@{d['version']}" for d in direct_outdated],
+                affected_components=direct_shown,
+                affected_components_total=direct_total,
                 action={
                     "type": "upgrade_outdated",
                     "packages": [
@@ -97,7 +107,8 @@ def analyze_outdated_dependencies(
                     "low": len(transitive_outdated),
                     "total": len(transitive_outdated),
                 },
-                affected_components=[f"{d['name']}@{d['version']}" for d in transitive_outdated[:10]],
+                affected_components=transitive_shown,
+                affected_components_total=transitive_total,
                 action={
                     "type": "review_transitive",
                     "suggestion": "Update direct dependencies to pull in newer transitive versions",
@@ -150,7 +161,10 @@ def analyze_version_fragmentation(
             Priority.MEDIUM if len(significant_fragmented) > SIGNIFICANT_FRAGMENTATION_THRESHOLD else Priority.LOW
         )
 
-        top_fragmented = significant_fragmented[:15]
+        fragmented_shown, fragmented_total = sample_components(
+            f"{f['name']} ({f['count']} versions)" for f in significant_fragmented
+        )
+        top_fragmented = significant_fragmented[:AFFECTED_COMPONENTS_SHOWN]
 
         recommendations.append(
             Recommendation(
@@ -175,18 +189,22 @@ def analyze_version_fragmentation(
                     "low": 0,
                     "total": len(significant_fragmented),
                 },
-                affected_components=[f"{f['name']} ({f['count']} versions)" for f in top_fragmented],
+                affected_components=fragmented_shown,
+                affected_components_total=fragmented_total,
                 action={
                     "type": "deduplicate_versions",
                     "packages": [
                         {
                             "name": f["name"],
-                            "versions": f["versions"][:5],
+                            # A set has no order, so rank before sampling: the newest versions are
+                            # what a reader pinning to one needs to see.
+                            "versions": newest_first(f["versions"])[:ACTION_VERSION_SAMPLE],
                             "version_count": f["count"],
-                            "suggestion": f"Pin to {max(f['versions'], key=lambda v: parse_version_tuple(v))}",
+                            "suggestion": f"Pin to {newest_first(f['versions'])[0]}",
                         }
                         for f in top_fragmented
                     ],
+                    "packages_total": len(significant_fragmented),
                     "commands": [
                         "# For npm: npm dedupe",
                         "# For yarn: yarn dedupe",
@@ -228,6 +246,7 @@ def analyze_dev_in_production(
                 )
                 break
 
+    dev_deps_shown, dev_deps_total = sample_components(f"{d['name']}@{d['version']}" for d in potential_dev_deps)
     if potential_dev_deps:
         recommendations.append(
             Recommendation(
@@ -246,7 +265,8 @@ def analyze_dev_in_production(
                     "low": len(potential_dev_deps),
                     "total": len(potential_dev_deps),
                 },
-                affected_components=[f"{d['name']}@{d['version']}" for d in potential_dev_deps[:15]],
+                affected_components=dev_deps_shown,
+                affected_components_total=dev_deps_total,
                 action={
                     "type": "review_dev_deps",
                     "packages": [d["name"] for d in potential_dev_deps],
@@ -275,6 +295,7 @@ def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]
         else:
             affected_packages.append(f"{pkg}@{version}")
 
+    eol_shown, eol_total = sample_components(affected_packages)
     critical_count = len([f for f in eol_findings if get_attr(f, "severity") == "CRITICAL"])
     high_count = len([f for f in eol_findings if get_attr(f, "severity") == "HIGH"])
 
@@ -297,7 +318,8 @@ def analyze_end_of_life(eol_findings: list[ModelOrDict]) -> list[Recommendation]
                 "low": len([f for f in eol_findings if get_attr(f, "severity") == "LOW"]),
                 "total": len(eol_findings),
             },
-            affected_components=affected_packages[:20],
+            affected_components=eol_shown,
+            affected_components_total=eol_total,
             action={
                 "type": "upgrade_eol",
                 "packages": affected_packages,

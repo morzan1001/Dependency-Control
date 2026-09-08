@@ -89,6 +89,42 @@ class CryptoDeltaItem(BaseModel):
 DeltaItem = FindingDeltaItem | ComponentDeltaItem | CryptoDeltaItem
 
 
+class ScanDeltaReachability(BaseModel):
+    """Reachability coverage of one side of a delta. A rescan has no callgraph, so one side can be
+    coverable-but-unanalysed while the other is enriched, and their risk scores are then not comparable."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    coverable_count: int = 0
+    analyzed_count: int = 0
+
+
+class ScanDeltaSide(BaseModel):
+    """Which build one side of a delta actually is. A symbolic side resolves server-side, so
+    without the branch and commit a caller cannot tell which artefact the totals describe."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    scan_id: str
+    branch: str | None = None
+    commit_hash: str | None = None
+    created_at: datetime | None = None
+
+
+class DeltaTruncation(BaseModel):
+    """Present only when a side holds more rows than the comparison read. Both sides are read in
+    the same order, so the two windows cover the same stretch of the identity space, but a row
+    past the window on one side and inside it on the other still reads as added or removed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    limit: int
+    from_compared: int
+    from_total: int
+    to_compared: int
+    to_total: int
+
+
 class ScanDeltaResponse(BaseModel):
     """Unified response envelope for the scan-delta endpoint."""
 
@@ -96,6 +132,8 @@ class ScanDeltaResponse(BaseModel):
 
     from_scan_id: str
     to_scan_id: str
+    from_side: ScanDeltaSide | None = None
+    to_side: ScanDeltaSide | None = None
     project_id: str
     category: DeltaCategory
     totals: ScanDeltaTotals
@@ -103,3 +141,18 @@ class ScanDeltaResponse(BaseModel):
     page_size: int = 50
     total_pages: int = 1
     items: list[DeltaItem] = Field(default_factory=list)
+    # None means the scan reports no reachability at all, which is distinct from zero coverage.
+    # Coverage is the whole scan's, not the filtered item set's: it describes the enrichment a side
+    # was scored with, so it counts every vulnerability in the scan whatever the delta asked for.
+    from_reachability: ScanDeltaReachability | None = None
+    to_reachability: ScanDeltaReachability | None = None
+    # Findings a waiver hides in whole or in part on each side, counted under the finding_type and
+    # severity filters; the `change` filter only scopes the item list.
+    from_waived_excluded: int = 0
+    to_waived_excluded: int = 0
+    # Added and removed items the comparison would not have produced had no waiver applied — the
+    # only evidence that a change is a waiver difference rather than a code difference, since two
+    # sides can hide equal numbers of different findings.
+    waiver_only_changes: int = 0
+    # None means both sides fit under the per-side fetch cap and `totals` describe the two scans.
+    truncation: DeltaTruncation | None = None

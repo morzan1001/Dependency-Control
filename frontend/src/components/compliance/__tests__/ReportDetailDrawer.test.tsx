@@ -30,7 +30,73 @@ const sampleReport: ComplianceReportMeta = {
   summary: {},
 } as ComplianceReportMeta;
 
+const EVALUATED = 20000;
+const IN_SCOPE = 20050;
+const NOT_EVALUATED = IN_SCOPE - EVALUATED;
+const ASSET_CAP = 10000;
+const ASSETS_IN_SCOPE = 10001;
+const PARTIAL_WARNING = /rested on finding no match in a capped input/i;
+const WITHHELD = 3;
+
 describe("ReportDetailDrawer", () => {
+  it("says no verdict over a subset may report passed or waived", () => {
+    const partial: ComplianceReportMeta = {
+      ...sampleReport,
+      coverage: {
+        findings: { evaluated: EVALUATED, in_scope: IN_SCOPE, limit: EVALUATED },
+        crypto_assets: { evaluated: ASSETS_IN_SCOPE, in_scope: ASSETS_IN_SCOPE, limit: ASSET_CAP },
+      },
+    };
+    withClient(<ReportDetailDrawer report={partial} onClose={() => {}} />);
+
+    expect(screen.getByText(PARTIAL_WARNING)).toBeInTheDocument();
+    expect(screen.getByText(new RegExp(NOT_EVALUATED.toLocaleString()))).toBeInTheDocument();
+  });
+
+  it("names the crypto inventory when that is the input the cap cut", () => {
+    const partial: ComplianceReportMeta = {
+      ...sampleReport,
+      coverage: {
+        findings: { evaluated: IN_SCOPE, in_scope: IN_SCOPE, limit: EVALUATED },
+        crypto_assets: { evaluated: ASSET_CAP, in_scope: ASSETS_IN_SCOPE, limit: ASSET_CAP },
+      },
+    };
+    withClient(<ReportDetailDrawer report={partial} onClose={() => {}} />);
+
+    expect(screen.getByText(PARTIAL_WARNING)).toBeInTheDocument();
+    expect(screen.getByText(/crypto assets in scope, a cap of/i)).toBeInTheDocument();
+  });
+
+  it("states plainly that a full evaluation covered the scope", () => {
+    const complete: ComplianceReportMeta = {
+      ...sampleReport,
+      coverage: {
+        findings: { evaluated: IN_SCOPE, in_scope: IN_SCOPE, limit: EVALUATED },
+        crypto_assets: { evaluated: ASSETS_IN_SCOPE, in_scope: ASSETS_IN_SCOPE, limit: ASSET_CAP },
+      },
+    };
+    withClient(<ReportDetailDrawer report={complete} onClose={() => {}} />);
+
+    expect(screen.getByText(/Evaluated all/i)).toBeInTheDocument();
+    expect(screen.queryByText(PARTIAL_WARNING)).not.toBeInTheDocument();
+  });
+
+  it("shows how many verdicts the cap withheld", () => {
+    const withheld: ComplianceReportMeta = {
+      ...sampleReport,
+      coverage: {
+        findings: { evaluated: EVALUATED, in_scope: IN_SCOPE, limit: EVALUATED },
+        crypto_assets: { evaluated: ASSETS_IN_SCOPE, in_scope: ASSETS_IN_SCOPE, limit: ASSET_CAP },
+      },
+      summary: { passed: 0, failed: 0, waived: 0, not_applicable: 0, not_evaluated: WITHHELD, total: WITHHELD },
+    };
+    withClient(<ReportDetailDrawer report={withheld} onClose={() => {}} />);
+
+    const label = screen.getByText("not_evaluated");
+    expect(label).toBeInTheDocument();
+    expect(label.className).toMatch(/amber/);
+  });
+
   it("renders a Delete report button and opens confirmation dialog", async () => {
     withClient(<ReportDetailDrawer report={sampleReport} onClose={() => {}} />);
     const deleteBtn = await screen.findByRole("button", { name: /Delete report/i });

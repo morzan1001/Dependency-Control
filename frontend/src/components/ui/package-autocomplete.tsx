@@ -33,6 +33,7 @@ export function PackageAutocomplete({
   const containerRef = useRef<HTMLDivElement>(null)
 
   const { data: suggestions, isLoading } = usePackageSuggestions(debouncedSearch)
+  const names = suggestions?.names ?? []
 
   const handleClose = useCallback(() => setOpen(false), [])
   useClickOutside(containerRef, handleClose, open)
@@ -69,9 +70,9 @@ export function PackageAutocomplete({
               </div>
            )}
            
-           {!isLoading && suggestions && suggestions.length > 0 && (
+           {!isLoading && names.length > 0 && (
               <div role="listbox" className="max-h-[200px] overflow-y-auto p-1">
-                 {suggestions.map((pkg) => (
+                 {names.map((pkg) => (
                     <div
                        key={pkg}
                        role="option"
@@ -90,7 +91,13 @@ export function PackageAutocomplete({
               </div>
            )}
            
-           {!isLoading && (!suggestions || suggestions.length === 0) && (
+           {!isLoading && suggestions?.more && (
+             <div className="border-t p-2 text-xs text-muted-foreground">
+                More packages match — keep typing to narrow the list.
+             </div>
+           )}
+
+           {!isLoading && names.length === 0 && (
              <div className="p-2 text-sm text-muted-foreground italic">
                 No results found, using custom input.
              </div>

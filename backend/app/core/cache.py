@@ -10,7 +10,9 @@ import json
 import logging
 import time
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, TypeVar, cast
 
 import redis.asyncio as redis
@@ -30,6 +32,23 @@ _LOCK_POLL_INTERVAL_SECONDS = 0.1
 # Atomic compare-and-delete: release the lock only if the value still matches our
 # token, so a slow fetch can't delete a lock re-acquired by another pod.
 _UNLOCK_LUA = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end"
+
+
+_writes_suppressed: ContextVar[bool] = ContextVar("cache_writes_suppressed", default=False)
+
+
+@contextmanager
+def suppress_cache_writes() -> Iterator[None]:
+    """Serve reads from the shared cache but publish nothing into it.
+
+    Context-local rather than an attribute on the service: the cache is one process-wide
+    singleton, so a flag would silence the concurrent scans that legitimately populate it.
+    """
+    token = _writes_suppressed.set(True)
+    try:
+        yield
+    finally:
+        _writes_suppressed.reset(token)
 
 
 class _FetchFailed(Exception):
@@ -297,7 +316,7 @@ class CacheService:
 
     async def set(self, key: str, value: Any, ttl_seconds: int | None = None) -> bool:
         """Set a JSON-serializable value with TTL (defaults to CACHE_DEFAULT_TTL_HOURS)."""
-        if not await self._ensure_available():
+        if _writes_suppressed.get() or not await self._ensure_available():
             return False
 
         if ttl_seconds is None:
@@ -329,7 +348,7 @@ class CacheService:
                 cache_operation_duration_seconds.labels(operation="set").observe(time.time() - _start)
 
     async def delete(self, key: str) -> bool:
-        if not await self._ensure_available():
+        if _writes_suppressed.get() or not await self._ensure_available():
             return False
 
         _start = time.time()
@@ -393,7 +412,7 @@ class CacheService:
 
     async def mset(self, mapping: dict[str, Any], ttl_seconds: int | None = None) -> bool:
         """Batch set with shared TTL."""
-        if not mapping or not await self._ensure_available():
+        if _writes_suppressed.get() or not mapping or not await self._ensure_available():
             return False
 
         if ttl_seconds is None:
@@ -442,7 +461,9 @@ class CacheService:
         if cached is not None:
             return cached
 
-        if not self._available:
+        # The stampede lock is itself a key derived from ``key``, so a suppressed caller has to
+        # skip the whole locked path rather than only the ``set`` that publishes the result.
+        if not self._available or _writes_suppressed.get():
             try:
                 return await fetch_fn()
             except Exception as e:

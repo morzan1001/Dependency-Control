@@ -49,9 +49,35 @@ export interface CryptoDeltaItem {
 
 export type DeltaItem = FindingDeltaItem | ComponentDeltaItem | CryptoDeltaItem;
 
+export interface ScanDeltaReachability {
+  coverable_count: number;
+  analyzed_count: number;
+}
+
+// Which build a side of the comparison actually is. A symbolic side ("release", "head") resolves
+// server-side, and a release side follows the rescan chain, so the requested id need not be it.
+export interface ScanDeltaSide {
+  scan_id: string;
+  branch: string | null;
+  commit_hash: string | null;
+  created_at: string | null;
+}
+
+// Present only when a side held more rows than the comparison read. Both sides are read in the
+// same order, so the two windows cover the same stretch of the identity space.
+export interface DeltaTruncation {
+  limit: number;
+  from_compared: number;
+  from_total: number;
+  to_compared: number;
+  to_total: number;
+}
+
 export interface ScanDeltaResponse {
   from_scan_id: string;
   to_scan_id: string;
+  from_side?: ScanDeltaSide | null;
+  to_side?: ScanDeltaSide | null;
   project_id: string;
   category: DeltaCategory;
   totals: ScanDeltaTotals;
@@ -59,4 +85,14 @@ export interface ScanDeltaResponse {
   page_size: number;
   total_pages: number;
   items: DeltaItem[];
+  // Null means the scan reports no reachability at all, which is distinct from zero coverage.
+  from_reachability?: ScanDeltaReachability | null;
+  to_reachability?: ScanDeltaReachability | null;
+  // Findings a waiver hides in whole or in part on each side.
+  from_waived_excluded: number;
+  to_waived_excluded: number;
+  // Added and removed items the comparison would not have produced had no waiver applied.
+  waiver_only_changes: number;
+  // Null means both sides fit under the per-side fetch cap and the totals describe the two scans.
+  truncation?: DeltaTruncation | null;
 }

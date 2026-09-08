@@ -2,23 +2,7 @@ import type { Severity } from './common';
 
 export type { Severity } from './common';
 
-export interface PipelineMetadata {
-  CI_COMMIT_BRANCH?: string;
-  CI_DEFAULT_BRANCH?: string;
-  CI_PROJECT_PATH?: string;
-  CI_PROJECT_ID?: number;
-  CI_PIPELINE_ID: number;
-  CI_PIPELINE_IID?: number;
-  CI_PROJECT_TITLE?: string;
-  CI_COMMIT_MESSAGE?: string;
-  CI_PROJECT_URL?: string;
-  CI_COMMIT_TAG?: string;
-  CI_JOB_STARTED_AT?: string;
-  CI_JOB_ID?: number;
-  CI_PROJECT_NAME?: string;
-}
-
-export type FindingType = 
+export type FindingType =
   | "vulnerability"
   | "license"
   | "secret"
@@ -55,6 +39,10 @@ export interface ReachabilityInfo {
   confidence_score?: number;
   call_path?: string[];
   matched_symbols?: string[];
+  message?: string;
+  // import_locations is a sample; import_location_count is the total it was cut from.
+  import_locations?: string[];
+  import_location_count?: number;
 }
 
 export interface NestedVulnerability {
@@ -307,6 +295,9 @@ export interface Finding {
   found_in: string[];
   aliases: string[];
   related_findings?: string[];
+  // Set when the component's finding group was too large to cross-link, so an empty
+  // related_findings above means "too many to list", not "none".
+  related_findings_omitted?: number | null;
   waived: boolean;
   waiver_reason?: string;
   source_type?: string;
@@ -523,7 +514,6 @@ export interface Scan {
   commit_hash?: string;
   pipeline_id?: number;
   pipeline_iid?: number;
-  metadata?: PipelineMetadata;
   project_url?: string;
   pipeline_url?: string;
   project_name?: string;
@@ -545,13 +535,47 @@ export interface Scan {
   is_rescan?: boolean;
   original_scan_id?: string;
   latest_rescan_id?: string;
+  // Only that the scan has a release record; which environments and versions live in ReleaseItem.
+  is_release?: boolean;
   job_started_at?: string;
   latest_run?: {
     scan_id: string;
     status: string;
-    findings_count: number;
-    stats: EnhancedStats | null;
+    // A rescan announces itself here the moment it is queued, with nothing analysed yet.
+    findings_count?: number;
+    stats?: EnhancedStats | null;
     completed_at?: string;
     created_at?: string;
   };
+}
+
+export interface ScanHistoryResponse {
+  // Newest first, at most page_size of them.
+  runs: Scan[];
+  // Runs the lineage holds, counted over the lineage rather than over the returned page.
+  total: number;
+  page_size: number;
+}
+
+export interface ScanReleaseRef {
+  environment: string;
+  version: string | null;
+  released_at: string;
+}
+
+export interface ScanWithReleases extends Scan {
+  // Newest first; empty for a scan that runs nowhere.
+  releases: ScanReleaseRef[];
+}
+
+export interface BranchTip {
+  branch: string;
+  // Counted over the whole branch, so it does not shrink with the page size.
+  scan_count: number;
+  tip: Scan | null;
+}
+
+export interface ProjectBranchTips {
+  branches: BranchTip[];
+  flagged_release_scan: ScanWithReleases | null;
 }

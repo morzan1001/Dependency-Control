@@ -11,30 +11,33 @@ from app.schemas.compliance import (
     ReportFramework,
     ReportStatus,
 )
+from app.services.compliance.frameworks.base import build_summary
 from app.services.compliance.renderers.json_renderer import JsonRenderer
 
 
 def _evaluation():
+    controls = [
+        ControlResult(
+            control_id="NIST-131A-01",
+            title="MD5 disallowed",
+            description="...",
+            status=ControlStatus.FAILED,
+            severity=Severity.HIGH,
+            evidence_finding_ids=["f1"],
+            evidence_asset_bom_refs=["a1"],
+            waiver_reasons=[],
+            remediation="Replace MD5 with SHA-256.",
+        ),
+    ]
     return FrameworkEvaluation(
         framework_key=ReportFramework.NIST_SP_800_131A,
         framework_name="NIST SP 800-131A",
         framework_version="Rev.3",
         generated_at=datetime(2026, 4, 20, tzinfo=timezone.utc),
         scope_description="project 'x'",
-        controls=[
-            ControlResult(
-                control_id="NIST-131A-01",
-                title="MD5 disallowed",
-                description="...",
-                status=ControlStatus.FAILED,
-                severity=Severity.HIGH,
-                evidence_finding_ids=["f1"],
-                evidence_asset_bom_refs=["a1"],
-                waiver_reasons=[],
-                remediation="Replace MD5 with SHA-256.",
-            ),
-        ],
-        summary={"passed": 0, "failed": 1, "waived": 0, "not_applicable": 0, "total": 1},
+        controls=controls,
+        # Counted the way the engine counts, so a new status bucket reaches the renderers here too.
+        summary=build_summary(controls),
         residual_risks=[],
         inputs_fingerprint="sha256:abc",
     )

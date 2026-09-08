@@ -7,7 +7,6 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
 
 from app.core.config import settings
-from app.core.constants import SCAN_USABLE_STATUSES
 from app.core.metrics import compliance_reports_total
 from app.models.compliance_report import ComplianceReport
 from app.models.user import User
@@ -15,7 +14,9 @@ from app.repositories.compliance_report import ComplianceReportRepository
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.compliance import (
+    EvaluationCoverage,
     FrameworkEvaluation,
+    InputCoverage,
     ReportFormat,
     ReportFramework,
     ReportStatus,
@@ -28,7 +29,13 @@ from app.services.compliance.renderers import RENDERER_REGISTRY
 
 logger = logging.getLogger(__name__)
 
+# Findings held in memory for one report. The projection measures 2.66 KiB per document and
+# MAX_CONCURRENT_COMPLIANCE_REPORTS reports can run at once, so this is ~530 MiB at saturation.
 _FINDINGS_LIMIT = 20000
+
+# Crypto assets held in memory for one report, across every scan in scope. A CryptoAsset measures
+# 3.74 KiB validated, so this is ~365 MiB once MAX_CONCURRENT_COMPLIANCE_REPORTS reports saturate it.
+_CRYPTO_ASSETS_LIMIT = 10000
 
 
 class ComplianceReportEngine:
@@ -52,6 +59,10 @@ class ComplianceReportEngine:
                 evaluation = await framework.evaluate_async(inputs)  # type: ignore[attr-defined]
             else:
                 evaluation = framework.evaluate(inputs)
+            # Every framework builds its own FrameworkEvaluation, so the engine is the one place
+            # that can guarantee no renderer receives a verdict without its coverage. A framework
+            # bounded by an input the engine does not gather widens it and keeps its own.
+            evaluation.coverage = evaluation.coverage or inputs.coverage
             artifact_bytes, filename, mime = self._render(
                 report.format,
                 framework,
@@ -75,6 +86,7 @@ class ComplianceReportEngine:
                 artifact_size_bytes=len(artifact_bytes),
                 artifact_mime_type=mime,
                 summary=evaluation.summary,
+                coverage=evaluation.coverage,
                 policy_version_snapshot=inputs.policy_version,
                 iana_catalog_version_snapshot=inputs.iana_catalog_version,
                 completed_at=datetime.now(timezone.utc),
@@ -103,8 +115,8 @@ class ComplianceReportEngine:
     ) -> EvaluationInput:
         scan_pairs = await self._pick_scan_ids(db, resolved)
         scan_ids = [sid for _, sid in scan_pairs]
-        assets = await self._collect_crypto_assets(db, scan_pairs)
-        findings = await self._collect_findings(db, resolved, scan_ids, framework)
+        assets, assets_in_scope = await self._collect_crypto_assets(db, scan_pairs)
+        findings, findings_in_scope = await self._collect_findings(db, resolved, scan_ids, framework)
         policy_repo = CryptoPolicyRepository(db)
         system = await policy_repo.get_system_policy()
         policy_version = getattr(system, "version", None) if system else None
@@ -125,29 +137,56 @@ class ComplianceReportEngine:
             iana_catalog_version=CURRENT_IANA_CATALOG_VERSION,
             scan_ids=scan_ids,
             db=db,
+            coverage=EvaluationCoverage(
+                findings=InputCoverage(
+                    evaluated=len(findings),
+                    in_scope=findings_in_scope,
+                    limit=_FINDINGS_LIMIT,
+                ),
+                crypto_assets=InputCoverage(
+                    evaluated=len(assets),
+                    in_scope=assets_in_scope,
+                    limit=_CRYPTO_ASSETS_LIMIT,
+                ),
+            ),
         )
 
     async def _pick_scan_ids(self, db: AsyncIOMotorDatabase, resolved: ResolvedScope) -> list[tuple[str, str]]:
-        match: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}}
-        if resolved.project_ids is not None:
-            match["project_id"] = {"$in": resolved.project_ids}
-        pipeline: list[dict[str, Any]] = [
-            {"$match": match},
-            {"$sort": {"created_at": -1}},
-            {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
-        ]
-        # Return (project_id, scan_id) pairs so callers avoid re-querying each scan's project.
-        return [(row["_id"], row["scan_id"]) async for row in db.scans.aggregate(pipeline)]
+        """(project_id, scan_id) pairs so callers avoid re-querying each scan's project."""
+        from app.services.releases import resolve_scan_ids
 
-    async def _collect_crypto_assets(self, db: AsyncIOMotorDatabase, scan_pairs: list[tuple[str, str]]) -> list[Any]:
+        return list((await resolve_scan_ids(db, resolved.project_ids)).items())
+
+    async def _collect_crypto_assets(
+        self,
+        db: AsyncIOMotorDatabase,
+        scan_pairs: list[tuple[str, str]],
+    ) -> tuple[list[Any], int]:
+        """The inventory the controls are evaluated over, and how many assets the scope holds.
+        The budget spans the whole report, so a global scope cannot multiply it by its scan count;
+        a scan costs a count round trip only once the budget can no longer swallow it whole."""
         repo = CryptoAssetRepository(db)
         out: list[Any] = []
+        in_scope = 0
         for pid, sid in scan_pairs:
             if pid is None or sid is None:
                 continue
-            assets = await repo.list_by_scan(pid, sid, limit=10000)
-            out.extend(assets)
-        return out
+            remaining = _CRYPTO_ASSETS_LIMIT - len(out)
+            if remaining > 0:
+                assets = await repo.list_by_scan(pid, sid, limit=remaining)
+                out.extend(assets)
+                if len(assets) < remaining:
+                    in_scope += len(assets)
+                    continue
+            in_scope += await repo.count_by_scan(pid, sid)
+        if len(out) < in_scope:
+            logger.warning(
+                "Compliance evaluation hit crypto-asset cap (%d of %d); "
+                "inventory-backed verdicts are withheld — consider narrowing the scope",
+                _CRYPTO_ASSETS_LIMIT,
+                in_scope,
+            )
+        return out, in_scope
 
     async def _collect_findings(
         self,
@@ -155,7 +194,9 @@ class ComplianceReportEngine:
         resolved: ResolvedScope,
         scan_ids: list[str],
         framework: ComplianceFramework | None = None,
-    ) -> list[dict]:
+    ) -> tuple[list[dict], int]:
+        """The findings the controls are evaluated over, and how many the scope holds. The count
+        costs a round trip only once the fetch has saturated."""
         query: dict[str, Any] = {
             "scan_id": {"$in": scan_ids},
             "type": self._finding_type_filter(framework),
@@ -172,14 +213,17 @@ class ComplianceReportEngine:
         }
         cursor = db.findings.find(query, projection).limit(_FINDINGS_LIMIT)
         results = [doc async for doc in cursor]
-        if len(results) >= _FINDINGS_LIMIT:
-            logger.warning(
-                "Compliance evaluation hit findings cap (%d) for scope %s; "
-                "report may understate exposure — consider narrowing the scope",
-                _FINDINGS_LIMIT,
-                self._scope_description(resolved),
-            )
-        return results
+        if len(results) < _FINDINGS_LIMIT:
+            return results, len(results)
+        in_scope: int = await db.findings.count_documents(query)
+        logger.warning(
+            "Compliance evaluation hit findings cap (%d of %d) for scope %s; "
+            "report may understate exposure — consider narrowing the scope",
+            _FINDINGS_LIMIT,
+            in_scope,
+            self._scope_description(resolved),
+        )
+        return results, in_scope
 
     def _finding_type_filter(self, framework: ComplianceFramework | None) -> Any:
         """Findings-query `type` clause per framework; unknown framework loads the union."""

@@ -4,7 +4,12 @@ from app.schemas.recommendation import (
     Recommendation,
     RecommendationType,
 )
-from app.services.recommendation.common import ModelOrDict, get_attr
+from app.services.recommendation.common import ModelOrDict, get_attr, sample_components
+
+# Chains detailed in the action, and parents previewed per chain; each is paired with the
+# population it was taken from.
+_DEEPEST_CHAINS_SAMPLED = 5
+_PARENTS_SAMPLED = 3
 
 
 def analyze_deep_dependency_chains(
@@ -92,6 +97,7 @@ def analyze_deep_dependency_chains(
                 cycle_packages.append({"name": get_attr(dep, "name"), "version": get_attr(dep, "version")})
 
         if cycle_packages:
+            cycle_shown, cycle_total = sample_components(f"{p['name']}@{p['version']}" for p in cycle_packages)
             recommendations.append(
                 Recommendation(
                     type=RecommendationType.DEEP_DEPENDENCY_CHAIN,
@@ -108,7 +114,8 @@ def analyze_deep_dependency_chains(
                         "low": 0,
                         "total": len(cycle_packages),
                     },
-                    affected_components=[f"{p['name']}@{p['version']}" for p in cycle_packages[:10]],
+                    affected_components=cycle_shown,
+                    affected_components_total=cycle_total,
                     action={
                         "type": "resolve_circular_deps",
                         "suggestions": [
@@ -132,13 +139,16 @@ def analyze_deep_dependency_chains(
                     "name": get_attr(dep, "name"),
                     "version": get_attr(dep, "version"),
                     "depth": depth,
-                    "parents": get_attr(dep, "parent_components", [])[:3],
+                    "parents": get_attr(dep, "parent_components", []) or [],
                 }
             )
 
     if deep_deps:
         deep_deps.sort(key=lambda x: x["depth"], reverse=True)
         max_depth = deep_deps[0]["depth"] if deep_deps else 0
+        deep_shown, deep_total = sample_components(
+            f"{d['name']}@{d['version']} (depth: {d['depth']})" for d in deep_deps
+        )
 
         recommendations.append(
             Recommendation(
@@ -158,7 +168,8 @@ def analyze_deep_dependency_chains(
                     "low": len([d for d in deep_deps if d["depth"] <= 7]),
                     "total": len(deep_deps),
                 },
-                affected_components=[f"{d['name']}@{d['version']} (depth: {d['depth']})" for d in deep_deps[:10]],
+                affected_components=deep_shown,
+                affected_components_total=deep_total,
                 action={
                     "type": "reduce_chain_depth",
                     "suggestions": [
@@ -170,10 +181,12 @@ def analyze_deep_dependency_chains(
                         {
                             "package": d["name"],
                             "depth": d["depth"],
-                            "chain_preview": " → ".join(d["parents"][:3]),
+                            "chain_preview": " → ".join(d["parents"][:_PARENTS_SAMPLED]),
+                            "parents_total": len(d["parents"]),
                         }
-                        for d in deep_deps[:5]
+                        for d in deep_deps[:_DEEPEST_CHAINS_SAMPLED]
                     ],
+                    "deepest_chains_total": len(deep_deps),
                 },
                 effort="high",
             )

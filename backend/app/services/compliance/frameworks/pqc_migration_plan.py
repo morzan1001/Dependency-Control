@@ -8,7 +8,9 @@ from app.schemas.compliance import (
     ControlDefinition,
     ControlResult,
     ControlStatus,
+    EvaluationCoverage,
     FrameworkEvaluation,
+    InputCoverage,
     ReportFramework,
 )
 from app.schemas.pqc_migration import MigrationItem, MigrationPlanResponse
@@ -18,6 +20,9 @@ from app.services.compliance.frameworks.base import (
     build_summary,
 )
 from app.services.pqc_migration.generator import PQCMigrationPlanGenerator
+
+# One control per migratable group, so the plan's own ceiling is this report's control ceiling.
+_PLAN_ITEM_LIMIT = 1000
 
 _STATUS_MAP: dict[str, ControlStatus] = {
     "migrate_now": ControlStatus.FAILED,
@@ -56,7 +61,7 @@ class PQCMigrationPlanFramework:
 
         plan = await PQCMigrationPlanGenerator(data.db).generate(
             resolved=data.resolved,
-            limit=1000,
+            limit=_PLAN_ITEM_LIMIT,
         )
 
         controls = [_item_to_control(item) for item in plan.items]
@@ -70,7 +75,24 @@ class PQCMigrationPlanFramework:
             summary=build_summary(controls),
             residual_risks=build_residual_risks(controls),
             inputs_fingerprint=_fingerprint(plan),
+            coverage=_coverage(data, plan),
         )
+
+
+def _coverage(data: EvaluationInput, plan: MigrationPlanResponse) -> EvaluationCoverage | None:
+    """The engine's coverage widened by the plan's own bound: past the ceiling the control list
+    is a cut of a plan whose summary counts every item."""
+    if data.coverage is None:
+        return None
+    return data.coverage.model_copy(
+        update={
+            "plan_items": InputCoverage(
+                evaluated=plan.summary.items_returned,
+                in_scope=plan.summary.total_items,
+                limit=_PLAN_ITEM_LIMIT,
+            )
+        }
+    )
 
 
 def _item_to_control(item: MigrationItem) -> ControlResult:

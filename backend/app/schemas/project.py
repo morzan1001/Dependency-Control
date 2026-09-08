@@ -3,11 +3,12 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.constants import PROJECT_ROLE_VIEWER, PROJECT_ROLES
+from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, PROJECT_ROLE_VIEWER, PROJECT_ROLES
 from app.core.notification_prefs import sanitize_notification_preferences
 from app.models.finding import FindingType, Severity
 from app.models.license import DeploymentModel, DistributionModel, LibraryUsage
 from app.models.project import Project, Scan
+from app.schemas.datetimes import UtcDatetime
 
 
 class LicensePolicySchema(BaseModel):
@@ -78,7 +79,7 @@ class ProjectCreate(BaseModel):
     )
     team_id: str | None = Field(None, description="ID of the team this project belongs to")
     active_analyzers: list[str] = Field(
-        default_factory=lambda: ["trivy", "osv", "license_compliance", "end_of_life"],
+        default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS),
         description="List of analyzers to run on this project",
         examples=[["end_of_life", "os_malware", "trivy"]],
     )
@@ -196,6 +197,61 @@ class RecentScan(Scan):
     project_name: str = Field(..., description="Name of the project this scan belongs to")
 
 
+class ScanReleaseRef(BaseModel):
+    """One environment a scan is the running artefact in."""
+
+    environment: str = Field(..., description="Environment slug the scan was released to")
+    version: str | None = Field(None, description="Release name recorded when the scan was marked")
+    released_at: UtcDatetime = Field(..., description="When the scan started running in that environment")
+
+
+class ScanWithReleases(Scan):
+    """Scan carrying where it runs. Response-only: the environments live in the releases collection,
+    while the scan document holds nothing beyond the ``is_release`` flag."""
+
+    releases: list[ScanReleaseRef] = Field(
+        default_factory=list,
+        description="Newest first; a scan can run in several environments at once, and a scan that "
+        "is not a release has none",
+    )
+
+
+class ScanHistoryResponse(BaseModel):
+    """A scan's lineage: the original run plus its re-scans, newest first."""
+
+    runs: list[Scan] = Field(..., description="Newest first, at most ``page_size`` of them")
+    total: int = Field(
+        ...,
+        description="Runs the lineage holds, counted over the whole lineage rather than over the returned page",
+    )
+    page_size: int = Field(..., description="Runs a single response can carry")
+
+
+class BranchTip(BaseModel):
+    """One branch of a project, with the scan whose numbers stand for it."""
+
+    branch: str = Field(..., description="Branch name")
+    scan_count: int = Field(
+        ...,
+        description="Non-rescan scans the branch holds, counted over the whole branch rather than over a page of scans",
+    )
+    tip: Scan | None = Field(
+        None,
+        description="Newest usable scan of the branch, a rescan only where nothing built is left; "
+        "None while the branch has produced no usable scan",
+    )
+
+
+class ProjectBranchTips(BaseModel):
+    """Every branch of a project, so no branch-level verdict is drawn from a page of scans."""
+
+    branches: list[BranchTip] = Field(..., description="Alphabetical by branch name")
+    flagged_release_scan: ScanWithReleases | None = Field(
+        None,
+        description="Newest usable scan carrying the release flag, whatever its age; None when the project has none",
+    )
+
+
 class DashboardStats(BaseModel):
     """Dashboard statistics for project overview."""
 
@@ -234,6 +290,11 @@ class ScanFindingItem(BaseModel):
     found_in: list[str] = Field(default_factory=list, description="Files where found")
     aliases: list[str] = Field(default_factory=list, description="Alternative IDs")
     related_findings: list[str] = Field(default_factory=list, description="Related finding IDs")
+    related_findings_omitted: int | None = Field(
+        None,
+        description="Same-component findings left unlinked because the group exceeded the "
+        "cross-linking ceiling; None when the list above is complete",
+    )
     created_at: datetime | None = Field(None, description="When the finding was created")
 
     # Enriched fields from dependency lookup

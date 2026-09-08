@@ -4,6 +4,9 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ComponentFinding, DependencyMetadata } from "@/types/analytics";
 import { AnalyticsDependencyModal } from "../AnalyticsDependencyModal";
 import { resolveRelatedFinding } from "../related-finding";
+import { AnalyticsModeContext } from "@/context/analytics-mode";
+
+const RELEASE_ENVIRONMENT = "production";
 
 vi.mock("@/hooks/queries/use-analytics", () => ({
   useDependencyMetadata: vi.fn(),
@@ -203,5 +206,37 @@ describe("AnalyticsDependencyModal copy button", () => {
     await waitFor(() => {
       expect(writeText).toHaveBeenCalledWith("pkg:npm/pkg@1.0.0");
     });
+  });
+});
+
+describe("AnalyticsDependencyModal scope", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (useDependencyMetadata as ReturnType<typeof vi.fn>).mockReturnValue({ data: baseMetadata, isLoading: false });
+    (useComponentFindings as ReturnType<typeof vi.fn>).mockReturnValue({ data: [], isLoading: false });
+  });
+
+  function renderInMode(releaseEnvironment: string | undefined) {
+    return render(
+      <MemoryRouter>
+        <AnalyticsModeContext.Provider value={releaseEnvironment}>
+          <AnalyticsDependencyModal component="pkg" version="1.0.0" open onOpenChange={() => {}} />
+        </AnalyticsModeContext.Provider>
+      </MemoryRouter>,
+    );
+  }
+
+  it("asks for the same scope the table that opened it rendered from", () => {
+    renderInMode(RELEASE_ENVIRONMENT);
+
+    expect(useComponentFindings).toHaveBeenCalledWith("pkg", "1.0.0", RELEASE_ENVIRONMENT);
+    expect(useDependencyMetadata).toHaveBeenCalledWith("pkg", "1.0.0", undefined, RELEASE_ENVIRONMENT);
+  });
+
+  it("asks for the branch tip when the page is in head mode", () => {
+    renderInMode(undefined);
+
+    expect(useComponentFindings).toHaveBeenCalledWith("pkg", "1.0.0", undefined);
+    expect(useDependencyMetadata).toHaveBeenCalledWith("pkg", "1.0.0", undefined, undefined);
   });
 });

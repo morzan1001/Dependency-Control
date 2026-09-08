@@ -19,7 +19,7 @@ import { type DeltaTabProps, useDeltaTabQuery } from "../shared/useDeltaTabQuery
 const CHANGES = ["all", "added", "removed"] as const;
 type CryptoChangeFilter = (typeof CHANGES)[number];
 
-export function CryptoDeltaTab({ projectId, fromScanId, toScanId, onCountLoaded }: DeltaTabProps) {
+export function CryptoDeltaTab({ projectId, fromScanId, toScanId, onLoaded }: DeltaTabProps) {
   const [change, setChange] = useState<CryptoChangeFilter>("all");
 
   const { query, setPage } = useDeltaTabQuery({
@@ -33,8 +33,8 @@ export function CryptoDeltaTab({ projectId, fromScanId, toScanId, onCountLoaded 
   const { data, isLoading, isError } = query;
 
   useEffect(() => {
-    if (data) onCountLoaded(data.totals.added + data.totals.removed);
-  }, [data, onCountLoaded]);
+    if (data) onLoaded(data);
+  }, [data, onLoaded]);
 
   if (isError) return <DeltaError category="crypto" />;
 

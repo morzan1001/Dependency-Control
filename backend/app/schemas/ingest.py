@@ -1,6 +1,9 @@
+from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from app.core.constants import DEFAULT_RELEASE_ENVIRONMENT, validate_release_environment
 
 _DESC_SCAN_ID = "Unique identifier of the scan"
 
@@ -23,6 +26,28 @@ class BaseIngest(BaseModel):
     commit_message: str | None = Field(None, description="Commit message")
     commit_tag: str | None = Field(None, description="Git tag")
     pipeline_user: str | None = Field(None, description="User who triggered the pipeline")
+
+    is_release: bool = Field(False, description="Mark this scan as the released/deployed artefact")
+    release_version: str | None = Field(None, description="Release name; falls back to commit_tag")
+    release_environment: str | None = Field(None, description=f"Slug; falls back to {DEFAULT_RELEASE_ENVIRONMENT}")
+
+    @field_validator("release_environment")
+    @classmethod
+    def validate_environment(cls, v: str | None) -> str | None:
+        return validate_release_environment(v)
+
+    def release_fields(self, released_at: datetime) -> dict[str, Any]:
+        """Release-document fields, or empty for a payload that marks nothing: every job of one CI
+        pipeline writes the same scan, so only an empty result keeps the mark promote-only."""
+        if not self.is_release:
+            return {}
+        return {
+            "environment": self.release_environment or DEFAULT_RELEASE_ENVIRONMENT,
+            # A CI producer sends an unset tag as "", and ReleaseRepository.record only skips a
+            # None version, so an empty one would be stored as the release's name.
+            "version": self.release_version or self.commit_tag or None,
+            "released_at": released_at,
+        }
 
 
 class ScanContext(BaseModel):

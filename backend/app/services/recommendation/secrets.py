@@ -2,7 +2,9 @@ from collections import defaultdict
 
 from app.core.trufflehog import resolve_detector_name
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import ModelOrDict, get_attr
+from app.services.recommendation.common import ModelOrDict, get_attr, name_some, sample_components
+
+_SECRET_TYPES_NAMED = 5
 
 
 def process_secrets(findings: list[ModelOrDict]) -> list[Recommendation]:
@@ -28,12 +30,14 @@ def process_secrets(findings: list[ModelOrDict]) -> list[Recommendation]:
         if component:
             files_affected.add(component)
 
+    files_shown, files_total = sample_components(sorted(files_affected))
+
     if severity_counts.get("CRITICAL", 0) > 0 or severity_counts.get("HIGH", 0) > 0:
         priority = Priority.CRITICAL
     else:
         priority = Priority.HIGH
 
-    secret_types = list(secrets_by_type.keys())[:5]
+    secret_types = sorted(secrets_by_type)
 
     recommendations.append(
         Recommendation(
@@ -42,7 +46,7 @@ def process_secrets(findings: list[ModelOrDict]) -> list[Recommendation]:
             title="Rotate Exposed Credentials",
             description=(
                 f"Found {len(findings)} exposed secrets/credentials in {len(files_affected)} files. "
-                f"These include: {', '.join(secret_types)}. "
+                f"These include: {name_some(secret_types, _SECRET_TYPES_NAMED)}. "
                 f"Immediately rotate all affected credentials and remove from code."
             ),
             impact={
@@ -52,11 +56,13 @@ def process_secrets(findings: list[ModelOrDict]) -> list[Recommendation]:
                 "low": severity_counts.get("LOW", 0),
                 "total": len(findings),
             },
-            affected_components=list(files_affected)[:20],
+            affected_components=files_shown,
+            affected_components_total=files_total,
             action={
                 "type": "rotate_secrets",
                 "secret_types": secret_types,
-                "files": list(files_affected)[:10],
+                "files": files_shown,
+                "files_total": files_total,
                 "steps": [
                     "1. Immediately rotate/regenerate all exposed credentials",
                     "2. Update applications using these credentials",

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ProjectInventory } from '../ProjectInventory'
 import * as inventoryApiModule from '@/api/inventory'
 import * as projectHooks from '@/hooks/queries/use-projects'
+import type { BranchInfo } from '@/types/project'
 
 vi.mock('@/api/inventory')
 vi.mock('@/hooks/queries/use-projects')
@@ -73,7 +74,7 @@ describe('ProjectInventory', () => {
 
   it('shows an empty state when the project has no active branches', async () => {
     vi.mocked(projectHooks.useProjectBranches).mockReturnValue({
-      data: [],
+      data: [] as BranchInfo[],
     } as ReturnType<typeof projectHooks.useProjectBranches>)
 
     renderInventory()

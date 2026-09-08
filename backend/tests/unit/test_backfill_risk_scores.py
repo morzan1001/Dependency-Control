@@ -1,9 +1,38 @@
 """backfill_risk_scores must rewrite only the two score fields, skip scans whose findings are gone, and mirror projects."""
 
+from unittest.mock import patch
+
 import pytest
 
-from scripts.backfill_risk_scores import backfill_scans, mirror_projects
+from app.models.stats import Stats
+from scripts.backfill_risk_scores import (
+    DIFF_SAMPLE_CAP,
+    UNPARSEABLE_FIELD,
+    ScanProcessingError,
+    backfill_scans,
+    mirror_projects,
+    stats_field_diff,
+)
 from tests.mocks.fake_mongo import FakeDatabase
+
+BATCH_SIZE = 10
+NO_SLEEP_MS = 0
+NO_LIMIT = 0
+DRIFTED_ACTIONABLE_TOTAL = 42
+SENTINEL_STORED_CRITICAL = 99
+SENTINEL_STORED_RISK_SCORE = 1.0
+# 1 CRITICAL -> 100*20/(20+250), via the shared runtime formula
+COMPUTED_RISK_SCORE = 7.4
+STALE_STORED_RISK_SCORE = 13.5
+GONE_FINDINGS_STORED_RISK_SCORE = 12.1
+GONE_FINDINGS_STORED_CRITICAL = 3
+OLD_STATS_PRIORITIZED_TOTAL = 99
+DRIFTED_SCAN_COUNT = DIFF_SAMPLE_CAP + 1
+CORRUPT_BUCKET_VALUE = ["not", "a", "number"]
+UNPARSEABLE_BUCKET_VALUE = "not-a-number"
+SURVIVING_BUCKET_HIGH = 2
+BROKEN_SCAN_ID = "scan-broken"
+UNRELATED_FAILURE = "motor exploded"
 
 
 def _finding(_id, scan_id, severity="CRITICAL"):
@@ -20,7 +49,7 @@ def _finding(_id, scan_id, severity="CRITICAL"):
     }
 
 
-def _old_stats(critical=1, risk=13.5):
+def _old_stats(critical=1, risk=STALE_STORED_RISK_SCORE):
     return {
         "critical": critical,
         "high": 0,
@@ -30,7 +59,7 @@ def _old_stats(critical=1, risk=13.5):
         "unknown": 0,
         "risk_score": risk,
         "adjusted_risk_score": risk,
-        "prioritized": {"total": 99},
+        "prioritized": {"total": OLD_STATS_PRIORITIZED_TOTAL},
     }
 
 
@@ -45,7 +74,12 @@ async def _seed(db):
     await db.scans.insert_one({"_id": "scan-a", "stats": _old_stats()})
     await db.findings.insert_one(_finding("f1", "scan-a"))
     # scan-b: stats claim findings but none stored anymore -> skip
-    await db.scans.insert_one({"_id": "scan-b", "stats": _old_stats(critical=3, risk=12.1)})
+    await db.scans.insert_one(
+        {
+            "_id": "scan-b",
+            "stats": _old_stats(critical=GONE_FINDINGS_STORED_CRITICAL, risk=GONE_FINDINGS_STORED_RISK_SCORE),
+        }
+    )
     await db.projects.insert_one({"_id": "proj-1", "latest_scan_id": "scan-a", "stats": _old_stats()})
 
 
@@ -53,39 +87,239 @@ class TestBackfillRiskScores:
     @pytest.mark.asyncio
     async def test_dry_run_reports_but_writes_nothing(self, seeded_db):
         await _seed(seeded_db)
-        counters = await backfill_scans(seeded_db, batch_size=10, sleep_ms=0, limit=0, execute=False)
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False
+        )
         assert counters["would_update"] == 1
         assert counters["skipped_no_findings"] == 1
         assert counters["updated"] == 0
         scan = await seeded_db.scans.find_one({"_id": "scan-a"})
-        assert scan["stats"]["risk_score"] == 13.5
+        assert scan["stats"]["risk_score"] == STALE_STORED_RISK_SCORE
 
     @pytest.mark.asyncio
     async def test_execute_rewrites_only_score_fields(self, seeded_db):
         await _seed(seeded_db)
-        counters = await backfill_scans(seeded_db, batch_size=10, sleep_ms=0, limit=0, execute=True)
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=True
+        )
         assert counters["updated"] == 1
         scan = await seeded_db.scans.find_one({"_id": "scan-a"})
-        # 1 CRITICAL -> 100*20/(20+250) = 7.4, via the shared runtime formula
-        assert scan["stats"]["risk_score"] == 7.4
-        assert scan["stats"]["adjusted_risk_score"] == 7.4
+        assert scan["stats"]["risk_score"] == COMPUTED_RISK_SCORE
+        assert scan["stats"]["adjusted_risk_score"] == COMPUTED_RISK_SCORE
         # the rest of the stored stats blob stays untouched
         assert scan["stats"]["critical"] == 1
-        assert scan["stats"]["prioritized"] == {"total": 99}
+        assert scan["stats"]["prioritized"] == {"total": OLD_STATS_PRIORITIZED_TOTAL}
 
     @pytest.mark.asyncio
     async def test_skipped_scan_keeps_stored_scores(self, seeded_db):
         await _seed(seeded_db)
-        await backfill_scans(seeded_db, batch_size=10, sleep_ms=0, limit=0, execute=True)
+        await backfill_scans(seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=True)
         scan = await seeded_db.scans.find_one({"_id": "scan-b"})
-        assert scan["stats"]["risk_score"] == 12.1
+        assert scan["stats"]["risk_score"] == GONE_FINDINGS_STORED_RISK_SCORE
 
     @pytest.mark.asyncio
     async def test_project_mirror_follows_latest_scan(self, seeded_db):
         await _seed(seeded_db)
-        counters = await backfill_scans(seeded_db, batch_size=10, sleep_ms=0, limit=0, execute=True)
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=True
+        )
         project_counters = await mirror_projects(seeded_db, counters["new_scores"], execute=True)
         assert project_counters["projects_updated"] == 1
         project = await seeded_db.projects.find_one({"_id": "proj-1"})
-        assert project["stats"]["risk_score"] == 7.4
+        assert project["stats"]["risk_score"] == COMPUTED_RISK_SCORE
         assert project["stats"]["critical"] == 1
+
+
+class TestFullStatsDivergenceReport:
+    """The dry-run against a prod restore is the only oracle that runs on real Mongo."""
+
+    @pytest.mark.asyncio
+    async def test_identical_stats_report_no_divergence(self, seeded_db):
+        from app.services.analysis.stats import calculate_comprehensive_stats
+
+        await seeded_db.findings.insert_one(_finding("f1", "scan-c"))
+        computed = await calculate_comprehensive_stats(seeded_db, "scan-c")
+        await seeded_db.scans.insert_one({"_id": "scan-c", "stats": computed.model_dump()})
+
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False
+        )
+        assert counters["stats_differ"] == 0
+        assert counters["stats_diff_fields"] == {}
+
+    @pytest.mark.asyncio
+    async def test_a_drifted_counter_is_reported_by_field_name(self, seeded_db):
+        from app.services.analysis.stats import calculate_comprehensive_stats
+
+        await seeded_db.findings.insert_one(_finding("f1", "scan-c"))
+        computed = await calculate_comprehensive_stats(seeded_db, "scan-c")
+        stored = computed.model_dump()
+        stored["prioritized"]["actionable_total"] = DRIFTED_ACTIONABLE_TOTAL
+        await seeded_db.scans.insert_one({"_id": "scan-c", "stats": stored})
+
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False
+        )
+        assert counters["stats_differ"] == 1
+        assert counters["stats_diff_fields"]["prioritized"] == 1
+
+    @pytest.mark.asyncio
+    async def test_the_breakdown_counts_scans_per_field(self, seeded_db):
+        """The breakdown's values are scan counts, so a field drifting twice must read 2."""
+        from app.services.analysis.stats import calculate_comprehensive_stats
+
+        for scan_id in ("scan-c", "scan-d"):
+            await seeded_db.findings.insert_one(_finding(f"f-{scan_id}", scan_id))
+            computed = await calculate_comprehensive_stats(seeded_db, scan_id)
+            stored = computed.model_dump()
+            stored["prioritized"]["actionable_total"] = DRIFTED_ACTIONABLE_TOTAL
+            await seeded_db.scans.insert_one({"_id": scan_id, "stats": stored})
+
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False
+        )
+        assert counters["stats_differ"] == 2
+        assert counters["stats_diff_fields"] == {"prioritized": 2}
+
+    @pytest.mark.asyncio
+    async def test_the_breakdown_names_the_scans_behind_each_field(self, seeded_db):
+        """A bare field count is a dead end: --limit walks _id order, which need not reach the divergent scans."""
+        from app.services.analysis.stats import calculate_comprehensive_stats
+
+        await seeded_db.findings.insert_one(_finding("f1", "scan-c"))
+        computed = await calculate_comprehensive_stats(seeded_db, "scan-c")
+        stored = computed.model_dump()
+        stored["prioritized"]["actionable_total"] = DRIFTED_ACTIONABLE_TOTAL
+        await seeded_db.scans.insert_one({"_id": "scan-c", "stats": stored})
+
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False
+        )
+        assert counters["stats_diff_samples"]["prioritized"] == ["scan-c"]
+
+    @pytest.mark.asyncio
+    async def test_the_named_scans_are_capped_while_the_count_is_not(self, seeded_db):
+        from app.services.analysis.stats import calculate_comprehensive_stats
+
+        for index in range(DRIFTED_SCAN_COUNT):
+            scan_id = f"scan-{index}"
+            await seeded_db.findings.insert_one(_finding(f"f-{scan_id}", scan_id))
+            computed = await calculate_comprehensive_stats(seeded_db, scan_id)
+            stored = computed.model_dump()
+            stored["prioritized"]["actionable_total"] = DRIFTED_ACTIONABLE_TOTAL
+            await seeded_db.scans.insert_one({"_id": scan_id, "stats": stored})
+
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False
+        )
+        assert counters["stats_diff_fields"]["prioritized"] == DRIFTED_SCAN_COUNT
+        assert len(counters["stats_diff_samples"]["prioritized"]) == DIFF_SAMPLE_CAP
+
+    @pytest.mark.asyncio
+    async def test_an_unparseable_block_is_named_by_scan_id(self, seeded_db):
+        await seeded_db.findings.insert_one(_finding("f1", "scan-c"))
+        await seeded_db.scans.insert_one({"_id": "scan-c", "stats": {"critical": UNPARSEABLE_BUCKET_VALUE}})
+
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False
+        )
+        assert counters["stats_diff_samples"][UNPARSEABLE_FIELD] == ["scan-c"]
+
+    @pytest.mark.asyncio
+    async def test_a_scan_whose_findings_are_gone_is_not_reported_as_divergent(self, seeded_db):
+        """Nothing was folded, so the all-zero result is retention, not an arithmetic disagreement."""
+        await _seed(seeded_db)
+
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False
+        )
+        assert counters["skipped_no_findings"] == 1
+        # scan-a's stored block is stale, so it is the only legitimate divergence in the seed.
+        assert counters["stats_differ"] == 1
+        assert "critical" not in counters["stats_diff_fields"]
+
+    @pytest.mark.asyncio
+    async def test_a_stats_block_missing_newer_keys_is_normalised_not_reported(self, seeded_db):
+        """An old stats block predates a field; defaulting it keeps schema drift out of the signal."""
+        from app.services.analysis.stats import calculate_comprehensive_stats
+
+        await seeded_db.findings.insert_one(_finding("f1", "scan-c"))
+        computed = await calculate_comprehensive_stats(seeded_db, "scan-c")
+        stored = computed.model_dump()
+        del stored["negligible"]
+
+        assert stats_field_diff(stored, computed) == {}
+
+    def test_an_unparseable_stats_block_is_reported_rather_than_raising(self):
+        assert list(stats_field_diff({"critical": UNPARSEABLE_BUCKET_VALUE}, Stats())) == [UNPARSEABLE_FIELD]
+
+    @pytest.mark.asyncio
+    async def test_divergence_reporting_never_writes(self, seeded_db):
+        await seeded_db.findings.insert_one(_finding("f1", "scan-c"))
+        await seeded_db.scans.insert_one(
+            {
+                "_id": "scan-c",
+                "stats": {"critical": SENTINEL_STORED_CRITICAL, "risk_score": SENTINEL_STORED_RISK_SCORE},
+            }
+        )
+
+        await backfill_scans(seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False)
+        scan = await seeded_db.scans.find_one({"_id": "scan-c"})
+        assert scan["stats"]["critical"] == SENTINEL_STORED_CRITICAL
+
+    @pytest.mark.asyncio
+    async def test_execute_writes_only_the_two_score_fields_when_the_whole_block_diverges(self, seeded_db):
+        """Divergence is reported, never repaired: widening the write would drop keys older writers emitted."""
+        await seeded_db.findings.insert_one(_finding("f1", "scan-c"))
+        await seeded_db.scans.insert_one(
+            {
+                "_id": "scan-c",
+                "stats": {
+                    "critical": SENTINEL_STORED_CRITICAL,
+                    "risk_score": SENTINEL_STORED_RISK_SCORE,
+                    "legacy_key_no_writer_emits_today": SENTINEL_STORED_CRITICAL,
+                },
+            }
+        )
+
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=True
+        )
+        assert counters["stats_differ"] == 1
+        scan = await seeded_db.scans.find_one({"_id": "scan-c"})
+        assert scan["stats"]["risk_score"] == COMPUTED_RISK_SCORE
+        assert scan["stats"]["adjusted_risk_score"] == COMPUTED_RISK_SCORE
+        assert scan["stats"]["critical"] == SENTINEL_STORED_CRITICAL
+        assert scan["stats"]["legacy_key_no_writer_emits_today"] == SENTINEL_STORED_CRITICAL
+        assert "prioritized" not in scan["stats"]
+
+
+class TestOneBadDocumentDoesNotDiscardThePass:
+    @pytest.mark.asyncio
+    async def test_a_non_numeric_bucket_is_skipped_not_fatal(self, seeded_db):
+        await seeded_db.scans.insert_one(
+            {"_id": BROKEN_SCAN_ID, "stats": {"critical": CORRUPT_BUCKET_VALUE, "high": SURVIVING_BUCKET_HIGH}}
+        )
+
+        counters = await backfill_scans(
+            seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False
+        )
+        assert counters["processed"] == 1
+        # The parseable buckets still claim findings the collection no longer holds.
+        assert counters["skipped_no_findings"] == 1
+
+    @pytest.mark.asyncio
+    async def test_a_per_scan_failure_names_the_scan(self, seeded_db):
+        await seeded_db.scans.insert_one({"_id": BROKEN_SCAN_ID, "stats": {}})
+
+        with patch(
+            "scripts.backfill_risk_scores.calculate_comprehensive_stats",
+            side_effect=RuntimeError(UNRELATED_FAILURE),
+        ):
+            with pytest.raises(ScanProcessingError) as excinfo:
+                await backfill_scans(
+                    seeded_db, batch_size=BATCH_SIZE, sleep_ms=NO_SLEEP_MS, limit=NO_LIMIT, execute=False
+                )
+
+        assert BROKEN_SCAN_ID in str(excinfo.value)
+        assert UNRELATED_FAILURE in str(excinfo.value)

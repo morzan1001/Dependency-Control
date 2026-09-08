@@ -1,11 +1,18 @@
 """Statistics calculation for SBOM analysis (EPSS/KEV and reachability)."""
 
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
-from typing import Any, cast
+from typing import Any, ClassVar, cast
+
+from pymongo import ASCENDING, ReadPreference
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
     DETAILS_KEY_KEV_RANSOMWARE,
+    EPSS_ACTIVE_EXPLOITATION_THRESHOLD,
+    EPSS_HIGH_THRESHOLD,
+    EPSS_MEDIUM_THRESHOLD,
+    EPSS_VERY_HIGH_THRESHOLD,
     HIGH_RISK_SCORE_THRESHOLD,
     REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
     REACHABILITY_LEVEL_IMPORT,
@@ -17,6 +24,9 @@ from app.core.risk_scoring import (
     CONFIRMED_REACHABLE_RISK_MODIFIER,
     RISK_SEVERITY_WEIGHTS,
     UNREACHABLE_RISK_MODIFIER,
+    is_actionable_vulnerability,
+    is_deprioritized_secret,
+    is_deprioritized_vulnerability,
     saturating_risk_score,
     severity_exposure,
 )
@@ -27,6 +37,7 @@ from app.models.stats import (
     Stats,
     ThreatIntelligenceStats,
 )
+from app.services.aggregation.components import lookup_component
 from app.services.analysis.types import (
     CallgraphInfo,
     Database,
@@ -40,7 +51,7 @@ from app.services.analysis.types import (
     VulnerabilityInfo,
 )
 from app.services.reachability_enrichment import (
-    count_coverable_findings,
+    build_component_language_map,
     is_high_confidence_reachable,
     reachability_display_tier,
 )
@@ -58,14 +69,14 @@ def _format_datetime(value: Any | None) -> str | None:
 
 
 def _process_finding_epss(details: dict[str, Any], summary: EPSSKEVSummary, epss_scores: list[float]) -> float | None:
-    """Process EPSS data for a single finding. Returns the epss_score if present."""
-    epss_score = details.get("epss_score")
+    """Process EPSS data for a single finding. Returns the epss_score if present and numeric."""
+    epss_score = _numeric(details.get("epss_score"))
     if epss_score is None:
         return None
     summary["epss_enriched"] += 1
-    epss_scores.append(float(epss_score))
-    summary["epss_scores"][bucket_epss(float(epss_score))] += 1
-    return float(epss_score)
+    epss_scores.append(epss_score)
+    summary["epss_scores"][bucket_epss(epss_score)] += 1
+    return epss_score
 
 
 def vulnerability_entry_cve(entry: dict[str, Any]) -> str | None:
@@ -152,6 +163,10 @@ def _process_finding_risk(
         summary["high_risk_cves"].append(high_risk_cve)
 
 
+# The high-risk list is a UI sample of the highest scores; high_risk_total carries the real count.
+_HIGH_RISK_SAMPLE_CAP = 20
+
+
 def build_epss_kev_summary(findings: list[dict[str, Any]]) -> EPSSKEVSummary:
     """Build a summary of EPSS/KEV enrichment for the raw data view."""
     epss_scores_counts: EPSSScoreCounts = {"high": 0, "medium": 0, "low": 0}
@@ -178,6 +193,7 @@ def build_epss_kev_summary(findings: list[dict[str, Any]]) -> EPSSKEVSummary:
         "max_risk_score": None,
         "kev_details": [],
         "high_risk_cves": [],
+        "high_risk_total": 0,
         "timestamp": datetime.now(timezone.utc).isoformat(),
     }
 
@@ -207,7 +223,8 @@ def build_epss_kev_summary(findings: list[dict[str, Any]]) -> EPSSKEVSummary:
         summary["max_risk_score"] = round(max(risk_scores), 1)
 
     summary["high_risk_cves"].sort(key=lambda x: x["risk_score"], reverse=True)
-    summary["high_risk_cves"] = summary["high_risk_cves"][:20]
+    summary["high_risk_total"] = len(summary["high_risk_cves"])
+    summary["high_risk_cves"] = summary["high_risk_cves"][:_HIGH_RISK_SAMPLE_CAP]
 
     return summary
 
@@ -291,530 +308,288 @@ def build_reachability_summary(
     return summary
 
 
-_VULN_TYPE_GATE: dict[str, Any] = {"$eq": ["$type", "vulnerability"]}
-
-# ``reachable`` is tri-state: only these predicates may gate a reachability counter, so that an
-# unanalysed finding (null) can never be counted as reachable or as unreachable.
-_REACHABLE_TRUE: dict[str, Any] = {"$eq": ["$reachable", True]}
-_REACHABLE_FALSE: dict[str, Any] = {"$eq": ["$reachable", False]}
-_REACHABLE_UNKNOWN: dict[str, Any] = {"$eq": ["$reachable", None]}
-_REACHABILITY_ANALYZED: dict[str, Any] = {"$ne": ["$reachable", None]}
-
 # Severities with a dedicated bucket; anything else is counted as unknown so buckets always sum to total.
 _BUCKETED_SEVERITIES = ("CRITICAL", "HIGH", "MEDIUM", "LOW", "NEGLIGIBLE", "INFO")
 
+_UNKNOWN_SEVERITY = "UNKNOWN"
+
+
+def _numeric(raw: Any) -> float | None:
+    """A real number, or None. bool is rejected despite subclassing int: True would score as a perfect 1.0."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    return float(raw)
+
+
+def _reach_modifier(reachable: Any, level: Any) -> float:
+    """Per-finding weight multiplier. Unreachable is tested first, so it wins over confirmed-reachable."""
+    if reachable is False:
+        return UNREACHABLE_RISK_MODIFIER
+    if reachable is True and level == REACHABILITY_LEVEL_SYMBOL:
+        return CONFIRMED_REACHABLE_RISK_MODIFIER
+    return 1.0
+
+
+class StatsAccumulator:
+    """Scan statistics, folded over a stream of findings."""
+
+    # Contract: these finding fields are available to downstream counter groups.
+    # As each group is added, it registers the paths it will read.
+    REQUIRED_PATHS: ClassVar[frozenset[str]] = frozenset(
+        {
+            "waived",
+            "severity",
+            "type",
+            "reachable",
+            "reachability_level",
+            "component",
+            "details.epss_score",
+            f"details.{DETAILS_KEY_IN_KEV}",
+            f"details.{DETAILS_KEY_KEV_RANSOMWARE}",
+            "details.verified",
+            "details.in_current_tree",
+            "details.reachability.confidence_score",
+        }
+    )
+
+    def __init__(self, component_languages: Mapping[str, frozenset[str]]) -> None:
+        self._component_languages = component_languages
+        self._counted = 0
+        self._severity: dict[str, int] = {sev: 0 for sev in (*_BUCKETED_SEVERITIES, _UNKNOWN_SEVERITY)}
+        self._adjusted_exposure = 0.0
+        self._vuln_severity: dict[str, int] = {"CRITICAL": 0, "HIGH": 0, "MEDIUM": 0, "LOW": 0}
+        self._vuln_total = 0
+        self._actionable_critical = 0
+        self._actionable_high = 0
+        self._actionable_total = 0
+        self._deprioritized = 0
+        self._secret_total = 0
+        self._secret_verified = 0
+        self._secret_in_tree = 0
+        self._secret_historical = 0
+        self._secret_unknown_tree = 0
+        self._secret_actionable = 0
+        self._secret_deprioritized = 0
+        self._kev = 0
+        self._kev_ransomware = 0
+        self._high_epss = 0
+        self._medium_epss = 0
+        self._weaponized = 0
+        self._active_exploitation = 0
+        self._epss_sum = 0.0
+        self._epss_n = 0
+        self._epss_max: float | None = None
+        self._analyzed = 0
+        self._reachable = 0
+        self._unreachable = 0
+        self._confirmed = 0
+        self._likely = 0
+        self._reachable_critical = 0
+        self._reachable_high = 0
+        self._reachable_hc = 0
+        self._reachable_critical_hc = 0
+        self._reachable_high_hc = 0
+        self._coverable = 0
+
+    def add(self, finding: Mapping[str, Any]) -> None:
+        if finding.get("waived") is True:
+            return
+        self._counted += 1
+
+        severity = finding.get("severity")
+        bucket = severity if severity in _BUCKETED_SEVERITIES else _UNKNOWN_SEVERITY
+        self._severity[bucket] += 1
+
+        raw_details = finding.get("details")
+        details: Mapping[str, Any] = raw_details if isinstance(raw_details, Mapping) else {}
+        reachable = finding.get("reachable")
+        level = finding.get("reachability_level")
+        epss = _numeric(details.get("epss_score"))
+        in_kev = details.get(DETAILS_KEY_IN_KEV) is True
+
+        # Weights are keyed on bucket, not on raw severity: a new RISK_SEVERITY_WEIGHTS key that is
+        # not also in _BUCKETED_SEVERITIES collapses to UNKNOWN and silently contributes 0.
+        self._adjusted_exposure += RISK_SEVERITY_WEIGHTS.get(bucket, 0.0) * _reach_modifier(reachable, level)
+
+        if finding.get("type") == "vulnerability":
+            self._vuln_total += 1
+            if bucket in self._vuln_severity:
+                self._vuln_severity[bucket] += 1
+            if is_actionable_vulnerability(epss_score=epss, is_kev=in_kev, reachable=reachable):
+                self._actionable_total += 1
+                if bucket == "CRITICAL":
+                    self._actionable_critical += 1
+                elif bucket == "HIGH":
+                    self._actionable_high += 1
+            if is_deprioritized_vulnerability(epss_score=epss, is_kev=in_kev, reachable=reachable):
+                self._deprioritized += 1
+            component = finding.get("component")
+            if self._component_languages and component and lookup_component(self._component_languages, component):
+                self._coverable += 1
+
+        if finding.get("type") == "secret":
+            verified = details.get("verified")
+            in_current_tree = details.get("in_current_tree")
+            self._secret_total += 1
+            if verified is True:
+                self._secret_verified += 1
+            if in_current_tree is True:
+                self._secret_in_tree += 1
+            elif in_current_tree is False:
+                self._secret_historical += 1
+            elif in_current_tree is None:
+                self._secret_unknown_tree += 1
+            if verified is True and in_current_tree is True:
+                self._secret_actionable += 1
+            if is_deprioritized_secret(verified, in_current_tree):
+                self._secret_deprioritized += 1
+
+        kev_ransomware = details.get(DETAILS_KEY_KEV_RANSOMWARE) is True
+        if in_kev:
+            self._kev += 1
+        if kev_ransomware:
+            self._kev_ransomware += 1
+        if epss is not None:
+            self._epss_sum += epss
+            self._epss_n += 1
+            self._epss_max = epss if self._epss_max is None else max(self._epss_max, epss)
+            if epss >= EPSS_HIGH_THRESHOLD:
+                self._high_epss += 1
+            elif epss >= EPSS_MEDIUM_THRESHOLD:
+                self._medium_epss += 1
+        if kev_ransomware or (in_kev and epss is not None and epss >= EPSS_VERY_HIGH_THRESHOLD):
+            self._weaponized += 1
+        if in_kev or (epss is not None and epss >= EPSS_ACTIVE_EXPLOITATION_THRESHOLD):
+            self._active_exploitation += 1
+
+        if reachable is not None:
+            self._analyzed += 1
+        if reachable is True:
+            self._reachable += 1
+            if level == REACHABILITY_LEVEL_SYMBOL:
+                self._confirmed += 1
+            elif level == REACHABILITY_LEVEL_IMPORT:
+                self._likely += 1
+            if bucket == "CRITICAL":
+                self._reachable_critical += 1
+            elif bucket == "HIGH":
+                self._reachable_high += 1
+            raw_reach = details.get("reachability")
+            confidence = _numeric(raw_reach.get("confidence_score")) if isinstance(raw_reach, Mapping) else None
+            if confidence is not None and confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD:
+                self._reachable_hc += 1
+                if bucket == "CRITICAL":
+                    self._reachable_critical_hc += 1
+                elif bucket == "HIGH":
+                    self._reachable_high_hc += 1
+        elif reachable is False:
+            self._unreachable += 1
+
+    def result(self) -> Stats:
+        # The four sub-models stay None on an empty or fully waived scan: the frontend's
+        # threat-intelligence view distinguishes no-data from all-zero.
+        if self._counted == 0:
+            return Stats()
+
+        critical = self._severity["CRITICAL"]
+        high = self._severity["HIGH"]
+        medium = self._severity["MEDIUM"]
+        low = self._severity["LOW"]
+        return Stats(
+            critical=critical,
+            high=high,
+            medium=medium,
+            low=low,
+            negligible=self._severity["NEGLIGIBLE"],
+            info=self._severity["INFO"],
+            unknown=self._severity[_UNKNOWN_SEVERITY],
+            risk_score=saturating_risk_score(severity_exposure(critical, high, medium, low)),
+            adjusted_risk_score=saturating_risk_score(self._adjusted_exposure),
+            threat_intel=ThreatIntelligenceStats(
+                kev_count=self._kev,
+                kev_ransomware_count=self._kev_ransomware,
+                high_epss_count=self._high_epss,
+                medium_epss_count=self._medium_epss,
+                avg_epss_score=round(self._epss_sum / self._epss_n, 4) if self._epss_n else None,
+                max_epss_score=round(self._epss_max, 4) if self._epss_max is not None else None,
+                weaponized_count=self._weaponized,
+                active_exploitation_count=self._active_exploitation,
+            ),
+            prioritized=PrioritizedCounts(
+                total=self._vuln_total,
+                critical=self._vuln_severity["CRITICAL"],
+                high=self._vuln_severity["HIGH"],
+                medium=self._vuln_severity["MEDIUM"],
+                low=self._vuln_severity["LOW"],
+                actionable_critical=self._actionable_critical,
+                actionable_high=self._actionable_high,
+                actionable_total=self._actionable_total,
+                deprioritized_count=self._deprioritized,
+            ),
+            secret_priority=SecretPrioritizedCounts(
+                total=self._secret_total,
+                verified_count=self._secret_verified,
+                in_current_tree_count=self._secret_in_tree,
+                historical_only_count=self._secret_historical,
+                unknown_tree_count=self._secret_unknown_tree,
+                actionable_count=self._secret_actionable,
+                deprioritized_count=self._secret_deprioritized,
+            ),
+            reachability=ReachabilityStats(
+                analyzed_count=self._analyzed,
+                coverable_count=self._coverable,
+                reachable_count=self._reachable,
+                confirmed_reachable_count=self._confirmed,
+                likely_reachable_count=self._likely,
+                unreachable_count=self._unreachable,
+                # vuln_total is type-gated; _analyzed is ungated. Non-vulnerabilities carrying
+                # reachable drive this negative.
+                unknown_count=self._vuln_total - self._analyzed,
+                reachable_critical=self._reachable_critical,
+                reachable_high=self._reachable_high,
+                reachable_count_high_confidence=self._reachable_hc,
+                reachable_critical_high_confidence=self._reachable_critical_hc,
+                reachable_high_high_confidence=self._reachable_high_hc,
+            ),
+        )
+
+
+def compute_stats(
+    findings: Iterable[Mapping[str, Any]],
+    component_languages: Mapping[str, frozenset[str]],
+) -> Stats:
+    acc = StatsAccumulator(component_languages)
+    for finding in findings:
+        acc.add(finding)
+    return acc.result()
+
+
+def _stats_projection() -> dict[str, int]:
+    """Derived from REQUIRED_PATHS, never hand-maintained: a forgotten path zeroes a counter forever."""
+    projection: dict[str, int] = {"_id": 0}
+    for path in sorted(StatsAccumulator.REQUIRED_PATHS):
+        projection[path] = 1
+    return projection
+
+
+# Tautological today; it fires the moment someone hand-edits the projection, which is the one
+# failure class a differential test cannot see — a typo zeroes a counter on both sides.
+assert StatsAccumulator.REQUIRED_PATHS <= _stats_projection().keys(), "stats projection drops a required path"
+
+# scan_id + type is the only index pair immutable after insert; severity and waived are rewritten by
+# _rollup_vulnerability_waivers and _apply_waivers, so hinting either opens a skip window mid-cursor.
+_STATS_CURSOR_HINT = [("scan_id", ASCENDING), ("type", ASCENDING)]
+
 
 async def calculate_comprehensive_stats(db: Database, scan_id: str) -> Stats:
-    """Calculate comprehensive statistics including EPSS/KEV and reachability data."""
-    pipeline: list[dict[str, Any]] = [
-        {"$match": {"scan_id": scan_id, "waived": {"$ne": True}}},
-        {
-            "$project": {
-                "severity": 1,
-                "type": 1,
-                "epss_score": {"$ifNull": ["$details.epss_score", None]},
-                "is_kev": {"$ifNull": [f"$details.{DETAILS_KEY_IN_KEV}", False]},
-                "kev_ransomware": {"$ifNull": [f"$details.{DETAILS_KEY_KEV_RANSOMWARE}", False]},
-                "reachable": {"$ifNull": ["$reachable", None]},
-                "reachability_level": {"$ifNull": ["$reachability_level", "unknown"]},
-                # Pulled up from details.reachability so the group stage can gate counts on it.
-                "reachability_confidence": {"$ifNull": ["$details.reachability.confidence_score", None]},
-                "verified": {"$ifNull": ["$details.verified", None]},
-                "in_current_tree": {"$ifNull": ["$details.in_current_tree", None]},
-                "severity_weight": {
-                    "$switch": {
-                        "branches": [
-                            {"case": {"$eq": ["$severity", sev]}, "then": weight}
-                            for sev, weight in RISK_SEVERITY_WEIGHTS.items()
-                        ],
-                        "default": 0.0,
-                    }
-                },
-                "reach_modifier": {
-                    "$switch": {
-                        "branches": [
-                            {"case": _REACHABLE_FALSE, "then": UNREACHABLE_RISK_MODIFIER},
-                            {
-                                "case": {
-                                    "$and": [
-                                        _REACHABLE_TRUE,
-                                        {"$eq": ["$reachability_level", REACHABILITY_LEVEL_SYMBOL]},
-                                    ]
-                                },
-                                "then": CONFIRMED_REACHABLE_RISK_MODIFIER,
-                            },
-                        ],
-                        "default": 1.0,
-                    }
-                },
-            }
-        },
-        {
-            "$group": {
-                "_id": None,
-                # Traditional severity counts
-                "critical": {"$sum": {"$cond": [{"$eq": ["$severity", "CRITICAL"]}, 1, 0]}},
-                "high": {"$sum": {"$cond": [{"$eq": ["$severity", "HIGH"]}, 1, 0]}},
-                "medium": {"$sum": {"$cond": [{"$eq": ["$severity", "MEDIUM"]}, 1, 0]}},
-                "low": {"$sum": {"$cond": [{"$eq": ["$severity", "LOW"]}, 1, 0]}},
-                "negligible": {"$sum": {"$cond": [{"$eq": ["$severity", "NEGLIGIBLE"]}, 1, 0]}},
-                "info": {"$sum": {"$cond": [{"$eq": ["$severity", "INFO"]}, 1, 0]}},
-                "unknown": {"$sum": {"$cond": [{"$in": ["$severity", list(_BUCKETED_SEVERITIES)]}, 0, 1]}},
-                # Reachability is vulnerability-only, so unknown_count is measured against vulns only.
-                "vuln_total": {"$sum": {"$cond": [_VULN_TYPE_GATE, 1, 0]}},
-                # Vulnerability-only severity counts backing PrioritizedCounts.
-                "vuln_critical": {
-                    "$sum": {"$cond": [{"$and": [_VULN_TYPE_GATE, {"$eq": ["$severity", "CRITICAL"]}]}, 1, 0]}
-                },
-                "vuln_high": {"$sum": {"$cond": [{"$and": [_VULN_TYPE_GATE, {"$eq": ["$severity", "HIGH"]}]}, 1, 0]}},
-                "vuln_medium": {
-                    "$sum": {"$cond": [{"$and": [_VULN_TYPE_GATE, {"$eq": ["$severity", "MEDIUM"]}]}, 1, 0]}
-                },
-                "vuln_low": {"$sum": {"$cond": [{"$and": [_VULN_TYPE_GATE, {"$eq": ["$severity", "LOW"]}]}, 1, 0]}},
-                # Weighted exposure with per-finding reachability modifiers; saturated into
-                # adjusted_risk_score below. Base exposure is derived from the severity counts.
-                "adjusted_exposure": {"$sum": {"$multiply": ["$severity_weight", "$reach_modifier"]}},
-                # KEV statistics
-                "kev_count": {"$sum": {"$cond": [{"$eq": ["$is_kev", True]}, 1, 0]}},
-                "kev_ransomware_count": {"$sum": {"$cond": [{"$eq": ["$kev_ransomware", True]}, 1, 0]}},
-                # EPSS statistics
-                "epss_scores": {
-                    "$push": {
-                        "$cond": [
-                            {"$ne": ["$epss_score", None]},
-                            "$epss_score",
-                            "$$REMOVE",
-                        ]
-                    }
-                },
-                "high_epss_count": {"$sum": {"$cond": [{"$gte": ["$epss_score", 0.1]}, 1, 0]}},
-                "medium_epss_count": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$and": [
-                                    {"$gte": ["$epss_score", 0.01]},
-                                    {"$lt": ["$epss_score", 0.1]},
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                # Reachability statistics
-                "reachability_analyzed": {"$sum": {"$cond": [_REACHABILITY_ANALYZED, 1, 0]}},
-                "reachable_count": {"$sum": {"$cond": [_REACHABLE_TRUE, 1, 0]}},
-                "unreachable_count": {"$sum": {"$cond": [_REACHABLE_FALSE, 1, 0]}},
-                # Symbol-level reachable = confirmed tier; import-level reachable = likely tier.
-                "confirmed_reachable": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$and": [
-                                    _REACHABLE_TRUE,
-                                    {"$eq": ["$reachability_level", REACHABILITY_LEVEL_SYMBOL]},
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                "likely_reachable": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$and": [
-                                    _REACHABLE_TRUE,
-                                    {"$eq": ["$reachability_level", REACHABILITY_LEVEL_IMPORT]},
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                # Reachable by severity
-                "reachable_critical": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$and": [
-                                    _REACHABLE_TRUE,
-                                    {"$eq": ["$severity", "CRITICAL"]},
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                "reachable_high": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$and": [
-                                    _REACHABLE_TRUE,
-                                    {"$eq": ["$severity", "HIGH"]},
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                # Counts gated by confidence >= REACHABILITY_HIGH_CONFIDENCE_THRESHOLD.
-                "reachable_count_high_confidence": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$and": [
-                                    _REACHABLE_TRUE,
-                                    {
-                                        "$gte": [
-                                            "$reachability_confidence",
-                                            REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
-                                        ]
-                                    },
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                "reachable_critical_high_confidence": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$and": [
-                                    _REACHABLE_TRUE,
-                                    {"$eq": ["$severity", "CRITICAL"]},
-                                    {
-                                        "$gte": [
-                                            "$reachability_confidence",
-                                            REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
-                                        ]
-                                    },
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                "reachable_high_high_confidence": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$and": [
-                                    _REACHABLE_TRUE,
-                                    {"$eq": ["$severity", "HIGH"]},
-                                    {
-                                        "$gte": [
-                                            "$reachability_confidence",
-                                            REACHABILITY_HIGH_CONFIDENCE_THRESHOLD,
-                                        ]
-                                    },
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                # Actionable: vulnerability AND (KEV or high EPSS) AND reachable (or reachability unknown)
-                "actionable_critical": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$and": [
-                                    _VULN_TYPE_GATE,
-                                    {"$eq": ["$severity", "CRITICAL"]},
-                                    {
-                                        "$or": [
-                                            {"$eq": ["$is_kev", True]},
-                                            {"$gte": ["$epss_score", 0.1]},
-                                        ]
-                                    },
-                                    {
-                                        "$or": [
-                                            _REACHABLE_TRUE,
-                                            _REACHABLE_UNKNOWN,
-                                        ]
-                                    },
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                "actionable_high": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$and": [
-                                    _VULN_TYPE_GATE,
-                                    {"$eq": ["$severity", "HIGH"]},
-                                    {
-                                        "$or": [
-                                            {"$eq": ["$is_kev", True]},
-                                            {"$gte": ["$epss_score", 0.1]},
-                                        ]
-                                    },
-                                    {
-                                        "$or": [
-                                            _REACHABLE_TRUE,
-                                            _REACHABLE_UNKNOWN,
-                                        ]
-                                    },
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                "actionable_total": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$and": [
-                                    _VULN_TYPE_GATE,
-                                    {
-                                        "$or": [
-                                            {"$eq": ["$is_kev", True]},
-                                            {"$gte": ["$epss_score", 0.1]},
-                                        ]
-                                    },
-                                    {
-                                        "$or": [
-                                            _REACHABLE_TRUE,
-                                            _REACHABLE_UNKNOWN,
-                                        ]
-                                    },
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                # Deprioritized: vulnerability AND (unreachable OR (low EPSS and not KEV)).
-                # Without the type gate every non-vulnerability finding qualifies via its missing EPSS.
-                "deprioritized_count": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$and": [
-                                    _VULN_TYPE_GATE,
-                                    {
-                                        "$or": [
-                                            _REACHABLE_FALSE,
-                                            {
-                                                "$and": [
-                                                    {"$ne": ["$is_kev", True]},
-                                                    {
-                                                        "$or": [
-                                                            {"$eq": ["$epss_score", None]},
-                                                            {"$lt": ["$epss_score", 0.01]},
-                                                        ]
-                                                    },
-                                                ]
-                                            },
-                                        ]
-                                    },
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                # Weaponized: KEV with ransomware or high EPSS with KEV
-                "weaponized_count": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$or": [
-                                    {"$eq": ["$kev_ransomware", True]},
-                                    {
-                                        "$and": [
-                                            {"$eq": ["$is_kev", True]},
-                                            {"$gte": ["$epss_score", 0.5]},
-                                        ]
-                                    },
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                # Active exploitation: KEV or very high EPSS
-                "active_exploitation_count": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$or": [
-                                    {"$eq": ["$is_kev", True]},
-                                    {"$gte": ["$epss_score", 0.7]},
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                # Secret finding priority (git-context aware)
-                "secret_total": {"$sum": {"$cond": [{"$eq": ["$type", "secret"]}, 1, 0]}},
-                "secret_verified_count": {
-                    "$sum": {
-                        "$cond": [
-                            {"$and": [{"$eq": ["$type", "secret"]}, {"$eq": ["$verified", True]}]},
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                "secret_in_current_tree_count": {
-                    "$sum": {
-                        "$cond": [
-                            {"$and": [{"$eq": ["$type", "secret"]}, {"$eq": ["$in_current_tree", True]}]},
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                "secret_historical_only_count": {
-                    "$sum": {
-                        "$cond": [
-                            {"$and": [{"$eq": ["$type", "secret"]}, {"$eq": ["$in_current_tree", False]}]},
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                "secret_unknown_tree_count": {
-                    "$sum": {
-                        "$cond": [
-                            {"$and": [{"$eq": ["$type", "secret"]}, {"$eq": ["$in_current_tree", None]}]},
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                "secret_actionable_count": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$and": [
-                                    {"$eq": ["$type", "secret"]},
-                                    {"$eq": ["$verified", True]},
-                                    {"$eq": ["$in_current_tree", True]},
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-                "secret_deprioritized_count": {
-                    "$sum": {
-                        "$cond": [
-                            {
-                                "$and": [
-                                    {"$eq": ["$type", "secret"]},
-                                    {"$ne": ["$verified", True]},
-                                    {"$eq": ["$in_current_tree", False]},
-                                ]
-                            },
-                            1,
-                            0,
-                        ]
-                    }
-                },
-            }
-        },
-    ]
-
-    # Read from PRIMARY to ensure read-after-write consistency.
-    # With secondaryPreferred, the stats aggregation might hit a replica
-    # that hasn't replicated the findings written milliseconds earlier,
-    # resulting in all-zero stats.
-    from pymongo import ReadPreference
-
+    """Comprehensive statistics for a scan, folded from a single projected cursor."""
+    acc = StatsAccumulator(await build_component_language_map(db, scan_id))
+    # PRIMARY: with secondaryPreferred the read can miss findings written milliseconds earlier.
     findings_primary = db.findings.with_options(read_preference=ReadPreference.PRIMARY)  # type: ignore[arg-type]
-    stats_result: list[dict[str, Any]] = await findings_primary.aggregate(pipeline).to_list(1)
-
-    # Initialize stats with defaults
-    stats = Stats()
-
-    if stats_result:
-        res = stats_result[0]
-
-        stats.critical = res.get("critical", 0)
-        stats.high = res.get("high", 0)
-        stats.medium = res.get("medium", 0)
-        stats.low = res.get("low", 0)
-        stats.negligible = res.get("negligible", 0)
-        stats.info = res.get("info", 0)
-        stats.unknown = res.get("unknown", 0)
-        stats.risk_score = saturating_risk_score(severity_exposure(stats.critical, stats.high, stats.medium, stats.low))
-        stats.adjusted_risk_score = saturating_risk_score(res.get("adjusted_exposure", 0.0))
-
-        epss_scores: list[float] = [s for s in res.get("epss_scores", []) if s is not None]
-        avg_epss: float | None = sum(epss_scores) / len(epss_scores) if epss_scores else None
-        max_epss: float | None = max(epss_scores) if epss_scores else None
-
-        stats.threat_intel = ThreatIntelligenceStats(
-            kev_count=res.get("kev_count", 0),
-            kev_ransomware_count=res.get("kev_ransomware_count", 0),
-            high_epss_count=res.get("high_epss_count", 0),
-            medium_epss_count=res.get("medium_epss_count", 0),
-            avg_epss_score=round(avg_epss, 4) if avg_epss is not None else None,
-            max_epss_score=round(max_epss, 4) if max_epss is not None else None,
-            weaponized_count=res.get("weaponized_count", 0),
-            active_exploitation_count=res.get("active_exploitation_count", 0),
-        )
-
-        stats.reachability = ReachabilityStats(
-            analyzed_count=res.get("reachability_analyzed", 0),
-            coverable_count=await count_coverable_findings(db, scan_id),
-            reachable_count=res.get("reachable_count", 0),
-            confirmed_reachable_count=res.get("confirmed_reachable", 0),
-            likely_reachable_count=res.get("likely_reachable", 0),
-            unreachable_count=res.get("unreachable_count", 0),
-            unknown_count=res.get("vuln_total", 0) - res.get("reachability_analyzed", 0),
-            reachable_critical=res.get("reachable_critical", 0),
-            reachable_high=res.get("reachable_high", 0),
-            reachable_count_high_confidence=res.get("reachable_count_high_confidence", 0),
-            reachable_critical_high_confidence=res.get("reachable_critical_high_confidence", 0),
-            reachable_high_high_confidence=res.get("reachable_high_high_confidence", 0),
-        )
-
-        stats.prioritized = PrioritizedCounts(
-            total=res.get("vuln_total", 0),
-            critical=res.get("vuln_critical", 0),
-            high=res.get("vuln_high", 0),
-            medium=res.get("vuln_medium", 0),
-            low=res.get("vuln_low", 0),
-            actionable_critical=res.get("actionable_critical", 0),
-            actionable_high=res.get("actionable_high", 0),
-            actionable_total=res.get("actionable_total", 0),
-            deprioritized_count=res.get("deprioritized_count", 0),
-        )
-
-        stats.secret_priority = SecretPrioritizedCounts(
-            total=res.get("secret_total", 0),
-            verified_count=res.get("secret_verified_count", 0),
-            in_current_tree_count=res.get("secret_in_current_tree_count", 0),
-            historical_only_count=res.get("secret_historical_only_count", 0),
-            unknown_tree_count=res.get("secret_unknown_tree_count", 0),
-            actionable_count=res.get("secret_actionable_count", 0),
-            deprioritized_count=res.get("secret_deprioritized_count", 0),
-        )
-
-    return stats
+    cursor = findings_primary.find({"scan_id": scan_id}, _stats_projection(), hint=_STATS_CURSOR_HINT)
+    try:
+        async for doc in cursor:
+            acc.add(doc)
+    finally:
+        await cursor.close()
+    return acc.result()

@@ -1,7 +1,7 @@
 """Tests for app.services.recommendation.licenses."""
 
 from app.schemas.recommendation import Priority, RecommendationType
-from app.services.recommendation.licenses import detect_license_drift, process_licenses
+from app.services.recommendation.licenses import _LICENSES_NAMED, detect_license_drift, process_licenses
 
 
 def _license(
@@ -123,16 +123,22 @@ class TestProcessLicensesGroupedByType:
         assert "AGPL-3.0" in licenses
         assert "SSPL" in licenses
 
-    def test_problematic_licenses_limited_to_ten(self):
-        findings = [_license(license_name=f"License-{i}", finding_id=f"l{i}") for i in range(15)]
-        rec = process_licenses(findings)[0]
-        assert len(rec.action["problematic_licenses"]) <= 10
+    def test_the_action_carries_every_problematic_license(self):
+        found = 15
+        findings = [_license(license_name=f"License-{i:02d}", finding_id=f"l{i}") for i in range(found)]
 
-    def test_description_limited_to_five_license_names(self):
-        findings = [_license(license_name=f"License-{i}", finding_id=f"l{i}") for i in range(8)]
         rec = process_licenses(findings)[0]
-        count = rec.description.count("License-")
-        assert count <= 5
+
+        assert len(rec.action["problematic_licenses"]) == found
+
+    def test_the_description_names_a_few_and_counts_the_rest(self):
+        found = 8
+        findings = [_license(license_name=f"License-{i:02d}", finding_id=f"l{i}") for i in range(found)]
+
+        rec = process_licenses(findings)[0]
+
+        assert rec.description.count("License-") == _LICENSES_NAMED
+        assert f"and {found - _LICENSES_NAMED} more" in rec.description
 
 
 class TestProcessLicensesComponentsTracked:
@@ -215,6 +221,9 @@ class TestProcessLicensesPriorityLow:
 
 # --- License Drift Detection ---
 
+_BARE_NAME = "jackson-databind"
+_QUALIFIED_NAME = "com.fasterxml.jackson.core:jackson-databind"
+
 
 def _drift_finding(component, version, license_name, category="permissive"):
     return {
@@ -267,3 +276,20 @@ class TestDetectLicenseDrift:
         assert "lodash" in result[0].affected_components[0]
         assert "MIT" in result[0].affected_components[0]
         assert "GPL-3.0" in result[0].affected_components[0]
+
+    def test_a_requalified_component_is_still_matched_against_its_previous_licence(self):
+        """Scanners disagree on how far a package name is qualified; an unfolded key makes the
+        previous licence unfindable, so a real drift reads as no drift."""
+        prev = [_drift_finding(_BARE_NAME, "2.13.0", "Apache-2.0", "permissive")]
+        curr = [_drift_finding(_QUALIFIED_NAME, "2.13.0", "GPL-3.0", "strong_copyleft")]
+
+        result = detect_license_drift(curr, prev)
+
+        assert len(result) == 1
+        assert result[0].priority == Priority.HIGH
+
+    def test_two_different_packages_are_not_folded_together(self):
+        prev = [_drift_finding("lodash", "1.0", "MIT", "permissive")]
+        curr = [_drift_finding("underscore", "1.0", "GPL-3.0", "strong_copyleft")]
+
+        assert detect_license_drift(curr, prev) == []

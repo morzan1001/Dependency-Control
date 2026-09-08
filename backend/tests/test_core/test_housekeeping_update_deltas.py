@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.core.housekeeping import _delete_scans_and_related_data
 from app.core.metrics import update_frequency_reconcile_drift_total
+from app.services.scan_cascade import delete_scans_and_related_data
 from app.services.update_frequency_reconcile import run_update_frequency_reconcile
 from app.services.update_frequency_rollup import record_scan_update_delta
 from tests.mocks.fake_mongo import FakeDatabase
@@ -65,7 +65,7 @@ async def test_retention_deletes_the_rollups_of_the_deleted_scans():
     await _seed(db, "scan-kept")
 
     with patch("app.services.gridfs_maintenance.AsyncIOMotorGridFSBucket", return_value=AsyncMock()):
-        deleted = await _delete_scans_and_related_data(db, ["scan-old"], "test")
+        deleted = await delete_scans_and_related_data(db, ["scan-old"], "test")
 
     assert deleted == 1
     assert await db.scan_update_deltas.find_one({"_id": "scan-old"}) is None
@@ -85,7 +85,7 @@ async def test_the_reconcile_recovers_the_movement_across_a_scan_retention_took(
     assert (before or {})["total_updates"] == 0
 
     with patch("app.services.gridfs_maintenance.AsyncIOMotorGridFSBucket", return_value=AsyncMock()):
-        await _delete_scans_and_related_data(db, ["s2"], "retention")
+        await delete_scans_and_related_data(db, ["s2"], "retention")
     exported = _severed_metric()
 
     report = await run_update_frequency_reconcile(db)

@@ -27,6 +27,9 @@ from app.services.webhooks import webhook_service
 
 logger = logging.getLogger(__name__)
 
+# Lines an alert lists before it starts naming a count instead; every channel says which it did.
+_TOP_VULNS_SHOWN = 10
+
 
 def _extract_vulnerability_info(vuln: dict[str, Any], finding: dict[str, Any]) -> dict[str, Any]:
     """Extract vulnerability info from a vulnerability dict and its parent finding."""
@@ -111,7 +114,7 @@ def _build_vulnerability_message(
     message += f"\nTotal critical/high vulnerabilities: {len(critical_vulns)}\n"
 
     if top_vulns:
-        message += "\nTop Priority Vulnerabilities:\n"
+        message += f"\nTop Priority Vulnerabilities ({len(top_vulns)} of {len(critical_vulns)}):\n"
         for i, vuln in enumerate(top_vulns, 1):
             message += _format_vuln_line(i, vuln) + "\n"
 
@@ -219,7 +222,7 @@ async def send_scan_notifications(
                 -(x.get("epss_score") or 0),
                 -get_severity_value(x.get("severity")),
             ),
-        )[:10]
+        )[:_TOP_VULNS_SHOWN]
 
         scan_link = f"{settings.FRONTEND_BASE_URL}/projects/{project.id}/scans/{scan_id}"
         subject, message = _build_vulnerability_message(
@@ -236,6 +239,7 @@ async def send_scan_notifications(
             project_name=settings.PROJECT_NAME,
             project_name_scanned=project.name,
             vulnerabilities=top_vulns,
+            critical_count=len(critical_vulns),
             has_kev=bool(kev_vulns),
             kev_count=len(kev_vulns),
             kev_vulnerabilities=kev_vulns,

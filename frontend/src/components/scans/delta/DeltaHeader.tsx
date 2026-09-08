@@ -1,37 +1,70 @@
 import { useQuery } from '@tanstack/react-query'
-import { ArrowLeftRight, GitBranch, GitCommit } from 'lucide-react'
+import { useState } from 'react'
+import { ArrowLeftRight, GitBranch, GitCommit, Rocket } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from '@/components/ui/select'
 import { scanApi } from '@/api/scans'
-import { useProjectScans } from '@/hooks/queries/use-scans'
+import { DeltaComparability } from '@/components/scans/delta/DeltaComparability'
+import { useLatestProjectRelease } from '@/hooks/queries/use-releases'
+import { SCAN_WINDOW_PAGE_SIZE, useProjectScanWindow } from '@/hooks/queries/use-scans'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
 import { isScanUsable } from '@/lib/scan-status'
+import type { ReleaseItem } from '@/types/release'
 import { Scan } from '@/types/scan'
+import type { ScanDeltaResponse, ScanDeltaSide } from '@/types/scanDelta'
+
+const RELEASE_MARKER_LABEL = 'Release'
+const COMPARED_PREFIX = 'compared: '
 
 interface DeltaHeaderProps {
   projectId: string
   fromScanId: string
   toScanId: string
   onChange: (from: string, to: string) => void
+  delta: ScanDeltaResponse | null
 }
 
-function scanLabel(scan: Scan): string {
+function ScanLabel({ scan }: { readonly scan: Scan }) {
   const pipeline = scan.pipeline_iid ? `#${scan.pipeline_iid} · ` : ''
-  return `${pipeline}${scan.branch} · ${formatDateTime(scan.created_at)}`
+  return (
+    <span className="flex items-center gap-1">
+      {`${pipeline}${scan.branch} · ${formatDateTime(scan.created_at)}`}
+      {/* An icon, not a word: the select trigger has a fixed width and would clip the label. */}
+      {scan.is_release && (
+        <Rocket role="img" aria-label={RELEASE_MARKER_LABEL} className="h-3 w-3 shrink-0 text-success" />
+      )}
+    </span>
+  )
 }
 
-function ScanSide({ label, scanId, options, onSelect }: {
+function releaseHint(release: ReleaseItem, alreadyCompared: boolean): string {
+  if (release.analysis_scan_id === null) {
+    return `The ${release.environment} release has no readable scan to compare.`
+  }
+  if (alreadyCompared) return `Already comparing the ${release.environment} release.`
+  const version = release.version ? ` ${release.version}` : ''
+  return `Compares the ${release.environment} release${version} against the To scan.`
+}
+
+function ScanSide({ label, scanId, options, onSelect, side }: {
   readonly label: string
   readonly scanId: string
   readonly options: Scan[]
   readonly onSelect: (id: string) => void
+  readonly side: ScanDeltaSide | null | undefined
 }) {
   const { data: scan } = useQuery({ queryKey: ['scan', scanId], queryFn: () => scanApi.getOne(scanId) })
-  // The compared scan can be a rescan excluded from `options`; without this the trigger renders blank.
+  // The compared scan can be a rescan or a release older than the option window; without this
+  // fallback the trigger renders blank.
   const currentInOptions = options.some((option) => option.id === scanId)
+  // The response names the build this side resolved to, which is the one the totals describe; the
+  // fetched scan only answers for the id that was asked for, and a symbolic side has none.
+  const branch = side?.branch ?? scan?.branch
+  const commitHash = side?.commit_hash ?? scan?.commit_hash
+  const createdAt = side?.created_at ?? scan?.created_at
   return (
     <div className="flex-1 space-y-2">
       <p className="text-xs font-medium uppercase text-muted-foreground">{label}</p>
@@ -39,43 +72,90 @@ function ScanSide({ label, scanId, options, onSelect }: {
         <SelectTrigger><SelectValue /></SelectTrigger>
         <SelectContent>
           {scan && !currentInOptions && (
-            <SelectItem value={scanId}>{scanLabel(scan)}</SelectItem>
+            <SelectItem value={scanId}><ScanLabel scan={scan} /></SelectItem>
           )}
           {options.map((option) => (
-            <SelectItem key={option.id} value={option.id}>{scanLabel(option)}</SelectItem>
+            <SelectItem key={option.id} value={option.id}><ScanLabel scan={option} /></SelectItem>
           ))}
         </SelectContent>
       </Select>
-      {scan && (
-        <div className="flex items-center gap-3 text-xs text-muted-foreground">
-          <span className="flex items-center gap-1"><GitBranch className="h-3 w-3" />{scan.branch}</span>
-          {scan.commit_hash && (
+      {(side || scan) && (
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+          {branch && <span className="flex items-center gap-1"><GitBranch className="h-3 w-3" />{branch}</span>}
+          {commitHash && (
             <span className="flex items-center gap-1 font-mono">
-              <GitCommit className="h-3 w-3" />{shortCommitHash(scan.commit_hash)}
+              <GitCommit className="h-3 w-3" />{shortCommitHash(commitHash)}
             </span>
           )}
-          <span>{formatDateTime(scan.created_at)}</span>
+          {createdAt && <span>{formatDateTime(createdAt)}</span>}
+          {side && (
+            <span className="max-w-full truncate font-mono" title={side.scan_id}>
+              {`${COMPARED_PREFIX}${side.scan_id}`}
+            </span>
+          )}
         </div>
       )}
     </div>
   )
 }
 
-export function DeltaHeader({ projectId, fromScanId, toScanId, onChange }: DeltaHeaderProps) {
-  const { data: scans } = useProjectScans(projectId, { page: 1, limit: 50, excludeRescans: true })
-  const options = (scans || []).filter((s) => isScanUsable(s.status))
+export function DeltaHeader({ projectId, fromScanId, toScanId, onChange, delta }: DeltaHeaderProps) {
+  const [pages, setPages] = useState(1)
+  const { data: window } = useProjectScanWindow(projectId, pages)
+  const options = (window?.scans ?? []).filter((s) => isScanUsable(s.status))
+  // Unqualified by environment so a project that only deploys to staging still gets a quick pick;
+  // the button names whichever environment won, since "the release" elsewhere means production.
+  const { latestRelease } = useLatestProjectRelease(projectId)
+  // A rescan moves a release's analysis onto a newer scan and the backend's own `from=release`
+  // follows that chain, so `scan_id` would diff against findings the release no longer reports.
+  // Null means nothing in the chain is readable — retention took it, or none of it has finished.
+  const releaseScanId = latestRelease?.analysis_scan_id ?? null
+  const alreadyCompared = releaseScanId !== null
+    && (releaseScanId === fromScanId || releaseScanId === toScanId)
 
   return (
     <Card>
-      <CardContent className="flex items-end gap-4 pt-6">
-        <ScanSide label="From" scanId={fromScanId} options={options}
-          onSelect={(id) => id !== toScanId && onChange(id, toScanId)} />
-        <Button variant="outline" size="icon" className="shrink-0"
-          onClick={() => onChange(toScanId, fromScanId)} aria-label="Swap scans">
-          <ArrowLeftRight className="h-4 w-4" />
-        </Button>
-        <ScanSide label="To" scanId={toScanId} options={options}
-          onSelect={(id) => id !== fromScanId && onChange(fromScanId, id)} />
+      <CardContent className="flex flex-col gap-3 pt-6">
+        {latestRelease && (
+          <div className="flex flex-wrap items-center gap-2">
+            {releaseScanId !== null && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-fit shrink-0"
+                disabled={alreadyCompared}
+                onClick={() => onChange(releaseScanId, toScanId)}
+              >
+                <Rocket className="mr-2 h-3 w-3" />
+                {`Latest ${latestRelease.environment} release`}
+              </Button>
+            )}
+            <span className="text-xs text-muted-foreground">
+              {releaseHint(latestRelease, alreadyCompared)}
+            </span>
+          </div>
+        )}
+        <div className="flex items-end gap-4">
+          <ScanSide label="From" scanId={fromScanId} options={options} side={delta?.from_side}
+            onSelect={(id) => id !== toScanId && onChange(id, toScanId)} />
+          <Button variant="outline" size="icon" className="shrink-0"
+            onClick={() => onChange(toScanId, fromScanId)} aria-label="Swap scans">
+            <ArrowLeftRight className="h-4 w-4" />
+          </Button>
+          <ScanSide label="To" scanId={toScanId} options={options} side={delta?.to_side}
+            onSelect={(id) => id !== fromScanId && onChange(fromScanId, id)} />
+        </div>
+        {window && !window.complete && (
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="text-xs text-muted-foreground">
+              {`The pickers offer the ${options.length} most recent scans; this project has older ones.`}
+            </span>
+            <Button variant="ghost" size="sm" className="h-6 px-2 text-xs" onClick={() => setPages((n) => n + 1)}>
+              {`Load ${SCAN_WINDOW_PAGE_SIZE} older`}
+            </Button>
+          </div>
+        )}
+        <DeltaComparability delta={delta} />
       </CardContent>
     </Card>
   )

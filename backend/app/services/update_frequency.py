@@ -10,11 +10,17 @@ from collections import Counter, defaultdict, deque
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
+from itertools import chain, islice
 from typing import Any, Literal
 
 from packaging.version import InvalidVersion, Version
 
-from app.core.constants import SCAN_USABLE_STATUSES
+from app.core.constants import (
+    RECENT_UPDATES_LIMIT,
+    SCAN_USABLE_STATUSES,
+    SLOWEST_PACKAGES_LIMIT,
+    UPDATE_SAMPLE_RANK,
+)
 from app.repositories.analysis_results import AnalysisResultRepository
 from app.repositories.dependencies import DependencyRepository
 from app.repositories.scans import ScanRepository
@@ -165,10 +171,6 @@ def fold_scan_deps(deps: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
     return {identity: _resolve_duplicate(infos) for identity, infos in candidates.items()}
 
 
-# One outdated_packages row is stored per SBOM of a scan; well above any real SBOM count.
-_MAX_OUTDATED_RESULTS_PER_SCAN = 50
-
-
 async def load_outdated_entries(
     analysis_repo: AnalysisResultRepository,
     scan_id: str,
@@ -179,15 +181,16 @@ async def load_outdated_entries(
     An analyzer that raised leaves no document behind and one that failed stores a
     result without ``outdated_dependencies``; reading either as an empty backlog
     would report the whole backlog of the previous scan as brought up to date.
+
+    One row is stored per SBOM of the scan and the caller folds them into a set, so the
+    cursor is walked whole: a bounded read would drop an arbitrary SBOM's backlog.
     """
-    docs = await analysis_repo.find_many_raw(
-        {"scan_id": scan_id, "analyzer_name": "outdated_packages"},
-        limit=_MAX_OUTDATED_RESULTS_PER_SCAN,
-        projection=projection,
-    )
     entries: list[dict[str, Any]] = []
     measured = False
-    for doc in docs:
+    async for doc in analysis_repo.iterate_raw(
+        {"scan_id": scan_id, "analyzer_name": "outdated_packages"},
+        projection=projection,
+    ):
         found = (doc.get("result") or {}).get("outdated_dependencies")
         if not isinstance(found, list):
             continue
@@ -225,6 +228,11 @@ async def _load_outdated_for_scan(
 
 def _measured_count(outdated: set[str] | None) -> int | None:
     return None if outdated is None else len(outdated)
+
+
+def _update_sample_order(event: DependencyUpdateEvent) -> tuple[int, str, str]:
+    """The order the delta writer sorts its samples in, so both paths cut a scan the same way."""
+    return (UPDATE_SAMPLE_RANK[event.update_type], event.package_name, event.new_version)
 
 
 def _compare_scan_pair(
@@ -401,6 +409,7 @@ def _aggregate_metrics(
     latest_outdated: set[str] | None = None,
     final_versions: dict[str, str] | None = None,
     window_days: int | None = None,
+    window_scan_cap: int | None = None,
 ) -> UpdateFrequencyMetrics:
     """Build the final metrics response from streamed counters."""
     downgrade_total = type_counter.get("downgrade", 0)
@@ -433,7 +442,7 @@ def _aggregate_metrics(
 
     trend_direction, trend_detail = compute_trend(bars)
 
-    slowest_packages = _build_slowest_packages(
+    slowest_packages, outdated_backlog = _build_slowest_packages(
         package_outdated_counts,
         package_latest_info,
         dep_type_map,
@@ -464,6 +473,8 @@ def _aggregate_metrics(
         update_coverage_pct=update_coverage_pct,
         trend_direction=trend_direction,
         trend_detail=trend_detail,
+        window_scan_cap=window_scan_cap,
+        outdated_backlog=outdated_backlog,
         scan_timeline=bars,
         slowest_packages=slowest_packages,
         recent_updates=recent_events,
@@ -495,8 +506,8 @@ def _build_slowest_packages(
     dep_type_map: dict[str, str],
     latest_outdated: set[str],
     final_versions: dict[str, str],
-) -> list[SlowPackage]:
-    """Slowest-to-update packages: the remaining backlog, ranked by scans outdated.
+) -> tuple[list[SlowPackage], int]:
+    """The rows of the slowest-to-update table and the backlog they are the head of.
 
     Only packages still outdated in the newest scan that carried an outdated
     analysis qualify — resolved ones are history, not backlog, and a scan
@@ -504,7 +515,7 @@ def _build_slowest_packages(
     from the newest scan's dependency set; analyzer entries may be scans old.
     """
     remaining = {pkg: count for pkg, count in package_outdated_counts.items() if pkg in latest_outdated}
-    slowest = sorted(remaining.items(), key=lambda x: x[1], reverse=True)[:15]
+    slowest = sorted(remaining.items(), key=lambda entry: (-entry[1], entry[0]))[:SLOWEST_PACKAGES_LIMIT]
     return [
         SlowPackage(
             name=pkg_name,
@@ -515,7 +526,7 @@ def _build_slowest_packages(
             scans_outdated=count,
         )
         for pkg_name, count in slowest
-    ]
+    ], len(remaining)
 
 
 def _empty_metrics(
@@ -554,8 +565,6 @@ def _empty_metrics(
     )
 
 
-_RECENT_EVENTS_BUFFER_SIZE = 30
-
 # Bounds the (package, version) -> first_scan_date map used for adoption-latency.
 # Far above realistic projects; protects against pathological version churn.
 _MAX_OBSERVATIONS = 10_000
@@ -583,8 +592,10 @@ class _AccumulatorState:
     """Streaming-loop state, bundled so each helper takes a single argument."""
 
     type_counter: Counter = field(default_factory=Counter)
-    recent_events_buffer: deque[DependencyUpdateEvent] = field(
-        default_factory=lambda: deque(maxlen=_RECENT_EVENTS_BUFFER_SIZE)
+    # One rank-ordered list per scan that produced changes, so the newest-first read below
+    # keeps the same events out of a busy scan as the delta writer's samples do.
+    recent_events_by_scan: deque[list[DependencyUpdateEvent]] = field(
+        default_factory=lambda: deque(maxlen=RECENT_UPDATES_LIMIT)
     )
     scan_timeline: list[ScanTimelineEntry] = field(default_factory=list)
     package_outdated_counts: dict[str, int] = field(default_factory=lambda: defaultdict(int))
@@ -637,11 +648,17 @@ class _AccumulatorState:
     def absorb_events(self, events: list[tuple[DependencyUpdateEvent, str]], curr_scan_date: datetime) -> None:
         for e, identity in events:
             self.type_counter[e.update_type] += 1
-            self.recent_events_buffer.append(e)
             if len(self.first_seen_versions) < _MAX_OBSERVATIONS:
                 key = (identity, e.new_version)
                 if key not in self.first_seen_versions:
                     self.first_seen_versions[key] = curr_scan_date
+        if events:
+            ranked = sorted((e for e, _identity in events), key=_update_sample_order)
+            self.recent_events_by_scan.append(ranked[:RECENT_UPDATES_LIMIT])
+
+    def recent_events(self) -> list[DependencyUpdateEvent]:
+        """Newest scan first, rank-ordered within a scan, cut at the shared limit."""
+        return list(islice(chain.from_iterable(reversed(self.recent_events_by_scan)), RECENT_UPDATES_LIMIT))
 
 
 def as_utc(dt: datetime) -> datetime:
@@ -909,12 +926,13 @@ async def compute_update_frequency(
         project_id,
         project_name,
         type_counter=state.type_counter,
-        recent_events=list(state.recent_events_buffer)[::-1],  # newest first
+        recent_events=state.recent_events(),
         upstream=upstream,
         branch=analyzed_branch,
         latest_outdated=latest_outdated,
         final_versions=_final_versions_by_name(prev_deps),
         window_days=rate_days,
+        window_scan_cap=hard_limit if truncated else None,
     )
 
 
@@ -1079,6 +1097,7 @@ async def compute_update_frequency_comparison(
                 total_updates=metrics.total_updates,
                 total_outdated=metrics.total_outdated_detected,
                 last_scan_date=metrics.last_scan_date,
+                window_scan_cap=metrics.window_scan_cap,
             )
 
     results = await asyncio.gather(*[_compute_single(p) for p in projects], return_exceptions=True)

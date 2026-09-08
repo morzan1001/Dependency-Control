@@ -2,10 +2,20 @@ import { render, screen, fireEvent } from '@testing-library/react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import { ProjectScans } from '../ProjectScans'
-import type { Scan } from '@/types/scan'
+import type { LatestProjectRelease } from '@/hooks/queries/use-releases'
+import type { ScanWithReleases } from '@/types/scan'
+
+const PRODUCTION = 'production'
+const STAGING = 'staging'
+const RELEASE_VERSION = 'v1.2.3'
+const STAGING_VERSION = 'v1.3.0-rc1'
+const RELEASED_AT = '2026-07-01T00:00:00Z'
+const RELEASES_ONLY_BUTTON = 'Releases only'
+const GENERIC_RELEASE_LABEL = 'Release'
 
 const mockUseProjectScans = vi.fn()
 const mockUseProjectBranches = vi.fn()
+const mockUseLatestProjectRelease = vi.fn()
 
 vi.mock('@/hooks/queries/use-scans', () => ({
   useProjectScans: (...args: unknown[]) => mockUseProjectScans(...args),
@@ -15,31 +25,42 @@ vi.mock('@/hooks/queries/use-projects', () => ({
   useProjectBranches: (...args: unknown[]) => mockUseProjectBranches(...args),
 }))
 
+vi.mock('@/hooks/queries/use-releases', () => ({
+  useLatestProjectRelease: (...args: unknown[]) => mockUseLatestProjectRelease(...args),
+}))
+
 const mockNavigate = vi.fn()
 
 vi.mock('react-router-dom', () => ({
   useNavigate: () => mockNavigate,
 }))
 
-function makeScan(overrides: Partial<Scan>): Scan {
+function makeScan(overrides: Partial<ScanWithReleases>): ScanWithReleases {
   return {
     id: 'scan-x',
     project_id: 'p1',
     branch: 'main',
     status: 'completed',
+    is_release: false,
+    releases: [],
     created_at: '2026-07-01T00:00:00Z',
     stats: { critical: 0, high: 0, medium: 0, low: 0 },
     ...overrides,
-  } as unknown as Scan
+  }
 }
 
-function renderScans(scans: Scan[]) {
+// Annotated, not inferred: an inferred fixture drops a field from the hook's type silently.
+const HAS_RELEASES: LatestProjectRelease = { latestRelease: undefined, hasReleases: true, isLoading: false }
+const NO_RELEASES: LatestProjectRelease = { latestRelease: undefined, hasReleases: false, isLoading: false }
+
+function renderScans(scans: ScanWithReleases[], releases: LatestProjectRelease = HAS_RELEASES) {
   mockUseProjectScans.mockReturnValue({
     data: scans,
     isLoading: false,
     isPlaceholderData: false,
   })
   mockUseProjectBranches.mockReturnValue({ data: [] })
+  mockUseLatestProjectRelease.mockReturnValue(releases)
   return render(<ProjectScans projectId="p1" />)
 }
 
@@ -96,5 +117,198 @@ describe('ProjectScans - Delta comparison partner', () => {
     renderScans([makeScan({ id: 'main-partial', status: 'completed_with_errors' })])
 
     expect(screen.getByText('completed with errors')).toBeInTheDocument()
+  })
+})
+
+describe('ProjectScans - a scan whose rescan is still queued', () => {
+  const OWN_CRITICAL = 4
+  const RESCAN_ID = 'main-1-rescan'
+  const NO_HIGH_RISKS = 'No high risks'
+  const NOTE_DELIVERED = 'Updated via re-scan'
+  const NOTE_IN_FLIGHT = 'Re-scan in progress'
+  const NOTE_FAILED = 'Re-scan failed'
+
+  function queuedRescan(): ScanWithReleases {
+    return makeScan({
+      id: 'main-1',
+      stats: { critical: OWN_CRITICAL, high: 0, medium: 0, low: 0 },
+      latest_rescan_id: RESCAN_ID,
+      // A queued rescan has analysed nothing yet, so its summary carries no stats.
+      latest_run: { scan_id: RESCAN_ID, status: 'pending' },
+    })
+  }
+
+  it('keeps the findings the scan itself reports instead of reading the queue as clean', () => {
+    renderScans([queuedRescan()])
+
+    expect(screen.getByText(String(OWN_CRITICAL))).toBeInTheDocument()
+    expect(screen.queryByText(NO_HIGH_RISKS)).not.toBeInTheDocument()
+  })
+
+  it('shows the status of the run those findings came from', () => {
+    renderScans([queuedRescan()])
+
+    expect(screen.getByText('completed')).toBeInTheDocument()
+    expect(screen.queryByText('pending')).not.toBeInTheDocument()
+  })
+
+  it('deltas against the run it counted, not the rescan that has analysed nothing', () => {
+    const newer = makeScan({ id: 'main-2', created_at: '2026-07-05T00:00:00Z' })
+
+    renderScans([newer, queuedRescan()])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delta' }))
+
+    expect(mockNavigate).toHaveBeenCalledWith('/projects/p1/delta?from=main-1&to=main-2')
+  })
+
+  it('deltas against a finished rescan, which is what the row counted', () => {
+    const rescanned = makeScan({
+      id: 'main-1',
+      latest_rescan_id: RESCAN_ID,
+      latest_run: { scan_id: RESCAN_ID, status: 'completed', stats: { critical: 0 } },
+    })
+    const newer = makeScan({ id: 'main-2', created_at: '2026-07-05T00:00:00Z' })
+
+    renderScans([newer, rescanned])
+
+    fireEvent.click(screen.getByRole('button', { name: 'Delta' }))
+
+    expect(mockNavigate).toHaveBeenCalledWith(`/projects/p1/delta?from=${RESCAN_ID}&to=main-2`)
+  })
+
+  it('says the rescan is still running instead of claiming the row was updated by it', () => {
+    renderScans([queuedRescan()])
+
+    expect(screen.getByText(NOTE_IN_FLIGHT)).toBeInTheDocument()
+    expect(screen.queryByText(NOTE_DELIVERED)).not.toBeInTheDocument()
+  })
+
+  it('says the row was updated once the rescan has delivered its results', () => {
+    renderScans([
+      makeScan({
+        id: 'main-1',
+        latest_rescan_id: RESCAN_ID,
+        latest_run: { scan_id: RESCAN_ID, status: 'completed', stats: { critical: 0 } },
+      }),
+    ])
+
+    expect(screen.getByText(NOTE_DELIVERED)).toBeInTheDocument()
+    expect(screen.queryByText(NOTE_IN_FLIGHT)).not.toBeInTheDocument()
+  })
+
+  it('says the rescan is still running when the scheduler has queued it without a summary', () => {
+    // The automatic scheduler sets latest_rescan_id and never writes latest_run.
+    renderScans([makeScan({ id: 'main-1', latest_rescan_id: RESCAN_ID })])
+
+    expect(screen.getByText(NOTE_IN_FLIGHT)).toBeInTheDocument()
+    expect(screen.queryByText(NOTE_DELIVERED)).not.toBeInTheDocument()
+    expect(screen.queryByText(NOTE_FAILED)).not.toBeInTheDocument()
+  })
+
+  it('names a failed rescan as failed rather than as still running', () => {
+    renderScans([
+      makeScan({
+        id: 'main-1',
+        latest_rescan_id: RESCAN_ID,
+        latest_run: { scan_id: RESCAN_ID, status: 'failed', stats: {} },
+      }),
+    ])
+
+    expect(screen.getByText(NOTE_FAILED)).toBeInTheDocument()
+    expect(screen.queryByText(NOTE_IN_FLIGHT)).not.toBeInTheDocument()
+  })
+})
+
+describe('ProjectScans - release', () => {
+  it('renders the release badge with its environment', () => {
+    renderScans([
+      makeScan({
+        id: 'rel',
+        is_release: true,
+        releases: [{ environment: PRODUCTION, version: RELEASE_VERSION, released_at: RELEASED_AT }],
+      }),
+    ])
+
+    expect(screen.getByLabelText(`Release ${RELEASE_VERSION} in ${PRODUCTION}`)).toBeInTheDocument()
+  })
+
+  it('renders one badge per environment the scan runs in', () => {
+    renderScans([
+      makeScan({
+        id: 'rel',
+        is_release: true,
+        releases: [
+          { environment: STAGING, version: STAGING_VERSION, released_at: RELEASED_AT },
+          { environment: PRODUCTION, version: RELEASE_VERSION, released_at: RELEASED_AT },
+        ],
+      }),
+    ])
+
+    expect(screen.getByLabelText(`Release ${STAGING_VERSION} in ${STAGING}`)).toBeInTheDocument()
+    expect(screen.getByLabelText(`Release ${RELEASE_VERSION} in ${PRODUCTION}`)).toBeInTheDocument()
+  })
+
+  it('still marks a scan whose release record has not landed yet', () => {
+    renderScans([makeScan({ id: 'rel', is_release: true })])
+
+    expect(screen.getByLabelText(GENERIC_RELEASE_LABEL)).toBeInTheDocument()
+  })
+
+  it('renders no badge for a plain scan', () => {
+    renderScans([makeScan({ id: 'plain' })])
+
+    expect(screen.queryByLabelText(/^Release/)).not.toBeInTheDocument()
+  })
+
+  it('asks the backend for releases only once the filter is on', () => {
+    renderScans([makeScan({ id: 'plain' })])
+
+    expect(mockUseProjectScans.mock.calls[0][1].isRelease).toBeUndefined()
+
+    fireEvent.click(screen.getByRole('button', { name: RELEASES_ONLY_BUTTON }))
+
+    const lastCall = mockUseProjectScans.mock.calls[mockUseProjectScans.mock.calls.length - 1]
+    expect(lastCall[1].isRelease).toBe(true)
+  })
+
+  it('stops excluding deleted branches while the release filter is on', () => {
+    renderScans([makeScan({ id: 'plain' })])
+
+    expect(mockUseProjectScans.mock.calls[0][1].excludeDeletedBranches).toBe(true)
+
+    fireEvent.click(screen.getByRole('button', { name: RELEASES_ONLY_BUTTON }))
+
+    const lastCall = mockUseProjectScans.mock.calls[mockUseProjectScans.mock.calls.length - 1]
+    expect(lastCall[1].excludeDeletedBranches).toBe(false)
+  })
+})
+
+describe('ProjectScans - the release filter on a project that does not release', () => {
+  it('offers no release filter', () => {
+    renderScans([makeScan({ id: 'plain' })], NO_RELEASES)
+
+    expect(screen.queryByRole('button', { name: RELEASES_ONLY_BUTTON })).not.toBeInTheDocument()
+  })
+
+  it('keeps the filter while it is engaged, so a withdrawal cannot strand the user in it', () => {
+    const { rerender } = renderScans([makeScan({ id: 'rel', is_release: true })])
+
+    fireEvent.click(screen.getByRole('button', { name: RELEASES_ONLY_BUTTON }))
+    mockUseLatestProjectRelease.mockReturnValue(NO_RELEASES)
+    rerender(<ProjectScans projectId="p1" />)
+
+    expect(screen.getByRole('button', { name: RELEASES_ONLY_BUTTON })).toBeInTheDocument()
+  })
+
+  it('lets the filter go once the user switches it off', () => {
+    const { rerender } = renderScans([makeScan({ id: 'rel', is_release: true })])
+
+    fireEvent.click(screen.getByRole('button', { name: RELEASES_ONLY_BUTTON }))
+    mockUseLatestProjectRelease.mockReturnValue(NO_RELEASES)
+    rerender(<ProjectScans projectId="p1" />)
+    fireEvent.click(screen.getByRole('button', { name: RELEASES_ONLY_BUTTON }))
+
+    expect(screen.queryByRole('button', { name: RELEASES_ONLY_BUTTON })).not.toBeInTheDocument()
   })
 })

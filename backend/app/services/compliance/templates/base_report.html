@@ -22,26 +22,38 @@
     <strong>Disclaimer:</strong> {{ disclaimer }}
   </div>
   {% endif %}
+  {% if coverage_statement %}
+  <div class="{{ 'coverage' if coverage_complete else 'coverage-partial' }}">
+    <strong>Coverage:</strong> {{ coverage_statement }}
+  </div>
+  {% endif %}
 </section>
 
 <section class="summary">
   <h2>Executive Summary</h2>
+  {% if coverage_statement and not coverage_complete %}
+  <div class="coverage-partial">{{ coverage_statement }}</div>
+  {% endif %}
   <div class="summary-grid">
     <div class="card passed"><div class="count">{{ summary.passed }}</div><div class="label">Passed</div></div>
     <div class="card failed"><div class="count">{{ summary.failed }}</div><div class="label">Failed</div></div>
     <div class="card waived"><div class="count">{{ summary.waived }}</div><div class="label">Waived</div></div>
     <div class="card na"><div class="count">{{ summary.not_applicable }}</div><div class="label">N/A</div></div>
+    <div class="card not-evaluated"><div class="count">{{ summary.not_evaluated }}</div>
+      <div class="label">Not Evaluated</div></div>
     <div class="card total"><div class="count">{{ summary.total }}</div><div class="label">Total Controls</div></div>
   </div>
   <div class="bar">
     {% set pct_failed = (summary.failed / summary.total * 100) if summary.total else 0 %}
     {% set pct_waived = (summary.waived / summary.total * 100) if summary.total else 0 %}
     {% set pct_na = (summary.not_applicable / summary.total * 100) if summary.total else 0 %}
-    {% set pct_passed = 100 - pct_failed - pct_waived - pct_na %}
+    {% set pct_withheld = (summary.not_evaluated / summary.total * 100) if summary.total else 0 %}
+    {% set pct_passed = 100 - pct_failed - pct_waived - pct_na - pct_withheld %}
     <div class="seg passed" style="width: {{ pct_passed }}%"></div>
     <div class="seg failed" style="width: {{ pct_failed }}%"></div>
     <div class="seg waived" style="width: {{ pct_waived }}%"></div>
     <div class="seg na" style="width: {{ pct_na }}%"></div>
+    <div class="seg not-evaluated" style="width: {{ pct_withheld }}%"></div>
   </div>
 </section>
 
@@ -73,6 +85,9 @@
   <div class="control-detail status-{{ c.status }}">
     <h3>{{ c.control_id }} — {{ c.title }}</h3>
     <p><strong>Status:</strong> {{ c.status }} &middot; <strong>Severity:</strong> {{ c.severity }}</p>
+    {% if c.status_reason %}
+    <p class="status-reason">{{ c.status_reason }}</p>
+    {% endif %}
     <p>{{ c.description }}</p>
     {% if c.remediation %}
     <p class="remediation"><strong>Remediation:</strong> {{ c.remediation }}</p>

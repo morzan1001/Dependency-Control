@@ -63,6 +63,8 @@ def correlate_maintainer_risks(
 
 class MaintainerRiskAnalyzer(Analyzer):
     name = "maintainer_risk"
+    _stale_after_days = STALE_PACKAGE_THRESHOLD_DAYS
+    _warn_after_days = STALE_PACKAGE_WARNING_DAYS
 
     @staticmethod
     def _parse_iso_datetime(dt_string: str | None) -> datetime | None:
@@ -378,8 +380,8 @@ class MaintainerRiskAnalyzer(Analyzer):
         risks = []
 
         days_since_release = info.get("days_since_release")
-        stale_after = getattr(self, "_stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS)
-        warn_after = getattr(self, "_warn_after_days", STALE_PACKAGE_WARNING_DAYS)
+        stale_after = self._stale_after_days
+        warn_after = self._warn_after_days
         if days_since_release:
             if days_since_release > stale_after:
                 risks.append(
@@ -434,8 +436,7 @@ class MaintainerRiskAnalyzer(Analyzer):
         days_since_push = gh_info.get("days_since_push")
         if days_since_push is None:
             return None
-        warn_after = getattr(self, "_warn_after_days", STALE_PACKAGE_WARNING_DAYS)
-        return bool(days_since_push <= warn_after)
+        return bool(days_since_push <= self._warn_after_days)
 
     def _assess_github_risks(self, gh_info: dict[str, Any]) -> list[dict[str, Any]]:
         """Assess risks from GitHub repository info."""
@@ -452,7 +453,7 @@ class MaintainerRiskAnalyzer(Analyzer):
             )
 
         days_since_push = gh_info.get("days_since_push")
-        if days_since_push and days_since_push > getattr(self, "_stale_after_days", STALE_PACKAGE_THRESHOLD_DAYS):
+        if days_since_push and days_since_push > self._stale_after_days:
             risks.append(
                 {
                     "type": "inactive_repo",

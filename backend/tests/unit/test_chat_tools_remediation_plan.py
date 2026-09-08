@@ -1,10 +1,18 @@
 """generate_remediation_plan must source targets from the stored finding shape (details.fixed_version / details.vulnerabilities[])."""
 
+from datetime import datetime, timezone
+
 import pytest
 
+from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry
 from tests.helpers.permission_presets import PRESET_ADMIN
+
+_NOW = datetime(2026, 9, 4, 12, 0, tzinfo=timezone.utc)
+_PROJECT = "proj-1"
+_BRANCH = "main"
+_SCAN = "scan-1"
 
 
 @pytest.fixture
@@ -17,12 +25,21 @@ def admin_user():
     )
 
 
-def _seed_project(db, project_id="proj-1", latest_scan_id="scan-1"):
+def _seed_project(db, project_id=_PROJECT, latest_scan_id=_SCAN):
     db.projects._docs[project_id] = {
         "_id": project_id,
         "name": "P",
         "team_id": None,
+        "default_branch": _BRANCH,
+        "deleted_branches": [],
         "latest_scan_id": latest_scan_id,
+    }
+    db.scans._docs[_SCAN] = {
+        "_id": _SCAN,
+        "project_id": project_id,
+        "branch": _BRANCH,
+        "status": SCAN_STATUS_COMPLETED,
+        "created_at": _NOW,
     }
 
 
@@ -31,7 +48,7 @@ def _seed_vuln_finding(db, fid, component, version, severity, details):
     db.findings._docs[fid] = {
         "_id": f"uuid-{fid}",
         "finding_id": fid,
-        "scan_id": "scan-1",
+        "scan_id": _SCAN,
         "project_id": "proj-1",
         "type": "vulnerability",
         "severity": severity,
@@ -45,7 +62,7 @@ def _seed_dependency(db, name, version, direct=True, dep_type="npm"):
     key = f"{name}@{version}"
     db.dependencies._docs[key] = {
         "_id": key,
-        "scan_id": "scan-1",
+        "scan_id": _SCAN,
         "name": name,
         "version": version,
         "direct": direct,

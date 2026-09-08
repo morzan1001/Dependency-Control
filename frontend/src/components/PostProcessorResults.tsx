@@ -33,7 +33,7 @@ import { getSeverityBadgeVariant } from "@/lib/finding-utils";
 import { formatDateTime } from "@/lib/utils";
 import { ReachabilitySummary } from "@/types/scan";
 
-interface EPSSKEVSummary {
+export interface EPSSKEVSummary {
   total_vulnerabilities: number;
   epss_enriched: number;
   kev_matches: number;
@@ -61,6 +61,7 @@ interface EPSSKEVSummary {
     due_date: string | null;
     ransomware: boolean;
   }>;
+  // high_risk_cves is the top-scoring sample; high_risk_total is how many cleared the threshold.
   high_risk_cves: Array<{
     cve: string;
     component: string;
@@ -70,8 +71,11 @@ interface EPSSKEVSummary {
     in_kev: boolean;
     exploit_maturity: string;
   }>;
+  high_risk_total?: number;
   timestamp: string;
 }
+
+const HIGH_RISK_ROWS_SHOWN = 10;
 
 export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
   // Target the Progress indicator, not the track, so bars aren't all rendered full.
@@ -302,17 +306,20 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
         </Card>
       )}
 
-      {data.high_risk_cves.length > 0 && (
+      {data.high_risk_cves.length > 0 && (() => {
+        const shownHighRisk = data.high_risk_cves.slice(0, HIGH_RISK_ROWS_SHOWN);
+        const highRiskTotal = data.high_risk_total ?? data.high_risk_cves.length;
+        return (
         <Card>
           <CardHeader>
             <CardTitle className="text-base flex items-center gap-2">
               <AlertTriangle className="h-4 w-4 text-orange-500" />
-              High Risk Vulnerabilities (Risk Score &gt; 70)
+              High Risk Vulnerabilities (Risk Score &gt; 70) ({highRiskTotal})
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-2">
-              {data.high_risk_cves.slice(0, 10).map((cve) => (
+              {shownHighRisk.map((cve) => (
                 <Collapsible key={`${cve.cve}-${cve.component}`}>
                   <CollapsibleTrigger className="flex items-center justify-between w-full p-3 rounded-lg bg-muted/50 hover:bg-muted transition-colors">
                     <div className="flex items-center gap-4">
@@ -351,10 +358,16 @@ export function EPSSKEVResults({ data }: { data: EPSSKEVSummary }) {
                   </CollapsibleContent>
                 </Collapsible>
               ))}
+              {highRiskTotal > shownHighRisk.length && (
+                <p className="text-sm text-muted-foreground text-center pt-2">
+                  Showing {shownHighRisk.length} of {highRiskTotal}
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>
-      )}
+        );
+      })()}
 
       <p className="text-xs text-muted-foreground text-right">
         Enriched at: {formatDateTime(data.timestamp)}

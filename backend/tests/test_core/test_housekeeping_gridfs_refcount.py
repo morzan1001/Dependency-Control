@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.core.housekeeping import _delete_scans_and_related_data
+from app.services.scan_cascade import delete_scans_and_related_data
 from tests.mocks.fake_mongo import FakeDatabase
 
 
@@ -43,7 +43,7 @@ async def test_cleanup_skips_gridfs_file_still_referenced_by_other_scan():
         "app.services.gridfs_maintenance.AsyncIOMotorGridFSBucket",
         return_value=mock_bucket,
     ):
-        await _delete_scans_and_related_data(db, ["scan-B"], "test")
+        await delete_scans_and_related_data(db, ["scan-B"], "test")
 
     # scan-A's GridFS file must NOT be deleted — scan-A still references it.
     mock_bucket.delete.assert_not_called()
@@ -70,7 +70,7 @@ async def test_cleanup_deletes_gridfs_file_when_no_other_scan_refs_it():
         "app.services.gridfs_maintenance.AsyncIOMotorGridFSBucket",
         return_value=mock_bucket,
     ):
-        await _delete_scans_and_related_data(db, ["scan-A"], "test")
+        await delete_scans_and_related_data(db, ["scan-A"], "test")
 
     # The GridFS file should be deleted exactly once — no surviving references.
     assert mock_bucket.delete.await_count == 1
@@ -108,7 +108,7 @@ async def test_cleanup_deletes_mixed_refs_correctly():
         "app.services.gridfs_maintenance.AsyncIOMotorGridFSBucket",
         return_value=mock_bucket,
     ):
-        await _delete_scans_and_related_data(db, ["scan-B"], "test")
+        await delete_scans_and_related_data(db, ["scan-B"], "test")
 
     # Only exclusive_gid should be deleted; shared_gid is still on scan-A.
     deleted_ids = {str(call.args[0]) for call in mock_bucket.delete.await_args_list}

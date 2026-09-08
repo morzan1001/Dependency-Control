@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorDatabase, AsyncIOMotorGridFSBucket
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.db.mongodb import open_gridfs_download_with_retry, primary_gridfs_bucket
 
@@ -71,23 +71,3 @@ async def resolve_sbom_refs(
 
     return resolved_sboms
 
-
-async def delete_gridfs_files(
-    db: AsyncIOMotorDatabase,
-    file_ids: list[str],
-) -> int:
-    """Delete multiple files from GridFS, returning the count deleted."""
-    if not file_ids:
-        return 0
-
-    fs = AsyncIOMotorGridFSBucket(db)
-    deleted = 0
-
-    for file_id in file_ids:
-        try:
-            await fs.delete(ObjectId(file_id))
-            deleted += 1
-        except Exception as e:
-            logger.warning(f"Could not delete GridFS file {file_id}: {e}")
-
-    return deleted

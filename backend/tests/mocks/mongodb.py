@@ -9,7 +9,7 @@ def create_mock_collection(**method_returns):
     Args:
         **method_returns: Override default return values.
             Supported keys: find_one, find (list), count_documents (int),
-            bulk_write (int), aggregate (list).
+            bulk_write (int), aggregate (list), distinct (list).
     """
     collection = MagicMock()
     collection.find_one = AsyncMock(return_value=method_returns.get("find_one"))
@@ -19,6 +19,7 @@ def create_mock_collection(**method_returns):
     collection.update_many = AsyncMock(return_value=MagicMock(modified_count=1))
     collection.delete_one = AsyncMock(return_value=MagicMock(deleted_count=1))
     collection.count_documents = AsyncMock(return_value=method_returns.get("count_documents", 0))
+    collection.distinct = AsyncMock(return_value=method_returns.get("distinct", []))
     collection.bulk_write = AsyncMock(return_value=MagicMock(modified_count=method_returns.get("bulk_write", 0)))
     collection.create_index = AsyncMock(return_value=None)
 

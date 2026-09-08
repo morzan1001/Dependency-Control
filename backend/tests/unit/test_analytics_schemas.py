@@ -19,6 +19,7 @@ def test_hotspot_entry_minimal():
         finding_count=2,
         severity_mix={"HIGH": 2},
         locations=["/a", "/b"],
+        locations_complete=True,
         project_ids=["p1"],
         first_seen=datetime.now(timezone.utc),
         last_seen=datetime.now(timezone.utc),

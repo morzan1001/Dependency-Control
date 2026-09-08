@@ -1,178 +1,143 @@
-"""Tests for ArchiveMetadataRepository query and CRUD logic with mocked MongoDB."""
+"""ArchiveMetadataRepository queries and CRUD, driven through FakeDatabase."""
 
-import asyncio
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock
+from datetime import datetime, timedelta, timezone
 
+import pytest
+
+from app.models.archive import ArchiveMetadata
 from app.repositories.archive_metadata import ArchiveMetadataRepository
-from tests.mocks.mongodb import create_mock_collection
+from tests.mocks.fake_mongo import FakeDatabase
+
+_PROJECT = "proj-1"
+_OTHER_PROJECT = "proj-2"
+_MAIN = "main"
+_FEATURE = "feature"
+_OTHER_BRANCH = "release"
+_T0 = datetime(2025, 6, 1, tzinfo=timezone.utc)
+_DAY = timedelta(days=1)
+_ARCHIVE_COUNT = 3
 
 
-def _make_mock_db(collection):
-    """Create a mock database that supports dict-style access for BaseRepository."""
-    db = MagicMock()
-    db.__getitem__ = MagicMock(return_value=collection)
-    return db
-
-
-def _make_archive_doc(**overrides):
-    """Create a raw archive metadata document."""
-    doc = {
-        "_id": "archive-1",
-        "project_id": "proj-1",
-        "scan_id": "scan-1",
-        "s3_key": "proj-1/scan-1.json.gz",
+def _archive_doc(archive_id, project_id=_PROJECT, branch=_MAIN, archived_at=_T0, scan_created_at=_T0):
+    return {
+        "_id": archive_id,
+        "project_id": project_id,
+        "scan_id": f"scan-{archive_id}",
+        "s3_key": f"{project_id}/{archive_id}.json.gz",
         "s3_bucket": "dc-archives",
-        "archived_at": datetime(2025, 6, 1, tzinfo=timezone.utc),
-        "branch": "main",
+        "archived_at": archived_at,
+        "scan_created_at": scan_created_at,
+        "branch": branch,
         "commit_hash": "abc123",
         "original_size_bytes": 5000,
         "compressed_size_bytes": 1000,
     }
-    doc.update(overrides)
-    return doc
+
+
+@pytest.fixture
+def db():
+    database = FakeDatabase()
+    for index in range(_ARCHIVE_COUNT):
+        database.archive_metadata._docs[f"a-{index}"] = _archive_doc(
+            f"a-{index}", archived_at=_T0 + index * _DAY, scan_created_at=_T0 + index * _DAY
+        )
+    # Distinct timestamps throughout: a tie on archived_at would make the sort order insertion order.
+    database.archive_metadata._docs["a-feature"] = _archive_doc(
+        "a-feature", branch=_FEATURE, archived_at=_T0 - _DAY, scan_created_at=_T0 - _DAY
+    )
+    database.archive_metadata._docs["b-0"] = _archive_doc(
+        "b-0", project_id=_OTHER_PROJECT, branch=_OTHER_BRANCH
+    )
+    return database
 
 
 class TestFindByProject:
-    def test_returns_archives_for_project(self):
-        docs = [
-            _make_archive_doc(_id="a-1", scan_id="scan-1"),
-            _make_archive_doc(_id="a-2", scan_id="scan-2"),
-        ]
-        collection = create_mock_collection(find=docs)
-        db = _make_mock_db(collection)
+    @pytest.mark.asyncio
+    async def test_newest_archive_first_and_this_project_only(self, db):
         repo = ArchiveMetadataRepository(db)
 
-        result = asyncio.run(repo.find_by_project("proj-1"))
+        found = await repo.find_by_project(_PROJECT)
 
-        assert len(result) == 2
-        assert result[0].scan_id == "scan-1"
-        assert result[1].scan_id == "scan-2"
+        assert [archive.id for archive in found] == ["a-2", "a-1", "a-0", "a-feature"]
 
-    def test_returns_empty_list_when_none_found(self):
-        collection = create_mock_collection(find=[])
-        db = _make_mock_db(collection)
+    @pytest.mark.asyncio
+    async def test_pages_from_the_requested_offset(self, db):
         repo = ArchiveMetadataRepository(db)
 
-        result = asyncio.run(repo.find_by_project("proj-1"))
+        page = await repo.find_by_project(_PROJECT, skip=1, limit=2)
 
-        assert result == []
+        assert [archive.id for archive in page] == ["a-1", "a-0"]
 
-    def test_applies_skip_and_limit(self):
-        collection = create_mock_collection(find=[])
-        db = _make_mock_db(collection)
+    @pytest.mark.asyncio
+    async def test_the_branch_and_date_window_narrow_the_result(self, db):
         repo = ArchiveMetadataRepository(db)
 
-        asyncio.run(repo.find_by_project("proj-1", skip=10, limit=5))
+        assert [a.id for a in await repo.find_by_project(_PROJECT, branch=_FEATURE)] == ["a-feature"]
+        windowed = await repo.find_by_project(_PROJECT, date_from=_T0 + _DAY, date_to=_T0 + _DAY)
+        assert [a.id for a in windowed] == ["a-1"]
 
-        cursor = collection.find.return_value
-        cursor.skip.assert_called_once_with(10)
-        cursor.limit.assert_called_once_with(5)
+    @pytest.mark.asyncio
+    async def test_a_project_with_no_archives_returns_an_empty_list(self, db):
+        repo = ArchiveMetadataRepository(db)
+
+        assert await repo.find_by_project("absent") == []
 
 
 class TestCountByProject:
-    def test_counts_archives(self):
-        collection = create_mock_collection(count_documents=5)
-        db = _make_mock_db(collection)
+    @pytest.mark.asyncio
+    async def test_counts_this_project_under_the_same_filters(self, db):
         repo = ArchiveMetadataRepository(db)
 
-        result = asyncio.run(repo.count_by_project("proj-1"))
+        assert await repo.count_by_project(_PROJECT) == _ARCHIVE_COUNT + 1
+        assert await repo.count_by_project(_PROJECT, branch=_FEATURE) == 1
+        assert await repo.count_by_project("absent") == 0
 
-        assert result == 5
-        collection.count_documents.assert_called_once_with({"project_id": "proj-1"})
 
-    def test_returns_zero_when_none(self):
-        collection = create_mock_collection(count_documents=0)
-        db = _make_mock_db(collection)
+class TestFindAndDeleteByScanId:
+    @pytest.mark.asyncio
+    async def test_the_archive_of_a_known_scan_is_found_and_deleted_once(self, db):
         repo = ArchiveMetadataRepository(db)
 
-        result = asyncio.run(repo.count_by_project("proj-1"))
+        found = await repo.find_by_scan_id("scan-a-0")
+        assert found is not None
+        assert found.s3_key == f"{_PROJECT}/a-0.json.gz"
 
-        assert result == 0
+        assert await repo.delete_by_scan_id("scan-a-0") is True
+        assert await repo.find_by_scan_id("scan-a-0") is None
+        assert await repo.delete_by_scan_id("scan-a-0") is False
 
-
-class TestFindByScanId:
-    def test_returns_archive_when_found(self):
-        doc = _make_archive_doc()
-        collection = create_mock_collection(find_one=doc)
-        db = _make_mock_db(collection)
+    @pytest.mark.asyncio
+    async def test_an_unknown_scan_resolves_to_nothing(self, db):
         repo = ArchiveMetadataRepository(db)
 
-        result = asyncio.run(repo.find_by_scan_id("scan-1"))
+        assert await repo.find_by_scan_id("nonexistent") is None
 
-        assert result is not None
-        assert result.scan_id == "scan-1"
-        assert result.s3_key == "proj-1/scan-1.json.gz"
 
-    def test_returns_none_when_not_found(self):
-        collection = create_mock_collection(find_one=None)
-        db = _make_mock_db(collection)
+class TestDistinctBranches:
+    @pytest.mark.asyncio
+    async def test_the_branches_of_this_project_are_listed_once_and_sorted(self, db):
         repo = ArchiveMetadataRepository(db)
 
-        result = asyncio.run(repo.find_by_scan_id("nonexistent"))
-
-        assert result is None
-
-
-class TestDeleteByScanId:
-    def test_returns_true_on_success(self):
-        collection = create_mock_collection()
-        collection.delete_one = AsyncMock(return_value=MagicMock(deleted_count=1))
-        db = _make_mock_db(collection)
-        repo = ArchiveMetadataRepository(db)
-
-        result = asyncio.run(repo.delete_by_scan_id("scan-1"))
-
-        assert result is True
-        collection.delete_one.assert_called_once_with({"scan_id": "scan-1"})
-
-    def test_returns_false_when_not_found(self):
-        collection = create_mock_collection()
-        collection.delete_one = AsyncMock(return_value=MagicMock(deleted_count=0))
-        db = _make_mock_db(collection)
-        repo = ArchiveMetadataRepository(db)
-
-        result = asyncio.run(repo.delete_by_scan_id("nonexistent"))
-
-        assert result is False
+        assert await repo.get_distinct_branches(_PROJECT) == [_FEATURE, _MAIN]
 
 
 class TestCRUD:
-    def test_create(self):
-        from app.models.archive import ArchiveMetadata
-
-        collection = create_mock_collection()
-        db = _make_mock_db(collection)
+    @pytest.mark.asyncio
+    async def test_a_created_archive_is_readable_by_id(self, db):
         repo = ArchiveMetadataRepository(db)
-
         metadata = ArchiveMetadata(
-            project_id="proj-1",
-            scan_id="scan-1",
-            s3_key="proj-1/scan-1.json.gz",
+            project_id=_PROJECT,
+            scan_id="scan-new",
+            s3_key=f"{_PROJECT}/scan-new.json.gz",
             s3_bucket="dc-archives",
         )
 
-        result = asyncio.run(repo.create(metadata))
+        created = await repo.create(metadata)
 
-        collection.insert_one.assert_called_once()
-        assert result.scan_id == "scan-1"
+        assert (await repo.get_by_id(created.id)).scan_id == "scan-new"
 
-    def test_get_by_id_found(self):
-        doc = _make_archive_doc()
-        collection = create_mock_collection(find_one=doc)
-        db = _make_mock_db(collection)
+    @pytest.mark.asyncio
+    async def test_an_unknown_id_resolves_to_nothing(self, db):
         repo = ArchiveMetadataRepository(db)
 
-        result = asyncio.run(repo.get_by_id("archive-1"))
-
-        assert result is not None
-        assert result.project_id == "proj-1"
-
-    def test_get_by_id_not_found(self):
-        collection = create_mock_collection(find_one=None)
-        db = _make_mock_db(collection)
-        repo = ArchiveMetadataRepository(db)
-
-        result = asyncio.run(repo.get_by_id("nonexistent"))
-
-        assert result is None
+        assert await repo.get_by_id("nonexistent") is None

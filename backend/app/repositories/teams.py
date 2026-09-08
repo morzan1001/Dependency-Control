@@ -5,10 +5,12 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import TEAM_ROLE_ADMIN
 from app.core.metrics import track_db_operation
 from app.models.team import Team
 
-_MEMBERS_USER_ID = "members.user_id"
+_USER_ID = "user_id"
+_MEMBERS_USER_ID = f"members.{_USER_ID}"
 _COL = "teams"
 
 
@@ -75,20 +77,33 @@ class TeamRepository:
         docs = await cursor.to_list(None)
         return [Team(**doc) for doc in docs]
 
-    async def add_member(self, team_id: str, member_data: dict[str, Any]) -> None:
-        await self.collection.update_one({"_id": team_id}, {"$push": {"members": member_data}})
-
-    async def remove_member(self, team_id: str, user_id: str) -> None:
-        await self.collection.update_one({"_id": team_id}, {"$pull": {"members": {"user_id": user_id}}})
-
-    async def update_member_role(self, team_id: str, user_id: str, role: str) -> None:
-        await self.collection.update_one(
-            {"_id": team_id, _MEMBERS_USER_ID: user_id},
-            {"$set": {"members.$.role": role}},
+    async def add_member(self, team_id: str, member_data: dict[str, Any], updated_at: datetime) -> bool:
+        """False when the user is already a member; the filter decides, not an earlier read."""
+        result = await self.collection.update_one(
+            {"_id": team_id, _MEMBERS_USER_ID: {"$ne": member_data[_USER_ID]}},
+            {"$push": {"members": member_data}, "$set": {"updated_at": updated_at}},
         )
+        return bool(result.matched_count)
 
-    async def set_members(self, team_id: str, members: list[dict[str, Any]], updated_at: datetime) -> None:
-        await self.collection.update_one({"_id": team_id}, {"$set": {"members": members, "updated_at": updated_at}})
+    async def remove_member(self, team_id: str, user_id: str, updated_at: datetime) -> bool:
+        """False when the pull would leave the team with no admin.
+
+        Expressed as a filter rather than a count taken from an earlier read, so two admins
+        removing each other at once cannot both pass the guard.
+        """
+        result = await self.collection.update_one(
+            {"_id": team_id, "members": {"$elemMatch": {_USER_ID: {"$ne": user_id}, "role": TEAM_ROLE_ADMIN}}},
+            {"$pull": {"members": {_USER_ID: user_id}}, "$set": {"updated_at": updated_at}},
+        )
+        return bool(result.matched_count)
+
+    async def update_member_role(self, team_id: str, user_id: str, role: str, updated_at: datetime) -> None:
+        # Address the member by identity: a concurrent $pull shifts array indices under a positional write.
+        await self.collection.update_one(
+            {"_id": team_id},
+            {"$set": {"members.$[m].role": role, "updated_at": updated_at}},
+            array_filters=[{f"m.{_USER_ID}": user_id}],
+        )
 
     async def is_member(self, team_id: str, user_id: str) -> bool:
         result = await self.collection.find_one({"_id": team_id, _MEMBERS_USER_ID: user_id}, {"_id": 1})

@@ -15,6 +15,15 @@ from tests.mocks.gitlab import (
 )
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
+_USABLE_INSTANCE_DOC = {
+    "_id": "inst-1",
+    "name": "Test",
+    "url": "https://gitlab.com",
+    "access_token": "token-1",
+    "is_active": True,
+    "created_by": "admin",
+}
+
 
 def _make_scan(**kwargs):
     """Create a Scan with sensible defaults for testing."""
@@ -101,11 +110,25 @@ class TestTeamMemberSyncResolveOnly:
 
 
 class TestMrDecorationEarlyReturns:
-    """MR decoration should bail early in various conditions."""
+    """Each guard has to stop before GitLabService is constructed; the body sits inside a blanket
+    except Exception, so a test without that assertion passes whatever the guard does."""
 
-    def test_skips_when_mr_comments_disabled(self):
+    @staticmethod
+    def _db(instance_doc):
+        """A usable instance behind every guard, so a dropped guard reaches GitLabService."""
+        return create_mock_db({"gitlab_instances": create_mock_collection(find_one=instance_doc)})
+
+    @classmethod
+    def _run_and_assert_no_service(cls, project, scan_doc, instance_doc=_USABLE_INSTANCE_DOC):
         from app.services.analysis.integrations import decorate_gitlab_mr
 
+        db = cls._db(instance_doc)
+        with patch("app.services.analysis.integrations.GitLabService") as MockService:
+            asyncio.run(decorate_gitlab_mr(scan_id="s1", stats=Stats(), scan_doc=scan_doc, project=project, db=db))
+
+        MockService.assert_not_called()
+
+    def test_skips_when_mr_comments_disabled(self):
         project = Project(
             name="Test",
             owner_id="u1",
@@ -113,19 +136,9 @@ class TestMrDecorationEarlyReturns:
             gitlab_project_id=100,
             gitlab_mr_comments_enabled=False,
         )
-        asyncio.run(
-            decorate_gitlab_mr(
-                scan_id="s1",
-                stats=Stats(),
-                scan_doc=_make_scan(commit_hash="abc"),
-                project=project,
-                db=MagicMock(),
-            )
-        )
+        self._run_and_assert_no_service(project, _make_scan(commit_hash="abc"))
 
     def test_skips_when_no_gitlab_ids(self):
-        from app.services.analysis.integrations import decorate_gitlab_mr
-
         project = Project(
             name="Test",
             owner_id="u1",
@@ -133,19 +146,9 @@ class TestMrDecorationEarlyReturns:
             gitlab_instance_id=None,
             gitlab_project_id=None,
         )
-        asyncio.run(
-            decorate_gitlab_mr(
-                scan_id="s1",
-                stats=Stats(),
-                scan_doc=_make_scan(commit_hash="abc"),
-                project=project,
-                db=MagicMock(),
-            )
-        )
+        self._run_and_assert_no_service(project, _make_scan(commit_hash="abc"))
 
     def test_skips_when_no_commit_hash(self):
-        from app.services.analysis.integrations import decorate_gitlab_mr
-
         project = Project(
             name="Test",
             owner_id="u1",
@@ -153,19 +156,9 @@ class TestMrDecorationEarlyReturns:
             gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
         )
-        asyncio.run(
-            decorate_gitlab_mr(
-                scan_id="s1",
-                stats=Stats(),
-                scan_doc=_make_scan(),
-                project=project,
-                db=MagicMock(),
-            )
-        )
+        self._run_and_assert_no_service(project, _make_scan())
 
     def test_skips_when_instance_not_found(self):
-        from app.services.analysis.integrations import decorate_gitlab_mr
-
         project = Project(
             name="Test",
             owner_id="u1",
@@ -173,22 +166,9 @@ class TestMrDecorationEarlyReturns:
             gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
         )
-        collection = create_mock_collection(find_one=None)
-        db = create_mock_db({"gitlab_instances": collection})
-
-        asyncio.run(
-            decorate_gitlab_mr(
-                scan_id="s1",
-                stats=Stats(),
-                scan_doc=_make_scan(commit_hash="abc"),
-                project=project,
-                db=db,
-            )
-        )
+        self._run_and_assert_no_service(project, _make_scan(commit_hash="abc"), instance_doc=None)
 
     def test_skips_when_instance_inactive(self):
-        from app.services.analysis.integrations import decorate_gitlab_mr
-
         project = Project(
             name="Test",
             owner_id="u1",
@@ -196,24 +176,21 @@ class TestMrDecorationEarlyReturns:
             gitlab_project_id=100,
             gitlab_mr_comments_enabled=True,
         )
-        instance_doc = {
-            "_id": "inst-1",
-            "name": "Test",
-            "url": "https://gitlab.com",
-            "is_active": False,
-            "created_by": "admin",
-        }
-        collection = create_mock_collection(find_one=instance_doc)
-        db = create_mock_db({"gitlab_instances": collection})
+        self._run_and_assert_no_service(
+            project, _make_scan(commit_hash="abc"), instance_doc={**_USABLE_INSTANCE_DOC, "is_active": False}
+        )
 
-        asyncio.run(
-            decorate_gitlab_mr(
-                scan_id="s1",
-                stats=Stats(),
-                scan_doc=_make_scan(commit_hash="abc"),
-                project=project,
-                db=db,
-            )
+    def test_skips_when_instance_has_no_access_token(self):
+        project = Project(
+            name="Test",
+            owner_id="u1",
+            gitlab_instance_id="inst-1",
+            gitlab_project_id=100,
+            gitlab_mr_comments_enabled=True,
+        )
+
+        self._run_and_assert_no_service(
+            project, _make_scan(commit_hash="abc"), instance_doc={**_USABLE_INSTANCE_DOC, "access_token": None}
         )
 
 

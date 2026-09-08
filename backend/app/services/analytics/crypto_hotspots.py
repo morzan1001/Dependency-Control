@@ -8,13 +8,30 @@ from typing import Any, Literal
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import SCAN_USABLE_STATUSES
 from app.schemas.analytics import HotspotEntry, HotspotResponse
 from app.services.analytics.cache import get_analytics_cache
 from app.services.analytics.scopes import ResolvedScope
 
 GroupBy = Literal["name", "primitive", "asset_type", "weakness_tag", "severity"]
 _SUPPORTED_GROUPINGS = {"name", "primitive", "asset_type", "weakness_tag", "severity"}
+
+# $push of every occurrence_locations array can exceed MongoDB's 16MB group-doc limit on a hot
+# group, so the accumulator reads the arrays of this many assets and no more.
+_LOCATION_SAMPLE_ASSETS = 20
+# Distinct locations one entry lists. Matches the heatmap's column budget so a row can mark
+# every column it belongs to rather than reading as absent from the ones past the cut.
+_LOCATIONS_PER_ENTRY = 30
+
+
+def _distinct_locations(sampled: list[Any]) -> list[str]:
+    """Flatten the sampled assets' location arrays, first occurrence wins."""
+    flat: list[str] = []
+    for entry in sampled:
+        if isinstance(entry, list):
+            flat.extend(str(item) for item in entry)
+        elif isinstance(entry, str):
+            flat.append(entry)
+    return list(dict.fromkeys(flat))
 
 
 class CryptoHotspotService:
@@ -67,15 +84,9 @@ class CryptoHotspotService:
     ) -> list[str]:
         if override:
             return [override]
-        match: dict[str, Any] = {"status": {"$in": SCAN_USABLE_STATUSES}}
-        if resolved.project_ids is not None:
-            match["project_id"] = {"$in": resolved.project_ids}
-        pipeline = [
-            {"$match": match},
-            {"$sort": {"created_at": -1}},
-            {"$group": {"_id": "$project_id", "scan_id": {"$first": "$_id"}}},
-        ]
-        return [row["scan_id"] async for row in self.db.scans.aggregate(pipeline)]
+        from app.services.releases import resolve_scan_ids
+
+        return list((await resolve_scan_ids(self.db, resolved.project_ids)).values())
 
     async def _aggregate(
         self,
@@ -109,10 +120,7 @@ class CryptoHotspotService:
                     "_id": group_key,
                     "asset_count": {"$sum": 1},
                     "project_ids": {"$addToSet": "$project_id"},
-                    # Cap locations in-pipeline: $push of every occurrence_locations array
-                    # can exceed MongoDB's 16MB group-doc limit on hot groups, and we only
-                    # surface 20. $firstN (MongoDB 5.2+) keeps <=20 arrays, flattened below.
-                    "locations": {"$firstN": {"input": "$occurrence_locations", "n": 20}},
+                    "locations": {"$firstN": {"input": "$occurrence_locations", "n": _LOCATION_SAMPLE_ASSETS}},
                     "first_seen": {"$min": "$created_at"},
                     "last_seen": {"$max": "$created_at"},
                 }
@@ -127,12 +135,8 @@ class CryptoHotspotService:
             key = self._key_from_row(row)
             if key is None:
                 continue
-            locations_flat: list[str] = []
-            for subl in row.get("locations", []):
-                if isinstance(subl, list):
-                    locations_flat.extend(subl)
-                elif isinstance(subl, str):
-                    locations_flat.append(subl)
+            distinct = _distinct_locations(row.get("locations", []))
+            sampled_every_asset = row["asset_count"] <= _LOCATION_SAMPLE_ASSETS
             out.append(
                 HotspotEntry(
                     key=key,
@@ -140,7 +144,8 @@ class CryptoHotspotService:
                     asset_count=row["asset_count"],
                     finding_count=0,
                     severity_mix={},
-                    locations=locations_flat[:20],
+                    locations=distinct[:_LOCATIONS_PER_ENTRY],
+                    locations_complete=sampled_every_asset and len(distinct) <= _LOCATIONS_PER_ENTRY,
                     project_ids=list(row.get("project_ids", [])),
                     first_seen=row.get("first_seen") or now,
                     last_seen=row.get("last_seen") or now,
@@ -238,6 +243,8 @@ class CryptoHotspotService:
                 finding_count=data["finding_count"],
                 severity_mix=data["severity_mix"],
                 locations=[],
+                # This dimension groups findings, which carry no per-asset location.
+                locations_complete=False,
                 project_ids=list(data["project_ids"]),
                 first_seen=data["first_seen"] or now,
                 last_seen=data["last_seen"] or now,

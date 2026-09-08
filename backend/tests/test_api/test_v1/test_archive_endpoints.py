@@ -8,6 +8,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.models.archive import ArchiveMetadata
+from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.api.v1.endpoints.archives"
 
@@ -548,6 +549,24 @@ class TestPinScan:
             )
 
         assert exc_info.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_a_scan_of_another_project_is_not_pinnable(self, admin_user):
+        """FakeDatabase-backed: a mock that answers every find_one the same way cannot tell
+        whether the lookup is scoped to the project in the path."""
+        from app.api.v1.endpoints.archives import pin_scan
+
+        db = FakeDatabase()
+        await db.scans.insert_one({"_id": "scan-1", "project_id": "other-proj"})
+
+        with (
+            patch(f"{MODULE}.check_project_access", new_callable=AsyncMock),
+            pytest.raises(HTTPException) as exc_info,
+        ):
+            await pin_scan(project_id="proj-1", scan_id="scan-1", current_user=admin_user, db=db)
+
+        assert exc_info.value.status_code == 404
+        assert (await db.scans.find_one({"_id": "scan-1"})).get("pinned") is None
 
     def test_raises_403_without_archive_restore_permission(self, no_perms_user):
         from app.api.v1.endpoints.archives import pin_scan

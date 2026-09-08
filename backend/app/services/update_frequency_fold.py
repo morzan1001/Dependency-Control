@@ -10,6 +10,7 @@ from datetime import datetime
 from itertools import dropwhile, pairwise
 from typing import Any, Literal
 
+from app.core.constants import RECENT_UPDATES_LIMIT
 from app.schemas.analytics import (
     DependencyUpdateEvent,
     ProjectUpdateSummary,
@@ -32,7 +33,6 @@ from app.services.update_frequency import (
 logger = logging.getLogger(__name__)
 
 _UPDATE_KINDS = ("patch", "minor", "major", "unknown")
-_RECENT_UPDATES_LIMIT = 30
 _NOT_ENOUGH_SCANS = "Not enough scans to analyze (need at least 2)"
 
 
@@ -71,6 +71,8 @@ class FoldedWindow:
         branch: str | None = None,
         slowest_packages: Sequence[SlowPackage] = (),
         upstream: UpstreamCadenceMetrics | None = None,
+        window_scan_cap: int | None = None,
+        outdated_backlog: int = 0,
     ) -> UpdateFrequencyMetrics:
         return UpdateFrequencyMetrics(
             project_id=project_id,
@@ -96,6 +98,8 @@ class FoldedWindow:
             trend_direction=self.trend_direction,
             trend_detail=self.trend_detail,
             dominant_ecosystem=self.dominant_ecosystem,
+            window_scan_cap=window_scan_cap,
+            outdated_backlog=outdated_backlog,
             scan_timeline=self.scan_timeline,
             slowest_packages=list(slowest_packages),
             recent_updates=self.recent_updates,
@@ -118,6 +122,7 @@ class FoldedWindow:
         branch: str | None = None,
         window_days: int,
         data_status: Literal["ready", "partial"] = "ready",
+        window_scan_cap: int | None = None,
     ) -> ProjectUpdateSummary:
         """A row carrying the folded numbers.
 
@@ -139,6 +144,7 @@ class FoldedWindow:
             total_updates=self.total_updates,
             total_outdated=self.total_outdated_detected,
             last_scan_date=self.last_scan_date,
+            window_scan_cap=window_scan_cap,
         )
 
 
@@ -420,6 +426,6 @@ def _recent_updates(deltas: Sequence[dict[str, Any]]) -> list[DependencyUpdateEv
                     was_outdated=bool(sample["wo"]),
                 )
             )
-            if len(events) == _RECENT_UPDATES_LIMIT:
+            if len(events) == RECENT_UPDATES_LIMIT:
                 return events
     return events

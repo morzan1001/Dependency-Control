@@ -19,7 +19,8 @@ from app.api.v1.helpers.ingest import process_findings_ingest
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_500
 from app.core.constants import SCAN_USABLE_STATUSES, WEBHOOK_EVENT_SBOM_INGESTED
 from app.models.project import Project
-from app.repositories import DependencyRepository, DistributedLocksRepository
+from app.models.release import Release
+from app.repositories import DependencyRepository, DistributedLocksRepository, ReleaseRepository
 from app.schemas.bearer import BearerIngest
 from app.schemas.ingest import (
     FindingsIngestResponse,
@@ -324,6 +325,14 @@ async def ingest_sbom(
                 "created_at": now,
             },
         }
+
+        release = data.release_fields(now)
+        if release:
+            # The row before the flag: the backfill sweeps the release rows and repairs a missing
+            # flag, while a flag whose row is missing shows a release that is not there.
+            release_repo = ReleaseRepository(db)
+            await release_repo.record(Release(project_id=str(project.id), scan_id=scan_id, **release))
+            scan_update["$set"]["is_release"] = True
 
         # Replace (never append) so a CI retry cannot pile up duplicate SBOMs that get
         # stored and re-analysed forever; superseded GridFS uploads are deleted below.

@@ -1,9 +1,13 @@
 """Stateless helpers for chat tool registry and crypto/compliance tool wrappers."""
 
+from contextvars import ContextVar
 from datetime import datetime, timezone
 from typing import Any
 
 from app.core.config import settings
+from app.services.aggregation.components import extract_artifact_name
+from app.services.analytics.findings_delta import finding_identity_key
+from app.services.recommendation.common import finding_cve_ids
 
 
 def _waiver_is_active(waiver: dict[str, Any], now: datetime | None = None) -> bool:
@@ -18,8 +22,19 @@ def _waiver_is_active(waiver: dict[str, Any], now: datetime | None = None) -> bo
     return bool(expiration > reference)
 
 
-MAX_TOOL_LIMIT = 200  # Hard cap on LLM-supplied limit arguments to prevent DoS.
 MAX_TOOL_RESULT_BYTES = 8_000  # Cap JSON size returned to the LLM per call.
+
+# How a bounded answer names the population its list was cut from: "<list key><suffix>".
+_TOTAL_SUFFIX = "_total"
+
+# Ceilings on an LLM-supplied limit, one per row shape, and every tool names the one it uses.
+# MAX_TOOL_RESULT_BYTES is what finally cuts a list — a serialized finding runs to ~850 bytes, so
+# roughly nine fill the budget — and _truncate_if_too_large says so when it does. These bound
+# what a call may cost before reaching that point.
+MAX_FINDING_ROWS = 25
+MAX_SUMMARY_ROWS = 50
+MAX_PLAN_STEPS = 25
+MAX_DAY_WINDOW = 365
 
 # details.exploit_maturity values meaning actively exploited in the wild.
 KEV_EQUIVALENT_MATURITY = ("active", "weaponized")
@@ -57,13 +72,104 @@ _SEVERITY_RANK = {
 }
 
 
-def _clamp_limit(raw: Any, default: int, maximum: int = MAX_TOOL_LIMIT) -> int:
-    """Coerce LLM-supplied `limit` to a safe integer, clamped to [1, maximum]."""
+# Clamps applied while one tool call runs, so the answer can say it was not the one asked for.
+_CLAMPED_LIMITS: ContextVar[list[tuple[int, int]] | None] = ContextVar("chat_tool_clamped_limits", default=None)
+
+# Reads that hit their ceiling while one tool call runs. An LLM relaying a list has no chart
+# beside it against which a reader could notice that the list stops short.
+_BOUNDED_READS: ContextVar[list[tuple[str, int, int]] | None] = ContextVar("chat_tool_bounded_reads", default=None)
+
+
+def begin_limit_ledger() -> None:
+    """Start recording clamps and saturated reads for one tool call."""
+    _CLAMPED_LIMITS.set([])
+    _BOUNDED_READS.set([])
+
+
+async def bounded_read(
+    collection: Any,
+    query: dict[str, Any],
+    *,
+    subject: str,
+    limit: int,
+    **find_kwargs: Any,
+) -> tuple[list[dict[str, Any]], int]:
+    """The first `limit` rows matching `query`, and how many rows match in total.
+
+    The count costs a round trip only once the read saturates, which is the only time the two
+    can differ. A saturated read is recorded so the answer says so even where the caller never
+    named a limit.
+    """
+    rows: list[dict[str, Any]] = await collection.find(query, limit=limit, **find_kwargs).to_list(length=limit)
+    if len(rows) < limit:
+        return rows, len(rows)
+    total = await collection.count_documents(query)
+    ledger = _BOUNDED_READS.get()
+    if ledger is not None:
+        ledger.append((subject, len(rows), total))
+    return rows, total
+
+
+def bounded_read_note() -> str | None:
+    """What this call read against what it was answering about, or None when the two agree."""
+    reads = _BOUNDED_READS.get()
+    if not reads:
+        return None
+    pairs = "; ".join(f"{shown} of {total} {subject}" for subject, shown, total in reads)
+    return (
+        f"State this caveat in your answer: it covers only part of what was asked about ({pairs}). "
+        "Narrow the question — a single project, a shorter window — for an answer over all of it."
+    )
+
+
+def clamped_limit_note() -> str | None:
+    """What this call asked for against what it was given, or None when the two agree."""
+    clamps = _CLAMPED_LIMITS.get()
+    if not clamps:
+        return None
+    pairs = ", ".join(f"{requested} to {granted}" for requested, granted in clamps)
+    return (
+        f"A numeric argument was outside this tool's range and was changed ({pairs}). "
+        "The answer covers the reduced amount; narrow the filter to see the rest."
+    )
+
+
+def _clamp_limit(raw: Any, default: int, maximum: int) -> int:
+    """Coerce LLM-supplied `limit` to a safe integer, clamped to [1, maximum].
+
+    A clamp is recorded, because a caller that asked for 500 and received 200 otherwise
+    reads the answer as the whole of what it asked about.
+    """
     try:
-        value = int(raw) if raw is not None else default
+        requested = int(raw) if raw is not None else None
     except (TypeError, ValueError):
-        value = default
-    return max(1, min(value, maximum))
+        requested = None
+    value = default if requested is None else requested
+    clamped = max(1, min(value, maximum))
+    ledger = _CLAMPED_LIMITS.get()
+    if requested is not None and clamped != requested and ledger is not None:
+        ledger.append((requested, clamped))
+    return clamped
+
+
+_VULNERABILITY = "vulnerability"
+
+
+def staleness_identities(finding: dict[str, Any]) -> set[tuple[str, str, str]]:
+    """What a finding must still be for its "days open" clock to keep running.
+
+    A vulnerability record is keyed once per advisory on the folded component name. The scan
+    delta's identity carries ``version`` on purpose — a bump is a change it must report — but
+    reusing it here would restart the clock the moment an unrelated upgrade lands, and a
+    long-lived unfixed advisory is the one that most deserves attention. Every other type's
+    identity is already version-free, so it is taken as the delta computes it.
+    """
+    if (finding.get("type") or "") == _VULNERABILITY:
+        component = extract_artifact_name(finding.get("component") or "")
+        advisories = finding_cve_ids(finding)
+        if advisories:
+            return {(_VULNERABILITY, component, advisory) for advisory in advisories}
+    return {finding_identity_key(finding)}
 
 
 def _ensure_list(value: Any) -> list[Any] | None:
@@ -226,8 +332,12 @@ def _truncate_if_too_large(result: dict[str, Any]) -> dict[str, Any]:
             hi = mid - 1
     result[biggest_key] = original[:lo]
     result["_truncated"] = True
+    # The list may already be a page of a larger set; naming its length would report the page
+    # as the population the byte cap cut from.
+    population = result.get(f"{biggest_key}{_TOTAL_SUFFIX}")
     result["_truncation_note"] = (
-        f"Result truncated from {biggest_len} to {lo} entries in '{biggest_key}'. "
+        f"Result truncated from {population if isinstance(population, int) else biggest_len} "
+        f"to {lo} entries in '{biggest_key}'. "
         f"Call this tool with a smaller limit or a narrower filter for more data."
     )
     return result

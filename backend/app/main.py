@@ -8,7 +8,9 @@ from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
 from app.api import health
 from app.api.v1.endpoints import (
+    adhoc_keys,
     analytics,
+    analyze,
     archives,
     auth,
     callgraph,
@@ -30,6 +32,7 @@ from app.api.v1.endpoints import (
     policy_audit,
     pqc_migration,
     projects,
+    releases,
     scripts,
     system,
     teams,
@@ -42,7 +45,7 @@ from app.core.init_db import init_db
 from app.core.metrics import PrometheusMiddleware, metrics_endpoint
 from app.core.worker import worker_manager
 from app.db.mongodb import close_mongo_connection, connect_to_mongo
-from app.services.analytics.scopes import ScopeResolutionError
+from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError
 
 logging.basicConfig(
     level=logging.INFO,
@@ -84,6 +87,12 @@ app.add_middleware(PrometheusMiddleware)
 async def scope_resolution_exception_handler(request: Request, exc: ScopeResolutionError) -> JSONResponse:
     """Map analytics scope-authorization failures to a uniform 403 response."""
     return JSONResponse(status_code=403, content={"detail": str(exc)})
+
+
+@app.exception_handler(ScopeTooLargeError)
+async def scope_too_large_exception_handler(request: Request, exc: ScopeTooLargeError) -> JSONResponse:
+    """A scope analytics cannot materialise is refused, not answered over an arbitrary subset."""
+    return JSONResponse(status_code=413, content={"detail": str(exc)})
 
 
 @app.exception_handler(Exception)
@@ -189,6 +198,7 @@ app.include_router(
 app.include_router(analytics.router, prefix=f"{settings.API_V1_STR}/analytics", tags=["analytics"])
 app.include_router(archives.router, prefix=f"{settings.API_V1_STR}/projects", tags=["archives"])
 app.include_router(archives.admin_router, prefix=f"{settings.API_V1_STR}/archives", tags=["archives-admin"])
+app.include_router(releases.router, prefix=f"{settings.API_V1_STR}/projects", tags=["releases"])
 app.include_router(callgraph.router, prefix=f"{settings.API_V1_STR}/projects", tags=["callgraph"])
 app.include_router(crypto_assets.router, prefix=f"{settings.API_V1_STR}", tags=["crypto-assets"])
 app.include_router(inventory.router, prefix=f"{settings.API_V1_STR}", tags=["inventory"])
@@ -201,6 +211,8 @@ app.include_router(scripts.router, prefix=f"{settings.API_V1_STR}", tags=["scrip
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
 app.include_router(mcp_keys.router, prefix=f"{settings.API_V1_STR}/mcp-keys", tags=["mcp-keys"])
 app.include_router(mcp.router, prefix=f"{settings.API_V1_STR}/mcp", tags=["mcp"])
+app.include_router(adhoc_keys.router, prefix=f"{settings.API_V1_STR}/analyze-keys", tags=["adhoc-keys"])
+app.include_router(analyze.router, prefix=f"{settings.API_V1_STR}", tags=["analyze"])
 
 
 @app.get("/")

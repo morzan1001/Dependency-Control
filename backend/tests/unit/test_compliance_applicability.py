@@ -8,7 +8,8 @@ from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
 from app.services.analytics.scopes import ResolvedScope
 from app.services.compliance.frameworks.base import (
     EvaluationInput,
-    _is_applicable,
+    _Applicability,
+    _applicability,
     default_evaluator,
 )
 
@@ -56,12 +57,12 @@ def _input(assets, *, findings=None):
 
 def test_rsa_control_not_applicable_when_only_aes_present():
     aes = _asset(name="AES", primitive=CryptoPrimitive.BLOCK_CIPHER, key_size_bits=256)
-    assert _is_applicable(_RSA_CONTROL, _input([aes])) is False
+    assert _applicability(_RSA_CONTROL, _input([aes])) is _Applicability.NO_ASSET_IN_SCOPE
 
 
 def test_rsa_control_applicable_when_compliant_rsa_present():
     rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
-    assert _is_applicable(_RSA_CONTROL, _input([rsa])) is True
+    assert _applicability(_RSA_CONTROL, _input([rsa])) is _Applicability.APPLICABLE
 
 
 def test_rsa_control_passes_with_compliant_rsa_and_no_findings():
@@ -77,7 +78,7 @@ def test_rsa_control_not_applicable_with_only_aes_and_no_findings():
 
 
 def test_no_assets_is_not_applicable():
-    assert _is_applicable(_RSA_CONTROL, _input([])) is False
+    assert _applicability(_RSA_CONTROL, _input([])) is _Applicability.NO_ASSET_IN_SCOPE
 
 
 def test_fallback_to_inventory_when_no_scoping_rules_available():
@@ -93,7 +94,7 @@ def test_fallback_to_inventory_when_no_scoping_rules_available():
         iana_catalog_version=1,
         scan_ids=["s1"],
     )
-    assert _is_applicable(_RSA_CONTROL, data) is True
+    assert _applicability(_RSA_CONTROL, data) is _Applicability.APPLICABLE
 
 
 # Controls backed only by disabled policy rules must never PASS.
@@ -129,7 +130,7 @@ def test_control_backed_only_by_disabled_rule_is_not_applicable():
     """A disabled rule is never evaluated, so no finding can exist and PASSED would be a false attestation."""
     rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
     data = _input_with_rules([rsa], [_DISABLED_RSA_RULE.model_dump()])
-    assert _is_applicable(_RSA_CONTROL, data) is False
+    assert _applicability(_RSA_CONTROL, data) is _Applicability.RULES_DISABLED
 
 
 def test_disabled_rule_control_reports_not_applicable_not_passed():
@@ -143,7 +144,7 @@ def test_enabled_rule_still_applicable_alongside_disabled_duplicate():
     """If at least one backing rule is enabled the control is still evaluable."""
     rsa = _asset(name="RSA", primitive=CryptoPrimitive.PKE, key_size_bits=4096)
     data = _input_with_rules([rsa], [_RSA_RULE.model_dump()])
-    assert _is_applicable(_RSA_CONTROL, data) is True
+    assert _applicability(_RSA_CONTROL, data) is _Applicability.APPLICABLE
 
 
 # default_evaluator must honour details.matched_rules.

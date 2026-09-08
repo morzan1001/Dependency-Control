@@ -15,6 +15,7 @@ from pymongo import UpdateMany, UpdateOne
 
 from app.core.constants import (
     DETAILS_KEY_IN_KEV,
+    MAX_RESCAN_HOPS,
     SCAN_STATUS_COMPLETED,
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
     SCAN_STATUS_FAILED,
@@ -57,7 +58,12 @@ from app.schemas.sbom import ParsedDependency
 from app.services.aggregation import ResultAggregator
 from app.services.analysis.integrations import decorate_gitlab_mr
 from app.services.analysis.notifications import send_scan_notifications
-from app.services.analysis.registry import CRYPTO_ANALYZERS, VULNERABILITY_ANALYZERS, analyzers, is_crypto_analyzer
+from app.services.analysis.registry import (
+    CRYPTO_ANALYZERS,
+    VULNERABILITY_ANALYZERS,
+    analyzer_factories,
+    is_crypto_analyzer,
+)
 from app.services.analysis.stats import (
     build_epss_kev_summary,
     build_reachability_summary,
@@ -111,7 +117,7 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"],
     logger.info(f"Rescan detected. Carrying over external results from {original_scan_id} to {scan_id}")
 
     # Internal analyzers and post-processors are regenerated per run, never carried over.
-    excluded_names = list(analyzers.keys()) + list(_POST_PROCESSOR_ANALYZERS)
+    excluded_names = list(analyzer_factories) + list(_POST_PROCESSOR_ANALYZERS)
 
     from app.repositories import AnalysisResultRepository
 
@@ -151,6 +157,28 @@ async def _carry_over_external_results(scan_id: str, scan_doc: Optional["Scan"],
         logger.info(f"Carried over {len(bulk_ops)} external results to rescan {scan_id}")
     except Exception as e:
         logger.exception("Failed to bulk carry over external results: %s", e)
+
+
+async def _carry_over_crypto_assets(scan_id: str, scan_doc: Optional["Scan"], db: Database) -> None:
+    """Re-key the original scan's crypto assets onto a rescan.
+
+    A CBOM posted to /ingest/cbom is not stored in GridFS, so a rescan cannot re-derive the assets
+    it described and every crypto surface would read the rescan as having no cryptography at all.
+    """
+    if not (scan_doc and scan_doc.is_rescan and scan_doc.original_scan_id and scan_doc.project_id):
+        return
+
+    from app.repositories.crypto_asset import CryptoAssetRepository
+
+    try:
+        carried = await CryptoAssetRepository(db).carry_over_to_scan(
+            scan_doc.project_id, scan_doc.original_scan_id, scan_id
+        )
+    except Exception as e:
+        logger.exception("Failed to carry over crypto assets to rescan %s: %s", scan_id, e)
+        return
+    if carried:
+        logger.info("Carried over %d crypto assets from %s to rescan %s", carried, scan_doc.original_scan_id, scan_id)
 
 
 # Analyzer result keys reporting incomplete coverage, with how to phrase each.
@@ -440,7 +468,7 @@ async def _process_sbom(
     tasks = [
         process_analyzer(
             analyzer_name,
-            analyzers[analyzer_name],
+            analyzer_factories[analyzer_name](),
             current_sbom,
             scan_id,
             db,
@@ -451,7 +479,7 @@ async def _process_sbom(
             project_id=project_id,
         )
         for analyzer_name in effective_analyzers
-        if analyzer_name in analyzers
+        if analyzer_name in analyzer_factories
     ]
 
     batch_results = await asyncio.gather(*tasks)
@@ -739,7 +767,7 @@ async def _aggregate_external_results(
     external_results = await result_repo.find_by_scan(scan_id, limit=10000)
     for res in external_results:
         # Skip post-processor rows: they are engine outputs, not external scanner results.
-        if res.analyzer_name not in analyzers and res.analyzer_name not in _POST_PROCESSOR_ANALYZERS:
+        if res.analyzer_name not in analyzer_factories and res.analyzer_name not in _POST_PROCESSOR_ANALYZERS:
             try:
                 aggregator.aggregate(res.analyzer_name, res.result)
                 if isinstance(res.result, dict) and res.result.get("error"):
@@ -776,7 +804,7 @@ def _cleanup_analyzer_names(active_analyzers: list[str]) -> list[str]:
     Crypto/post-processor rows are regenerated per run and can exist independently of
     active_analyzers (crypto auto-added by an embedded CBOM), so they must be purged explicitly.
     """
-    internal_analyzers = [name for name in active_analyzers if name in analyzers]
+    internal_analyzers = [name for name in active_analyzers if name in analyzer_factories]
     return sorted(set(internal_analyzers) | set(_POST_PROCESSOR_ANALYZERS) | set(CRYPTO_ANALYZERS))
 
 
@@ -906,6 +934,25 @@ def _as_utc(dt: datetime | None) -> datetime | None:
     return dt
 
 
+async def _lineage_root(scan_id: str, scan_doc: Any, scan_repo: ScanRepository) -> str:
+    """The scan a rescan lineage descends from, following original_scan_id upwards.
+
+    A pointer may name a rescan rather than the root, so one hop is not enough. Bounded, so a
+    cyclic pointer cannot hang the ingest path.
+    """
+    root_id = scan_id
+    doc = scan_doc
+    for _hop in range(MAX_RESCAN_HOPS):
+        if doc is None or not getattr(doc, "is_rescan", False):
+            break
+        parent_id = getattr(doc, "original_scan_id", None)
+        if not parent_id or parent_id == root_id:
+            break
+        root_id = parent_id
+        doc = await scan_repo.get_by_id_strong(parent_id)
+    return root_id
+
+
 async def _should_update_project_latest_scan(
     scan_id: str,
     scan_doc: Any,
@@ -917,8 +964,13 @@ async def _should_update_project_latest_scan(
     """True unless a strictly-newer scan (by created_at) is already the project's latest.
 
     Guards against a late/out-of-order scan clobbering latest_scan_id/stats with stale data.
+    A rescan always carries created_at = now, so it wins the slot only when it descends from the
+    same original the current latest descends from — a release or old-scan rescan must not swing
+    the project onto its numbers.
     A non-authoritative scan (no SBOM ever received) may only become latest when the project
     has none yet, so a SAST-only pipeline run cannot wipe the SBOM-derived picture.
+    The slot means "the tip of the default branch", so a pipeline on another branch — a feature
+    branch or a tag build — cannot take it off the branch the VCS calls default.
     """
     project_doc = await project_repo.get_by_id_strong(project_id)
     current_latest_id = getattr(project_doc, "latest_scan_id", None) if project_doc else None
@@ -930,6 +982,22 @@ async def _should_update_project_latest_scan(
     current_latest = await scan_repo.get_by_id_strong(current_latest_id)
     if not current_latest:
         return True
+
+    default_branch = getattr(project_doc, "default_branch", None)
+    incoming_branch = getattr(scan_doc, "branch", None)
+    if default_branch and current_latest.branch == default_branch and incoming_branch != default_branch:
+        return False
+
+    if getattr(scan_doc, "is_rescan", False):
+        incoming_parent = getattr(scan_doc, "original_scan_id", None)
+        current_parent = getattr(current_latest, "original_scan_id", None) or current_latest_id
+        # One shared parent settles the common case with no read at all; only a mismatch is worth
+        # resolving both sides for, because a pointer into the middle of a chain names no root.
+        if incoming_parent and incoming_parent != current_parent:
+            incoming_root = await _lineage_root(scan_id, scan_doc, scan_repo)
+            current_root = await _lineage_root(current_latest_id, current_latest, scan_repo)
+            if incoming_root != current_root:
+                return False
 
     this_created = _as_utc(getattr(scan_doc, "created_at", None))
     current_created = _as_utc(getattr(current_latest, "created_at", None))
@@ -1150,7 +1218,9 @@ async def run_analysis(scan_id: str, sboms: list[dict[str, Any]], active_analyze
     if scan_doc.is_rescan and analysis_rescan_operations_total:
         analysis_rescan_operations_total.inc()
 
+    # Before the SBOM loop: an embedded CBOM re-persists over the carried copy of the same asset.
     await _carry_over_external_results(scan_id, scan_doc, db)
+    await _carry_over_crypto_assets(scan_id, scan_doc, db)
 
     settings_repo = SystemSettingsRepository(db)
     system_settings = await settings_repo.get()

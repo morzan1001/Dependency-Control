@@ -34,7 +34,9 @@ export interface SearchResult {
 export interface DependencyUsage {
   name: string;
   type: string;
+  // The newest versions in use; version_count is how many distinct ones the estate holds.
   versions: string[];
+  version_count: number;
   project_count: number;
   total_occurrences: number;
   has_vulnerabilities: boolean;
@@ -62,6 +64,9 @@ export interface DependencyTreeNode {
 export interface DependencyGraph {
   nodes: DependencyTreeNode[];
   roots: string[];
+  // Rows the graph was built from against what the scan holds; equal unless the read saturated.
+  dependencies_read: number;
+  dependencies_total: number;
 }
 
 export interface ImpactAnalysisResult {
@@ -85,6 +90,7 @@ export interface ImpactAnalysisResult {
   days_known?: number;
   has_fix?: boolean;
   fix_versions?: string[];
+  fix_version_count?: number;
   priority_reasons?: string[];
 }
 
@@ -95,6 +101,9 @@ export interface VulnerabilityHotspot {
   finding_count: number;
   severity_breakdown: SeverityBreakdown;
   affected_projects: string[];
+  affected_project_count?: number;
+  fix_version_count?: number;
+  cve_count?: number;
   first_seen: string;
   max_epss_score?: number;
   epss_percentile?: number;
@@ -124,6 +133,16 @@ export interface AnalyticsSummary {
   unique_packages: number;
   dependency_types: DependencyTypeStats[];
   severity_distribution: SeverityBreakdown;
+}
+
+export interface AnalyticsScope {
+  // Every environment any project in scope was released to; empty means nothing was ever marked.
+  release_environments: string[];
+  resolved_projects: number;
+  // Counts projects with no usable scan at all unless a release environment was requested.
+  projects_without_release: number;
+  // Date of the oldest analysis behind the numbers; null when the scope resolved to no scan.
+  oldest_analysis_at: string | null;
 }
 
 export interface AdvancedSearchResult {
@@ -193,6 +212,7 @@ export interface HotspotsQueryParams {
   limit?: number;
   sort_by?: 'finding_count' | 'component' | 'first_seen' | 'epss' | 'risk';
   sort_order?: 'asc' | 'desc';
+  release_environment?: string;
 }
 
 export interface AdvancedSearchResponse {
@@ -243,6 +263,7 @@ export interface VulnerabilitySearchOptions {
   sort_order?: 'asc' | 'desc';
   skip?: number;
   limit?: number;
+  release_environment?: string;
 }
 
 export type ComponentFinding = Finding & { project_id: string; project_name: string; scan_id?: string };
@@ -342,6 +363,8 @@ export interface RecommendationAction {
   line_number?: number;
   secret_type?: string;
   files?: string[];
+  // Files the recommendation covers, counted before `files` was cut.
+  files_total?: number;
   rule_ids?: string[];
   license_type?: string;
   components?: string[];
@@ -386,6 +409,12 @@ export interface Recommendation {
   description: string;
   impact: RecommendationImpact;
   affected_components: string[];
+  // Components the recommendation covers, counted before the list was cut.
+  affected_components_total: number;
+  // Position in the ranked list this came from and how many were ranked; both 0 unless the
+  // generator cut that list.
+  rank: number;
+  ranked_out_of: number;
   affected_projects?: Array<{ id: string; name: string }>;
   action: RecommendationAction;
   effort: 'low' | 'medium' | 'high';
@@ -417,6 +446,9 @@ export interface RecommendationsResponse {
   total_vulnerabilities: number;
   recommendations: Recommendation[];
   summary: RecommendationsSummary;
+  // Dependency rows the engine reasoned over against what the scan holds.
+  dependencies_read: number;
+  dependencies_total: number;
 }
 
 export interface AdvancedSearchOptions {
@@ -429,6 +461,7 @@ export interface AdvancedSearchOptions {
     sort_order?: 'asc' | 'desc';
     skip?: number;
     limit?: number;
+    release_environment?: string;
 }
 
 export type UpdateType = 'patch' | 'minor' | 'major' | 'unknown' | 'downgrade';
@@ -498,6 +531,11 @@ export interface UpdateFrequencyMetrics {
     upstream_days_since_latest_release_median: number | null;
     adoption_latency_days_median: number | null;
     dominant_ecosystem: string | null;
+    // Scans the numbers cover when the branch holds more than either read path follows;
+    // null when the whole window was read.
+    window_scan_cap: number | null;
+    // Packages still outdated in the newest measured scan, counted before slowest_packages was cut.
+    outdated_backlog: number;
     scan_timeline: ScanTimelineEntry[];
     slowest_packages: SlowPackage[];
     recent_updates: DependencyUpdateEvent[];
@@ -526,6 +564,9 @@ export interface ProjectUpdateSummary {
     total_updates: number | null;
     last_scan_date: string | null;
     data_status: UpdateDataStatus;
+    // Scans the row covers when the branch holds more than either read path follows;
+    // null when the whole window was read.
+    window_scan_cap: number | null;
 }
 
 // projects holds every project in scope: the ranked ones first, then partial,

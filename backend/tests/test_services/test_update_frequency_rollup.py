@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from app.core.constants import RECENT_UPDATES_LIMIT
 from app.core.metrics import update_frequency_delta_writes_total
 from app.services.update_frequency_rollup import record_scan_update_delta
 from tests.mocks.fake_mongo import FakeDatabase
@@ -267,10 +268,11 @@ class TestDiff:
         assert doc["updates"]["minor"] == 1
 
     @pytest.mark.asyncio
-    async def test_sample_is_capped_at_twenty_deterministically(self):
+    async def test_sample_is_capped_at_the_shared_limit_deterministically(self):
+        changed = RECENT_UPDATES_LIMIT + 10
         db = FakeDatabase()
-        old = [_dep("s1", f"pkg{i:03d}", "1.0.0") for i in range(30)]
-        new = [_dep("s2", f"pkg{i:03d}", "1.0.1") for i in range(30)]
+        old = [_dep("s1", f"pkg{i:03d}", "1.0.0") for i in range(changed)]
+        new = [_dep("s2", f"pkg{i:03d}", "1.0.1") for i in range(changed)]
         new[7]["version"] = "2.0.0"
         new[7]["purl"] = "pkg:pypi/pkg007@2.0.0"
         await _seed_scan(db, "s1", _at(0), old)
@@ -281,11 +283,12 @@ class TestDiff:
 
         doc = await _delta(db, "s2")
         assert doc is not None
-        assert doc["total_updates"] == 30
-        assert len(doc["updates_sample"]) == 20
-        # Biggest jump first, then by name, so a recomputation keeps the same 20.
+        assert doc["total_updates"] == changed
+        # The writer keeps exactly what the readers show, so one busy scan can fill their list.
+        assert len(doc["updates_sample"]) == RECENT_UPDATES_LIMIT
+        # Biggest jump first, then by name, so a recomputation keeps the same entries.
         assert doc["updates_sample"][0]["n"] == "pkg007"
-        expected = [f"pkg{i:03d}" for i in range(20) if i != 7]
+        expected = [f"pkg{i:03d}" for i in range(RECENT_UPDATES_LIMIT) if i != 7]
         assert [entry["n"] for entry in doc["updates_sample"][1:]] == expected
 
 
@@ -618,8 +621,8 @@ class TestOutOfOrderArrival:
 
         repaired = [i for i in range(1, 8) if (await _delta(db, f"empty{i}"))["prev_scan_id"] == "late"]
         assert repaired == [1, 2, 3, 4, 5]
-        # Silence here would hide deltas left on a stale predecessor.
-        assert "repair stopped after 5 hops from scan late" in caplog.text
+        # Silence here would hide deltas left on a stale predecessor; the hop count is the assertion above.
+        assert "repair stopped" in caplog.text
 
     @pytest.mark.asyncio
     async def test_repair_walks_past_a_successor_that_fails_to_recompute(self):

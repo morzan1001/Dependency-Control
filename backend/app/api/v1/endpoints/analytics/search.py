@@ -8,9 +8,11 @@ from fastapi import Query
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
+    ReleaseEnvironmentQuery,
     get_projects_with_scans,
     get_user_project_ids,
     require_analytics_permission,
+    scope_resolution_counts,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
 from app.core.constants import DETAILS_KEY_IN_KEV, DETAILS_KEY_KEV_RANSOMWARE, get_severity_value
@@ -107,6 +109,7 @@ async def search_dependencies_advanced(
         Query(description="Sort field: name, version, type, project_name, license, direct"),
     ] = "name",
     sort_order: Annotated[str, Query(description="Sort order: asc or desc")] = "asc",
+    release_environment: ReleaseEnvironmentQuery = None,
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> DependencySearchResponse:
@@ -120,15 +123,27 @@ async def search_dependencies_advanced(
         accessible_project_ids = [pid for pid in accessible_project_ids if pid in requested_ids]
 
     if not accessible_project_ids:
-        return DependencySearchResponse(items=[], total=0, page=0, size=limit)
+        return DependencySearchResponse(
+            items=[], total=0, page=0, size=limit, resolved_projects=0, projects_without_release=0
+        )
 
     dep_repo = DependencyRepository(db)
     finding_repo = FindingRepository(db)
 
-    project_name_map, scan_ids = await get_projects_with_scans(accessible_project_ids, db)
+    project_name_map, scan_ids = await get_projects_with_scans(
+        accessible_project_ids, db, release_environment=release_environment
+    )
+    resolved_projects, projects_without_release = scope_resolution_counts(accessible_project_ids, scan_ids)
 
     if not scan_ids:
-        return DependencySearchResponse(items=[], total=0, page=0, size=limit)
+        return DependencySearchResponse(
+            items=[],
+            total=0,
+            page=0,
+            size=limit,
+            resolved_projects=resolved_projects,
+            projects_without_release=projects_without_release,
+        )
 
     query = {"scan_id": {"$in": scan_ids}, "name": {"$regex": re.escape(q), "$options": "i"}}
     if version:
@@ -189,6 +204,8 @@ async def search_dependencies_advanced(
         total=total_count,
         page=(skip // limit) + 1 if limit > 0 else 1,
         size=limit,
+        resolved_projects=resolved_projects,
+        projects_without_release=projects_without_release,
     )
 
 
@@ -406,6 +423,7 @@ async def search_vulnerabilities(
         Query(description="Sort field: severity, cvss, epss, component, project_name"),
     ] = "severity",
     sort_order: Annotated[str, Query(description="Sort order: asc or desc")] = "desc",
+    release_environment: ReleaseEnvironmentQuery = None,
     skip: Annotated[int, Query(ge=0, description="Number of items to skip")] = 0,
     limit: Annotated[int, Query(ge=1, le=500)] = 50,
 ) -> VulnerabilitySearchResponse:
@@ -419,14 +437,26 @@ async def search_vulnerabilities(
         accessible_project_ids = [pid for pid in accessible_project_ids if pid in requested_ids]
 
     if not accessible_project_ids:
-        return VulnerabilitySearchResponse(items=[], total=0, page=0, size=limit)
+        return VulnerabilitySearchResponse(
+            items=[], total=0, page=0, size=limit, resolved_projects=0, projects_without_release=0
+        )
 
     finding_repo = FindingRepository(db)
 
-    project_name_map, scan_ids = await get_projects_with_scans(accessible_project_ids, db)
+    project_name_map, scan_ids = await get_projects_with_scans(
+        accessible_project_ids, db, release_environment=release_environment
+    )
+    resolved_projects, projects_without_release = scope_resolution_counts(accessible_project_ids, scan_ids)
 
     if not scan_ids:
-        return VulnerabilitySearchResponse(items=[], total=0, page=0, size=limit)
+        return VulnerabilitySearchResponse(
+            items=[],
+            total=0,
+            page=0,
+            size=limit,
+            resolved_projects=resolved_projects,
+            projects_without_release=projects_without_release,
+        )
 
     query = _build_vuln_query(scan_ids, q, severity, finding_type, include_waived)
 
@@ -460,4 +490,6 @@ async def search_vulnerabilities(
         total=total_count,
         page=(skip // limit) + 1 if limit > 0 else 1,
         size=limit,
+        resolved_projects=resolved_projects,
+        projects_without_release=projects_without_release,
     )

@@ -1,5 +1,6 @@
 import { api } from '@/api/client';
-import { Scan, ScanAnalysisResult, SbomResponse, ScanFindingsParams, ScanFindingsResponse, ScanStats } from '@/types/scan';
+import { SMALL_PAGE_SIZE } from '@/lib/constants';
+import { ProjectBranchTips, Scan, ScanAnalysisResult, SbomResponse, ScanFindingsParams, ScanFindingsResponse, ScanHistoryResponse, ScanStats, ScanWithReleases } from '@/types/scan';
 
 export const scanApi = {
     getRecent: async (): Promise<Scan[]> => {
@@ -10,16 +11,23 @@ export const scanApi = {
     getProjectScans: async (id: string, params: {
         skip?: number; limit?: number; branch?: string; sortBy?: string;
         sortOrder?: 'asc' | 'desc'; excludeRescans?: boolean; excludeDeletedBranches?: boolean;
-    } = {}): Promise<Scan[]> => {
-        const { skip = 0, limit = 20, branch, sortBy = 'created_at', sortOrder = 'desc', excludeRescans = false, excludeDeletedBranches = false } = params;
-        const response = await api.get<Scan[]>(`/projects/${id}/scans`, {
-          params: { skip, limit, branch, sort_by: sortBy, sort_order: sortOrder, exclude_rescans: excludeRescans, exclude_deleted_branches: excludeDeletedBranches }
+        isRelease?: boolean;
+    } = {}): Promise<ScanWithReleases[]> => {
+        // isRelease is tri-state: undefined is no filter, false selects the scans that are not releases.
+        const { skip = 0, limit = SMALL_PAGE_SIZE, branch, sortBy = 'created_at', sortOrder = 'desc', excludeRescans = false, excludeDeletedBranches = false, isRelease } = params;
+        const response = await api.get<ScanWithReleases[]>(`/projects/${id}/scans`, {
+          params: { skip, limit, branch, sort_by: sortBy, sort_order: sortOrder, exclude_rescans: excludeRescans, exclude_deleted_branches: excludeDeletedBranches, is_release: isRelease }
         });
         return response.data;
     },
 
-    getHistory: async (projectId: string, scanId: string): Promise<Scan[]> => {
-        const response = await api.get<Scan[]>(`/projects/${projectId}/scans/${scanId}/history`);
+    getBranchTips: async (id: string): Promise<ProjectBranchTips> => {
+        const response = await api.get<ProjectBranchTips>(`/projects/${id}/scans/branch-tips`);
+        return response.data;
+    },
+
+    getHistory: async (projectId: string, scanId: string): Promise<ScanHistoryResponse> => {
+        const response = await api.get<ScanHistoryResponse>(`/projects/${projectId}/scans/${scanId}/history`);
         return response.data;
     },
 
@@ -28,8 +36,8 @@ export const scanApi = {
         return response.data;
     },
 
-    getOne: async (scanId: string): Promise<Scan> => {
-        const response = await api.get<Scan>(`/projects/scans/${scanId}`);
+    getOne: async (scanId: string): Promise<ScanWithReleases> => {
+        const response = await api.get<ScanWithReleases>(`/projects/scans/${scanId}`);
         return response.data;
     },
 

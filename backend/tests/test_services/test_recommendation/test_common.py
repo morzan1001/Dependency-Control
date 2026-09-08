@@ -8,11 +8,14 @@ from app.schemas.recommendation import (
     RecommendationType,
 )
 from app.services.recommendation.common import (
+    AFFECTED_COMPONENTS_SHOWN,
     calculate_best_fix_version,
     calculate_score,
-    extract_cve_id,
+    finding_cve_ids,
     get_attr,
+    name_some,
     parse_version_tuple,
+    sample_components,
     sort_key,
 )
 
@@ -99,69 +102,64 @@ class TestGetAttr:
         assert get_attr([1, 2, 3], "key", "nope") == "nope"
 
 
-class TestExtractCveId:
-    def test_direct_id_field(self):
-        finding = {"id": "CVE-2024-0001"}
-        assert extract_cve_id(finding) == "CVE-2024-0001"
+def _stored_vuln(entries):
+    """A vulnerability finding in the shape the aggregator persists: the document id is the
+    (component, version) pair and every advisory lives in details.vulnerabilities."""
+    return {
+        "id": "log4j-core:2.14.1",
+        "finding_id": "log4j-core:2.14.1",
+        "type": "vulnerability",
+        "component": "log4j-core",
+        "version": "2.14.1",
+        "aliases": [],
+        "details": {"fixed_version": "2.15.0", "vulnerabilities": entries},
+    }
 
-    def test_direct_finding_id_field(self):
-        finding = {"finding_id": "CVE-2024-9999"}
-        assert extract_cve_id(finding) == "CVE-2024-9999"
 
-    def test_direct_id_non_cve_skipped(self):
-        finding = {"id": "GHSA-1234-abcd-5678"}
-        assert extract_cve_id(finding) is None
+class TestFindingCveIds:
+    def test_reads_the_advisory_list(self):
+        finding = _stored_vuln([{"id": "CVE-2021-44228"}])
+        assert finding_cve_ids(finding) == ["CVE-2021-44228"]
 
-    def test_details_cve_id(self):
-        finding = {"id": "some-id", "details": {"cve_id": "CVE-2023-5555"}}
-        assert extract_cve_id(finding) == "CVE-2023-5555"
+    def test_component_version_document_id_is_never_returned(self):
+        finding = _stored_vuln([{"id": "CVE-2021-44228"}])
+        assert "log4j-core:2.14.1" not in finding_cve_ids(finding)
 
-    def test_details_cve_id_non_cve_ignored(self):
-        finding = {"id": "nope", "details": {"cve_id": "GHSA-xyz"}}
-        assert extract_cve_id(finding) is None
+    def test_every_advisory_in_the_group_is_named(self):
+        finding = _stored_vuln([{"id": "CVE-2021-44228"}, {"id": "CVE-2021-45046"}])
+        assert finding_cve_ids(finding) == ["CVE-2021-44228", "CVE-2021-45046"]
 
-    def test_details_cve_id_none_value(self):
-        finding = {"id": "nope", "details": {"cve_id": None}}
-        assert extract_cve_id(finding) is None
+    def test_ghsa_entry_collapses_to_its_cve_alias(self):
+        finding = _stored_vuln([{"id": "GHSA-jfh8-c2jp-5v3q", "aliases": ["CVE-2021-44228"]}])
+        assert finding_cve_ids(finding) == ["CVE-2021-44228"]
 
-    def test_alias_cve(self):
-        finding = {"id": "GHSA-abc", "aliases": ["CVE-2022-1111", "GHSA-def"]}
-        assert extract_cve_id(finding) == "CVE-2022-1111"
+    def test_resolved_cve_wins_over_the_entry_id(self):
+        finding = _stored_vuln([{"id": "GHSA-jfh8-c2jp-5v3q", "resolved_cve": "CVE-2021-44228"}])
+        assert finding_cve_ids(finding) == ["CVE-2021-44228"]
 
-    def test_alias_first_cve_taken(self):
-        finding = {"id": "nope", "aliases": ["GHSA-1", "CVE-2022-2222", "CVE-2022-3333"]}
-        assert extract_cve_id(finding) == "CVE-2022-2222"
+    def test_ghsa_only_advisory_keeps_its_own_id(self):
+        finding = _stored_vuln([{"id": "GHSA-only-1234"}])
+        assert finding_cve_ids(finding) == ["GHSA-only-1234"]
 
-    def test_aliases_in_details(self):
-        finding = {"id": "nope", "details": {"aliases": ["CVE-2021-7777"]}}
-        assert extract_cve_id(finding) == "CVE-2021-7777"
+    def test_a_cve_named_by_two_entries_is_listed_once(self):
+        finding = _stored_vuln([{"id": "CVE-2021-44228"}, {"id": "GHSA-jfh8-c2jp-5v3q", "aliases": ["CVE-2021-44228"]}])
+        assert finding_cve_ids(finding) == ["CVE-2021-44228"]
 
-    def test_aliases_empty_list(self):
-        finding = {"id": "nope", "aliases": []}
-        assert extract_cve_id(finding) is None
+    def test_empty_advisory_list_names_nothing(self):
+        assert finding_cve_ids(_stored_vuln([])) == []
 
-    def test_aliases_no_cve_in_list(self):
-        finding = {"id": "nope", "aliases": ["GHSA-1", "GHSA-2"]}
-        assert extract_cve_id(finding) is None
+    def test_finding_without_details_names_nothing(self):
+        assert finding_cve_ids({"id": "log4j-core:2.14.1"}) == []
 
-    def test_no_cve_at_all(self):
-        finding = {"id": "SOMETHING", "details": {}, "aliases": []}
-        assert extract_cve_id(finding) is None
+    def test_details_not_dict_names_nothing(self):
+        assert finding_cve_ids({"id": "log4j-core:2.14.1", "details": "a string"}) == []
 
-    def test_empty_finding(self):
-        assert extract_cve_id({}) is None
+    def test_reads_a_pydantic_finding_too(self):
+        class _Finding(BaseModel):
+            id: str = "log4j-core:2.14.1"
+            details: dict = {"vulnerabilities": [{"id": "CVE-2021-44228"}]}
 
-    def test_finding_without_aliases_or_details(self):
-        finding = {"id": "nope"}
-        assert extract_cve_id(finding) is None
-
-    def test_none_aliases_handled(self):
-        finding = {"id": "nope", "aliases": None}
-        assert extract_cve_id(finding) is None
-
-    def test_details_not_dict_ignored(self):
-        finding = {"id": "nope", "details": "a string"}
-        assert extract_cve_id(finding) is None
+        assert finding_cve_ids(_Finding()) == ["CVE-2021-44228"]
 
 
 class TestParseVersionTuple:
@@ -466,3 +464,100 @@ class TestCalculateScore:
         )
         score = calculate_score(rec)
         assert isinstance(score, int)
+
+
+class TestSampleComponents:
+    """One cut, one count: the reader always learns the size of the population."""
+
+    def test_a_population_past_the_cap_is_counted_before_it_is_cut(self):
+        covered = AFFECTED_COMPONENTS_SHOWN * 45
+        shown, total = sample_components(f"pkg{index:04d}" for index in range(covered))
+
+        assert len(shown) == AFFECTED_COMPONENTS_SHOWN
+        assert total == covered
+
+    def test_duplicates_do_not_inflate_the_population(self):
+        shown, total = sample_components(["a", "b", "a", "b"])
+
+        assert shown == ["a", "b"]
+        assert total == 2
+
+    def test_the_callers_order_survives_so_a_ranked_population_keeps_its_ranking(self):
+        ranked = [f"pkg{index:04d}" for index in range(AFFECTED_COMPONENTS_SHOWN * 2)][::-1]
+
+        shown, _total = sample_components(ranked)
+
+        assert shown == ranked[:AFFECTED_COMPONENTS_SHOWN]
+
+    def test_blank_entries_are_neither_listed_nor_counted(self):
+        shown, total = sample_components(["a", "", "b"])
+
+        assert shown == ["a", "b"]
+        assert total == 2
+
+
+class TestNameSome:
+    def test_a_list_longer_than_the_prose_allows_says_how_many_it_left_out(self):
+        named = 3
+        values = [f"v{index}" for index in range(10)]
+
+        assert name_some(values, named) == "v0, v1, v2 and 7 more"
+
+    def test_a_list_the_prose_holds_whole_claims_nothing_more(self):
+        assert name_some(["v0", "v1"], 3) == "v0, v1"
+
+
+class TestRecommendationTotal:
+    """A generator that lists everything need not repeat the number."""
+
+    @staticmethod
+    def _rec_with(components: list[str], total: int) -> Recommendation:
+        return Recommendation(
+            type=RecommendationType.NO_FIX_AVAILABLE,
+            priority=Priority.HIGH,
+            title="Vulnerability with No Fix Available",
+            description="d",
+            impact={},
+            affected_components=components,
+            action={},
+            affected_components_total=total,
+        )
+
+    def test_a_complete_list_counts_itself(self):
+        rec = self._rec_with(["a", "b"], 0)
+
+        assert rec.affected_components_total == 2
+
+    def test_a_cut_list_reports_the_population_it_was_drawn_from(self):
+        covered = 900
+
+        rec = self._rec_with(["a", "b"], covered)
+
+        assert rec.affected_components_total == covered
+        assert rec.to_dict()["affected_components_total"] == covered
+
+
+class TestFindingCveIdsAdvisoryFilter:
+    """A card names the advisories it is about; a seven-CVE component group is not seven KEV CVEs."""
+
+    def _mixed(self):
+        return _stored_vuln(
+            [
+                {"id": "CVE-2021-44228", "in_kev": True, "kev_ransomware_use": True},
+                {"id": "CVE-2021-44832"},
+                {"id": "CVE-2021-45046", "in_kev": True, "kev_ransomware_use": True},
+                {"id": "CVE-2021-45105"},
+            ]
+        )
+
+    def test_only_the_marked_advisories_are_named(self):
+        marked = finding_cve_ids(self._mixed(), lambda a: bool(a.get("kev_ransomware_use")))
+        assert marked == ["CVE-2021-44228", "CVE-2021-45046"]
+
+    def test_an_unmarked_group_falls_back_to_every_cve(self):
+        finding = _stored_vuln([{"id": "CVE-2021-44228"}, {"id": "CVE-2021-44832"}])
+        finding["details"]["kev_ransomware_use"] = True
+
+        marked = finding_cve_ids(finding, lambda a: bool(a.get("kev_ransomware_use")))
+
+        assert marked == ["CVE-2021-44228", "CVE-2021-44832"]

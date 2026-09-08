@@ -65,6 +65,9 @@ class Permissions:
     # MCP (external LLM clients calling our tools via API key)
     MCP_ACCESS = "mcp:access"
 
+    # Ad-hoc analysis (stateless /analyze endpoint)
+    ANALYZE_ADHOC = "analyze:adhoc"
+
 
 # All permissions in the system (excluding internal/special permissions like auth:setup_2fa)
 ALL_PERMISSIONS: list[str] = [
@@ -122,6 +125,8 @@ ALL_PERMISSIONS: list[str] = [
     Permissions.CHAT_HISTORY_DELETE,
     # MCP
     Permissions.MCP_ACCESS,
+    # Ad-hoc analysis
+    Permissions.ANALYZE_ADHOC,
 ]
 
 

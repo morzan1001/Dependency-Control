@@ -147,14 +147,6 @@ async def fetch_and_enrich_team(team_id: str, db: AsyncIOMotorDatabase) -> TeamR
     return TeamResponse(**team_data)
 
 
-def find_member_in_team(team: Team, user_id: str) -> int | None:
-    """Return a member's index in the team's member list, or None if not found."""
-    for i, member in enumerate(team.members):
-        if member.user_id == user_id:
-            return i
-    return None
-
-
 def get_member_role(team: Team, user_id: str) -> str | None:
     """Return a member's role in the team, or None if not a member."""
     for member in team.members:

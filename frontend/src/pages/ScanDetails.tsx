@@ -8,7 +8,7 @@ import { WaivedFindingsSection } from '@/components/findings/WaivedFindingsSecti
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Button } from '@/components/ui/button'
-import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, RefreshCw, Loader2, Tag, Folder, X } from 'lucide-react'
+import { ArrowLeft, GitBranch, GitCommit, ShieldAlert, Calendar, CheckCircle, FileJson, ExternalLink, PlayCircle, RefreshCw, Loader2, X } from 'lucide-react'
 import { Checkbox } from '@/components/ui/checkbox'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -19,6 +19,7 @@ import { toast } from "sonner"
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { SCAN_STATUS_COMPLETED_WITH_ERRORS } from '@/lib/scan-status'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
+import { ScanReleaseControl } from '@/components/scans/ScanReleaseControl'
 import { logger } from '@/lib/logger'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
 import { SEVERITY_CHART_COLORS } from '@/lib/finding-utils'
@@ -167,10 +168,10 @@ export default function ScanDetails() {
   }
 
   const scanContext: ScanContext = {
-    projectUrl: scan.project_url || scan.metadata?.CI_PROJECT_URL,
+    projectUrl: scan.project_url,
     pipelineUrl: scan.pipeline_url,
     commitHash: scan.commit_hash,
-    branch: scan.branch || scan.metadata?.CI_COMMIT_BRANCH,
+    branch: scan.branch,
   }
 
   const activeAnalyzers = project.active_analyzers || [];
@@ -220,20 +221,25 @@ export default function ScanDetails() {
             </div>
         </div>
         <div className="flex items-center gap-2">
-            {scanHistory && scanHistory.length > 1 && (
-                <Select 
-                    value={scanId} 
+            {scanHistory && scanHistory.total > 1 && (
+                <Select
+                    value={scanId}
                     onValueChange={(value) => navigate(`/projects/${projectId}/scans/${value}`)}
                 >
                     <SelectTrigger className="w-[250px]">
                         <SelectValue placeholder="Select version" />
                     </SelectTrigger>
                     <SelectContent>
-                        {scanHistory.map((h: ScanHistoryItem) => (
+                        {scanHistory.runs.map((h: ScanHistoryItem) => (
                             <SelectItem key={h.id} value={h.id}>
                                 {h.is_rescan ? 'Re-scan' : 'Original'} - {formatDateTime(h.created_at)}
                             </SelectItem>
                         ))}
+                        {scanHistory.total > scanHistory.runs.length && (
+                            <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                                {`Newest ${scanHistory.runs.length} of ${scanHistory.total} runs`}
+                            </p>
+                        )}
                     </SelectContent>
                 </Select>
             )}
@@ -279,7 +285,7 @@ export default function ScanDetails() {
                             <div className="flex items-center gap-2">
                                 <GitBranch className="h-4 w-4" />
                                 <ScmLink href={buildBranchUrl({
-                                    projectUrl: scan.project_url || scan.metadata?.CI_PROJECT_URL,
+                                    projectUrl: scan.project_url,
                                     pipelineUrl: scan.pipeline_url,
                                     branch: scan.branch,
                                 })}>
@@ -287,13 +293,14 @@ export default function ScanDetails() {
                                 </ScmLink>
                             </div>
                         </div>
+                        <ScanReleaseControl projectId={projectId!} scan={scan} />
                         {scan.commit_hash && (
                             <div className="flex flex-col space-y-1">
                                 <span className="text-sm text-muted-foreground">Commit</span>
                                 <div className="flex items-center gap-2">
                                     <GitCommit className="h-4 w-4" />
                                     <ScmLink href={buildCommitUrl({
-                                        projectUrl: scan.project_url || scan.metadata?.CI_PROJECT_URL,
+                                        projectUrl: scan.project_url,
                                         pipelineUrl: scan.pipeline_url,
                                         commitHash: scan.commit_hash,
                                     })}>
@@ -335,9 +342,9 @@ export default function ScanDetails() {
                             </div>
                         )}
                         {(() => {
-                            const pipelineId = scan.pipeline_id ?? scan.metadata?.CI_PIPELINE_ID
+                            const pipelineId = scan.pipeline_id
                             const href = buildPipelineUrl({
-                                projectUrl: scan.project_url || scan.metadata?.CI_PROJECT_URL,
+                                projectUrl: scan.project_url,
                                 pipelineUrl: scan.pipeline_url,
                                 pipelineId,
                             })
@@ -353,60 +360,6 @@ export default function ScanDetails() {
                                 </div>
                             )
                         })()}
-                        {scan.metadata?.CI_JOB_ID && scan.metadata?.CI_PROJECT_URL && (
-                            <div className="flex flex-col space-y-1">
-                                <span className="text-sm text-muted-foreground">Job</span>
-                                <a 
-                                    href={`${scan.metadata.CI_PROJECT_URL}/-/jobs/${scan.metadata.CI_JOB_ID}`}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-center gap-2 text-primary hover:underline"
-                                >
-                                    <FileJson className="h-4 w-4" />
-                                    <span className="font-medium">#{scan.metadata.CI_JOB_ID}</span>
-                                    <ExternalLink className="h-3 w-3" />
-                                </a>
-                            </div>
-                        )}
-                        {scan.metadata?.CI_COMMIT_TAG && (
-                            <div className="flex flex-col space-y-1">
-                                <span className="text-sm text-muted-foreground">Tag</span>
-                                <div className="flex items-center gap-2">
-                                    <Tag className="h-4 w-4 text-amber-500" />
-                                    <span className="font-medium">{scan.metadata.CI_COMMIT_TAG}</span>
-                                </div>
-                            </div>
-                        )}
-                        {scan.metadata?.CI_PROJECT_PATH && (
-                            <div className="flex flex-col space-y-1">
-                                <span className="text-sm text-muted-foreground">Project Path</span>
-                                {scan.metadata?.CI_PROJECT_URL ? (
-                                    <a 
-                                        href={scan.metadata.CI_PROJECT_URL}
-                                        target="_blank"
-                                        rel="noopener noreferrer"
-                                        className="flex items-center gap-2 text-primary hover:underline"
-                                    >
-                                        <Folder className="h-4 w-4" />
-                                        <span className="font-medium text-sm">{scan.metadata.CI_PROJECT_PATH}</span>
-                                        <ExternalLink className="h-3 w-3" />
-                                    </a>
-                                ) : (
-                                    <div className="flex items-center gap-2">
-                                        <Folder className="h-4 w-4" />
-                                        <span className="font-medium text-sm">{scan.metadata.CI_PROJECT_PATH}</span>
-                                    </div>
-                                )}
-                            </div>
-                        )}
-                        {scan.metadata?.CI_COMMIT_MESSAGE && (
-                            <div className="col-span-2 flex flex-col space-y-1 border-t pt-2 mt-2">
-                                <span className="text-sm text-muted-foreground">Commit Message</span>
-                                <span className="text-sm font-medium truncate" title={scan.metadata.CI_COMMIT_MESSAGE}>
-                                    {scan.metadata.CI_COMMIT_MESSAGE}
-                                </span>
-                            </div>
-                        )}
                     </div>
                 </CardContent>
             </Card>

@@ -11,12 +11,12 @@ from app.repositories.crypto_asset import CryptoAssetRepository
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.schemas.cbom import CryptoAssetType
 from app.schemas.crypto_policy import CryptoPolicySource, CryptoRule
-from app.services.analysis.registry import analyzers
+from tests.helpers.analyzers import build_analyzer
 
 
 @pytest.mark.asyncio
 async def test_cert_lifecycle_registered_and_runs(db):
-    analyzer = analyzers["crypto_certificate_lifecycle"]
+    analyzer = build_analyzer("crypto_certificate_lifecycle")
     now = datetime.now(timezone.utc)
     await CryptoAssetRepository(db).bulk_upsert(
         "p",

@@ -1,5 +1,7 @@
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
+from app.core.constants import DEFAULT_ACTIVE_ANALYZERS
+
 
 class SystemSettingsBase(BaseModel):
     instance_name: str | None = "Dependency Control"
@@ -52,7 +54,7 @@ class SystemSettingsBase(BaseModel):
     gitlab_oidc_audience: str | None = None
 
     # Default Analyzers for auto-created projects
-    default_active_analyzers: list[str] = ["trivy", "osv", "license_compliance", "end_of_life"]
+    default_active_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))
 
     # Retention
     retention_mode: str = "project"

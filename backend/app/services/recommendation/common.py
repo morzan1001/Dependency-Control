@@ -1,4 +1,5 @@
 import re
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 from pydantic import BaseModel
@@ -12,8 +13,50 @@ from app.core.constants import (
     RECOMMENDATION_TYPE_BONUSES,
 )
 from app.schemas.recommendation import Priority, Recommendation
+from app.services.enrichment import canonical_cves
 
 ModelOrDict = BaseModel | dict[str, Any]
+
+# Components one recommendation lists. Every generator draws its evidence through
+# sample_components, so the cut is one number and the reader always gets the population.
+AFFECTED_COMPONENTS_SHOWN = 20
+
+
+def name_some(values: Sequence[str], shown: int) -> str:
+    """Prose list of the first `shown` values, saying how many it left unnamed."""
+    head = ", ".join(values[:shown])
+    remaining = len(values) - shown
+    return f"{head} and {remaining} more" if remaining > 0 else head
+
+
+def sample_components(components: Iterable[str]) -> tuple[list[str], int]:
+    """The components a recommendation lists, and how many it actually covers.
+
+    Order is the caller's, so a ranked population keeps its ranking; pass a sorted sequence
+    where the source is a set, whose iteration order changes between runs.
+    """
+    unique = list(dict.fromkeys(component for component in components if component))
+    return unique[:AFFECTED_COMPONENTS_SHOWN], len(unique)
+
+
+def sampled(name: str, values: Sequence[Any], cap: int) -> dict[str, Any]:
+    """A sample of `values` under `name`, alongside how many there are under "<name>_total".
+
+    Evidence inside an ``action`` block is read as the whole of what a card found; the population
+    is what tells a reader that the list they are acting on is a sample of it.
+    """
+    return {name: list(values[:cap]), f"{name}_total": len(values)}
+
+
+def take_top(candidates: Sequence[Any], cap: int) -> list[tuple[int, Any, int]]:
+    """The highest-ranked `cap` candidates as (rank, candidate, population).
+
+    Rank and population are both 0 while everything ranked is emitted; past the cap a generator
+    passes them on so a reader who sees `cap` recommendations of one kind knows more were ranked.
+    """
+    cut = len(candidates) > cap
+    population = len(candidates) if cut else 0
+    return [(rank if cut else 0, candidate, population) for rank, candidate in enumerate(candidates[:cap], start=1)]
 
 
 def get_attr(obj: ModelOrDict, key: str, default: Any = None) -> Any:
@@ -52,33 +95,45 @@ def group_findings_by_field(
     return grouped
 
 
-def extract_cve_id(finding: ModelOrDict) -> str | None:
-    """Return the first CVE-XXXX-XXXXX id found in finding.id, details.cve_id, or aliases."""
-    finding_id = get_attr(finding, "id") or get_attr(finding, "finding_id")
-    if finding_id and str(finding_id).startswith("CVE-"):
-        return str(finding_id)
+def finding_cve_ids(
+    finding: ModelOrDict,
+    advisory_filter: Callable[[dict[str, Any]], bool] | None = None,
+) -> list[str]:
+    """Every advisory a stored vulnerability finding names, collapsed to its CVE identity.
 
+    Aggregation groups one record per (component, version) and its top-level ``id`` is that pair,
+    so the advisory identity only ever lives in ``details.vulnerabilities`` — the same place the
+    scan delta reads its identity from.
+
+    ``advisory_filter`` narrows the list to the advisories a card is actually about, so a group of
+    seven log4j CVEs is not presented as seven ransomware CVEs. Enrichment marks each advisory and
+    the document, but a live refresh writes the document only, so a finding whose advisories carry
+    no mark falls back to naming the whole group rather than nothing.
+    """
     details = get_attr(finding, "details", {})
-    if isinstance(details, dict):
-        cve_id = details.get("cve_id")
-        if cve_id and str(cve_id).startswith("CVE-"):
-            return str(cve_id)
-
-    aliases = get_attr(finding, "aliases", [])
-    if not aliases and isinstance(details, dict):
-        aliases = details.get("aliases", [])
-
-    for alias in aliases or []:
-        if alias and str(alias).startswith("CVE-"):
-            return str(alias)
-
-    return None
+    if not isinstance(details, dict):
+        return []
+    if advisory_filter is not None:
+        entries = [e for e in details.get("vulnerabilities") or [] if isinstance(e, dict) and advisory_filter(e)]
+        if entries:
+            return canonical_cves([{"vulnerabilities": entries}])
+    return canonical_cves([details])
 
 
 def parse_version_tuple(version: str) -> tuple:
     """Naive numeric tuple — sufficient for picking the highest of a candidate list."""
     parts = re.findall(r"\d+", version)
     return tuple(int(p) for p in parts)
+
+
+# Versions named per package inside an action block; version_count carries the population.
+ACTION_VERSION_SAMPLE = 5
+
+
+def newest_first(versions: Iterable[Any]) -> list[str]:
+    """Versions ranked newest first. A set-derived list carries no order of its own, so a sample
+    taken off one is a different five between runs."""
+    return sorted((str(v) for v in versions), key=parse_version_tuple, reverse=True)
 
 
 def calculate_best_fix_version(versions: list[str]) -> str:

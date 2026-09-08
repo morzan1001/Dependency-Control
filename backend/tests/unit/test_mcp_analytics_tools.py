@@ -27,6 +27,7 @@ async def test_mcp_get_crypto_hotspots(db):
             ),
         ],
     )
+    await db.projects.insert_one({"_id": "p", "name": "p", "latest_scan_id": "s"})
     await db.scans.insert_one(
         {
             "_id": "s",

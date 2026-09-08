@@ -106,6 +106,7 @@ export function MCPApiKeysCard() {
   };
 
   const keys = data?.keys ?? [];
+  const truncated = data?.truncated ?? null;
 
   return (
     <Card>
@@ -177,6 +178,12 @@ export function MCPApiKeysCard() {
               );
             })}
           </ul>
+        )}
+        {truncated && (
+          <p className="mt-2 text-xs text-muted-foreground">
+            Showing the newest {truncated.returned} of {truncated.total} keys. Revoke the ones you
+            no longer need — the rest cannot be listed here.
+          </p>
         )}
       </CardContent>
 

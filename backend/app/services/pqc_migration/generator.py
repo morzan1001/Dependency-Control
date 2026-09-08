@@ -5,7 +5,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.core.constants import SCAN_USABLE_STATUSES
+from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN, SCAN_USABLE_STATUSES
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoPrimitive
@@ -47,14 +47,16 @@ class PQCMigrationPlanGenerator:
         groups = self._group_assets(assets)
         items = [item for key, group in groups.items() if (item := self._build_item(key, group, now)) is not None]
         items.sort(key=lambda i: i.priority_score, reverse=True)
-        items = items[:limit]
+        returned = items[:limit]
 
         return MigrationPlanResponse(
             scope=resolved.scope,
             scope_id=resolved.scope_id,
             generated_at=now,
-            items=items,
-            summary=self._summarise(items),
+            items=returned,
+            # Summarised over every migratable group: a plan that under-counts the work is a
+            # planning document wrong in the direction that matters.
+            summary=self._summarise(items, items_returned=len(returned)),
             mappings_version=CURRENT_MAPPINGS_VERSION,
         )
 
@@ -113,7 +115,7 @@ class PQCMigrationPlanGenerator:
         )
 
     @staticmethod
-    def _summarise(items: list[MigrationItem]) -> MigrationPlanSummary:
+    def _summarise(items: list[MigrationItem], *, items_returned: int) -> MigrationPlanSummary:
         status_counts: dict[str, int] = {}
         for item in items:
             key = item.status if isinstance(item.status, str) else item.status.value
@@ -122,6 +124,7 @@ class PQCMigrationPlanGenerator:
         earliest = min(deadlines) if deadlines else None
         return MigrationPlanSummary(
             total_items=len(items),
+            items_returned=items_returned,
             status_counts=status_counts,
             earliest_deadline=earliest,
         )
@@ -130,7 +133,9 @@ class PQCMigrationPlanGenerator:
         self,
         resolved: ResolvedScope,
     ) -> list[CryptoAsset]:
-        """Quantum-vulnerable assets from the latest scan of each resolved project."""
+        """Quantum-vulnerable assets from the head build of each resolved project."""
+        from app.services.releases import resolve_scan_ids
+
         out: list[CryptoAsset] = []
         # None project_ids means global scope (all projects); an explicit [] means none.
         if resolved.project_ids is None:
@@ -139,11 +144,8 @@ class PQCMigrationPlanGenerator:
             project_ids = resolved.project_ids
         repo = CryptoAssetRepository(self.db)
         canonical_families = {m.source_family for m in self.mappings.mappings}
-        for pid in project_ids:
-            scan_doc = await self._latest_scan_for_project(pid)
-            if not scan_doc:
-                continue
-            assets = await repo.list_by_scan(pid, scan_doc["_id"], limit=10000)
+        for pid, scan_id in (await resolve_scan_ids(self.db, project_ids)).items():
+            assets = await repo.list_by_scan(pid, scan_id, limit=MAX_CRYPTO_ASSETS_PER_SCAN)
             out.extend(self._filter_vulnerable(assets, canonical_families))
         return out
 
@@ -167,24 +169,6 @@ class PQCMigrationPlanGenerator:
             "project_id",
             {"status": {"$in": SCAN_USABLE_STATUSES}},
         )
-
-    async def _latest_scan_for_project(self, project_id: str) -> dict | None:
-        """Most recent usable scan for a project, or None."""
-        cursor = (
-            self.db.scans.find(
-                {
-                    "project_id": project_id,
-                    "status": {"$in": SCAN_USABLE_STATUSES},
-                }
-            )
-            .sort("created_at", -1)
-            .limit(1)
-        )
-        docs = await cursor.to_list(length=1)
-        if not docs:
-            return None
-        first: dict[str, Any] = docs[0]
-        return first
 
     def _find_mapping(self, family: str, primitive: Any) -> PQCMapping | None:
         prim_val = _enum_value(primitive)

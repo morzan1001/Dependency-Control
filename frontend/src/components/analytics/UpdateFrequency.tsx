@@ -21,6 +21,7 @@ import {
   ComposedChart,
 } from 'recharts'
 import {
+  AlertTriangle,
   RefreshCw,
   Clock,
   Package,
@@ -55,6 +56,14 @@ const updateTypeBadgeVariants: Record<string, string> = {
 function formatDays(days: number): string {
   if (days < 1) return `${(days * 24).toFixed(1)}h`
   return `${days.toFixed(days < 10 ? 1 : 0)}d`
+}
+
+function windowCapNotice(cap: number, windowDays?: number): string {
+  const scope = windowDays ? `the last ${windowDays} days` : 'the requested window'
+  return (
+    `This branch is busier than the analysis follows: every number below covers its newest ` +
+    `${cap} scans, not all of ${scope}.`
+  )
 }
 
 function SummaryCards({ data, windowDays }: Readonly<{ data: UpdateFrequencyMetrics; windowDays?: number }>) {
@@ -236,7 +245,8 @@ function SlowPackagesTable({ data }: Readonly<{ data: UpdateFrequencyMetrics }>)
       <CardHeader>
         <CardTitle>Slowest to Update</CardTitle>
         <CardDescription>
-          Packages that remain outdated across the most scans
+          {`Showing ${data.slowest_packages.length} of ${data.outdated_backlog} packages still outdated, ` +
+            'ranked by the scans they stayed outdated across'}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -275,13 +285,15 @@ function SlowPackagesTable({ data }: Readonly<{ data: UpdateFrequencyMetrics }>)
 
 function RecentUpdatesTable({ data }: Readonly<{ data: UpdateFrequencyMetrics }>) {
   if (data.recent_updates.length === 0) return null
+  // Downgrades are version changes too, and the list carries them; total_updates leaves them out.
+  const versionChanges = data.total_updates + data.downgrade_updates
 
   return (
     <Card>
       <CardHeader>
         <CardTitle>Recent Updates</CardTitle>
         <CardDescription>
-          Latest dependency version changes detected across scans
+          {`Showing ${data.recent_updates.length} of ${versionChanges} version changes, newest scans first`}
         </CardDescription>
       </CardHeader>
       <CardContent>
@@ -460,6 +472,13 @@ export function UpdateFrequency({ projectId: initialProjectId }: Readonly<Update
                 Branch <span className="font-medium text-foreground">{data.branch}</span>
                 {data.dominant_ecosystem && ` · ${data.dominant_ecosystem}`}
               </span>
+            </div>
+          )}
+
+          {data.window_scan_cap !== null && (
+            <div className="flex items-start gap-2 rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>{windowCapNotice(data.window_scan_cap, windowDays)}</span>
             </div>
           )}
 

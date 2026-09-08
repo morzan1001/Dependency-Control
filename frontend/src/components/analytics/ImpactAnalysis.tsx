@@ -1,4 +1,5 @@
 import { useImpactAnalysis } from '@/hooks/queries/use-analytics'
+import { useAnalyticsMode } from '@/context/analytics-mode'
 import { ImpactAnalysisResult } from '@/types/analytics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -19,8 +20,10 @@ interface ImpactAnalysisProps {
   onSelectComponent?: (result: ImpactAnalysisResult) => void;
 }
 
+const IMPACT_LIMIT = 20
+
 export function ImpactAnalysis({ onSelectComponent }: Readonly<ImpactAnalysisProps>) {
-  const { data: results, isLoading } = useImpactAnalysis(20)
+  const { data: results, isLoading } = useImpactAnalysis(IMPACT_LIMIT, useAnalyticsMode())
 
   const maxImpact = results?.reduce((max, r) => Math.max(max, r.fix_impact_score), 0) || 1
 

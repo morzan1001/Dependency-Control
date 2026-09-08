@@ -5,7 +5,11 @@ import pytest
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository
 from app.schemas.cbom import CryptoAssetType, CryptoPrimitive
-from app.services.analytics.crypto_hotspots import CryptoHotspotService
+from app.services.analytics.crypto_hotspots import (
+    _LOCATION_SAMPLE_ASSETS,
+    _LOCATIONS_PER_ENTRY,
+    CryptoHotspotService,
+)
 from app.services.analytics.scopes import ResolvedScope
 
 
@@ -31,6 +35,7 @@ async def test_hotspots_group_by_name(db):
             _asset("a3", "SHA-256", CryptoPrimitive.HASH),
         ],
     )
+    await db.projects.insert_one({"_id": "p1", "name": "p1", "latest_scan_id": "s1"})
     await db.scans.insert_one(
         {
             "_id": "s1",
@@ -54,6 +59,7 @@ async def test_hotspots_group_by_name(db):
 async def test_hotspots_respects_limit(db):
     assets = [_asset(f"a{i}", f"algo-{i}", project_id="p2", scan_id="s2") for i in range(20)]
     await CryptoAssetRepository(db).bulk_upsert("p2", "s2", assets)
+    await db.projects.insert_one({"_id": "p2", "name": "p2", "latest_scan_id": "s2"})
     await db.scans.insert_one(
         {
             "_id": "s2",
@@ -83,6 +89,7 @@ async def test_hotspots_group_by_primitive(db):
             _asset("a3", "AES", CryptoPrimitive.BLOCK_CIPHER, project_id="p3", scan_id="s3"),
         ],
     )
+    await db.projects.insert_one({"_id": "p3", "name": "p3", "latest_scan_id": "s3"})
     await db.scans.insert_one(
         {
             "_id": "s3",
@@ -139,6 +146,7 @@ async def test_group_by_name_enrichment_joins_on_bare_name_despite_variants(db):
             _variant_asset("a2", "RSA", "RSA-PSS", project_id="pv", scan_id="sv"),
         ],
     )
+    await db.projects.insert_one({"_id": "pv", "name": "pv", "latest_scan_id": "sv"})
     await db.scans.insert_one(
         {"_id": "sv", "project_id": "pv", "status": "completed", "created_at": datetime.now(timezone.utc)}
     )
@@ -167,6 +175,7 @@ async def test_group_by_name_enrichment_excludes_waived_findings(db):
         "sw",
         [_variant_asset("a1", "MD5", None, project_id="pw", scan_id="sw")],
     )
+    await db.projects.insert_one({"_id": "pw", "name": "pw", "latest_scan_id": "sw"})
     await db.scans.insert_one(
         {"_id": "sw", "project_id": "pw", "status": "completed", "created_at": datetime.now(timezone.utc)}
     )
@@ -193,10 +202,10 @@ async def test_group_by_severity_excludes_waived_findings(db):
         _crypto_finding("f3", asset_name="MD5", project_id="ps", scan_id="ss", severity="LOW"),
     ]:
         await db.findings.insert_one(f)
+    await db.projects.insert_one({"_id": "ps", "name": "ps", "latest_scan_id": "ss"})
     await db.scans.insert_one(
         {"_id": "ss", "project_id": "ps", "status": "completed", "created_at": datetime.now(timezone.utc)}
     )
-    # Seed a completed scan so _pick_scan_ids selects "ss".
     resolved = ResolvedScope(scope="project", scope_id="ps", project_ids=["ps"])
     result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="severity", limit=10)
 
@@ -213,7 +222,8 @@ async def test_no_completed_scans_returns_empty_not_all_history(db):
         "srun",
         [_variant_asset("a1", "AES", "AES-256", project_id="pn", scan_id="srun")],
     )
-    # Only scan is still running → not eligible for _pick_scan_ids.
+    # The pointer is unset, so the resolver falls back to the query and still finds nothing usable.
+    await db.projects.insert_one({"_id": "pn", "name": "pn", "latest_scan_id": None})
     await db.scans.insert_one(
         {"_id": "srun", "project_id": "pn", "status": "running", "created_at": datetime.now(timezone.utc)}
     )
@@ -223,3 +233,64 @@ async def test_no_completed_scans_returns_empty_not_all_history(db):
 
     assert result.items == []
     assert result.total == 0
+
+
+_SHARED_LOCATION = "/shared.py"
+
+
+async def _seed_locations(db, *, project_id, scan_id, assets):
+    await CryptoAssetRepository(db).bulk_upsert(
+        project_id,
+        scan_id,
+        [
+            _variant_asset(
+                f"lk{index}",
+                "MD5",
+                None,
+                project_id=project_id,
+                scan_id=scan_id,
+                locations=[f"/f{index}.py", _SHARED_LOCATION],
+            )
+            for index in range(assets)
+        ],
+    )
+    await db.projects.insert_one({"_id": project_id, "name": project_id, "latest_scan_id": scan_id})
+    await db.scans.insert_one(
+        {"_id": scan_id, "project_id": project_id, "status": "completed", "created_at": datetime.now(timezone.utc)}
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_key_on_more_assets_than_the_sample_says_its_locations_are_not_the_whole_set(db):
+    await _seed_locations(db, project_id="pl", scan_id="sl", assets=_LOCATION_SAMPLE_ASSETS * 3)
+
+    resolved = ResolvedScope(scope="project", scope_id="pl", project_ids=["pl"])
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", limit=10)
+
+    entry = result.items[0]
+    assert entry.locations_complete is False
+    assert entry.asset_count == _LOCATION_SAMPLE_ASSETS * 3
+
+
+@pytest.mark.asyncio
+async def test_a_key_the_sample_covers_whole_claims_its_locations_are_the_whole_set(db):
+    await _seed_locations(db, project_id="pw", scan_id="sw", assets=3)
+
+    resolved = ResolvedScope(scope="project", scope_id="pw", project_ids=["pw"])
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", limit=10)
+
+    entry = result.items[0]
+    assert entry.locations_complete is True
+    assert entry.locations == ["/f0.py", _SHARED_LOCATION, "/f1.py", "/f2.py"]
+
+
+@pytest.mark.asyncio
+async def test_the_listed_locations_are_distinct_so_the_display_cap_bounds_columns(db):
+    await _seed_locations(db, project_id="pd", scan_id="sd", assets=_LOCATION_SAMPLE_ASSETS)
+
+    resolved = ResolvedScope(scope="project", scope_id="pd", project_ids=["pd"])
+    result = await CryptoHotspotService(db).hotspots(resolved=resolved, group_by="name", limit=10)
+
+    locations = result.items[0].locations
+    assert len(locations) == len(set(locations))
+    assert len(locations) <= _LOCATIONS_PER_ENTRY

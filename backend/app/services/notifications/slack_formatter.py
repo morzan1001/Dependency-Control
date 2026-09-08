@@ -2,11 +2,22 @@
 
 from typing import Any
 
-# Slack Block Kit limits
+# Slack Block Kit limits: a payload past any of these is rejected outright.
 _HEADER_MAX_LENGTH = 150
 _SECTION_TEXT_MAX_LENGTH = 3000
 _MAX_BLOCKS = 50
-_MAX_FIELDS = 10
+
+_CUT_MARKER = "… [cut]"
+_AFFECTED_PROJECTS_SHOWN = 15
+_PROJECT_FINDINGS_SHOWN = 5
+
+
+def _fit(text: str) -> str:
+    """Section text within Slack's per-block budget, saying so when it did not fit."""
+    if len(text) <= _SECTION_TEXT_MAX_LENGTH:
+        return text
+    return text[: _SECTION_TEXT_MAX_LENGTH - len(_CUT_MARKER)] + _CUT_MARKER
+
 
 _SEVERITY_EMOJI = {
     "CRITICAL": "\U0001f534",  # red circle
@@ -38,6 +49,16 @@ def build_generic_blocks(subject: str, message: str) -> list[dict[str, Any]]:
             {
                 "type": "section",
                 "text": {"type": "mrkdwn", "text": chunk},
+            }
+        )
+
+    # The loop leaves the last block slot free precisely so a message too long for Slack
+    # can end by saying how much of it is missing.
+    if remaining:
+        blocks.append(
+            {
+                "type": "section",
+                "text": {"type": "mrkdwn", "text": f"_{len(remaining)} more characters did not fit in this message._"},
             }
         )
 
@@ -105,7 +126,7 @@ def build_analysis_completed_blocks(
                 "type": "section",
                 "text": {
                     "type": "mrkdwn",
-                    "text": f"*Analyzers ({len(results_summary)})*\n{results_text}"[:_SECTION_TEXT_MAX_LENGTH],
+                    "text": _fit(f"*Analyzers ({len(results_summary)})*\n{results_text}"),
                 },
             }
         )
@@ -180,17 +201,15 @@ def build_vulnerability_found_blocks(
         fields.append({"type": "mrkdwn", "text": f"\U0001f4c8 *High EPSS (>10%):* {high_epss_count}"})
     fields.append({"type": "mrkdwn", "text": f"{_SEVERITY_EMOJI['CRITICAL']} *Critical/High:* {critical_count}"})
 
-    blocks.append({"type": "section", "fields": fields[:_MAX_FIELDS]})
+    blocks.append({"type": "section", "fields": fields})
 
     if top_vulns:
-        vuln_lines = [_format_vuln_line(i, v) for i, v in enumerate(top_vulns[:10], 1)]
+        vuln_lines = [_format_vuln_line(i, v) for i, v in enumerate(top_vulns, 1)]
+        heading = f"*Top Priority Vulnerabilities ({len(top_vulns)} of {critical_count})*"
         blocks.append(
             {
                 "type": "section",
-                "text": {
-                    "type": "mrkdwn",
-                    "text": ("*Top Priority Vulnerabilities*\n" + "\n".join(vuln_lines))[:_SECTION_TEXT_MAX_LENGTH],
-                },
+                "text": {"type": "mrkdwn", "text": _fit(heading + "\n" + "\n".join(vuln_lines))},
             }
         )
 
@@ -230,23 +249,25 @@ def build_advisory_blocks(
         {"type": "divider"},
         {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": message[:_SECTION_TEXT_MAX_LENGTH]},
+            "text": {"type": "mrkdwn", "text": _fit(message)},
         },
     ]
 
     if affected_projects:
+        shown = affected_projects[:_AFFECTED_PROJECTS_SHOWN]
         project_lines = []
-        for p in affected_projects[:15]:
-            findings_str = ", ".join(p.get("findings", [])[:5])
-            if len(p.get("findings", [])) > 5:
-                findings_str += f", +{len(p['findings']) - 5} more"
+        for p in shown:
+            findings = p.get("findings", [])
+            findings_str = ", ".join(findings[:_PROJECT_FINDINGS_SHOWN])
+            if len(findings) > _PROJECT_FINDINGS_SHOWN:
+                findings_str += f", +{len(findings) - _PROJECT_FINDINGS_SHOWN} more"
             project_lines.append(f"\u2022 *{p['name']}*: {findings_str}")
 
-        text = f"*Affected Projects ({len(affected_projects)})*\n" + "\n".join(project_lines)
+        heading = f"*Affected Projects ({len(shown)} of {len(affected_projects)})*"
         blocks.append(
             {
                 "type": "section",
-                "text": {"type": "mrkdwn", "text": text[:_SECTION_TEXT_MAX_LENGTH]},
+                "text": {"type": "mrkdwn", "text": _fit(heading + "\n" + "\n".join(project_lines))},
             }
         )
 

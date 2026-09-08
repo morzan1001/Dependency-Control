@@ -29,7 +29,7 @@ class TestAggregateExternalResultsResilience:
         results_summary: list = []
 
         # 'trivy' absent from analyzers -> external results path
-        monkeypatch.setattr("app.services.analysis.engine.analyzers", {})
+        monkeypatch.setattr("app.services.analysis.engine.analyzer_factories", {})
 
         good_result = FakeResult(
             "trivy",
@@ -96,7 +96,7 @@ class TestAggregateExternalResultsResilience:
         aggregator = self._make_aggregator()
         results_summary: list = []
 
-        monkeypatch.setattr("app.services.analysis.engine.analyzers", {})
+        monkeypatch.setattr("app.services.analysis.engine.analyzer_factories", {})
 
         good_result = FakeResult(
             "trivy",

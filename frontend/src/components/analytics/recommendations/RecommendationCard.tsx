@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Link } from 'react-router-dom'
-import { Recommendation, CrossProjectCve } from '@/types/analytics'
+import { Recommendation, RecommendationAction, CrossProjectCve } from '@/types/analytics'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -38,6 +38,22 @@ import {
 } from 'lucide-react'
 import { priorityConfig, typeConfig, effortConfig } from './config'
 
+const FILES_LISTED = 5
+
+/** Files the recommendation covers beyond the ones listed; the action's own list is already a sample. */
+function filesBeyond(action: RecommendationAction): number {
+  const listed = action.files?.length ?? 0
+  return Math.max(action.files_total ?? listed, listed) - Math.min(listed, FILES_LISTED)
+}
+
+function componentsHeading(recommendation: Recommendation): string {
+  const shown = recommendation.affected_components.length
+  const total = Math.max(recommendation.affected_components_total, shown)
+  return total > shown
+    ? `Affected Components (${shown} of ${total.toLocaleString()})`
+    : `Affected Components (${total.toLocaleString()})`
+}
+
 export function RecommendationCard({ recommendation }: { recommendation: Recommendation }) {
   const [expanded, setExpanded] = useState(false)
 
@@ -73,6 +89,11 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
               <Badge variant="secondary" className="shrink-0">
                 {typeInfo.label}
               </Badge>
+              {recommendation.ranked_out_of > 0 && (
+                <Badge variant="outline" className="shrink-0 text-muted-foreground">
+                  Ranked {recommendation.rank} of {recommendation.ranked_out_of.toLocaleString()}
+                </Badge>
+              )}
             </div>
 
             <p className="text-sm text-muted-foreground line-clamp-2">
@@ -260,8 +281,10 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                         {recommendation.action.files.slice(0, 5).map((file) => (
                           <li key={file} className="font-mono text-xs">{file}</li>
                         ))}
-                        {recommendation.action.files.length > 5 && (
-                          <li className="text-muted-foreground">...and {recommendation.action.files.length - 5} more</li>
+                        {filesBeyond(recommendation.action) > 0 && (
+                          <li className="text-muted-foreground">
+                            {`...and ${filesBeyond(recommendation.action).toLocaleString()} more`}
+                          </li>
                         )}
                       </ul>
                     </div>
@@ -304,8 +327,10 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                         {recommendation.action.files.slice(0, 5).map((file) => (
                           <li key={file}>{file}</li>
                         ))}
-                        {recommendation.action.files.length > 5 && (
-                          <li className="text-muted-foreground">...and {recommendation.action.files.length - 5} more</li>
+                        {filesBeyond(recommendation.action) > 0 && (
+                          <li className="text-muted-foreground">
+                            {`...and ${filesBeyond(recommendation.action).toLocaleString()} more`}
+                          </li>
                         )}
                       </ul>
                     </div>
@@ -664,9 +689,11 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                 </div>
               </div>
             )}
-            {recommendation.affected_components.length > 0 && recommendation.affected_components.length <= 10 && (
+            {recommendation.affected_components.length > 0 && (
               <div className="space-y-2">
-                <h5 className="text-sm font-medium">Affected Components</h5>
+                <h5 className="text-sm font-medium">
+                  {componentsHeading(recommendation)}
+                </h5>
                 <div className="flex flex-wrap gap-1">
                   {recommendation.affected_components.map((comp) => (
                     <Badge key={comp} variant="secondary">
@@ -674,11 +701,6 @@ export function RecommendationCard({ recommendation }: { recommendation: Recomme
                     </Badge>
                   ))}
                 </div>
-              </div>
-            )}
-            {recommendation.affected_components.length > 10 && (
-              <div className="text-sm text-muted-foreground">
-                {recommendation.affected_components.length} components affected
               </div>
             )}
           </div>

@@ -3,14 +3,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FindingsDeltaTab } from "../tabs/FindingsDeltaTab";
 import * as api from "@/api/scanDelta";
+import type { ScanDeltaResponse } from "@/types/scanDelta";
 
 vi.mock("@/api/scanDelta");
 
-function renderTab(onCountLoaded: (n: number) => void = () => {}) {
+function renderTab(onLoaded: (delta: ScanDeltaResponse) => void = () => {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <FindingsDeltaTab projectId="p1" fromScanId="a" toScanId="b" onCountLoaded={onCountLoaded} />
+      <FindingsDeltaTab projectId="p1" fromScanId="a" toScanId="b" onLoaded={onLoaded} />
     </QueryClientProvider>,
   );
 }

@@ -6,7 +6,7 @@ from typing import ClassVar
 
 from app.models.compliance_report import ComplianceReport
 from app.schemas.compliance import FrameworkEvaluation, ReportFormat
-from app.services.compliance.renderers.base import build_filename
+from app.services.compliance.renderers.base import build_filename, coverage_statement
 
 
 class CsvRenderer:
@@ -21,8 +21,17 @@ class CsvRenderer:
         "severity",
         "evidence_count",
         "waived",
+        "status_reason",
         "remediation",
     ]
+
+    @staticmethod
+    def _framework_header(evaluation: FrameworkEvaluation) -> str:
+        name = evaluation.framework_name or ""
+        version = evaluation.framework_version or ""
+        if name and version:
+            return f"{name} ({version})"
+        return name or version
 
     def render(
         self,
@@ -33,16 +42,15 @@ class CsvRenderer:
     ) -> tuple[bytes, str, str]:
         buf = io.StringIO()
         # Prepend disclaimers as '#' comment lines so a bare CSV export cannot be mistaken for a full pass.
-        fw_name = evaluation.framework_name or ""
-        fw_version = evaluation.framework_version or ""
         if disclaimer:
             buf.write(f"# Disclaimer: {disclaimer}\n")
-            if fw_name or fw_version:
-                fw_header = fw_name
-                if fw_version:
-                    fw_header = f"{fw_header} ({fw_version})" if fw_name else fw_version
+            fw_header = self._framework_header(evaluation)
+            if fw_header:
                 buf.write(f"# Framework: {fw_header}\n")
             buf.write(f"# Generated: {evaluation.generated_at.isoformat()}\n")
+        coverage = coverage_statement(evaluation.coverage)
+        if coverage:
+            buf.write(f"# Coverage: {coverage}\n")
         writer = csv.DictWriter(buf, fieldnames=self.FIELDS)
         writer.writeheader()
         for c in evaluation.controls:
@@ -57,6 +65,7 @@ class CsvRenderer:
                     # Evidence may land in either list depending on the evaluator.
                     "evidence_count": (len(c.evidence_finding_ids) + len(c.evidence_asset_bom_refs)),
                     "waived": "true" if status_val == "waived" else "false",
+                    "status_reason": c.status_reason or "",
                     "remediation": c.remediation,
                 }
             )

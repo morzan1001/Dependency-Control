@@ -520,9 +520,11 @@ class TestGenerateRecommendationsCrossProject:
         assert isinstance(result, list)
 
 
-class TestGenerateRecommendationsScanHistory:
+class TestGenerateRecommendationsCveRecurrence:
     @pytest.mark.asyncio
-    async def test_scan_history_does_not_crash(self):
+    async def test_cve_recurrence_does_not_crash(self):
+        from app.services.recommendation.trends import CveRecurrence
+
         engine = RecommendationEngine()
         finding = _make_vuln_finding()
         dep = _make_dependency()
@@ -530,7 +532,8 @@ class TestGenerateRecommendationsScanHistory:
         result = await engine.generate_recommendations(
             findings=[finding],
             dependencies=[dep],
-            scan_history=[{"scan_id": "s1", "findings_count": 5}],
+            cve_recurrence={"CVE-2024-001": CveRecurrence(scans={"s1", "s2", "s3"}, severity="HIGH")},
+            recurrence_window_scans=10,
         )
         assert isinstance(result, list)
 

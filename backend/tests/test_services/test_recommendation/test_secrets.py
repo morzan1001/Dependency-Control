@@ -1,7 +1,8 @@
 """Tests for app.services.recommendation.secrets."""
 
 from app.schemas.recommendation import Priority, RecommendationType
-from app.services.recommendation.secrets import process_secrets
+from app.services.recommendation.common import AFFECTED_COMPONENTS_SHOWN
+from app.services.recommendation.secrets import _SECRET_TYPES_NAMED, process_secrets
 
 
 def _secret(
@@ -99,10 +100,14 @@ class TestProcessSecretsMultipleGroupedByDetector:
         assert "Github" in secret_types
         assert "SlackWebhook" in secret_types
 
-    def test_secret_types_limited_to_five(self):
-        findings = [_secret(detector=str(i), finding_id=f"s{i}") for i in range(8)]
+    def test_the_action_carries_every_detector_and_the_prose_counts_the_rest(self):
+        found = 8
+        findings = [_secret(detector=str(i), finding_id=f"s{i}") for i in range(found)]
+
         rec = process_secrets(findings)[0]
-        assert len(rec.action["secret_types"]) <= 5
+
+        assert len(rec.action["secret_types"]) == found
+        assert f"and {found - _SECRET_TYPES_NAMED} more" in rec.description
 
 
 class TestProcessSecretsFilesAffected:
@@ -128,10 +133,15 @@ class TestProcessSecretsFilesAffected:
         rec = process_secrets(findings)[0]
         assert len(rec.affected_components) <= 20
 
-    def test_action_files_limited_to_ten(self):
-        findings = [_secret(component=f"src/file{i}.py", finding_id=f"s{i}") for i in range(15)]
+    def test_the_files_the_action_lists_are_counted_before_they_are_cut(self):
+        found = AFFECTED_COMPONENTS_SHOWN + 15
+        findings = [_secret(component=f"src/file{i:03d}.py", finding_id=f"s{i}") for i in range(found)]
+
         rec = process_secrets(findings)[0]
-        assert len(rec.action["files"]) <= 10
+
+        assert len(rec.action["files"]) == AFFECTED_COMPONENTS_SHOWN
+        assert rec.action["files_total"] == found
+        assert rec.affected_components_total == found
 
     def test_empty_component_not_tracked(self):
         findings = [_secret(component="")]
@@ -203,8 +213,8 @@ class TestProcessSecretsDetectorFallbacks:
             _secret(detector="9", finding_id="s2"),
         ]
         rec = process_secrets(findings)[0]
-        assert "These include: URI, Gitlab" in rec.description
-        assert rec.action["secret_types"] == ["URI", "Gitlab"]
+        assert "These include: Gitlab, URI" in rec.description
+        assert rec.action["secret_types"] == ["Gitlab", "URI"]
 
     def test_unmapped_ordinal_falls_back_to_the_stored_value(self):
         rec = process_secrets([_secret(detector="999999")])[0]

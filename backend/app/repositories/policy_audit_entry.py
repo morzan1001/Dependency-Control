@@ -42,7 +42,14 @@ class PolicyAuditRepository(BaseRepository[PolicyAuditEntry]):
             **_policy_type_filter(policy_type),
         }
         with track_db_operation(self.collection_name, "find"):
-            cursor = self.collection.find(query).sort("timestamp", DESCENDING).skip(skip).limit(limit)
+            # Timestamps are stored to the millisecond and two saves can share one, so version —
+            # which only ever grows within a scope — decides which of them is the later change.
+            cursor = (
+                self.collection.find(query)
+                .sort([("timestamp", DESCENDING), ("version", DESCENDING)])
+                .skip(skip)
+                .limit(limit)
+            )
             docs = await cursor.to_list(length=limit)
         return [PolicyAuditEntry.model_validate(d) for d in docs]
 

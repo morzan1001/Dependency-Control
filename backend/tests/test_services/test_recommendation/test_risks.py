@@ -2,6 +2,8 @@
 
 from app.schemas.recommendation import PackageHotspot, Priority, RecommendationType
 from app.services.recommendation.risks import (
+    CRITICAL_HOTSPOTS_SHOWN,
+    TOXIC_DEPENDENCIES_SHOWN,
     analyze_attack_surface,
     detect_critical_hotspots,
     detect_toxic_dependencies,
@@ -588,3 +590,61 @@ class TestAnalyzeAttackSurfaceCombined:
         types = {r.title for r in result}
         assert any("Transitive" in t for t in types)
         assert any("Large" in t for t in types)
+
+
+class TestRankedListsSayHowManyWereRankedOut:
+    """A top-N of recommendations reads as the whole set unless each card names its rank."""
+
+    def test_hotspots_beyond_the_cap_are_counted_on_every_card(self):
+        candidates = CRITICAL_HOTSPOTS_SHOWN + 3
+        findings = []
+        for index in range(candidates):
+            findings += [
+                _vuln(f"pkg-{index}", "CRITICAL", finding_id=f"CVE-2024-{index}-1"),
+                _vuln(f"pkg-{index}", "HIGH", finding_id=f"CVE-2024-{index}-2"),
+                _vuln(f"pkg-{index}", "MEDIUM", finding_id=f"CVE-2024-{index}-3"),
+            ]
+
+        result = detect_critical_hotspots(findings, [])
+
+        assert len(result) == CRITICAL_HOTSPOTS_SHOWN
+        assert [r.rank for r in result] == list(range(1, CRITICAL_HOTSPOTS_SHOWN + 1))
+        assert {r.ranked_out_of for r in result} == {candidates}
+
+    def test_hotspots_within_the_cap_claim_no_rank(self):
+        findings = [
+            _vuln("pkg", "CRITICAL", finding_id="CVE-2024-001"),
+            _vuln("pkg", "HIGH", finding_id="CVE-2024-002"),
+            _vuln("pkg", "MEDIUM", finding_id="CVE-2024-003"),
+        ]
+
+        result = detect_critical_hotspots(findings, [])
+
+        assert [(r.rank, r.ranked_out_of) for r in result] == [(0, 0)]
+
+    def test_toxic_dependencies_beyond_the_cap_are_counted_on_every_card(self):
+        candidates = TOXIC_DEPENDENCIES_SHOWN + 2
+        findings = []
+        for index in range(candidates):
+            findings += [
+                _vuln(f"pkg-{index}", "CRITICAL", finding_id=f"CVE-2024-{index}"),
+                _eol(f"pkg-{index}"),
+                _license(f"pkg-{index}"),
+            ]
+
+        result = detect_toxic_dependencies(findings, [])
+
+        assert len(result) == TOXIC_DEPENDENCIES_SHOWN
+        assert [r.rank for r in result] == list(range(1, TOXIC_DEPENDENCIES_SHOWN + 1))
+        assert {r.ranked_out_of for r in result} == {candidates}
+
+    def test_toxic_dependencies_within_the_cap_claim_no_rank(self):
+        findings = [
+            _vuln("pkg", "CRITICAL", finding_id="CVE-2024-001"),
+            _eol("pkg"),
+            _license("pkg"),
+        ]
+
+        result = detect_toxic_dependencies(findings, [])
+
+        assert [(r.rank, r.ranked_out_of) for r in result] == [(0, 0)]

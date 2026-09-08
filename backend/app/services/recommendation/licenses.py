@@ -2,7 +2,10 @@ from collections import defaultdict
 from typing import Any
 
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import ModelOrDict, get_attr
+from app.services.aggregation.components import extract_artifact_name
+from app.services.recommendation.common import ModelOrDict, get_attr, name_some, sample_components
+
+_LICENSES_NAMED = 5
 
 # Category restrictiveness rank (higher = more restrictive)
 _CATEGORY_RANK = {
@@ -44,7 +47,8 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
         # All findings are INFO-only.
         priority = Priority.LOW
 
-    problematic_licenses = list(by_license.keys())[:10]
+    problematic_licenses = sorted(by_license)
+    components_shown, components_total = sample_components(sorted(components))
 
     return [
         Recommendation(
@@ -53,7 +57,7 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
             title="Resolve License Compliance Issues",
             description=(
                 f"Found {len(findings)} license compliance issues across {len(components)} components. "
-                f"Problematic licenses include: {', '.join(problematic_licenses[:5])}."
+                f"Problematic licenses: {name_some(problematic_licenses, _LICENSES_NAMED)}."
             ),
             impact={
                 "critical": severity_counts.get("CRITICAL", 0),
@@ -62,7 +66,8 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
                 "low": severity_counts.get("LOW", 0),
                 "total": len(findings),
             },
-            affected_components=list(components)[:20],
+            affected_components=components_shown,
+            affected_components_total=components_total,
             action={
                 "type": "license_compliance",
                 "problematic_licenses": problematic_licenses,
@@ -79,7 +84,10 @@ def process_licenses(findings: list[ModelOrDict]) -> list[Recommendation]:
 
 
 def _license_key(f: ModelOrDict) -> str:
-    return f"{get_attr(f, 'component', '')}@{get_attr(f, 'version', '')}"
+    """Drift is about the licence, so the key stays component-shaped — but scanners disagree on
+    how far a package name is qualified, and an unfolded name makes the previous licence
+    unfindable, which reads as no drift."""
+    return f"{extract_artifact_name(get_attr(f, 'component', '') or '')}@{get_attr(f, 'version', '')}"
 
 
 def _license_info(f: ModelOrDict) -> dict[str, Any]:
@@ -151,6 +159,9 @@ def detect_license_drift(
         return []
 
     has_copyleft_drift = any(_CATEGORY_RANK.get(d["current_category"], 0) >= 2 for d in drifted)
+    drift_shown, drift_total = sample_components(
+        f"{d['component']}@{d['version']}: {d['previous_license']} → {d['current_license']}" for d in drifted
+    )
 
     return [
         Recommendation(
@@ -166,13 +177,11 @@ def detect_license_drift(
                 "total": len(drifted),
                 "copyleft_drift": len([d for d in drifted if _CATEGORY_RANK.get(d["current_category"], 0) >= 2]),
             },
-            affected_components=[
-                f"{d['component']}@{d['version']}: {d['previous_license']} → {d['current_license']}"
-                for d in drifted[:15]
-            ],
+            affected_components=drift_shown,
+            affected_components_total=drift_total,
             action={
                 "type": "review_license_drift",
-                "drifted_components": drifted[:20],
+                "drifted_components": drifted,
                 "steps": [
                     "Review the license change for each affected component",
                     "Check if the new license is compatible with your project",

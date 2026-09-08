@@ -13,13 +13,14 @@ class DependencyRepository(BaseRepository[Dependency]):
     async def get_by_name(self, name: str) -> Dependency | None:
         return await self.find_one({"name": name})
 
-    async def find_by_scan(
-        self,
-        scan_id: str,
-        skip: int = 0,
-        limit: int = 10000,
-    ) -> list[Dependency]:
-        return await self.find_many({"scan_id": scan_id}, skip=skip, limit=limit)
+    async def find_by_scan(self, scan_id: str, limit: int) -> tuple[list[Dependency], int]:
+        """The scan's dependencies up to ``limit``, and how many it holds. The count costs a
+        round trip only once the read has saturated, and a caller that reports the pair can tell
+        a small scan from a windowed one."""
+        rows = await self.find_many({"scan_id": scan_id}, limit=limit)
+        if len(rows) < limit:
+            return rows, len(rows)
+        return rows, await self.count_by_scan(scan_id)
 
     async def find_all(
         self,

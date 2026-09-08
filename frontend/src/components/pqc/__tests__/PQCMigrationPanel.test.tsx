@@ -35,6 +35,7 @@ const plan: MigrationPlanResponse = {
   mappings_version: 3,
   summary: {
     total_items: 0,
+    items_returned: 0,
     status_counts: {
       migrate_now: 1,
       migrate_soon: 0,
@@ -122,5 +123,48 @@ describe("PQCMigrationPanel export-as-compliance-report", () => {
     });
 
     expect(localStorage.getItem("prefill_compliance_framework")).toBeNull();
+  });
+});
+
+const PLAN_LIMIT = 500;
+const MIGRATABLE_GROUPS = 600;
+
+function migrationItem(index: number): MigrationPlanResponse["items"][number] {
+  return {
+    asset_bom_ref: `ref-${index}`,
+    asset_name: "RSA",
+    asset_variant: null,
+    asset_key_size_bits: 2048,
+    project_ids: ["p1"],
+    asset_count: 1,
+    source_family: "RSA",
+    source_primitive: "pke",
+    use_case: "key-exchange",
+    recommended_pqc: "ML-KEM-768",
+    recommended_standard: "FIPS 203",
+    notes: "",
+    priority_score: 40,
+    status: "plan_migration",
+    recommended_deadline: null,
+  };
+}
+
+describe("PQCMigrationPanel item count", () => {
+  beforeEach(async () => {
+    localStorage.clear();
+    const { getPQCMigrationPlan } = await import("@/api/pqcMigration");
+    vi.mocked(getPQCMigrationPlan).mockResolvedValue({
+      ...plan,
+      items: Array.from({ length: PLAN_LIMIT }, (_, i) => migrationItem(i)),
+      summary: { ...plan.summary, total_items: MIGRATABLE_GROUPS, items_returned: PLAN_LIMIT },
+    });
+  });
+
+  it("names the migration work the estate holds, not the page the endpoint returned", async () => {
+    renderHarness();
+
+    expect(
+      await screen.findByText(new RegExp(`Showing ${PLAN_LIMIT} of ${MIGRATABLE_GROUPS} item`)),
+    ).toBeInTheDocument();
   });
 });

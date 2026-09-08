@@ -23,6 +23,7 @@ import { AdditionalDetailsView } from './details/AdditionalDetailsView'
 import { WaiverForm } from './details/WaiverForm'
 import { SastDetailsView, ScanContext } from './details/SastDetailsView'
 import { DetailSection, FileLocation, BadgeList } from './details/shared'
+import { ReachabilityEvidence } from './details/ReachabilityEvidence'
 import {
   getFindingId,
   getFindingPackage,
@@ -279,6 +280,16 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                         </DetailSection>
                                     </div>
                                 )}
+                                {!!finding.related_findings_omitted && (
+                                    <div className="col-span-2">
+                                        <DetailSection label="Related Findings" compact>
+                                            <p className="text-xs text-muted-foreground">
+                                                Not listed: this component carries {finding.related_findings_omitted.toLocaleString()} other
+                                                findings, more than the scan pairs up. Filter the findings table by this component to see them.
+                                            </p>
+                                        </DetailSection>
+                                    </div>
+                                )}
                             </div>
 
                             {finding.description && finding.type !== 'vulnerability' && finding.type !== 'sast' && finding.type !== 'iac' && (
@@ -524,6 +535,9 @@ export function FindingDetailsModal({ finding, isOpen, onClose, projectId, scanI
                                                             })()}
                                                             {(vuln.reachability?.matched_symbols ?? finding.details?.reachability?.matched_symbols ?? []).length > 0 && (
                                                                 <MatchedSymbolsList symbols={vuln.reachability?.matched_symbols ?? finding.details?.reachability?.matched_symbols ?? []} />
+                                                            )}
+                                                            {(vuln.reachability?.message ?? finding.details?.reachability?.message) && (
+                                                                <ReachabilityEvidence reachability={(vuln.reachability ?? finding.details?.reachability)!} />
                                                             )}
                                                             {(vuln.kev_required_action || finding.details?.kev_required_action) && (
                                                                 <div className="flex items-center gap-2 w-full">

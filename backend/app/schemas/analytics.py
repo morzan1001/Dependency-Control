@@ -37,7 +37,9 @@ class DependencyUsage(BaseModel):
 
     name: str
     type: str
+    # The newest versions in use; version_count is how many distinct ones the estate holds.
     versions: list[str]
+    version_count: int
     project_count: int
     total_occurrences: int
     has_vulnerabilities: bool
@@ -71,6 +73,9 @@ class DependencyGraph(BaseModel):
     # otherwise-disconnected component), so the graph is rendered whole without server nesting.
     nodes: list[DependencyTreeNode] = []
     roots: list[str] = []
+    # Rows the graph was built from against what the scan holds; equal unless the read saturated.
+    dependencies_read: int = 0
+    dependencies_total: int = 0
 
 
 class ImpactAnalysisResult(BaseModel):
@@ -85,6 +90,7 @@ class ImpactAnalysisResult(BaseModel):
     fix_impact_score: float
     affected_project_names: list[str]
     max_epss_score: float | None = None
+    fix_version_count: int = 0
     epss_percentile: float | None = None
     has_kev: bool = False
     kev_count: int = 0
@@ -108,6 +114,9 @@ class VulnerabilityHotspot(BaseModel):
     finding_count: int
     severity_breakdown: SeverityBreakdown
     affected_projects: list[str]
+    affected_project_count: int = 0
+    fix_version_count: int = 0
+    cve_count: int = 0
     first_seen: str
     max_epss_score: float | None = None
     epss_percentile: float | None = None
@@ -141,6 +150,21 @@ class AnalyticsSummary(BaseModel):
     unique_packages: int
     dependency_types: list[DependencyTypeStats]
     severity_distribution: SeverityBreakdown
+    resolved_projects: int
+    projects_without_release: int
+
+
+class AnalyticsScope(BaseModel):
+    """What the caller's analytics scope offers: the release environments it can be narrowed to,
+    how much of it the current mode resolved, and how far back the analyses behind it reach."""
+
+    release_environments: list[str]
+    resolved_projects: int
+    projects_without_release: int
+    # Release mode resolves to a build nobody rebuilt, so its findings are the vulnerability
+    # landscape of its analysis date; without that date beside them the answer reads as present
+    # tense. Null when the scope resolved to no scan at all.
+    oldest_analysis_at: datetime | None = None
 
 
 class DependencyMetadata(BaseModel):
@@ -213,6 +237,8 @@ class VulnerabilitySearchResponse(BaseModel):
     total: int
     page: int
     size: int
+    resolved_projects: int
+    projects_without_release: int
 
 
 class DependencySearchResult(BaseModel):
@@ -251,6 +277,8 @@ class DependencySearchResponse(BaseModel):
     total: int
     page: int
     size: int
+    resolved_projects: int
+    projects_without_release: int
 
 
 class RecommendationResponse(BaseModel):
@@ -262,6 +290,12 @@ class RecommendationResponse(BaseModel):
     description: str
     impact: dict[str, Any]
     affected_components: list[str]
+    affected_components_total: int = Field(
+        0,
+        description="Components the recommendation covers, counted before the list was cut",
+    )
+    rank: int = Field(0, description="Position in the ranked list this recommendation came from, 0 if it was whole")
+    ranked_out_of: int = Field(0, description="Candidates ranked for that list, 0 if none were ranked out")
     action: dict[str, Any]
     effort: str
 
@@ -276,6 +310,10 @@ class RecommendationsResponse(BaseModel):
     total_vulnerabilities: int
     recommendations: list[RecommendationResponse]
     summary: dict[str, Any]
+    # Dependency rows the engine reasoned over against what the scan holds; equal unless the
+    # read saturated, in which case component-wide advice is scoped to the rows that were read.
+    dependencies_read: int = 0
+    dependencies_total: int = 0
 
 
 # --- Update Frequency Analysis ---
@@ -366,6 +404,13 @@ class UpdateFrequencyMetrics(BaseModel):
     # Dominant dep ecosystem ("pypi"/"npm"/...); "mixed" if none >=70%; None if empty.
     dominant_ecosystem: str | None = None
 
+    # Scans the numbers cover when the branch holds more than either read path follows;
+    # None when the whole window was read. scan_count counts timeline bars, not scans.
+    window_scan_cap: int | None = None
+    # Packages still outdated in the newest measured scan: the backlog slowest_packages ranks,
+    # counted before the table was cut.
+    outdated_backlog: int = 0
+
     scan_timeline: list[ScanTimelineEntry]
     slowest_packages: list[SlowPackage]
     recent_updates: list[DependencyUpdateEvent]
@@ -404,6 +449,10 @@ class ProjectUpdateSummary(BaseModel):
     total_updates: int | None = None
     total_outdated: int | None = None
     last_scan_date: str | None = None
+    # Scans the row's numbers cover when the branch holds more than either read path
+    # follows; None when the whole window was read. The rate is still comparable, because
+    # it divides by the stretch that was read rather than by the window.
+    window_scan_cap: int | None = None
 
 
 class UpdateFrequencyComparison(BaseModel):
@@ -438,6 +487,11 @@ class HotspotEntry(BaseModel):
     finding_count: int = Field(..., ge=0)
     severity_mix: dict[str, int] = Field(default_factory=dict)
     locations: list[str] = Field(default_factory=list)
+    locations_complete: bool = Field(
+        ...,
+        description="Every location this key occurs in is listed; when false a location absent "
+        "from the list is unknown rather than known not to hold the key",
+    )
     project_ids: list[str] = Field(default_factory=list)
     first_seen: datetime
     last_seen: datetime

@@ -63,6 +63,9 @@ export const Permissions = {
 
   // MCP — issue API keys for external LLM clients
   MCP_ACCESS: "mcp:access",
+
+  // Ad-hoc analysis — stateless /analyze endpoint via API key
+  ANALYZE_ADHOC: "analyze:adhoc",
 } as const;
 
 export type Permission = (typeof Permissions)[keyof typeof Permissions];
@@ -123,6 +126,8 @@ export const ALL_PERMISSIONS: Permission[] = [
   Permissions.CHAT_HISTORY_DELETE,
   // MCP
   Permissions.MCP_ACCESS,
+  // Ad-hoc analysis
+  Permissions.ANALYZE_ADHOC,
 ];
 
 // Admin: All permissions
@@ -482,6 +487,20 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
         label: "MCP Access",
         description:
           "Create and manage personal MCP API keys and use them against /api/v1/mcp",
+      },
+    ],
+  },
+  {
+    id: "analyze",
+    title: "Ad-hoc Analysis",
+    description:
+      "Lets a user mint personal API keys for POST /api/v1/analyze, the stateless endpoint that analyses a posted SBOM in memory and stores nothing.",
+    permissions: [
+      {
+        id: Permissions.ANALYZE_ADHOC,
+        label: "Ad-hoc Analysis",
+        description:
+          "Create and manage personal ad-hoc analysis API keys and use them against /api/v1/analyze",
       },
     ],
   },

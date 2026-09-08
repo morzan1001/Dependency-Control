@@ -3,7 +3,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.constants import PROJECT_ROLE_VIEWER, PROJECT_ROLES
+from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, PROJECT_ROLE_VIEWER, PROJECT_ROLES
 from app.core.notification_prefs import sanitize_notification_preferences
 from app.models.base import CreatedAtModel
 from app.models.finding import Finding
@@ -40,7 +40,7 @@ class Project(MongoDocument, CreatedAtModel):
     team_source: Literal["gitlab", "manual"] | None = None
     members: list[ProjectMember] = Field(default_factory=list)
     api_key_hash: str | None = Field(None, exclude=True)
-    active_analyzers: list[str] = Field(default_factory=lambda: ["trivy", "osv", "license_compliance", "end_of_life"])
+    active_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))
     stats: Stats | None = None
     last_scan_at: datetime | None = None
     latest_scan_id: str | None = None
@@ -143,10 +143,16 @@ class Scan(MongoDocument, CreatedAtModel):
     # Pinned scans are exempt from retention cleanup (housekeeping filters "pinned": {"$ne": True}).
     pinned: bool = False
 
+    # Monotone: ingest only ever promotes it. Where the artefact runs lives in the releases collection.
+    is_release: bool = False
+
     # Re-scan metadata
     is_rescan: bool = False
     original_scan_id: str | None = None
     latest_rescan_id: str | None = None
+    # The scheduled-rescan clock. Lives here because project.last_scan_at is bumped by every
+    # scanner post, so a project-wide clock never expires while CI is active.
+    last_rescanned_at: datetime | None = None
 
     # Summary of the latest run (either this scan itself, or the latest re-scan if this is the original)
     latest_run: dict[str, Any] | None = None

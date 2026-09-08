@@ -99,6 +99,15 @@ class WaiverRepository:
             docs = await cursor.to_list(None)
         return [Waiver(**doc) for doc in docs]
 
+    async def find_active_global(self) -> list[Waiver]:
+        """Active (non-expired) waivers that apply to every project (project_id=None)."""
+        query: dict[str, Any] = {"$and": [{"project_id": None}, _non_expired_filter(now=datetime.now(timezone.utc))]}
+
+        with track_db_operation(_COL, "find"):
+            cursor = self.collection.find(query)
+            docs = await cursor.to_list(None)
+        return [Waiver(**doc) for doc in docs]
+
     async def find_by_finding(self, project_id: str, finding_id: str) -> Waiver | None:
         with track_db_operation(_COL, "find_one"):
             data = await self.collection.find_one(

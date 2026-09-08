@@ -2,7 +2,7 @@
 
 import asyncio
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import AsyncIterator, Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from unittest.mock import patch
@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 import app.services.update_frequency as update_frequency_module
+from app.core.constants import RECENT_UPDATES_LIMIT, SLOWEST_PACKAGES_LIMIT
 from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
 from app.repositories.update_frequency import (
     BranchWindowActivity,
@@ -23,12 +24,14 @@ from app.services.update_frequency import (
     _COMPARISON_CONCURRENCY,
     READY_COVERAGE_RATIO,
     _aggregate_metrics,
+    _build_slowest_packages,
     _dominant_ecosystem,
     _empty_metrics,
     classify_version_change,
     compute_trend,
     compute_update_frequency,
     compute_update_frequency_comparison,
+    load_outdated_entries,
     select_primary_branch,
     window_coverage_status,
     window_cutoff,
@@ -367,12 +370,7 @@ class FakeAnalysisRepo:
         self._results = results
         self.queries: list[dict[str, Any]] = []
 
-    async def find_many_raw(
-        self,
-        query: dict[str, Any],
-        limit: int = 1000,
-        projection: dict[str, int] | None = None,
-    ) -> list[dict[str, Any]]:
+    def _matching(self, query: dict[str, Any], projection: dict[str, int] | None) -> list[dict[str, Any]]:
         self.queries.append(query)
         scan_filter = query.get("scan_id")
         analyzer = query.get("analyzer_name")
@@ -387,7 +385,23 @@ class FakeAnalysisRepo:
             if analyzer is not None and r["analyzer_name"] != analyzer:
                 continue
             out.append(_apply_projection(r, projection))
-        return out[:limit]
+        return out
+
+    async def find_many_raw(
+        self,
+        query: dict[str, Any],
+        limit: int = 1000,
+        projection: dict[str, int] | None = None,
+    ) -> list[dict[str, Any]]:
+        return self._matching(query, projection)[:limit]
+
+    async def iterate_raw(
+        self,
+        query: dict[str, Any] | None = None,
+        projection: dict[str, int] | None = None,
+    ) -> AsyncIterator[dict[str, Any]]:
+        for doc in self._matching(query or {}, projection):
+            yield doc
 
 
 _BASE_SCAN_DATE = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -1462,6 +1476,26 @@ class TestStreamingOrchestrator:
         )
         # Only the newest 100 scans should be analysed under the safety cap.
         assert m.scan_count == 100
+        # And the response says so: every number above covers 100 of the branch's 2500 scans.
+        assert m.window_scan_cap == 100
+
+    @pytest.mark.asyncio
+    async def test_a_window_read_whole_names_no_cap(self):
+        scans = _recent_scans(30)
+        deps = {f"s{i}": [_make_dep(f"s{i}", "pkg-a", f"1.0.{i}")] for i in range(30)}
+
+        m = await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+            max_scans=5,
+            window_days=3000,
+            hard_limit=100,
+        )
+
+        assert m.window_scan_cap is None
 
     @staticmethod
     def _two_scan_project(pid: str, pkg: str, versions: tuple[str, str]) -> tuple[list, dict]:
@@ -1900,3 +1934,122 @@ class TestWindowCutoff:
         result = window_cutoff(3650)
         assert result is not None
         assert result.year < datetime.now(tz=timezone.utc).year
+
+
+class TestRecentUpdatesSelection:
+    """One limit and one order for the list, so the walk and the ledger keep the same events."""
+
+    @staticmethod
+    async def _compute(scans, deps):
+        return await compute_update_frequency(
+            project_id="proj-1",
+            project_name="Project",
+            scan_repo=FakeScanRepo(scans),
+            dep_repo=FakeDepRepo(deps),
+            analysis_repo=FakeAnalysisRepo([]),
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_scan_with_more_changes_than_the_limit_keeps_the_ranked_ones(self):
+        changed = RECENT_UPDATES_LIMIT + 10
+        scans = [_make_scan("s0", 0), _make_scan("s1", 1)]
+        deps = {
+            "s0": [_make_dep("s0", f"pkg{i:03d}", "1.0.0") for i in range(changed)],
+            # The last package by name takes a major bump; ranking has to pull it to the
+            # front, past the limit that document order alone would have dropped it behind.
+            "s1": [_make_dep("s1", f"pkg{i:03d}", "2.0.0" if i == changed - 1 else "1.0.1") for i in range(changed)],
+        }
+
+        m = await self._compute(scans, deps)
+
+        assert len(m.recent_updates) == RECENT_UPDATES_LIMIT
+        assert m.recent_updates[0].package_name == f"pkg{changed - 1:03d}"
+        assert m.recent_updates[0].update_type == "major"
+        assert [event.package_name for event in m.recent_updates[1:]] == [
+            f"pkg{i:03d}" for i in range(RECENT_UPDATES_LIMIT - 1)
+        ]
+
+    @pytest.mark.asyncio
+    async def test_the_newest_scan_comes_first(self):
+        scans = [_make_scan("s0", 0), _make_scan("s1", 1), _make_scan("s2", 2)]
+        deps = {
+            "s0": [_make_dep("s0", "pkg-a", "1.0.0")],
+            "s1": [_make_dep("s1", "pkg-a", "1.0.1")],
+            "s2": [_make_dep("s2", "pkg-a", "1.0.2")],
+        }
+
+        m = await self._compute(scans, deps)
+
+        assert [event.new_version for event in m.recent_updates] == ["1.0.2", "1.0.1"]
+
+
+class TestSlowestPackagesCut:
+    """The table is the head of a backlog, ranked with a tie-break both read paths share."""
+
+    @staticmethod
+    def _rows(package_outdated_counts, latest_outdated):
+        return _build_slowest_packages(package_outdated_counts, {}, {}, latest_outdated, {})
+
+    def test_packages_tied_on_scans_are_ordered_by_name(self):
+        tied = {f"pkg{i:02d}": 3 for i in range(SLOWEST_PACKAGES_LIMIT + 5)}
+        # Insertion order is Mongo document order, which is not stable across requests.
+        shuffled = dict(reversed(list(tied.items())))
+
+        rows, _backlog = self._rows(shuffled, set(tied))
+
+        assert [row.name for row in rows] == sorted(tied)[:SLOWEST_PACKAGES_LIMIT]
+
+    def test_a_higher_count_still_outranks_the_name(self):
+        counts = {"zzz": 9, "aaa": 1}
+
+        rows, _backlog = self._rows(counts, set(counts))
+
+        assert [row.name for row in rows] == ["zzz", "aaa"]
+
+    def test_the_backlog_is_counted_before_the_table_is_cut(self):
+        backlog_size = SLOWEST_PACKAGES_LIMIT + 7
+        counts = {f"pkg{i:02d}": 2 for i in range(backlog_size)}
+
+        rows, backlog = self._rows(counts, set(counts))
+
+        assert len(rows) == SLOWEST_PACKAGES_LIMIT
+        assert backlog == backlog_size
+
+    def test_resolved_packages_are_not_backlog(self):
+        counts = {"still-outdated": 4, "resolved": 9}
+
+        rows, backlog = self._rows(counts, {"still-outdated"})
+
+        assert [row.name for row in rows] == ["still-outdated"]
+        assert backlog == 1
+
+
+class TestOutdatedRowsPerScan:
+    """One row is stored per SBOM; the backlog is their union, so every row must be read."""
+
+    _SBOMS_PER_SCAN = 60
+
+    def _repo(self) -> FakeAnalysisRepo:
+        return FakeAnalysisRepo(
+            [
+                {
+                    "scan_id": "scan-1",
+                    "analyzer_name": "outdated_packages",
+                    "result": {"outdated_dependencies": [{"component": f"pkg{i:03d}"}]},
+                }
+                for i in range(self._SBOMS_PER_SCAN)
+            ]
+        )
+
+    @pytest.mark.asyncio
+    async def test_a_monorepo_posting_many_sboms_keeps_every_backlog_row(self):
+        entries = await load_outdated_entries(self._repo(), "scan-1")
+
+        assert entries is not None
+        assert [e["component"] for e in entries] == [f"pkg{i:03d}" for i in range(self._SBOMS_PER_SCAN)]
+
+    @pytest.mark.asyncio
+    async def test_a_scan_with_no_outdated_analysis_is_unmeasured_not_empty(self):
+        entries = await load_outdated_entries(FakeAnalysisRepo([]), "scan-1")
+
+        assert entries is None

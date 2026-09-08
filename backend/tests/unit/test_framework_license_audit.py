@@ -120,3 +120,29 @@ async def test_waived_finding_produces_waived_control():
     strong_ctrl = next(c for c in result.controls if c.control_id == "LICENSE-AUDIT-STRONG-COPYLEFT")
     assert strong_ctrl.status == "waived"
     assert "accepted risk" in strong_ctrl.waiver_reasons
+
+
+@pytest.mark.asyncio
+async def test_analyzer_output_reaches_the_identified_control():
+    """The analyzer counts unlicensed components; the control has to see them as findings."""
+    from app.services.aggregation import ResultAggregator
+    from app.services.analyzers.license_compliance import LicenseAnalyzer
+    from app.services.normalizers.license import normalize_license
+
+    sbom = {
+        "components": [
+            {"type": "library", "name": "mit-lib", "version": "1.0.0", "licenses": [{"license": {"id": "MIT"}}]},
+            {"type": "library", "name": "undeclared-lib", "version": "2.0.0"},
+        ]
+    }
+    result = await LicenseAnalyzer().analyze(sbom)
+    assert result["summary"]["unknown"] == 1
+
+    aggregator = ResultAggregator()
+    normalize_license(aggregator, result, source="sbom.json")
+    findings = [f.model_dump() | {"_id": f.id} for f in aggregator.get_findings()]
+
+    evaluation = await LicenseAuditFramework().evaluate_async(_eval_input(findings=findings, policy={}))
+    ctrl = next(c for c in evaluation.controls if c.control_id == "LICENSE-AUDIT-LICENSE-IDENTIFIED")
+    assert ctrl.status == "failed"
+    assert len(ctrl.evidence_finding_ids) == 1

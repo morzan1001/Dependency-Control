@@ -2,10 +2,12 @@
 
 import logging
 import uuid
+from collections.abc import Sequence
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType
 from app.repositories.crypto_asset import CryptoAssetRepository
@@ -16,6 +18,19 @@ from app.services.analyzers.crypto.matcher import rule_matches
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
 
 logger = logging.getLogger(__name__)
+
+
+def crypto_findings_for_assets(assets: Sequence[CryptoAsset], rules: Sequence[CryptoRule]) -> list[dict[str, Any]]:
+    """One finding per asset violating at least one rule, at the strictest matched severity.
+
+    All matched rules are recorded in details for cross-framework attribution.
+    """
+    findings: list[dict[str, Any]] = []
+    for asset in assets:
+        matched_rules = [r for r in rules if rule_matches(asset, r)]
+        if matched_rules:
+            findings.append(_build_finding_dedup(asset, matched_rules))
+    return findings
 
 
 class CryptoRuleAnalyzer(Analyzer):
@@ -37,7 +52,7 @@ class CryptoRuleAnalyzer(Analyzer):
             return {"findings": []}
 
         try:
-            assets = await CryptoAssetRepository(db).list_by_scan(project_id, scan_id, limit=50_000)
+            assets = await CryptoAssetRepository(db).list_by_scan(project_id, scan_id, limit=MAX_CRYPTO_ASSETS_PER_SCAN)
             effective = await CryptoPolicyResolver(db).resolve(project_id)
             relevant_finding_types = {ft.value if hasattr(ft, "value") else ft for ft in self.finding_types}
             rules = [
@@ -47,15 +62,7 @@ class CryptoRuleAnalyzer(Analyzer):
                 and (r.finding_type if not hasattr(r.finding_type, "value") else r.finding_type.value)
                 in relevant_finding_types
             ]
-            findings: list[dict[str, Any]] = []
-            for asset in assets:
-                matched_rules = [r for r in rules if rule_matches(asset, r)]
-                if not matched_rules:
-                    continue
-                # One finding per asset at the strictest matched severity; all
-                # matched rules recorded in details for cross-framework attribution.
-                findings.append(_build_finding_dedup(asset, matched_rules))
-            return {"findings": findings}
+            return {"findings": crypto_findings_for_assets(assets, rules)}
         except Exception as e:
             logger.exception("crypto analyzer %s failed: %s", self.name, e)
             return {"error": str(e), "findings": []}

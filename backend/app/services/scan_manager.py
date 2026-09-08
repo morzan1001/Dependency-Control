@@ -11,7 +11,7 @@ from app.core.constants import SCAN_USABLE_STATUSES
 from app.core.worker import worker_manager
 from app.models.finding import Finding
 from app.models.project import Project
-from app.models.stats import Stats
+from app.models.release import Release
 from app.models.waiver import Waiver
 from app.schemas.ingest import BaseIngest, ScanContext
 
@@ -59,7 +59,7 @@ class ScanManager:
         # Atomic upsert to avoid races between concurrent scanners.
         now = datetime.now(timezone.utc)
 
-        scan_update = {
+        scan_update: dict[str, Any] = {
             "$set": {
                 "branch": data.branch or "unknown",
                 "commit_hash": data.commit_hash,
@@ -84,10 +84,18 @@ class ScanManager:
             },
         }
 
-        # Capture the raw result so is_new reflects insert (upserted_id set) vs update.
         from app.core.metrics import track_db_operation
-        from app.repositories import ScanRepository
+        from app.repositories import ReleaseRepository, ScanRepository
 
+        release = data.release_fields(now)
+        if release:
+            # The row before the flag: the backfill sweeps the release rows and repairs a missing
+            # flag, while a flag whose row is missing shows a release that is not there.
+            release_repo = ReleaseRepository(self.db)
+            await release_repo.record(Release(project_id=str(self.project.id), scan_id=scan_id, **release))
+            scan_update["$set"]["is_release"] = True
+
+        # Capture the raw result so is_new reflects insert (upserted_id set) vs update.
         scan_repo = ScanRepository(self.db)
         with track_db_operation("scans", "update_one"):
             upsert_result = await scan_repo.collection.update_one({"_id": scan_id}, scan_update, upsert=True)
@@ -230,23 +238,3 @@ class ScanManager:
 
         project_repo = ProjectRepository(self.db)
         await project_repo.update_raw(str(self.project.id), {"$set": {"last_scan_at": datetime.now(timezone.utc)}})
-
-    @staticmethod
-    def compute_stats(findings: list[Finding]) -> Stats:
-        """Compute severity statistics from findings."""
-        stats = Stats()
-        for f in findings:
-            sev = f.severity.lower() if f.severity else "unknown"
-            if sev == "critical":
-                stats.critical += 1
-            elif sev == "high":
-                stats.high += 1
-            elif sev == "medium":
-                stats.medium += 1
-            elif sev == "low":
-                stats.low += 1
-            elif sev == "info":
-                stats.info += 1
-            else:
-                stats.unknown += 1
-        return stats

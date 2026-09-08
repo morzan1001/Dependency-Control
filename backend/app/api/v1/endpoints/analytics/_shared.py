@@ -3,32 +3,21 @@
 from typing import Any
 
 from app.api.deps import DatabaseDep
-from app.core.constants import SCAN_USABLE_STATUSES
 from app.repositories import (
     DependencyEnrichmentRepository,
     ProjectRepository,
+    ScanRepository,
 )
 
 _MSG_ACCESS_DENIED = "Access denied to this project"
 
 
 async def _resolve_scan_id(project_id: str, db: DatabaseDep) -> str | None:
-    """Latest scan ID for a project, preferring branches that aren't deleted."""
-    project_repo = ProjectRepository(db)
-    project = await project_repo.get_by_id(project_id)
+    """The scan representing the project's head."""
+    project = await ProjectRepository(db).get_by_id(project_id)
     if not project:
         return None
-
-    deleted = project.deleted_branches or []
-    if not deleted:
-        return project.latest_scan_id
-
-    scan_doc = await db.scans.find_one(
-        {"project_id": project_id, "branch": {"$nin": deleted}, "status": {"$in": SCAN_USABLE_STATUSES}},
-        sort=[("created_at", -1)],
-        projection={"_id": 1},
-    )
-    return scan_doc["_id"] if scan_doc else None
+    return (await ScanRepository(db).get_latest_active_scan_ids([project])).get(project_id)
 
 
 async def _get_enrichment_info(enrichment_repo: DependencyEnrichmentRepository, purl: str | None) -> dict[str, Any]:

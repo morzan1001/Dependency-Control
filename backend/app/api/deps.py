@@ -493,6 +493,76 @@ async def authorize_callgraph_write(
     raise HTTPException(status_code=401, detail="Missing authentication credentials")
 
 
+async def authorize_release_write(
+    project_id: str,
+    x_api_key: str | None = Header(None, alias="X-API-Key"),
+    oidc_token: str | None = Header(None, alias="Job-Token"),
+    token: str | None = Depends(optional_oauth2_scheme),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+    settings_: SystemSettings = Depends(get_system_settings),
+) -> str:
+    """Authorize a release mark for CI credentials or a logged-in editor; returns the project id.
+
+    The deploy stage runs long after the build, so the CD job marks with the same credentials it
+    ingested with, while a human correcting a mistake has only a session.
+    """
+    from app.api.v1.helpers.projects import check_project_access
+    from app.core.constants import PROJECT_ROLE_EDITOR
+
+    if x_api_key or oidc_token:
+        project = await get_project_for_ingest(x_api_key=x_api_key, oidc_token=oidc_token, db=db, settings=settings_)
+        if str(project.id) != project_id:
+            raise HTTPException(status_code=403, detail="CI credentials do not match the target project")
+        return project_id
+
+    if token:
+        user = await get_current_user(db=db, token=token)
+        await check_project_access(
+            project_id, await get_current_active_user(user), db, required_role=PROJECT_ROLE_EDITOR
+        )
+        return project_id
+
+    raise HTTPException(status_code=401, detail="Missing authentication credentials")
+
+
+async def get_adhoc_api_key(
+    authorization: str = Header(default=""),
+    db: AsyncIOMotorDatabase = Depends(get_database),
+) -> dict[str, Any]:
+    """Resolve an ad-hoc analysis Bearer token to its key document.
+
+    No usage timestamp is stamped: the ad-hoc endpoint persists nothing, auth included.
+    """
+    from app.core.permissions import Permissions, has_permission
+    from app.repositories.adhoc_api_keys import AdhocApiKeyRepository
+
+    if not authorization.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Bearer token",
+            headers={"WWW-Authenticate": 'Bearer realm="analyze"'},
+        )
+    token = authorization.split(" ", 1)[1].strip()
+    key_doc = await AdhocApiKeyRepository(db).get_by_plaintext(token)
+    if not key_doc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid, revoked, or expired ad-hoc API key",
+        )
+
+    user = await UserRepository(db).get_by_id(key_doc["user_id"])
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token owner is no longer active")
+    if not has_permission(user.permissions, Permissions.ANALYZE_ADHOC):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Token owner no longer has ad-hoc analysis access",
+        )
+    return key_doc
+
+
 DatabaseDep = Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)]
 CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
 CallgraphWriteDep = Annotated[str, Depends(authorize_callgraph_write)]
+ReleaseWriteDep = Annotated[str, Depends(authorize_release_write)]
+AdhocKeyDep = Annotated[dict[str, Any], Depends(get_adhoc_api_key)]

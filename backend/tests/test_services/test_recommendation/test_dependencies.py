@@ -1,5 +1,7 @@
 """Tests for app.services.recommendation.dependencies."""
 
+import pytest
+
 from app.schemas.recommendation import Priority, RecommendationType
 from app.services.recommendation.dependencies import (
     analyze_dev_in_production,
@@ -198,40 +200,22 @@ class TestAnalyzeDevInProductionEmpty:
 
 
 class TestAnalyzeDevInProductionFlagged:
-    def test_jest_not_in_dev_scope_flagged(self):
-        deps = [_dep(name="jest", version="29.0.0")]
-        result = analyze_dev_in_production(deps)
-        assert len(result) == 1
+    @pytest.mark.parametrize(
+        ("name", "version"),
+        [
+            ("jest", "29.0.0"),
+            ("mocha", "10.0.0"),
+            ("eslint", "8.0.0"),
+            ("prettier", "3.0.0"),
+            ("@types/node", "20.0.0"),
+            ("cypress", "13.0.0"),
+        ],
+    )
+    def test_a_dev_package_outside_a_dev_scope_is_flagged(self, name, version):
+        rec = analyze_dev_in_production([_dep(name=name, version=version)])
 
-    def test_jest_flagged_type(self):
-        deps = [_dep(name="jest", version="29.0.0")]
-        rec = analyze_dev_in_production(deps)[0]
-        assert rec.type == RecommendationType.DEV_IN_PRODUCTION
-
-    def test_mocha_flagged(self):
-        deps = [_dep(name="mocha", version="10.0.0")]
-        result = analyze_dev_in_production(deps)
-        assert len(result) == 1
-
-    def test_eslint_flagged(self):
-        deps = [_dep(name="eslint", version="8.0.0")]
-        result = analyze_dev_in_production(deps)
-        assert len(result) == 1
-
-    def test_prettier_flagged(self):
-        deps = [_dep(name="prettier", version="3.0.0")]
-        result = analyze_dev_in_production(deps)
-        assert len(result) == 1
-
-    def test_types_package_flagged(self):
-        deps = [_dep(name="@types/node", version="20.0.0")]
-        result = analyze_dev_in_production(deps)
-        assert len(result) == 1
-
-    def test_cypress_flagged(self):
-        deps = [_dep(name="cypress", version="13.0.0")]
-        result = analyze_dev_in_production(deps)
-        assert len(result) == 1
+        assert len(rec) == 1
+        assert rec[0].type == RecommendationType.DEV_IN_PRODUCTION
 
     def test_multiple_dev_deps_single_recommendation(self):
         deps = [
@@ -244,30 +228,12 @@ class TestAnalyzeDevInProductionFlagged:
 
 
 class TestAnalyzeDevInProductionNotFlagged:
-    def test_jest_in_dev_scope_not_flagged(self):
-        deps = [_dep(name="jest", version="29.0.0", scope="dev")]
-        result = analyze_dev_in_production(deps)
-        assert len(result) == 0
+    @pytest.mark.parametrize("scope", ["dev", "development", "test"])
+    def test_a_dev_package_inside_a_dev_scope_is_not_flagged(self, scope):
+        assert analyze_dev_in_production([_dep(name="jest", version="29.0.0", scope=scope)]) == []
 
-    def test_jest_in_development_scope_not_flagged(self):
-        deps = [_dep(name="jest", version="29.0.0", scope="development")]
-        result = analyze_dev_in_production(deps)
-        assert len(result) == 0
-
-    def test_jest_in_test_scope_not_flagged(self):
-        deps = [_dep(name="jest", version="29.0.0", scope="test")]
-        result = analyze_dev_in_production(deps)
-        assert len(result) == 0
-
-    def test_non_dev_package_not_flagged(self):
-        deps = [_dep(name="express", version="4.18.0")]
-        result = analyze_dev_in_production(deps)
-        assert len(result) == 0
-
-    def test_unrelated_package_not_flagged(self):
-        deps = [_dep(name="requests", version="2.31.0")]
-        result = analyze_dev_in_production(deps)
-        assert len(result) == 0
+    def test_a_runtime_package_is_not_flagged(self):
+        assert analyze_dev_in_production([_dep(name="express", version="4.18.0")]) == []
 
 
 class TestAnalyzeEndOfLifeEmpty:

@@ -1,5 +1,6 @@
 """Shared constants used across the application."""
 
+import re
 from typing import Any
 
 # Canonical keys for KEV (CISA Known Exploited Vulnerabilities) state persisted in a
@@ -335,6 +336,7 @@ CROSS_PROJECT_MIN_OCCURRENCES: int = 2  # Min projects for cross-project pattern
 
 # EPSS very high threshold (for immediate action recommendations)
 EPSS_VERY_HIGH_THRESHOLD: float = 0.5  # >= 50% - Extremely likely to be exploited
+EPSS_ACTIVE_EXPLOITATION_THRESHOLD: float = 0.7  # >= 70% - treated as under active exploitation
 
 # OpenSSF Scorecard thresholds
 SCORECARD_LOW_THRESHOLD: float = 4.0  # Packages below this are flagged as low quality
@@ -344,10 +346,28 @@ SCORECARD_UNMAINTAINED_THRESHOLD: float = 5.0  # Used for critical risk correlat
 STALE_PACKAGE_THRESHOLD_DAYS: int = 730  # 2 years = potentially abandoned
 STALE_PACKAGE_WARNING_DAYS: int = 365  # 1 year = warning
 
+# Days past an end-of-life date at which the finding is raised to HIGH, then to MEDIUM.
+EOL_HIGH_AFTER_DAYS: int = 365
+EOL_MEDIUM_AFTER_DAYS: int = 180
+
 # Typosquatting detection threshold (similarity ratio 0-1)
 TYPOSQUATTING_SIMILARITY_THRESHOLD: float = 0.82
-# Maximum popular packages to cache (prevent memory issues)
-TYPOSQUATTING_MAX_FALLBACK_PACKAGES: int = 10000
+# Download-rank depth of the corpus a package name is compared against. The upstream list serves
+# 15 000 ranks and every 1 000 of them costs ~3 ms per unrecognised component, so the depth is a
+# scan-time budget: 5 000 ranks is ~15 ms per component. The analyzer result reports the depth,
+# because a name similar to a package below it is not flagged.
+TYPOSQUATTING_POPULAR_PACKAGE_RANKS: int = 5000
+
+# Analyzers a project runs unless it overrides them. epss_kev is the only caller of the
+# enrichment service, so without it a scan writes no in_kev, epss_score or enrichment
+# risk_score and every surface reading those reports zero.
+DEFAULT_ACTIVE_ANALYZERS: tuple[str, ...] = (
+    "trivy",
+    "osv",
+    "license_compliance",
+    "end_of_life",
+    "epss_kev",
+)
 
 # Analyzer batch sizes for API rate limiting
 ANALYZER_BATCH_SIZES: dict[str, int] = {
@@ -356,6 +376,7 @@ ANALYZER_BATCH_SIZES: dict[str, int] = {
     "outdated": 25,
     "malware": 20,
     "maintainer_risk": 10,
+    "hash_verification": 10,
     "typosquatting": 50,
     "end_of_life": 20,
     "epss": 100,  # Max CVEs per EPSS API request
@@ -402,9 +423,22 @@ EXPLOIT_MATURITY_BOOST: dict[str, float] = {
     "unknown": 1.0,
 }
 
+# Dependency rows one request holds in memory for a single scan. Measured against MongoDB 7:
+# 10 000 rows cost 0.32 s and 52 MiB peak through the graph builder, 50 000 cost 1.96 s and
+# 261 MiB, and 200 000 cost 9.25 s and 1.04 GiB against a 2 GiB pod.
+SCAN_DEPENDENCY_READ_LIMIT: int = 10_000
+
 # Maximum items returned by analytics aggregation queries
 # Used to prevent memory issues with large datasets
 ANALYTICS_MAX_QUERY_LIMIT: int = 100000
+
+# Page ceilings for services reachable both through their REST endpoint and through a chat tool.
+# One name per concept, so the two entry points cannot bound the same read at different numbers.
+MAX_CRYPTO_ASSET_PAGE: int = 500
+MAX_CRYPTO_HOTSPOT_PAGE: int = 500
+MAX_PQC_PLAN_ITEMS: int = 2000
+MAX_COMPLIANCE_REPORT_PAGE: int = 200
+MAX_POLICY_AUDIT_PAGE: int = 200
 
 # The /impact and /hotspots $group stages must not cap per-group arrays with a
 # post-$group $slice: it can't shrink a materialized accumulator, and capping in
@@ -466,7 +500,7 @@ NPM_REGISTRY_URL = "https://registry.npmjs.org"
 # Other service APIs
 EOL_API_URL = "https://endoflife.date/api"
 MALWARE_API_URL = "https://api.opensourcemalware.com/functions/v1/check-malicious"
-TOP_PYPI_PACKAGES_URL = "https://hugovk.github.io/top-pypi-packages/top-pypi-packages-30-days.json"
+TOP_PYPI_PACKAGES_URL = "https://hugovk.dev/top-pypi-packages/top-pypi-packages-30-days.json"
 GITHUB_API_URL = "https://api.github.com"
 
 # Mapping from package/component names to endoflife.date product IDs
@@ -815,6 +849,22 @@ SCAN_USABLE_STATUSES = [
     SCAN_STATUS_COMPLETED_WITH_ERRORS,
 ]
 
+# Version changes the "recent updates" list answers with, and the samples the delta writer keeps
+# per scan. One number for both: a writer keeping fewer than the readers show leaves a busy scan
+# unable to fill the list on its own, and the two read paths then answer with different events.
+RECENT_UPDATES_LIMIT: int = 30
+# The order the cut is taken in, so a scan with more changes than the limit loses the same ones
+# on every path. Downgrades rank last: they are recorded but are not update activity.
+UPDATE_SAMPLE_RANK: dict[str, int] = {"major": 0, "minor": 1, "patch": 2, "unknown": 3, "downgrade": 4}
+
+# Rows of the slowest-to-update table. Both read paths rank by scans outdated and break ties on
+# the package name; without that, packages tied at the cap swap places between requests.
+SLOWEST_PACKAGES_LIMIT: int = 15
+
+# Bound on the pointer hops a rescan-lineage walk follows, so a cyclic pointer cannot hang a
+# request. A walk whose first iteration reads the starting scan spends that one on zero hops.
+MAX_RESCAN_HOPS: int = 10
+
 # SPDX originator/supplier prefix for organization entities
 SPDX_ORGANIZATION_PREFIX = "Organization:"
 
@@ -911,8 +961,9 @@ AGG_KEY_VULNERABILITY = "AGG:VULN"
 AGG_KEY_QUALITY = "AGG:QUALITY"
 AGG_KEY_SAST = "SAST-AGG"
 
-# Limits for waiver queries
-WAIVER_QUERY_LIMIT = 1000
+# Cross-linking is pairwise, so a component carrying thousands of findings costs O(n^2) to
+# produce a related-findings list no reader can use. Above this the group is left unlinked.
+MAX_CROSS_LINK_GROUP_SIZE: int = 100
 
 # Waiver status values
 WAIVER_STATUS_ACCEPTED_RISK = "accepted_risk"
@@ -975,6 +1026,9 @@ HOUSEKEEPING_BRANCH_SYNC_INTERVAL_HOURS: int = 6
 # europe-west1, so its repair writes do not land in the working day.
 HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC: int = 2
 
+# TTL (seconds) of the per-source rescan-creation lock; only the insert runs under it.
+HOUSEKEEPING_RESCAN_LOCK_TTL_SECONDS: int = 60
+
 # Archive / Retention Action Constants
 RETENTION_ACTION_DELETE = "delete"
 RETENTION_ACTION_ARCHIVE = "archive"
@@ -1004,13 +1058,65 @@ RESTORE_INSERT_BATCH_SIZE = 1000
 # Housekeeping
 ARCHIVE_BATCH_SIZE = 50
 
+# Everything a scan owns, addressed by a scan_id field. Deletion, archival and restore all read
+# this: a second hand-kept copy is how crypto_assets came to outlive the project it belonged to.
+SCAN_SCOPED_COLLECTIONS: tuple[str, ...] = (
+    "analysis_results",
+    "findings",
+    "finding_records",
+    "dependencies",
+    "callgraphs",
+    "crypto_assets",
+)
+
+# The update-frequency rollups are keyed by scan id, not by a scan_id field, and an archive bundle
+# does not carry them: the restore recomputes them.
+SCAN_KEYED_COLLECTIONS: tuple[str, ...] = ("scan_update_deltas", "scan_outdated_sets")
+
+# The bundle frame holding the scan's GridFS SBOMs, alongside the scan-scoped collections.
+ARCHIVE_GRIDFS_FRAME = "gridfs_sboms"
+
+# BSON int32 is a different type from bool, so a flag written outside the model as 1 satisfies
+# {"$ne": True} and the scan is deleted for good. The retention guards spell out both spellings.
+RETENTION_PROTECTED_FLAG_VALUES: list[object] = [True, 1]
+
+# Scan ids per round trip of the release-flag reconcile; both directions splice one into an $in.
+RELEASE_FLAG_RECONCILE_BATCH_SIZE = 1000
+
 # Orphan reaper: only delete S3 objects older than this without metadata
 ARCHIVE_ORPHAN_MIN_AGE_HOURS = 24
 
 # CBOM / Crypto
+# Also the budget of every read that wants one scan whole: 50 000 assets validate in 0.95 s and
+# 182 MiB, and a scan cannot be ingested past this in one upload.
 MAX_CRYPTO_ASSETS_PER_SCAN: int = 50_000
 MAX_CBOM_BODY_BYTES: int = 25 * 1024 * 1024
+MAX_ADHOC_BODY_BYTES: int = 25 * 1024 * 1024
+ADHOC_MAX_FINDINGS: int = 5000
+ADHOC_DEADLINE_SECONDS: float = 180.0
+ADHOC_RATE_LIMIT_PER_MINUTE: int = 5
+ADHOC_RATE_LIMIT_PER_HOUR: int = 60
+
+# The parse and the aggregation are synchronous and superlinear in these three counts, so a
+# deadline cannot interrupt them and the body ceiling is 25 MB above where they hurt. Each
+# limit is the shape that drives one measured blow-up, counted in linear time before it runs.
+ADHOC_MAX_SBOM_COMPONENTS: int = 10_000
+# ``properties``, ``evidence.occurrences`` and ``cpes``: the parser dedupes each into a list
+# with a linear membership test, so cost is quadratic in whatever one component carries.
+ADHOC_MAX_SBOM_EVIDENCE_ENTRIES: int = 20_000
+ADHOC_MAX_SCANNER_FINDINGS: int = 5_000
 MAX_CONCURRENT_COMPLIANCE_REPORTS: int = 10
 POLICY_AUDIT_DEFAULT_MIN_PRUNE_DAYS: int = 90
 CRYPTO_ASSET_BULK_CHUNK_SIZE: int = 500
-CRYPTO_ASSET_MAX_LIST_LIMIT: int = 10_000
+
+# Environments are used as index and query keys, so the slug shape is enforced, not normalised.
+RELEASE_ENVIRONMENT_PATTERN: str = r"^[a-z0-9][a-z0-9_-]{0,31}$"
+DEFAULT_RELEASE_ENVIRONMENT: str = "production"
+
+
+def validate_release_environment(value: str | None) -> str | None:
+    if value is None:
+        return None
+    if not re.fullmatch(RELEASE_ENVIRONMENT_PATTERN, value):
+        raise ValueError(f"release_environment must match {RELEASE_ENVIRONMENT_PATTERN}")
+    return value

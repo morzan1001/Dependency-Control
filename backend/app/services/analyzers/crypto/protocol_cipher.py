@@ -7,6 +7,7 @@ from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import MAX_CRYPTO_ASSETS_PER_SCAN
 from app.models.crypto_asset import CryptoAsset
 from app.models.finding import FindingType, Severity
 from app.repositories.crypto_asset import CryptoAssetRepository
@@ -65,7 +66,7 @@ class ProtocolCipherSuiteAnalyzer(Analyzer):
             assets = await CryptoAssetRepository(db).list_by_scan(
                 project_id,
                 scan_id,
-                limit=50_000,
+                limit=MAX_CRYPTO_ASSETS_PER_SCAN,
                 asset_type=CryptoAssetType.PROTOCOL,
             )
             effective = await CryptoPolicyResolver(db).resolve(project_id)

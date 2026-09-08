@@ -1,5 +1,6 @@
 """Tests for SystemSettings model."""
 
+from app.core.constants import DEFAULT_ACTIVE_ANALYZERS
 from app.models.system import SystemSettings
 
 
@@ -73,7 +74,7 @@ class TestSystemSettingsDefaults:
 
     def test_default_active_analyzers(self):
         s = SystemSettings()
-        assert s.default_active_analyzers == ["trivy", "osv", "license_compliance", "end_of_life"]
+        assert s.default_active_analyzers == list(DEFAULT_ACTIVE_ANALYZERS)
 
     def test_retention_defaults(self):
         s = SystemSettings()
@@ -178,6 +179,6 @@ class TestSystemSettingsIdAlias:
             "instance_name": "Legacy",
         }
         s = SystemSettings(**legacy_doc)
-        assert s.default_active_analyzers == ["trivy", "osv", "license_compliance", "end_of_life"]
+        assert s.default_active_analyzers == list(DEFAULT_ACTIVE_ANALYZERS)
         assert s.gitlab_oidc_audience is None
         assert s.retention_mode == "project"

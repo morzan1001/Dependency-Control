@@ -6,6 +6,9 @@ from pathlib import Path
 import pytest
 
 FIXTURES = Path(__file__).parent.parent / "fixtures" / "sast"
+_POLL_ATTEMPTS = 100
+_POLL_INTERVAL_SECONDS = 0.1
+_NON_TERMINAL_STATUSES = ("running", "pending", "processing", None)
 
 
 def _load_fixture(name: str) -> dict:
@@ -13,11 +16,9 @@ def _load_fixture(name: str) -> dict:
         return json.load(f)
 
 
-@pytest.mark.skip(
-    reason="requires full ingest worker — mock DB lacks find_one_and_update; unit coverage in test_sast_normalizer_crypto_misuse.py is the primary proof"
-)
+@pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_sast_ingest_tags_crypto_misuse_findings(client, db, api_key_headers):
+async def test_sast_ingest_tags_crypto_misuse_findings(client, db, running_worker, api_key_headers):
     sast_payload = _load_fixture("crypto_misuse_findings.json")
 
     resp = await client.post(
@@ -30,16 +31,20 @@ async def test_sast_ingest_tags_crypto_misuse_findings(client, db, api_key_heade
         },
         headers=api_key_headers,
     )
-    assert resp.status_code == 202, resp.text
+    assert resp.status_code == 200, resp.text
     scan_id = resp.json()["scan_id"]
 
     import asyncio
 
-    for _ in range(100):
+    # OpenGrep ingest registers its result with trigger_analysis=False by design, so nothing
+    # aggregates the raw result into findings until a job is queued.
+    await running_worker.add_job(scan_id)
+
+    for _ in range(_POLL_ATTEMPTS):
         scan = await db.scans.find_one({"_id": scan_id})
-        if scan and scan.get("status") not in ("running", "pending", None):
+        if scan and scan.get("status") not in _NON_TERMINAL_STATUSES:
             break
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(_POLL_INTERVAL_SECONDS)
 
     findings = [f async for f in db.findings.find({"scan_id": scan_id})]
     km_findings = [f for f in findings if f.get("type") == "crypto_key_management"]

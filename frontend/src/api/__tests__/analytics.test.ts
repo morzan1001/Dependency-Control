@@ -129,3 +129,58 @@ describe("analyticsApi update-frequency timeouts", () => {
     expect(config.signal).toBe(signal);
   });
 });
+
+describe("analyticsApi release environment", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockGet.mockResolvedValue({ data: { items: [], total: 0, page: 0, size: 50 } });
+  });
+
+  const RELEASE_PARAM = "release_environment";
+  const PRODUCTION = "production";
+  const HEAD_MODE = undefined;
+  const SEARCH_TERM = "log4j";
+
+  // Every analytics endpoint the backend accepts release_environment on, with the argument
+  // position each of its callers uses.
+  const inReleaseMode: [string, () => Promise<unknown>][] = [
+    ["/analytics/scope", () => analyticsApi.getScope(PRODUCTION)],
+    ["/analytics/summary", () => analyticsApi.getSummary(PRODUCTION)],
+    ["/analytics/dependencies/top", () => analyticsApi.getTopDependencies(undefined, undefined, PRODUCTION)],
+    ["/analytics/dependency-types", () => analyticsApi.getDependencyTypes(PRODUCTION)],
+    ["/analytics/impact", () => analyticsApi.getImpactAnalysis(undefined, PRODUCTION)],
+    ["/analytics/hotspots", () => analyticsApi.getVulnerabilityHotspots({ release_environment: PRODUCTION })],
+    ["/analytics/search", () => analyticsApi.searchDependenciesAdvanced(SEARCH_TERM, { release_environment: PRODUCTION })],
+    [
+      "/analytics/vulnerability-search",
+      () => analyticsApi.searchVulnerabilities(SEARCH_TERM, { release_environment: PRODUCTION }),
+    ],
+  ];
+
+  const inHeadMode: [string, () => Promise<unknown>][] = [
+    ["/analytics/scope", () => analyticsApi.getScope(HEAD_MODE)],
+    ["/analytics/summary", () => analyticsApi.getSummary(HEAD_MODE)],
+    ["/analytics/dependencies/top", () => analyticsApi.getTopDependencies()],
+    ["/analytics/dependency-types", () => analyticsApi.getDependencyTypes()],
+    ["/analytics/impact", () => analyticsApi.getImpactAnalysis()],
+    ["/analytics/hotspots", () => analyticsApi.getVulnerabilityHotspots()],
+    ["/analytics/search", () => analyticsApi.searchDependenciesAdvanced(SEARCH_TERM)],
+    ["/analytics/vulnerability-search", () => analyticsApi.searchVulnerabilities(SEARCH_TERM)],
+  ];
+
+  it.each(inReleaseMode)("sends the environment to %s", async (url, call) => {
+    await call();
+
+    const [requested, config] = mockGet.mock.calls[0];
+    expect(requested).toBe(url);
+    expect((config.params as URLSearchParams).get(RELEASE_PARAM)).toBe(PRODUCTION);
+  });
+
+  it.each(inHeadMode)("omits the environment from %s in head mode", async (url, call) => {
+    await call();
+
+    const [requested, config] = mockGet.mock.calls[0];
+    expect(requested).toBe(url);
+    expect((config.params as URLSearchParams).has(RELEASE_PARAM)).toBe(false);
+  });
+});

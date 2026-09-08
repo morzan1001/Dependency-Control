@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useDependencyTypes, useTopDependencies } from '@/hooks/queries/use-analytics'
+import { useAnalyticsMode } from '@/context/analytics-mode'
 import { DependencyUsage } from '@/types/analytics'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
@@ -20,13 +21,17 @@ interface DependencyStatsProps {
 
 const DEP_STATS_SKELETON_IDS = ['ds1', 'ds2', 'ds3', 'ds4', 'ds5']
 
+const VERSION_BADGES_SHOWN = 3
+
 export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
   const [selectedType, setSelectedType] = useState<string | undefined>(undefined)
   const [limit, setLimit] = useState(20)
 
-  const { data: types } = useDependencyTypes()
+  const releaseEnvironment = useAnalyticsMode()
 
-  const { data: dependencies, isLoading } = useTopDependencies(limit, selectedType)
+  const { data: types } = useDependencyTypes(releaseEnvironment)
+
+  const { data: dependencies, isLoading } = useTopDependencies(limit, selectedType, releaseEnvironment)
 
   const handleRowClick = (dep: DependencyUsage) => {
     onSelectDependency?.(dep)
@@ -111,11 +116,13 @@ export function DependencyStats({ onSelectDependency }: DependencyStatsProps) {
                   <TableCell className="text-center">{dep.total_occurrences}</TableCell>
                   <TableCell>
                     <div className="flex flex-wrap gap-1">
-                      {dep.versions.slice(0, 3).map((v) => (
+                      {dep.versions.slice(0, VERSION_BADGES_SHOWN).map((v) => (
                         <Badge key={v} variant="outline" className="text-xs">{v}</Badge>
                       ))}
-                      {dep.versions.length > 3 && (
-                        <Badge variant="outline" className="text-xs">+{dep.versions.length - 3}</Badge>
+                      {dep.version_count > VERSION_BADGES_SHOWN && (
+                        <Badge variant="outline" className="text-xs">
+                          +{dep.version_count - VERSION_BADGES_SHOWN}
+                        </Badge>
                       )}
                     </div>
                   </TableCell>

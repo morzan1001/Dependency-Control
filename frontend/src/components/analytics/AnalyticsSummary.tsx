@@ -1,10 +1,11 @@
 import { useAnalyticsSummary } from '@/hooks/queries/use-analytics'
+import { useAnalyticsMode } from '@/context/analytics-mode'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Package, AlertTriangle, Layers, PieChart } from 'lucide-react'
 
 export function AnalyticsSummaryCards() {
-  const { data: summary, isLoading } = useAnalyticsSummary()
+  const { data: summary, isLoading } = useAnalyticsSummary(useAnalyticsMode())
 
   if (isLoading) {
     return (
@@ -66,7 +67,7 @@ export function AnalyticsSummaryCards() {
 }
 
 export function SeverityDistribution() {
-  const { data: summary, isLoading } = useAnalyticsSummary()
+  const { data: summary, isLoading } = useAnalyticsSummary(useAnalyticsMode())
 
   if (isLoading) {
     return <Skeleton className="h-40 w-full" />
@@ -143,7 +144,7 @@ export function SeverityDistribution() {
 }
 
 export function DependencyTypesChart() {
-  const { data: summary, isLoading } = useAnalyticsSummary()
+  const { data: summary, isLoading } = useAnalyticsSummary(useAnalyticsMode())
 
   if (isLoading) {
     return <Skeleton className="h-40 w-full" />

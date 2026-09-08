@@ -1,5 +1,13 @@
 """Tests for the TyposquattingAnalyzer - detects potential typosquatting attacks."""
 
+import logging
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from app.core.cache import cache_service
+from app.core.constants import TYPOSQUATTING_POPULAR_PACKAGE_RANKS
 from app.services.analyzers.typosquatting import TyposquattingAnalyzer
 
 
@@ -177,3 +185,62 @@ class TestSeverityThresholds:
     def test_ratio_at_boundary_095_is_high(self):
         # 0.95 is not > 0.95, so it is HIGH.
         assert self._make_issue(0.95) == "HIGH"
+
+
+class TestCorpusDepthIsDeclaredAndReported:
+    """One declared depth drives the fetch, and the result says what the comparison covered."""
+
+    @pytest.mark.asyncio
+    async def test_the_fetch_cuts_at_the_declared_rank_depth(self):
+        served_ranks = TYPOSQUATTING_POPULAR_PACKAGE_RANKS * 3
+        payload = {"rows": [{"project": f"pkg-{index}"} for index in range(served_ranks)]}
+
+        with (
+            patch.object(cache_service, "set", new=AsyncMock()),
+            patch("app.services.analyzers.typosquatting.InstrumentedAsyncClient") as ClientCls,
+        ):
+            ClientCls.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=SimpleNamespace(status_code=200, json=lambda: payload)
+            )
+            packages = await TyposquattingAnalyzer()._fetch_pypi_packages()
+
+        assert len(packages) == TYPOSQUATTING_POPULAR_PACKAGE_RANKS
+
+    @pytest.mark.asyncio
+    async def test_the_result_names_the_corpus_each_ecosystem_was_compared_against(self):
+        analyzer = TyposquattingAnalyzer()
+        corpus = {"pypi": {"requests", "flask"}, "npm": {"react"}}
+
+        with patch.object(analyzer, "_ensure_popular_packages", new=AsyncMock(return_value=corpus)):
+            result = await analyzer.analyze({"components": []})
+
+        assert result["popular_packages_compared"] == {"npm": 1, "pypi": 2}
+
+    @pytest.mark.asyncio
+    async def test_the_fetch_follows_the_corpus_when_it_moves_host(self):
+        """A 301 that is not followed leaves the detector on the built-in handful of names."""
+        with (
+            patch.object(cache_service, "set", new=AsyncMock()),
+            patch("app.services.analyzers.typosquatting.InstrumentedAsyncClient") as ClientCls,
+        ):
+            ClientCls.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=SimpleNamespace(status_code=200, json=lambda: {"rows": []})
+            )
+            await TyposquattingAnalyzer()._fetch_pypi_packages()
+
+        assert ClientCls.call_args.kwargs["follow_redirects"] is True
+
+    @pytest.mark.asyncio
+    async def test_falling_back_to_the_built_in_names_is_reported(self, caplog):
+        with (
+            patch.object(cache_service, "set", new=AsyncMock()),
+            patch("app.services.analyzers.typosquatting.InstrumentedAsyncClient") as ClientCls,
+            caplog.at_level(logging.WARNING, logger="app.services.analyzers.typosquatting"),
+        ):
+            ClientCls.return_value.__aenter__.return_value.get = AsyncMock(
+                return_value=SimpleNamespace(status_code=301, json=dict)
+            )
+            packages = await TyposquattingAnalyzer()._fetch_pypi_packages()
+
+        assert len(packages) < TYPOSQUATTING_POPULAR_PACKAGE_RANKS
+        assert "HTTP 301" in caplog.text

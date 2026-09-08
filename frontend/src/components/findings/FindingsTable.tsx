@@ -20,7 +20,14 @@ import { SeverityBadge } from './SeverityBadge'
 import { FindingTypeBadge } from './FindingTypeBadge'
 import { getSourceInfo, isSecretDeprioritized, getReachabilityDisplay, type ReachabilityVerdict } from '@/lib/finding-utils'
 import { ScanContext } from './details/SastDetailsView'
-import { resolveRelatedFindingInRows, fetchRelatedFinding } from './related-finding-rows'
+import { toast } from 'sonner'
+import {
+    RELATED_FINDING_SEARCH_LIMIT,
+    fetchRelatedFinding,
+    lookupOutcome,
+    resolveRelatedFindingInRows,
+    type RelatedFindingLookup,
+} from './related-finding-rows'
 
 // Fixed string keys avoid the array-index-as-key anti-pattern.
 const SKELETON_ROW_KEYS = Array.from({ length: 10 }, (_, i) => `skeleton-row-${i}`)
@@ -173,6 +180,18 @@ interface FindingsTableProps {
     readonly hideHistoricalSecrets?: boolean;
 }
 
+function reportUnresolved(outcome: RelatedFindingLookup): void {
+    if (outcome.status === 'found') return
+    if (outcome.status === 'beyond-window') {
+        toast.warning('Could not open that finding', {
+            description: `${outcome.matched.toLocaleString()} findings matched the search and only the first `
+                + `${outcome.searched} were read. Filter the table to narrow it.`,
+        })
+        return
+    }
+    toast.warning('Could not open that finding', { description: 'This scan holds no finding with that reference.' })
+}
+
 export function FindingsTable({ scanId, projectId, category, search, severity, scanContext, stickyHeaderTop = 0, licenseCategory, hideInfo, waivedFilter = "active", directOnly = false, hideHistoricalSecrets = false }: FindingsTableProps) {
     const sentinelRef = useRef<HTMLDivElement>(null)
     const scrollTargetRef = useRef<HTMLTableRowElement | null>(null)
@@ -197,14 +216,19 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
             try {
                 // Try the internal UUID first (what the backend emits as .id),
                 // fall back to the stable finding_id string (e.g. "CVE-X").
-                const res = await scanApi.getFindings(scanId, { search: deepLinkFindingId, skip: 0, limit: 200 })
+                const res = await scanApi.getFindings(scanId, {
+                    search: deepLinkFindingId, skip: 0, limit: RELATED_FINDING_SEARCH_LIMIT,
+                })
                 let found = res.items.find(f => f.id === deepLinkFindingId)
                     || res.items.find(f => (f as { finding_id?: string }).finding_id === deepLinkFindingId)
                 if (!found && res.items.length === 1) found = res.items[0]
-                if (!cancelled && found) {
+                if (cancelled) return
+                if (found) {
                     openedDeepLinkRef.current = deepLinkFindingId
                     setSelectedFinding(found)
+                    return
                 }
+                reportUnresolved(lookupOutcome(found, res.total))
             } catch (err) {
                 console.error('Failed to open deep-linked finding:', err)
             }
@@ -462,17 +486,20 @@ export function FindingsTable({ scanId, projectId, category, search, severity, s
                     onClose={closeSelectedFinding}
                     onSelectFinding={async (id) => {
                         // Prefer a match among the already-loaded rows.
-                        let found = resolveRelatedFindingInRows(allRows, id)
+                        const inRows = resolveRelatedFindingInRows(allRows, id)
+                        if (inRows) {
+                            setSelectedFinding(inRows)
+                            return
+                        }
                         // If not present locally (e.g. switching between
                         // quality/security tabs), fall back to the API.
-                        if (!found) {
-                            try {
-                                found = await fetchRelatedFinding(scanId, id)
-                            } catch (err) {
-                                console.error('Failed to fetch finding details:', err)
-                            }
+                        try {
+                            const outcome = await fetchRelatedFinding(scanId, id)
+                            if (outcome.status === 'found') setSelectedFinding(outcome.finding)
+                            else reportUnresolved(outcome)
+                        } catch (err) {
+                            console.error('Failed to fetch finding details:', err)
                         }
-                        if (found) setSelectedFinding(found);
                     }}
                 />
             )}

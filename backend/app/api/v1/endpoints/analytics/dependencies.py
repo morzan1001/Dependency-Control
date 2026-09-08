@@ -7,6 +7,7 @@ from fastapi import HTTPException, Query
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.analytics import (
+    ReleaseEnvironmentQuery,
     build_findings_severity_map,
     get_latest_scan_ids,
     get_projects_with_scans,
@@ -14,7 +15,7 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
 )
 from app.api.v1.helpers.responses import RESP_AUTH
-from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT
+from app.core.constants import ANALYTICS_MAX_QUERY_LIMIT, SCAN_DEPENDENCY_READ_LIMIT
 from app.core.permissions import Permissions
 from app.repositories import (
     DependencyEnrichmentRepository,
@@ -107,7 +108,11 @@ def _build_tree_node(dep: Any, findings_map: dict[str, dict[str, int]]) -> Depen
     )
 
 
-def _build_dependency_graph(dependencies: list[Any], findings_map: dict[str, dict[str, int]]) -> DependencyGraph:
+def _build_dependency_graph(
+    dependencies: list[Any],
+    findings_map: dict[str, dict[str, int]],
+    dependencies_total: int,
+) -> DependencyGraph:
     """Flatten deps into unique nodes + per-node child_ids and roots so the client nests lazily."""
     node_by_key: dict[str, DependencyTreeNode] = {}
     order: list[str] = []
@@ -171,6 +176,8 @@ def _build_dependency_graph(dependencies: list[Any], findings_map: dict[str, dic
     return DependencyGraph(
         nodes=[node_by_key[key] for key in order],
         roots=[node_by_key[key].id for key in root_keys],
+        dependencies_read=len(dependencies),
+        dependencies_total=dependencies_total,
     )
 
 
@@ -197,7 +204,7 @@ async def get_dependency_tree(
     if not scan_id:
         return DependencyGraph()
 
-    dependencies = await dep_repo.find_by_scan(scan_id)
+    dependencies, dependencies_total = await dep_repo.find_by_scan(scan_id, limit=SCAN_DEPENDENCY_READ_LIMIT)
 
     if not dependencies:
         return DependencyGraph()
@@ -208,7 +215,7 @@ async def get_dependency_tree(
     )
     findings_map = build_findings_severity_map(findings)
 
-    return _build_dependency_graph(dependencies, findings_map)
+    return _build_dependency_graph(dependencies, findings_map, dependencies_total)
 
 
 @router.get("/component-findings", responses=RESP_AUTH)
@@ -217,6 +224,7 @@ async def get_component_findings(
     db: DatabaseDep,
     component: Annotated[str, Query(description="Component/package name")],
     version: Annotated[str | None, Query(description="Specific version")] = None,
+    release_environment: ReleaseEnvironmentQuery = None,
 ) -> list[dict[str, Any]]:
     """Get all findings for a specific component across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
@@ -226,7 +234,9 @@ async def get_component_findings(
     if not project_ids:
         return []
 
-    project_name_map, scan_ids = await get_projects_with_scans(project_ids, db)
+    # Same scope resolution as the tables that link here, or a component the hotspot ranking
+    # found in the release is looked up against the branch tip and reads as having no findings.
+    project_name_map, scan_ids = await get_projects_with_scans(project_ids, db, release_environment=release_environment)
 
     if not scan_ids:
         return []
@@ -308,6 +318,7 @@ async def get_dependency_metadata_endpoint(
     component: Annotated[str, Query(description="Component/package name")],
     version: Annotated[str | None, Query(description="Specific version")] = None,
     type: Annotated[str | None, Query(description="Package type")] = None,
+    release_environment: ReleaseEnvironmentQuery = None,
 ) -> DependencyMetadata | None:
     """Aggregated dependency metadata across accessible projects."""
     require_analytics_permission(current_user, Permissions.ANALYTICS_SEARCH)
@@ -316,7 +327,7 @@ async def get_dependency_metadata_endpoint(
     if not project_ids:
         return None
 
-    scan_ids = await get_latest_scan_ids(project_ids, db)
+    scan_ids = await get_latest_scan_ids(project_ids, db, release_environment=release_environment)
     if not scan_ids:
         return None
 

@@ -15,6 +15,10 @@ USE_GPL_FOR_DERIVATIVE_WORK = "Use GPL for derivative work"
 SHARE_COMPLETE_SOURCE_CODE = "Share complete source code"
 NETWORK_USE_TRIGGERS_DISCLOSURE = "Network use triggers source disclosure"
 
+# Stands in for the licence of a component the SBOM does not let us determine.
+UNDETERMINED_LICENSE_ID = "UNKNOWN"
+UNDETERMINED_LICENSE_MESSAGE = "License could not be determined from the SBOM"
+
 SPDX_EXPR_SPLIT = re.compile(r"\s+(?:AND|OR|WITH)\s+")
 SPDX_OR_SPLIT = re.compile(r"\s+OR\s+")
 SPDX_AND_SPLIT = re.compile(r"\s+AND\s+")
@@ -65,6 +69,9 @@ SEVERITY_RANK: dict[str | None, int] = {
     Severity.HIGH.value: 4,
     Severity.CRITICAL.value: 5,
 }
+
+# Every policy escape in evaluate_license lands below HIGH, so HIGH is the first rank policy did not soften.
+POLICY_VIOLATION_MIN_RANK = SEVERITY_RANK[Severity.HIGH.value]
 
 
 LICENSE_DATABASE: dict[str, LicenseInfo] = {

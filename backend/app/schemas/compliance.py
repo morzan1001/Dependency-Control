@@ -43,6 +43,8 @@ class ControlStatus(str, Enum):
     FAILED = "failed"
     WAIVED = "waived"
     NOT_APPLICABLE = "not_applicable"
+    # The input the verdict would have rested on did not cover the scope.
+    NOT_EVALUATED = "not_evaluated"
 
 
 @dataclass
@@ -68,6 +70,8 @@ class ControlResult(BaseModel):
     evidence_asset_bom_refs: list[str] = Field(default_factory=list)
     waiver_reasons: list[str] = Field(default_factory=list)
     remediation: str
+    # Why NOT_EVALUATED was returned in place of a verdict.
+    status_reason: str | None = None
 
     model_config = ConfigDict(use_enum_values=True)
 
@@ -81,6 +85,32 @@ class ResidualRisk(BaseModel):
     model_config = ConfigDict(use_enum_values=True)
 
 
+class InputCoverage(BaseModel):
+    """What one bounded input covers of what the scope holds."""
+
+    evaluated: int
+    in_scope: int
+    limit: int
+
+    @property
+    def complete(self) -> bool:
+        return self.evaluated >= self.in_scope
+
+
+class EvaluationCoverage(BaseModel):
+    """What the control verdicts were actually computed over, per input a verdict can rest on."""
+
+    findings: InputCoverage
+    crypto_assets: InputCoverage
+    # Set only by a framework that builds one control per row of a bounded plan.
+    plan_items: InputCoverage | None = None
+
+    @property
+    def complete(self) -> bool:
+        plan_complete = self.plan_items is None or self.plan_items.complete
+        return self.findings.complete and self.crypto_assets.complete and plan_complete
+
+
 class FrameworkEvaluation(BaseModel):
     framework_key: ReportFramework
     framework_name: str
@@ -91,5 +121,7 @@ class FrameworkEvaluation(BaseModel):
     summary: dict[str, int] = Field(default_factory=dict)
     residual_risks: list[ResidualRisk] = Field(default_factory=list)
     inputs_fingerprint: str
+    # Set by the engine, which is the only caller that knows the scope's true finding count.
+    coverage: EvaluationCoverage | None = None
 
     model_config = ConfigDict(use_enum_values=True)

@@ -13,12 +13,13 @@ vi.mock("@/api/analytics", () => ({
 
 import { analyticsApi } from "@/api/analytics";
 
-const makeDep = (name: string): DependencyUsage => ({
+const makeDep = (name: string, versions: string[] = ["1.0.0"], versionCount?: number): DependencyUsage => ({
   name,
   type: "npm",
   project_count: 2,
   total_occurrences: 5,
-  versions: ["1.0.0"],
+  versions,
+  version_count: versionCount ?? versions.length,
   has_vulnerabilities: false,
   vulnerability_count: 0,
 });
@@ -58,6 +59,41 @@ describe("DependencyStats row hover icon", () => {
 
     await waitFor(() => {
       expect(analyticsApi.getTopDependencies).toHaveBeenCalled();
+    });
+  });
+});
+
+const VERSION_BADGES_SHOWN = 3;
+const VERSIONS_IN_PAYLOAD = 10;
+const DISTINCT_VERSIONS = 40;
+
+describe("DependencyStats version badge", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    (analyticsApi.getDependencyTypes as ReturnType<typeof vi.fn>).mockResolvedValue([]);
+  });
+
+  it("counts the overflow badge from the distinct total, not the ten versions it received", () => {
+    const versions = Array.from({ length: VERSIONS_IN_PAYLOAD }, (_, i) => `1.${DISTINCT_VERSIONS - 1 - i}.0`);
+    (analyticsApi.getTopDependencies as ReturnType<typeof vi.fn>).mockResolvedValue([
+      makeDep("left-pad", versions, DISTINCT_VERSIONS),
+    ]);
+    renderStats();
+
+    return waitFor(() => {
+      expect(screen.getByText(`+${DISTINCT_VERSIONS - VERSION_BADGES_SHOWN}`)).toBeInTheDocument();
+    });
+  });
+
+  it("shows no overflow badge when the component has three versions or fewer", () => {
+    (analyticsApi.getTopDependencies as ReturnType<typeof vi.fn>).mockResolvedValue([
+      makeDep("left-pad", ["2.0.0", "1.0.0"], 2),
+    ]);
+    renderStats();
+
+    return waitFor(() => {
+      expect(screen.getByText("2.0.0")).toBeInTheDocument();
+      expect(screen.queryByText(/^\+\d+$/)).toBeNull();
     });
   });
 });

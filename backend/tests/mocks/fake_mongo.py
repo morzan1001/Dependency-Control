@@ -10,41 +10,73 @@ Supported query operators
 - ``$in``, ``$nin``, ``$ne``, ``$exists``
 - ``$regex`` (with ``$options: "i"`` for case-insensitive)
 - Range: ``$gt``, ``$gte``, ``$lt``, ``$lte``
-- Logical: top-level ``$or``, ``$and``
+- ``$elemMatch`` (every clause has to hold on one array element)
+- Logical: top-level ``$or``, ``$and``, ``$nor``
+- Anything else raises ``OperationFailure``, as the server does; matching on an
+  operator the fake cannot evaluate would report a wider scope than the query asks for.
 
 Supported update operators
 --------------------------
-- ``$set``, ``$setOnInsert``, ``$inc``, ``$addToSet``
+- ``$set`` (including ``a.$[ident].b`` paths with ``array_filters``), ``$setOnInsert``,
+  ``$unset``, ``$inc``, ``$addToSet``, ``$push``, ``$pull``
+- Anything else raises ``OperationFailure``; silently ignoring a modifier turns a write
+  into a no-op the test then reports as success.
 
 Server-side behaviour that tests rely on
 ----------------------------------------
 - Projections in ``find``/``find_one``, inclusion and exclusion, dotted paths
   included, so a too-narrow projection surfaces here instead of in production.
 - BSON datetimes: a written aware datetime is stored (and read back) as naive
-  UTC, and an aware query value is normalised before comparison, matching what
-  the driver puts on the wire.
+  UTC truncated to the millisecond, and a query value is normalised the same way
+  before comparison, matching what the driver puts on the wire.
+- BSON compares by type before value, so a bool never equals the number Python
+  would call it equal to: ``{"$ne": True}`` keeps a document holding ``1``.
 - Cross-type BSON ordering: sorts, ``$min`` and ``$max`` rank a mixed column
   (missing < number < string < date) instead of raising, while a range query
   brackets to its bound's type and skips the other types outright.
 - ``$group`` drops a grouping key the document does not carry rather than
   binding it to null.
+- ``$ne`` against an array compares the array as a whole as well as element by
+  element, so ``$ne: []`` excludes the empty array.
 - Only false, null and zero are false to ``$cond``/``$switch``; ``""`` and
   ``[]`` are true.
+- A cursor is consumed as it is read: ``to_list(length=n)`` hands back the next
+  n documents and finally an empty list, and iterating a drained cursor yields
+  nothing, so a paging loop terminates here as it does there.
+- ``insert_one``/``insert_many`` stamp a generated ``ObjectId`` onto the caller's
+  document, so code that reads the new id back without a round trip works, and a
+  later insert never reuses the key of a deleted one.
+- ``bulk_write`` reports matched, modified and upserted counts, and does not count
+  an update that changed nothing.
+
+Known divergences, none of which the application issues
+-------------------------------------------------------
+- ``distinct`` resolves only top-level scalar fields: it does not follow a dotted
+  path and does not flatten an array-valued one.
+- ``$push`` takes a plain value; the ``$each``/``$slice``/``$sort`` modifiers are
+  appended verbatim instead of being applied.
+- ``$addToSet`` writes a dotted path as a literal key rather than descending it.
+- ``count_documents`` ignores ``skip``.
+- A ``$group`` ``$push`` over a field the document lacks pushes null, where the
+  server pushes nothing.
 
 Supported aggregation stages
 ----------------------------
-- ``$match``, ``$sort``, ``$group``, ``$project``, ``$limit``, ``$unwind``
-- ``$group`` accumulators: ``$sum``, ``$avg``, ``$first``, ``$min``, ``$max``,
-  ``$addToSet``, ``$push``
+- ``$match``, ``$sort`` (direction must be 1 or -1), ``$group``, ``$project``, ``$limit``, ``$unwind``
+- ``$group`` accumulators: ``$sum``, ``$avg``, ``$first``, ``$firstN``, ``$min``,
+  ``$max``, ``$addToSet``, ``$push``
 - ``$dateTrunc`` truncates to the start of the unit (day/week/month/year; week
   starts Sunday, matching MongoDB's default), in both expressions and
   ``$group._id``, so trend bucketing is exercised end-to-end.
 
 Supported aggregation expression operators (in ``$project`` / accumulator args)
 ------------------------------------------------------------------------------
-- ``$ifNull``, ``$cond``, ``$switch``, ``$toDouble``, ``$toLower``
+- ``$ifNull``, ``$cond``, ``$switch``, ``$toDouble``, ``$toLower``, ``$toString``
 - Comparison: ``$eq``, ``$ne``, ``$gt``, ``$gte``, ``$lt``, ``$lte``
 - Logical: ``$and``, ``$or``
+- ``$map``, ``$filter``, ``$let``, ``$mergeObjects``, ``$literal``. A bound ``$$var`` is
+  substituted; every other reference still resolves against the root document, as it does
+  on the server, so the team-enrichment ``$lookup`` runs here byte-for-byte as it does there.
 - ``$$REMOVE`` (field is omitted; mirrors Mongo's $push semantics)
 """
 
@@ -59,6 +91,11 @@ from datetime import timedelta as _timedelta
 from datetime import timezone as _timezone
 from typing import Any
 from unittest.mock import MagicMock
+
+from bson import ObjectId
+from pymongo.errors import OperationFailure
+
+from app.core.init_db import RELEASES_UPSERT_KEY_FIELDS
 
 
 def _truncate_date(value: Any, unit: str) -> Any:
@@ -79,6 +116,7 @@ def _truncate_date(value: Any, unit: str) -> Any:
 
 _SET_ON_INSERT = "$setOnInsert"
 _CMP = {"$lt": _op.lt, "$lte": _op.le, "$gt": _op.gt, "$gte": _op.ge}
+_MICROSECONDS_PER_MILLISECOND = 1000
 
 
 # ---------------------------------------------------------------------------
@@ -87,10 +125,29 @@ _CMP = {"$lt": _op.lt, "$lte": _op.le, "$gt": _op.gt, "$gte": _op.ge}
 
 
 def _naive_utc(value: Any) -> Any:
-    """BSON has no offsets: an aware datetime is stored (and read back) as naive UTC."""
-    if isinstance(value, _datetime) and value.tzinfo is not None:
-        return value.astimezone(_timezone.utc).replace(tzinfo=None)
-    return value
+    """BSON has no offsets and dates are int64 milliseconds: an aware datetime is stored (and read
+    back) as naive UTC, and every datetime loses the sub-millisecond digits the wire cannot carry."""
+    if not isinstance(value, _datetime):
+        return value
+    if value.tzinfo is not None:
+        value = value.astimezone(_timezone.utc).replace(tzinfo=None)
+    return value.replace(microsecond=value.microsecond // _MICROSECONDS_PER_MILLISECOND * _MICROSECONDS_PER_MILLISECOND)
+
+
+def _bson_equal(left: Any, right: Any) -> bool:
+    """Equality with BSON's type ranking: bool is its own type, so ``1`` never equals ``True``."""
+    if isinstance(left, bool) != isinstance(right, bool):
+        return False
+    return bool(_naive_utc(left) == _naive_utc(right))
+
+
+def _bson_identical(left: Any, right: Any) -> bool:
+    """Deep equality under BSON's type ranking, so a $set turning ``1`` into ``True`` is a change."""
+    if isinstance(left, dict) and isinstance(right, dict):
+        return left.keys() == right.keys() and all(_bson_identical(left[key], right[key]) for key in left)
+    if isinstance(left, list) and isinstance(right, list):
+        return len(left) == len(right) and all(_bson_identical(a, b) for a, b in zip(left, right))
+    return _bson_equal(left, right)
 
 
 def _bsonify(value: Any) -> Any:
@@ -149,9 +206,18 @@ def _bson_sort_key(value: Any) -> tuple[int, Any]:
     return (rank, str(value))
 
 
+_SORT_DIRECTIONS = frozenset({1, -1})
+
+
 def _sort_docs(docs: list, sort_spec) -> list:
-    """Sort in place by a ``[(field, direction)]`` spec, using BSON ordering."""
+    """Sort in place by a ``[(field, direction)]`` spec, using BSON ordering.
+
+    A direction outside 1/-1 raises, as the server does; treating 2 as ascending would let a typo
+    in a sort spec pass here and fail the query in production.
+    """
     for key, direction in reversed(list(sort_spec)):
+        if direction not in _SORT_DIRECTIONS:
+            raise OperationFailure(f"$sort key ordering must be 1 (for ascending) or -1 (for descending), got {key}")
         docs.sort(key=lambda d, k=key: _bson_sort_key(_resolve_dotted(d, k)), reverse=direction < 0)
     return docs
 
@@ -190,6 +256,22 @@ def _resolve_dotted(doc: dict, path: str):
     if isinstance(cur, dict):
         return _resolve_dotted(cur, rest)
     return None
+
+
+def _descend_for_update(node: Any, part: str) -> Any:
+    """The container one update-path segment deeper, created as a dict when it is missing.
+    An index past the end of a list pads with nulls, as the server does."""
+    if isinstance(node, list):
+        index = int(part)
+        node.extend([None] * (index + 1 - len(node)))
+        if not isinstance(node[index], (dict, list)):
+            node[index] = {}
+        return node[index]
+    child = node.get(part)
+    if not isinstance(child, (dict, list)):
+        child = {}
+        node[part] = child
+    return child
 
 
 def _match_range_ops(value, ops_dict: dict) -> bool:
@@ -252,13 +334,46 @@ def _in_allowed(value: Any, allowed: list) -> bool:
         if isinstance(candidate, _re.Pattern):
             if isinstance(value, str) and candidate.search(value):
                 return True
-        elif value == candidate:
+        elif _bson_equal(value, candidate):
             return True
     return False
 
 
+_PULL_ELEMENT = "__element__"
+_MATCH_TOP_LEVEL_OPERATORS = frozenset({"$or", "$and", "$nor", "$expr"})
+_MATCH_FIELD_OPERATORS = frozenset({"$exists", "$in", "$nin", "$ne", "$regex", "$options", "$elemMatch", *_CMP})
+
+
+def _assert_known_operators(query: dict) -> None:
+    """Refuse an operator the fake does not implement.
+
+    Ignoring it would match every document, so a broken filter would return more rows than the
+    server does and the test would report a wider scope than the code actually selects.
+    """
+    for key, condition in query.items():
+        if key.startswith("$"):
+            if key not in _MATCH_TOP_LEVEL_OPERATORS:
+                raise OperationFailure(f"unknown top level operator: {key}")
+            for sub in condition if isinstance(condition, list) else []:
+                if isinstance(sub, dict):
+                    _assert_known_operators(sub)
+        elif isinstance(condition, dict):
+            for unknown in (k for k in condition if k.startswith("$") and k not in _MATCH_FIELD_OPERATORS):
+                raise OperationFailure(f"unknown operator: {unknown}")
+
+
+def _pull_matches(item: Any, condition: Any) -> bool:
+    """$pull's condition is a query document against each element, or a literal to equal."""
+    if isinstance(condition, dict) and isinstance(item, dict):
+        return _match_doc(item, condition)
+    if isinstance(condition, dict):
+        return _match_doc({_PULL_ELEMENT: item}, {_PULL_ELEMENT: condition})
+    return bool(_bson_equal(item, condition))
+
+
 def _match_doc(doc: dict, query: dict) -> bool:
     """Return True if doc matches a MongoDB query."""
+    _assert_known_operators(query)
     for key, condition in query.items():
         if key == "$or":
             if not any(_match_doc(doc, sub) for sub in condition):
@@ -266,6 +381,10 @@ def _match_doc(doc: dict, query: dict) -> bool:
             continue
         if key == "$and":
             if not all(_match_doc(doc, sub) for sub in condition):
+                return False
+            continue
+        if key == "$nor":
+            if any(_match_doc(doc, sub) for sub in condition):
                 return False
             continue
         if key == "$expr":
@@ -278,10 +397,15 @@ def _match_doc(doc: dict, query: dict) -> bool:
         # Dotted path landed on a list (e.g. members.user_id): any element matching
         # equality/$in counts as a hit (mirrors real Mongo semantics).
         if isinstance(value, list) and not isinstance(condition, dict):
-            if condition in value:
+            if any(_bson_equal(element, condition) for element in value):
                 continue
             return False
         if isinstance(condition, dict):
+            if "$elemMatch" in condition:
+                # A single element has to satisfy every clause; a non-array field never does.
+                elements = value if isinstance(value, list) else []
+                if not any(isinstance(e, dict) and _match_doc(e, condition["$elemMatch"]) for e in elements):
+                    return False
             if "$exists" in condition:
                 field_present = _resolve_dotted(doc, key) is not None or key in doc
                 if bool(condition["$exists"]) != field_present:
@@ -299,16 +423,16 @@ def _match_doc(doc: dict, query: dict) -> bool:
             if "$nin" in condition:
                 disallowed = condition["$nin"]
                 if isinstance(value, list):
-                    if any(v in disallowed for v in value):
+                    if any(_in_allowed(v, disallowed) for v in value):
                         return False
-                elif value in disallowed:
+                elif _in_allowed(value, disallowed):
                     return False
             if "$ne" in condition:
                 ne_val = condition["$ne"]
-                if isinstance(value, list):
-                    if ne_val in value:
-                        return False
-                elif value == ne_val:
+                # An array field is also compared as a whole, so ``$ne: []`` excludes the empty array.
+                if _bson_equal(value, ne_val) or (
+                    isinstance(value, list) and any(_bson_equal(element, ne_val) for element in value)
+                ):
                     return False
             if "$regex" in condition:
                 flags = _re.IGNORECASE if condition.get("$options") == "i" else 0
@@ -317,7 +441,7 @@ def _match_doc(doc: dict, query: dict) -> bool:
             if not _match_range_ops(value, condition):
                 return False
         else:
-            if _naive_utc(value) != _naive_utc(condition):
+            if not _bson_equal(value, condition):
                 return False
     return True
 
@@ -344,16 +468,26 @@ def _to_number(value):
         return None
 
 
-def _bind_map_var(expr, item, prefix: str):
-    """Resolve ``$$var``/``$$var.path`` references inside a $map ``in`` expression."""
-    if isinstance(expr, str) and expr.startswith(prefix):
+def _substitute_var(expr, prefix: str, value):
+    """Replace ``$$var`` / ``$$var.path`` references with a literal.
+
+    Every other reference is left alone so it still resolves against the root document, which is
+    what ``$$CURRENT`` stays bound to inside ``$map``, ``$filter`` and ``$let``.
+    """
+    if isinstance(expr, str) and (expr == prefix or expr.startswith(f"{prefix}.")):
         tail = expr[len(prefix) :].lstrip(".")
-        return _resolve_dotted(item, tail) if tail else item
+        if not tail:
+            return {"$literal": value}
+        # A path into a non-document, or into a document that lacks it, is missing on the
+        # server: the enclosing document expression omits the field rather than nulling it.
+        if not isinstance(value, dict) or not _has_field(value, tail):
+            return {"$literal": _REMOVE}
+        return {"$literal": _resolve_dotted(value, tail)}
     if isinstance(expr, dict):
-        return {k: _bind_map_var(v, item, prefix) for k, v in expr.items()}
+        return {k: _substitute_var(v, prefix, value) for k, v in expr.items()}
     if isinstance(expr, list):
-        return [_bind_map_var(e, item, prefix) for e in expr]
-    return _eval_expr(item, expr) if isinstance(item, dict) else expr
+        return [_substitute_var(e, prefix, value) for e in expr]
+    return expr
 
 
 def _eval_map(doc: dict, spec: dict):
@@ -361,7 +495,22 @@ def _eval_map(doc: dict, spec: dict):
     if not isinstance(items, list):
         return []
     prefix = f"$${spec.get('as', 'this')}"
-    return [_bind_map_var(spec.get("in"), item, prefix) for item in items]
+    return [_eval_expr(doc, _substitute_var(spec.get("in"), prefix, item)) for item in items]
+
+
+def _eval_filter(doc: dict, spec: dict):
+    items = _eval_expr(doc, spec.get("input"))
+    if not isinstance(items, list):
+        return []
+    prefix = f"$${spec.get('as', 'this')}"
+    return [item for item in items if _eval_bool(doc, _substitute_var(spec.get("cond"), prefix, item))]
+
+
+def _eval_let(doc: dict, spec: dict):
+    body = spec.get("in")
+    for var, value_expr in (spec.get("vars") or {}).items():
+        body = _substitute_var(body, f"$${var}", _eval_expr(doc, value_expr))
+    return _eval_expr(doc, body)
 
 
 def _eval_expr(doc: dict, expr):
@@ -375,14 +524,32 @@ def _eval_expr(doc: dict, expr):
     if isinstance(expr, str):
         if expr == "$$REMOVE":
             return _REMOVE
+        if expr == "$$ROOT":
+            return doc
         if expr.startswith("$"):
             return _resolve_dotted(doc, expr[1:])
         return expr
     if not isinstance(expr, dict):
         return expr
 
+    if "$literal" in expr:
+        return expr["$literal"]
     if "$map" in expr:
         return _eval_map(doc, expr["$map"])
+    if "$filter" in expr:
+        return _eval_filter(doc, expr["$filter"])
+    if "$let" in expr:
+        return _eval_let(doc, expr["$let"])
+    if "$mergeObjects" in expr:
+        merged: dict = {}
+        for operand in expr["$mergeObjects"]:
+            value = _eval_expr(doc, operand)
+            if isinstance(value, dict):
+                merged.update(value)
+        return merged
+    if "$toString" in expr:
+        value = _eval_expr(doc, expr["$toString"])
+        return None if value is None else str(value)
     if "$dateTrunc" in expr:
         spec = expr["$dateTrunc"]
         return _truncate_date(_eval_expr(doc, spec.get("date")), spec.get("unit", "day"))
@@ -472,10 +639,12 @@ def _eval_expr(doc: dict, expr):
     for op in ("$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$and", "$or", "$in"):
         if op in expr:
             return _eval_bool(doc, expr)
-    # Operator-free dict: Mongo treats it as a document expression, so evaluate each value.
-    if expr and not any(k.startswith("$") for k in expr):
-        return {k: _eval_expr(doc, v) for k, v in expr.items()}
-    return expr
+    for unknown in (k for k in expr if k.startswith("$")):
+        raise OperationFailure(f"Unrecognized expression '{unknown}'")
+    # Operator-free dict: Mongo treats it as a document expression, so evaluate each value
+    # and omit the fields whose expression resolved to missing.
+    evaluated = ((k, _eval_expr(doc, v)) for k, v in expr.items())
+    return {k: v for k, v in evaluated if v is not _REMOVE}
 
 
 def _truthy(value) -> bool:
@@ -596,6 +765,12 @@ def _run_group(docs: list, group_spec: dict) -> list:
             elif op == "$first":
                 if is_new:
                     grp[acc_name] = val
+            elif op == "$firstN":
+                # Keeps the first n evaluations of `input`, so an array-valued input yields a
+                # list of arrays rather than n flattened elements.
+                bucket = grp.setdefault(acc_name, [])
+                if len(bucket) < arg.get("n", 0):
+                    bucket.append(_resolve_field(doc, arg.get("input")))
             elif op == "$addToSet":
                 # Real $addToSet dedupes by full value equality and accepts
                 # documents (unhashable in Python). Back it with a list +
@@ -741,11 +916,13 @@ class _AsyncIter:
         return item
 
     async def to_list(self, length=None):
-        return self._items if length is None else self._items[:length]
+        batch = self._items[self._idx :] if length is None else self._items[self._idx : self._idx + length]
+        self._idx += len(batch)
+        return batch
 
 
 class _FakeCursor:
-    """Chainable cursor for ``find()``. Supports skip/limit/sort/projection."""
+    """Chainable cursor for ``find()``. Supports skip/limit/sort/projection and close()."""
 
     def __init__(self, docs: dict, query: dict, sort=None, limit: int = 0, skip: int = 0, projection=None):
         self._docs = docs
@@ -754,7 +931,7 @@ class _FakeCursor:
         self._skip_n = skip
         self._limit_n = limit
         self._projection = projection
-        self._iter = None
+        self._remaining: list | None = None
 
     def skip(self, n: int) -> _FakeCursor:
         self._skip_n = n
@@ -780,18 +957,30 @@ class _FakeCursor:
             return [_apply_projection(doc, self._projection) for doc in results]
         return results
 
+    def _unread(self) -> list:
+        if self._remaining is None:
+            self._remaining = self._filtered()
+        return self._remaining
+
     async def to_list(self, length=None) -> list:
-        return self._filtered()
+        # The server caps the batch at ``length`` and consumes it, so a paging loop terminates here
+        # too and a test of a saturated read cannot pass by re-reading the same first page.
+        remaining = self._unread()
+        batch = list(remaining) if length is None else remaining[:length]
+        del remaining[: len(batch)]
+        return batch
 
     def __aiter__(self):
-        self._iter = iter(self._filtered())
         return self
 
     async def __anext__(self):
-        try:
-            return next(self._iter)  # type: ignore[arg-type]
-        except StopIteration:
+        remaining = self._unread()
+        if not remaining:
             raise StopAsyncIteration
+        return remaining.pop(0)
+
+    async def close(self) -> None:
+        self._remaining = []
 
 
 # ---------------------------------------------------------------------------
@@ -870,12 +1059,12 @@ def _matched_key(docs: dict, query: dict) -> Any:
 class FakeCollection:
     """In-process collection covering the Motor API surface that the app uses."""
 
-    def __init__(self, db: Any = None):
+    def __init__(self, db: Any = None, unique_keys: list[tuple[str, ...]] | None = None):
         self._docs: dict = {}
         # $lookup needs to reach sibling collections.
         self._db = db
-        # Unique-index field tuples declared via create_index(..., unique=True).
-        self._unique_keys: list[tuple[str, ...]] = []
+        # Unique-index field tuples, declared up front or via create_index(..., unique=True).
+        self._unique_keys: list[tuple[str, ...]] = list(unique_keys or [])
 
     # -- writes -----------------------------------------------------------
 
@@ -906,10 +1095,12 @@ class FakeCollection:
         collision = self._duplicate_key(doc)
         if collision is not None:
             raise DuplicateKeyError(f"E11000 duplicate key error: {collision}")
-        key = doc.get("_id") or str(len(self._docs))
-        self._docs[key] = _bsonify(doc)
+        # The driver stamps the _id onto the caller's document, which is how code that needs the
+        # new id reads it back without a round trip.
+        doc.setdefault("_id", ObjectId())
+        self._docs[doc["_id"]] = _bsonify(doc)
         result = MagicMock()
-        result.inserted_id = key
+        result.inserted_id = doc["_id"]
         return result
 
     async def insert_many(self, docs: list, ordered: bool = True):
@@ -927,9 +1118,9 @@ class FakeCollection:
                 if ordered:
                     break
                 continue
-            key = doc.get("_id") or str(len(self._docs))
-            self._docs[key] = _bsonify(doc)
-            inserted.append(key)
+            doc.setdefault("_id", ObjectId())
+            self._docs[doc["_id"]] = _bsonify(doc)
+            inserted.append(doc["_id"])
         if write_errors:
             raise BulkWriteError({"writeErrors": write_errors, "nInserted": len(inserted)})
         result = MagicMock()
@@ -950,24 +1141,26 @@ class FakeCollection:
         doc = {k: v for k, v in query.items() if not isinstance(v, dict) and not k.startswith("$")}
         doc.update(update.get(_SET_ON_INSERT, {}))
         self._apply_update(doc, update, skip_set_on_insert=True)
-        doc["_id"] = doc.get("_id") or str(len(self._docs))
+        doc.setdefault("_id", ObjectId())
         collision = self._duplicate_key(doc)
         if collision is not None:
             raise DuplicateKeyError(f"E11000 duplicate key error: {collision}")
         self._docs[doc["_id"]] = _bsonify(doc)
         return self._docs[doc["_id"]]
 
-    async def update_one(self, query, update, upsert: bool = False):
+    async def update_one(self, query, update, array_filters=None, upsert: bool = False):
         matched = _matched_key(self._docs, query)
         modified = 0
         if matched is not None:
             before = _copy.deepcopy(self._docs[matched])
-            self._apply_update(self._docs[matched], update)
-            modified = int(self._docs[matched] != before)
+            self._apply_update(self._docs[matched], update, array_filters=array_filters)
+            modified = int(not _bson_identical(self._docs[matched], before))
         elif upsert:
             self._insert_upserted(query, update)
         result = MagicMock()
         result.modified_count = modified
+        # A conditional write tells a filter miss apart from a no-op on matched_count alone.
+        result.matched_count = int(matched is not None)
         return result
 
     async def update_many(self, query, update, array_filters=None, upsert: bool = False):
@@ -977,7 +1170,7 @@ class FakeCollection:
             before = _copy.deepcopy(self._docs[k])
             self._apply_update(self._docs[k], update, array_filters=array_filters)
             # Real Mongo does not count a $set that changes nothing.
-            modified += self._docs[k] != before
+            modified += not _bson_identical(self._docs[k], before)
         if not matched and upsert:
             self._insert_upserted(query, update)
         result = MagicMock()
@@ -1010,9 +1203,9 @@ class FakeCollection:
             if op == "$set":
                 for k, v in payload.items():
                     FakeCollection._set_dotted(target, k, v, filters)
-            elif op == "$setOnInsert" and not skip_set_on_insert:
+            elif op == "$setOnInsert":
                 # only applied when called outside upsert insert path
-                for k, v in payload.items():
+                for k, v in payload.items() if not skip_set_on_insert else ():
                     target.setdefault(k, v)
             elif op == "$unset":
                 for field in payload:
@@ -1026,19 +1219,30 @@ class FakeCollection:
                     bucket = target.setdefault(field, [])
                     if value not in bucket:
                         bucket.append(value)
+            elif op == "$push":
+                for field, value in payload.items():
+                    parent, leaf = FakeCollection._resolve_parent(target, field)
+                    parent.setdefault(leaf, []).append(value)
+            elif op == "$pull":
+                for field, condition in payload.items():
+                    parent, leaf = FakeCollection._resolve_parent(target, field)
+                    parent[leaf] = [item for item in parent.get(leaf, []) if not _pull_matches(item, condition)]
+            else:
+                raise OperationFailure(f"Unknown modifier: {op}")
 
     @staticmethod
-    def _resolve_parent(target: dict, dotted_key: str) -> tuple[dict, str]:
-        """Walk (creating) nested dicts so dotted update paths behave like real Mongo."""
+    def _resolve_parent(target: dict, dotted_key: str) -> tuple[Any, Any]:
+        """Walk (creating) nested containers so dotted update paths behave like real Mongo.
+
+        A numeric segment indexes into a list, so ``members.1.role`` rewrites that element
+        instead of hanging a ``{"1": ...}`` dict off the document.
+        """
         parts = dotted_key.split(".")
-        node = target
+        node: Any = target
         for part in parts[:-1]:
-            nxt = node.get(part)
-            if not isinstance(nxt, dict):
-                nxt = {}
-                node[part] = nxt
-            node = nxt
-        return node, parts[-1]
+            node = _descend_for_update(node, part)
+        leaf = parts[-1]
+        return node, int(leaf) if isinstance(node, list) else leaf
 
     @staticmethod
     def _unset_dotted(target: dict, dotted_key: str) -> None:
@@ -1099,6 +1303,8 @@ class FakeCollection:
 
     async def bulk_write(self, ops, ordered: bool = True):
         modified = 0
+        matched = 0
+        upserted = 0
         for op in ops:
             flt = op._filter
             upd = op._doc
@@ -1108,10 +1314,13 @@ class FakeCollection:
                 # UpdateMany touches every match; UpdateOne only the first (Mongo semantics).
                 if type(op).__name__ != "UpdateMany":
                     matched_keys = matched_keys[:1]
+                matched += len(matched_keys)
                 for key in matched_keys:
+                    before = _copy.deepcopy(self._docs[key])
                     self._apply_update(self._docs[key], upd)
-                    modified += 1
+                    modified += not _bson_identical(self._docs[key], before)
             elif upsert:
+                upserted += 1
                 doc: dict = {}
                 doc.update(upd.get(_SET_ON_INSERT, {}))
                 doc.update(upd.get("$set", {}))
@@ -1126,6 +1335,8 @@ class FakeCollection:
                 self._docs[doc["_id"]] = _bsonify(doc)
         result = MagicMock()
         result.modified_count = modified
+        result.matched_count = matched
+        result.upserted_count = upserted
         return result
 
     async def create_index(self, keys, **kwargs):
@@ -1209,6 +1420,9 @@ class FakeDatabase:
             "users",
         ):
             object.__setattr__(self, name, FakeCollection(self))
+        # Every release write runs against the constraint production runs against, so a test
+        # cannot prove idempotence on a filter the server would never have needed.
+        object.__setattr__(self, "releases", FakeCollection(self, unique_keys=[RELEASES_UPSERT_KEY_FIELDS]))
 
     def __getattr__(self, name: str) -> FakeCollection:
         # Auto-vivify collections so repositories that touch unexpected ones

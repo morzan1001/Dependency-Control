@@ -32,6 +32,7 @@ class ArchiveFailureReason:
     ENCRYPTION = "encryption"
     NOT_FOUND = "not_found"
     LOCK_HELD = "lock_held"
+    RELEASE_PROTECTED = "release_protected"
     ALREADY_EXISTS = "already_exists"
     VERSION_MISMATCH = "version_mismatch"
     INTEGRITY = "integrity"
@@ -527,6 +528,19 @@ chat_rate_limited_total = Counter(
 chat_rate_limit_remaining = Gauge(
     "dc_chat_rate_limit_remaining",
     "Remaining requests in the current rate-limit window per user",
+    ["user_id", "window"],
+)
+
+# Its own series rather than a label on the chat pair: the Chat AI Assistant dashboard sums the
+# chat counter unfiltered, so a shared metric would show ad-hoc denials as chat denials.
+adhoc_rate_limited_total = Counter(
+    "dc_adhoc_rate_limited_total",
+    "Rate-limited ad-hoc analysis requests",
+)
+
+adhoc_rate_limit_remaining = Gauge(
+    "dc_adhoc_rate_limit_remaining",
+    "Remaining ad-hoc analysis requests in the current rate-limit window per user",
     ["user_id", "window"],
 )
 

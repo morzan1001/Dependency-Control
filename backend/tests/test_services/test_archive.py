@@ -11,6 +11,7 @@ from app.models.archive import ArchiveMetadata
 from app.services.archive import archive_scan, restore_scan
 
 MODULE = "app.services.archive"
+_NO_IDS: list[str] = []
 
 
 # ---------------------------------------------------------------------------
@@ -80,6 +81,9 @@ def _make_mock_db(
     db.scans.find_one = AsyncMock(return_value=scan_doc)
     db.scans.find = MagicMock(return_value=_AsyncCursorMock([scan_doc] if scan_doc else []))
     db.scans.insert_one = AsyncMock()
+    # Nothing in these fixtures is released, so the release-chain guard finds no protection.
+    db.scans.distinct = AsyncMock(return_value=_NO_IDS)
+    db.releases.distinct = AsyncMock(return_value=_NO_IDS)
     db.findings.find = MagicMock(return_value=_AsyncCursorMock(findings or []))
     db.findings.insert_many = AsyncMock()
     db.finding_records.find = MagicMock(return_value=_AsyncCursorMock(finding_records or []))

@@ -14,6 +14,17 @@ from .base import Analyzer
 logger = logging.getLogger(__name__)
 
 
+async def kill_and_reap(process: asyncio.subprocess.Process) -> None:
+    """End a scanner this process will never read again, and collect it.
+
+    Killing without waiting leaves a zombie in the pod's process table; a scanner left running
+    holds its CPU and its temp files for as long as the tool feels like, under no deadline the
+    request can still enforce.
+    """
+    process.kill()
+    await process.wait()
+
+
 class CLIAnalyzer(Analyzer):
     """Base class for analyzers that execute CLI tools with temp-file management and retry."""
 
@@ -119,10 +130,14 @@ class CLIAnalyzer(Analyzer):
         try:
             stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=self.cli_timeout)
         except asyncio.TimeoutError:
-            process.kill()
-            await process.wait()
+            await kill_and_reap(process)
             logger.exception("%s timed out after %ss", self.name, self.cli_timeout)
             return b"", f"{self.name} timed out after {self.cli_timeout} seconds".encode(), 1
+        except asyncio.CancelledError:
+            # cli_timeout lives inside the coroutine being cancelled, so it is cancelled with it
+            # and the scanner would be left with no ceiling at all — and one more per retry.
+            await kill_and_reap(process)
+            raise
         return stdout, stderr, process.returncode or 0
 
     def _handle_error(self, stderr: bytes) -> dict[str, Any]:

@@ -5,11 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from app.core.housekeeping import (
-    _archive_scans_and_delete,
-    _delete_scans_and_related_data,
-    _handle_retention_action,
-)
+from app.core.constants import RETENTION_PROTECTED_FLAG_VALUES
+from app.core.housekeeping import _archive_scans_and_delete, _handle_retention_action
 from app.models.archive import ArchiveMetadata
 
 MODULE = "app.core.housekeeping"
@@ -46,7 +43,7 @@ class TestArchiveScansAndDelete:
 
         with (
             patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=metadata) as mock_archive,
-            patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=1),
+            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock, return_value=1),
         ):
             result = asyncio.run(_archive_scans_and_delete(MagicMock(), ["scan-1"], "test"))
 
@@ -56,7 +53,7 @@ class TestArchiveScansAndDelete:
     def test_skips_delete_for_failed_archives(self):
         with (
             patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=None) as mock_archive,
-            patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=0) as mock_delete,
+            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock, return_value=0) as mock_delete,
         ):
             result = asyncio.run(_archive_scans_and_delete(MagicMock(), ["scan-1"], "test"))
 
@@ -76,7 +73,7 @@ class TestArchiveScansAndDelete:
 
         with (
             patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, side_effect=mock_archive_fn),
-            patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=1) as mock_delete,
+            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock, return_value=1) as mock_delete,
         ):
             result = asyncio.run(_archive_scans_and_delete(MagicMock(), ["scan-1", "scan-2"], "test"))
 
@@ -88,7 +85,7 @@ class TestArchiveScansAndDelete:
     def test_handles_archive_exception(self):
         with (
             patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, side_effect=Exception("Archive crashed")),
-            patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=0) as mock_delete,
+            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock, return_value=0) as mock_delete,
         ):
             result = asyncio.run(_archive_scans_and_delete(MagicMock(), ["scan-1"], "test"))
 
@@ -103,7 +100,7 @@ class TestArchiveScansAndDelete:
 
         with (
             patch(f"{ARCHIVE_SVC}.archive_scan", new_callable=AsyncMock, return_value=metadata) as mock_archive,
-            patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock, return_value=100),
+            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock, return_value=100),
         ):
             asyncio.run(_archive_scans_and_delete(MagicMock(), scan_ids, "test"))
 
@@ -117,7 +114,7 @@ class TestArchiveScansAndDelete:
 
 class TestHandleRetentionAction:
     def test_delete_action_calls_delete(self):
-        with patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete:
+        with patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete:
             asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "delete", "test"))
 
         mock_delete.assert_called_once()
@@ -135,7 +132,7 @@ class TestHandleRetentionAction:
         with (
             patch(f"{MODULE}.is_archive_enabled", return_value=False),
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
-            patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete,
+            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete,
             patch(f"{MODULE}.logger") as mock_logger,
         ):
             asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "archive", "test"))
@@ -147,7 +144,7 @@ class TestHandleRetentionAction:
     def test_none_action_does_nothing(self):
         with (
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
-            patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete,
+            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete,
         ):
             asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "none", "test"))
 
@@ -157,7 +154,7 @@ class TestHandleRetentionAction:
     def test_empty_scan_list_returns_early(self):
         with (
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
-            patch(f"{MODULE}._delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete,
+            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete,
         ):
             asyncio.run(_handle_retention_action(MagicMock(), [], "delete", "test"))
 
@@ -195,7 +192,8 @@ class TestRunHousekeepingArchive:
         with (
             patch(f"{MODULE}.get_database", new_callable=AsyncMock, return_value=mock_db),
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
-            patch(f"{MODULE}._get_referenced_scan_ids", new_callable=AsyncMock, return_value=[]),
+            patch(f"{MODULE}._referenced_scan_ids", new_callable=AsyncMock, return_value=set()),
+            patch(f"{MODULE}.release_protected_scan_ids", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock) as mock_handle,
         ):
             asyncio.run(run_housekeeping())
@@ -249,7 +247,8 @@ class TestRunHousekeepingArchive:
         with (
             patch(f"{MODULE}.get_database", new_callable=AsyncMock, return_value=mock_db),
             patch(f"{MODULE}.SystemSettingsRepository", return_value=mock_repo),
-            patch(f"{MODULE}._get_referenced_scan_ids", new_callable=AsyncMock, return_value=[]),
+            patch(f"{MODULE}._referenced_scan_ids", new_callable=AsyncMock, return_value=set()),
+            patch(f"{MODULE}.release_protected_scan_ids", new_callable=AsyncMock, return_value=set()),
             patch(f"{MODULE}._handle_retention_action", new_callable=AsyncMock),
             patch(f"{MODULE}.reap_orphan_gridfs_files", new_callable=AsyncMock),
         ):
@@ -258,7 +257,7 @@ class TestRunHousekeepingArchive:
         find_call = mock_db.scans.find.call_args
         query = find_call[0][0]
         assert "pinned" in query
-        assert query["pinned"] == {"$ne": True}
+        assert query["pinned"] == {"$nin": RETENTION_PROTECTED_FLAG_VALUES}
 
     def test_global_mode_zero_retention_days_skips(self):
         from app.core.housekeeping import run_housekeeping
@@ -317,16 +316,17 @@ async def test_housekeeping_global_skips_in_progress_scans(monkeypatch):
     settings_repo.get = AsyncMock(return_value=_SystemSettings())
 
     monkeypatch.setattr("app.core.housekeeping.SystemSettingsRepository", lambda _db: settings_repo)
-    monkeypatch.setattr("app.core.housekeeping._get_referenced_scan_ids", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.core.housekeeping._referenced_scan_ids", AsyncMock(return_value=set()))
+    monkeypatch.setattr("app.core.housekeeping.release_protected_scan_ids", AsyncMock(return_value=set()))
     monkeypatch.setattr("app.core.housekeeping.get_database", AsyncMock(return_value=db))
     monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
 
     await run_housekeeping()
 
-    assert len(captured_queries) >= 1
-    q = captured_queries[0]
-    assert "status" in q, f"Expected status filter in query, got: {q}"
-    assert q["status"] == {"$nin": ["pending", "processing"]}
+    retention_cursors = [q for q in captured_queries if "created_at" in q]
+    assert retention_cursors, captured_queries
+    for q in retention_cursors:
+        assert q["status"] == {"$nin": ["pending", "processing"]}, q
 
 
 @pytest.mark.asyncio
@@ -369,7 +369,8 @@ async def test_housekeeping_project_specific_skips_in_progress_scans(monkeypatch
     settings_repo.get = AsyncMock(return_value=_SystemSettings())
 
     monkeypatch.setattr("app.core.housekeeping.SystemSettingsRepository", lambda _db: settings_repo)
-    monkeypatch.setattr("app.core.housekeeping._get_referenced_scan_ids", AsyncMock(return_value=[]))
+    monkeypatch.setattr("app.core.housekeeping._referenced_scan_ids", AsyncMock(return_value=set()))
+    monkeypatch.setattr("app.core.housekeeping.release_protected_scan_ids", AsyncMock(return_value=set()))
     monkeypatch.setattr("app.core.housekeeping.get_database", AsyncMock(return_value=db))
     monkeypatch.setattr("app.core.housekeeping.is_archive_enabled", lambda: False)
 
@@ -597,36 +598,37 @@ async def test_reap_orphan_runs_stale_metadata_pass_first(monkeypatch):
     assert call_order == ["stale_metadata", "list_objects"]
 
 
-# ---------------------------------------------------------------------------
-# _delete_scans_and_related_data — verify every per-scan collection is purged
-# ---------------------------------------------------------------------------
-
-
 @pytest.mark.asyncio
-async def test_delete_scans_purges_crypto_assets():
-    """Retention/delete must wipe crypto_assets too; otherwise CBOM rows orphan."""
-    db = MagicMock()
-    db.analysis_results.delete_many = AsyncMock()
-    db.findings.delete_many = AsyncMock()
-    db.finding_records.delete_many = AsyncMock()
-    db.dependencies.delete_many = AsyncMock()
-    db.callgraphs.delete_many = AsyncMock()
-    db.crypto_assets.delete_many = AsyncMock()
-    db.scan_update_deltas.delete_many = AsyncMock()
-    db.scan_outdated_sets.delete_many = AsyncMock()
-    db.scans.delete_many = AsyncMock(return_value=MagicMock(deleted_count=2))
+async def test_reap_orphan_callgraphs_deletes_only_orphans_past_the_age_window():
+    """The window protects a callgraph uploaded before its scan row exists; the reaper deletes
+    rows outright, so an inverted cutoff destroys work in flight."""
+    from datetime import datetime, timedelta, timezone
 
-    with patch(f"{MODULE}._collect_gridfs_ids", new=AsyncMock(return_value=[])):
-        with patch(f"{MODULE}.cleanup_gridfs_files", new=AsyncMock()):
-            count = await _delete_scans_and_related_data(db, ["s1", "s2"], label="test")
+    from app.core.constants import ARCHIVE_ORPHAN_MIN_AGE_HOURS
+    from app.core.housekeeping import _reap_orphan_callgraphs
+    from tests.mocks.fake_mongo import FakeDatabase
 
-    assert count == 2
-    db.crypto_assets.delete_many.assert_awaited_once_with({"scan_id": {"$in": ["s1", "s2"]}})
-    # Sanity: the other per-scan collections are still being deleted.
-    db.findings.delete_many.assert_awaited_once()
-    db.finding_records.delete_many.assert_awaited_once()
-    db.dependencies.delete_many.assert_awaited_once()
-    db.analysis_results.delete_many.assert_awaited_once()
-    db.callgraphs.delete_many.assert_awaited_once()
-    db.scan_update_deltas.delete_many.assert_awaited_once_with({"_id": {"$in": ["s1", "s2"]}})
-    db.scan_outdated_sets.delete_many.assert_awaited_once_with({"_id": {"$in": ["s1", "s2"]}})
+    now = datetime.now(timezone.utc)
+    db = FakeDatabase()
+    await db.scans.insert_one({"_id": "scan-known"})
+    await db.callgraphs.insert_many(
+        [
+            {
+                "_id": "cg-orphan-old",
+                "scan_id": "scan-missing",
+                "created_at": now - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS * 2),
+            },
+            {"_id": "cg-orphan-fresh", "scan_id": "scan-arriving", "created_at": now - timedelta(minutes=1)},
+            {
+                "_id": "cg-known-old",
+                "scan_id": "scan-known",
+                "created_at": now - timedelta(hours=ARCHIVE_ORPHAN_MIN_AGE_HOURS * 2),
+            },
+        ]
+    )
+
+    deleted = await _reap_orphan_callgraphs(db)
+
+    survivors = sorted([cg["_id"] async for cg in db.callgraphs.find({})])
+    assert deleted == 1
+    assert survivors == ["cg-known-old", "cg-orphan-fresh"]

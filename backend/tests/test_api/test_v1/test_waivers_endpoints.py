@@ -7,9 +7,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import BackgroundTasks, HTTPException
 
+from app.core.constants import SCAN_STATUS_COMPLETED, SCAN_STATUS_PENDING
 from app.models.waiver import Waiver
+from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.api.v1.endpoints.waivers"
+
+_PROJECT = "proj-1"
+_BRANCH = "main"
+_HEAD_SCAN = "scan-1"
+_QUEUED_SCAN = "scan-2"
 
 _LIST_DEFAULTS = {
     "finding_id": None,
@@ -86,23 +93,36 @@ class TestCreateWaiver:
 
 
 class TestCreateWaiverValidatesFindingMatch:
-    """A finding-scope waiver must match at least one finding in the project's latest scan, else it is a zombie waiver that never applies."""
+    """A finding-scope waiver must match at least one finding on the project's head build, else it is a zombie waiver that never applies."""
 
     @staticmethod
-    def _mock_db_with_latest_scan(scan_id="scan-1", project_id="proj-1"):
-        async def _project_find_one(query, projection=None):
-            return {"_id": project_id, "latest_scan_id": scan_id}
-
-        db = MagicMock()
-        db.projects.find_one = _project_find_one
+    def _db_with_head_scan(scan_id=_HEAD_SCAN, project_id=_PROJECT, findings=(), scans=True):
+        """A project whose head resolves to ``scan_id``, plus whatever findings that build holds."""
+        db = FakeDatabase()
+        db.projects._docs[project_id] = {
+            "_id": project_id,
+            "name": "P",
+            "default_branch": _BRANCH,
+            "deleted_branches": [],
+            "latest_scan_id": scan_id if scans else None,
+        }
+        if scans:
+            db.scans._docs[scan_id] = {
+                "_id": scan_id,
+                "project_id": project_id,
+                "branch": _BRANCH,
+                "status": SCAN_STATUS_COMPLETED,
+                "created_at": datetime.now(timezone.utc),
+            }
+        for i, finding in enumerate(findings):
+            db.findings._docs[f"f-{i}"] = {"scan_id": scan_id, "project_id": project_id, **finding}
         return db
 
     def test_finding_scope_waiver_with_no_match_raises_422(self, admin_user):
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
-        db = self._mock_db_with_latest_scan()
-        db.findings.find_one = AsyncMock(return_value=None)
+        db = self._db_with_head_scan()
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -137,8 +157,9 @@ class TestCreateWaiverValidatesFindingMatch:
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
-        db = self._mock_db_with_latest_scan()
-        db.findings.find_one = AsyncMock(return_value={"_id": "fid1", "type": "quality", "component": None})
+        db = self._db_with_head_scan(
+            findings=[{"finding_id": "QUALITY:artemis-commons:2.43.0", "type": "quality", "component": None}]
+        )
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -164,13 +185,53 @@ class TestCreateWaiverValidatesFindingMatch:
 
         mock_repo.create.assert_called_once()
 
+    def test_validation_reads_the_head_build_not_the_queued_scan_the_pointer_names(self, admin_user):
+        """A queued scan holds no findings, so validating against the pointer would reject a waiver
+        for a finding the head build really reports."""
+        from app.api.v1.endpoints.waivers import create_waiver
+        from app.schemas.waiver import WaiverCreate
+
+        db = self._db_with_head_scan(
+            findings=[{"finding_id": "QUALITY:artemis-commons:2.43.0", "type": "quality", "component": None}]
+        )
+        db.scans._docs[_QUEUED_SCAN] = {
+            "_id": _QUEUED_SCAN,
+            "project_id": _PROJECT,
+            "branch": _BRANCH,
+            "status": SCAN_STATUS_PENDING,
+            "created_at": datetime.now(timezone.utc) + timedelta(hours=1),
+        }
+        db.projects._docs[_PROJECT]["latest_scan_id"] = _QUEUED_SCAN
+
+        mock_repo = MagicMock()
+        mock_repo.create = AsyncMock()
+
+        with patch(f"{MODULE}.check_project_access", new_callable=AsyncMock):
+            with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
+                with patch(f"{MODULE}.recalculate_project_stats"):
+                    asyncio.run(
+                        create_waiver(
+                            waiver_in=WaiverCreate(
+                                project_id=_PROJECT,
+                                finding_id="QUALITY:artemis-commons:2.43.0",
+                                finding_type="quality",
+                                scope="finding",
+                                reason="ok",
+                            ),
+                            background_tasks=BackgroundTasks(),
+                            current_user=admin_user,
+                            db=db,
+                        )
+                    )
+
+        mock_repo.create.assert_called_once()
+
     def test_rule_scope_waiver_skips_match_check(self, admin_user):
         """rule-scope is preventive — covers future matches — so no current-scan match is required."""
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
-        db = self._mock_db_with_latest_scan()
-        db.findings.find_one = AsyncMock(return_value=None)
+        db = self._db_with_head_scan()
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -201,8 +262,7 @@ class TestCreateWaiverValidatesFindingMatch:
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
-        db = self._mock_db_with_latest_scan()
-        db.findings.find_one = AsyncMock(return_value=None)
+        db = self._db_with_head_scan()
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -355,12 +415,7 @@ class TestCreateWaiverValidatesFindingMatch:
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
-        async def _project_find_one(query, projection=None):
-            return {"_id": "proj-1", "latest_scan_id": None}
-
-        db = MagicMock()
-        db.projects.find_one = _project_find_one
-        db.findings.find_one = AsyncMock(return_value=None)
+        db = self._db_with_head_scan(scans=False)
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -385,15 +440,13 @@ class TestCreateWaiverValidatesFindingMatch:
                     )
 
         mock_repo.create.assert_called_once()
-        db.findings.find_one.assert_not_called()
 
     def test_vulnerability_id_scoped_waiver_skips_finding_id_check(self, admin_user):
         """CVE-targeted waivers match by vulnerability_id, not finding_id, so the finding_id format mismatch must not 422."""
         from app.api.v1.endpoints.waivers import create_waiver
         from app.schemas.waiver import WaiverCreate
 
-        db = self._mock_db_with_latest_scan()
-        db.findings.find_one = AsyncMock(return_value=None)
+        db = self._db_with_head_scan()
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -426,7 +479,7 @@ class TestCreateWaiverValidatesFindingMatch:
         from app.schemas.waiver import WaiverCreate
 
         finding_doc = {
-            "_id": "fid",
+            "finding_id": "OPENGREP-r-a.py-10",
             "type": "sast",
             "component": "a.py",
             "match": {
@@ -439,8 +492,7 @@ class TestCreateWaiverValidatesFindingMatch:
             },
         }
 
-        db = self._mock_db_with_latest_scan()
-        db.findings.find_one = AsyncMock(return_value=finding_doc)
+        db = self._db_with_head_scan(findings=[finding_doc])
 
         mock_repo = MagicMock()
         mock_repo.create = AsyncMock()
@@ -625,77 +677,56 @@ class TestListWaivers:
 
 
 class TestOrphanedFilter:
-    def test_orphaned_filter_lists_only_orphaned_waivers(self, admin_user):
-        """orphaned=True returns only waivers with last_match_count==0 and last_eval_scan_id!=None; items must expose both fields."""
-        orphaned_waiver = _make_waiver(
-            id="w-orphaned",
-            last_eval_scan_id="s1",
-            last_match_count=0,
-        )
-        active_waiver = _make_waiver(
-            id="w-active",
-            last_eval_scan_id="s1",
-            last_match_count=1,
-        )
+    """FakeDatabase-backed: the orphaned filter is a query, so a mock that answers every query the
+    same way cannot tell whether it selected anything."""
 
-        # --- (a) Verify fields appear in response --------------------------------
-        orphaned_doc = orphaned_waiver.model_dump(by_alias=True)
-        mock_repo = MagicMock()
-        mock_repo.count = AsyncMock(return_value=1)
-        mock_repo.find_many = AsyncMock(return_value=[orphaned_doc])
+    _NOW = datetime.now(timezone.utc)
+    _WINDOW = timedelta(days=5)
 
-        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo):
-            result = _call_list_waivers(admin_user, orphaned=True)
+    def _db(self):
+        db = FakeDatabase()
+        for waiver in (
+            _make_waiver(id="w-orphaned", last_eval_scan_id="s1", last_match_count=0),
+            _make_waiver(id="w-matching", last_eval_scan_id="s1", last_match_count=1),
+            _make_waiver(id="w-unevaluated", last_eval_scan_id=None, last_match_count=0),
+            _make_waiver(
+                id="w-orphaned-expired",
+                last_eval_scan_id="s1",
+                last_match_count=0,
+                expiration_date=self._NOW - self._WINDOW,
+            ),
+            _make_waiver(
+                id="w-orphaned-expiring",
+                last_eval_scan_id="s1",
+                last_match_count=0,
+                expiration_date=self._NOW + self._WINDOW,
+            ),
+        ):
+            db.waivers._docs[waiver.id] = waiver.model_dump(by_alias=True)
+        return db
 
-        item = result["items"][0]
-        assert "last_eval_scan_id" in item, "last_eval_scan_id must be in response"
-        assert "last_match_count" in item, "last_match_count must be in response"
-        assert item["last_eval_scan_id"] == "s1"
-        assert item["last_match_count"] == 0
+    def test_only_evaluated_unexpired_waivers_matching_nothing_are_orphaned(self, admin_user):
+        db = self._db()
 
-        # --- (b) orphaned=True filters by Mongo query before count+find ---------
-        both_docs = [
-            orphaned_waiver.model_dump(by_alias=True),
-            active_waiver.model_dump(by_alias=True),
-        ]
-        mock_repo2 = MagicMock()
-        mock_repo2.count = AsyncMock(return_value=1)
-        mock_repo2.find_many = AsyncMock(return_value=[orphaned_doc])
+        result = _call_list_waivers(admin_user, db=db, orphaned=True)
 
-        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo2):
-            result_orphaned = _call_list_waivers(admin_user, orphaned=True)
+        assert sorted(item["id"] for item in result["items"]) == ["w-orphaned", "w-orphaned-expiring"]
+        assert result["total"] == len(result["items"])
 
-        assert result_orphaned["total"] == 1
-        assert len(result_orphaned["items"]) == 1
+    def test_without_the_filter_every_waiver_is_listed(self, admin_user):
+        db = self._db()
 
-        count_query = mock_repo2.count.call_args[0][0]
-        assert count_query.get("last_eval_scan_id") == {"$ne": None}, (
-            "count query must filter last_eval_scan_id != None"
-        )
-        assert count_query.get("last_match_count") == 0, "count query must filter last_match_count == 0"
+        result = _call_list_waivers(admin_user, db=db)
 
-        find_query = mock_repo2.find_many.call_args[0][0]
-        assert find_query.get("last_eval_scan_id") == {"$ne": None}
-        assert find_query.get("last_match_count") == 0
+        assert result["total"] == len(db.waivers._docs)
 
-        # orphaned filter also excludes expired waivers (mirrors the is_active badge gate)
-        or_clause = find_query.get("$or")
-        assert or_clause is not None and len(or_clause) == 3
-        assert {"expiration_date": {"$exists": False}} in or_clause
-        assert {"expiration_date": None} in or_clause
-        assert "$gt" in or_clause[-1]["expiration_date"]
+    def test_the_evaluation_state_is_exposed_on_each_item(self, admin_user):
+        db = self._db()
 
-        mock_repo3 = MagicMock()
-        mock_repo3.count = AsyncMock(return_value=2)
-        mock_repo3.find_many = AsyncMock(return_value=both_docs)
+        result = _call_list_waivers(admin_user, db=db, orphaned=True)
 
-        with patch(f"{MODULE}.WaiverRepository", return_value=mock_repo3):
-            result_all = _call_list_waivers(admin_user)
-
-        count_query_all = mock_repo3.count.call_args[0][0]
-        assert "last_eval_scan_id" not in count_query_all, "plain call must NOT add orphaned filter"
-        assert result_all["total"] == 2
-        assert len(result_all["items"]) == 2
+        orphaned = next(item for item in result["items"] if item["id"] == "w-orphaned")
+        assert (orphaned["last_eval_scan_id"], orphaned["last_match_count"]) == ("s1", 0)
 
 
 class TestDeleteWaiver:

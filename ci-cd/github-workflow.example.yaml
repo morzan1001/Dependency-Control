@@ -23,6 +23,12 @@ env:
   SCANNER_SHA256: ${{ vars.SCANNER_SHA256 }}
   # Optional: Override the OIDC audience (default: "dependency-control")
   # DEP_CONTROL_OIDC_AUDIENCE: "dependency-control"
+  # Mark the scanned artefact as the one now running in an environment. Set these on the job that
+  # deploys, not here: every job of one run writes the same scan, so one marked job is enough.
+  #   DEP_CONTROL_IS_RELEASE: "true"
+  #   DEP_CONTROL_RELEASE_VERSION: ${{ github.ref_name }}   # default: the commit tag
+  #   DEP_CONTROL_RELEASE_ENVIRONMENT: "production"         # slug ^[a-z0-9][a-z0-9_-]{0,31}$
+  # Requires SCANNER_VERSION 1.2.0 or newer; older scanners ignore all three.
 
 jobs:
   sbom-scan:

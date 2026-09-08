@@ -6,6 +6,7 @@ import { PasswordUpdateCard } from '@/components/profile/PasswordUpdateCard';
 import { TwoFactorAuthCard } from '@/components/profile/TwoFactorAuthCard';
 import { NotificationPreferencesCard } from '@/components/profile/NotificationPreferencesCard';
 import { MCPApiKeysCard } from '@/components/profile/MCPApiKeysCard';
+import { AdhocApiKeysCard } from '@/components/profile/AdhocApiKeysCard';
 import { useAuth } from '@/context';
 import { Permissions } from '@/lib/permissions';
 
@@ -13,6 +14,7 @@ export default function ProfilePage() {
   const { data: user, isLoading } = useCurrentUser();
   const { hasPermission } = useAuth();
   const canUseMcp = hasPermission(Permissions.MCP_ACCESS);
+  const canUseAdhocAnalysis = hasPermission(Permissions.ANALYZE_ADHOC);
 
   const { data: notificationChannels } = useNotificationChannels();
   const { data: appConfig } = useAppConfig();
@@ -45,6 +47,7 @@ export default function ProfilePage() {
       <NotificationPreferencesCard key={`notif-${user?.id}`} user={user} availableChannels={notificationChannels} />
 
       {canUseMcp && <MCPApiKeysCard />}
+      {canUseAdhocAnalysis && <AdhocApiKeysCard />}
     </div>
   );
 }

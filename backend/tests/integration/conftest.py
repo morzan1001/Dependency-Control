@@ -1,5 +1,9 @@
 """Fixtures for integration tests: real FastAPI app with in-process fake Mongo and auth bypassed via dependency overrides."""
 
+import asyncio
+import os
+import uuid
+
 import pytest
 import pytest_asyncio
 from fastapi import Depends
@@ -9,6 +13,16 @@ from app.models.project import Project
 from tests.mocks.fake_mongo import FakeDatabase
 
 _SET_ON_INSERT = "$setOnInsert"
+_LIVE_MONGO_MARKER = "live_mongo"
+_LIVE_MONGO_URL = os.environ.get("DC_TEST_MONGO_URL", "mongodb://localhost:27017")
+_LIVE_MONGO_REQUIRED = os.environ.get("DC_REQUIRE_LIVE_MONGO") == "1"
+_SERVER_SELECTION_TIMEOUT_MS = 2000
+_LIVE_DB_PREFIX = "dc_test_"
+_WORKER_NAME = "test-worker"
+
+
+def pytest_configure(config):
+    config.addinivalue_line("markers", f"{_LIVE_MONGO_MARKER}: run against a real MongoDB instead of FakeDatabase")
 
 
 def _make_project(project_id: str = "test-project-id", name: str = "test-project") -> Project:
@@ -21,8 +35,60 @@ def _project():
 
 
 @pytest_asyncio.fixture
-async def db():
-    return FakeDatabase()
+async def db(request):
+    """FakeDatabase, or a throwaway database on a real MongoDB for a test marked ``live_mongo``.
+
+    CI sets ``DC_REQUIRE_LIVE_MONGO`` so an unreachable server fails the run; without it a marked
+    test would silently skip and stop guarding anything, which is the state it came from.
+    """
+    if not request.node.get_closest_marker(_LIVE_MONGO_MARKER):
+        yield FakeDatabase()
+        return
+
+    from motor.motor_asyncio import AsyncIOMotorClient
+    from pymongo.errors import PyMongoError
+
+    client = AsyncIOMotorClient(_LIVE_MONGO_URL, serverSelectionTimeoutMS=_SERVER_SELECTION_TIMEOUT_MS)
+    try:
+        await client.admin.command("ping")
+    except PyMongoError as exc:
+        client.close()
+        if _LIVE_MONGO_REQUIRED:
+            raise
+        pytest.skip(f"no MongoDB reachable at {_LIVE_MONGO_URL}: {exc}")
+
+    name = f"{_LIVE_DB_PREFIX}{uuid.uuid4().hex}"
+    try:
+        yield client[name]
+    finally:
+        await client.drop_database(name)
+        client.close()
+
+
+@pytest_asyncio.fixture
+async def running_worker(db, monkeypatch):
+    """One in-process analysis worker bound to the test's database.
+
+    The worker resolves its database and the ingest path resolves its queue through
+    module-level singletons, so both have to be replaced for a job to reach this worker.
+    """
+    from app.core import worker as worker_mod
+    from app.services import scan_manager as scan_manager_mod
+
+    async def _get_database():
+        return db
+
+    manager = worker_mod.AnalysisWorkerManager(num_workers=1)
+    monkeypatch.setattr(worker_mod, "get_database", _get_database)
+    monkeypatch.setattr(worker_mod, "worker_manager", manager)
+    monkeypatch.setattr(scan_manager_mod, "worker_manager", manager)
+
+    task = asyncio.create_task(manager.worker(_WORKER_NAME))
+    try:
+        yield manager
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
 
 
 @pytest_asyncio.fixture

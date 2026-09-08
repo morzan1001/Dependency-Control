@@ -1,13 +1,16 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useProjectScans, useScanResults } from '@/hooks/queries/use-scans'
+import { useProjectBranchTips, useProjectScans, useScan, useScanResults } from '@/hooks/queries/use-scans'
+import { useLatestProjectRelease } from '@/hooks/queries/use-releases'
 import { useProjectWaivers } from '@/hooks/queries/use-waivers'
 import { Scan } from '@/types/scan'
-import { isScanUsable } from '@/lib/scan-status'
+import { hasUnrecordedRelease } from '@/lib/releases'
+import { resolveRun } from '@/lib/scan-run'
 import { highestRiskBranch } from '@/lib/branches'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
+import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Activity, ShieldAlert, ShieldCheck, AlertTriangle, GitBranch } from 'lucide-react'
+import { Activity, ShieldAlert, ShieldCheck, AlertTriangle, GitBranch, Rocket } from 'lucide-react'
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend, PieChart, Pie, Cell, BarChart, Bar } from 'recharts'
 import { Skeleton } from '@/components/ui/skeleton'
 import { ThreatIntelligenceDashboard } from '@/components/ThreatIntelligenceDashboard'
@@ -23,30 +26,41 @@ interface ProjectOverviewProps {
   selectedBranches: string[]
 }
 
+const RELEASE_NOT_ANALYSED = 'Nothing in its rescan chain has finished analysing'
+const RELEASE_CHAIN_BOUNDED = 'Rescan chain longer than the walk follows — a newer analysis may exist'
+const TREND_WINDOW_BOUNDED = `newest ${MAX_SCANS_FOR_CHARTS} scans — older ones are outside the plot`
+
+function releaseHeadline(environment: string | null, branch: string): string {
+  return environment ? `Release in ${environment} on ${branch}` : `Release on ${branch}`
+}
+
 export function ProjectOverview({ projectId, selectedBranches }: ProjectOverviewProps) {
   const navigate = useNavigate()
-  const { data: scans, isLoading } = useProjectScans(projectId, { page: 1, limit: MAX_SCANS_FOR_CHARTS, excludeDeletedBranches: true })
+  // The trend line is the only consumer of this page: every branch-level number below comes
+  // from branch-tips, which reads the whole project rather than a page of it.
+  const { data: scans, isLoading: scansLoading } = useProjectScans(projectId, { page: 1, limit: MAX_SCANS_FOR_CHARTS, excludeDeletedBranches: true })
+  const { data: branchTips, isLoading: tipsLoading } = useProjectBranchTips(projectId)
 
   const { data: waivers } = useProjectWaivers(projectId)
 
+  const isLoading = scansLoading || tipsLoading
   const scanList = scans || []
+  const trendWindowBounded = scanList.length >= MAX_SCANS_FOR_CHARTS
 
   const filteredScans = scanList.filter((s: Scan) => selectedBranches.includes(s.branch))
 
-  const uniqueScansCount = filteredScans.filter((s: Scan) => !s.is_rescan).length
+  const selectedTips = useMemo(
+    () => (branchTips?.branches ?? []).filter((row) => selectedBranches.includes(row.branch)),
+    [branchTips, selectedBranches],
+  )
+
+  const uniqueScansCount = selectedTips.reduce((total, row) => total + row.scan_count, 0)
 
   const projectStats = useMemo(() => {
-      if (!filteredScans.length) return null;
-
       const latestScansByBranch: Record<string, Scan> = {};
 
-      filteredScans.forEach((scan: Scan) => {
-          if (!isScanUsable(scan.status)) return;
-
-          const currentLatest = latestScansByBranch[scan.branch];
-          if (!currentLatest || new Date(scan.created_at) > new Date(currentLatest.created_at)) {
-              latestScansByBranch[scan.branch] = scan;
-          }
+      selectedTips.forEach((row) => {
+          if (row.tip) latestScansByBranch[row.branch] = row.tip;
       });
 
       const branchStatsData = Object.values(latestScansByBranch).map(scan => ({
@@ -60,18 +74,42 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       }));
 
       return { branchStats: branchStatsData, latestScansByBranch };
-  }, [filteredScans]);
+  }, [selectedTips]);
 
   const latestScansByBranch = useMemo(() => projectStats?.latestScansByBranch || {}, [projectStats]);
   const branchNames = Object.keys(latestScansByBranch);
   const [pickedBranch, setPickedBranch] = useState<string | null>(null);
+  const [showRelease, setShowRelease] = useState(false);
   // Every headline number below comes from this one scan. Summing across branches would
   // count the same CVE once per branch; the per-branch breakdown covers the rest.
   const activeBranch = pickedBranch && branchNames.includes(pickedBranch)
     ? pickedBranch
     : highestRiskBranch(latestScansByBranch);
-  const activeScan = activeBranch ? latestScansByBranch[activeBranch] : undefined;
-  const { data: scanResults } = useScanResults(activeScan?.id || '');
+  // The tile names the environment the release went to rather than assuming production.
+  const { latestRelease, isLoading: releasesLoading } = useLatestProjectRelease(projectId);
+  const { data: markedReleaseScan } = useScan(latestRelease?.analysis_scan_id ?? '');
+  // A release row is what the endpoint lists, so a scan holding only the flag reaches it no other way.
+  const candidate = branchTips?.flagged_release_scan;
+  const flaggedScan = candidate && hasUnrecordedRelease(candidate) ? candidate : undefined;
+  const releaseScan = latestRelease ? markedReleaseScan : flaggedScan;
+  const releaseEnvironment = latestRelease?.environment ?? null;
+  // Hidden entirely on a project that reports no release: an empty tile reads as a missing report.
+  // Withheld while the answer is in flight too, because the flag-only fallback would otherwise put
+  // a nameless badge on screen for the instant before the row names its environment.
+  const showReleaseTile = !releasesLoading && (latestRelease !== undefined || flaggedScan !== undefined);
+  // analysis_scan_id is null while nothing in the release's rescan chain has finished analysing.
+  const releaseHasNumbers = latestRelease
+    ? latestRelease.analysis_scan_id !== null
+    : flaggedScan !== undefined;
+  const headScan = activeBranch ? latestScansByBranch[activeBranch] : undefined;
+  const releaseShown = showRelease ? releaseScan : undefined;
+  const activeScan = releaseShown ?? headScan;
+  const activeRun = activeScan ? resolveRun(activeScan) : undefined;
+  const activeScanId = activeRun?.scanId;
+  const headlineSource = releaseShown
+    ? releaseHeadline(releaseEnvironment, releaseShown.branch)
+    : activeBranch ? `Branch ${activeBranch}` : null;
+  const { data: scanResults } = useScanResults(activeScanId || '');
 
   if (isLoading) {
     return (
@@ -84,7 +122,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
     )
   }
 
-  const stats = activeScan?.stats || {}
+  const stats = activeRun?.stats ?? {}
   const branchStats = projectStats?.branchStats || []
 
   const threatIntel = stats.threat_intel
@@ -141,12 +179,19 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
       {branchNames.length > 1 && activeBranch && (
         <div className="flex flex-wrap items-center justify-between gap-2">
           <p className="text-sm text-muted-foreground">
-            Findings exist on every branch, so the blocks below show one branch at a time.
+            {releaseShown
+              ? 'A release is one build, so the branch picker is off while its numbers are shown.'
+              : 'Findings exist on every branch, so the blocks below show one branch at a time.'}
           </p>
           <Tabs value={activeBranch} onValueChange={setPickedBranch}>
             <TabsList>
               {branchNames.map(branch => (
-                <TabsTrigger key={branch} value={branch} className="gap-1.5">
+                <TabsTrigger
+                  key={branch}
+                  value={branch}
+                  className="gap-1.5"
+                  disabled={releaseShown !== undefined}
+                >
                   <GitBranch className="h-3 w-3" />
                   {branch}
                 </TabsTrigger>
@@ -155,7 +200,32 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           </Tabs>
         </div>
       )}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+      <div className={`grid gap-4 md:grid-cols-2 ${showReleaseTile ? 'lg:grid-cols-5' : 'lg:grid-cols-4'}`}>
+        {showReleaseTile && (
+          <Card>
+            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+              <CardTitle className="text-sm font-medium">Latest Release</CardTitle>
+              <Rocket className="h-4 w-4 text-success" />
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <ReleaseBadge environment={releaseEnvironment} version={latestRelease?.version} />
+              {releaseHasNumbers ? (
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+                  onClick={() => setShowRelease((on) => !on)}
+                >
+                  {showRelease ? 'Show HEAD numbers' : 'Show release numbers'}
+                </button>
+              ) : (
+                <p className="text-xs text-muted-foreground">{RELEASE_NOT_ANALYSED}</p>
+              )}
+              {latestRelease?.analysis_chain_bounded && (
+                <p className="text-xs text-amber-700 dark:text-amber-300">{RELEASE_CHAIN_BOUNDED}</p>
+              )}
+            </CardContent>
+          </Card>
+        )}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total Scans</CardTitle>
@@ -171,7 +241,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
         <Card
           className="cursor-pointer transition-colors hover:bg-muted/50"
           onClick={() => {
-            if (activeScan) navigate(`/projects/${projectId}/scans/${activeScan.id}?severity=CRITICAL`)
+            if (activeScanId) navigate(`/projects/${projectId}/scans/${activeScanId}?severity=CRITICAL`)
           }}
         >
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -181,14 +251,14 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           <CardContent>
             <div className="text-2xl font-bold text-destructive">{stats.critical ?? 0}</div>
             <p className="text-xs text-muted-foreground">
-              {activeBranch ? `Branch ${activeBranch} — click to view findings` : 'Click to view findings'}
+              {headlineSource ? `${headlineSource} — click to view findings` : 'Click to view findings'}
             </p>
           </CardContent>
         </Card>
         <Card
           className="cursor-pointer transition-colors hover:bg-muted/50"
           onClick={() => {
-            if (activeScan) navigate(`/projects/${projectId}/scans/${activeScan.id}?severity=HIGH`)
+            if (activeScanId) navigate(`/projects/${projectId}/scans/${activeScanId}?severity=HIGH`)
           }}
         >
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -198,7 +268,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
           <CardContent>
             <div className="text-2xl font-bold text-orange-500">{stats.high ?? 0}</div>
             <p className="text-xs text-muted-foreground">
-              {activeBranch ? `Branch ${activeBranch} — click to view findings` : 'Click to view findings'}
+              {headlineSource ? `${headlineSource} — click to view findings` : 'Click to view findings'}
             </p>
           </CardContent>
         </Card>
@@ -224,6 +294,7 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
                 <CardTitle>Vulnerability Trends</CardTitle>
                 <CardDescription>
                     {selectedBranches.length > 0 ? `Showing trends for: ${selectedBranches.join(', ')}` : 'Select branches to view trends'}
+                    {trendWindowBounded && ` · ${TREND_WINDOW_BOUNDED}`}
                 </CardDescription>
             </div>
           </CardHeader>
@@ -274,9 +345,8 @@ export function ProjectOverview({ projectId, selectedBranches }: ProjectOverview
                     paddingAngle={5}
                     dataKey="value"
                     onClick={(data) => {
-                      if (data?.name) {
-                        const scan = activeBranch ? latestScansByBranch[activeBranch] : Object.values(latestScansByBranch)[0]
-                        if (scan) navigate(`/projects/${projectId}/scans/${scan.id}?severity=${data.name.toUpperCase()}`)
+                      if (data?.name && activeScanId) {
+                        navigate(`/projects/${projectId}/scans/${activeScanId}?severity=${data.name.toUpperCase()}`)
                       }
                     }}
                   >

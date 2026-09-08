@@ -14,6 +14,20 @@ from app.models.license import (
     LicensePolicy,
 )
 
+from .constants import (
+    POLICY_VIOLATION_MIN_RANK,
+    SEVERITY_RANK,
+    UNDETERMINED_LICENSE_ID,
+    UNDETERMINED_LICENSE_MESSAGE,
+)
+
+
+def is_acceptable_under_policy(issue: dict[str, Any] | None) -> bool:
+    """Whether a consumer could actually take this licence: no finding, or one a policy escape already softened."""
+    if issue is None:
+        return True
+    return SEVERITY_RANK[issue["severity"]] < POLICY_VIOLATION_MIN_RANK
+
 
 def evaluate_license(
     component: str,
@@ -302,6 +316,49 @@ def evaluate_network_copyleft(
         risks=license_info.risks,
         purl=purl,
         license_url=lic_url,
+    )
+
+
+def create_undeterminable_issue(
+    component: str,
+    version: str,
+    purl: str,
+    unrecognized: list[str],
+    rejected_alternatives: list[str] | None = None,
+) -> dict[str, Any]:
+    """A component whose licence the SBOM does not let us determine: none declared, or declared
+    under an identifier we do not know. Neither is auditable, which is what the audit control means.
+
+    Informational, because "we cannot tell" is not the same class as a disallowed licence; the
+    control keys on the finding's presence, not on its severity.
+    """
+    if unrecognized:
+        explanation = (
+            f"The SBOM declares {', '.join(unrecognized)} for this component, which is not a "
+            "recognised SPDX identifier, so its obligations cannot be evaluated."
+        )
+    else:
+        explanation = (
+            "The SBOM carries no license information for this component, so its obligations cannot be evaluated."
+        )
+    if rejected_alternatives:
+        explanation += (
+            f" The alternatives this expression offers that we can read ({', '.join(rejected_alternatives)}) "
+            "are not acceptable under the current license policy, so no readable and acceptable choice remains."
+        )
+    return create_issue(
+        component=component,
+        version=version,
+        license_id=UNDETERMINED_LICENSE_ID,
+        severity=Severity.INFO,
+        category=LicenseCategory.UNKNOWN,
+        message=UNDETERMINED_LICENSE_MESSAGE,
+        explanation=explanation,
+        recommendation=(
+            "Add a license override for this component, pin it to a release that declares its "
+            "license, or remove the dependency."
+        ),
+        purl=purl,
     )
 
 

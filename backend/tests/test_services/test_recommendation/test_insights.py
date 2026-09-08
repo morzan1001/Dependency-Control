@@ -57,10 +57,23 @@ def _quality_finding(
     }
 
 
-def _cross_project_data(projects, total_projects=None):
+def _cross_project_data(projects, total_projects=None, shared_packages=None, projects_compared=None):
     return {
         "projects": projects,
+        "shared_packages": shared_packages or [],
         "total_projects": total_projects or len(projects),
+        "projects_compared": projects_compared if projects_compared is not None else len(projects),
+    }
+
+
+def _shared_package(name="requests", versions=("2.28.0", "2.31.0"), project_count=2):
+    """One row of the cross-project package aggregation, which counts in Mongo over every
+    dependency row rather than sampling each scan."""
+    return {
+        "name": name,
+        "versions": list(versions),
+        "version_count": len(versions),
+        "project_count": project_count,
     }
 
 
@@ -68,7 +81,6 @@ def _project(
     project_id="p1",
     project_name="App1",
     cves=None,
-    packages=None,
     total_critical=0,
     total_high=0,
 ):
@@ -76,7 +88,6 @@ def _project(
         "project_id": project_id,
         "project_name": project_name,
         "cves": cves or [],
-        "packages": packages or [],
         "total_critical": total_critical,
         "total_high": total_high,
     }
@@ -225,10 +236,12 @@ class TestAnalyzeCrossProjectPatternsSharedVuln:
                 _project(project_id="p2", project_name="App2", cves=["CVE-2024-001"]),
             ],
             total_projects=3,
+            projects_compared=2,
         )
         result = analyze_cross_project_patterns([], [], data)
         shared_recs = [r for r in result if r.type == RecommendationType.SHARED_VULNERABILITY]
-        assert any("CVE-2024-001" in c and "2/3" in c for c in shared_recs[0].affected_components)
+        assert any("CVE-2024-001" in c and "2/2 projects compared" in c for c in shared_recs[0].affected_components)
+        assert "compared across 2 of your 3 projects" in shared_recs[0].description
 
     def test_cve_in_only_one_project_not_flagged(self):
         data = _cross_project_data(
@@ -245,10 +258,8 @@ class TestAnalyzeCrossProjectPatternsSharedVuln:
 class TestAnalyzeCrossProjectPatternsInconsistentVersions:
     def test_inconsistent_versions_produces_recommendation(self):
         data = _cross_project_data(
-            [
-                _project(project_id="p1", project_name="App1", packages=[{"name": "requests", "version": "2.28.0"}]),
-                _project(project_id="p2", project_name="App2", packages=[{"name": "requests", "version": "2.31.0"}]),
-            ]
+            [_project(project_id="p1"), _project(project_id="p2")],
+            shared_packages=[_shared_package()],
         )
         result = analyze_cross_project_patterns([], [], data)
         pattern_recs = [r for r in result if r.type == RecommendationType.CROSS_PROJECT_PATTERN]
@@ -256,10 +267,8 @@ class TestAnalyzeCrossProjectPatternsInconsistentVersions:
 
     def test_inconsistent_versions_type(self):
         data = _cross_project_data(
-            [
-                _project(project_id="p1", project_name="App1", packages=[{"name": "requests", "version": "2.28.0"}]),
-                _project(project_id="p2", project_name="App2", packages=[{"name": "requests", "version": "2.31.0"}]),
-            ]
+            [_project(project_id="p1"), _project(project_id="p2")],
+            shared_packages=[_shared_package()],
         )
         result = analyze_cross_project_patterns([], [], data)
         pattern_recs = [
@@ -270,12 +279,8 @@ class TestAnalyzeCrossProjectPatternsInconsistentVersions:
         assert len(pattern_recs) == 1
 
     def test_same_versions_no_inconsistency(self):
-        data = _cross_project_data(
-            [
-                _project(project_id="p1", project_name="App1", packages=[{"name": "requests", "version": "2.31.0"}]),
-                _project(project_id="p2", project_name="App2", packages=[{"name": "requests", "version": "2.31.0"}]),
-            ]
-        )
+        """The aggregation only emits a package whose version_count exceeds one."""
+        data = _cross_project_data([_project(project_id="p1"), _project(project_id="p2")])
         result = analyze_cross_project_patterns([], [], data)
         pattern_recs = [
             r
@@ -340,19 +345,10 @@ class TestAnalyzeCrossProjectPatternsMultipleRecommendations:
     def test_shared_vuln_and_inconsistent_versions(self):
         data = _cross_project_data(
             [
-                _project(
-                    project_id="p1",
-                    project_name="App1",
-                    cves=["CVE-2024-001"],
-                    packages=[{"name": "requests", "version": "2.28.0"}],
-                ),
-                _project(
-                    project_id="p2",
-                    project_name="App2",
-                    cves=["CVE-2024-001"],
-                    packages=[{"name": "requests", "version": "2.31.0"}],
-                ),
-            ]
+                _project(project_id="p1", project_name="App1", cves=["CVE-2024-001"]),
+                _project(project_id="p2", project_name="App2", cves=["CVE-2024-001"]),
+            ],
+            shared_packages=[_shared_package()],
         )
         result = analyze_cross_project_patterns([], [], data)
         types = {r.type for r in result}

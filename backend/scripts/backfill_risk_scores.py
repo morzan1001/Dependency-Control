@@ -6,6 +6,11 @@ duplicated formula), then mirrors the scores onto each project's stats for its
 latest_scan_id. Scans whose stored stats count findings that no longer exist in the
 findings collection are skipped, not zeroed.
 
+The run also reports, per top-level Stats field, how many stored blocks disagree with a
+freshly computed one and names a few of the scans behind each. That report never writes:
+what is written stays the two score fields, because overwriting a whole stats block would
+drop keys older writers emitted.
+
 Usage (in-pod): `python -m scripts.backfill_risk_scores --help` from /app.
 
 Exit codes:
@@ -16,9 +21,11 @@ Exit codes:
 import argparse
 import asyncio
 import sys
+from collections import Counter
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorClient
+from pydantic import ValidationError
 
 from app.core.config import settings
 from app.models.stats import Stats
@@ -27,11 +34,30 @@ from app.services.analysis.stats import calculate_comprehensive_stats
 DEFAULT_BATCH_SIZE = 500
 DEFAULT_SLEEP_MS = 50
 
+UNPARSEABLE_FIELD = "<unparseable>"
+
+# Enough scan ids per field to start an investigation; the whole list would bury the counters.
+DIFF_SAMPLE_CAP = 5
+
 _BUCKET_FIELDS = ("critical", "high", "medium", "low", "negligible", "info", "unknown")
 
 
+class ScanProcessingError(Exception):
+    """Names the scan a whole-estate pass died on; the bare cause identifies no document."""
+
+    def __init__(self, scan_id: Any, cause: BaseException) -> None:
+        super().__init__(f"scan {scan_id}: {type(cause).__name__}: {cause}")
+
+
 def _bucket_total(stats: dict[str, Any]) -> int:
-    return sum(int(stats.get(field) or 0) for field in _BUCKET_FIELDS)
+    # Per-field tolerance: one corrupt bucket must not abort a pass over the whole estate.
+    total = 0
+    for field in _BUCKET_FIELDS:
+        try:
+            total += int(stats.get(field) or 0)
+        except (TypeError, ValueError):
+            continue
+    return total
 
 
 def _scores_differ(stored: dict[str, Any], computed: Stats) -> bool:
@@ -45,8 +71,44 @@ def _scores_differ(stored: dict[str, Any], computed: Stats) -> bool:
     )
 
 
+def stats_field_diff(stored: dict[str, Any], computed: Stats) -> dict[str, tuple[Any, Any]]:
+    """Top-level Stats fields where a stored block disagrees with a freshly computed one.
+
+    The stored block is normalised through the model first, so a field an older writer never
+    emitted defaults instead of registering as drift.
+    """
+    try:
+        reference = Stats.model_validate(stored).model_dump()
+    except ValidationError:
+        return {UNPARSEABLE_FIELD: (stored, computed.model_dump())}
+    fresh = computed.model_dump()
+    return {key: (reference[key], fresh[key]) for key in fresh if reference[key] != fresh[key]}
+
+
+def _record_diff(
+    field_diff: dict[str, tuple[Any, Any]],
+    diff_fields: Counter[str],
+    diff_samples: dict[str, list[str]],
+    scan_id: Any,
+) -> None:
+    diff_fields.update(field_diff.keys())
+    for field in field_diff:
+        samples = diff_samples.setdefault(field, [])
+        if len(samples) < DIFF_SAMPLE_CAP:
+            samples.append(str(scan_id))
+
+
 async def backfill_scans(db: Any, batch_size: int, sleep_ms: int, limit: int, execute: bool) -> dict[str, Any]:
-    counters = {"processed": 0, "would_update": 0, "updated": 0, "unchanged": 0, "skipped_no_findings": 0}
+    counters: dict[str, Any] = {
+        "processed": 0,
+        "would_update": 0,
+        "updated": 0,
+        "unchanged": 0,
+        "skipped_no_findings": 0,
+        "stats_differ": 0,
+    }
+    diff_fields: Counter[str] = Counter()
+    diff_samples: dict[str, list[str]] = {}
     new_scores: dict[str, tuple[float, float]] = {}
     last_id: Any = None
 
@@ -60,34 +122,47 @@ async def backfill_scans(db: Any, batch_size: int, sleep_ms: int, limit: int, ex
 
         for doc in batch:
             scan_id = doc["_id"]
-            stored = doc.get("stats") or {}
-            computed = await calculate_comprehensive_stats(db, scan_id)
+            try:
+                stored = doc.get("stats") or {}
+                computed = await calculate_comprehensive_stats(db, scan_id)
 
-            counters["processed"] += 1
-            if _bucket_total(computed.model_dump()) == 0 and _bucket_total(stored) > 0:
-                # Findings for this scan are gone (pruned/never persisted); zeroing the
-                # stored score would fabricate a clean bill of health.
-                counters["skipped_no_findings"] += 1
-            elif _scores_differ(stored, computed):
-                counters["would_update"] += 1
-                new_scores[scan_id] = (computed.risk_score, computed.adjusted_risk_score)
-                if execute:
-                    await db.scans.update_one(
-                        {"_id": scan_id},
-                        {
-                            "$set": {
-                                "stats.risk_score": computed.risk_score,
-                                "stats.adjusted_risk_score": computed.adjusted_risk_score,
-                            }
-                        },
-                    )
-                    counters["updated"] += 1
-            else:
-                counters["unchanged"] += 1
+                counters["processed"] += 1
+                if _bucket_total(computed.model_dump()) == 0 and _bucket_total(stored) > 0:
+                    # Findings for this scan are gone (pruned/never persisted); zeroing the
+                    # stored score would fabricate a clean bill of health.
+                    counters["skipped_no_findings"] += 1
+                else:
+                    # Only a scan that recomputed against live findings can evidence an arithmetic
+                    # disagreement; one whose findings are gone diverges on whatever it happened to store.
+                    field_diff = stats_field_diff(stored, computed)
+                    if field_diff:
+                        counters["stats_differ"] += 1
+                        _record_diff(field_diff, diff_fields, diff_samples, scan_id)
+
+                    if _scores_differ(stored, computed):
+                        counters["would_update"] += 1
+                        new_scores[scan_id] = (computed.risk_score, computed.adjusted_risk_score)
+                        if execute:
+                            await db.scans.update_one(
+                                {"_id": scan_id},
+                                {
+                                    "$set": {
+                                        "stats.risk_score": computed.risk_score,
+                                        "stats.adjusted_risk_score": computed.adjusted_risk_score,
+                                    }
+                                },
+                            )
+                            counters["updated"] += 1
+                    else:
+                        counters["unchanged"] += 1
+            except Exception as exc:
+                raise ScanProcessingError(scan_id, exc) from exc
 
             if limit and counters["processed"] >= limit:
                 print(f"Reached --limit {limit}.")
                 counters["new_scores"] = new_scores
+                counters["stats_diff_fields"] = dict(diff_fields)
+                counters["stats_diff_samples"] = diff_samples
                 return counters
 
         last_id = batch[-1]["_id"]
@@ -102,6 +177,8 @@ async def backfill_scans(db: Any, batch_size: int, sleep_ms: int, limit: int, ex
             await asyncio.sleep(sleep_ms / 1000)
 
     counters["new_scores"] = new_scores
+    counters["stats_diff_fields"] = dict(diff_fields)
+    counters["stats_diff_samples"] = diff_samples
     return counters
 
 
@@ -136,6 +213,8 @@ async def run(args: argparse.Namespace) -> int:
 
         counters = await backfill_scans(db, args.batch_size, args.sleep_ms, args.limit, args.execute)
         new_scores = counters.pop("new_scores")
+        diff_fields = counters.pop("stats_diff_fields")
+        diff_samples = counters.pop("stats_diff_samples")
         project_counters = await mirror_projects(db, new_scores, args.execute)
 
         print()
@@ -146,6 +225,12 @@ async def run(args: argparse.Namespace) -> int:
         print(f"[{mode}] scans skipped (no findings for non-zero stats): {counters['skipped_no_findings']}")
         print(f"[{mode}] projects needing mirror:   {project_counters['projects_would_update']}")
         print(f"[{mode}] projects updated:          {project_counters['projects_updated']}")
+        print(f"[{mode}] scans whose full Stats differ: {counters['stats_differ']}")
+        for field, count in sorted(diff_fields.items(), key=lambda item: (-item[1], item[0])):
+            print(f"[{mode}]   {field}: {count}")
+            samples = diff_samples.get(field) or []
+            if samples:
+                print(f"[{mode}]     scans (up to {DIFF_SAMPLE_CAP}): {', '.join(samples)}")
         if not args.execute:
             print("Dry-run (pass --execute to write).")
     except Exception as exc:

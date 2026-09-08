@@ -3,7 +3,7 @@
 from collections import defaultdict
 
 from app.schemas.recommendation import Effort, Priority, Recommendation, RecommendationType
-from app.services.recommendation.common import ModelOrDict, get_attr
+from app.services.recommendation.common import ModelOrDict, get_attr, sampled
 
 CRYPTO_FINDING_TYPES = {
     "crypto_weak_algorithm",
@@ -21,6 +21,9 @@ CRYPTO_FINDING_TYPES = {
     "crypto_cert_validity_too_long",
     "crypto_key_management",
 }
+
+# Findings quoted verbatim in the action block; `sampled` pairs the sample with its population.
+_EVIDENCE_SAMPLED = 3
 
 # Well-known modern replacements; falls back to generic phrasing when absent.
 _MODERN_HASH = "SHA-256 or SHA-3"
@@ -138,7 +141,7 @@ def _build_recommendation(
         "finding_type": finding_type,
         "bom_refs": bom_refs,
         "rule_ids": rule_ids,
-        "evidence": descriptions[:3],
+        **sampled("evidence", descriptions, _EVIDENCE_SAMPLED),
     }
     suggested = _suggested_replacement(finding_type, asset_name, findings)
     if suggested:

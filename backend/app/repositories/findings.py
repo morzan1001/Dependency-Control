@@ -1,5 +1,6 @@
 """Repository for finding database operations."""
 
+from collections.abc import AsyncGenerator, Sequence
 from typing import Any
 
 from pymongo import UpdateOne
@@ -8,6 +9,19 @@ from app.core.constants import get_severity_value
 from app.models.finding_record import FindingRecord
 from app.repositories.base import BaseRepository
 from app.services.aggregation.components import build_component_index
+
+# What names a CVE, plus the fields a recurrence row reports back.
+_VULNERABILITY_IDENTITY_PROJECTION = {
+    "scan_id": 1,
+    "severity": 1,
+    "component": 1,
+    "description": 1,
+    "finding_id": 1,
+    "aliases": 1,
+    "details.vulnerabilities.id": 1,
+    "details.vulnerabilities.resolved_cve": 1,
+    "details.vulnerabilities.aliases": 1,
+}
 
 
 class FindingRepository(BaseRepository[FindingRecord]):
@@ -122,14 +136,27 @@ class FindingRepository(BaseRepository[FindingRecord]):
     async def find_by_scan(
         self,
         scan_id: str,
+        limit: int,
         skip: int = 0,
-        limit: int = 1000,
         query_filter: dict[str, Any] | None = None,
     ) -> list[FindingRecord]:
+        """``limit`` is required: a default here is a cap the caller never chose and cannot see."""
         query: dict[str, Any] = {"scan_id": scan_id}
         if query_filter:
             query.update(query_filter)
         return await self.find_many(query, skip=skip, limit=limit)
+
+    async def iter_vulnerability_identities(self, scan_ids: Sequence[str]) -> AsyncGenerator[dict[str, Any], None]:
+        """Every vulnerability finding of these scans, projected to what names a CVE.
+
+        Streamed and unbounded: a recurrence count taken over a cut of this set reports a CVE
+        present in every scan as absent from most of them.
+        """
+        if not scan_ids:
+            return
+        query = {"scan_id": {"$in": list(scan_ids)}, "type": "vulnerability"}
+        async for doc in self.collection.find(query, _VULNERABILITY_IDENTITY_PROJECTION):
+            yield doc
 
     async def delete_by_scan(self, scan_id: str) -> int:
         return await self.delete_many({"scan_id": scan_id})

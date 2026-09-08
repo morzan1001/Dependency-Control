@@ -8,7 +8,7 @@ from pymongo import DESCENDING
 from app.core.metrics import track_db_operation
 from app.models.compliance_report import ComplianceReport
 from app.repositories.base import BaseRepository
-from app.schemas.compliance import ReportFramework, ReportStatus
+from app.schemas.compliance import EvaluationCoverage, ReportFramework, ReportStatus
 
 
 class ComplianceReportRepository(BaseRepository[ComplianceReport]):
@@ -62,6 +62,7 @@ class ComplianceReportRepository(BaseRepository[ComplianceReport]):
         artifact_size_bytes: int | None = None,
         artifact_mime_type: str | None = None,
         summary: dict[str, Any] | None = None,
+        coverage: EvaluationCoverage | None = None,
         error_message: str | None = None,
         policy_version_snapshot: int | None = None,
         iana_catalog_version_snapshot: int | None = None,
@@ -75,6 +76,7 @@ class ComplianceReportRepository(BaseRepository[ComplianceReport]):
             ("artifact_size_bytes", artifact_size_bytes),
             ("artifact_mime_type", artifact_mime_type),
             ("summary", summary),
+            ("coverage", coverage.model_dump() if coverage else None),
             ("error_message", error_message),
             ("policy_version_snapshot", policy_version_snapshot),
             ("iana_catalog_version_snapshot", iana_catalog_version_snapshot),

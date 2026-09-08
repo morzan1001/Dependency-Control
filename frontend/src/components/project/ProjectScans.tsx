@@ -1,9 +1,13 @@
 import { useState, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Scan } from '@/types/scan'
-import { isScanUsable } from '@/lib/scan-status'
+import { hasUnrecordedRelease } from '@/lib/releases'
+import { resolveRun } from '@/lib/scan-run'
+import { isScanUsable, SCAN_STATUS_FAILED } from '@/lib/scan-status'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
+import { ReleaseBadge } from '@/components/scans/ReleaseBadge'
 import { useProjectBranches } from '@/hooks/queries/use-projects'
+import { useLatestProjectRelease } from '@/hooks/queries/use-releases'
 import { useProjectScans } from '@/hooks/queries/use-scans'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
@@ -11,7 +15,7 @@ import { Badge } from '@/components/ui/badge'
 import { Skeleton } from '@/components/ui/skeleton'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ExternalLink, ArrowUp, ArrowDown, RefreshCw, Trash2 } from 'lucide-react'
+import { ChevronLeft, ChevronRight, GitBranch, GitCommit, Calendar, ShieldAlert, Activity, X, ArrowUp, ArrowDown, RefreshCw, Rocket, Trash2 } from 'lucide-react'
 import { buildBranchUrl, buildCommitUrl, buildPipelineUrl } from '@/lib/scm-links'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
@@ -20,30 +24,45 @@ interface ProjectScansProps {
   projectId: string
 }
 
-const getEffectiveScanData = (scan: Scan) => {
-    const source = scan.latest_run || scan;
-    return {
-        stats: source.stats || { critical: 0, high: 0, medium: 0, low: 0 },
-        status: source.status,
-        date: source.completed_at || source.created_at || scan.created_at
-    };
-};
+const RESCAN_NOTE_DELIVERED = 'Updated via re-scan'
+const RESCAN_NOTE_IN_FLIGHT = 'Re-scan in progress'
+const RESCAN_NOTE_FAILED = 'Re-scan failed'
+
+// The row keeps counting the source scan until the re-scan delivers, so the note has to name the
+// re-scan's own state rather than its mere existence.
+function rescanNote(status?: string): string {
+  if (isScanUsable(status)) return RESCAN_NOTE_DELIVERED
+  return status === SCAN_STATUS_FAILED ? RESCAN_NOTE_FAILED : RESCAN_NOTE_IN_FLIGHT
+}
 
 export function ProjectScans({ projectId }: ProjectScansProps) {
   const [page, setPage] = useState(1)
   const [selectedBranch, setSelectedBranch] = useState<string | undefined>(undefined)
   const [sortBy, setSortBy] = useState("created_at")
   const [sortOrder, setSortOrder] = useState<"asc" | "desc">("desc")
+  const [releasesOnly, setReleasesOnly] = useState(false)
   const limit = DEFAULT_PAGE_SIZE
   const navigate = useNavigate()
 
   const { data: branches } = useProjectBranches(projectId)
 
+  const { hasReleases } = useLatestProjectRelease(projectId)
+  // Withdrawing the last release while the filter is on would change the table under the user with
+  // no control left to undo it, so an engaged filter keeps its button until it is switched off.
+  const showReleaseFilter = hasReleases || releasesOnly
+
   const activeBranches = useMemo(() => branches?.filter(b => b.is_active) || [], [branches])
   const deletedBranches = useMemo(() => branches?.filter(b => !b.is_active) || [], [branches])
 
   const { data: scans, isLoading, isPlaceholderData } = useProjectScans(
-    projectId, { page, limit, branch: selectedBranch, sortBy, sortOrder, excludeRescans: true, excludeDeletedBranches: !selectedBranch }
+    projectId,
+    {
+      page, limit, branch: selectedBranch, sortBy, sortOrder,
+      excludeRescans: true,
+      // A release commonly sits on a branch that has since been deleted, tag builds above all.
+      excludeDeletedBranches: !selectedBranch && !releasesOnly,
+      isRelease: releasesOnly ? true : undefined,
+    }
   )
 
   const renderSortIcon = (column: string) => {
@@ -81,7 +100,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
       let prevCompleted: Scan | undefined
       for (const scan of chronological) {
         if (prevCompleted) partners.set(scan.id, prevCompleted)
-        if (isScanUsable(getEffectiveScanData(scan).status)) prevCompleted = scan
+        if (isScanUsable(resolveRun(scan).status)) prevCompleted = scan
       }
     }
     return partners
@@ -106,6 +125,20 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                 }}
               >
                 <X className="h-4 w-4" />
+              </Button>
+            )}
+            {showReleaseFilter && (
+              <Button
+                variant={releasesOnly ? 'default' : 'outline'}
+                size="sm"
+                aria-pressed={releasesOnly}
+                onClick={() => {
+                  setReleasesOnly((on) => !on)
+                  setPage(1)
+                }}
+              >
+                <Rocket className="mr-2 h-4 w-4" />
+                Releases only
               </Button>
             )}
             <Select
@@ -195,14 +228,14 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                     <div className="flex items-center gap-2">
                       <Calendar className="h-4 w-4 text-muted-foreground" />
                       {(() => {
-                          const { date } = getEffectiveScanData(scan);
+                          const { date } = resolveRun(scan);
                           return formatDateTime(date);
                       })()}
                     </div>
                     {scan.latest_rescan_id && (
                         <div className="text-xs text-muted-foreground mt-1 flex items-center gap-1">
                             <RefreshCw className="h-3 w-3" />
-                            Updated via re-scan
+                            {rescanNote(scan.latest_run?.status)}
                         </div>
                     )}
                   </TableCell>
@@ -210,7 +243,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                     <div className="flex items-center gap-2">
                       <span className="font-mono text-xs">
                         {(() => {
-                          const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
+                          const projectUrl = scan.project_url
                           const pipelineId = scan.pipeline_id
                           const href = buildPipelineUrl({
                             projectUrl,
@@ -234,24 +267,13 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                           )
                         })()}
                       </span>
-                      {scan.metadata?.CI_PROJECT_URL && (
-                        <a 
-                          href={scan.metadata.CI_PROJECT_URL}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          onClick={(e) => e.stopPropagation()}
-                          className="text-muted-foreground hover:text-primary"
-                        >
-                          <ExternalLink className="h-3 w-3" />
-                        </a>
-                      )}
                     </div>
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
                       <GitBranch className="h-4 w-4 text-muted-foreground" />
                       {(() => {
-                        const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
+                        const projectUrl = scan.project_url
                         const href = buildBranchUrl({
                           projectUrl,
                           pipelineUrl: scan.pipeline_url,
@@ -273,6 +295,15 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                         )
                       })()}
                     </div>
+                    {scan.releases.map((release) => (
+                      <ReleaseBadge
+                        key={release.environment}
+                        environment={release.environment}
+                        version={release.version}
+                        className="mt-1"
+                      />
+                    ))}
+                    {hasUnrecordedRelease(scan) && <ReleaseBadge className="mt-1" />}
                   </TableCell>
                   <TableCell>
                     <div className="flex items-center gap-2">
@@ -281,7 +312,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                         const shortSha = shortCommitHash(scan.commit_hash)
                         if (!shortSha) return <span className="font-mono text-xs">N/A</span>
 
-                        const projectUrl = scan.project_url || scan.metadata?.CI_PROJECT_URL
+                        const projectUrl = scan.project_url
                         const href = buildCommitUrl({
                           projectUrl,
                           pipelineUrl: scan.pipeline_url,
@@ -308,7 +339,7 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                   <TableCell>
                     <div className="flex gap-2">
                       {(() => {
-                          const { stats } = getEffectiveScanData(scan);
+                          const { stats } = resolveRun(scan);
                           return (
                               <>
                                 {(stats.critical || 0) > 0 && (
@@ -332,15 +363,17 @@ export function ProjectScans({ projectId }: ProjectScansProps) {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <ScanStatusBadge status={getEffectiveScanData(scan).status} failedAnalyzers={scan.failed_analyzers} />
+                    <ScanStatusBadge status={resolveRun(scan).status} failedAnalyzers={scan.failed_analyzers} />
                   </TableCell>
                   <TableCell onClick={(e) => e.stopPropagation()}>
                     {prevScan && (
                       <Button
                         variant="outline"
                         size="sm"
+                        // The delta compares the runs the two rows count, so a queued rescan is not
+                        // a side: it would diff against a scan that has analysed nothing.
                         onClick={() =>
-                          navigate(`/projects/${projectId}/delta?from=${prevScan.latest_rescan_id || prevScan.id}&to=${scan.latest_rescan_id || scan.id}`)
+                          navigate(`/projects/${projectId}/delta?from=${resolveRun(prevScan).scanId}&to=${resolveRun(scan).scanId}`)
                         }
                       >
                         Delta

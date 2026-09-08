@@ -8,7 +8,11 @@ from app.schemas.recommendation import (
     RecommendationType,
 )
 from app.services.aggregation.components import build_component_index, lookup_component
-from app.services.recommendation.common import ModelOrDict, calculate_best_fix_version, get_attr
+from app.services.recommendation.common import ModelOrDict, calculate_best_fix_version, get_attr, take_top
+
+# A quick win is one recommendation per package, so this bounds the advice feed rather than a
+# list inside one card; each emitted card carries the rank it was cut at.
+QUICK_WINS_SHOWN = 5
 
 
 def identify_quick_wins(
@@ -78,7 +82,7 @@ def identify_quick_wins(
 
     quick_wins.sort(key=lambda x: x.score, reverse=True)
 
-    for qw in quick_wins[:5]:
+    for rank, qw, ranked_out_of in take_top(quick_wins, QUICK_WINS_SHOWN):
         dep_type = "direct dependency" if qw.is_direct else "transitive dependency"
 
         recommendations.append(
@@ -111,6 +115,8 @@ def identify_quick_wins(
                     "fixes_count": qw.vuln_count,
                 },
                 effort="low",
+                rank=rank,
+                ranked_out_of=ranked_out_of,
             )
         )
 

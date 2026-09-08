@@ -47,17 +47,6 @@ async def test_get_latest_active_scan_includes_completed_with_errors(db):
 @pytest.mark.asyncio
 async def test_get_latest_active_scan_ids_includes_completed_with_errors(db):
     await _seed_scans(db)
-    result = await ScanRepository(db).get_latest_active_scan_ids(
-        [{"_id": "p1", "deleted_branches": ["gone"], "latest_scan_id": "scan-old-completed"}]
-    )
+    # No pointer, so the answer comes from the query rather than from the cached id.
+    result = await ScanRepository(db).get_latest_active_scan_ids([{"_id": "p1", "deleted_branches": ["gone"]}])
     assert result == {"p1": "scan-new-partial"}
-
-
-@pytest.mark.asyncio
-async def test_get_latest_for_project_usable_statuses(db):
-    await _seed_scans(db)
-    from app.core.constants import SCAN_USABLE_STATUSES
-
-    scan = await ScanRepository(db).get_latest_for_project("p1", statuses=SCAN_USABLE_STATUSES)
-    assert scan is not None
-    assert scan.id == "scan-new-partial"

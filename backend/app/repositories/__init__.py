@@ -14,6 +14,7 @@ from app.repositories.findings import FindingRepository
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.repositories.invitations import InvitationRepository
 from app.repositories.projects import ProjectRepository
+from app.repositories.releases import ReleaseRepository
 from app.repositories.scans import ScanRepository
 from app.repositories.system_settings import SystemSettingsRepository
 from app.repositories.teams import TeamRepository
@@ -38,6 +39,7 @@ __all__ = [
     "GitHubInstanceRepository",
     "InvitationRepository",
     "ProjectRepository",
+    "ReleaseRepository",
     "ScanRepository",
     "SystemSettingsRepository",
     "TeamRepository",

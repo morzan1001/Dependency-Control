@@ -23,7 +23,7 @@ export function ComponentsDeltaTab({
   projectId,
   fromScanId,
   toScanId,
-  onCountLoaded,
+  onLoaded,
 }: DeltaTabProps) {
   const [change, setChange] = useState<ComponentChangeFilter>("all");
 
@@ -38,8 +38,8 @@ export function ComponentsDeltaTab({
   const { data, isLoading, isError } = query;
 
   useEffect(() => {
-    if (data) onCountLoaded(data.totals.added + data.totals.removed + data.totals.changed);
-  }, [data, onCountLoaded]);
+    if (data) onLoaded(data);
+  }, [data, onLoaded]);
 
   if (isError) return <DeltaError category="components" />;
 

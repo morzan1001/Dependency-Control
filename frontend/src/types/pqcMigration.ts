@@ -19,8 +19,10 @@ export interface MigrationItem {
   recommended_deadline: string | null;
 }
 
+// Counted over every migratable group; items_returned is how many of them `items` carries.
 export interface MigrationPlanSummary {
   total_items: number;
+  items_returned: number;
   status_counts: Record<MigrationItemStatus, number>;
   earliest_deadline: string | null;
 }

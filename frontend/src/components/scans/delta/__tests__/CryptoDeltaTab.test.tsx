@@ -3,14 +3,15 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { CryptoDeltaTab } from "../tabs/CryptoDeltaTab";
 import * as api from "@/api/scanDelta";
+import type { ScanDeltaResponse } from "@/types/scanDelta";
 
 vi.mock("@/api/scanDelta");
 
-function renderTab(onCountLoaded: (n: number) => void = () => {}) {
+function renderTab(onLoaded: (delta: ScanDeltaResponse) => void = () => {}) {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <CryptoDeltaTab projectId="p1" fromScanId="a" toScanId="b" onCountLoaded={onCountLoaded} />
+      <CryptoDeltaTab projectId="p1" fromScanId="a" toScanId="b" onLoaded={onLoaded} />
     </QueryClientProvider>,
   );
 }
@@ -54,15 +55,18 @@ describe("CryptoDeltaTab", () => {
     expect(screen.getByText("×3")).toBeInTheDocument();
   });
 
-  it("calls onCountLoaded with totals after fetch", async () => {
-    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+  it("hands the whole response up after fetch, totals and side labels together", async () => {
+    // Annotated, not inferred: an inferred fixture drops a field from the response type silently.
+    const loaded: ScanDeltaResponse = {
       category: "crypto", from_scan_id: "a", to_scan_id: "b", project_id: "p1",
       totals: { added: 3, removed: 2, unchanged: 7, changed: 0, by_severity: {}, by_type: {} },
       page: 1, page_size: 50, total_pages: 1, items: [],
-    });
-    const onCountLoaded = vi.fn();
-    renderTab(onCountLoaded);
-    await waitFor(() => expect(onCountLoaded).toHaveBeenCalledWith(5));
+      from_waived_excluded: 0, to_waived_excluded: 0, waiver_only_changes: 0,
+    };
+    (api.getScanDelta as unknown as ReturnType<typeof vi.fn>).mockResolvedValue(loaded);
+    const onLoaded = vi.fn();
+    renderTab(onLoaded);
+    await waitFor(() => expect(onLoaded).toHaveBeenCalledWith(loaded));
   });
 
   it("re-fetches when change filter changes", async () => {

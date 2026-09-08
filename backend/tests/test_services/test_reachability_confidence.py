@@ -2,16 +2,16 @@
 
 import pytest
 
-from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD
+from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD, REACHABILITY_LEVEL_IMPORT
 from app.schemas.projections import CallgraphMinimal
 from app.services.analysis.stats import build_reachability_summary
 from app.services.reachability_enrichment import (
-    _build_component_language_map,
     _check_package_in_imports,
     _enrich_finding_from_callgraphs,
     _enrich_single_finding,
     _match_symbols,
     _prepare_callgraph,
+    build_component_language_map,
     is_high_confidence_reachable,
 )
 
@@ -154,7 +154,7 @@ class TestEcosystemFromDependencyMap:
         await db.dependencies.insert_one({"scan_id": "s1", "name": "mymod", "type": "go-module"})
         await db.dependencies.insert_one({"scan_id": "s1", "name": "viapurl", "purl": "pkg:pypi/viapurl@1.0"})
         await db.dependencies.insert_one({"scan_id": "s1", "name": "rpmpkg", "type": "rpm"})  # no callgraph lang
-        m = await _build_component_language_map(db, "s1")
+        m = await build_component_language_map(db, "s1")
         assert m["requests"] == frozenset({"python"})
         assert m["left-pad"] == frozenset({"javascript", "typescript"})
         assert m["mymod"] == frozenset({"go"})
@@ -351,6 +351,33 @@ class TestReachabilityFailClosed:
         assert reach["is_reachable"] is True
         assert reach["analysis_level"] == "import"
         assert finding["details"]["adjusted_risk_score"] == finding["details"]["risk_score"]
+
+
+class TestPureEnrichmentEntryPoint:
+    """The reachability loop must run without a database, callgraph repository or scan id."""
+
+    def test_enriches_only_vulnerability_findings_and_returns_the_count(self):
+        from app.services.reachability_enrichment import enrich_findings_from_callgraphs
+
+        vuln = _vuln_finding(component="requests", risk_score=80.0)
+        secret = {"type": "secret", "component": "config/aws.env", "details": {}}
+        cg = _prepared(module_usage=_usage("requests", "app/client.py"), language="python")
+
+        enriched = enrich_findings_from_callgraphs([vuln, secret], [cg], {"requests": frozenset({"python"})})
+
+        assert enriched == 1
+        assert vuln["reachable"] is True
+        assert "reachability" not in secret["details"]
+
+    def test_mirrors_the_verdict_to_the_top_level_fields(self):
+        from app.services.reachability_enrichment import enrich_findings_from_callgraphs
+
+        vuln = _vuln_finding(component="requests", risk_score=80.0)
+        cg = _prepared(module_usage=_usage("requests", "app/client.py"), language="python")
+
+        enrich_findings_from_callgraphs([vuln], [cg], {"requests": frozenset({"python"})})
+
+        assert vuln["reachability_level"] == REACHABILITY_LEVEL_IMPORT
 
 
 class TestRunPendingBulkPersist:
