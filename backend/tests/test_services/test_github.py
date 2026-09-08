@@ -478,11 +478,15 @@ class TestGitHubApiWriteMethods:
         mock_client.patch = AsyncMock(return_value=MagicMock(status_code=200))
 
         with _patch_api_client(service, mock_client):
-            asyncio.run(service._api_patch("/repos/o/r/issues/comments/9", {"body": "hi"}))
+            response = asyncio.run(service._api_patch("/repos/o/r/issues/comments/9", {"body": "hi"}))
 
+        assert response is not None
+        assert response.status_code == 200
         mock_client.patch.assert_awaited_once()
         assert mock_client.patch.call_args[0][0] == "https://api.github.com/repos/o/r/issues/comments/9"
-        assert mock_client.patch.call_args.kwargs["json"] == {"body": "hi"}
+        kwargs = mock_client.patch.call_args.kwargs
+        assert kwargs["json"] == {"body": "hi"}
+        assert kwargs["headers"]["Authorization"] == "Bearer ghp-x"
 
     def test_api_write_uses_the_ghes_api_url(self):
         service = GitHubService(
