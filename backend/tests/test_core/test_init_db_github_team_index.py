@@ -31,5 +31,10 @@ def test_manual_teams_stay_outside_the_unique_scope():
     calls = _github_team_index_calls()
     assert calls[0].kwargs["partialFilterExpression"] == {
         "github_instance_id": {"$type": "string"},
-        "github_team_id": {"$type": "int"},
+        "github_team_id": {"$type": "number"},
     }
+
+
+def test_the_scope_covers_team_ids_wider_than_int32():
+    """pymongo encodes an id >= 2**31 as BSON long; "int" is int32 only and would exempt it."""
+    assert _github_team_index_calls()[0].kwargs["partialFilterExpression"]["github_team_id"] != {"$type": "int"}

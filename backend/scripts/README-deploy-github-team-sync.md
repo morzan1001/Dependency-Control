@@ -19,20 +19,25 @@ db.teams.createIndex(
   { unique: true,
     partialFilterExpression: {
       github_instance_id: { $type: "string" },
-      github_team_id: { $type: "int" }
+      github_team_id: { $type: "number" }
     } }
 )
 ```
 
-The `$type` filter is load-bearing: every team document carries an explicit
-`github_team_id: null`, which `$exists: true` would match, making the second manual team a
-duplicate key.
+Both halves of the filter are load-bearing:
+
+- `$type` rather than `$exists`, because every team document carries an explicit
+  `github_team_id: null`, which `$exists: true` matches — the second manual team would fail with
+  `E11000 … dup key: { github_instance_id: null, github_team_id: null }`.
+- `"number"` rather than `"int"`, because `"int"` is BSON int32 only and the driver encodes any id
+  at or beyond 2³¹ as BSON `long`. Such a team would sit outside the unique scope and could be
+  created twice.
 
 Check for pre-existing duplicates first; the build fails on any:
 
 ```js
 db.teams.aggregate([
-  { $match: { github_team_id: { $type: "int" } } },
+  { $match: { github_team_id: { $type: "number" } } },
   { $group: { _id: { i: "$github_instance_id", t: "$github_team_id" }, n: { $sum: 1 } } },
   { $match: { n: { $gt: 1 } } }
 ])
