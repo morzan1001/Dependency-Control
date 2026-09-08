@@ -25,15 +25,25 @@ import pytest
 from tests.mocks.github import make_github_instance
 from tests.mocks.gitlab import make_gitlab_instance
 
+_WEASYPRINT_REQUIRED = os.environ.get("DC_REQUIRE_WEASYPRINT") == "1"
+
 
 def _probe_weasyprint() -> bool:
     """WeasyPrint dlopens Cairo/Pango on import. Retrying that dlopen later, inside a running
-    asyncio loop, segfaults the interpreter, so the whole suite gets exactly this one attempt."""
+    asyncio loop, segfaults the interpreter, so the whole suite gets exactly this one attempt.
+
+    CI sets ``DC_REQUIRE_WEASYPRINT`` so a missing native stack fails the run; without it the
+    PDF tests skip, and a report the renderer can no longer produce still reads as green.
+    """
     if importlib.util.find_spec("weasyprint") is None:
+        if _WEASYPRINT_REQUIRED:
+            raise RuntimeError("weasyprint is not installed")
         return False
     try:
         importlib.import_module("weasyprint")
     except Exception:  # pragma: no cover - environment-dependent
+        if _WEASYPRINT_REQUIRED:
+            raise
         return False
     return True
 

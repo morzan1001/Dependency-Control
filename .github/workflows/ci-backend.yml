@@ -48,6 +48,8 @@ jobs:
       DC_TEST_MONGO_URL: mongodb://localhost:27017
       # Fail the run instead of skipping the live-Mongo tests back into silence.
       DC_REQUIRE_LIVE_MONGO: '1'
+      # Likewise for the PDF tests, which need WeasyPrint's Cairo/Pango stack.
+      DC_REQUIRE_WEASYPRINT: '1'
     steps:
       - name: Checkout repository
         uses: actions/checkout@v7
