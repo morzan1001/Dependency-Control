@@ -1,7 +1,7 @@
 """Shared constants used across the application."""
 
 import re
-from typing import Any
+from typing import Any, Literal, get_args
 
 # Canonical keys for KEV (CISA Known Exploited Vulnerabilities) state persisted in a
 # finding's ``details`` dict by the enrichment writer. Every reader of persisted
@@ -173,10 +173,14 @@ PROJECT_ROLE_EDITOR = "editor"
 PROJECT_ROLE_VIEWER = "viewer"
 PROJECT_ROLES = [PROJECT_ROLE_VIEWER, PROJECT_ROLE_EDITOR, PROJECT_ROLE_ADMIN]
 
-# Team Roles
-TEAM_ROLE_ADMIN = "admin"
-TEAM_ROLE_MEMBER = "member"
-TEAM_ROLES = [TEAM_ROLE_MEMBER, TEAM_ROLE_ADMIN]
+# Upper bound on a user-entered policy comment, shared by the audit entry and the request bodies.
+POLICY_COMMENT_MAX_LENGTH = 1000
+
+# Team Roles. Ordered least- to most-privileged: helpers/teams.py compares by index.
+TeamRole = Literal["member", "admin"]
+TEAM_ROLE_ADMIN: TeamRole = "admin"
+TEAM_ROLE_MEMBER: TeamRole = "member"
+TEAM_ROLES: list[str] = list(get_args(TeamRole))
 
 # Weights for calculating risk scores
 SEVERITY_WEIGHTS: dict[str, float] = {
@@ -1030,15 +1034,12 @@ HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC: int = 2
 HOUSEKEEPING_RESCAN_LOCK_TTL_SECONDS: int = 60
 
 # Archive / Retention Action Constants
-RETENTION_ACTION_DELETE = "delete"
-RETENTION_ACTION_ARCHIVE = "archive"
-RETENTION_ACTION_NONE = "none"
+RetentionAction = Literal["delete", "archive", "none"]
+RETENTION_ACTION_DELETE: RetentionAction = "delete"
+RETENTION_ACTION_ARCHIVE: RetentionAction = "archive"
+RETENTION_ACTION_NONE: RetentionAction = "none"
 
-RETENTION_ACTIONS = [
-    RETENTION_ACTION_DELETE,
-    RETENTION_ACTION_ARCHIVE,
-    RETENTION_ACTION_NONE,
-]
+RETENTION_ACTIONS: list[str] = list(get_args(RetentionAction))
 
 # Archive bundle wire format
 ARCHIVE_BUNDLE_VERSION = 2

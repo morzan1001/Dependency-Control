@@ -34,6 +34,11 @@ from app.services.webhooks.webhook_service import webhook_service
 router = CustomAPIRouter()
 
 
+def _response_items(webhooks: list[Webhook]) -> list[dict[str, Any]]:
+    """Project stored webhooks onto the response schema, which withholds the HMAC signing secret."""
+    return [WebhookResponse.model_validate(w).model_dump() for w in webhooks]
+
+
 @router.post("/project/{project_id}", response_model=WebhookResponse, status_code=201, responses=RESP_AUTH)
 async def create_webhook(
     project_id: str,
@@ -67,7 +72,7 @@ async def list_webhooks(
     total = await webhook_repo.count_by_project(project_id)
     webhooks = await webhook_repo.find_by_project(project_id, skip=skip, limit=limit)
 
-    items = [w.model_dump() for w in webhooks]
+    items = _response_items(webhooks)
     return build_pagination_response(items, total, skip, limit)
 
 
@@ -98,7 +103,7 @@ async def list_global_webhooks(
     total = await webhook_repo.count_global()
     webhooks = await webhook_repo.find_global(skip=skip, limit=limit)
 
-    items = [w.model_dump() for w in webhooks]
+    items = _response_items(webhooks)
     return build_pagination_response(items, total, skip, limit)
 
 
@@ -135,7 +140,7 @@ async def list_team_webhooks(
     total = await webhook_repo.count_by_team(team_id)
     webhooks = await webhook_repo.find_by_team(team_id, skip=skip, limit=limit)
 
-    items = [w.model_dump() for w in webhooks]
+    items = _response_items(webhooks)
     return build_pagination_response(items, total, skip, limit)
 
 

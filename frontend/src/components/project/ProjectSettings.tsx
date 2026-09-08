@@ -12,6 +12,7 @@ import { hasSettingsSchema, getSettingsSchema } from '@/lib/analyzer-settings-sc
 import { AnalyzerSettingsDialog } from './AnalyzerSettingsDialog'
 import { User } from '@/types/user'
 import { getErrorMessage } from '@/lib/utils'
+import { memberPreferences, enforcedPreferences } from '@/lib/notification-preferences'
 import { useAuth } from '@/context/useAuth'
 import {
   isProjectAdmin,
@@ -119,23 +120,14 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const [notificationPrefs, setNotificationPrefs] = useState<Record<string, string[]>>(() => {
     if (!project || !user) return {};
 
-    const userId = user.id;
-
+    // Enforcement resolves to the first admin member's preferences, matching the notification
+    // service; every other member reads their own entry.
     if (project.enforce_notification_settings) {
-        return project.owner_notification_preferences || {};
+      return enforcedPreferences(project) || {};
     }
 
-    let projectPrefs: Record<string, string[]> | undefined;
-    if (project.members?.some(m => m.user_id === userId && m.role === 'admin')) {
-      projectPrefs = project.owner_notification_preferences;
-    } else if (project.members) {
-      const member = project.members.find(m => m.user_id === userId);
-      if (member?.notification_preferences && Object.keys(member.notification_preferences).length > 0) {
-        projectPrefs = member.notification_preferences;
-      }
-    }
-
-    if (projectPrefs && Object.keys(projectPrefs).length > 0) {
+    const projectPrefs = memberPreferences(project, user.id);
+    if (projectPrefs) {
       return projectPrefs;
     }
     return user.notification_preferences || {};
@@ -645,14 +637,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
             )}
 
             {!enforceNotificationSettings && (() => {
-                const userId = user.id;
-                let hasProjectPrefs: boolean;
-                if (project.members?.some(m => m.user_id === userId && m.role === 'admin')) {
-                    hasProjectPrefs = !!(project.owner_notification_preferences && Object.keys(project.owner_notification_preferences).length > 0);
-                } else {
-                    const member = project.members?.find(m => m.user_id === userId);
-                    hasProjectPrefs = !!(member?.notification_preferences && Object.keys(member.notification_preferences).length > 0);
-                }
+                const hasProjectPrefs = !!memberPreferences(project, user.id);
                 if (!hasProjectPrefs) {
                     return (
                         <div className="flex items-center gap-2 p-4 text-sm text-blue-800 bg-blue-50 border border-blue-200 rounded-lg dark:bg-blue-950/50 dark:text-blue-200 dark:border-blue-900">

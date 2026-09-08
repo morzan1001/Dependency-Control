@@ -117,10 +117,11 @@ def test_a_partial_license_policy_keeps_plain_string_values():
     }
 
 
-def test_the_project_policy_schema_stays_lenient():
-    """Forbidding extras belongs on the ad-hoc subclass; the project API accepts unknown keys today."""
-    policy = LicensePolicySchema(**{_MISSPELLED_POLICY_KEY: _INTERNAL_ONLY})
-    assert policy.deployment_model == _NETWORK_FACING
+def test_the_project_policy_schema_refuses_the_same_key():
+    """The persisted path carries the harsher version of this defect — a discarded key is stored on
+    the project and re-graded into every future scan — so both paths refuse it."""
+    with pytest.raises(ValidationError):
+        LicensePolicySchema(**{_MISSPELLED_POLICY_KEY: _INTERNAL_ONLY})
 
 
 def test_too_many_sboms_is_rejected():

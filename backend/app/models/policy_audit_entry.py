@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 from pydantic import Field
 
+from app.core.constants import POLICY_COMMENT_MAX_LENGTH
 from app.models.types import MongoDocument
 from app.schemas.policy_audit import PolicyAuditAction
 
@@ -40,7 +41,9 @@ class PolicyAuditEntry(MongoDocument):
         max_length=200,
         description="Human-readable one-line summary of what changed",
     )
-    comment: str | None = Field(None, max_length=1000, description="User-entered comment at save time")
+    comment: str | None = Field(
+        None, max_length=POLICY_COMMENT_MAX_LENGTH, description="User-entered comment at save time"
+    )
     reverted_from_version: int | None = Field(
         None,
         description="For REVERT actions: the source version being restored",

@@ -2,6 +2,7 @@ import re
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+from app.core.notification_prefs import NotificationPreferences
 from app.models.types import PyObjectId
 
 
@@ -28,7 +29,7 @@ class UserBase(BaseModel):
     permissions: list[str] = []
     slack_username: str | None = None
     mattermost_username: str | None = None
-    notification_preferences: dict[str, list[str]] | None = None
+    notification_preferences: NotificationPreferences = None
 
 
 class UserCreate(UserBase):
@@ -48,7 +49,7 @@ class UserSignup(BaseModel):
     password: str
     slack_username: str | None = None
     mattermost_username: str | None = None
-    notification_preferences: dict[str, list[str]] | None = None
+    notification_preferences: NotificationPreferences = None
 
     @field_validator("password")
     @classmethod
@@ -63,7 +64,7 @@ class UserUpdate(BaseModel):
     permissions: list[str] | None = None
     slack_username: str | None = None
     mattermost_username: str | None = None
-    notification_preferences: dict[str, list[str]] | None = None
+    notification_preferences: NotificationPreferences = None
     password: str | None = None
 
 
@@ -72,7 +73,7 @@ class UserUpdateMe(BaseModel):
     username: str | None = None
     slack_username: str | None = None
     mattermost_username: str | None = None
-    notification_preferences: dict[str, list[str]] | None = None
+    notification_preferences: NotificationPreferences = None
 
 
 class UserPasswordUpdate(BaseModel):

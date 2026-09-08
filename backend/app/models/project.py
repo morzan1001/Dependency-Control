@@ -4,7 +4,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, PROJECT_ROLE_VIEWER, PROJECT_ROLES
-from app.core.notification_prefs import sanitize_notification_preferences
+from app.core.notification_prefs import NotificationPreferences
 from app.models.base import CreatedAtModel
 from app.models.finding import Finding
 from app.models.stats import Stats
@@ -14,7 +14,7 @@ from app.models.types import MongoDocument
 class ProjectMember(BaseModel):
     user_id: str
     role: str = PROJECT_ROLE_VIEWER
-    notification_preferences: dict[str, list[str]] = Field(default_factory=dict)
+    notification_preferences: NotificationPreferences = Field(default_factory=dict)
     username: str | None = None
     inherited_from: str | None = None  # e.g. "Team: DevOps"
 
@@ -24,11 +24,6 @@ class ProjectMember(BaseModel):
         if v not in PROJECT_ROLES:
             raise ValueError(f"Role must be one of: {', '.join(PROJECT_ROLES)}")
         return v
-
-    @field_validator("notification_preferences")
-    @classmethod
-    def validate_notification_preferences(cls, v: Any) -> dict[str, list[str]]:
-        return sanitize_notification_preferences(v)
 
 
 class Project(MongoDocument, CreatedAtModel):

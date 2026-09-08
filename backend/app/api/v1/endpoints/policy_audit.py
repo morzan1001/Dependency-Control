@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
-from fastapi import Body, HTTPException, Query
+from fastapi import HTTPException, Query
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.deps import CurrentUserDep, DatabaseDep
@@ -26,7 +26,7 @@ from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.policy_audit_entry import PolicyAuditRepository
 from app.schemas.crypto_policy import CryptoRule
-from app.schemas.policy_audit import PolicyAuditAction
+from app.schemas.policy_audit import PolicyAuditAction, PolicyRevertRequest
 from app.services.audit.history import record_policy_change
 
 logger = logging.getLogger(__name__)
@@ -77,14 +77,11 @@ async def get_system_audit_entry(
 async def revert_system_policy(
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    body: dict = Body(...),
+    body: PolicyRevertRequest,
 ) -> dict[str, Any]:
     _require_admin(current_user)
-    target_raw = body.get("target_version")
-    if target_raw is None:
-        raise HTTPException(status_code=400, detail="target_version required")
-    target_version = int(target_raw)
-    comment = body.get("comment")
+    target_version = body.target_version
+    comment = body.comment
     await _revert_policy(
         db=db,
         actor=current_user,
@@ -157,15 +154,12 @@ async def revert_project_policy(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    body: dict = Body(...),
+    body: PolicyRevertRequest,
 ) -> dict[str, Any]:
     # 'owner' is not a project role; PROJECT_ROLES = viewer|editor|admin.
     await check_project_access(project_id, current_user, db, required_role="admin")
-    target_raw = body.get("target_version")
-    if target_raw is None:
-        raise HTTPException(status_code=400, detail="target_version required")
-    target_version = int(target_raw)
-    comment = body.get("comment")
+    target_version = body.target_version
+    comment = body.comment
     await _revert_policy(
         db=db,
         actor=current_user,

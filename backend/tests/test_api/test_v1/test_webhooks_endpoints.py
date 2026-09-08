@@ -1,6 +1,7 @@
 """Tests for webhook API endpoints (CRUD for project/global webhooks, update validation, test-webhook)."""
 
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -109,6 +110,60 @@ class TestListGlobalWebhooks:
             )
 
         assert result["total"] == 1
+
+
+class TestListRoutesWithholdSecret:
+    """The HMAC signing secret is stored in plaintext, so no list route may echo it back."""
+
+    SECRET = "hmac-signing-key"
+
+    def _assert_withheld(self, result):
+        assert result["items"], "vacuous: the route returned no items to inspect"
+        for item in result["items"]:
+            assert "secret" not in item
+        assert self.SECRET not in json.dumps(result, default=str)
+
+    def test_project_list(self, regular_user):
+        from app.api.v1.endpoints.webhooks import list_webhooks
+
+        mock_repo = MagicMock()
+        mock_repo.count_by_project = AsyncMock(return_value=1)
+        mock_repo.find_by_project = AsyncMock(return_value=[_make_webhook(secret=self.SECRET)])
+
+        with patch(f"{MODULE}.check_webhook_list_permission", new_callable=AsyncMock):
+            with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
+                result = asyncio.run(
+                    list_webhooks(project_id="proj-1", skip=0, limit=50, current_user=regular_user, db=MagicMock())
+                )
+
+        self._assert_withheld(result)
+
+    def test_global_list(self, admin_user):
+        from app.api.v1.endpoints.webhooks import list_global_webhooks
+
+        mock_repo = MagicMock()
+        mock_repo.count_global = AsyncMock(return_value=1)
+        mock_repo.find_global = AsyncMock(return_value=[_make_webhook(project_id=None, secret=self.SECRET)])
+
+        with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
+            result = asyncio.run(list_global_webhooks(skip=0, limit=50, current_user=admin_user, db=MagicMock()))
+
+        self._assert_withheld(result)
+
+    def test_team_list(self, regular_user):
+        from app.api.v1.endpoints.webhooks import list_team_webhooks
+
+        mock_repo = MagicMock()
+        mock_repo.count_by_team = AsyncMock(return_value=1)
+        mock_repo.find_by_team = AsyncMock(return_value=[_make_webhook(project_id=None, team_id="team-1", secret=self.SECRET)])
+
+        with patch(f"{MODULE}.check_team_webhook_list_permission", new_callable=AsyncMock):
+            with patch(f"{MODULE}.WebhookRepository", return_value=mock_repo):
+                result = asyncio.run(
+                    list_team_webhooks(team_id="team-1", skip=0, limit=50, current_user=regular_user, db=MagicMock())
+                )
+
+        self._assert_withheld(result)
 
 
 class TestGetWebhook:

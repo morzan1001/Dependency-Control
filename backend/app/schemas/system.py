@@ -1,6 +1,6 @@
 from pydantic import BaseModel, ConfigDict, Field, computed_field
 
-from app.core.constants import DEFAULT_ACTIVE_ANALYZERS
+from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, RETENTION_ACTION_DELETE, RetentionAction
 
 
 class SystemSettingsBase(BaseModel):
@@ -78,7 +78,9 @@ class SystemSettingsBase(BaseModel):
 
 
 class SystemSettingsUpdate(SystemSettingsBase):
-    pass
+    # Narrowed only on the way in: the response shares this base and must stay able to render a
+    # setting that predates this constraint.
+    global_retention_action: RetentionAction = RETENTION_ACTION_DELETE
 
 
 class SystemSettingsResponse(SystemSettingsBase):

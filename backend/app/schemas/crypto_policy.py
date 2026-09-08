@@ -9,6 +9,7 @@ from enum import Enum
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from app.core.constants import POLICY_COMMENT_MAX_LENGTH
 from app.models.finding import FindingType, Severity
 from app.schemas.cbom import CryptoPrimitive
 
@@ -94,3 +95,13 @@ class CryptoRule(BaseModel):
                 "(otherwise post-quantum primitives like ML-KEM would also match)"
             )
         return self
+
+
+class CryptoPolicyPutRequest(BaseModel):
+    """Full replacement of a policy's rule set. `rules` is required: an absent or misspelled key
+    used to read as an empty list, which silently disarmed every crypto analyzer under a 200."""
+
+    rules: list[CryptoRule]
+    comment: str | None = Field(None, max_length=POLICY_COMMENT_MAX_LENGTH)
+
+    model_config = ConfigDict(extra="forbid")

@@ -1,5 +1,7 @@
 """Teams Adaptive Card formatter for webhook payloads."""
 
+from app.schemas.notification import AlertVulnerability
+
 _ACTION_OPEN_URL = "Action.OpenUrl"
 _SEVERITY_KEYS = ("critical", "high", "medium", "low", "info", "unknown")
 
@@ -169,12 +171,14 @@ class TeamsFormatter:
 
         if top:
             top_items: list[dict] = [{"type": "TextBlock", "text": "**Top Vulnerabilities**", "weight": "Bolder"}]
-            for vuln in top[:3]:
-                cve_id = vuln.get("cve_id", "Unknown")
-                severity = vuln.get("severity", "Unknown")
-                component = vuln.get("component", "")
+            for raw in top[:3]:
+                vuln = AlertVulnerability.model_validate(raw)
                 top_items.append(
-                    {"type": "TextBlock", "text": f"• **{cve_id}** ({severity}) — {component}", "wrap": True}
+                    {
+                        "type": "TextBlock",
+                        "text": f"• **{vuln.id}** ({vuln.severity}) — {vuln.package}",
+                        "wrap": True,
+                    }
                 )
             body.append({"type": "Container", "items": top_items})
 

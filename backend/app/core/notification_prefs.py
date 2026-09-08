@@ -7,7 +7,9 @@ old persisted data readable after we add or remove valid events.
 """
 
 import logging
-from typing import Any
+from typing import Annotated, Any
+
+from pydantic import AfterValidator
 
 from app.core.constants import NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS
 
@@ -38,3 +40,11 @@ def sanitize_notification_preferences(value: Any) -> dict[str, list[str]]:
         if kept:
             cleaned[event] = kept
     return cleaned
+
+
+# Every declaration of the {event: [channels]} structure uses this, so a preference cannot be
+# accepted and echoed back by a request schema only to be dropped when the model reads it.
+NotificationPreferences = Annotated[
+    dict[str, list[str]] | None,
+    AfterValidator(sanitize_notification_preferences),
+]

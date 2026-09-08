@@ -7,6 +7,7 @@ from app.core.config import settings
 from app.core.constants import get_severity_value
 from app.models.finding import Finding
 from app.models.project import Project
+from app.schemas.notification import AlertVulnerability
 from app.services.analysis.types import Database
 from app.services.notifications import notification_service
 from app.services.notifications.mattermost_formatter import (
@@ -33,16 +34,16 @@ _TOP_VULNS_SHOWN = 10
 
 def _extract_vulnerability_info(vuln: dict[str, Any], finding: dict[str, Any]) -> dict[str, Any]:
     """Extract vulnerability info from a vulnerability dict and its parent finding."""
-    return {
-        "id": vuln.get("id", finding.get("id", "Unknown")),
-        "severity": vuln.get("severity", finding.get("severity", "UNKNOWN")),
-        "package": finding.get("component", "Unknown"),
-        "version": finding.get("version", ""),
-        "in_kev": vuln.get("in_kev", False),
-        "epss_score": vuln.get("epss_score"),
-        "kev_due_date": vuln.get("kev_due_date"),
-        "kev_ransomware_use": vuln.get("kev_ransomware_use", False),
-    }
+    return AlertVulnerability(
+        id=vuln.get("id", finding.get("id", "Unknown")),
+        severity=vuln.get("severity", finding.get("severity", "UNKNOWN")),
+        package=finding.get("component", "Unknown"),
+        version=finding.get("version", ""),
+        in_kev=vuln.get("in_kev", False),
+        epss_score=vuln.get("epss_score"),
+        kev_due_date=vuln.get("kev_due_date"),
+        kev_ransomware_use=vuln.get("kev_ransomware_use", False),
+    ).model_dump()
 
 
 def _categorize_vulnerabilities(
