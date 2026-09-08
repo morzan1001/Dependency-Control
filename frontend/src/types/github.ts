@@ -7,6 +7,7 @@ export interface GitHubInstance {
   is_active: boolean;
   oidc_audience?: string;
   auto_create_projects: boolean;
+  sync_teams: boolean;
   has_access_token?: boolean;
   created_at: string;
   created_by: string;
@@ -21,6 +22,7 @@ export interface GitHubInstanceCreate {
   is_active?: boolean;
   oidc_audience?: string;
   auto_create_projects?: boolean;
+  sync_teams?: boolean;
   access_token?: string;
 }
 
@@ -32,6 +34,7 @@ export interface GitHubInstanceUpdate {
   is_active?: boolean;
   oidc_audience?: string;
   auto_create_projects?: boolean;
+  sync_teams?: boolean;
   access_token?: string;
 }
 
