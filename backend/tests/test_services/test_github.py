@@ -1,4 +1,4 @@
-"""Tests for GitHubService OIDC validation and API pagination."""
+"""Tests for GitHubService OIDC validation, API pagination and write verbs."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -354,6 +354,17 @@ def _link_header(page: int) -> str:
     )
 
 
+def _patch_api_client(service, mock_client):
+    class _CM:
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, *a):
+            return False
+
+    return patch.object(service, "_api_client", return_value=_CM())
+
+
 def _patch_three_pages(service, fetched_pages):
     async def fake_get(url, headers=None, params=None):
         page = params["page"]
@@ -367,14 +378,7 @@ def _patch_three_pages(service, fetched_pages):
     mock_client = MagicMock()
     mock_client.get = AsyncMock(side_effect=fake_get)
 
-    class _CM:
-        async def __aenter__(self):
-            return mock_client
-
-        async def __aexit__(self, *a):
-            return False
-
-    return patch.object(service, "_api_client", return_value=_CM())
+    return _patch_api_client(service, mock_client)
 
 
 class TestGitHubPaginationCap:
@@ -426,3 +430,84 @@ class TestGitHubPaginationCap:
         assert result is not None
         assert [t["slug"] for t in result] == ["payments", "platform", "sre"]
         assert [r for r in caplog.records if r.levelname == "WARNING"] == []
+
+
+class TestGitHubApiWriteMethods:
+    """POST/PATCH must fail closed without a token and must hit the right verb and URL."""
+
+    def test_api_post_returns_none_without_token(self):
+        """The token guard must short-circuit before any client is opened, not lean on the _get_auth_headers ValueError."""
+        service = GitHubService(make_github_instance(access_token=None))
+        mock_client = MagicMock()
+
+        with _patch_api_client(service, mock_client) as api_client:
+            assert asyncio.run(service._api_post("/repos/o/r/issues/1/comments", {"body": "x"})) is None
+
+        api_client.assert_not_called()
+        mock_client.post.assert_not_called()
+
+    def test_api_patch_returns_none_without_token(self):
+        service = GitHubService(make_github_instance(access_token=None))
+        mock_client = MagicMock()
+
+        with _patch_api_client(service, mock_client) as api_client:
+            assert asyncio.run(service._api_patch("/repos/o/r/issues/comments/9", {"body": "x"})) is None
+
+        api_client.assert_not_called()
+        mock_client.patch.assert_not_called()
+
+    def test_api_post_sends_json_body_to_the_api_url(self):
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=MagicMock(status_code=201))
+
+        with _patch_api_client(service, mock_client):
+            response = asyncio.run(service._api_post("/repos/o/r/issues/1/comments", {"body": "hello"}))
+
+        assert response is not None
+        assert response.status_code == 201
+        assert mock_client.post.call_args[0][0] == "https://api.github.com/repos/o/r/issues/1/comments"
+        kwargs = mock_client.post.call_args.kwargs
+        assert kwargs["json"] == {"body": "hello"}
+        assert kwargs["headers"]["Authorization"] == "Bearer ghp-x"
+
+    def test_api_patch_uses_the_patch_verb(self):
+        """A PUT here returns 404 from GitHub: issue comments are updated with PATCH only."""
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        mock_client = MagicMock()
+        mock_client.patch = AsyncMock(return_value=MagicMock(status_code=200))
+
+        with _patch_api_client(service, mock_client):
+            asyncio.run(service._api_patch("/repos/o/r/issues/comments/9", {"body": "hi"}))
+
+        mock_client.patch.assert_awaited_once()
+        assert mock_client.patch.call_args[0][0] == "https://api.github.com/repos/o/r/issues/comments/9"
+        assert mock_client.patch.call_args.kwargs["json"] == {"body": "hi"}
+
+    def test_api_write_uses_the_ghes_api_url(self):
+        service = GitHubService(
+            make_github_instance(access_token="ghp-x", github_url="https://github.corp.example.com")
+        )
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=MagicMock(status_code=201))
+
+        with _patch_api_client(service, mock_client):
+            asyncio.run(service._api_post("/repos/o/r/issues/1/comments", {"body": "x"}))
+
+        assert mock_client.post.call_args[0][0] == "https://github.corp.example.com/api/v3/repos/o/r/issues/1/comments"
+
+    def test_api_post_returns_none_on_transport_error(self):
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=RuntimeError("connection reset"))
+
+        with _patch_api_client(service, mock_client):
+            assert asyncio.run(service._api_post("/repos/o/r/issues/1/comments", {"body": "x"})) is None
+
+    def test_api_patch_returns_none_on_transport_error(self):
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        mock_client = MagicMock()
+        mock_client.patch = AsyncMock(side_effect=RuntimeError("connection reset"))
+
+        with _patch_api_client(service, mock_client):
+            assert asyncio.run(service._api_patch("/repos/o/r/issues/comments/9", {"body": "x"})) is None

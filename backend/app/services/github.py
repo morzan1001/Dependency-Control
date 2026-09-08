@@ -73,6 +73,36 @@ class GitHubService:
             logger.exception("GitHub API GET %s failed: %s", endpoint, e)
             return None
 
+    async def _api_post(self, endpoint: str, json_data: dict[str, Any] | None = None) -> httpx.Response | None:
+        if not self.instance.access_token:
+            return None
+
+        try:
+            async with self._api_client() as client:
+                return await client.post(
+                    f"{self.api_url}{endpoint}",
+                    headers=self._get_auth_headers(),
+                    json=json_data,
+                )
+        except Exception as e:
+            logger.exception("GitHub API POST %s failed: %s", endpoint, e)
+            return None
+
+    async def _api_patch(self, endpoint: str, json_data: dict[str, Any] | None = None) -> httpx.Response | None:
+        if not self.instance.access_token:
+            return None
+
+        try:
+            async with self._api_client() as client:
+                return await client.patch(
+                    f"{self.api_url}{endpoint}",
+                    headers=self._get_auth_headers(),
+                    json=json_data,
+                )
+        except Exception as e:
+            logger.exception("GitHub API PATCH %s failed: %s", endpoint, e)
+            return None
+
     async def _api_get_paginated(
         self,
         endpoint: str,

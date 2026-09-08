@@ -32,7 +32,7 @@ def _counter_value(counter, service: str) -> float:
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     "verb, expected_method",
-    [("get", "GET"), ("post", "POST"), ("put", "PUT"), ("delete", "DELETE")],
+    [("get", "GET"), ("post", "POST"), ("put", "PUT"), ("patch", "PATCH"), ("delete", "DELETE")],
 )
 async def test_verbs_delegate_to_request(verb, expected_method):
     client = InstrumentedAsyncClient("VerbTest")
@@ -52,7 +52,7 @@ async def test_verbs_delegate_to_request(verb, expected_method):
 @pytest.mark.asyncio
 async def test_verbs_raise_when_not_started():
     client = InstrumentedAsyncClient("NotStarted")
-    for verb in ("get", "post", "put", "delete", "request"):
+    for verb in ("get", "post", "put", "patch", "delete", "request"):
         with pytest.raises(RuntimeError):
             if verb == "request":
                 await client.request("GET", "https://example.test")
