@@ -4,7 +4,6 @@ export interface Webhook {
   team_id?: string;
   url: string;
   events: string[];
-  secret?: string;
   is_active: boolean;
   created_at: string;
   last_triggered_at?: string;
