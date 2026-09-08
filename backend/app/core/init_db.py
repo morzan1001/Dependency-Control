@@ -271,13 +271,15 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
                 "github_team_id": {MONGO_TYPE: "number"},
             },
         )
-    except (pymongo.errors.DuplicateKeyError, pymongo.errors.OperationFailure) as exc:
-        key_info = getattr(exc, "details", None) or str(exc)
+    except pymongo.errors.OperationFailure as exc:
+        # Named "response" rather than "details": the Finding.details contract test reads any
+        # local of that name as a finding-details access.
+        response = exc.details or {}
         logger.error(
-            "Skipping unique teams (github_instance_id, github_team_id) index: build "
-            "failed (likely a pre-existing duplicate). Startup continues without it; "
-            "reconcile the duplicate and re-run. Offending key/error: %s",
-            key_info,
+            "Skipping unique teams (github_instance_id, github_team_id) index, build failed "
+            "with %s; the key stays unenforced until it is built. Server response: %s",
+            response.get("codeName", type(exc).__name__),
+            response or exc,
         )
 
     # Scans

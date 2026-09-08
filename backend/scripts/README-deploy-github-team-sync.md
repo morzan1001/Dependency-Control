@@ -7,11 +7,31 @@ Prod context: `gke_rd-itsecurity-sboms-prod_europe-west1_prod-1`, namespace `dep
 `create_indexes` runs in the startup path, so a build there stalls the rollout. Build it by hand
 first; the startup call then finds it and is a no-op.
 
+### 1a. Look at what is already there
+
+```js
+db.teams.getIndexes()
+```
+
+If `github_instance_id_1_github_team_id_1` already exists with a `partialFilterExpression` other
+than the one below — an earlier attempt using `$exists: true`, or `$type: "int"` — **drop it**:
+
+```js
+db.teams.dropIndex("github_instance_id_1_github_team_id_1")
+```
+
+Startup cannot fix this for you and will not stop for it. MongoDB refuses to redefine an index that
+already exists under that name, answers `IndexKeySpecsConflict` (code 86), and the guard in
+`create_indexes` logs the skip and continues. The wrong index survives, and with an `$exists`
+filter the next manual team creation fails in production with
+`E11000 … dup key: { github_instance_id: null, github_team_id: null }` — measured, not inferred.
+
+### 1b. Build it
+
 Do **not** pass a `name`. Omitting it gives the index the same default name `create_index` would
-generate (`github_instance_id_1_github_team_id_1`). Under a custom name startup tries to create a
-second index with the same key, MongoDB answers `IndexOptionsConflict` (code 85), and the guard
-logs `Skipping unique teams (github_instance_id, github_team_id) index: build failed (likely a
-pre-existing duplicate)` on every pod start — a permanent false alarm over a healthy index.
+generate (`github_instance_id_1_github_team_id_1`). Under a custom name the key exists twice as far
+as MongoDB is concerned: startup's build answers `IndexOptionsConflict` (code 85) and logs a skip on
+every pod start — a permanent alarm over a healthy index.
 
 ```js
 db.teams.createIndex(
