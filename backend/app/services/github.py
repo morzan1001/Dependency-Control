@@ -77,9 +77,13 @@ class GitHubService:
         self,
         endpoint: str,
         params: dict[str, Any] | None = None,
-        max_pages: int = 10,
+        max_pages: int | None = 10,
     ) -> list[dict[str, Any]] | None:
-        """Paginated GET via GitHub's Link header; returns all items or None on failure."""
+        """Paginated GET via GitHub's Link header; returns all items or None on failure.
+
+        ``max_pages=None`` fetches all pages uncapped; a hit finite cap logs a
+        truncation WARNING.
+        """
         if not self.instance.access_token:
             return None
 
@@ -89,7 +93,7 @@ class GitHubService:
 
         try:
             async with self._api_client() as client:
-                while page <= max_pages:
+                while max_pages is None or page <= max_pages:
                     request_params = {**(params or {}), "page": page, "per_page": per_page}
                     response = await client.get(
                         f"{self.api_url}{endpoint}",
@@ -98,7 +102,7 @@ class GitHubService:
                     )
 
                     if response.status_code != 200:
-                        logger.error(f"GitHub API GET {endpoint} failed: {response.status_code}")
+                        logger.error(f"GitHub API GET {endpoint} page {page} failed: {response.status_code}")
                         return None
 
                     items = response.json()
@@ -107,8 +111,9 @@ class GitHubService:
 
                     all_items.extend(items)
 
-                    link_header = response.headers.get("link", "")
-                    if 'rel="next"' not in link_header:
+                    if 'rel="next"' not in response.headers.get("link", ""):
+                        break
+                    if self._cap_reached(endpoint, page, max_pages, len(all_items)):
                         break
 
                     page += 1
@@ -118,6 +123,20 @@ class GitHubService:
             return None
 
         return all_items
+
+    @staticmethod
+    def _cap_reached(endpoint: str, page: int, max_pages: int | None, item_count: int) -> bool:
+        """True (and logs a WARNING) when a finite cap is hit while the Link header still offers a next page."""
+        if max_pages is None or page < max_pages:
+            return False
+        logger.warning(
+            "GitHub API GET %s hit the pagination cap of %d page(s) (%d items) but the Link header "
+            'still offers rel="next". Result is TRUNCATED.',
+            endpoint,
+            max_pages,
+            item_count,
+        )
+        return True
 
     async def list_branches(self, owner: str, repo: str) -> list[str] | None:
         """Fetches all branch names from a GitHub repository. Returns None on API failure."""

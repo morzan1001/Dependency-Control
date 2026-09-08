@@ -1,7 +1,7 @@
-"""Tests for GitHubService OIDC validation."""
+"""Tests for GitHubService OIDC validation and API pagination."""
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models.github_api import GitHubOIDCPayload
 from app.services.github import GitHubService
@@ -286,3 +286,129 @@ class TestGitHubServiceOIDC:
 
                     result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
                     assert result is None
+
+
+_TEAMS_ENDPOINT = "/repos/acme/widgets/teams"
+_TEAMS_URL = f"https://api.github.com{_TEAMS_ENDPOINT}"
+
+# Shape of GET /repos/{owner}/{repo}/teams, one team per page.
+_TEAM_PAGES = [
+    [
+        {
+            "id": 501,
+            "node_id": "T_kwDOA",
+            "name": "Payments",
+            "slug": "payments",
+            "description": None,
+            "privacy": "closed",
+            "permission": "push",
+            "url": "https://api.github.com/organizations/9/team/501",
+            "html_url": "https://github.com/orgs/acme/teams/payments",
+            "members_url": "https://api.github.com/organizations/9/team/501/members{/member}",
+            "repositories_url": "https://api.github.com/organizations/9/team/501/repos",
+            "parent": None,
+        }
+    ],
+    [
+        {
+            "id": 502,
+            "node_id": "T_kwDOB",
+            "name": "Platform",
+            "slug": "platform",
+            "description": None,
+            "privacy": "closed",
+            "permission": "pull",
+            "url": "https://api.github.com/organizations/9/team/502",
+            "html_url": "https://github.com/orgs/acme/teams/platform",
+            "members_url": "https://api.github.com/organizations/9/team/502/members{/member}",
+            "repositories_url": "https://api.github.com/organizations/9/team/502/repos",
+            "parent": None,
+        }
+    ],
+    [
+        {
+            "id": 503,
+            "node_id": "T_kwDOC",
+            "name": "SRE",
+            "slug": "sre",
+            "description": None,
+            "privacy": "closed",
+            "permission": "admin",
+            "url": "https://api.github.com/organizations/9/team/503",
+            "html_url": "https://github.com/orgs/acme/teams/sre",
+            "members_url": "https://api.github.com/organizations/9/team/503/members{/member}",
+            "repositories_url": "https://api.github.com/organizations/9/team/503/repos",
+            "parent": None,
+        }
+    ],
+]
+
+
+def _link_header(page: int) -> str:
+    """GitHub's Link header: rel="next" on every page but the last."""
+    if page >= len(_TEAM_PAGES):
+        return f'<{_TEAMS_URL}?per_page=100&page=1>; rel="first", <{_TEAMS_URL}?per_page=100&page=2>; rel="prev"'
+    return (
+        f'<{_TEAMS_URL}?per_page=100&page={page + 1}>; rel="next", '
+        f'<{_TEAMS_URL}?per_page=100&page={len(_TEAM_PAGES)}>; rel="last"'
+    )
+
+
+def _patch_three_pages(service, fetched_pages):
+    async def fake_get(url, headers=None, params=None):
+        page = params["page"]
+        fetched_pages.append(page)
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = _TEAM_PAGES[page - 1]
+        response.headers = {"link": _link_header(page)}
+        return response
+
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(side_effect=fake_get)
+
+    class _CM:
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, *a):
+            return False
+
+    return patch.object(service, "_api_client", return_value=_CM())
+
+
+class TestGitHubPaginationCap:
+    def test_cap_truncates_and_warns_naming_the_endpoint(self, caplog):
+        """A hit cap must be visible: the result stops at the cap AND a WARNING names endpoint, cap and item count."""
+        service = GitHubService(make_github_instance(access_token="ghp-test-token"))
+        fetched_pages: list[int] = []
+
+        with _patch_three_pages(service, fetched_pages):
+            with caplog.at_level("WARNING", logger="app.services.github"):
+                result = asyncio.run(service._api_get_paginated(_TEAMS_ENDPOINT, max_pages=2))
+
+        assert fetched_pages == [1, 2]
+        assert result is not None
+        assert [t["slug"] for t in result] == ["payments", "platform"]
+
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1, [r.getMessage() for r in caplog.records]
+        message = warnings[0].getMessage()
+        assert _TEAMS_ENDPOINT in message
+        assert "cap of 2 page(s)" in message
+        assert "(2 items)" in message
+        assert "TRUNCATED" in message
+
+    def test_max_pages_none_fetches_every_page(self, caplog):
+        """max_pages=None is uncapped: all three pages are fetched and nothing warns."""
+        service = GitHubService(make_github_instance(access_token="ghp-test-token"))
+        fetched_pages: list[int] = []
+
+        with _patch_three_pages(service, fetched_pages):
+            with caplog.at_level("WARNING", logger="app.services.github"):
+                result = asyncio.run(service._api_get_paginated(_TEAMS_ENDPOINT, max_pages=None))
+
+        assert fetched_pages == [1, 2, 3]
+        assert result is not None
+        assert [t["slug"] for t in result] == ["payments", "platform", "sre"]
+        assert [r for r in caplog.records if r.levelname == "WARNING"] == []
