@@ -123,6 +123,36 @@ describe('ProjectSettings GitHub PR decoration', () => {
     expect(screen.getByText('Requires an access token on the GitHub instance.')).toBeInTheDocument()
   })
 
+  it('lets an already-enabled project turn decoration off after the instance loses its token', async () => {
+    mockUseGitHubInstances.mockReturnValue(githubInstances(false))
+
+    renderSettings(githubProject({ github_pr_comments_enabled: true }))
+
+    const toggle = screen.getByLabelText('Pull Request Decoration')
+    expect(toggle).toBeEnabled()
+    expect(toggle).toBeChecked()
+
+    fireEvent.click(toggle)
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1]).toMatchObject({ github_pr_comments_enabled: false })
+  })
+
+  // active_only filtering hides a deactivated instance, which must not silently mask the stored value.
+  it('shows the stored value when the linked instance is missing from the active list', async () => {
+    mockUseGitHubInstances.mockReturnValue({ data: { items: [] } })
+
+    renderSettings(githubProject({ github_pr_comments_enabled: true }))
+
+    expect(screen.getByLabelText('Pull Request Decoration')).toBeChecked()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1]).toMatchObject({ github_pr_comments_enabled: true })
+  })
+
   it('shows nothing for a GitLab-sourced project', () => {
     renderSettings(githubProject({ github_instance_id: undefined, gitlab_instance_id: 'gl-1' }))
 

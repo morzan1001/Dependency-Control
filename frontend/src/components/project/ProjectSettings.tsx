@@ -432,10 +432,11 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                                             : "Requires an access token on the GitHub instance."}
                                     </p>
                                 </div>
+                                {/* Show the value that will actually be sent, and keep turning it back off reachable. */}
                                 <Switch
                                     id="github-pr-comments"
-                                    checked={githubPrCommentsEnabled && githubHasToken}
-                                    disabled={!githubHasToken}
+                                    checked={githubPrCommentsEnabled}
+                                    disabled={!githubHasToken && !githubPrCommentsEnabled}
                                     onCheckedChange={setGithubPrCommentsEnabled}
                                 />
                             </div>
