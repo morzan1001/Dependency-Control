@@ -1,7 +1,7 @@
 from datetime import datetime
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator
 
 from app.core.constants import (
     DEFAULT_ACTIVE_ANALYZERS,
@@ -25,7 +25,9 @@ class LicensePolicySchema(BaseModel):
     ``use_enum_values``/``validate_default`` serialize values as plain strings.
     """
 
-    model_config = ConfigDict(use_enum_values=True, validate_default=True)
+    # extra="forbid": a misspelt key used to be discarded, restoring the network-facing default and
+    # re-grading every AGPL finding in the project on every future scan.
+    model_config = ConfigDict(use_enum_values=True, validate_default=True, extra="forbid")
 
     distribution_model: DistributionModel = Field(
         DistributionModel.DISTRIBUTED,
@@ -44,6 +46,33 @@ class LicensePolicySchema(BaseModel):
     )
     allow_strong_copyleft: bool = Field(False, description="Allow GPL-style licenses (reduces severity to INFO)")
     allow_network_copyleft: bool = Field(False, description="Allow AGPL/SSPL licenses (reduces severity)")
+
+
+_LICENSE_POLICY_ENUMS: dict[str, type[DistributionModel] | type[DeploymentModel] | type[LibraryUsage]] = {
+    "distribution_model": DistributionModel,
+    "deployment_model": DeploymentModel,
+    "library_usage": LibraryUsage,
+}
+
+
+def _reject_unusable_license_settings(value: dict[str, dict[str, Any]] | None) -> dict[str, dict[str, Any]] | None:
+    """The license analyzer coerces these three keys into enums on every scan, so a value it will
+    refuse must not be stored: the write returns 200 and each later scan of the project raises."""
+    settings = (value or {}).get("license_compliance")
+    if not isinstance(settings, dict):
+        return value
+    nested = settings.get("license_policy")
+    for scope in (settings, nested if isinstance(nested, dict) else {}):
+        for key, enum in _LICENSE_POLICY_ENUMS.items():
+            if key in scope:
+                enum(scope[key])
+    return value
+
+
+AnalyzerSettings = Annotated[
+    dict[str, dict[str, Any]],
+    AfterValidator(_reject_unusable_license_settings),
+]
 
 
 class BranchInfo(BaseModel):
@@ -97,7 +126,7 @@ class ProjectCreate(BaseModel):
     license_policy: LicensePolicySchema | None = Field(
         None, description="License compliance policy controlling copyleft finding severity"
     )
-    analyzer_settings: dict[str, dict[str, Any]] | None = Field(
+    analyzer_settings: AnalyzerSettings | None = Field(
         None, description="Per-analyzer configuration overrides keyed by analyzer ID"
     )
 
@@ -128,7 +157,7 @@ class ProjectUpdate(BaseModel):
     license_policy: LicensePolicySchema | None = Field(
         None, description="License compliance policy controlling copyleft finding severity"
     )
-    analyzer_settings: dict[str, dict[str, Any]] | None = Field(
+    analyzer_settings: AnalyzerSettings | None = Field(
         None, description="Per-analyzer configuration overrides keyed by analyzer ID"
     )
 

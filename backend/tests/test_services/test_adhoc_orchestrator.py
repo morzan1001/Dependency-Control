@@ -2,7 +2,8 @@
 
 import pytest
 
-from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocLicensePolicy
+from app.schemas.adhoc import AdhocAnalyzeRequest
+from app.schemas.project import LicensePolicySchema
 from app.services.analysis.adhoc import run_adhoc_analysis
 from app.services.analysis.registry import analyzer_factories
 from tests.helpers.analyzers import serve_analyzer
@@ -248,7 +249,7 @@ async def test_request_license_policy_reaches_the_analyzer_as_plain_settings():
         sboms=[_SBOM],
         analyzers=["license_compliance"],
         apply_global_waivers=False,
-        license_policy=AdhocLicensePolicy(allow_strong_copyleft=True),
+        license_policy=LicensePolicySchema(allow_strong_copyleft=True),
     )
 
     response = await run_adhoc_analysis(request, FakeDatabase())

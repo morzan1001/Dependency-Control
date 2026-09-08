@@ -15,13 +15,6 @@ MAX_ADHOC_SBOMS: int = 10
 MAX_ADHOC_ANALYZERS: int = 25
 
 
-class AdhocLicensePolicy(LicensePolicySchema):
-    """The project API tolerates unknown policy keys; a one-shot request cannot, because a
-    misspelt key silently restores the network-facing default and re-grades AGPL findings."""
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class AdhocScannerPayloads(BaseModel):
     """Inner scanner result shapes, not the ingest envelopes: TruffleHog/OpenGrep/Bearer
     carry ``findings``, KICS carries ``queries``."""
@@ -47,7 +40,7 @@ class AdhocAnalyzeRequest(BaseModel):
     analyzers: list[str] | None = Field(default=None, max_length=MAX_ADHOC_ANALYZERS)
     callgraph: dict[str, Any] | None = None
     apply_global_waivers: bool = True
-    license_policy: AdhocLicensePolicy | None = None
+    license_policy: LicensePolicySchema | None = None
     format: Literal["json", "html"] = "json"
 
     @model_validator(mode="after")
