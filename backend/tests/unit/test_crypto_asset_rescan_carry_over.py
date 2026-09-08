@@ -6,9 +6,10 @@ only the second, so without a carry-over every crypto surface reads a rescanned 
 no cryptography, and the crypto delta reads that as risk having disappeared.
 """
 
-import pytest
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+
+import pytest
 
 from app.models.crypto_asset import CryptoAsset
 from app.repositories.crypto_asset import CryptoAssetRepository

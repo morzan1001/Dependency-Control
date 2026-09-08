@@ -1,7 +1,7 @@
 """Tests that the PyPI hash verifier collects every file's digest per algorithm, not just the first."""
 
 import asyncio
-from typing import Any
+from typing import Any, Self
 
 import pytest
 
@@ -98,10 +98,10 @@ class _ConcurrencyProbe:
         self.live = 0
         self.peak = 0
 
-    async def __aenter__(self) -> "_ConcurrencyProbe":
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *_exc: Any) -> bool:
+    async def __aexit__(self, *_exc: object) -> bool:
         return False
 
     async def get(self, _url: str) -> _FakeResponse:

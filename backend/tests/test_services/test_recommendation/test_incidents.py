@@ -8,7 +8,6 @@ from app.services.recommendation.incidents import (
     process_typosquatting,
 )
 
-
 # The smallest EPSS decrement that stays on the other side of the threshold.
 _EPSS_STEP = 0.01
 

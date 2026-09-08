@@ -6,12 +6,12 @@ from app.core.constants import REACHABILITY_HIGH_CONFIDENCE_THRESHOLD, REACHABIL
 from app.schemas.projections import CallgraphMinimal
 from app.services.analysis.stats import build_reachability_summary
 from app.services.reachability_enrichment import (
-    build_component_language_map,
     _check_package_in_imports,
     _enrich_finding_from_callgraphs,
     _enrich_single_finding,
     _match_symbols,
     _prepare_callgraph,
+    build_component_language_map,
     is_high_confidence_reachable,
 )
 

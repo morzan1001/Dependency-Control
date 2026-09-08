@@ -15,8 +15,8 @@ import pytest
 from app.api.v1.endpoints.compliance_reports import list_reports
 from app.api.v1.endpoints.crypto_analytics import get_hotspots
 from app.api.v1.endpoints.crypto_assets import list_crypto_assets as list_crypto_assets_endpoint
-from app.api.v1.endpoints.pqc_migration import get_pqc_migration_plan
 from app.api.v1.endpoints.policy_audit import list_system_audit
+from app.api.v1.endpoints.pqc_migration import get_pqc_migration_plan
 from app.core.constants import SCAN_STATUS_COMPLETED
 from app.models.user import User
 from app.services.chat.tools import ChatToolRegistry

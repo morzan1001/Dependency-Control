@@ -1,6 +1,6 @@
 """The ad-hoc endpoint is rate limited per token owner, and a Redis outage does not block it."""
 
-from typing import Any
+from typing import Any, NoReturn, Self
 
 import pytest
 import redis.asyncio as redis
@@ -66,10 +66,10 @@ class _FakeRedisCtx:
     def __init__(self, keys: list[str]) -> None:
         self._keys = keys
 
-    async def __aenter__(self) -> "_FakeRedisCtx":
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *_exc: Any) -> bool:
+    async def __aexit__(self, *_exc: object) -> bool:
         return False
 
     async def eval(self, _script: str, _numkeys: int, key: str, *_args: Any) -> list[int]:
@@ -80,10 +80,10 @@ class _FakeRedisCtx:
 class _DenyingRedisCtx:
     """Answers the sliding-window script with a refusal, so the real limiter runs its denial path."""
 
-    async def __aenter__(self) -> "_DenyingRedisCtx":
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *_exc: Any) -> bool:
+    async def __aexit__(self, *_exc: object) -> bool:
         return False
 
     async def eval(self, *_args: Any) -> list[int]:
@@ -94,11 +94,11 @@ class _BrokenRedisCtx:
     def __init__(self, opened: list[str]) -> None:
         self._opened = opened
 
-    async def __aenter__(self) -> "_BrokenRedisCtx":
+    async def __aenter__(self) -> NoReturn:
         self._opened.append(_RATE_LIMIT_PREFIX)
         raise redis.RedisError("redis down")
 
-    async def __aexit__(self, *_exc: Any) -> bool:
+    async def __aexit__(self, *_exc: object) -> bool:
         return False
 
 

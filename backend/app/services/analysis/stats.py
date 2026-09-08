@@ -30,7 +30,6 @@ from app.core.risk_scoring import (
     saturating_risk_score,
     severity_exposure,
 )
-from app.services.aggregation.components import lookup_component
 from app.models.stats import (
     PrioritizedCounts,
     ReachabilityStats,
@@ -38,6 +37,7 @@ from app.models.stats import (
     Stats,
     ThreatIntelligenceStats,
 )
+from app.services.aggregation.components import lookup_component
 from app.services.analysis.types import (
     CallgraphInfo,
     Database,

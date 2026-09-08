@@ -5,8 +5,8 @@ import pytest
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocLicensePolicy
 from app.services.analysis.adhoc import run_adhoc_analysis
 from app.services.analysis.registry import analyzer_factories
-from tests.mocks.fake_mongo import FakeDatabase
 from tests.helpers.analyzers import serve_analyzer
+from tests.mocks.fake_mongo import FakeDatabase
 
 _SECRET_FILE = "app/config.py"
 _SBOM_LABEL = "sbom#1"

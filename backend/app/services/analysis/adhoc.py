@@ -38,8 +38,8 @@ from app.services.analyzers.crypto.base import CryptoRuleAnalyzer, crypto_findin
 from app.services.crypto_policy.seeder import load_seed_rules
 from app.services.enrichment.service import VulnerabilityEnrichmentService
 from app.services.reachability_enrichment import (
-    _PreparedCallgraph,
     _prepare_callgraph,
+    _PreparedCallgraph,
     component_language_map,
     enrich_findings_from_callgraphs,
 )

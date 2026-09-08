@@ -37,7 +37,7 @@ _RATE_LIMIT_PREFIX = "dc:adhoc:rl:"
 _RATE_LIMITED = "Rate limit exceeded"
 _HTML = "html"
 
-_DESCRIPTION = """
+_DESCRIPTION = f"""
 Analyze posted SBOMs and scanner results and return findings, statistics, dependencies and
 recommendations. Nothing is written: no scan, no findings, no dependency records, no audit row.
 
@@ -51,13 +51,13 @@ Posted scanner output is validated entry by entry against the same models `/api/
 uses. A scanner whose entries do not validate is reported in `analyzers.errored` and contributes
 no findings, so a report the pipeline could not read never reads as an all-clear.
 
-At most {max_findings} findings are returned. Past that the set is cut by severity, and equally
+At most {ADHOC_MAX_FINDINGS} findings are returned. Past that the set is cut by severity, and equally
 severe findings are shared out over the finding types present so no one type can evict another.
 `truncated` is null when the whole result is returned; otherwise it counts what was dropped, by
 type and by severity, and `stats` describes only what came back.
 
 `format: "html"` returns the same result as a standalone report document instead of JSON.
-""".format(max_findings=ADHOC_MAX_FINDINGS)
+"""
 
 _HTML_RESPONSE: dict[int | str, dict[str, Any]] = {200: {"content": {"text/html": {"schema": {"type": "string"}}}}}
 

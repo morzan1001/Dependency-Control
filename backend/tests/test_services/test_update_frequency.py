@@ -10,6 +10,7 @@ from unittest.mock import patch
 import pytest
 
 import app.services.update_frequency as update_frequency_module
+from app.core.constants import RECENT_UPDATES_LIMIT, SLOWEST_PACKAGES_LIMIT
 from app.repositories import AnalysisResultRepository, DependencyRepository, ScanRepository
 from app.repositories.update_frequency import (
     BranchWindowActivity,
@@ -19,13 +20,12 @@ from app.repositories.update_frequency import (
 )
 from app.schemas.analytics import ScanTimelineEntry, UpdateFrequencyMetrics
 from app.services.release_history import ReleaseHistory, ReleaseInfo
-from app.core.constants import RECENT_UPDATES_LIMIT, SLOWEST_PACKAGES_LIMIT
 from app.services.update_frequency import (
     _COMPARISON_CONCURRENCY,
     READY_COVERAGE_RATIO,
     _aggregate_metrics,
-    _dominant_ecosystem,
     _build_slowest_packages,
+    _dominant_ecosystem,
     _empty_metrics,
     classify_version_change,
     compute_trend,

@@ -21,7 +21,8 @@ _VERSION = "v1.2.3"
 _COMMIT_TAG = "v9"
 _UNSET = ""
 _FIELDS_A_SCAN_MUST_NOT_CARRY = ("release_version", "release_environment", "released_at")
-_NAIVE_RELEASED_AT = datetime(2026, 9, 4, 22, 30)
+# Mongo stores UTC and hands the value back with the zone dropped; that naivety is the input here.
+_NAIVE_RELEASED_AT = datetime(2026, 9, 4, 22, 30, tzinfo=timezone.utc).replace(tzinfo=None)
 _OFFSET_RELEASED_AT = datetime(2026, 9, 4, 22, 30, tzinfo=timezone(timedelta(hours=2)))
 _UTC_SUFFIX = "Z"
 

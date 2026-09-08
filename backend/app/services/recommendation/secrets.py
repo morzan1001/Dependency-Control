@@ -4,7 +4,6 @@ from app.core.trufflehog import resolve_detector_name
 from app.schemas.recommendation import Priority, Recommendation, RecommendationType
 from app.services.recommendation.common import ModelOrDict, get_attr, name_some, sample_components
 
-
 _SECRET_TYPES_NAMED = 5
 
 

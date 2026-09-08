@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.services.scan_cascade import delete_scans_and_related_data
 from app.core.metrics import update_frequency_reconcile_drift_total
+from app.services.scan_cascade import delete_scans_and_related_data
 from app.services.update_frequency_reconcile import run_update_frequency_reconcile
 from app.services.update_frequency_rollup import record_scan_update_delta
 from tests.mocks.fake_mongo import FakeDatabase

@@ -26,13 +26,13 @@ from app.core.constants import (
     SCAN_STATUS_PROCESSING,
     SCAN_USABLE_STATUSES,
 )
+from app.core.init_db import SCANS_TIP_SORT
 from app.core.metrics import (
     archive_housekeeping_batch_total,
     archive_housekeeping_scans_processed_total,
     update_archive_stats,
     update_db_stats,
 )
-from app.core.init_db import SCANS_TIP_SORT
 from app.core.s3 import delete_object, is_archive_enabled, list_objects
 from app.db.mongodb import get_database
 from app.models.project import Project, Scan

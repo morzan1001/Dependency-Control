@@ -10,7 +10,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Any
+from typing import Any, Self
 
 import pymongo
 import pytest
@@ -23,8 +23,8 @@ from app.db import mongodb
 from app.schemas.adhoc import AdhocAnalyzeRequest, AdhocAnalyzeResponse
 from app.services.analysis.adhoc import run_adhoc_analysis
 from app.services.analysis.registry import analyzer_factories
-from tests.mocks.fake_mongo import FakeCollection, FakeDatabase
 from tests.helpers.analyzers import build_analyzer, serve_analyzer
+from tests.mocks.fake_mongo import FakeCollection, FakeDatabase
 
 # The scan-backed pipeline's collections plus the GridFS indexes. A floor, not a closed set:
 # the runtime sweep below also covers whatever the run vivified that nobody listed here.
@@ -476,7 +476,7 @@ class _RecordingPipeline:
 
 def _unprefixed(key: str) -> str:
     prefix = settings.CACHE_PREFIX
-    return key[len(prefix) :] if key.startswith(prefix) else key
+    return key.removeprefix(prefix)
 
 
 @dataclass(frozen=True)
@@ -712,10 +712,10 @@ class _RateLimitRedis:
     def __init__(self, keys: list[str]) -> None:
         self._keys = keys
 
-    async def __aenter__(self) -> "_RateLimitRedis":
+    async def __aenter__(self) -> Self:
         return self
 
-    async def __aexit__(self, *_exc: Any) -> bool:
+    async def __aexit__(self, *_exc: object) -> bool:
         return False
 
     async def eval(self, _script: str, _numkeys: int, key: str, *_args: Any) -> list[int]:

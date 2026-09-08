@@ -4,8 +4,8 @@ import pytest
 
 from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.services.analysis.adhoc import run_adhoc_analysis
-from tests.mocks.fake_mongo import FakeDatabase
 from tests.helpers.analyzers import serve_analyzer
+from tests.mocks.fake_mongo import FakeDatabase
 
 _OSV = "osv"
 _REACHABILITY = "reachability"

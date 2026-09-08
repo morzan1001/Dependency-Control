@@ -1,13 +1,14 @@
 """EPSS/KEV enrichment runs on a per-request service instance and is always closed."""
 
+from typing import ClassVar
 from unittest.mock import AsyncMock
 
 import pytest
 
 from app.schemas.adhoc import AdhocAnalyzeRequest
 from app.services.analysis.adhoc import run_adhoc_analysis
-from tests.mocks.fake_mongo import FakeDatabase
 from tests.helpers.analyzers import serve_analyzer
+from tests.mocks.fake_mongo import FakeDatabase
 
 _ENRICHMENT = "epss_kev"
 _TRUFFLEHOG_NAME = "trufflehog"
@@ -46,7 +47,7 @@ _SBOM = {
 
 
 class _SpyService:
-    instances: list["_SpyService"] = []
+    instances: ClassVar[list["_SpyService"]] = []
 
     def __init__(self):
         self.enriched = None

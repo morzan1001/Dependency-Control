@@ -1,5 +1,7 @@
 """Tests for the LicenseAnalyzer - license compliance analysis."""
 
+from typing import Any, ClassVar
+
 import pytest
 
 from app.models.finding import Severity
@@ -811,7 +813,7 @@ _ONE_ALTERNATIVE_RESOLVED = 1
 class TestUndeterminableLicense:
     """A component the SBOM does not let us classify must reach the audit control as a finding."""
 
-    UNDETERMINABLE_SHAPES = [
+    UNDETERMINABLE_SHAPES: ClassVar[list[dict[str, Any]]] = [
         {"type": "library", "name": "no-licenses-key", "version": "1.0.0"},
         {"type": "library", "name": "empty-licenses-list", "version": "1.0.0", "licenses": []},
         {

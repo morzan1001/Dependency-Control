@@ -16,7 +16,6 @@ from app.services.compliance.frameworks.pqc_migration_plan import (
     PQCMigrationPlanFramework,
 )
 
-
 _COMPLETE_INPUT = InputCoverage(evaluated=0, in_scope=0, limit=1)
 _PLAN_ITEMS_BUILT = 2
 _ITEMS_IN_SCOPE = 4200

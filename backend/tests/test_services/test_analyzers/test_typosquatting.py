@@ -238,7 +238,7 @@ class TestCorpusDepthIsDeclaredAndReported:
             caplog.at_level(logging.WARNING, logger="app.services.analyzers.typosquatting"),
         ):
             ClientCls.return_value.__aenter__.return_value.get = AsyncMock(
-                return_value=SimpleNamespace(status_code=301, json=lambda: {})
+                return_value=SimpleNamespace(status_code=301, json=dict)
             )
             packages = await TyposquattingAnalyzer()._fetch_pypi_packages()
 

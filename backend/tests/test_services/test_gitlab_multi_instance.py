@@ -15,7 +15,6 @@ from tests.mocks.gitlab import (
 )
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
-
 _USABLE_INSTANCE_DOC = {
     "_id": "inst-1",
     "name": "Test",

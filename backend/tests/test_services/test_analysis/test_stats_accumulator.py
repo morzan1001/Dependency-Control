@@ -1,7 +1,7 @@
 """Permanent pins for StatsAccumulator rules a differential corpus cannot express."""
 
 import copy
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -24,7 +24,6 @@ from app.services.analysis.stats import (
 )
 from app.services.reachability_enrichment import component_language_map
 from tests.mocks.fake_mongo import FakeDatabase
-
 
 # One CRITICAL finding, scored through saturating_risk_score at each reachability tier.
 _UNMODIFIED_CRITICAL_SCORE = 7.4
@@ -297,7 +296,10 @@ class TestHighConfidenceGate:
 
 
 class TestCoverableCount:
-    _LANGS = {"lodash": frozenset({"javascript"}), "requests": frozenset({"python"})}
+    _LANGS: ClassVar[dict[str, frozenset[str]]] = {
+        "lodash": frozenset({"javascript"}),
+        "requests": frozenset({"python"}),
+    }
 
     def test_counts_only_components_a_callgraph_could_analyse(self):
         findings = [
