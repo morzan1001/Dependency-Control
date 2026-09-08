@@ -1004,6 +1004,9 @@ GITLAB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)
 GITHUB_JWKS_CACHE_TTL = 3600  # 1 hour
 GITHUB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)
 
+# One workflow run fans out into many jobs; without this every job refetches the same three lists.
+GITHUB_TEAM_SYNC_CACHE_TTL = 300  # 5 minutes
+
 # Threshold for classifying a CVE as high-risk based on its composite risk score
 HIGH_RISK_SCORE_THRESHOLD: float = 70.0
 

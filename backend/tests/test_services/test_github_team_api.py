@@ -1,0 +1,230 @@
+"""GitHub team-sync reads: uncapped pagination, role-tagged members, and a shared cache."""
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import fakeredis.aioredis
+import pytest
+
+from app.core.cache import CacheService
+from app.services.github import GitHubService
+from tests.mocks.github import make_github_instance
+
+_ORG_URL = "https://api.github.com/organizations/1234"
+
+# `parent` is a Team Simple: it carries no `parent` of its own, so nesting depth is not
+# derivable from the repository endpoint. The second team is the shape GitHub returns when
+# it omits the optional `permissions` and `access_source`.
+_REPO_TEAMS = [
+    {
+        "id": 4711,
+        "node_id": "T_kwDOBl2Rp84AEnZn",
+        "url": f"{_ORG_URL}/team/4711",
+        "html_url": "https://github.com/orgs/acme/teams/payments",
+        "name": "Payments",
+        "slug": "payments",
+        "description": "Payments platform",
+        "privacy": "closed",
+        "notification_setting": "notifications_enabled",
+        "permission": "push",
+        "permissions": {"pull": True, "triage": True, "push": True, "maintain": False, "admin": False},
+        "access_source": "direct",
+        "members_url": f"{_ORG_URL}/team/4711/members{{/member}}",
+        "repositories_url": f"{_ORG_URL}/team/4711/repos",
+        "parent": {
+            "id": 42,
+            "node_id": "T_kwDOBl2Rp84AEnAA",
+            "url": f"{_ORG_URL}/team/42",
+            "html_url": "https://github.com/orgs/acme/teams/platform",
+            "name": "Platform",
+            "slug": "platform",
+            "description": "Everything below the product teams",
+            "privacy": "closed",
+            "notification_setting": "notifications_enabled",
+            "permission": "pull",
+            "members_url": f"{_ORG_URL}/team/42/members{{/member}}",
+            "repositories_url": f"{_ORG_URL}/team/42/repos",
+        },
+    },
+    {
+        "id": 8150,
+        "node_id": "T_kwDOBl2Rp84AEqLm",
+        "url": f"{_ORG_URL}/team/8150",
+        "html_url": "https://github.com/orgs/acme/teams/sre",
+        "name": "SRE",
+        "slug": "sre",
+        "description": None,
+        "privacy": "secret",
+        "permission": "admin",
+        "members_url": f"{_ORG_URL}/team/8150/members{{/member}}",
+        "repositories_url": f"{_ORG_URL}/team/8150/repos",
+        "parent": None,
+    },
+]
+
+_ORG_MEMBERSHIPS = [
+    {
+        "login": "acme",
+        "id": 1234,
+        "node_id": "O_kgDOBl2Rpw",
+        "url": "https://api.github.com/orgs/acme",
+        "repos_url": "https://api.github.com/orgs/acme/repos",
+        "description": None,
+    },
+]
+
+
+def _service() -> GitHubService:
+    return GitHubService(make_github_instance(access_token="ghp-secret"))
+
+
+@pytest.fixture
+def fake_cache(monkeypatch):
+    """A CacheService backed by an in-memory fakeredis async client."""
+    svc = CacheService()
+    svc._client = fakeredis.aioredis.FakeRedis(decode_responses=True)
+    svc._pool = object()
+    svc._available = True
+    monkeypatch.setattr("app.services.github.cache_service", svc)
+    return svc
+
+
+class TestRepositoryTeams:
+    @pytest.mark.asyncio
+    async def test_are_fetched_uncapped_from_the_repository_endpoint(self, fake_cache):
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_REPO_TEAMS)) as paginated:
+            result = await service.get_repository_teams("acme", "widgets")
+
+        assert result == _REPO_TEAMS
+        assert paginated.await_args.args[0] == "/repos/acme/widgets/teams"
+        assert paginated.await_args.kwargs["max_pages"] is None
+
+    @pytest.mark.asyncio
+    async def test_the_second_call_is_served_from_the_cache(self, fake_cache):
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_REPO_TEAMS)) as paginated:
+            await service.get_repository_teams("acme", "widgets")
+            second = await service.get_repository_teams("acme", "widgets")
+
+        # Equality after a JSON round-trip: the optional fields and the nested parent survive.
+        assert second == _REPO_TEAMS
+        assert paginated.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_failed_fetch_is_not_cached(self, fake_cache):
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=None)) as paginated:
+            assert await service.get_repository_teams("acme", "widgets") is None
+            assert await service.get_repository_teams("acme", "widgets") is None
+
+        assert paginated.await_count == 2
+
+
+class TestOrgTeams:
+    @pytest.mark.asyncio
+    async def test_are_fetched_uncapped_from_the_org_endpoint(self, fake_cache):
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=[])) as paginated:
+            await service.get_org_teams("acme")
+
+        assert paginated.await_args.args[0] == "/orgs/acme/teams"
+        assert paginated.await_args.kwargs["max_pages"] is None
+
+
+class TestTeamMembers:
+    @pytest.mark.asyncio
+    async def test_carry_the_role_the_query_asked_for(self, fake_cache):
+        service = _service()
+        pages = {
+            "maintainer": [{"login": "ada", "id": 1, "type": "User"}],
+            "member": [{"login": "bob", "id": 2, "type": "User"}],
+        }
+
+        async def _paginated(endpoint, params=None, max_pages=10):
+            return pages[params["role"]]
+
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(side_effect=_paginated)) as paginated:
+            result = await service.get_team_members("acme", "payments", 4711)
+
+        assert result == [
+            {"login": "ada", "role": "maintainer"},
+            {"login": "bob", "role": "member"},
+        ]
+        # A capped member list is a team quietly missing people, so both calls must be uncapped.
+        assert [call.kwargs["max_pages"] for call in paginated.await_args_list] == [None, None]
+
+    @pytest.mark.asyncio
+    async def test_a_failed_page_yields_none_rather_than_half_a_team(self, fake_cache):
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(side_effect=[[{"login": "ada"}], None])):
+            assert await service.get_team_members("acme", "payments", 4711) is None
+
+    @pytest.mark.asyncio
+    async def test_a_renamed_slug_still_hits_the_cache_entry_of_the_same_team_id(self, fake_cache):
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=[{"login": "ada"}])) as paginated:
+            await service.get_team_members("acme", "payments", 4711)
+            renamed = await service.get_team_members("acme", "payments-eu", 4711)
+
+        assert renamed == [{"login": "ada", "role": "maintainer"}, {"login": "ada", "role": "member"}]
+        assert paginated.await_count == 2
+
+
+class TestViewerOrganisations:
+    @pytest.mark.asyncio
+    async def test_are_fetched_uncapped_from_the_viewer_endpoint(self):
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_ORG_MEMBERSHIPS)) as paginated:
+            assert await service.get_viewer_organisations() == _ORG_MEMBERSHIPS
+
+        assert paginated.await_args.args[0] == "/user/orgs"
+        assert paginated.await_args.kwargs["max_pages"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_refused_request_stays_none_rather_than_an_empty_list(self):
+        """The connection test tells "refused" from "member of nothing" only by this distinction."""
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=None)):
+            assert await service.get_viewer_organisations() is None
+
+
+class TestPublicProfileEmail:
+    @pytest.mark.asyncio
+    async def test_returns_the_public_email(self):
+        service = _service()
+        response = MagicMock(status_code=200)
+        response.json = MagicMock(return_value={"login": "ada", "email": "ada@example.com"})
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)) as api_get:
+            assert await service.get_user_public_email("ada") == "ada@example.com"
+
+        assert api_get.await_args.args[0] == "/users/ada"
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_the_profile_hides_it(self):
+        service = _service()
+        response = MagicMock(status_code=200)
+        response.json = MagicMock(return_value={"login": "ada", "email": None})
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)):
+            assert await service.get_user_public_email("ada") is None
+
+    @pytest.mark.asyncio
+    async def test_a_refusal_is_logged_rather_than_read_as_a_hidden_email(self, caplog):
+        service = _service()
+        response = MagicMock(status_code=403)
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)):
+            with caplog.at_level("WARNING", logger="app.services.github"):
+                assert await service.get_user_public_email("ada") is None
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1, warnings
+        assert "ada" in warnings[0] and "403" in warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_an_unknown_login_is_not_worth_a_warning(self, caplog):
+        service = _service()
+        response = MagicMock(status_code=404)
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)):
+            with caplog.at_level("WARNING", logger="app.services.github"):
+                assert await service.get_user_public_email("ghost") is None
+
+        assert [r.getMessage() for r in caplog.records if r.levelname == "WARNING"] == []

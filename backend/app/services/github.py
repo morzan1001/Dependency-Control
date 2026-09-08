@@ -10,6 +10,7 @@ from app.core.cache import cache_service
 from app.core.constants import (
     GITHUB_JWKS_CACHE_TTL,
     GITHUB_JWKS_URI_CACHE_TTL,
+    GITHUB_TEAM_SYNC_CACHE_TTL,
 )
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
@@ -181,6 +182,67 @@ class GitHubService:
         if response and response.status_code == 200:
             branch = response.json().get("default_branch")
             return str(branch) if branch else None
+        return None
+
+    async def _get_cached_list(self, cache_key: str) -> list[dict[str, Any]] | None:
+        cached: list[dict[str, Any]] | None = await cache_service.get(cache_key)
+        return cached
+
+    async def _get_cached_all_pages(self, cache_key: str, endpoint: str) -> list[dict[str, Any]] | None:
+        cached = await self._get_cached_list(cache_key)
+        if cached is not None:
+            return cached
+
+        items = await self._api_get_paginated(endpoint, max_pages=None)
+        if items is None:
+            return None
+        await cache_service.set(cache_key, items, ttl_seconds=GITHUB_TEAM_SYNC_CACHE_TTL)
+        return items
+
+    async def get_repository_teams(self, owner: str, repo: str) -> list[dict[str, Any]] | None:
+        """Teams with access to a repository. Returns None on API failure."""
+        return await self._get_cached_all_pages(
+            self._get_cache_key(f"repo_teams:{owner}/{repo}"),
+            f"/repos/{owner}/{repo}/teams",
+        )
+
+    async def get_org_teams(self, org: str) -> list[dict[str, Any]] | None:
+        """Every team of an organisation with its parent, for the nesting-depth map."""
+        return await self._get_cached_all_pages(self._get_cache_key(f"org_teams:{org}"), f"/orgs/{org}/teams")
+
+    async def get_team_members(self, org: str, team_slug: str, team_id: int) -> list[dict[str, Any]] | None:
+        """Logins tagged with their role. Cached on the numeric id: the slug is renameable."""
+        cache_key = self._get_cache_key(f"team_members:{org}/{team_id}")
+        cached = await self._get_cached_list(cache_key)
+        if cached is not None:
+            return cached
+
+        endpoint = f"/orgs/{org}/teams/{team_slug}/members"
+        members: list[dict[str, Any]] = []
+        # The endpoint returns plain user objects, so the role can only come from the query.
+        for role in ("maintainer", "member"):
+            page = await self._api_get_paginated(endpoint, params={"role": role}, max_pages=None)
+            if page is None:
+                return None
+            members.extend({"login": user["login"], "role": role} for user in page if user.get("login"))
+
+        await cache_service.set(cache_key, members, ttl_seconds=GITHUB_TEAM_SYNC_CACHE_TTL)
+        return members
+
+    async def get_viewer_organisations(self) -> list[dict[str, Any]] | None:
+        """Organisations the token's own identity belongs to. Uncached: a connection test must
+        observe the token as it is now, not as it was five minutes ago."""
+        return await self._api_get_paginated("/user/orgs", max_pages=None)
+
+    async def get_user_public_email(self, login: str) -> str | None:
+        """The public profile email, or None when the user hides it."""
+        response = await self._api_get(f"/users/{login}")
+        if response is not None and response.status_code == 200:
+            email = response.json().get("email")
+            return str(email) if email else None
+        # A refusal read as "no public email" would silently disable email matching for every member.
+        if response is not None and response.status_code != 404:
+            logger.warning("GitHub API GET /users/%s failed: %s", login, response.status_code)
         return None
 
     async def get_pull_requests_for_commit(self, owner: str, repo: str, commit_sha: str) -> list[GitHubPullRequest]:
