@@ -15,6 +15,9 @@ from app.services.gitlab import GitLabService
 
 logger = logging.getLogger(__name__)
 
+# Identifies our own comment on an MR/PR so repeat scans update it instead of appending a duplicate.
+_SCAN_COMMENT_MARKER = "<!-- dependency-control:scan-comment -->"
+
 
 def _build_mr_comment(
     scan_id: str,
@@ -28,11 +31,10 @@ def _build_mr_comment(
     if stats.critical > 0 or stats.high > 0:
         status_label = "[ALERT]"
 
-    marker = "<!-- dependency-control:scan-comment -->"
     scan_marker = f"<!-- dependency-control:scan-id:{scan_id} -->"
 
     comment_lines: list[str] = [
-        marker,
+        _SCAN_COMMENT_MARKER,
         scan_marker,
         f"### {status_label} Dependency Control Scan Results",
         "",
@@ -111,7 +113,6 @@ async def decorate_gitlab_mr(
         scan_url = f"{frontend_url}/projects/{project.id}/scans/{scan_id}"
 
         comment_body = _build_mr_comment(scan_id, stats, scan_url)
-        marker = "<!-- dependency-control:scan-comment -->"
 
         for mr in relevant_mrs:
             try:
@@ -120,7 +121,6 @@ async def decorate_gitlab_mr(
                     gitlab_project_id=project.gitlab_project_id,
                     mr_iid=mr.iid,
                     comment_body=comment_body,
-                    marker=marker,
                     project_id=str(project.id),
                     scan_id=scan_id,
                 )
@@ -147,18 +147,17 @@ async def _update_or_create_mr_comment(
     gitlab_project_id: int,
     mr_iid: int,
     comment_body: str,
-    marker: str,
     project_id: str,
     scan_id: str,
 ) -> None:
-    """Upsert an MR comment identified by `marker`."""
+    """Upsert the MR comment carrying _SCAN_COMMENT_MARKER."""
     existing_notes = await gitlab_service.get_merge_request_notes(gitlab_project_id, mr_iid)
 
     existing_comment_id: int | None = None
     existing_body: str | None = None
 
     for note in existing_notes:
-        if marker in note.body:
+        if _SCAN_COMMENT_MARKER in note.body:
             existing_comment_id = note.id
             existing_body = note.body
             break
@@ -246,7 +245,6 @@ async def decorate_github_pr(
         scan_url = f"{frontend_url}/projects/{project.id}/scans/{scan_id}"
 
         comment_body = _build_mr_comment(scan_id, stats, scan_url)
-        marker = "<!-- dependency-control:scan-comment -->"
 
         for pr in relevant_prs:
             try:
@@ -256,7 +254,6 @@ async def decorate_github_pr(
                     repo=repo,
                     pr_number=pr.number,
                     comment_body=comment_body,
-                    marker=marker,
                     project_id=str(project.id),
                     scan_id=scan_id,
                 )
@@ -284,18 +281,17 @@ async def _update_or_create_pr_comment(
     repo: str,
     pr_number: int,
     comment_body: str,
-    marker: str,
     project_id: str,
     scan_id: str,
 ) -> None:
-    """Upsert a PR comment identified by `marker`."""
+    """Upsert the PR comment carrying _SCAN_COMMENT_MARKER."""
     existing_comments = await github_service.get_pull_request_comments(owner, repo, pr_number)
 
     existing_comment_id: int | None = None
     existing_body: str | None = None
 
     for comment in existing_comments:
-        if marker in (comment.body or ""):
+        if _SCAN_COMMENT_MARKER in (comment.body or ""):
             existing_comment_id = comment.id
             existing_body = comment.body
             break
