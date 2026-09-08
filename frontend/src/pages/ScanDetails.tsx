@@ -19,6 +19,7 @@ import { toast } from "sonner"
 import { isPostProcessorResult } from '@/lib/post-processors'
 import { SCAN_STATUS_COMPLETED_WITH_ERRORS } from '@/lib/scan-status'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
+import { MarkReleaseButton } from '@/components/scans/MarkReleaseButton'
 import { ScanReleaseControl } from '@/components/scans/ScanReleaseControl'
 import { logger } from '@/lib/logger'
 import { formatDateTime, shortCommitHash } from '@/lib/utils'
@@ -261,6 +262,7 @@ export default function ScanDetails() {
                 <RefreshCw className={`mr-2 h-4 w-4 ${triggerRescanMutation.isPending ? 'animate-spin' : ''}`} />
                 Trigger Re-scan
             </Button>
+            <MarkReleaseButton projectId={projectId!} scan={scan} />
         </div>
       </div>
 
