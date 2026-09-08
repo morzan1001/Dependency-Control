@@ -12,7 +12,7 @@ from app.core.constants import (
     GITHUB_JWKS_URI_CACHE_TTL,
 )
 from app.core.http_utils import InstrumentedAsyncClient
-from app.models.github_api import GitHubOIDCPayload
+from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
 from app.models.github_instance import GitHubInstance
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
@@ -182,6 +182,75 @@ class GitHubService:
             branch = response.json().get("default_branch")
             return str(branch) if branch else None
         return None
+
+    async def get_pull_requests_for_commit(self, owner: str, repo: str, commit_sha: str) -> list[GitHubPullRequest]:
+        """Pull requests associated with a commit, retrying via the head parent when it is a merge commit."""
+        pull_requests = await self._pull_requests_for_sha(owner, repo, commit_sha)
+        if pull_requests:
+            return pull_requests
+
+        # A `pull_request` workflow checks out an ephemeral test-merge commit that GitHub associates with
+        # no pull request (HTTP 200 and an empty list, never a 404); its parents[1] is the PR head.
+        head_sha = await self._merge_commit_head_parent(owner, repo, commit_sha)
+        if head_sha:
+            pull_requests = await self._pull_requests_for_sha(owner, repo, head_sha)
+            if pull_requests:
+                return pull_requests
+
+        logger.info(
+            "No pull request found for %s/%s commit %s (head parent tried: %s)",
+            owner,
+            repo,
+            commit_sha,
+            head_sha or "none",
+        )
+        return []
+
+    async def _pull_requests_for_sha(self, owner: str, repo: str, sha: str) -> list[GitHubPullRequest]:
+        response = await self._api_get(f"/repos/{owner}/{repo}/commits/{sha}/pulls")
+        if response and response.status_code == 200:
+            return [GitHubPullRequest(**pr) for pr in response.json()]
+        return []
+
+    async def _merge_commit_head_parent(self, owner: str, repo: str, commit_sha: str) -> str | None:
+        """Second parent of a two-parent merge commit. Parent order is a git convention, not an API guarantee."""
+        response = await self._api_get(f"/repos/{owner}/{repo}/commits/{commit_sha}")
+        if not (response and response.status_code == 200):
+            return None
+        parents = response.json().get("parents") or []
+        if len(parents) != 2:
+            return None
+        head_sha = parents[1].get("sha")
+        return str(head_sha) if head_sha else None
+
+    async def get_pull_request_comments(self, owner: str, repo: str, pr_number: int) -> list[GitHubIssueComment]:
+        """Issue comments on a pull request, uncapped so an old scan comment is never missed and duplicated."""
+        comments = await self._api_get_paginated(f"/repos/{owner}/{repo}/issues/{pr_number}/comments", max_pages=None)
+        return [GitHubIssueComment(**c) for c in comments] if comments else []
+
+    async def post_pull_request_comment(self, owner: str, repo: str, pr_number: int, body: str) -> bool:
+        """Post a comment on a pull request."""
+        response = await self._api_post(
+            f"/repos/{owner}/{repo}/issues/{pr_number}/comments",
+            json_data={"body": body},
+        )
+        if response:
+            if response.status_code == 201:
+                return True
+            logger.error(f"Failed to post PR comment: {response.status_code} - {response.text}")
+        return False
+
+    async def update_pull_request_comment(self, owner: str, repo: str, comment_id: int, body: str) -> bool:
+        """Update an existing pull-request comment."""
+        response = await self._api_patch(
+            f"/repos/{owner}/{repo}/issues/comments/{comment_id}",
+            json_data={"body": body},
+        )
+        if response:
+            if response.status_code == 200:
+                return True
+            logger.error(f"Failed to update PR comment: {response.status_code} - {response.text}")
+        return False
 
     async def _get_jwks_uri(self) -> str | None:
         """Resolve the JWKS URI: well-known endpoint for github.com, OIDC discovery for GHES."""
