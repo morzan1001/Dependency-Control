@@ -5,6 +5,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { CICDInstancesManagement } from '../CICDInstancesManagement'
 import type { GitHubInstance } from '@/types/github'
 
+const mockGitHubCreate = vi.fn().mockResolvedValue({})
 const mockGitHubUpdate = vi.fn().mockResolvedValue({})
 const mockUseGitHubInstances = vi.fn()
 const mockUseGitLabInstances = vi.fn()
@@ -14,7 +15,7 @@ vi.mock('@/api/gitlab-instances', () => ({
 }))
 vi.mock('@/api/github-instances', () => ({
   githubInstancesApi: {
-    create: vi.fn(),
+    create: (...args: unknown[]) => mockGitHubCreate(...args),
     update: (...args: unknown[]) => mockGitHubUpdate(...args),
     delete: vi.fn(),
     testConnection: vi.fn(),
@@ -93,6 +94,7 @@ function renderManagement() {
 
 describe('CICDInstancesManagement GitHub team sync', () => {
   beforeEach(() => {
+    mockGitHubCreate.mockClear()
     mockGitHubUpdate.mockClear()
     mockUseGitLabInstances.mockReturnValue({ data: { items: [] }, isLoading: false })
     mockUseGitHubInstances.mockReturnValue(githubInstance())
@@ -141,5 +143,26 @@ describe('CICDInstancesManagement GitHub team sync', () => {
     fireEvent.click(within(gitlabDialog).getByRole('button', { name: 'Cancel' }))
 
     expect(within(openEditDialog(/GitHub\.com/)).queryByLabelText('Team Sync Depth')).toBeNull()
+  })
+
+  it('sends sync_teams with the GitHub create payload', async () => {
+    renderManagement()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Add Instance' }))
+
+    const dialog = screen.getByRole('dialog')
+    fireEvent.click(within(dialog).getByRole('combobox'))
+    fireEvent.click(screen.getByRole('option', { name: 'GitHub' }))
+
+    fireEvent.change(within(dialog).getByLabelText('Name *'), { target: { value: 'GitHub.com' } })
+    fireEvent.change(within(dialog).getByLabelText('OIDC Issuer URL *'), {
+      target: { value: 'https://token.actions.githubusercontent.com' },
+    })
+    fireEvent.change(within(dialog).getByLabelText('Access Token'), { target: { value: 'ghp_x' } })
+    fireEvent.click(within(dialog).getByLabelText('Sync Teams'))
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create Instance' }))
+
+    await waitFor(() => expect(mockGitHubCreate).toHaveBeenCalled())
+    expect(mockGitHubCreate.mock.calls[0][0]).toMatchObject({ sync_teams: true })
   })
 })
