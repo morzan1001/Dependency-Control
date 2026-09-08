@@ -899,6 +899,8 @@ class ChatToolRegistry:
 
             summary = {
                 "total_steps": len(steps),
+                "findings_read": len(findings),
+                "findings_total": findings_total,
                 "cves_resolved": sum(s["resolves_count"] for s in steps),
                 "critical_resolved": sum(s["critical_count"] for s in steps),
                 "steps_without_fix": sum(1 for s in steps if not s["has_fix"]),

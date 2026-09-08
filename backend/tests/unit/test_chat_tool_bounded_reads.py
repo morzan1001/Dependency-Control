@@ -14,6 +14,7 @@ from app.services.chat.tools.registry import (
     _CVE_OCCURRENCE_READ,
     _DEPENDENCY_TREE_READ,
     _EXPIRING_WAIVER_READ,
+    _REMEDIATION_FINDING_READ,
     _TEAM_PROJECT_READ,
     _WAIVER_READ,
     _WEBHOOK_DELIVERY_READ,
@@ -244,6 +245,33 @@ async def test_the_occurrence_count_for_a_cve_is_the_population_not_the_page(see
 
     assert result["occurrences_read"] == _CVE_OCCURRENCE_READ
     assert result["total_occurrences"] == population
+    assert result["_bounded_read"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_remediation_plan_names_the_finding_set_it_was_built_over(seeded, admin_user):
+    """The plan's summary counts only what the page resolved, which reads as the whole backlog."""
+    population = _REMEDIATION_FINDING_READ + _OVER_THE_CEILING
+    _fill(
+        seeded.findings,
+        population,
+        lambda i: {
+            "_id": f"row-{i}",
+            "scan_id": _SCAN,
+            "project_id": _PROJECT,
+            "severity": "HIGH",
+            "component": f"pkg-{i}",
+            "version": "1.0.0",
+            "details": {"fixed_version": "2.0.0"},
+        },
+    )
+
+    result = await ChatToolRegistry().execute_tool(
+        "generate_remediation_plan", {"project_id": _PROJECT}, admin_user, seeded
+    )
+
+    assert result["summary"]["findings_read"] == _REMEDIATION_FINDING_READ
+    assert result["summary"]["findings_total"] == population
     assert result["_bounded_read"] is True
 
 
