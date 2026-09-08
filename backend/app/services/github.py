@@ -24,6 +24,73 @@ _GITHUB_COM_JWKS_URI = "https://token.actions.githubusercontent.com/.well-known/
 
 _GITHUB_API_TIMEOUT = 10.0
 
+# An explicit "direct" outranks an omitted access_source, which outranks an explicit
+# "organization"/"enterprise". The field is optional on the repository-teams response.
+_ACCESS_SOURCE_RANK = {"direct": 2, "organization": 0, "enterprise": 0}
+_ACCESS_SOURCE_ABSENT = 1
+
+_PERMISSION_RANK = {"pull": 0, "triage": 1, "push": 2, "maintain": 3, "admin": 4}
+
+
+def build_team_depth_map(org_teams: list[dict[str, Any]]) -> dict[int, int]:
+    """Team id -> nesting depth from GET /orgs/{org}/teams; the repository call carries one level only."""
+    parents: dict[int, int | None] = {}
+    for team in org_teams:
+        team_id = team.get("id")
+        if team_id is None:
+            continue
+        parent_id = (team.get("parent") or {}).get("id")
+        parents[int(team_id)] = None if parent_id is None else int(parent_id)
+
+    depths: dict[int, int] = {}
+    for team_id, parent_id in parents.items():
+        depth = 0
+        seen = {team_id}
+        current = parent_id
+        # A parent outside the map is a team this token cannot see; `seen` stops a cycle from hanging the sync.
+        while current is not None and current in parents and current not in seen:
+            seen.add(current)
+            depth += 1
+            current = parents[current]
+        depths[team_id] = depth
+    return depths
+
+
+def _access_source_rank(team: dict[str, Any]) -> int:
+    access_source = team.get("access_source")
+    if access_source is None:
+        return _ACCESS_SOURCE_ABSENT
+    return _ACCESS_SOURCE_RANK.get(str(access_source), _ACCESS_SOURCE_ABSENT)
+
+
+def _permission_rank(team: dict[str, Any]) -> int:
+    permissions = team.get("permissions")
+    # The legacy `permission` string collapses maintain onto push and triage onto pull.
+    if isinstance(permissions, dict):
+        return max((rank for name, rank in _PERMISSION_RANK.items() if permissions.get(name)), default=-1)
+    return _PERMISSION_RANK.get(str(team.get("permission") or ""), -1)
+
+
+def _sort_key(team: dict[str, Any], depth_map: dict[int, int] | None) -> tuple[int, int, int, int]:
+    team_id = int(team["id"])
+    depth = depth_map.get(team_id, 0) if depth_map else 0
+    return (-_access_source_rank(team), -depth, -_permission_rank(team), team_id)
+
+
+def select_github_team(
+    candidates: list[dict[str, Any]],
+    depth_map: dict[int, int] | None = None,
+) -> dict[str, Any] | None:
+    """Direct access, then depth, then permission, then the lowest id.
+
+    The id keeps the order total: without it two equally-ranked teams swap between syncs and the
+    project's team assignment flips with nothing in the logs to explain it.
+    """
+    ranked = [team for team in candidates if team.get("id") is not None]
+    if not ranked:
+        return None
+    return min(ranked, key=lambda team: _sort_key(team, depth_map))
+
 
 class GitHubService:
     """OIDC token validation and API operations for github.com and GHES instances."""
