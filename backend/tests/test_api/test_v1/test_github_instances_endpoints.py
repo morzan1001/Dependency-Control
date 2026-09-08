@@ -34,3 +34,35 @@ class TestGitHubInstancePagination:
         assert result["page"] == 2
         assert result["size"] == 100
         assert result["pages"] == 3
+
+
+class TestGitHubInstanceSyncTeams:
+    def test_create_persists_and_returns_sync_teams(self, admin_user):
+        from app.api.v1.endpoints.github_instances import create_instance
+        from app.schemas.github_instance import GitHubInstanceCreate
+
+        created = []
+        mock_repo = _make_repo_mock(exists_by_url=False, exists_by_name=False)
+
+        async def _create(instance):
+            created.append(instance)
+            return instance
+
+        mock_repo.create = AsyncMock(side_effect=_create)
+        service = MagicMock()
+        service.get_jwks = AsyncMock(return_value={"keys": [{"kid": "k1"}]})
+
+        payload = GitHubInstanceCreate(
+            name="GitHub.com",
+            url="https://token.actions.githubusercontent.com",
+            oidc_audience="dependency-control",
+            access_token="ghp-secret",
+            sync_teams=True,
+        )
+
+        with patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo):
+            with patch(f"{MODULE}.GitHubService", return_value=service):
+                response = asyncio.run(create_instance(instance_data=payload, db=MagicMock(), current_user=admin_user))
+
+        assert created[0].sync_teams is True
+        assert response.sync_teams is True

@@ -26,13 +26,16 @@ class GitHubInstance(MongoDocument, CreatedAtModel, VcsInstanceModel):
     access_token: str | None = Field(
         None,
         exclude=True,
-        description="Personal Access Token with 'repo' scope for GitHub API operations",
+        description="Personal Access Token for GitHub API operations. Classic PAT: 'repo', plus "
+        "'read:org' when sync_teams is on. The token's identity must be a member of the "
+        "organisation, or it sees only a subset of teams and members.",
     )
 
     # Features
     auto_create_projects: bool = Field(
         False, description="Automatically create projects from OIDC tokens if they don't exist"
     )
+    sync_teams: bool = Field(False, description="Sync GitHub team members to local teams")
 
     # Metadata
     created_by: str = Field(..., description="User ID of the admin who created this instance")
