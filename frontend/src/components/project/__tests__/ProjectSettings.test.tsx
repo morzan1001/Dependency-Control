@@ -8,6 +8,7 @@ import type { User } from '@/types/user'
 
 const mockUpdate = vi.fn().mockResolvedValue({})
 const mockUseGitHubInstances = vi.fn()
+const mockUseTeams = vi.fn()
 
 vi.mock('@/api/projects', () => ({
   projectApi: {
@@ -17,7 +18,7 @@ vi.mock('@/api/projects', () => ({
   },
 }))
 vi.mock('@/hooks/queries/use-system', () => ({ useAppConfig: () => ({ data: undefined }) }))
-vi.mock('@/hooks/queries/use-teams', () => ({ useTeams: () => ({ data: [] }) }))
+vi.mock('@/hooks/queries/use-teams', () => ({ useTeams: () => mockUseTeams() }))
 vi.mock('@/hooks/queries/use-projects', () => ({
   projectKeys: { detail: (id: string) => ['project', id] },
   useProjectBranches: () => ({ data: [] }),
@@ -92,6 +93,7 @@ function renderSettings(project: Project) {
 describe('ProjectSettings GitHub PR decoration', () => {
   beforeEach(() => {
     mockUpdate.mockClear()
+    mockUseTeams.mockReturnValue({ data: [] })
     mockUseGitHubInstances.mockReturnValue(githubInstances(true))
   })
 
@@ -157,5 +159,39 @@ describe('ProjectSettings GitHub PR decoration', () => {
     renderSettings(githubProject({ github_instance_id: undefined, gitlab_instance_id: 'gl-1' }))
 
     expect(screen.queryByLabelText('Pull Request Decoration')).toBeNull()
+  })
+})
+
+describe('ProjectSettings GitHub team assignment', () => {
+  beforeEach(() => {
+    mockUseTeams.mockReturnValue({ data: [] })
+    mockUseGitHubInstances.mockReturnValue(githubInstances(true))
+  })
+
+  it('names the team a rule picked out of several candidates', () => {
+    mockUseTeams.mockReturnValue({
+      data: [
+        { id: 't0', name: 'Platform' },
+        { id: 't1', name: 'Payments' },
+      ],
+    })
+
+    renderSettings(githubProject({ team_id: 't1', github_team_candidates: 3 }))
+
+    expect(screen.getByText('3 teams matched, using Payments')).toBeInTheDocument()
+  })
+
+  it('stays silent when exactly one team matched', () => {
+    mockUseTeams.mockReturnValue({ data: [{ id: 't1', name: 'Payments' }] })
+
+    renderSettings(githubProject({ team_id: 't1', github_team_candidates: 1 }))
+
+    expect(screen.queryByText(/teams matched/)).toBeNull()
+  })
+
+  it('stays silent for a project that predates the field', () => {
+    renderSettings(githubProject({ team_id: 't1' }))
+
+    expect(screen.queryByText(/teams matched/)).toBeNull()
   })
 })
