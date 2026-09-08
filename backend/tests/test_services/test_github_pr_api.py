@@ -43,7 +43,8 @@ def _commit_payload(*parent_shas):
     return {
         "sha": _MERGE_SHA,
         "node_id": "C_kwDOABCDEF",
-        "commit": {"message": f"Merge {_HEAD_SHA[:7]} into {_BASE_SHA[:7]}"},
+        # GitHub spells both SHAs out in full in a test-merge message.
+        "commit": {"message": f"Merge {_HEAD_SHA} into {_BASE_SHA}"},
         "parents": [
             {
                 "sha": sha,
@@ -53,6 +54,11 @@ def _commit_payload(*parent_shas):
             for sha in parent_shas
         ],
     }
+
+
+def _error_body(message):
+    """Shape of a GitHub REST error response."""
+    return {"message": message, "documentation_url": "https://docs.github.com/rest"}
 
 
 def _routed_api_get(routes):
@@ -121,7 +127,7 @@ class TestMergeCommitFallback:
         ],
     )
     def test_fallback_only_fires_for_an_exactly_two_parent_commit(self, parents):
-        """On an ordinary commit parents[0] is just its ancestor, and asking it would decorate a foreign pull request."""
+        """On an ordinary commit parents[0] is just its ancestor; asking it would decorate a foreign pull request."""
         service = GitHubService(make_github_instance(access_token="ghp-x"))
         routes = {
             f"/repos/acme/widget/commits/{_MERGE_SHA}/pulls": _json_response([]),
@@ -139,6 +145,24 @@ class TestMergeCommitFallback:
             f"/repos/acme/widget/commits/{_MERGE_SHA}",
         ]
 
+    def test_logs_the_fallback_hit_at_info_naming_both_shas(self, caplog):
+        """A decoration that came from the heuristic must be tellable from one the direct lookup found."""
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        routes = {
+            f"/repos/acme/widget/commits/{_MERGE_SHA}/pulls": _json_response([]),
+            f"/repos/acme/widget/commits/{_MERGE_SHA}": _json_response(_commit_payload(_BASE_SHA, _HEAD_SHA)),
+            f"/repos/acme/widget/commits/{_HEAD_SHA}/pulls": _json_response([_PULL_REQUEST]),
+        }
+        with patch.object(service, "_api_get", _routed_api_get(routes)):
+            with caplog.at_level("INFO", logger="app.services.github"):
+                prs = asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA))
+
+        assert [p.number for p in prs] == [42]
+        messages = [r.getMessage() for r in caplog.records if r.levelname == "INFO"]
+        assert len(messages) == 1, messages
+        assert _MERGE_SHA in messages[0]
+        assert _HEAD_SHA in messages[0]
+
     def test_logs_the_two_step_miss_at_info_naming_both_shas(self, caplog):
         """Decorating nothing must never be silent: both the stored SHA and the head parent belong in the log."""
         service = GitHubService(make_github_instance(access_token="ghp-x"))
@@ -155,6 +179,42 @@ class TestMergeCommitFallback:
         assert len(messages) == 1, messages
         assert _MERGE_SHA in messages[0]
         assert _HEAD_SHA in messages[0]
+
+
+class TestRejectedLookupsAreLoud:
+    """A rejected lookup must not read like "this commit has no pull request": _api_get logs transport
+    exceptions only, so an unlogged 403 or 429 would end at the INFO miss line and mislead the operator."""
+
+    def test_a_rejected_direct_lookup_warns_with_endpoint_and_status(self, caplog):
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        endpoint = f"/repos/acme/widget/commits/{_MERGE_SHA}/pulls"
+        routes = {endpoint: _json_response(_error_body("Resource not accessible by integration"), 403)}
+
+        with patch.object(service, "_api_get", _routed_api_get(routes)):
+            with caplog.at_level("WARNING", logger="app.services.github"):
+                assert asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA)) == []
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1, warnings
+        assert endpoint in warnings[0]
+        assert "403" in warnings[0]
+
+    def test_a_rejected_commit_lookup_warns_with_endpoint_and_status(self, caplog):
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        endpoint = f"/repos/acme/widget/commits/{_MERGE_SHA}"
+        routes = {
+            f"{endpoint}/pulls": _json_response([]),
+            endpoint: _json_response(_error_body("API rate limit exceeded for installation ID 1234."), 429),
+        }
+
+        with patch.object(service, "_api_get", _routed_api_get(routes)):
+            with caplog.at_level("WARNING", logger="app.services.github"):
+                assert asyncio.run(service.get_pull_requests_for_commit("acme", "widget", _MERGE_SHA)) == []
+
+        warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1, warnings
+        assert endpoint in warnings[0]
+        assert "429" in warnings[0]
 
 
 class TestGetPullRequestComments:

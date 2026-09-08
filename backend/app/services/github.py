@@ -195,6 +195,14 @@ class GitHubService:
         if head_sha:
             pull_requests = await self._pull_requests_for_sha(owner, repo, head_sha)
             if pull_requests:
+                logger.info(
+                    "Resolved %s/%s commit %s to pull request(s) %s via merge-commit head parent %s",
+                    owner,
+                    repo,
+                    commit_sha,
+                    [pr.number for pr in pull_requests],
+                    head_sha,
+                )
                 return pull_requests
 
         logger.info(
@@ -207,21 +215,31 @@ class GitHubService:
         return []
 
     async def _pull_requests_for_sha(self, owner: str, repo: str, sha: str) -> list[GitHubPullRequest]:
-        response = await self._api_get(f"/repos/{owner}/{repo}/commits/{sha}/pulls")
-        if response and response.status_code == 200:
-            return [GitHubPullRequest(**pr) for pr in response.json()]
-        return []
+        endpoint = f"/repos/{owner}/{repo}/commits/{sha}/pulls"
+        response = await self._api_get(endpoint)
+        if response is None or not self._ok(endpoint, response):
+            return []
+        return [GitHubPullRequest(**pr) for pr in response.json()]
 
     async def _merge_commit_head_parent(self, owner: str, repo: str, commit_sha: str) -> str | None:
         """Second parent of a two-parent merge commit. Parent order is a git convention, not an API guarantee."""
-        response = await self._api_get(f"/repos/{owner}/{repo}/commits/{commit_sha}")
-        if not (response and response.status_code == 200):
+        endpoint = f"/repos/{owner}/{repo}/commits/{commit_sha}"
+        response = await self._api_get(endpoint)
+        if response is None or not self._ok(endpoint, response):
             return None
         parents = response.json().get("parents") or []
         if len(parents) != 2:
             return None
         head_sha = parents[1].get("sha")
         return str(head_sha) if head_sha else None
+
+    @staticmethod
+    def _ok(endpoint: str, response: httpx.Response) -> bool:
+        """True for 200. A rejected read must not be mistaken for an empty one, so a non-200 is logged here."""
+        if response.status_code == 200:
+            return True
+        logger.warning("GitHub API GET %s returned HTTP %d", endpoint, response.status_code)
+        return False
 
     async def get_pull_request_comments(self, owner: str, repo: str, pr_number: int) -> list[GitHubIssueComment]:
         """Issue comments on a pull request, uncapped so an old scan comment is never missed and duplicated."""
