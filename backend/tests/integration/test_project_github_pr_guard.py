@@ -55,15 +55,28 @@ async def test_enabling_is_allowed_and_persisted_when_the_instance_has_a_token(c
 
 
 @pytest.mark.asyncio
-async def test_an_unrelated_edit_is_refused_while_the_stored_toggle_is_on(client, db, owner_auth_headers_proj):
-    """Falling back to the stored value locks the project out of every edit until decoration is turned off."""
+async def test_an_unrelated_edit_is_allowed_while_the_stored_toggle_is_on(client, db, owner_auth_headers_proj):
+    """The link is not editable here, so refusing the stored value would leave no way out of the lockout."""
     await _link_github(db, access_token=None)
     await db.projects.update_one({"_id": "p"}, {"$set": {"github_pr_comments_enabled": True}})
 
     resp = await client.put("/api/v1/projects/p", json={"name": "renamed"}, headers=owner_auth_headers_proj)
 
+    assert resp.status_code == 200, resp.text
+    assert (await db.projects.find_one({"_id": "p"}))["name"] == "renamed"
+
+
+@pytest.mark.asyncio
+async def test_re_enabling_is_still_refused_while_the_stored_toggle_is_on(client, db, owner_auth_headers_proj):
+    await _link_github(db, access_token=None)
+    await db.projects.update_one({"_id": "p"}, {"$set": {"github_pr_comments_enabled": True}})
+
+    resp = await client.put(
+        "/api/v1/projects/p", json={"github_pr_comments_enabled": True}, headers=owner_auth_headers_proj
+    )
+
     assert resp.status_code == 400, resp.text
-    assert (await db.projects.find_one({"_id": "p"}))["name"] != "renamed"
+    assert "no access token" in resp.json()["detail"]
 
 
 @pytest.mark.asyncio
