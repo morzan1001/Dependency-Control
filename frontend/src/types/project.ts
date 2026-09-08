@@ -44,6 +44,7 @@ export interface Project {
   github_instance_id?: string;
   github_repository_id?: string;
   github_repository_path?: string;
+  github_pr_comments_enabled?: boolean;
   stats?: EnhancedStats | null;
   last_scan_at?: string;
   created_at?: string;
@@ -75,6 +76,7 @@ export interface ProjectUpdate {
   gitlab_instance_id?: string | null;
   gitlab_project_id?: number | null;
   gitlab_project_path?: string | null;
+  github_pr_comments_enabled?: boolean;
 }
 
 export interface ProjectApiKeyResponse {

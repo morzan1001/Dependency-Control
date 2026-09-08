@@ -92,6 +92,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const [gitlabInstanceId, setGitlabInstanceId] = useState<string | undefined>(project.gitlab_instance_id)
   const [gitlabProjectId, setGitlabProjectId] = useState<number | undefined>(project.gitlab_project_id)
   const [gitlabProjectPath, setGitlabProjectPath] = useState<string | undefined>(project.gitlab_project_path)
+  const [githubPrCommentsEnabled, setGithubPrCommentsEnabled] = useState<boolean>(project.github_pr_comments_enabled || false)
 
   const [openSettingsAnalyzer, setOpenSettingsAnalyzer] = useState<string | null>(null)
   const [analyzerSettingsState, setAnalyzerSettingsState] = useState<Record<string, Record<string, unknown>>>(
@@ -150,6 +151,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const linkedGithubInstance = project.github_instance_id
     ? githubInstances?.items.find((i) => i.id === project.github_instance_id)
     : undefined;
+  const githubHasToken = linkedGithubInstance?.has_access_token ?? false;
 
   const deleteProjectMutation = useMutation({
     mutationFn: () => projectApi.delete(projectId),
@@ -224,6 +226,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
       gitlab_instance_id: gitlabInstanceId || null,
       gitlab_project_id: gitlabProjectId || null,
       gitlab_project_path: gitlabProjectPath || null,
+      github_pr_comments_enabled: githubPrCommentsEnabled,
     })
   }
 
@@ -417,6 +420,25 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                             <p className="text-xs text-muted-foreground pt-2">
                                 This project was created from a GitHub instance. The link is managed by the GitHub Actions OIDC trust and isn't editable here.
                             </p>
+
+                            <div className="flex items-center justify-between pt-2 border-t">
+                                <div className="space-y-0.5">
+                                    <Label htmlFor="github-pr-comments" className={`text-base ${!githubHasToken ? "text-muted-foreground" : ""}`}>
+                                        Pull Request Decoration
+                                    </Label>
+                                    <p className="text-sm text-muted-foreground">
+                                        {githubHasToken
+                                            ? "Post scan results as comments on GitHub Pull Requests."
+                                            : "Requires an access token on the GitHub instance."}
+                                    </p>
+                                </div>
+                                <Switch
+                                    id="github-pr-comments"
+                                    checked={githubPrCommentsEnabled && githubHasToken}
+                                    disabled={!githubHasToken}
+                                    onCheckedChange={setGithubPrCommentsEnabled}
+                                />
+                            </div>
                         </div>
                     </div>
                 )}
