@@ -259,6 +259,26 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             key_info,
         )
 
+    # Same $type filter as the GitLab index above: teams carrying an explicit null in both
+    # fields must stay out of the unique scope, or the second manual team is a duplicate key.
+    try:
+        await database["teams"].create_index(
+            [("github_instance_id", pymongo.ASCENDING), ("github_team_id", pymongo.ASCENDING)],
+            unique=True,
+            partialFilterExpression={
+                "github_instance_id": {MONGO_TYPE: "string"},
+                "github_team_id": {MONGO_TYPE: "int"},
+            },
+        )
+    except (pymongo.errors.DuplicateKeyError, pymongo.errors.OperationFailure) as exc:
+        key_info = getattr(exc, "details", None) or str(exc)
+        logger.error(
+            "Skipping unique teams (github_instance_id, github_team_id) index: build "
+            "failed (likely a pre-existing duplicate). Startup continues without it; "
+            "reconcile the duplicate and re-run. Offending key/error: %s",
+            key_info,
+        )
+
     # Scans
     await database["scans"].create_index("pipeline_id")
     await database["scans"].create_index([("created_at", pymongo.DESCENDING)])
