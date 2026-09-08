@@ -66,6 +66,9 @@ class Project(MongoDocument, CreatedAtModel):
     github_repository_path: str | None = Field(
         None, description="GitHub repository path (owner/repo). For display purposes."
     )
+    github_pr_comments_enabled: bool = Field(
+        False, description="Enable posting scan results as comments on pull requests"
+    )
 
     # Deprecated: use analyzer_settings["license_compliance"] instead.
     license_policy: dict[str, Any] | None = Field(

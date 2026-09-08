@@ -48,6 +48,7 @@ from app.repositories import (
     AnalysisResultRepository,
     CallgraphRepository,
     FindingRepository,
+    GitHubInstanceRepository,
     InvitationRepository,
     ProjectRepository,
     ReleaseRepository,
@@ -248,6 +249,7 @@ async def create_project(
         api_key_hash=api_key_hash,
         active_analyzers=project_in.active_analyzers,
         retention_days=(project_in.retention_days if project_in.retention_days is not None else 90),
+        github_pr_comments_enabled=project_in.github_pr_comments_enabled,
         members=[ProjectMember(user_id=str(current_user.id), role="admin")],
     )
 
@@ -549,6 +551,25 @@ async def _assert_gitlab_mr_token_present(
         )
 
 
+async def _assert_github_pr_token_present(
+    project: Project,
+    update_data: dict[str, Any],
+    db: Any,
+) -> None:
+    """Reject PR-decoration enablement when the linked GitHub instance lacks a token."""
+    pr_enabled = update_data.get("github_pr_comments_enabled", project.github_pr_comments_enabled)
+    # Unlike its GitLab twin, the link itself is set by the OIDC ingest path, never by an update body.
+    if not (pr_enabled and project.github_instance_id):
+        return
+
+    github_instance = await GitHubInstanceRepository(db).get_by_id(project.github_instance_id)
+    if github_instance and not github_instance.access_token:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot enable PR decoration: the linked GitHub instance has no access token configured",
+        )
+
+
 async def _audit_license_policy_change(
     db: Any,
     project_id: str,
@@ -598,6 +619,7 @@ async def update_project(
     if "team_id" in update_data and update_data["team_id"] != project.team_id:
         update_data["team_source"] = "manual"
     await _assert_gitlab_mr_token_present(project, update_data, db)
+    await _assert_github_pr_token_present(project, update_data, db)
 
     system_settings = await deps.get_system_settings(db)
     update_data = apply_system_settings_enforcement(

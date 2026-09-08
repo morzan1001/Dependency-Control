@@ -295,6 +295,34 @@ class TestProjectLimitCountsOnlyProjectsTheUserAdmins:
         assert len(db.projects._docs) == len([1, 2, 3]) + 1
 
 
+class TestCreateCarriesThePrDecorationToggle:
+    """ProjectCreate accepts the toggle, so a create that sets it must reach the stored document."""
+
+    def test_the_toggle_reaches_the_stored_document(self):
+        from app.api.v1.endpoints.projects import create_project
+        from app.models.system import SystemSettings
+        from app.schemas.project import ProjectCreate
+        from tests.mocks.fake_mongo import FakeDatabase
+
+        db = FakeDatabase()
+
+        response = asyncio.run(
+            create_project(
+                project_in=ProjectCreate(name="New", github_pr_comments_enabled=True),
+                current_user=User(
+                    id="creator",
+                    username="creator",
+                    email="creator@test.com",
+                    permissions=["project:create"],
+                ),
+                db=db,
+                settings=SystemSettings(project_limit_per_user=0),
+            )
+        )
+
+        assert db.projects._docs[response.project_id]["github_pr_comments_enabled"] is True
+
+
 class TestHideHistoricalSecretsNarrowsTheResult:
     """The $nor has to run for real: a filter the fake ignored would leave the buried secret visible."""
 
