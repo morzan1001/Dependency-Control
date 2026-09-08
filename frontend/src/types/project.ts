@@ -44,9 +44,6 @@ export interface Project {
   github_instance_id?: string;
   github_repository_id?: string;
   github_repository_path?: string;
-  owner_notification_preferences?: {
-    [key: string]: string[];
-  };
   stats?: EnhancedStats | null;
   last_scan_at?: string;
   created_at?: string;
@@ -78,7 +75,6 @@ export interface ProjectUpdate {
   gitlab_instance_id?: string | null;
   gitlab_project_id?: number | null;
   gitlab_project_path?: string | null;
-  owner_notification_preferences?: Record<string, string[]>;
 }
 
 export interface ProjectApiKeyResponse {
