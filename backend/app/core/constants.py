@@ -1,7 +1,7 @@
 """Shared constants used across the application."""
 
 import re
-from typing import Any
+from typing import Any, Literal, get_args
 
 # Canonical keys for KEV (CISA Known Exploited Vulnerabilities) state persisted in a
 # finding's ``details`` dict by the enrichment writer. Every reader of persisted
@@ -173,10 +173,11 @@ PROJECT_ROLE_EDITOR = "editor"
 PROJECT_ROLE_VIEWER = "viewer"
 PROJECT_ROLES = [PROJECT_ROLE_VIEWER, PROJECT_ROLE_EDITOR, PROJECT_ROLE_ADMIN]
 
-# Team Roles
-TEAM_ROLE_ADMIN = "admin"
-TEAM_ROLE_MEMBER = "member"
-TEAM_ROLES = [TEAM_ROLE_MEMBER, TEAM_ROLE_ADMIN]
+# Team Roles. Ordered least- to most-privileged: helpers/teams.py compares by index.
+TeamRole = Literal["member", "admin"]
+TEAM_ROLE_ADMIN: TeamRole = "admin"
+TEAM_ROLE_MEMBER: TeamRole = "member"
+TEAM_ROLES: list[str] = list(get_args(TeamRole))
 
 # Weights for calculating risk scores
 SEVERITY_WEIGHTS: dict[str, float] = {

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from app.core.constants import TEAM_ROLE_ADMIN, TEAM_ROLE_MEMBER
 from app.models.team import Team, TeamMember
@@ -358,6 +359,31 @@ class TestAddTeamMember:
         assert exc_info.value.status_code == 400
         assert "already" in exc_info.value.detail.lower()
         assert _stored_roles(db) == {"admin-1": TEAM_ROLE_ADMIN, "existing-id": TEAM_ROLE_MEMBER}
+
+
+class TestMemberRoleIsConstrained:
+    """`update_member_role` writes with a bare `$set`, so an illegal role that gets past the request
+    schema is stored unvalidated and then fails every later `Team(**data)` read — including the two
+    endpoints that would repair it."""
+
+    @pytest.mark.parametrize("role", ["owner", "Admin", "ADMIN", "", "viewer"])
+    def test_illegal_roles_rejected_at_the_boundary(self, role):
+        from app.schemas.team import TeamMemberAdd, TeamMemberUpdate
+
+        with pytest.raises(ValidationError):
+            TeamMemberUpdate(role=role)
+        with pytest.raises(ValidationError):
+            TeamMemberAdd(email="a@b.c", role=role)
+
+    @pytest.mark.parametrize("role", [TEAM_ROLE_MEMBER, TEAM_ROLE_ADMIN])
+    def test_legal_roles_accepted(self, role):
+        from app.schemas.team import TeamMemberUpdate
+
+        assert TeamMemberUpdate(role=role).role == role
+
+    def test_storage_model_would_reject_what_the_schema_now_blocks(self):
+        with pytest.raises(ValidationError):
+            TeamMember(user_id="u1", role="owner")
 
 
 class TestUpdateTeamMember:
