@@ -56,7 +56,7 @@ from app.repositories.system_settings import SystemSettingsRepository
 from app.schemas.finding_details import SystemWarningDetails, VulnerabilitySummaryDetails
 from app.schemas.sbom import ParsedDependency
 from app.services.aggregation import ResultAggregator
-from app.services.analysis.integrations import decorate_gitlab_mr
+from app.services.analysis.integrations import decorate_github_pr, decorate_gitlab_mr
 from app.services.analysis.notifications import send_scan_notifications
 from app.services.analysis.registry import (
     CRYPTO_ANALYZERS,
@@ -1144,6 +1144,7 @@ async def _send_integrations_and_notifications(
         return
     project = Project(**project_data)
     await decorate_gitlab_mr(scan_id, stats, scan_doc, project, db)
+    await decorate_github_pr(scan_id, stats, scan_doc, project, db)
     await send_scan_notifications(scan_id, project, aggregated_findings, results_summary, db)
 
 
