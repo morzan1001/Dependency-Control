@@ -42,6 +42,11 @@ class TeamRepository:
             {"gitlab_instance_id": gitlab_instance_id, "gitlab_group_id": gitlab_group_id}
         )
 
+    async def get_raw_by_github_team(self, github_instance_id: str, github_team_id: int) -> dict[str, Any] | None:
+        return await self.collection.find_one(
+            {"github_instance_id": github_instance_id, "github_team_id": github_team_id}
+        )
+
     async def create(self, team: Team) -> Team:
         await self.collection.insert_one(team.model_dump(by_alias=True))
         return team
