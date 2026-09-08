@@ -114,3 +114,33 @@ async def test_revert_denied_for_non_admin(
         headers=member_auth_headers,
     )
     assert resp.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "body",
+    [
+        pytest.param({"target_version": "abc"}, id="non-numeric-version"),
+        pytest.param({"target_version": 1, "comment": "x" * 1001}, id="over-long-comment"),
+        pytest.param({"target_version": 1, "targt_version": 2}, id="unknown-key"),
+    ],
+)
+async def test_revert_answers_422_not_500(client, db, admin_auth_headers, body):
+    """`int(target_raw)` and the audit entry's comment limit both raised below the route, where the
+    catch-all handler turned them into a 500."""
+    await client.put(
+        "/api/v1/crypto-policies/system",
+        json={"rules": [_rule_dict("alpha")]},
+        headers=admin_auth_headers,
+    )
+
+    resp = await client.post("/api/v1/crypto-policies/system/revert", json=body, headers=admin_auth_headers)
+
+    assert resp.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_revert_without_target_version_is_rejected(client, db, admin_auth_headers):
+    resp = await client.post("/api/v1/crypto-policies/system/revert", json={}, headers=admin_auth_headers)
+
+    assert resp.status_code == 422

@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any
 
-from fastapi import Body, Depends, HTTPException, status
+from fastapi import Depends, HTTPException, status
 
 from app.api.deps import CurrentUserDep, DatabaseDep, PermissionChecker
 from app.api.router import CustomAPIRouter
@@ -13,7 +13,7 @@ from app.models.crypto_policy import CryptoPolicy
 from app.models.user import User
 from app.repositories.crypto_policy import CryptoPolicyRepository
 from app.repositories.system_settings import SystemSettingsRepository
-from app.schemas.crypto_policy import CryptoRule
+from app.schemas.crypto_policy import CryptoPolicyPutRequest
 from app.schemas.policy_audit import PolicyAuditAction
 from app.services.audit.history import record_policy_change
 from app.services.crypto_policy.resolver import CryptoPolicyResolver
@@ -44,11 +44,11 @@ async def get_system_policy(
 async def put_system_policy(
     current_user: AdminUserDep,
     db: DatabaseDep,
-    body: dict = Body(...),
+    body: CryptoPolicyPutRequest,
 ) -> dict[str, Any]:
     """Replace the system-level crypto policy, bumping the version. Admin only."""
-    rules = [CryptoRule.model_validate(r) for r in body.get("rules") or []]
-    comment = body.get("comment")
+    rules = body.rules
+    comment = body.comment
     repo = CryptoPolicyRepository(db)
     existing = await repo.get_system_policy()
     new_version = (existing.version + 1) if existing else 1
@@ -95,7 +95,7 @@ async def put_project_policy(
     project_id: str,
     current_user: CurrentUserDep,
     db: DatabaseDep,
-    body: dict = Body(...),
+    body: CryptoPolicyPutRequest,
 ) -> dict[str, Any]:
     """Create or replace the project override policy. Project owner or admin only."""
     await check_project_access(project_id, current_user, db, required_role="admin")
@@ -105,8 +105,8 @@ async def put_project_policy(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="System enforces a global crypto policy; project overrides are disabled.",
         )
-    rules = [CryptoRule.model_validate(r) for r in body.get("rules") or []]
-    comment = body.get("comment")
+    rules = body.rules
+    comment = body.comment
     repo = CryptoPolicyRepository(db)
     existing = await repo.get_project_policy(project_id)
     new_version = (existing.version + 1) if existing else 1

@@ -173,6 +173,9 @@ PROJECT_ROLE_EDITOR = "editor"
 PROJECT_ROLE_VIEWER = "viewer"
 PROJECT_ROLES = [PROJECT_ROLE_VIEWER, PROJECT_ROLE_EDITOR, PROJECT_ROLE_ADMIN]
 
+# Upper bound on a user-entered policy comment, shared by the audit entry and the request bodies.
+POLICY_COMMENT_MAX_LENGTH = 1000
+
 # Team Roles. Ordered least- to most-privileged: helpers/teams.py compares by index.
 TeamRole = Literal["member", "admin"]
 TEAM_ROLE_ADMIN: TeamRole = "admin"
