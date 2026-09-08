@@ -3,6 +3,11 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+from fastapi import HTTPException
+
+from tests.mocks.github import make_github_instance
+
 MODULE = "app.api.v1.endpoints.github_instances"
 
 
@@ -10,6 +15,25 @@ def _make_repo_mock(**method_returns):
     mock_repo = MagicMock()
     for method_name, return_value in method_returns.items():
         setattr(mock_repo, method_name, AsyncMock(return_value=return_value))
+    return mock_repo
+
+
+def _run_update(instance, current_user, **fields):
+    """Drive update_instance against a repository that answers with ``instance``."""
+    from app.api.v1.endpoints.github_instances import update_instance
+    from app.schemas.github_instance import GitHubInstanceUpdate
+
+    mock_repo = _make_repo_mock(get_by_id=instance, exists_by_url=False, exists_by_name=False, update=True)
+
+    with patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo):
+        asyncio.run(
+            update_instance(
+                instance_id="gh-1",
+                update_data=GitHubInstanceUpdate(**fields),
+                db=MagicMock(),
+                current_user=current_user,
+            )
+        )
     return mock_repo
 
 
@@ -66,3 +90,38 @@ class TestGitHubInstanceSyncTeams:
 
         assert created[0].sync_teams is True
         assert response.sync_teams is True
+
+
+class TestGitHubInstanceUpdateTokenGuard:
+    """The create-time validator is decorative if an update can flip sync_teams on without a token."""
+
+    def test_enabling_sync_teams_without_any_token_is_rejected(self, admin_user):
+        instance = make_github_instance(id="gh-1", access_token=None)
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run_update(instance, admin_user, sync_teams=True)
+
+        assert exc_info.value.status_code == 400
+        assert "access token" in exc_info.value.detail
+
+    def test_enabling_sync_teams_together_with_a_token_is_allowed(self, admin_user):
+        instance = make_github_instance(id="gh-1", access_token=None)
+
+        repo = _run_update(instance, admin_user, sync_teams=True, access_token="ghp-secret")
+
+        assert repo.update.await_args.args[1]["sync_teams"] is True
+
+    def test_enabling_sync_teams_on_an_instance_that_already_has_a_token_is_allowed(self, admin_user):
+        instance = make_github_instance(id="gh-1", access_token="ghp-stored")
+
+        repo = _run_update(instance, admin_user, sync_teams=True)
+
+        assert repo.update.await_args.args[1]["sync_teams"] is True
+
+    def test_clearing_the_token_while_sync_teams_stays_on_is_rejected(self, admin_user):
+        instance = make_github_instance(id="gh-1", access_token="ghp-stored", sync_teams=True)
+
+        with pytest.raises(HTTPException) as exc_info:
+            _run_update(instance, admin_user, access_token=None)
+
+        assert exc_info.value.status_code == 400

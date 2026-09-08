@@ -184,6 +184,15 @@ async def update_instance(
             detail=f"Another instance with name '{update_dict['name']}' already exists",
         )
 
+    # Team syncing requires an access token.
+    will_have_token = update_dict.get("access_token", instance.access_token)
+    will_sync_teams = update_dict.get("sync_teams", instance.sync_teams)
+    if will_sync_teams and not will_have_token:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="An access token is required to enable team syncing",
+        )
+
     update_dict["last_modified_at"] = datetime.now(timezone.utc)
 
     success = await instance_repo.update(instance_id, update_dict)
