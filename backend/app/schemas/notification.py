@@ -48,3 +48,20 @@ class PackageSuggestions(BaseModel):
         ...,
         description="More packages match than are listed; the query has to narrow to reach them",
     )
+
+
+class AlertVulnerability(BaseModel):
+    """One vulnerability line in a "vulnerabilities found" alert.
+
+    Declares the field names every channel formatter reads. Defaults are tolerant because the
+    Teams card is built from a webhook payload that has been through JSON.
+    """
+
+    id: str = Field("Unknown", description="CVE or advisory identifier")
+    severity: str = Field("UNKNOWN", description="Severity of the vulnerability")
+    package: str = Field("Unknown", description="Component the vulnerability was found in")
+    version: str = Field("", description="Version of the component")
+    in_kev: bool = False
+    epss_score: float | None = None
+    kev_due_date: str | None = None
+    kev_ransomware_use: bool = False

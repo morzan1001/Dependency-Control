@@ -1,11 +1,20 @@
 """Unit tests for TeamsFormatter Adaptive Card builders."""
 
+from app.services.analysis.notifications import _extract_vulnerability_info
 from app.services.webhooks.teams_formatter import TeamsFormatter
 
 
 def _get_card(result: dict) -> dict:
     """Extract the Adaptive Card content from the Teams message envelope."""
     return result["attachments"][0]["content"]
+
+
+def _producer_entry(cve: str) -> dict:
+    """What the sole producer of these entries actually emits, rather than a hand-built shape."""
+    return _extract_vulnerability_info(
+        {"id": cve, "severity": "CRITICAL"},
+        {"component": "requests", "version": "2.30.0"},
+    )
 
 
 class TestTeamsFormatterEnvelope:
@@ -220,7 +229,7 @@ class TestBuildVulnerabilityFoundCard:
         assert "Known Exploited (KEV)" not in titles
 
     def test_top_vulns_shown_max_three(self):
-        top = [{"cve_id": f"CVE-2024-{i}", "severity": "Critical", "component": "lib"} for i in range(5)]
+        top = [_producer_entry(f"CVE-2024-{i}") for i in range(5)]
         card = _get_card(
             TeamsFormatter.build_vulnerability_found_card(
                 project_name="MyApp",
@@ -235,6 +244,28 @@ class TestBuildVulnerabilityFoundCard:
                 if item.get("type") == "TextBlock" and "CVE-2024-" in item.get("text", ""):
                     cve_blocks.append(item)
         assert len(cve_blocks) == 3
+
+    def test_card_names_the_cve_and_component_the_producer_emitted(self):
+        """The card used to read `cve_id`/`component` while the only producer emits `id`/`package`,
+        so every line rendered as "**Unknown** (CRITICAL) — ". The fixture must come from the
+        producer, not from the reader's idea of the payload."""
+        entry = _producer_entry("CVE-2024-35195")
+        card = _get_card(
+            TeamsFormatter.build_vulnerability_found_card(
+                project_name="MyApp",
+                _scan_id="scan-1",
+                vulns={"critical": 1, "high": 0, "kev": 0, "high_epss": 0, "top": [entry]},
+            )
+        )
+        texts = [
+            item.get("text", "")
+            for block in card["body"]
+            if block["type"] == "Container"
+            for item in block.get("items", [])
+        ]
+        line = next(t for t in texts if "CVE-2024-35195" in t)
+        assert "requests" in line
+        assert "Unknown" not in line
 
     def test_high_epss_shown_when_nonzero(self):
         card = _get_card(
