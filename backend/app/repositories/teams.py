@@ -29,8 +29,8 @@ class TeamRepository:
     async def get_raw_by_id(self, team_id: str) -> dict[str, Any] | None:
         return await self.collection.find_one({"_id": team_id})
 
-    # Don't match synced GitLab teams by name — names aren't unique across instances
-    # (cross-tenant collision); use get_raw_by_gitlab_group instead.
+    # Don't match provider-synced teams by name — names aren't unique across instances
+    # (cross-tenant collision); use get_raw_by_gitlab_group or get_raw_by_github_team instead.
     async def get_by_name(self, name: str) -> Team | None:
         data = await self.collection.find_one({"name": name})
         if data:
