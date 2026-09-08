@@ -21,6 +21,8 @@ from app.core.constants import (
     HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC,
     RETENTION_ACTION_ARCHIVE,
     RETENTION_ACTION_DELETE,
+    RETENTION_ACTION_NONE,
+    RETENTION_ACTIONS,
     RETENTION_PROTECTED_FLAG_VALUES,
     SCAN_STATUS_PENDING,
     SCAN_STATUS_PROCESSING,
@@ -477,6 +479,13 @@ async def _handle_retention_action(db: Any, scan_ids: list[str], action: str, la
         logger.warning(
             f"{label}: Retention action is 'archive' but S3 is not configured. "
             "Skipping cleanup. Configure S3 or change retention action to 'delete'."
+        )
+    elif action != RETENTION_ACTION_NONE:
+        # A value stored before the request schemas constrained it. Without this the scans would
+        # simply never expire, and disk growth would be the only signal.
+        logger.warning(
+            f"{label}: Unknown retention action {action!r}; expected one of {RETENTION_ACTIONS}. "
+            f"{len(scan_ids)} scans past their retention window were left in place."
         )
 
 

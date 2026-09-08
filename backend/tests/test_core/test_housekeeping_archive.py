@@ -151,6 +151,34 @@ class TestHandleRetentionAction:
         mock_archive.assert_not_called()
         mock_delete.assert_not_called()
 
+    def test_none_action_stays_silent(self):
+        """"none" is a deliberate no-op, so it must not be reported as a misconfiguration."""
+        with (
+            patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock),
+            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock),
+            patch(f"{MODULE}.logger") as mock_logger,
+        ):
+            asyncio.run(_handle_retention_action(MagicMock(), ["scan-1"], "none", "test"))
+
+        mock_logger.warning.assert_not_called()
+
+    def test_unknown_action_is_reported_instead_of_expiring_nothing(self):
+        """A value stored before the schemas constrained it matches no branch; retention would
+        otherwise skip the scans forever with no log line at all."""
+        with (
+            patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,
+            patch(f"{MODULE}.delete_scans_and_related_data", new_callable=AsyncMock) as mock_delete,
+            patch(f"{MODULE}.logger") as mock_logger,
+        ):
+            asyncio.run(_handle_retention_action(MagicMock(), ["scan-1", "scan-2"], "Delete", "test"))
+
+        mock_archive.assert_not_called()
+        mock_delete.assert_not_called()
+        mock_logger.warning.assert_called_once()
+        message = mock_logger.warning.call_args[0][0]
+        assert "Delete" in message
+        assert "2" in message
+
     def test_empty_scan_list_returns_early(self):
         with (
             patch(f"{MODULE}._archive_scans_and_delete", new_callable=AsyncMock) as mock_archive,

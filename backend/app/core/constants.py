@@ -1034,15 +1034,12 @@ HOUSEKEEPING_UPDATE_FREQUENCY_RECONCILE_HOUR_UTC: int = 2
 HOUSEKEEPING_RESCAN_LOCK_TTL_SECONDS: int = 60
 
 # Archive / Retention Action Constants
-RETENTION_ACTION_DELETE = "delete"
-RETENTION_ACTION_ARCHIVE = "archive"
-RETENTION_ACTION_NONE = "none"
+RetentionAction = Literal["delete", "archive", "none"]
+RETENTION_ACTION_DELETE: RetentionAction = "delete"
+RETENTION_ACTION_ARCHIVE: RetentionAction = "archive"
+RETENTION_ACTION_NONE: RetentionAction = "none"
 
-RETENTION_ACTIONS = [
-    RETENTION_ACTION_DELETE,
-    RETENTION_ACTION_ARCHIVE,
-    RETENTION_ACTION_NONE,
-]
+RETENTION_ACTIONS: list[str] = list(get_args(RetentionAction))
 
 # Archive bundle wire format
 ARCHIVE_BUNDLE_VERSION = 2

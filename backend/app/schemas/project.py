@@ -3,7 +3,13 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, PROJECT_ROLE_VIEWER, PROJECT_ROLES
+from app.core.constants import (
+    DEFAULT_ACTIVE_ANALYZERS,
+    PROJECT_ROLE_VIEWER,
+    PROJECT_ROLES,
+    RETENTION_ACTION_DELETE,
+    RetentionAction,
+)
 from app.core.notification_prefs import sanitize_notification_preferences
 from app.models.finding import FindingType, Severity
 from app.models.license import DeploymentModel, DistributionModel, LibraryUsage
@@ -84,8 +90,8 @@ class ProjectCreate(BaseModel):
         examples=[["end_of_life", "os_malware", "trivy"]],
     )
     retention_days: int | None = Field(90, description="Number of days to keep scan history", ge=1)
-    retention_action: str | None = Field(
-        "delete",
+    retention_action: RetentionAction | None = Field(
+        RETENTION_ACTION_DELETE,
         description="Action when retention period expires: delete, archive, or none",
     )
     license_policy: LicensePolicySchema | None = Field(
@@ -101,7 +107,7 @@ class ProjectUpdate(BaseModel):
     team_id: str | None = Field(None, description="Transfer project to a team")
     active_analyzers: list[str] | None = Field(None, description="Updated list of active analyzers")
     retention_days: int | None = Field(None, description="Number of days to keep scan history", ge=1)
-    retention_action: str | None = Field(
+    retention_action: RetentionAction | None = Field(
         None,
         description="Action when retention period expires: delete, archive, or none",
     )
