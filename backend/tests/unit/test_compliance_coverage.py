@@ -39,6 +39,7 @@ from app.services.compliance.frameworks.fips_140_3 import Fips1403Framework
 from app.services.compliance.renderers.base import coverage_statement
 from app.services.compliance.renderers.csv_renderer import CsvRenderer
 from app.services.compliance.renderers.json_renderer import JsonRenderer
+from app.services.compliance.renderers.pdf_renderer import build_template_context
 from app.services.compliance.renderers.sarif_renderer import SarifRenderer
 from tests.unit.test_renderer_json import _evaluation, _report
 
@@ -114,6 +115,14 @@ def _evaluation_with(coverage: EvaluationCoverage | None):
     evaluation = _evaluation()
     evaluation.coverage = coverage
     return evaluation
+
+
+def _render_report(evaluation, disclaimer: str | None = None) -> str:
+    """The page the PDF renderer renders, built through its own context so the two cannot diverge."""
+    env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=select_autoescape(["html"]))
+    return env.get_template("base_report.html").render(
+        **build_template_context(evaluation, _report(), disclaimer)
+    )
 
 
 @pytest.mark.asyncio
@@ -313,21 +322,7 @@ def test_a_renderer_given_no_coverage_prints_nothing_about_it():
 )
 def test_the_pdf_cover_prints_the_coverage_banner(coverage, expects_alarm):
     """WeasyPrint's native stack is not needed to see what the page says."""
-    env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=select_autoescape(["html"]))
-    html = env.get_template("base_report.html").render(
-        framework_name="CVE Remediation SLA",
-        framework_version="1",
-        generated_at=datetime(2026, 9, 5, tzinfo=timezone.utc).isoformat(),
-        scope_description=f"project '{_PROJECT}'",
-        inputs_fingerprint="sha256:abc",
-        requested_by="u1",
-        disclaimer=None,
-        coverage_statement=coverage_statement(coverage),
-        coverage_complete=coverage.complete,
-        summary={"passed": 0, "failed": 0, "waived": 0, "not_applicable": 0, "not_evaluated": 1, "total": 1},
-        controls=[],
-        residual_risks=[],
-    )
+    html = _render_report(_evaluation_with(coverage))
 
     assert "Coverage:" in html
     assert ('class="coverage-partial"' in html) is expects_alarm
@@ -606,35 +601,10 @@ async def test_csv_and_json_carry_the_reason_beside_the_withheld_status():
 @pytest.mark.asyncio
 async def test_the_pdf_prints_the_withheld_count_and_the_per_control_reason():
     evaluation = await CveRemediationSlaFramework().evaluate_async(_sla_input([], _partial()))
-    env = Environment(loader=FileSystemLoader(str(_TEMPLATE_DIR)), autoescape=select_autoescape(["html"]))
-    html = env.get_template("base_report.html").render(
-        framework_name="CVE Remediation SLA",
-        framework_version="1",
-        generated_at=datetime(2026, 9, 5, tzinfo=timezone.utc).isoformat(),
-        scope_description=f"project '{_PROJECT}'",
-        inputs_fingerprint="sha256:abc",
-        requested_by="u1",
-        disclaimer=None,
-        coverage_statement=coverage_statement(_partial()),
-        coverage_complete=False,
-        summary=evaluation.summary,
-        controls=[
-            {
-                "control_id": c.control_id,
-                "title": c.title,
-                "description": c.description,
-                "status": c.status,
-                "severity": c.severity,
-                "evidence_finding_ids": [],
-                "evidence_asset_bom_refs": [],
-                "waiver_reasons": [],
-                "remediation": c.remediation,
-                "status_reason": c.status_reason,
-            }
-            for c in evaluation.controls
-        ],
-        residual_risks=[],
-    )
+    # The engine, not the framework, hands the renderer the coverage.
+    evaluation.coverage = _partial()
+
+    html = _render_report(evaluation)
 
     assert "Not Evaluated" in html
     assert 'class="status-reason"' in html
