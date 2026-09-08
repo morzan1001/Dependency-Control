@@ -187,6 +187,16 @@ class TestViewerOrganisations:
         with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=None)):
             assert await service.get_viewer_organisations() is None
 
+    @pytest.mark.asyncio
+    async def test_are_never_served_from_the_cache(self, fake_cache):
+        """A connection test reporting a five-minute-old token state, in green, is worse than slow."""
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_ORG_MEMBERSHIPS)) as paginated:
+            await service.get_viewer_organisations()
+            await service.get_viewer_organisations()
+
+        assert paginated.await_count == 2
+
 
 class TestPublicProfileEmail:
     @pytest.mark.asyncio
@@ -217,7 +227,8 @@ class TestPublicProfileEmail:
 
         warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
         assert len(warnings) == 1, warnings
-        assert "ada" in warnings[0] and "403" in warnings[0]
+        assert "ada" in warnings[0]
+        assert "403" in warnings[0]
 
     @pytest.mark.asyncio
     async def test_an_unknown_login_is_not_worth_a_warning(self, caplog):
