@@ -10,7 +10,7 @@ from app.core.constants import (
     RETENTION_ACTION_DELETE,
     RetentionAction,
 )
-from app.core.notification_prefs import sanitize_notification_preferences
+from app.core.notification_prefs import NotificationPreferences
 from app.models.finding import FindingType, Severity
 from app.models.license import DeploymentModel, DistributionModel, LibraryUsage
 from app.models.project import Project, Scan
@@ -150,7 +150,7 @@ class ProjectMemberUpdate(BaseModel):
         description=f"New role to assign ({', '.join(PROJECT_ROLES)})",
         examples=[PROJECT_ROLE_VIEWER],
     )
-    notification_preferences: dict[str, list[str]] | None = Field(
+    notification_preferences: NotificationPreferences = Field(
         None, description="Notification preferences for the member"
     )
 
@@ -163,7 +163,7 @@ class ProjectMemberUpdate(BaseModel):
 
 
 class ProjectNotificationSettings(BaseModel):
-    notification_preferences: dict[str, list[str]] = Field(
+    notification_preferences: NotificationPreferences = Field(
         ...,
         description="Map of event types to notification channels",
         examples=[
@@ -176,11 +176,6 @@ class ProjectNotificationSettings(BaseModel):
     enforce_notification_settings: bool | None = Field(
         None, description="Enforce these settings for all members (Owner only)"
     )
-
-    @field_validator("notification_preferences")
-    @classmethod
-    def _sanitize_prefs(cls, v: Any) -> dict[str, list[str]]:
-        return sanitize_notification_preferences(v)
 
 
 class ProjectApiKeyResponse(BaseModel):

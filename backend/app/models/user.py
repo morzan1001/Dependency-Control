@@ -1,10 +1,9 @@
 import logging
 from datetime import datetime
-from typing import Any
 
-from pydantic import ConfigDict, EmailStr, Field, field_validator
+from pydantic import ConfigDict, EmailStr, Field
 
-from app.core.notification_prefs import sanitize_notification_preferences
+from app.core.notification_prefs import NotificationPreferences
 from app.models.types import MongoDocument
 
 logger = logging.getLogger(__name__)
@@ -27,11 +26,6 @@ class User(MongoDocument):
     # Notification settings
     slack_username: str | None = None
     mattermost_username: str | None = None
-    notification_preferences: dict[str, list[str]] | None = Field(default_factory=dict)
-
-    @field_validator("notification_preferences")
-    @classmethod
-    def validate_notification_preferences(cls, v: Any) -> dict[str, list[str]]:
-        return sanitize_notification_preferences(v)
+    notification_preferences: NotificationPreferences = Field(default_factory=dict)
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
