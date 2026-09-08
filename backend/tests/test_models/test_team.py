@@ -1,5 +1,8 @@
 """Tests for Team and TeamMember models."""
 
+import pytest
+from pydantic import ValidationError
+
 from app.core.constants import TEAM_ROLE_MEMBER
 from app.models.team import Team, TeamMember
 
@@ -55,3 +58,30 @@ class TestTeamModel:
         team = Team(name="T")
         dumped = team.model_dump(by_alias=True)
         assert "_id" in dumped
+
+
+class TestTeamGitHubProvenance:
+    def test_team_carries_the_github_identity_pair(self):
+        team = Team(
+            name="GitHub Team: acme/payments",
+            github_instance_id="gh-inst-1",
+            github_org="acme",
+            github_team_id=4711,
+            github_team_slug="payments",
+        )
+        assert team.github_instance_id == "gh-inst-1"
+        assert team.github_org == "acme"
+        assert team.github_team_id == 4711
+        assert team.github_team_slug == "payments"
+
+    def test_manual_team_leaves_the_github_fields_unset(self):
+        team = Team(name="Atlas")
+        assert team.github_team_id is None
+        assert team.github_instance_id is None
+
+    def test_member_can_be_sourced_from_github(self):
+        assert TeamMember(user_id="u-1", source="github").source == "github"
+
+    def test_member_source_rejects_an_unknown_provider(self):
+        with pytest.raises(ValidationError):
+            TeamMember(user_id="u-1", source="bitbucket")

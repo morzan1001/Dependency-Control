@@ -30,9 +30,9 @@ class Project(MongoDocument, CreatedAtModel):
     name: str
     owner_id: str | None = None  # Deprecated: use team/member admins instead
     team_id: str | None = None
-    # "manual" team_id assignments are never reverted by GitLab sync;
-    # "gitlab"/None may be overwritten by sync.
-    team_source: Literal["gitlab", "manual"] | None = None
+    # "manual" team_id assignments are never reverted by sync;
+    # "gitlab"/"github"/None may be overwritten by the sync that owns them.
+    team_source: Literal["gitlab", "github", "manual"] | None = None
     members: list[ProjectMember] = Field(default_factory=list)
     api_key_hash: str | None = Field(None, exclude=True)
     active_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))
@@ -65,6 +65,9 @@ class Project(MongoDocument, CreatedAtModel):
     )
     github_repository_path: str | None = Field(
         None, description="GitHub repository path (owner/repo). For display purposes."
+    )
+    github_team_candidates: int | None = Field(
+        None, description="How many GitHub teams matched the repository on the last sync."
     )
     github_pr_comments_enabled: bool = Field(
         False, description="Enable posting scan results as comments on pull requests"
