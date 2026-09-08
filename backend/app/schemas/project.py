@@ -112,7 +112,16 @@ class ProjectUpdate(BaseModel):
         description="Action when retention period expires: delete, archive, or none",
     )
     default_branch: str | None = Field(None, description="Default branch to show in dashboard")
+    rescan_enabled: bool | None = Field(
+        None, description="Periodically re-scan this project; None follows the system default"
+    )
+    rescan_interval: int | None = Field(
+        None, description="Hours between re-scans; None follows the system default", ge=1
+    )
     gitlab_mr_comments_enabled: bool | None = Field(None, description="Post scan results as MR comments on GitLab")
+    gitlab_instance_id: str | None = Field(None, description="Reference to GitLabInstance._id")
+    gitlab_project_id: int | None = Field(None, description="GitLab project numeric ID")
+    gitlab_project_path: str | None = Field(None, description="GitLab project path, e.g. group/subgroup/project")
     enforce_notification_settings: bool | None = Field(
         None, description="Enforce admin notification settings for all members"
     )
