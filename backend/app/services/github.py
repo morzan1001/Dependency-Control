@@ -11,10 +11,14 @@ from app.core.constants import (
     GITHUB_JWKS_CACHE_TTL,
     GITHUB_JWKS_URI_CACHE_TTL,
     GITHUB_TEAM_SYNC_CACHE_TTL,
+    TEAM_ROLE_ADMIN,
+    TEAM_ROLE_MEMBER,
 )
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
 from app.models.github_instance import GitHubInstance
+from app.models.team import TeamMember
+from app.repositories import UserRepository
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
 logger = logging.getLogger(__name__)
@@ -319,6 +323,47 @@ class GitHubService:
         if response is not None and response.status_code != 404:
             logger.warning("GitHub API GET /users/%s failed: %s", login, response.status_code)
         return None
+
+    async def _find_user_for_github_member(self, login: str, user_repo: UserRepository) -> dict[str, Any] | None:
+        """Resolve a GitHub login to an EXISTING local user: username first, then the public email."""
+        user = await user_repo.get_raw_by_username(login)
+        if user:
+            return user
+        email = await self.get_user_public_email(login)
+        if email:
+            # Case-insensitive: the OIDC-login email may differ in case from the profile one.
+            return await user_repo.get_raw_by_email_ci(email)
+        return None
+
+    async def _build_team_members(
+        self,
+        members: list[dict[str, Any]],
+        user_repo: UserRepository,
+    ) -> list[TeamMember]:
+        """Map GitHub members onto existing local users, tagged source="github" for the merge."""
+        team_members: list[TeamMember] = []
+        for member in members:
+            login = member["login"]
+            user = await self._find_user_for_github_member(login, user_repo)
+            if not user:
+                # Sync never creates users; a real member is added on their next sync after
+                # logging in via OIDC.
+                logger.debug("Skipping GitHub member with no local account (login=%s).", login)
+                continue
+            role = TEAM_ROLE_ADMIN if member.get("role") == "maintainer" else TEAM_ROLE_MEMBER
+            user_id = str(user.get("_id", user.get("id")))
+            team_members.append(TeamMember(user_id=user_id, role=role, source="github"))
+        unresolved = len(members) - len(team_members)
+        if unresolved:
+            # The per-member misses are DEBUG, so this is the only signal at INFO that a token
+            # without profile access has broken matching wholesale.
+            logger.info(
+                "GitHub team sync resolved %d of %d members; %d have no local account.",
+                len(team_members),
+                len(members),
+                unresolved,
+            )
+        return team_members
 
     async def get_pull_requests_for_commit(self, owner: str, repo: str, commit_sha: str) -> list[GitHubPullRequest]:
         """Pull requests associated with a commit, retrying via the head parent when it is a merge commit."""
