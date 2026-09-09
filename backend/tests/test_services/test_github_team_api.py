@@ -131,6 +131,50 @@ class TestOrgTeams:
         assert paginated.await_args.kwargs["max_pages"] is None
 
 
+class TestOrgTeamCount:
+    @pytest.mark.asyncio
+    async def test_is_fetched_uncapped_from_the_org_endpoint(self):
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_REPO_TEAMS)) as paginated:
+            assert await service.count_org_teams("acme") == 2
+
+        assert paginated.await_args.args[0] == "/orgs/acme/teams"
+        assert paginated.await_args.kwargs["max_pages"] is None
+
+    @pytest.mark.asyncio
+    async def test_a_refused_request_stays_none_rather_than_zero(self):
+        """The connection test tells "no teams here" from "the API refused" only by this distinction."""
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=None)):
+            assert await service.count_org_teams("acme") is None
+
+    @pytest.mark.asyncio
+    async def test_an_organisation_without_teams_counts_zero(self):
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=[])):
+            assert await service.count_org_teams("acme") == 0
+
+    @pytest.mark.asyncio
+    async def test_is_never_served_from_the_cache(self, fake_cache):
+        """A connection test reporting a five-minute-old token state, in green, is worse than slow."""
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_REPO_TEAMS)) as paginated:
+            await service.count_org_teams("acme")
+            await service.count_org_teams("acme")
+
+        assert paginated.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_a_warm_get_org_teams_entry_does_not_answer_the_count(self, fake_cache):
+        """A sync minutes earlier leaves that entry warm; a revoked token must still read red."""
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_REPO_TEAMS)) as paginated:
+            await service.get_org_teams("acme")
+            await service.count_org_teams("acme")
+
+        assert paginated.await_count == 2
+
+
 class TestTeamMembers:
     @pytest.mark.asyncio
     async def test_carry_the_role_the_query_asked_for(self, fake_cache):
