@@ -132,6 +132,21 @@ describe('CICDInstancesManagement GitHub team sync', () => {
     expect(within(screen.getByRole('table')).getByText('Sync Teams')).toBeInTheDocument()
   })
 
+  // Spec §8: GHES has no IdP team sync, so its teams may be hand-maintained and less
+  // authoritative than an operator expects.
+  it('warns that GHES team structure is hand-maintained once sync is on', () => {
+    mockUseGitLabInstances.mockReturnValue(gitlabInstance())
+    mockUseGitHubInstances.mockReturnValue(githubInstance({ sync_teams: true }))
+
+    renderManagement()
+
+    const gitlabDialog = openEditDialog(/Internal GitLab/)
+    expect(within(gitlabDialog).queryByText(/Enterprise Server/)).toBeNull()
+    fireEvent.click(within(gitlabDialog).getByRole('button', { name: 'Cancel' }))
+
+    expect(within(openEditDialog(/GitHub\.com/)).getByText(/Enterprise Server/)).toBeInTheDocument()
+  })
+
   it('keeps the depth select GitLab-only', () => {
     mockUseGitLabInstances.mockReturnValue(gitlabInstance())
     mockUseGitHubInstances.mockReturnValue(githubInstance({ sync_teams: true }))

@@ -725,6 +725,13 @@ function InstanceForm({
           />
         </div>
 
+        {formData.type === "github" && formData.sync_teams && (
+          <p className="text-xs text-muted-foreground">
+            GitHub Enterprise Server has no IdP team sync, so its team structure is maintained by hand
+            and may be less authoritative than on github.com.
+          </p>
+        )}
+
         {formData.type === "gitlab" && formData.sync_teams && (
           <div className="space-y-2">
             <Label htmlFor="ci-team-sync-depth">Team Sync Depth</Label>
