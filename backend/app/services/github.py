@@ -428,7 +428,8 @@ class GitHubService:
             update_data: dict[str, Any] = {
                 "members": self._merge_team_members(existing_team.get("members") or [], team_members),
                 "updated_at": datetime.now(timezone.utc),
-                # Slugs are renameable; the numeric id is what identifies the team.
+                # Both are renameable; the instance id and the numeric team id identify the team.
+                "github_org": org,
                 "github_team_slug": team_slug,
             }
             # A team manually renamed to e.g. "Payments Guild" keeps its name.

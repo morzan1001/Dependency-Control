@@ -308,6 +308,25 @@ class TestTeamUpsert:
 
         assert repo.update.await_args.args[1]["github_team_slug"] == "payments"
 
+    @pytest.mark.asyncio
+    async def test_the_organisation_is_refreshed_on_every_sync(self):
+        """A renamed organisation rewrites name and description, so the stored login must follow."""
+        service = _service()
+        existing = {
+            "_id": "t-1",
+            "name": "GitHub Team: acme-old/payments",
+            "members": [],
+            "github_team_id": 4711,
+            "github_org": "acme-old",
+        }
+        repo = _team_repo(existing)
+
+        await service._upsert_team_with_members(
+            repo, existing, *self._ARGS, [TeamMember(user_id="u-1", source="github")]
+        )
+
+        assert repo.update.await_args.args[1]["github_org"] == "acme"
+
 
 class TestSyncTeamFromGithub:
     @pytest.mark.asyncio
