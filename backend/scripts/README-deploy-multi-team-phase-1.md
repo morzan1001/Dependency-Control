@@ -23,8 +23,7 @@ db.projects.dropIndex("old_index_name")
 **This is critical**: if a hand-built index exists under a custom name, the startup call to
 `create_index` fails with `IndexOptionsConflict` (code 85). This call is unguarded — there is no
 try/catch around it in `init_db.py:234` — so the exception aborts `startup_event`, and every
-backend pod crashes on startup. The rolling update stalls at the first pod. This installation has
-hit this exact failure before.
+backend pod crashes on startup. The rolling update stalls at the first pod.
 
 ### 1b. Build the index
 
@@ -50,9 +49,18 @@ db.projects.getIndexes().filter(i => i.name.includes("team_ids"))
 
 The output must show `team_ids_1` exactly, with no custom name or options.
 
-### 1c. Watch the first pod rollout
+## 2. Deploy the revision that adds the multikey index
 
-Verify the index name is correct before the rollout starts. Once it does, watch the deployment:
+Deploy the code that includes:
+- The `team_ids` field on projects (new in this deploy)
+- The multikey index (built by hand in step 1, where it becomes a no-op on startup)
+- The backfill migration script (will be invoked in step 3)
+
+Later deploys will add analytics and queries using `team_ids`.
+
+### 2a. Watch the rollout
+
+Once the deploy starts, verify the index name did not cause a startup crash:
 
 ```bash
 kubectl rollout status deployment/dependency-control-backend -n dependency-control
@@ -60,14 +68,6 @@ kubectl rollout status deployment/dependency-control-backend -n dependency-contr
 
 If any pod crashes with an index error, stop the rollout immediately — the index name is wrong and
 must be dropped and rebuilt before you continue.
-
-## 2. Deploy the revision that adds the multikey index
-
-Deploy the code that includes:
-- The `team_ids` field on projects (already present from Phase 1 of the multi-team rollout)
-- The multikey index (built by hand in step 1, no-op in startup after that)
-- The backfill migration script (will be invoked in step 3)
-- Analytics and queries using `team_ids` (come later in the rollout sequence)
 
 ## 3. Run the dry-run backfill
 
@@ -80,11 +80,12 @@ command: ["python", "-m", "scripts.backfill_project_team_ids"]
 ```
 
 The working directory `/app` is required — the script's usage line and all invocations depend on it.
+Name the Job `dc-migration` (the conventional name used by the sibling migration runbooks).
 
 Once the job completes, view the logs:
 
 ```bash
-kubectl logs -n dependency-control job/backfill-project-team-ids
+kubectl logs -n dependency-control job/dc-migration
 ```
 
 Record the `projects planned` count. Expected: **742** (229 with a team, 513 without).
@@ -103,7 +104,7 @@ command: ["python", "-m", "scripts.backfill_project_team_ids", "--execute"]
 View the logs:
 
 ```bash
-kubectl logs -n dependency-control job/backfill-project-team-ids
+kubectl logs -n dependency-control job/dc-migration
 ```
 
 Record the `projects matched` count. Expected: **742**.
@@ -129,6 +130,6 @@ and silently truncate every multi-team project back to one team.
 
 In a later deploy, the write paths will begin writing `team_ids` directly instead of through the
 scalar. From that deploy onward, this backfill migration **must not be re-run**. At that point,
-the `team_id` field is scheduled to be removed in the following deploy, along with its index. The
+the `team_id` field and its index are scheduled for removal in a subsequent deploy. The
 `team_ids` index remains permanent, as it enables team-scoped queries for all team-membership
 features.

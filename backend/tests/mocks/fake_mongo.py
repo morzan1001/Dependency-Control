@@ -1073,7 +1073,7 @@ class FakeCollection:
         self._docs: dict = {}
         self._db = db
         self._unique_keys: list[tuple[str, ...]] = list(unique_keys or [])
-        self.created_indexes: list[str] = []
+        self.created_indexes: list[str | tuple[str, ...]] = []
 
     # -- writes -----------------------------------------------------------
 
