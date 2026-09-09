@@ -176,21 +176,31 @@ describe('ProjectSettings GitHub team assignment', () => {
       ],
     })
 
-    renderSettings(githubProject({ team_id: 't1', github_team_candidates: 3 }))
+    renderSettings(githubProject({ team_id: 't1', team_source: 'github', github_team_candidates: 3 }))
 
     expect(screen.getByText('3 teams matched, using Payments')).toBeInTheDocument()
+  })
+
+  // The candidate count is recorded even when the provenance guard refuses the assignment, so the
+  // note would otherwise credit the tiebreak with the operator's own choice.
+  it('stays silent when the team was assigned by hand', () => {
+    mockUseTeams.mockReturnValue({ data: [{ id: 't1', name: 'Atlas' }] })
+
+    renderSettings(githubProject({ team_id: 't1', team_source: 'manual', github_team_candidates: 3 }))
+
+    expect(screen.queryByText(/teams matched/)).toBeNull()
   })
 
   it('stays silent when exactly one team matched', () => {
     mockUseTeams.mockReturnValue({ data: [{ id: 't1', name: 'Payments' }] })
 
-    renderSettings(githubProject({ team_id: 't1', github_team_candidates: 1 }))
+    renderSettings(githubProject({ team_id: 't1', team_source: 'github', github_team_candidates: 1 }))
 
     expect(screen.queryByText(/teams matched/)).toBeNull()
   })
 
   it('stays silent for a project that predates the field', () => {
-    renderSettings(githubProject({ team_id: 't1' }))
+    renderSettings(githubProject({ team_id: 't1', team_source: 'github' }))
 
     expect(screen.queryByText(/teams matched/)).toBeNull()
   })

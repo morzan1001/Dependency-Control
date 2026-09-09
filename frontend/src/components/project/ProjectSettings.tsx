@@ -153,10 +153,15 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     ? githubInstances?.items.find((i) => i.id === project.github_instance_id)
     : undefined;
   const githubHasToken = linkedGithubInstance?.has_access_token ?? false;
-  const teamCandidatesNote = githubTeamCandidatesNote(
-    project.github_team_candidates,
-    teams?.find((team) => team.id === project.team_id)?.name
-  );
+  // The count is recorded even when the provenance guard refuses the assignment, so the note is
+  // only honest about a team the sync actually chose.
+  const teamCandidatesNote =
+    project.team_source === "github"
+      ? githubTeamCandidatesNote(
+          project.github_team_candidates,
+          teams?.find((team) => team.id === project.team_id)?.name
+        )
+      : null;
 
   const deleteProjectMutation = useMutation({
     mutationFn: () => projectApi.delete(projectId),

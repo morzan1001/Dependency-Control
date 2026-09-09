@@ -27,6 +27,7 @@ export interface Project {
   owner_id?: string; // access is controlled via team/member admins
   team_id?: string;
   team_name?: string;
+  team_source?: 'gitlab' | 'github' | 'manual';
   members?: ProjectMember[];
   active_analyzers?: string[];
   retention_days?: number;
