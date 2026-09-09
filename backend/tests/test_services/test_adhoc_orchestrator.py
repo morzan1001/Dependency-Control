@@ -594,6 +594,39 @@ async def test_an_analyzer_that_never_ran_is_not_named_in_the_notes():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("analyzer_name", "upstream"),
+    [
+        ("deps_dev", "api.deps.dev"),
+        ("outdated_packages", "api.deps.dev"),
+        ("end_of_life", "endoflife.date"),
+        ("hash_verification", "pypi.org"),
+        ("maintainer_risk", "api.github.com"),
+        ("os_malware", "api.opensourcemalware.com"),
+    ],
+)
+async def test_every_stage_that_sends_coordinates_upstream_names_its_host(monkeypatch, analyzer_name, upstream):
+    """The endpoint promises notes names every stage that sent something; osv is not the only one."""
+
+    serve_analyzer(monkeypatch, analyzer_name, _FakeOsv())
+    request = AdhocAnalyzeRequest(sboms=[_SBOM], analyzers=[analyzer_name], apply_global_waivers=False)
+
+    response = await run_adhoc_analysis(request, FakeDatabase())
+
+    assert analyzer_name in response.analyzers.notes
+    assert upstream in response.analyzers.notes[analyzer_name]
+
+
+def test_every_registered_analyzer_is_classified_as_sending_or_not():
+    """A new analyzer must be placed on one side of the contract before it can quietly break it."""
+
+    from app.services.analysis.adhoc import _SENDS_NOTHING, _STAGE_NOTES
+
+    unclassified = set(analyzer_factories) - set(_STAGE_NOTES) - _SENDS_NOTHING
+    assert unclassified == set()
+
+
+@pytest.mark.asyncio
 async def test_a_scanner_payload_that_genuinely_found_nothing_still_counts_as_ran():
     request = AdhocAnalyzeRequest(scanners={"trufflehog": {"findings": []}}, analyzers=[], apply_global_waivers=False)
 

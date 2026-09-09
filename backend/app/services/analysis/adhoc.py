@@ -6,6 +6,7 @@ import re
 from collections import Counter, deque
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ValidationError
 
@@ -15,6 +16,17 @@ from app.core.constants import (
     ADHOC_MAX_SBOM_COMPONENTS,
     ADHOC_MAX_SBOM_EVIDENCE_ENTRIES,
     ADHOC_MAX_SCANNER_FINDINGS,
+    DEPS_DEV_API_URL,
+    EOL_API_URL,
+    EPSS_API_URL,
+    GITHUB_API_URL,
+    KEV_CATALOG_URL,
+    MALWARE_API_URL,
+    NPM_REGISTRY_URL,
+    OSV_BATCH_API_URL,
+    OSV_VULN_API_URL,
+    PYPI_API_URL,
+    TOP_PYPI_PACKAGES_URL,
     get_severity_value,
 )
 from app.models.crypto_asset import CryptoAsset
@@ -156,14 +168,42 @@ def _rule_driven_finding_types() -> frozenset[str]:
 
 _RULE_DRIVEN_FINDING_TYPES: frozenset[str] = _rule_driven_finding_types()
 
-# What a stage that ran does not otherwise reveal. ``osv`` is in the defaults, so a caller who
-# named no analyzer still has to be told their package list left the process, and the crypto
-# stage grades against the shipped seeds because it never reads this installation's policy.
+def _hosts(*urls: str) -> str:
+    """The distinct hosts behind the given endpoints, read off the constants the analyzers use
+    so a note can never name somewhere the code no longer calls."""
+    return ", ".join(dict.fromkeys(urlsplit(url).netloc for url in urls))
+
+
+_COORDINATES_SENT = "package coordinates from the posted SBOMs are sent to {hosts}"
+
+# What a stage that ran does not otherwise reveal. Storing nothing is not sending nothing, so
+# every stage that puts something the caller posted on the wire is named here, and the crypto
+# stage says it grades against the shipped seeds because it never reads this installation's policy.
 _STAGE_NOTES: dict[str, str] = {
-    _OSV: "package coordinates from the posted SBOMs are sent to api.osv.dev",
-    _ENRICHMENT: "vulnerability ids are sent to the EPSS API and matched against the CISA KEV catalog",
+    _OSV: _COORDINATES_SENT.format(hosts=_hosts(OSV_BATCH_API_URL, OSV_VULN_API_URL)),
+    "deps_dev": _COORDINATES_SENT.format(hosts=_hosts(DEPS_DEV_API_URL)),
+    "outdated_packages": _COORDINATES_SENT.format(hosts=_hosts(DEPS_DEV_API_URL)),
+    "end_of_life": _COORDINATES_SENT.format(hosts=_hosts(EOL_API_URL)),
+    "hash_verification": _COORDINATES_SENT.format(hosts=_hosts(PYPI_API_URL, NPM_REGISTRY_URL)),
+    "maintainer_risk": _COORDINATES_SENT.format(hosts=_hosts(PYPI_API_URL, NPM_REGISTRY_URL, GITHUB_API_URL)),
+    "os_malware": _COORDINATES_SENT.format(hosts=_hosts(MALWARE_API_URL)),
+    # The odd one out: it downloads a list and matches against it here, so nothing posted leaves.
+    "typosquatting": (
+        f"the package list at {_hosts(TOP_PYPI_PACKAGES_URL)} is downloaded and matched in this "
+        "process; no posted coordinate is sent"
+    ),
+    _ENRICHMENT: (
+        f"vulnerability ids are sent to the EPSS API at {_hosts(EPSS_API_URL)} and matched "
+        f"against the CISA KEV catalog from {_hosts(KEV_CATALOG_URL)}"
+    ),
     _CRYPTO_RULES: "graded against the shipped seed rules, not against this installation's crypto policy",
 }
+
+# Analyzers that put nothing the caller posted on the wire: the licence database ships with the
+# image, the crypto analyzers read stored assets, and the two CLI scanners match the SBOM against
+# a vulnerability database they fetch for themselves. Named rather than inferred so a new
+# analyzer has to be placed on one side of the contract before it can quietly break it.
+_SENDS_NOTHING: frozenset[str] = frozenset({"license_compliance", "trivy", "grype"}) | frozenset(CRYPTO_ANALYZERS)
 
 _NO_CALLGRAPH = "no callgraph supplied"
 _AUTO_FORMAT = "auto"
