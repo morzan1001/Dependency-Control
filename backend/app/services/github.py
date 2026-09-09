@@ -342,19 +342,26 @@ class GitHubService:
         user_repo: UserRepository,
     ) -> list[TeamMember]:
         """Map GitHub members onto existing local users, tagged source="github" for the merge."""
-        team_members: list[TeamMember] = []
+        resolved: dict[str, TeamMember] = {}
+        unresolved = 0
         for member in members:
             login = member["login"]
             user = await self._find_user_for_github_member(login, user_repo)
             if not user:
                 # Sync never creates users; a real member is added on their next sync after
                 # logging in via OIDC.
+                unresolved += 1
                 logger.debug("Skipping GitHub member with no local account (login=%s).", login)
                 continue
             role = TEAM_ROLE_ADMIN if member.get("role") == "maintainer" else TEAM_ROLE_MEMBER
             user_id = str(user.get("_id", user.get("id")))
-            team_members.append(TeamMember(user_id=user_id, role=role, source="github"))
-        unresolved = len(members) - len(team_members)
+            # Two logins can resolve to one local user. A duplicate entry breaks add_member's $ne
+            # guard, and the next sync's last-wins merge would silently demote the admin entry.
+            previous = resolved.get(user_id)
+            if previous is not None and previous.role == TEAM_ROLE_ADMIN:
+                continue
+            resolved[user_id] = TeamMember(user_id=user_id, role=role, source="github")
+        team_members = list(resolved.values())
         if unresolved:
             # The per-member misses are DEBUG, so this is the only signal at INFO that a token
             # without profile access has broken matching wholesale.

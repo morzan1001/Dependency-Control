@@ -83,6 +83,40 @@ class TestMemberResolution:
         assert members[0].source == "github"
 
     @pytest.mark.asyncio
+    async def test_two_logins_resolving_to_one_user_yield_a_single_member(self):
+        service = _service()
+        repo = _user_repo(by_username={"_id": "u-1"})
+
+        members = await service._build_team_members(
+            [{"login": "ada", "role": "maintainer"}, {"login": "ada-work", "role": "member"}], repo
+        )
+
+        assert members == [TeamMember(user_id="u-1", role="admin", source="github")]
+
+    @pytest.mark.asyncio
+    async def test_the_stronger_role_wins_whichever_login_comes_first(self):
+        service = _service()
+        repo = _user_repo(by_username={"_id": "u-1"})
+
+        members = await service._build_team_members(
+            [{"login": "ada-work", "role": "member"}, {"login": "ada", "role": "maintainer"}], repo
+        )
+
+        assert members == [TeamMember(user_id="u-1", role="admin", source="github")]
+
+    @pytest.mark.asyncio
+    async def test_a_deduplicated_login_does_not_count_as_unresolved(self, caplog):
+        service = _service()
+        repo = _user_repo(by_username={"_id": "u-1"})
+
+        with caplog.at_level("INFO", logger="app.services.github"):
+            await service._build_team_members(
+                [{"login": "ada", "role": "maintainer"}, {"login": "ada-work", "role": "member"}], repo
+            )
+
+        assert [record.getMessage() for record in caplog.records if record.levelname == "INFO"] == []
+
+    @pytest.mark.asyncio
     async def test_a_wholesale_resolution_failure_is_summarised_once(self, caplog):
         service = _service()
         repo = _user_repo()
