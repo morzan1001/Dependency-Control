@@ -833,10 +833,20 @@ def _run_lookup(docs: list, spec: dict, database: Any) -> list:
             doc[as_field] = [{k: v for k, v in m.items() if not k.startswith("$")} for m in matched]
         else:
             local = _resolve_dotted(doc, spec["localField"])
+            # MongoDB joins an array localField element-wise, and matches a scalar against an array
+            # foreignField the same way; a plain == joins nothing and lets the test pass anyway.
+            wanted = local if isinstance(local, list) else [local]
             doc[as_field] = [
-                _copy.deepcopy(fd) for fd in foreign_docs if _resolve_dotted(fd, spec["foreignField"]) == local
+                _copy.deepcopy(fd)
+                for fd in foreign_docs
+                if _matches_any(_resolve_dotted(fd, spec["foreignField"]), wanted)
             ]
     return docs
+
+
+def _matches_any(foreign: Any, wanted: list) -> bool:
+    candidates = foreign if isinstance(foreign, list) else [foreign]
+    return any(candidate in wanted for candidate in candidates)
 
 
 def _run_pipeline(docs: list, pipeline: list, database: Any = None) -> list:
