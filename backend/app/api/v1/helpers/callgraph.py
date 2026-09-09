@@ -5,7 +5,7 @@ from typing import Any
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.v1.helpers.projects import is_write_superuser, team_derived_role
+from app.api.v1.helpers.projects import is_write_superuser, max_project_role, team_derived_role
 from app.core.constants import (
     PROJECT_ROLE_EDITOR,
     PROJECT_ROLES,
@@ -40,8 +40,7 @@ async def _effective_project_role(
     team_ids = owning_team_ids(project.get("team_id"))
     team_role = await team_derived_role(team_ids, user_id, team_repo)
 
-    roles = [role for role in (direct_role, team_role) if role]
-    return max(roles, key=PROJECT_ROLES.index) if roles else None
+    return max_project_role(direct_role, team_role)
 
 
 async def check_callgraph_access(

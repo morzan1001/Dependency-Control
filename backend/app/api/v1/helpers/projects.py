@@ -59,7 +59,7 @@ def _is_write_request(required_role: str | None) -> bool:
     return required_role in _WRITE_ROLES
 
 
-def _max_role(role_a: str | None, role_b: str | None) -> str | None:
+def max_project_role(role_a: str | None, role_b: str | None) -> str | None:
     """Return the higher of two project roles (by PROJECT_ROLES order); either may be None."""
     if role_a is None:
         return role_b
@@ -94,7 +94,7 @@ async def team_derived_role(
         for member in team.get("members", []):
             if member.get("user_id") == user_id:
                 granted = PROJECT_ROLE_ADMIN if member.get("role") == TEAM_ROLE_ADMIN else PROJECT_ROLE_VIEWER
-                role = _max_role(role, granted)
+                role = max_project_role(role, granted)
     return role
 
 
@@ -108,7 +108,7 @@ async def _resolve_effective_role(
     direct_role = _direct_member_role(project, user_id)
     team_role = await team_derived_role(project.team_ids, user_id, team_repo)
     is_member = direct_role is not None or team_role is not None
-    return is_member, _max_role(direct_role, team_role)
+    return is_member, max_project_role(direct_role, team_role)
 
 
 async def check_project_access(
