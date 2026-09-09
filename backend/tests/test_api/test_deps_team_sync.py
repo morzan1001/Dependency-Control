@@ -130,3 +130,32 @@ class TestGitlabTeamSyncUpdate:
             )
             result = asyncio.run(_gitlab_team_sync_update(project, 100, "grp/proj", svc, MagicMock()))
         assert result == {}
+
+
+class TestShouldOverwriteTeamIdAcrossProviders:
+    """Either provenance field means the current team came from a sync."""
+
+    def test_a_github_synced_team_is_overwritable(self):
+        repo = _team_repo_with(
+            {
+                "_id": "t-gh",
+                "name": "GitHub Team: acme/payments",
+                "github_instance_id": "gh-1",
+                "github_team_id": 4711,
+            }
+        )
+        assert asyncio.run(_should_overwrite_team_id_from_sync("t-gh", repo, team_source="github")) is True
+
+    def test_a_gitlab_synced_team_is_still_overwritable(self):
+        repo = _team_repo_with(
+            {"_id": "t-gl", "name": "GitLab Group: bkg", "gitlab_instance_id": "gl-1", "gitlab_group_id": 875}
+        )
+        assert asyncio.run(_should_overwrite_team_id_from_sync("t-gl", repo, team_source="gitlab")) is True
+
+    def test_a_manual_project_assignment_is_never_reverted_by_github_sync(self):
+        repo = _team_repo_with({"_id": "t-gh", "github_team_id": 4711})
+        assert asyncio.run(_should_overwrite_team_id_from_sync("t-gh", repo, team_source="manual")) is False
+
+    def test_a_manual_team_is_still_not_overwritable(self):
+        repo = _team_repo_with({"_id": "t-manual", "name": "Atlas", "github_team_id": None})
+        assert asyncio.run(_should_overwrite_team_id_from_sync("t-manual", repo)) is False

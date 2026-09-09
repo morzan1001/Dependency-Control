@@ -178,11 +178,11 @@ async def _should_overwrite_team_id_from_sync(
     team_repo: TeamRepository,
     team_source: str | None = None,
 ) -> bool:
-    """Whether GitLab sync may overwrite project.team_id.
+    """Whether VCS sync may overwrite project.team_id.
 
     A manual team_source is never reverted by sync. For legacy projects
     (team_source unknown), overwrite only when there is no team, the team is
-    missing, or the current team itself came from GitLab sync.
+    missing, or the current team itself came from a sync.
     """
     if team_source == "manual":
         return False
@@ -191,7 +191,7 @@ async def _should_overwrite_team_id_from_sync(
     current_team = await team_repo.get_raw_by_id(project_team_id)
     if not current_team:
         return True
-    return bool(current_team.get("gitlab_group_id"))
+    return bool(current_team.get("gitlab_group_id") or current_team.get("github_team_id"))
 
 
 async def _gitlab_team_sync_update(
