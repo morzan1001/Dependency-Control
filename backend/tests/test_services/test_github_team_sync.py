@@ -356,6 +356,29 @@ class TestSyncTeamFromGithub:
         assert "platform" in logged
 
     @pytest.mark.asyncio
+    async def test_a_candidate_with_no_slug_does_not_take_the_repository_down_with_it(self):
+        """It outranks the sound team on permission, so an unguarded read of its slug aborts the sync."""
+        service = _service()
+        unaddressable = {"id": 1, "name": "Broken", "permission": "admin", "parent": None}
+        repo_reads, org_reads, member_reads = _stub_reads(
+            service, repo_teams=[unaddressable, _WINNER], members=[{"login": "ada", "role": "maintainer"}]
+        )
+
+        with (
+            repo_reads,
+            org_reads,
+            member_reads,
+            patch("app.services.github.TeamRepository", return_value=_team_repo()),
+            patch("app.services.github.UserRepository", return_value=_user_repo(by_username={"_id": "u-1"})),
+        ):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+            member_read = service.get_team_members.await_args
+
+        assert result.team_id is not None
+        assert result.candidate_count == 2
+        assert member_read.args == ("acme", "payments", 4711)
+
+    @pytest.mark.asyncio
     async def test_the_organisation_map_is_what_lets_the_nested_team_win(self):
         service = _service()
         repo_reads, org_reads, member_reads = _stub_reads(

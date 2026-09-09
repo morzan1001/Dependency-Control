@@ -200,6 +200,24 @@ def test_a_team_whose_id_cannot_be_ordered_by_is_skipped_rather_than_fatal(malfo
     assert winner["slug"] == "sound"
 
 
+@pytest.mark.parametrize(
+    "malformed",
+    [
+        pytest.param({"id": 1, "permission": "admin"}, id="slug-missing"),
+        pytest.param({"id": 1, "slug": None, "permission": "admin"}, id="slug-null"),
+        pytest.param({"id": 1, "slug": "", "permission": "admin"}, id="slug-empty"),
+    ],
+)
+def test_a_team_that_cannot_be_addressed_by_slug_is_skipped_rather_than_fatal(malformed):
+    """The members endpoint is slug-addressed, so an unaddressable winner is no winner at all."""
+    assert select_github_team([malformed], None) is None
+
+    # The malformed team outranks the sound one on permission and on id, so only the filter saves it.
+    winner = select_github_team([malformed, _team(5, "sound")], None)
+    assert winner is not None
+    assert winner["slug"] == "sound"
+
+
 class TestStability:
     """Two syncs of one repository must not flip the project's team."""
 

@@ -48,6 +48,12 @@ def _team_id(team: dict[str, Any]) -> int | None:
         return None
 
 
+def _team_slug(team: dict[str, Any]) -> str | None:
+    """None for a team the members endpoint cannot be addressed by; skipped like a malformed id."""
+    slug = team.get("slug")
+    return str(slug) if slug else None
+
+
 def build_team_depth_map(org_teams: list[dict[str, Any]]) -> dict[int, int]:
     """Team id -> nesting depth from GET /orgs/{org}/teams; the repository call carries one level only."""
     parents: dict[int, int | None] = {}
@@ -95,12 +101,16 @@ def select_github_team(
     candidates: list[dict[str, Any]],
     depth_map: dict[int, int] | None = None,
 ) -> dict[str, Any] | None:
-    """Direct access, then depth, then permission, then the lowest id.
+    """Direct access, then depth, then permission, then the lowest id. Winners carry an id and a slug.
 
     The id keeps the order total: without it two equally-ranked teams swap between syncs and the
     project's team assignment flips with nothing in the logs to explain it.
     """
-    ranked = [(team_id, team) for team in candidates if (team_id := _team_id(team)) is not None]
+    ranked = [
+        (team_id, team)
+        for team in candidates
+        if (team_id := _team_id(team)) is not None and _team_slug(team) is not None
+    ]
     if not ranked:
         return None
     return min(ranked, key=lambda entry: _sort_key(entry[0], entry[1], depth_map))[1]
