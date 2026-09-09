@@ -436,7 +436,7 @@ class TestGitHubApiWriteMethods:
     """POST/PATCH must fail closed without a token and must hit the right verb and URL."""
 
     def test_api_post_returns_none_without_token(self):
-        """The token guard must short-circuit before any client is opened, not lean on the _get_auth_headers ValueError."""
+        """The guard must short-circuit before any client opens, not lean on _get_auth_headers raising."""
         service = GitHubService(make_github_instance(access_token=None))
         mock_client = MagicMock()
 
