@@ -128,21 +128,24 @@ class TestGitHubInstanceUpdateTokenGuard:
         assert exc_info.value.status_code == 400
 
 
-def _run_test_connection(instance, current_user, jwks, orgs=None):
-    """Drive test_connection with the two outbound calls stubbed; returns (response, org_probe_mock)."""
+def _run_test_connection(instance, current_user, jwks, orgs=None, team_counts=None):
+    """Drive test_connection with the three outbound calls stubbed; returns (response, org_probe, team_probe)."""
     from app.api.v1.endpoints.github_instances import test_connection
 
     mock_repo = _make_repo_mock(get_by_id=instance)
     org_probe = AsyncMock(return_value=orgs)
+    counts = team_counts or {}
+    team_probe = AsyncMock(side_effect=lambda org: counts[org])
 
     with (
         patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo),
         patch.object(GitHubService, "get_jwks", new=AsyncMock(return_value=jwks)),
         patch.object(GitHubService, "get_viewer_organisations", new=org_probe),
+        patch.object(GitHubService, "count_org_teams", new=team_probe),
     ):
         result = asyncio.run(test_connection(instance_id="gh-1", db=MagicMock(), current_user=current_user))
 
-    return result, org_probe
+    return result, org_probe, team_probe
 
 
 class TestConnectionChecksTheToken:
@@ -152,7 +155,7 @@ class TestConnectionChecksTheToken:
         instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
 
         # None is the service's "the API refused" signal.
-        result, _ = _run_test_connection(instance, admin_user, jwks={"keys": [{}]}, orgs=None)
+        result, _, _ = _run_test_connection(instance, admin_user, jwks={"keys": [{}]}, orgs=None)
 
         assert result.success is False
         assert "read:org" in result.message
@@ -161,7 +164,7 @@ class TestConnectionChecksTheToken:
         """A token that lists zero organisations syncs zero teams, however willing the API was to answer."""
         instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
 
-        result, _ = _run_test_connection(instance, admin_user, jwks={"keys": [{}]}, orgs=[])
+        result, _, _ = _run_test_connection(instance, admin_user, jwks={"keys": [{}]}, orgs=[])
 
         assert result.success is False
         assert "read:org" in result.message
@@ -170,31 +173,72 @@ class TestConnectionChecksTheToken:
         """An instance that only ingests needs no org access; demanding it would fail a fine setup."""
         instance = make_github_instance(access_token="ghp-test-token", sync_teams=False)
 
-        result, org_probe = _run_test_connection(instance, admin_user, jwks={"keys": [{}]})
+        result, org_probe, team_probe = _run_test_connection(instance, admin_user, jwks={"keys": [{}]})
 
         assert result.success is True
         org_probe.assert_not_called()
-
-    def test_success_names_the_signing_keys_and_the_organisation_count(self, admin_user):
-        instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
-
-        result, _ = _run_test_connection(
-            instance,
-            admin_user,
-            jwks={"keys": [{}, {}]},
-            orgs=[{"login": "acme"}, {"login": "globex"}],
-        )
-
-        assert result.success is True
-        assert "2 signing key(s)" in result.message
-        assert "2 organisation(s)" in result.message
+        team_probe.assert_not_called()
 
     def test_a_jwks_failure_stays_a_jwks_failure_and_never_probes_the_org(self, admin_user):
         """An operator must be able to tell an unreachable issuer from a token that cannot read the org."""
         instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
 
-        result, org_probe = _run_test_connection(instance, admin_user, jwks={"keys": []})
+        result, org_probe, team_probe = _run_test_connection(instance, admin_user, jwks={"keys": []})
 
         assert result.success is False
         assert "read:org" not in result.message
         org_probe.assert_not_called()
+        team_probe.assert_not_called()
+
+
+class TestConnectionProbesEveryOrganisation:
+    """The owner runs several organisations; a token green on one and blind on another is the §8 failure."""
+
+    def test_success_names_every_organisation_with_its_team_count(self, admin_user):
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
+
+        result, _, team_probe = _run_test_connection(
+            instance,
+            admin_user,
+            jwks={"keys": [{}, {}]},
+            orgs=[{"login": "acme"}, {"login": "globex"}],
+            team_counts={"acme": 7, "globex": 3},
+        )
+
+        assert result.success is True
+        assert "2 signing key(s)" in result.message
+        # Each count must come from its own organisation's probe, not be reused across them.
+        assert "acme (7 team(s))" in result.message
+        assert "globex (3 team(s))" in result.message
+        assert [call.args[0] for call in team_probe.await_args_list] == ["acme", "globex"]
+
+    def test_one_unreadable_organisation_among_several_fails_and_names_it(self, admin_user):
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
+
+        result, _, _ = _run_test_connection(
+            instance,
+            admin_user,
+            jwks={"keys": [{}]},
+            orgs=[{"login": "acme"}, {"login": "globex"}],
+            team_counts={"acme": 7, "globex": None},
+        )
+
+        assert result.success is False
+        assert "globex" in result.message
+        # Naming the healthy organisation too would leave the operator guessing which one to fix.
+        assert "acme" not in result.message
+
+    def test_an_organisation_with_no_teams_is_a_success(self, admin_user):
+        """Zero teams is an answer; only a refusal is a failure."""
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
+
+        result, _, _ = _run_test_connection(
+            instance,
+            admin_user,
+            jwks={"keys": [{}]},
+            orgs=[{"login": "acme"}],
+            team_counts={"acme": 0},
+        )
+
+        assert result.success is True
+        assert "acme (0 team(s))" in result.message

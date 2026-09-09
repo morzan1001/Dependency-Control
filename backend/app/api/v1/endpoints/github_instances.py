@@ -276,7 +276,8 @@ async def test_connection(
             # pure-ingest instance would fail a perfectly good setup.
             if instance.sync_teams:
                 orgs = await github_service.get_viewer_organisations()
-                if not orgs:
+                org_names = [str(org["login"]) for org in orgs if org.get("login")] if orgs else []
+                if not org_names:
                     return GitHubInstanceTestConnectionResponse(
                         success=False,
                         message=(
@@ -287,7 +288,23 @@ async def test_connection(
                         instance_name=instance.name,
                         url=instance.url,
                     )
-                message += f" Token is a member of {len(orgs)} organisation(s)."
+                # Every organisation the token belongs to is one team sync will act on, so a single
+                # unreadable one is a red test: a green one hiding it is the §8 partial-team failure.
+                probes = [(name, await github_service.count_org_teams(name)) for name in org_names]
+                unreadable = [name for name, count in probes if count is None]
+                if unreadable:
+                    return GitHubInstanceTestConnectionResponse(
+                        success=False,
+                        message=(
+                            "OIDC endpoint reachable, but the token cannot read teams in "
+                            f"{', '.join(unreadable)}. Team sync needs read:org and membership in "
+                            "every organisation it covers, or repositories there get partial or no teams."
+                        ),
+                        instance_name=instance.name,
+                        url=instance.url,
+                    )
+                covered = ", ".join(f"{name} ({count} team(s))" for name, count in probes)
+                message += f" Token reads teams in {covered}."
             return GitHubInstanceTestConnectionResponse(
                 success=True,
                 message=message,

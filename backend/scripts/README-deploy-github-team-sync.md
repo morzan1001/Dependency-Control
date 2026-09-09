@@ -75,6 +75,10 @@ GitHub instance whose token has `read:org` and whose identity is a member of the
 A token that is not an org member sees a subset of teams and members and produces a
 partially-populated team with no error.
 
+Then run Test Connection. It probes every organisation the token belongs to and names each with
+the number of teams it can read, so the coverage is visible per organisation; one organisation it
+cannot read teams for turns the whole test red and is named in the message.
+
 ## 3. No backfill
 
 Existing GitHub-linked projects gain a team on their next ingest, not retroactively.

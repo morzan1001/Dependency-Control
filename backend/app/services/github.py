@@ -308,6 +308,15 @@ class GitHubService:
         """Every team of an organisation with its parent, for the nesting-depth map."""
         return await self._get_cached_all_pages(self._get_cache_key(f"org_teams:{org}"), f"/orgs/{org}/teams")
 
+    async def count_org_teams(self, org: str) -> int | None:
+        """How many teams the token can read in an organisation; None when the API refuses.
+
+        Uncached, unlike ``get_org_teams``: a connection test must observe the token as it is now,
+        not as it was five minutes ago.
+        """
+        teams = await self._api_get_paginated(f"/orgs/{org}/teams", max_pages=None)
+        return None if teams is None else len(teams)
+
     async def get_team_members(self, org: str, team_slug: str, team_id: int) -> list[dict[str, Any]] | None:
         """Logins tagged with their role. Cached on the numeric id: the slug is renameable."""
         cache_key = self._get_cache_key(f"team_members:{org}/{team_id}")
