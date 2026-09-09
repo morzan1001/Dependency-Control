@@ -2,6 +2,7 @@ import logging
 import urllib.parse
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 from typing import Any
 
 import httpx
@@ -17,8 +18,8 @@ from app.core.constants import (
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
 from app.models.github_instance import GitHubInstance
-from app.models.team import TeamMember
-from app.repositories import UserRepository
+from app.models.team import Team, TeamMember
+from app.repositories import TeamRepository, UserRepository
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
 logger = logging.getLogger(__name__)
@@ -364,6 +365,61 @@ class GitHubService:
                 unresolved,
             )
         return team_members
+
+    @staticmethod
+    def _merge_team_members(
+        existing_members: list[dict[str, Any]],
+        github_members: list[TeamMember],
+    ) -> list[dict[str, Any]]:
+        """Keep manual members; replace the github-sourced subset so departed members disappear."""
+        merged: dict[str, dict[str, Any]] = {}
+        # Untagged members default to manual so pre-existing members are preserved.
+        for raw in existing_members:
+            if raw.get("source", "manual") != "github":
+                merged[raw["user_id"]] = {**raw, "source": "manual"}
+        for member in github_members:
+            merged[member.user_id] = member.model_dump()
+        return list(merged.values())
+
+    async def _upsert_team_with_members(
+        self,
+        team_repo: TeamRepository,
+        existing_team: dict[str, Any] | None,
+        team_name: str,
+        description: str,
+        instance_id: str,
+        org: str,
+        team_id: int,
+        team_slug: str,
+        team_members: list[TeamMember],
+    ) -> str | None:
+        if existing_team:
+            update_data: dict[str, Any] = {
+                "members": self._merge_team_members(existing_team.get("members") or [], team_members),
+                "updated_at": datetime.now(timezone.utc),
+                # Slugs are renameable; the numeric id is what identifies the team.
+                "github_team_slug": team_slug,
+            }
+            # A team manually renamed to e.g. "Payments Guild" keeps its name.
+            current_name = existing_team.get("name", "")
+            if current_name.startswith("GitHub Team:") and current_name != team_name:
+                update_data["name"] = team_name
+                update_data["description"] = description
+            await team_repo.update(existing_team["_id"], update_data)
+            return str(existing_team["_id"])
+        if team_members:
+            new_team = Team(
+                name=team_name,
+                description=description,
+                github_instance_id=instance_id,
+                github_org=org,
+                github_team_id=team_id,
+                github_team_slug=team_slug,
+                members=team_members,
+            )
+            await team_repo.create(new_team)
+            return str(new_team.id)
+        return None
 
     async def get_pull_requests_for_commit(self, owner: str, repo: str, commit_sha: str) -> list[GitHubPullRequest]:
         """Pull requests associated with a commit, retrying via the head parent when it is a merge commit."""
