@@ -385,10 +385,6 @@ class GitHubService:
             if previous is not None and previous.role == TEAM_ROLE_ADMIN:
                 continue
             resolved[user_id] = TeamMember(user_id=user_id, role=role, source="github")
-        if members and not resolved:
-            # Bots make a partial miss routine, so only a total one is worth a line. A refused
-            # profile lookup and a hidden email are the same None here: state no cause.
-            logger.info("GitHub team sync could not resolve any of %d GitHub members to a local user.", len(members))
         return list(resolved.values()), unresolved
 
     @staticmethod

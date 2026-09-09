@@ -143,24 +143,7 @@ class TestMemberResolution:
             assert await service._build_team_members(github_members, repo) == ([], 3)
 
     @pytest.mark.asyncio
-    async def test_a_total_resolution_failure_is_summarised_without_naming_a_cause(self, caplog):
-        service = _service()
-        repo = _user_repo()
-        github_members = [{"login": f"user-{index}", "role": "member"} for index in range(3)]
-
-        with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=None)):
-            with caplog.at_level("INFO", logger="app.services.github"):
-                await service._build_team_members(github_members, repo)
-
-        summaries = [record.getMessage() for record in caplog.records if record.levelname == "INFO"]
-        assert len(summaries) == 1
-        assert "any of 3" in summaries[0]
-        # A refused profile lookup and a hidden email are the same None here, so the line must not
-        # blame user provisioning.
-        assert "no local account" not in summaries[0]
-
-    @pytest.mark.asyncio
-    async def test_the_bots_every_organisation_has_are_not_summarised(self, caplog):
+    async def test_the_bots_every_organisation_has_count_without_costing_the_real_members(self):
         service = _service()
         repo = MagicMock()
         repo.get_raw_by_username = AsyncMock(side_effect=[None, None, {"_id": "u-1"}])
@@ -172,21 +155,10 @@ class TestMemberResolution:
         ]
 
         with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=None)):
-            with caplog.at_level("INFO", logger="app.services.github"):
-                _, unresolved = await service._build_team_members(github_members, repo)
+            members, unresolved = await service._build_team_members(github_members, repo)
 
+        assert [m.user_id for m in members] == ["u-1"]
         assert unresolved == 2
-        assert [record.getMessage() for record in caplog.records if record.levelname == "INFO"] == []
-
-    @pytest.mark.asyncio
-    async def test_a_fully_resolved_team_is_not_summarised(self, caplog):
-        service = _service()
-        repo = _user_repo(by_username={"_id": "u-1"})
-
-        with caplog.at_level("INFO", logger="app.services.github"):
-            await service._build_team_members([{"login": "ada", "role": "member"}], repo)
-
-        assert [record.getMessage() for record in caplog.records if record.levelname == "INFO"] == []
 
 
 class TestRoleMapping:
