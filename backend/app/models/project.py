@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.core.constants import DEFAULT_ACTIVE_ANALYZERS, PROJECT_ROLE_VIEWER, PROJECT_ROLES
 from app.core.notification_prefs import NotificationPreferences
@@ -29,9 +29,12 @@ class ProjectMember(BaseModel):
 class Project(MongoDocument, CreatedAtModel):
     name: str
     owner_id: str | None = None  # Deprecated: use team/member admins instead
+    team_ids: list[str] = Field(default_factory=list, description="Every team that owns this project")
+    # Provenance per owner: "manual" entries are never reverted by sync, and a provider only ever
+    # replaces the entries it wrote itself. A scalar cannot say which of several owners was manual.
+    team_sources: dict[str, Literal["gitlab", "github", "manual"]] = Field(default_factory=dict)
+    # Written until the legacy scalars are removed, so a pod running older code still reads an owner.
     team_id: str | None = None
-    # "manual" team_id assignments are never reverted by sync;
-    # "gitlab"/"github"/None may be overwritten by the sync that owns them.
     team_source: Literal["gitlab", "github", "manual"] | None = None
     members: list[ProjectMember] = Field(default_factory=list)
     api_key_hash: str | None = Field(None, exclude=True)
@@ -92,6 +95,14 @@ class Project(MongoDocument, CreatedAtModel):
     # Periodic Scanning
     rescan_enabled: bool | None = None  # If None, use system default
     rescan_interval: int | None = None  # Hours. If None, use system default
+
+    @model_validator(mode="after")
+    def _derive_team_ids(self) -> "Project":
+        """The scalar is still what every writer sets, so the list is derived from it, never the
+        other way round: mirroring back would revert a transfer the scalar already recorded."""
+        self.team_ids = [self.team_id] if self.team_id else []
+        self.team_sources = {self.team_id: self.team_source} if self.team_id and self.team_source else {}
+        return self
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
