@@ -256,7 +256,7 @@ async def test_connection(
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
 ) -> GitHubInstanceTestConnectionResponse:
-    """Test OIDC connectivity by fetching the JWKS from the configured issuer URL."""
+    """Fetch the JWKS from the configured issuer and, for a team-syncing instance, exercise the token."""
     instance_repo = GitHubInstanceRepository(db)
     instance = await instance_repo.get_by_id(instance_id)
 
@@ -271,10 +271,26 @@ async def test_connection(
         jwks = await github_service.get_jwks()
 
         if jwks and jwks.get("keys"):
-            key_count = len(jwks["keys"])
+            message = f"OIDC endpoint reachable. Found {len(jwks['keys'])} signing key(s)."
+            # Only an instance that syncs teams needs organisation access; demanding it of a
+            # pure-ingest instance would fail a perfectly good setup.
+            if instance.sync_teams:
+                orgs = await github_service.get_viewer_organisations()
+                if not orgs:
+                    return GitHubInstanceTestConnectionResponse(
+                        success=False,
+                        message=(
+                            "OIDC endpoint reachable, but the token cannot list its organisations. "
+                            "Team sync needs read:org and an identity that is a member of the "
+                            "organisation, or it will silently see only part of it."
+                        ),
+                        instance_name=instance.name,
+                        url=instance.url,
+                    )
+                message += f" Token is a member of {len(orgs)} organisation(s)."
             return GitHubInstanceTestConnectionResponse(
                 success=True,
-                message=f"OIDC endpoint reachable. Found {key_count} signing key(s).",
+                message=message,
                 instance_name=instance.name,
                 url=instance.url,
             )
