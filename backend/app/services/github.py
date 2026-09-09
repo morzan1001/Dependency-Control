@@ -323,15 +323,31 @@ class GitHubService:
         return await self._api_get_paginated("/user/orgs", max_pages=None)
 
     async def get_user_public_email(self, login: str) -> str | None:
-        """The public profile email, or None when the user hides it."""
+        """The public profile email, or None when the user hides it. Cached per login: this is the
+        one per-member call of a sync, and the jobs of one workflow run must not repeat it."""
+        cache_key = self._get_cache_key(f"user_email:{login}")
+        # "" is the stored "no public email": a cached None reads back as a miss, and the bots that
+        # never resolve are exactly the logins not worth asking about twice.
+        cached: str | None = await cache_service.get(cache_key)
+        if cached is not None:
+            return cached or None
+
         response = await self._api_get(f"/users/{login}")
-        if response is not None and response.status_code == 200:
-            email = response.json().get("email")
-            return str(email) if email else None
-        # A refusal read as "no public email" would silently disable email matching for every member.
-        if response is not None and response.status_code != 404:
+        if response is None:
+            return None
+        if response.status_code == 200:
+            profile_email = response.json().get("email")
+            email = str(profile_email) if profile_email else ""
+        elif response.status_code == 404:
+            email = ""
+        else:
+            # A refusal read as "no public email" would silently disable email matching for every
+            # member; caching it would extend that to every later job of the run.
             logger.warning("GitHub API GET /users/%s failed: %s", login, response.status_code)
-        return None
+            return None
+
+        await cache_service.set(cache_key, email, ttl_seconds=GITHUB_TEAM_SYNC_CACHE_TTL)
+        return email or None
 
     async def _find_user_for_github_member(self, login: str, user_repo: UserRepository) -> dict[str, Any] | None:
         """Resolve a GitHub login to an EXISTING local user: username first, then the public email."""
