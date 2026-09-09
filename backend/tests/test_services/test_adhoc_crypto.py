@@ -102,6 +102,28 @@ async def test_a_weak_key_in_the_posted_cbom_becomes_a_finding():
 
 
 @pytest.mark.asyncio
+async def test_the_same_cbom_twice_yields_the_same_finding_ids():
+    """finding_id is how the response says findings are addressed, so it cannot be a per-run nonce.
+
+    A random id makes two identical requests look like two different results, and no waiver
+    written against one run can ever match the next.
+    """
+    first = _crypto_findings(await _run([_cbom(_RSA_1024, _MD5)]))
+    second = _crypto_findings(await _run([_cbom(_RSA_1024, _MD5)]))
+
+    assert [finding["id"] for finding in first] == [finding["id"] for finding in second]
+    assert [finding["finding_id"] for finding in first] == [finding["id"] for finding in first]
+
+
+@pytest.mark.asyncio
+async def test_two_distinct_crypto_assets_keep_distinct_ids():
+    """Stability must not be bought by collapsing different assets onto one id."""
+    crypto = _crypto_findings(await _run([_cbom(_RSA_1024, _MD5)]))
+
+    assert len({finding["id"] for finding in crypto}) == len(crypto) == 2
+
+
+@pytest.mark.asyncio
 async def test_a_rule_another_analyzer_grades_is_left_to_that_analyzer():
     response = await _run([_cbom(_RSA_1024, _AES_256)])
 

@@ -135,8 +135,9 @@ def has_spdx_expression(component: dict[str, Any]) -> str | None:
 
 def parse_spdx_expression(expr: str) -> list[list[str]]:
     """Parse an SPDX expression into OR-groups of AND-connected licenses."""
-    # WITH modifies the preceding license; strip it. Match only spaces/tabs to avoid \s+ backtracking.
-    expr = re.sub(r"[ \t]+WITH[ \t]+\S+", "", expr)
+    # WITH modifies the preceding license; strip it. The lookbehind keeps the scan linear for the
+    # same reason it does on the SPDX_* patterns.
+    expr = re.sub(r"(?<![ \t])[ \t]+WITH[ \t]+\S+", "", expr)
 
     # OR has the lowest precedence in SPDX.
     or_parts = SPDX_OR_SPLIT.split(expr)

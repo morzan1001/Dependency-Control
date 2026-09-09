@@ -1,5 +1,6 @@
 """Tests for the LicenseAnalyzer - license compliance analysis."""
 
+import time
 from typing import Any, ClassVar
 
 import pytest
@@ -562,6 +563,32 @@ class TestSpdxExpressionEvaluation:
     def test_parse_single_license(self):
         result = parse_spdx_expression("MIT")
         assert result == [["MIT"]]
+
+    def test_long_whitespace_run_between_tokens_still_splits(self):
+        """Whitespace is not a separator budget: an operator stays an operator however far it sits."""
+        expr = "MIT" + " " * 5000 + "OR" + " " * 5000 + "Apache-2.0"
+        assert parse_spdx_expression(expr) == [["MIT"], ["Apache-2.0"]]
+
+    def test_whitespace_run_parses_without_superlinear_backtracking(self):
+        """A run of spaces matching no operator must cost linear time, not quadratic.
+
+        Every SPDX pattern starts with a repeated whitespace class, so without pruning the
+        doomed start positions one 50 KB component licence burns ~10 s of CPU on a stage no
+        deadline can interrupt.
+        """
+        expr = "MIT" + " " * 50_000 + "Apache-2.0"
+        started = time.perf_counter()
+        result = parse_spdx_expression(expr)
+        assert time.perf_counter() - started < 1.0
+        assert result == [["MIT" + " " * 50_000 + "Apache-2.0"]]
+
+    def test_expression_scan_without_superlinear_backtracking(self):
+        """The same pruning has to hold for the AND|OR|WITH scan extract_licenses runs."""
+        component = {"licenses": [{"expression": "MIT" + " " * 50_000 + "Apache-2.0"}]}
+        started = time.perf_counter()
+        licenses = extract_licenses(component)
+        assert time.perf_counter() - started < 1.0
+        assert licenses == [("MIT" + " " * 50_000 + "Apache-2.0", None)]
 
     def test_evaluate_or_picks_least_restrictive(self):
         policy = LicensePolicy()
