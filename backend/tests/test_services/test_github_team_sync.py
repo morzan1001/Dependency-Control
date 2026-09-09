@@ -495,6 +495,9 @@ class TestSyncTeamFromGithub:
         team_repo.update.assert_not_called()
         warnings = " ".join(record.getMessage() for record in caplog.records if record.levelname == "WARNING")
         assert "0 of 2" in warnings
+        # A refused profile lookup and a hidden email are the same None here, so the line reports an
+        # outcome: blaming user provisioning misdirects the operator in exactly the 403 case.
+        assert "no local account" not in warnings
 
     @pytest.mark.asyncio
     async def test_a_member_that_does_not_resolve_never_blocks_the_ones_that_do(self):
