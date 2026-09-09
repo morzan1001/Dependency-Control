@@ -59,7 +59,7 @@ def _is_write_request(required_role: str | None) -> bool:
     return required_role in _WRITE_ROLES
 
 
-def _max_role(role_a: str | None, role_b: str | None) -> str | None:
+def max_project_role(role_a: str | None, role_b: str | None) -> str | None:
     """Return the higher of two project roles (by PROJECT_ROLES order); either may be None."""
     if role_a is None:
         return role_b
@@ -76,21 +76,26 @@ def _direct_member_role(project: Project, user_id: str) -> str | None:
     return None
 
 
-async def _team_derived_role(
-    project: Project,
+async def team_derived_role(
+    team_ids: list[str],
     user_id: str,
     team_repo: TeamRepository,
 ) -> str | None:
-    """Return the project role from team membership: team admin -> admin, else viewer; None if not a team member."""
-    if not project.team_id:
-        return None
-    team = await team_repo.get_raw_by_id(project.team_id)
-    if not team:
-        return None
-    for tm in team.get("members", []):
-        if tm.get("user_id") == user_id:
-            return PROJECT_ROLE_ADMIN if tm.get("role") == TEAM_ROLE_ADMIN else PROJECT_ROLE_VIEWER
-    return None
+    """The strongest project role any of these teams grants: team admin -> admin, member -> viewer.
+
+    Strongest rather than first, because array order is set by whichever writer touched the field
+    last and must not decide who may write.
+    """
+    role: str | None = None
+    for team_id in team_ids:
+        team = await team_repo.get_raw_by_id(team_id)
+        if not team:
+            continue
+        for member in team.get("members", []):
+            if member.get("user_id") == user_id:
+                granted = PROJECT_ROLE_ADMIN if member.get("role") == TEAM_ROLE_ADMIN else PROJECT_ROLE_VIEWER
+                role = max_project_role(role, granted)
+    return role
 
 
 async def _resolve_effective_role(
@@ -101,9 +106,9 @@ async def _resolve_effective_role(
     """Return (is_member, effective_role) where effective_role = MAX(direct, team-derived)."""
     user_id = str(user.id)
     direct_role = _direct_member_role(project, user_id)
-    team_role = await _team_derived_role(project, user_id, team_repo)
+    team_role = await team_derived_role(project.team_ids, user_id, team_repo)
     is_member = direct_role is not None or team_role is not None
-    return is_member, _max_role(direct_role, team_role)
+    return is_member, max_project_role(direct_role, team_role)
 
 
 async def check_project_access(
