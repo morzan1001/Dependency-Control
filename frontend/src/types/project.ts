@@ -27,6 +27,7 @@ export interface Project {
   owner_id?: string; // access is controlled via team/member admins
   team_id?: string;
   team_name?: string;
+  team_source?: 'gitlab' | 'github' | 'manual';
   members?: ProjectMember[];
   active_analyzers?: string[];
   retention_days?: number;
@@ -44,6 +45,8 @@ export interface Project {
   github_instance_id?: string;
   github_repository_id?: string;
   github_repository_path?: string;
+  github_team_candidates?: number;
+  github_pr_comments_enabled?: boolean;
   stats?: EnhancedStats | null;
   last_scan_at?: string;
   created_at?: string;
@@ -75,6 +78,7 @@ export interface ProjectUpdate {
   gitlab_instance_id?: string | null;
   gitlab_project_id?: number | null;
   gitlab_project_path?: string | null;
+  github_pr_comments_enabled?: boolean;
 }
 
 export interface ProjectApiKeyResponse {

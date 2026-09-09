@@ -11,9 +11,9 @@ from app.models.types import MongoDocument
 class TeamMember(BaseModel):
     user_id: str
     role: str = TEAM_ROLE_MEMBER
-    # Defaults to "manual" so manually-added members survive GitLab merge-sync;
-    # only the "gitlab"-sourced subset is replaced on each sync.
-    source: Literal["gitlab", "manual"] = "manual"
+    # Defaults to "manual" so manually-added members survive merge-sync; only the
+    # provider-sourced subset is replaced on each sync.
+    source: Literal["gitlab", "github", "manual"] = "manual"
 
     @field_validator("role")
     @classmethod
@@ -28,6 +28,11 @@ class Team(MongoDocument, CreatedAtModel):
     description: str | None = None
     gitlab_instance_id: str | None = None
     gitlab_group_id: int | None = None
+    github_instance_id: str | None = None
+    github_org: str | None = None
+    # The numeric id identifies the team; slugs are renameable.
+    github_team_id: int | None = None
+    github_team_slug: str | None = None
     members: list[TeamMember] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

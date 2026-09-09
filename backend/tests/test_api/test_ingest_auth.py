@@ -827,3 +827,113 @@ class TestIngestGitHubOidcProjectLookup:
 
         assert result.name == "GL Project"
         assert result.id == "proj-gl"
+
+
+_TEAM_SYNC_INSTANCE = {
+    "_id": "gh-inst-a",
+    "name": "GitHub.com",
+    "url": "https://token.actions.githubusercontent.com",
+    "is_active": True,
+    "created_by": "admin",
+    "access_token": "ghp-secret",
+}
+_TEAM_SYNC_PROJECT = {
+    "_id": "proj-gh-1",
+    "name": "acme/widgets",
+    "github_instance_id": "gh-inst-a",
+    "github_repository_id": "123456",
+    "github_repository_path": "acme/widgets",
+}
+
+
+class TestIngestGitHubTeamSync:
+    """GitHub OIDC ingest assigns the repository's team when the instance opts in."""
+
+    def _run(self, instance_doc, sync_result, project_doc=None, **payload_overrides):
+        from app.api.deps import get_project_for_ingest
+        from app.services.github import GitHubTeamSyncResult
+
+        projects_coll = create_mock_collection(find_one=project_doc)
+        projects_coll.find_one_and_update = AsyncMock(side_effect=lambda _q, update, **_kw: update["$setOnInsert"])
+        db = create_mock_db(
+            {
+                "gitlab_instances": create_mock_collection(find_one=None),
+                "github_instances": create_mock_collection(find_one=instance_doc),
+                "projects": projects_coll,
+                "users": create_mock_collection(find_one=None),
+            }
+        )
+
+        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+            mock_claims.return_value = {"iss": "https://token.actions.githubusercontent.com"}
+            with patch("app.services.github.GitHubService") as MockService:
+                mock_svc = MagicMock()
+                payload = {"repository_id": "123456", "repository": "acme/widgets", "repository_owner": "acme"}
+                payload.update(payload_overrides)
+                mock_svc.validate_oidc_token = AsyncMock(return_value=make_github_oidc_payload(**payload))
+                mock_svc.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult(*sync_result))
+                MockService.return_value = mock_svc
+
+                asyncio.run(
+                    get_project_for_ingest(x_api_key=None, oidc_token="a.b.c", db=db, settings=_make_system_settings())
+                )
+        return mock_svc, projects_coll, db
+
+    def test_sync_is_not_called_when_the_instance_has_it_off(self):
+        mock_svc, projects_coll, _ = self._run(
+            {**_TEAM_SYNC_INSTANCE, "sync_teams": False}, ("t-9", 1), project_doc=_TEAM_SYNC_PROJECT
+        )
+        mock_svc.sync_team_from_github.assert_not_called()
+        projects_coll.update_one.assert_not_called()
+
+    def test_sync_is_not_called_on_auto_create_when_the_instance_has_it_off(self):
+        instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": False, "auto_create_projects": True}
+        mock_svc, projects_coll, _ = self._run(instance, ("t-9", 1))
+        mock_svc.sync_team_from_github.assert_not_called()
+        inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
+        assert inserted["team_id"] is None
+        assert inserted["github_team_candidates"] is None
+
+    def test_the_owning_org_comes_from_the_token(self):
+        mock_svc, _, db = self._run(
+            {**_TEAM_SYNC_INSTANCE, "sync_teams": True}, ("t-9", 1), project_doc=_TEAM_SYNC_PROJECT
+        )
+        mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme", "acme/widgets")
+
+    def test_the_org_is_the_repository_owner_claim_not_the_path_prefix(self):
+        """Pins which claim sources the org; the two agree in real tokens, so nothing else would catch a swap."""
+        mock_svc, _, db = self._run(
+            {**_TEAM_SYNC_INSTANCE, "sync_teams": True},
+            ("t-9", 1),
+            project_doc=_TEAM_SYNC_PROJECT,
+            repository_owner="acme-org",
+        )
+        mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme-org", "acme/widgets")
+
+    def test_the_team_and_the_candidate_count_are_written_to_the_project(self):
+        _, projects_coll, _ = self._run(
+            {**_TEAM_SYNC_INSTANCE, "sync_teams": True}, ("t-9", 3), project_doc=_TEAM_SYNC_PROJECT
+        )
+        assert projects_coll.update_one.await_args.args[0] == {"_id": "proj-gh-1"}
+        update = projects_coll.update_one.await_args.args[1]["$set"]
+        assert update["team_id"] == "t-9"
+        assert update["team_source"] == "github"
+        assert update["github_team_candidates"] == 3
+
+    def test_an_auto_created_project_carries_the_synced_team(self):
+        instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
+        mock_svc, projects_coll, db = self._run(instance, ("t-9", 3), repository_owner="acme-org")
+        # The auto-create call site sources the org from the same claim as the existing-project one.
+        mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme-org", "acme/widgets")
+        inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
+        assert inserted["team_id"] == "t-9"
+        assert inserted["team_source"] == "github"
+        assert inserted["github_team_candidates"] == 3
+
+    def test_an_auto_created_project_without_a_team_is_still_created(self):
+        instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
+        _, projects_coll, _ = self._run(instance, (None, 0))
+        inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
+        assert inserted["team_id"] is None
+        assert inserted["team_source"] is None
+        assert inserted["github_team_candidates"] == 0

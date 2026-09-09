@@ -11,3 +11,13 @@ if (globalThis.IntersectionObserver === undefined) {
   (globalThis as unknown as { IntersectionObserver: typeof intersectionObserverStub }).IntersectionObserver =
     intersectionObserverStub;
 }
+
+// jsdom lacks ResizeObserver; Radix's useSize constructs one on mount.
+const resizeObserverStub = class {
+  observe = (): void => undefined;
+  disconnect = (): void => undefined;
+  unobserve = (): void => undefined;
+};
+if (globalThis.ResizeObserver === undefined) {
+  (globalThis as unknown as { ResizeObserver: typeof resizeObserverStub }).ResizeObserver = resizeObserverStub;
+}

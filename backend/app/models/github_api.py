@@ -1,4 +1,4 @@
-"""Pydantic models for GitHub Actions OIDC token payloads (extra="ignore" discards unused claims)."""
+"""Pydantic models for GitHub API responses and Actions OIDC token payloads (extra="ignore" discards unused fields)."""
 
 from pydantic import BaseModel, ConfigDict
 
@@ -17,3 +17,23 @@ class GitHubOIDCPayload(BaseModel):
     workflow: str | None = None
     run_id: str | None = None
     event_name: str | None = None
+
+
+class GitHubPullRequest(BaseModel):
+    """Pull request from GET /repos/{owner}/{repo}/commits/{sha}/pulls."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    number: int
+    state: str
+    draft: bool = False
+
+
+class GitHubIssueComment(BaseModel):
+    """Comment from GET /repos/{owner}/{repo}/issues/{number}/comments."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+    # GitHub's issue-comment schema declares `body` optional.
+    body: str | None = None

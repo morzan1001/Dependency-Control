@@ -151,6 +151,7 @@ class ProjectUpdate(BaseModel):
     gitlab_instance_id: str | None = Field(None, description="Reference to GitLabInstance._id")
     gitlab_project_id: int | None = Field(None, description="GitLab project numeric ID")
     gitlab_project_path: str | None = Field(None, description="GitLab project path, e.g. group/subgroup/project")
+    github_pr_comments_enabled: bool | None = Field(None, description="Post scan results as PR comments on GitHub")
     enforce_notification_settings: bool | None = Field(
         None, description="Enforce admin notification settings for all members"
     )

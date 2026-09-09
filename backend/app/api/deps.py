@@ -1,5 +1,5 @@
 import logging
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -22,6 +22,9 @@ from app.repositories import (
 )
 from app.schemas.token import TokenPayload
 from app.services.gitlab import GitLabService
+
+if TYPE_CHECKING:
+    from app.services.github import GitHubService
 
 logger = logging.getLogger(__name__)
 
@@ -178,11 +181,11 @@ async def _should_overwrite_team_id_from_sync(
     team_repo: TeamRepository,
     team_source: str | None = None,
 ) -> bool:
-    """Whether GitLab sync may overwrite project.team_id.
+    """Whether VCS sync may overwrite project.team_id.
 
     A manual team_source is never reverted by sync. For legacy projects
     (team_source unknown), overwrite only when there is no team, the team is
-    missing, or the current team itself came from GitLab sync.
+    missing, or the current team itself came from a sync.
     """
     if team_source == "manual":
         return False
@@ -191,7 +194,7 @@ async def _should_overwrite_team_id_from_sync(
     current_team = await team_repo.get_raw_by_id(project_team_id)
     if not current_team:
         return True
-    return bool(current_team.get("gitlab_group_id"))
+    return bool(current_team.get("gitlab_group_id") or current_team.get("github_team_id"))
 
 
 async def _gitlab_team_sync_update(
@@ -220,6 +223,34 @@ async def _gitlab_team_sync_update(
         f"GitLab sync would have set team_id={team_id}."
     )
     return {}
+
+
+async def _github_team_sync_update(
+    project: Project,
+    github_org: str,
+    repository_path: str,
+    github_service: "GitHubService",
+    db: AsyncIOMotorDatabase,
+) -> dict:
+    """Return the team update GitHub sync should merge, or an empty dict to skip."""
+    result = await github_service.sync_team_from_github(db, github_org, repository_path)
+    updates: dict = {}
+    # None means the candidate list was never determined; keep the last known count.
+    if result.candidate_count is not None and result.candidate_count != project.github_team_candidates:
+        updates["github_team_candidates"] = result.candidate_count
+    if not result.team_id or project.team_id == result.team_id:
+        return updates
+    team_repo = TeamRepository(db)
+    if await _should_overwrite_team_id_from_sync(project.team_id, team_repo, project.team_source):
+        # Stamp github provenance so a later manual reassignment is not reverted on sync.
+        updates["team_id"] = result.team_id
+        updates["team_source"] = "github"
+        return updates
+    logger.info(
+        f"Keeping manual team assignment for project {project.id} ({repository_path}); "
+        f"GitHub sync would have set team_id={result.team_id}."
+    )
+    return updates
 
 
 async def _sync_project_name(
@@ -325,6 +356,7 @@ async def _handle_gitlab_oidc(
 async def _handle_github_oidc(
     oidc_token: str,
     github_instance: Any,
+    db: AsyncIOMotorDatabase,
     project_repo: ProjectRepository,
     user_repo: UserRepository,
     default_analyzers: list,
@@ -347,11 +379,20 @@ async def _handle_github_oidc(
 
     project_data = await project_repo.get_raw_by_github_composite_key(instance_id, repo_id)
     if project_data:
+        project = Project(**project_data)
+        extra_updates: dict = {}
+
+        if github_instance.sync_teams:
+            extra_updates.update(
+                await _github_team_sync_update(project, gh_payload.repository_owner, repo_path, github_service, db)
+            )
+
         return await _sync_project_name(
-            Project(**project_data),
+            project,
             repo_path,
             project_repo,
             path_field="github_repository_path",
+            extra_updates=extra_updates,
         )
 
     if not github_instance.auto_create_projects:
@@ -371,6 +412,13 @@ async def _handle_github_oidc(
         default_branch=None,
         active_analyzers=default_analyzers,
     )
+
+    if github_instance.sync_teams:
+        sync_result = await github_service.sync_team_from_github(db, gh_payload.repository_owner, repo_path)
+        new_project.github_team_candidates = sync_result.candidate_count
+        if sync_result.team_id:
+            new_project.team_id = sync_result.team_id
+            new_project.team_source = "github"
 
     project, created = await project_repo.find_or_create_by_github_key(instance_id, repo_id, new_project)
     if created:
@@ -438,6 +486,7 @@ async def _authenticate_via_oidc(
         return await _handle_github_oidc(
             oidc_token,
             github_instance,
+            db,
             project_repo,
             user_repo,
             default_active_analyzers,

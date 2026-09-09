@@ -1,7 +1,7 @@
-"""Tests for GitHubService OIDC validation."""
+"""Tests for GitHubService OIDC validation, API pagination and write verbs."""
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.models.github_api import GitHubOIDCPayload
 from app.services.github import GitHubService
@@ -286,3 +286,232 @@ class TestGitHubServiceOIDC:
 
                     result = asyncio.run(service.validate_oidc_token("fake.jwt.token"))
                     assert result is None
+
+
+_TEAMS_ENDPOINT = "/repos/acme/widgets/teams"
+_TEAMS_URL = f"https://api.github.com{_TEAMS_ENDPOINT}"
+
+# Shape of GET /repos/{owner}/{repo}/teams, one team per page.
+_TEAM_PAGES = [
+    [
+        {
+            "id": 501,
+            "node_id": "T_kwDOA",
+            "name": "Payments",
+            "slug": "payments",
+            "description": None,
+            "privacy": "closed",
+            "permission": "push",
+            "url": "https://api.github.com/organizations/9/team/501",
+            "html_url": "https://github.com/orgs/acme/teams/payments",
+            "members_url": "https://api.github.com/organizations/9/team/501/members{/member}",
+            "repositories_url": "https://api.github.com/organizations/9/team/501/repos",
+            "parent": None,
+        }
+    ],
+    [
+        {
+            "id": 502,
+            "node_id": "T_kwDOB",
+            "name": "Platform",
+            "slug": "platform",
+            "description": None,
+            "privacy": "closed",
+            "permission": "pull",
+            "url": "https://api.github.com/organizations/9/team/502",
+            "html_url": "https://github.com/orgs/acme/teams/platform",
+            "members_url": "https://api.github.com/organizations/9/team/502/members{/member}",
+            "repositories_url": "https://api.github.com/organizations/9/team/502/repos",
+            "parent": None,
+        }
+    ],
+    [
+        {
+            "id": 503,
+            "node_id": "T_kwDOC",
+            "name": "SRE",
+            "slug": "sre",
+            "description": None,
+            "privacy": "closed",
+            "permission": "admin",
+            "url": "https://api.github.com/organizations/9/team/503",
+            "html_url": "https://github.com/orgs/acme/teams/sre",
+            "members_url": "https://api.github.com/organizations/9/team/503/members{/member}",
+            "repositories_url": "https://api.github.com/organizations/9/team/503/repos",
+            "parent": None,
+        }
+    ],
+]
+
+
+def _link_header(page: int) -> str:
+    """GitHub's Link header: rel="next" on every page but the last."""
+    if page >= len(_TEAM_PAGES):
+        return f'<{_TEAMS_URL}?per_page=100&page=1>; rel="first", <{_TEAMS_URL}?per_page=100&page=2>; rel="prev"'
+    return (
+        f'<{_TEAMS_URL}?per_page=100&page={page + 1}>; rel="next", '
+        f'<{_TEAMS_URL}?per_page=100&page={len(_TEAM_PAGES)}>; rel="last"'
+    )
+
+
+def _patch_api_client(service, mock_client):
+    class _CM:
+        async def __aenter__(self):
+            return mock_client
+
+        async def __aexit__(self, *a):
+            return False
+
+    return patch.object(service, "_api_client", return_value=_CM())
+
+
+def _patch_three_pages(service, fetched_pages):
+    async def fake_get(url, headers=None, params=None):
+        page = params["page"]
+        fetched_pages.append(page)
+        response = MagicMock()
+        response.status_code = 200
+        response.json.return_value = _TEAM_PAGES[page - 1]
+        response.headers = {"link": _link_header(page)}
+        return response
+
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(side_effect=fake_get)
+
+    return _patch_api_client(service, mock_client)
+
+
+class TestGitHubPaginationCap:
+    def test_cap_truncates_and_warns_naming_the_endpoint(self, caplog):
+        """A hit cap must be visible: the result stops at the cap AND a WARNING names endpoint, cap and item count."""
+        service = GitHubService(make_github_instance(access_token="ghp-test-token"))
+        fetched_pages: list[int] = []
+
+        with _patch_three_pages(service, fetched_pages):
+            with caplog.at_level("WARNING", logger="app.services.github"):
+                result = asyncio.run(service._api_get_paginated(_TEAMS_ENDPOINT, max_pages=2))
+
+        assert fetched_pages == [1, 2]
+        assert result is not None
+        assert [t["slug"] for t in result] == ["payments", "platform"]
+
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1, [r.getMessage() for r in caplog.records]
+        message = warnings[0].getMessage()
+        assert _TEAMS_ENDPOINT in message
+        assert "cap of 2 page(s)" in message
+        assert "(2 items)" in message
+        assert "TRUNCATED" in message
+
+    def test_cap_exactly_matching_available_pages_does_not_warn(self, caplog):
+        """A complete result that ends on the cap boundary must not raise a false truncation alarm."""
+        service = GitHubService(make_github_instance(access_token="ghp-test-token"))
+        fetched_pages: list[int] = []
+
+        with _patch_three_pages(service, fetched_pages):
+            with caplog.at_level("WARNING", logger="app.services.github"):
+                result = asyncio.run(service._api_get_paginated(_TEAMS_ENDPOINT, max_pages=len(_TEAM_PAGES)))
+
+        assert fetched_pages == [1, 2, 3]
+        assert result is not None
+        assert [t["slug"] for t in result] == ["payments", "platform", "sre"]
+        assert [r.getMessage() for r in caplog.records if r.levelname == "WARNING"] == []
+
+    def test_max_pages_none_fetches_every_page(self, caplog):
+        """max_pages=None is uncapped: all three pages are fetched and nothing warns."""
+        service = GitHubService(make_github_instance(access_token="ghp-test-token"))
+        fetched_pages: list[int] = []
+
+        with _patch_three_pages(service, fetched_pages):
+            with caplog.at_level("WARNING", logger="app.services.github"):
+                result = asyncio.run(service._api_get_paginated(_TEAMS_ENDPOINT, max_pages=None))
+
+        assert fetched_pages == [1, 2, 3]
+        assert result is not None
+        assert [t["slug"] for t in result] == ["payments", "platform", "sre"]
+        assert [r for r in caplog.records if r.levelname == "WARNING"] == []
+
+
+class TestGitHubApiWriteMethods:
+    """POST/PATCH must fail closed without a token and must hit the right verb and URL."""
+
+    def test_api_post_returns_none_without_token(self):
+        """The guard must short-circuit before any client opens, not lean on _get_auth_headers raising."""
+        service = GitHubService(make_github_instance(access_token=None))
+        mock_client = MagicMock()
+
+        with _patch_api_client(service, mock_client) as api_client:
+            assert asyncio.run(service._api_post("/repos/o/r/issues/1/comments", {"body": "x"})) is None
+
+        api_client.assert_not_called()
+        mock_client.post.assert_not_called()
+
+    def test_api_patch_returns_none_without_token(self):
+        service = GitHubService(make_github_instance(access_token=None))
+        mock_client = MagicMock()
+
+        with _patch_api_client(service, mock_client) as api_client:
+            assert asyncio.run(service._api_patch("/repos/o/r/issues/comments/9", {"body": "x"})) is None
+
+        api_client.assert_not_called()
+        mock_client.patch.assert_not_called()
+
+    def test_api_post_sends_json_body_to_the_api_url(self):
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=MagicMock(status_code=201))
+
+        with _patch_api_client(service, mock_client):
+            response = asyncio.run(service._api_post("/repos/o/r/issues/1/comments", {"body": "hello"}))
+
+        assert response is not None
+        assert response.status_code == 201
+        assert mock_client.post.call_args[0][0] == "https://api.github.com/repos/o/r/issues/1/comments"
+        kwargs = mock_client.post.call_args.kwargs
+        assert kwargs["json"] == {"body": "hello"}
+        assert kwargs["headers"]["Authorization"] == "Bearer ghp-x"
+
+    def test_api_patch_uses_the_patch_verb(self):
+        """A PUT here returns 404 from GitHub: issue comments are updated with PATCH only."""
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        mock_client = MagicMock()
+        mock_client.patch = AsyncMock(return_value=MagicMock(status_code=200))
+
+        with _patch_api_client(service, mock_client):
+            response = asyncio.run(service._api_patch("/repos/o/r/issues/comments/9", {"body": "hi"}))
+
+        assert response is not None
+        assert response.status_code == 200
+        mock_client.patch.assert_awaited_once()
+        assert mock_client.patch.call_args[0][0] == "https://api.github.com/repos/o/r/issues/comments/9"
+        kwargs = mock_client.patch.call_args.kwargs
+        assert kwargs["json"] == {"body": "hi"}
+        assert kwargs["headers"]["Authorization"] == "Bearer ghp-x"
+
+    def test_api_write_uses_the_ghes_api_url(self):
+        service = GitHubService(
+            make_github_instance(access_token="ghp-x", github_url="https://github.corp.example.com")
+        )
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(return_value=MagicMock(status_code=201))
+
+        with _patch_api_client(service, mock_client):
+            asyncio.run(service._api_post("/repos/o/r/issues/1/comments", {"body": "x"}))
+
+        assert mock_client.post.call_args[0][0] == "https://github.corp.example.com/api/v3/repos/o/r/issues/1/comments"
+
+    def test_api_post_returns_none_on_transport_error(self):
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        mock_client = MagicMock()
+        mock_client.post = AsyncMock(side_effect=RuntimeError("connection reset"))
+
+        with _patch_api_client(service, mock_client):
+            assert asyncio.run(service._api_post("/repos/o/r/issues/1/comments", {"body": "x"})) is None
+
+    def test_api_patch_returns_none_on_transport_error(self):
+        service = GitHubService(make_github_instance(access_token="ghp-x"))
+        mock_client = MagicMock()
+        mock_client.patch = AsyncMock(side_effect=RuntimeError("connection reset"))
+
+        with _patch_api_client(service, mock_client):
+            assert asyncio.run(service._api_patch("/repos/o/r/issues/comments/9", {"body": "x"})) is None

@@ -1,10 +1,15 @@
-"""Tests for the hybrid team_id update guard used by _handle_gitlab_oidc."""
+"""Tests for the hybrid team_id update guard used by _handle_gitlab_oidc and _handle_github_oidc."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.api.deps import _gitlab_team_sync_update, _should_overwrite_team_id_from_sync
+from app.api.deps import (
+    _github_team_sync_update,
+    _gitlab_team_sync_update,
+    _should_overwrite_team_id_from_sync,
+)
 from app.models.project import Project
+from app.services.github import GitHubTeamSyncResult
 
 
 def _team_repo_with(raw_team):
@@ -21,6 +26,23 @@ def _service_returning(team_id):
     svc = MagicMock()
     svc.get_project_details = AsyncMock(return_value=MagicMock())
     svc.sync_team_from_gitlab = AsyncMock(return_value=team_id)
+    return svc
+
+
+def _github_project(team_id=None, candidates=None):
+    return Project(
+        id="p-gh",
+        name="acme/widgets",
+        team_id=team_id,
+        github_instance_id="gh-1",
+        github_repository_id="123456",
+        github_team_candidates=candidates,
+    )
+
+
+def _github_service_returning(result):
+    svc = MagicMock()
+    svc.sync_team_from_github = AsyncMock(return_value=result)
     return svc
 
 
@@ -130,3 +152,103 @@ class TestGitlabTeamSyncUpdate:
             )
             result = asyncio.run(_gitlab_team_sync_update(project, 100, "grp/proj", svc, MagicMock()))
         assert result == {}
+
+
+class TestShouldOverwriteTeamIdAcrossProviders:
+    """Either provenance field means the current team came from a sync."""
+
+    def test_a_github_synced_team_is_overwritable(self):
+        repo = _team_repo_with(
+            {
+                "_id": "t-gh",
+                "name": "GitHub Team: acme/payments",
+                "github_instance_id": "gh-1",
+                "github_team_id": 4711,
+            }
+        )
+        assert asyncio.run(_should_overwrite_team_id_from_sync("t-gh", repo, team_source="github")) is True
+
+    def test_a_gitlab_synced_team_is_still_overwritable(self):
+        repo = _team_repo_with(
+            {"_id": "t-gl", "name": "GitLab Group: bkg", "gitlab_instance_id": "gl-1", "gitlab_group_id": 875}
+        )
+        assert asyncio.run(_should_overwrite_team_id_from_sync("t-gl", repo, team_source="gitlab")) is True
+
+    def test_a_manual_project_assignment_is_never_reverted_by_github_sync(self):
+        repo = _team_repo_with({"_id": "t-gh", "github_team_id": 4711})
+        assert asyncio.run(_should_overwrite_team_id_from_sync("t-gh", repo, team_source="manual")) is False
+
+    def test_a_manual_team_is_still_not_overwritable(self):
+        repo = _team_repo_with({"_id": "t-manual", "name": "Atlas", "github_team_id": None})
+        assert asyncio.run(_should_overwrite_team_id_from_sync("t-manual", repo)) is False
+
+
+class TestGithubTeamSyncUpdate:
+    """Integration: _github_team_sync_update wires sync_team_from_github + hybrid guard."""
+
+    def test_assigns_the_team_and_stamps_github_provenance(self):
+        svc = _github_service_returning(GitHubTeamSyncResult("t-new", 1))
+        db = MagicMock()
+        with patch("app.api.deps.TeamRepository") as TR:
+            TR.return_value.get_raw_by_id = AsyncMock(return_value=None)
+            result = asyncio.run(_github_team_sync_update(_github_project(), "acme", "acme/widgets", svc, db))
+        assert result == {"github_team_candidates": 1, "team_id": "t-new", "team_source": "github"}
+        svc.sync_team_from_github.assert_awaited_once_with(db, "acme", "acme/widgets")
+        TR.assert_called_once_with(db)
+
+    def test_records_an_ambiguous_match(self):
+        svc = _github_service_returning(GitHubTeamSyncResult("t-new", 3))
+        with patch("app.api.deps.TeamRepository") as TR:
+            TR.return_value.get_raw_by_id = AsyncMock(return_value=None)
+            result = asyncio.run(_github_team_sync_update(_github_project(), "acme", "acme/widgets", svc, MagicMock()))
+        assert result["github_team_candidates"] == 3
+
+    def test_an_undetermined_count_does_not_clobber_the_recorded_one(self):
+        svc = _github_service_returning(GitHubTeamSyncResult(None, None))
+        result = asyncio.run(
+            _github_team_sync_update(_github_project(candidates=3), "acme", "acme/widgets", svc, MagicMock())
+        )
+        assert result == {}
+
+    def test_an_unchanged_count_is_not_rewritten(self):
+        svc = _github_service_returning(GitHubTeamSyncResult("t-same", 2))
+        result = asyncio.run(
+            _github_team_sync_update(
+                _github_project(team_id="t-same", candidates=2), "acme", "acme/widgets", svc, MagicMock()
+            )
+        )
+        assert result == {}
+
+    def test_overwrites_a_legacy_team_that_itself_came_from_github(self):
+        svc = _github_service_returning(GitHubTeamSyncResult("t-new-github", 1))
+        with patch("app.api.deps.TeamRepository") as TR:
+            TR.return_value.get_raw_by_id = AsyncMock(return_value={"_id": "t-old-github", "github_team_id": 4711})
+            result = asyncio.run(
+                _github_team_sync_update(
+                    _github_project(team_id="t-old-github"), "acme", "acme/widgets", svc, MagicMock()
+                )
+            )
+        assert result == {"github_team_candidates": 1, "team_id": "t-new-github", "team_source": "github"}
+        # The guard must be asked about the project's current team, not the sync target.
+        TR.return_value.get_raw_by_id.assert_awaited_once_with("t-old-github")
+
+    def test_a_repository_with_no_team_leaves_team_id_untouched(self):
+        svc = _github_service_returning(GitHubTeamSyncResult(None, 0))
+        with patch("app.api.deps.TeamRepository") as TR:
+            result = asyncio.run(
+                _github_team_sync_update(_github_project(team_id="t-keep"), "acme", "acme/widgets", svc, MagicMock())
+            )
+        assert result == {"github_team_candidates": 0}
+        TR.assert_not_called()
+
+    def test_keeps_a_manual_team_assignment_and_says_so(self, caplog):
+        project = _github_project(team_id="t-manual")
+        project.team_source = "manual"
+        svc = _github_service_returning(GitHubTeamSyncResult("t-from-sync", 1))
+        with patch("app.api.deps.TeamRepository") as TR:
+            TR.return_value.get_raw_by_id = AsyncMock(return_value={"_id": "t-manual", "name": "Atlas"})
+            with caplog.at_level("INFO", logger="app.api.deps"):
+                result = asyncio.run(_github_team_sync_update(project, "acme", "acme/widgets", svc, MagicMock()))
+        assert result == {"github_team_candidates": 1}
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("Keeping manual team assignment" in message for message in messages), messages

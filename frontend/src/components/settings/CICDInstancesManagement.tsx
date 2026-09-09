@@ -4,9 +4,10 @@ import { Plus, Trash2, Edit2, CheckCircle2, XCircle, Loader2 } from "lucide-reac
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { gitlabInstancesApi } from "@/api/gitlab-instances";
 import { githubInstancesApi } from "@/api/github-instances";
-import { GitLabInstance, GitLabInstanceCreate, GitLabInstanceUpdate } from "@/types/gitlab";
-import { GitHubInstance, GitHubInstanceCreate, GitHubInstanceUpdate } from "@/types/github";
+import { GitLabInstanceCreate, GitLabInstanceUpdate } from "@/types/gitlab";
+import { GitHubInstanceCreate, GitHubInstanceUpdate } from "@/types/github";
 import { useGitLabInstances, useGitHubInstances, gitlabInstanceKeys, githubInstanceKeys } from "@/hooks/queries/use-instances";
+import { InstanceType, UnifiedInstance, mergeInstances } from "./cicd-instances";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -39,28 +40,6 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { toast } from "sonner";
 
-type InstanceType = "gitlab" | "github";
-
-type UnifiedInstance = {
-  _type: InstanceType;
-  id: string;
-  name: string;
-  url: string;
-  description?: string;
-  is_active: boolean;
-  oidc_audience?: string;
-  auto_create_projects: boolean;
-  created_at: string;
-  // GitLab-specific
-  is_default?: boolean;
-  sync_teams?: boolean;
-  team_sync_depth?: number;
-  token_configured?: boolean;
-  // GitHub-specific
-  github_url?: string;
-  has_access_token?: boolean;
-};
-
 interface InstanceFormData {
   type: InstanceType;
   name: string;
@@ -69,9 +48,9 @@ interface InstanceFormData {
   oidc_audience: string;
   is_active: boolean;
   auto_create_projects: boolean;
-  // GitLab-specific
   access_token: string;
   sync_teams: boolean;
+  // GitLab-specific
   team_sync_depth: number;
   is_default: boolean;
   // GitHub-specific
@@ -92,53 +71,6 @@ const emptyFormData: InstanceFormData = {
   is_default: false,
   github_url: "",
 };
-
-function mergeInstances(
-  gitlabItems: GitLabInstance[] | undefined,
-  githubItems: GitHubInstance[] | undefined
-): UnifiedInstance[] {
-  const merged: UnifiedInstance[] = [];
-
-  if (gitlabItems) {
-    for (const gl of gitlabItems) {
-      merged.push({
-        _type: "gitlab",
-        id: gl.id,
-        name: gl.name,
-        url: gl.url,
-        description: gl.description,
-        is_active: gl.is_active,
-        oidc_audience: gl.oidc_audience,
-        auto_create_projects: gl.auto_create_projects,
-        created_at: gl.created_at,
-        is_default: gl.is_default,
-        sync_teams: gl.sync_teams,
-        team_sync_depth: gl.team_sync_depth,
-        token_configured: gl.token_configured,
-      });
-    }
-  }
-
-  if (githubItems) {
-    for (const gh of githubItems) {
-      merged.push({
-        _type: "github",
-        id: gh.id,
-        name: gh.name,
-        url: gh.url,
-        description: gh.description,
-        is_active: gh.is_active,
-        oidc_audience: gh.oidc_audience,
-        auto_create_projects: gh.auto_create_projects,
-        created_at: gh.created_at,
-        github_url: gh.github_url,
-        has_access_token: gh.has_access_token,
-      });
-    }
-  }
-
-  return merged.sort((a, b) => a.name.localeCompare(b.name));
-}
 
 export function CICDInstancesManagement() {
   const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
@@ -308,6 +240,7 @@ export function CICDInstancesManagement() {
         description: formData.description || undefined,
         oidc_audience: formData.oidc_audience || undefined,
         auto_create_projects: formData.auto_create_projects,
+        sync_teams: formData.sync_teams,
         is_active: formData.is_active,
         access_token: formData.access_token || undefined,
       };
@@ -340,6 +273,7 @@ export function CICDInstancesManagement() {
         description: formData.description || undefined,
         oidc_audience: formData.oidc_audience || undefined,
         auto_create_projects: formData.auto_create_projects,
+        sync_teams: formData.sync_teams,
         is_active: formData.is_active,
         access_token: formData.access_token || undefined,
       };
@@ -385,7 +319,7 @@ export function CICDInstancesManagement() {
 
   const isCreateDisabled = () => {
     if (isCreatePending || !formData.name || !formData.url) return true;
-    if (formData.type === "gitlab" && formData.sync_teams && !formData.access_token) return true;
+    if (formData.sync_teams && !formData.access_token) return true;
     return false;
   };
 
@@ -473,7 +407,7 @@ export function CICDInstancesManagement() {
                           Auto-Create
                         </Badge>
                       )}
-                      {instance._type === "gitlab" && instance.sync_teams && (
+                      {instance.sync_teams && (
                         <Badge variant="outline" className="text-xs">
                           Sync Teams
                         </Badge>
@@ -770,49 +704,54 @@ function InstanceForm({
           />
         </div>
 
-        {formData.type === "gitlab" && (
-          <>
-            <div className="flex items-center justify-between">
-              <div>
-                <Label htmlFor="ci-sync-teams" className={!formData.access_token && !isEdit ? "text-muted-foreground" : ""}>Sync Teams</Label>
-                <p className="text-xs text-muted-foreground">
-                  {!formData.access_token && !isEdit
-                    ? "Requires an access token"
-                    : "Sync GitLab group members to local teams"}
-                </p>
-              </div>
-              <Switch
-                id="ci-sync-teams"
-                checked={formData.sync_teams}
-                disabled={!formData.access_token && !isEdit}
-                onCheckedChange={(checked) =>
-                  setFormData((prev) => ({ ...prev, sync_teams: checked }))
-                }
-              />
-            </div>
+        <div className="flex items-center justify-between">
+          <div>
+            <Label htmlFor="ci-sync-teams" className={!formData.access_token && !isEdit ? "text-muted-foreground" : ""}>Sync Teams</Label>
+            <p className="text-xs text-muted-foreground">
+              {!formData.access_token && !isEdit
+                ? "Requires an access token"
+                : formData.type === "gitlab"
+                  ? "Sync GitLab group members to local teams"
+                  : "Sync GitHub team members to local teams. The token needs read:org and must belong to a member of the organisation."}
+            </p>
+          </div>
+          <Switch
+            id="ci-sync-teams"
+            checked={formData.sync_teams}
+            disabled={!formData.access_token && !isEdit}
+            onCheckedChange={(checked) =>
+              setFormData((prev) => ({ ...prev, sync_teams: checked }))
+            }
+          />
+        </div>
 
-            {formData.sync_teams && (
-              <div className="space-y-2">
-                <Label htmlFor="ci-team-sync-depth">Team Sync Depth</Label>
-                <select
-                  id="ci-team-sync-depth"
-                  className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                  value={formData.team_sync_depth}
-                  onChange={(e) =>
-                    setFormData((prev) => ({ ...prev, team_sync_depth: Number.parseInt(e.target.value) }))
-                  }
-                >
-                  <option value={1}>Top-level group only (e.g. &quot;foo&quot;)</option>
-                  <option value={2}>Two levels (e.g. &quot;foo/bar&quot;)</option>
-                  <option value={3}>Three levels (e.g. &quot;foo/bar/baz&quot;)</option>
-                  <option value={0}>Full path (one team per subgroup)</option>
-                </select>
-                <p className="text-xs text-muted-foreground">
-                  Controls how deep into the GitLab group hierarchy teams are created.
-                </p>
-              </div>
-            )}
-          </>
+        {formData.type === "github" && formData.sync_teams && (
+          <p className="text-xs text-muted-foreground">
+            GitHub Enterprise Server has no IdP team sync, so its team structure is maintained by hand
+            and may be less authoritative than on github.com.
+          </p>
+        )}
+
+        {formData.type === "gitlab" && formData.sync_teams && (
+          <div className="space-y-2">
+            <Label htmlFor="ci-team-sync-depth">Team Sync Depth</Label>
+            <select
+              id="ci-team-sync-depth"
+              className="flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              value={formData.team_sync_depth}
+              onChange={(e) =>
+                setFormData((prev) => ({ ...prev, team_sync_depth: Number.parseInt(e.target.value) }))
+              }
+            >
+              <option value={1}>Top-level group only (e.g. &quot;foo&quot;)</option>
+              <option value={2}>Two levels (e.g. &quot;foo/bar&quot;)</option>
+              <option value={3}>Three levels (e.g. &quot;foo/bar/baz&quot;)</option>
+              <option value={0}>Full path (one team per subgroup)</option>
+            </select>
+            <p className="text-xs text-muted-foreground">
+              Controls how deep into the GitLab group hierarchy teams are created.
+            </p>
+          </div>
         )}
       </div>
     </div>

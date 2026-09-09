@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.schemas._oidc_audience import (
     validate_audience_not_blank,
@@ -22,6 +22,7 @@ class GitHubInstanceBase(BaseModel):
     description: str | None = Field(None, description="Optional description of this instance")
     is_active: bool = Field(True, description="Whether this instance is currently active")
     auto_create_projects: bool = Field(False, description="Automatically create projects from OIDC tokens")
+    sync_teams: bool = Field(False, description="Sync GitHub team members to local teams")
 
 
 class GitHubInstanceCreate(GitHubInstanceBase):
@@ -37,6 +38,12 @@ class GitHubInstanceCreate(GitHubInstanceBase):
 
     _audience_not_blank = field_validator("oidc_audience")(validate_audience_not_blank)
 
+    @model_validator(mode="after")
+    def validate_token_dependent_features(self) -> "GitHubInstanceCreate":
+        if self.sync_teams and not self.access_token:
+            raise ValueError("An access token is required to enable team syncing")
+        return self
+
 
 class GitHubInstanceUpdate(BaseModel):
     """Schema for updating a GitHub instance. All fields optional."""
@@ -50,6 +57,7 @@ class GitHubInstanceUpdate(BaseModel):
         None, description="Expected 'aud' claim for OIDC tokens. If provided, must not be empty."
     )
     auto_create_projects: bool | None = Field(None, description="Automatically create projects from OIDC tokens")
+    sync_teams: bool | None = Field(None, description="Sync GitHub team members to local teams")
     access_token: str | None = Field(None, description="Personal Access Token for GitHub API operations")
 
     _audience_not_blank = field_validator("oidc_audience")(validate_optional_audience_not_blank)
