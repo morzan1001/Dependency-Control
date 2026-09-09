@@ -340,8 +340,8 @@ class GitHubService:
         self,
         members: list[dict[str, Any]],
         user_repo: UserRepository,
-    ) -> list[TeamMember]:
-        """Map GitHub members onto existing local users, tagged source="github" for the merge."""
+    ) -> tuple[list[TeamMember], int]:
+        """Map GitHub members onto existing local users, tagged source="github", plus the unresolved count."""
         resolved: dict[str, TeamMember] = {}
         unresolved = 0
         for member in members:
@@ -351,7 +351,7 @@ class GitHubService:
                 # Sync never creates users; a real member is added on their next sync after
                 # logging in via OIDC.
                 unresolved += 1
-                logger.debug("Skipping GitHub member with no local account (login=%s).", login)
+                logger.debug("Skipping GitHub member that resolved to no local user (login=%s).", login)
                 continue
             role = TEAM_ROLE_ADMIN if member.get("role") == "maintainer" else TEAM_ROLE_MEMBER
             user_id = str(user.get("_id", user.get("id")))
@@ -361,17 +361,11 @@ class GitHubService:
             if previous is not None and previous.role == TEAM_ROLE_ADMIN:
                 continue
             resolved[user_id] = TeamMember(user_id=user_id, role=role, source="github")
-        team_members = list(resolved.values())
-        if unresolved:
-            # The per-member misses are DEBUG, so this is the only signal at INFO that a token
-            # without profile access has broken matching wholesale.
-            logger.info(
-                "GitHub team sync resolved %d of %d members; %d have no local account.",
-                len(team_members),
-                len(members),
-                unresolved,
-            )
-        return team_members
+        if members and not resolved:
+            # Bots make a partial miss routine, so only a total one is worth a line. A refused
+            # profile lookup and a hidden email are the same None here: state no cause.
+            logger.info("GitHub team sync could not resolve any of %d GitHub members to a local user.", len(members))
+        return list(resolved.values()), unresolved
 
     @staticmethod
     def _merge_team_members(
