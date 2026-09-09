@@ -3,9 +3,10 @@ import urllib.parse
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
+from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.core.cache import cache_service
 from app.core.constants import (
@@ -103,6 +104,13 @@ def select_github_team(
     if not ranked:
         return None
     return min(ranked, key=lambda entry: _sort_key(entry[0], entry[1], depth_map))[1]
+
+
+class GitHubTeamSyncResult(NamedTuple):
+    """``candidate_count`` is None when the candidate list could not be determined."""
+
+    team_id: str | None
+    candidate_count: int | None
 
 
 class GitHubService:
@@ -421,6 +429,94 @@ class GitHubService:
             await team_repo.create(new_team)
             return str(new_team.id)
         return None
+
+    async def sync_team_from_github(
+        self,
+        db: AsyncIOMotorDatabase,
+        org: str,
+        repository_path: str,
+    ) -> GitHubTeamSyncResult:
+        """Sync the GitHub team owning a repository to a local Team. Never raises."""
+        try:
+            owner, _, repo = repository_path.partition("/")
+            candidates = await self.get_repository_teams(owner, repo)
+            if candidates is None:
+                logger.warning("Could not fetch GitHub teams for repository %s.", repository_path)
+                return GitHubTeamSyncResult(None, None)
+
+            org_teams = await self.get_org_teams(org)
+            # Without the map, rule 2 (depth) is skipped; the tiebreak stays total.
+            depth_map = build_team_depth_map(org_teams) if org_teams else None
+            winner = select_github_team(candidates, depth_map)
+            if winner is None:
+                logger.info("No GitHub team resolved for repository %s; team_id left untouched.", repository_path)
+                return GitHubTeamSyncResult(None, len(candidates))
+
+            team_id = int(winner["id"])
+            team_slug = str(winner["slug"])
+            logger.info(
+                "GitHub team sync for %s: %d candidate(s) %s, using '%s' (id=%d).",
+                repository_path,
+                len(candidates),
+                [candidate.get("slug") for candidate in candidates],
+                team_slug,
+                team_id,
+            )
+
+            team_repo = TeamRepository(db)
+            user_repo = UserRepository(db)
+            instance_id = str(self.instance.id)
+            existing_team = await team_repo.get_raw_by_github_team(instance_id, team_id)
+            existing_team_id = str(existing_team["_id"]) if existing_team else None
+
+            # An empty list is a team nobody is left in, and its members must go; only None is a failure.
+            members = await self.get_team_members(org, team_slug, team_id)
+            if members is None:
+                logger.warning(
+                    "Failed to fetch members for GitHub team %s/%s (id=%d) while syncing %s. Skipping member sync.",
+                    org,
+                    team_slug,
+                    team_id,
+                    repository_path,
+                )
+                return GitHubTeamSyncResult(existing_team_id, len(candidates))
+
+            team_members, unresolved = await self._build_team_members(members, user_repo)
+            if unresolved and not team_members:
+                # A token that lost profile access resolves nobody; writing that would strip the
+                # whole github subset and read as a team everyone left.
+                logger.warning(
+                    "Resolved 0 of %d members of GitHub team %s/%s (id=%d) while syncing %s; "
+                    "leaving the existing team untouched.",
+                    unresolved,
+                    org,
+                    team_slug,
+                    team_id,
+                    repository_path,
+                )
+                return GitHubTeamSyncResult(existing_team_id, len(candidates))
+
+            local_team_id = await self._upsert_team_with_members(
+                team_repo,
+                existing_team,
+                f"GitHub Team: {org}/{team_slug}",
+                f"Imported from GitHub Team {org}/{team_slug}",
+                instance_id,
+                org,
+                team_id,
+                team_slug,
+                team_members,
+            )
+            return GitHubTeamSyncResult(local_team_id, len(candidates))
+
+        except Exception as e:
+            logger.exception(
+                "Error syncing GitHub teams for repository %s: %s: %s",
+                repository_path,
+                type(e).__name__,
+                e,
+            )
+            return GitHubTeamSyncResult(None, None)
 
     async def get_pull_requests_for_commit(self, owner: str, repo: str, commit_sha: str) -> list[GitHubPullRequest]:
         """Pull requests associated with a commit, retrying via the head parent when it is a merge commit."""

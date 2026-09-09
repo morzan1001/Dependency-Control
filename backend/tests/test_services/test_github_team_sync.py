@@ -5,8 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from app.models.team import TeamMember
-from app.services.github import GitHubService
+from app.services.github import GitHubService, GitHubTeamSyncResult
 from tests.mocks.github import make_github_instance
+
+_WINNER = {"id": 4711, "slug": "payments", "name": "Payments", "permission": "push", "parent": None}
+_RUNNER_UP = {"id": 9000, "slug": "platform", "name": "Platform", "permission": "pull", "parent": None}
 
 
 def _service() -> GitHubService:
@@ -27,6 +30,14 @@ def _team_repo(existing=None) -> MagicMock:
     repo.update = AsyncMock()
     repo.create = AsyncMock()
     return repo
+
+
+def _stub_reads(service, *, repo_teams, org_teams=None, members=None):
+    return (
+        patch.object(service, "get_repository_teams", new=AsyncMock(return_value=repo_teams)),
+        patch.object(service, "get_org_teams", new=AsyncMock(return_value=org_teams or [])),
+        patch.object(service, "get_team_members", new=AsyncMock(return_value=members)),
+    )
 
 
 class TestMemberResolution:
@@ -317,3 +328,135 @@ class TestTeamUpsert:
         )
 
         assert repo.update.await_args.args[1]["github_team_slug"] == "payments"
+
+
+class TestSyncTeamFromGithub:
+    @pytest.mark.asyncio
+    async def test_no_candidate_team_leaves_the_project_alone(self, caplog):
+        service = _service()
+        repo_reads, org_reads, member_reads = _stub_reads(service, repo_teams=[])
+
+        with repo_reads, org_reads, member_reads, caplog.at_level("INFO", logger="app.services.github"):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult(None, 0)
+        assert any("acme/widgets" in record.getMessage() for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_api_reports_an_undetermined_count(self):
+        service = _service()
+        repo_reads, org_reads, member_reads = _stub_reads(service, repo_teams=None)
+
+        with repo_reads, org_reads, member_reads:
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult(None, None)
+
+    @pytest.mark.asyncio
+    async def test_the_candidate_count_and_the_winner_are_logged(self, caplog):
+        service = _service()
+        repo_reads, org_reads, member_reads = _stub_reads(
+            service, repo_teams=[_RUNNER_UP, _WINNER], members=[{"login": "ada", "role": "maintainer"}]
+        )
+        resolved = ([TeamMember(user_id="u-1", role="admin", source="github")], 0)
+
+        with (
+            repo_reads,
+            org_reads,
+            member_reads,
+            patch.object(service, "_build_team_members", new=AsyncMock(return_value=resolved)),
+            patch("app.services.github.TeamRepository", return_value=_team_repo()),
+            patch("app.services.github.UserRepository", return_value=_user_repo()),
+            caplog.at_level("INFO", logger="app.services.github"),
+        ):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result.candidate_count == 2
+        logged = " ".join(record.getMessage() for record in caplog.records)
+        assert "payments" in logged and "platform" in logged
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_member_list_keeps_the_existing_team(self):
+        service = _service()
+        existing = {"_id": "t-1", "name": "GitHub Team: acme/payments", "members": [], "github_team_id": 4711}
+        repo_reads, org_reads, member_reads = _stub_reads(service, repo_teams=[_WINNER], members=None)
+
+        with (
+            repo_reads,
+            org_reads,
+            member_reads,
+            patch("app.services.github.TeamRepository", return_value=_team_repo(existing)),
+            patch("app.services.github.UserRepository", return_value=_user_repo()),
+        ):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult("t-1", 1)
+
+    @pytest.mark.asyncio
+    async def test_members_that_all_fail_to_resolve_leave_the_stored_members_untouched(self, caplog):
+        service = _service()
+        existing = {
+            "_id": "t-1",
+            "name": "GitHub Team: acme/payments",
+            "github_team_id": 4711,
+            "members": [{"user_id": "u-1", "role": "admin", "source": "github"}],
+        }
+        team_repo = _team_repo(existing)
+        repo_reads, org_reads, member_reads = _stub_reads(
+            service,
+            repo_teams=[_WINNER],
+            members=[{"login": "ada", "role": "maintainer"}, {"login": "bob", "role": "member"}],
+        )
+
+        with (
+            repo_reads,
+            org_reads,
+            member_reads,
+            patch.object(service, "get_user_public_email", new=AsyncMock(return_value=None)),
+            patch("app.services.github.TeamRepository", return_value=team_repo),
+            patch("app.services.github.UserRepository", return_value=_user_repo()),
+            caplog.at_level("WARNING", logger="app.services.github"),
+        ):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult("t-1", 1)
+        team_repo.update.assert_not_called()
+        warnings = " ".join(record.getMessage() for record in caplog.records if record.levelname == "WARNING")
+        assert "0 of 2" in warnings
+
+    @pytest.mark.asyncio
+    async def test_a_team_nobody_is_left_in_still_empties_the_github_subset(self):
+        service = _service()
+        existing = {
+            "_id": "t-1",
+            "name": "GitHub Team: acme/payments",
+            "github_team_id": 4711,
+            "members": [
+                {"user_id": "u-1", "role": "admin", "source": "github"},
+                {"user_id": "u-manual", "role": "member", "source": "manual"},
+            ],
+        }
+        team_repo = _team_repo(existing)
+        repo_reads, org_reads, member_reads = _stub_reads(service, repo_teams=[_WINNER], members=[])
+
+        with (
+            repo_reads,
+            org_reads,
+            member_reads,
+            patch("app.services.github.TeamRepository", return_value=team_repo),
+            patch("app.services.github.UserRepository", return_value=_user_repo()),
+        ):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult("t-1", 1)
+        assert team_repo.update.await_args.args[1]["members"] == [
+            {"user_id": "u-manual", "role": "member", "source": "manual"}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_an_exception_is_swallowed_and_reports_nothing_determined(self):
+        service = _service()
+        with patch.object(service, "get_repository_teams", new=AsyncMock(side_effect=RuntimeError("boom"))):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult(None, None)
