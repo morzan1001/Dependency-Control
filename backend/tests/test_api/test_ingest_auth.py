@@ -886,6 +886,14 @@ class TestIngestGitHubTeamSync:
         mock_svc.sync_team_from_github.assert_not_called()
         projects_coll.update_one.assert_not_called()
 
+    def test_sync_is_not_called_on_auto_create_when_the_instance_has_it_off(self):
+        instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": False, "auto_create_projects": True}
+        mock_svc, projects_coll, _ = self._run(instance, ("t-9", 1))
+        mock_svc.sync_team_from_github.assert_not_called()
+        inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
+        assert inserted["team_id"] is None
+        assert inserted["github_team_candidates"] is None
+
     def test_the_owning_org_comes_from_the_token(self):
         mock_svc, _, db = self._run(
             {**_TEAM_SYNC_INSTANCE, "sync_teams": True}, ("t-9", 1), project_doc=_TEAM_SYNC_PROJECT
@@ -906,6 +914,7 @@ class TestIngestGitHubTeamSync:
         _, projects_coll, _ = self._run(
             {**_TEAM_SYNC_INSTANCE, "sync_teams": True}, ("t-9", 3), project_doc=_TEAM_SYNC_PROJECT
         )
+        assert projects_coll.update_one.await_args.args[0] == {"_id": "proj-gh-1"}
         update = projects_coll.update_one.await_args.args[1]["$set"]
         assert update["team_id"] == "t-9"
         assert update["team_source"] == "github"
@@ -913,7 +922,9 @@ class TestIngestGitHubTeamSync:
 
     def test_an_auto_created_project_carries_the_synced_team(self):
         instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
-        _, projects_coll, _ = self._run(instance, ("t-9", 3))
+        mock_svc, projects_coll, db = self._run(instance, ("t-9", 3), repository_owner="acme-org")
+        # The auto-create call site sources the org from the same claim as the existing-project one.
+        mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme-org", "acme/widgets")
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
         assert inserted["team_id"] == "t-9"
         assert inserted["team_source"] == "github"
