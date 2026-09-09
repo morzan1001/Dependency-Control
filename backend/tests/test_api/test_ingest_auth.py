@@ -929,6 +929,7 @@ class TestIngestGitHubTeamSync:
         assert inserted["team_id"] == "t-9"
         assert inserted["team_source"] == "github"
         assert inserted["github_team_candidates"] == 3
+        assert inserted["team_ids"] == ["t-9"]
 
     def test_an_auto_created_project_without_a_team_is_still_created(self):
         instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
@@ -937,3 +938,60 @@ class TestIngestGitHubTeamSync:
         assert inserted["team_id"] is None
         assert inserted["team_source"] is None
         assert inserted["github_team_candidates"] == 0
+
+
+_GITLAB_TEAM_SYNC_INSTANCE = {
+    "_id": "gl-inst-a",
+    "name": "GitLab.com",
+    "url": "https://gitlab.com",
+    "access_token": "glpat-secret",
+    "is_active": True,
+    "created_by": "admin",
+}
+
+
+class TestIngestGitLabTeamSync:
+    """GitLab OIDC ingest assigns the project's team when the instance opts in."""
+
+    def _run(self, instance_doc, team_id, project_doc=None):
+        from app.api.deps import get_project_for_ingest
+
+        projects_coll = create_mock_collection(find_one=project_doc)
+        projects_coll.find_one_and_update = AsyncMock(side_effect=lambda _q, update, **_kw: update["$setOnInsert"])
+        db = create_mock_db(
+            {
+                "gitlab_instances": create_mock_collection(find_one=instance_doc),
+                "github_instances": create_mock_collection(find_one=None),
+                "projects": projects_coll,
+                "users": create_mock_collection(find_one=None),
+            }
+        )
+
+        with patch("jose.jwt.get_unverified_claims") as mock_claims:
+            mock_claims.return_value = {"iss": "https://gitlab.com"}
+            with patch("app.api.deps.GitLabService") as MockService:
+                mock_svc = MagicMock()
+                mock_svc.validate_oidc_token = AsyncMock(
+                    return_value=make_oidc_payload(
+                        project_id="99",
+                        project_path="group/new-project",
+                        user_email="dev@test.com",
+                    )
+                )
+                mock_svc.get_project_details = AsyncMock(return_value={})
+                mock_svc.sync_team_from_gitlab = AsyncMock(return_value=team_id)
+                MockService.return_value = mock_svc
+
+                asyncio.run(
+                    get_project_for_ingest(x_api_key=None, oidc_token="a.b.c", db=db, settings=_make_system_settings())
+                )
+        return mock_svc, projects_coll, db
+
+    def test_an_auto_created_project_carries_the_synced_team(self):
+        instance = {**_GITLAB_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
+        mock_svc, projects_coll, db = self._run(instance, "t-gl-1")
+        mock_svc.sync_team_from_gitlab.assert_awaited_once_with(db, 99, "group/new-project", gitlab_project_data={})
+        inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
+        assert inserted["team_id"] == "t-gl-1"
+        assert inserted["team_source"] == "gitlab"
+        assert inserted["team_ids"] == ["t-gl-1"]

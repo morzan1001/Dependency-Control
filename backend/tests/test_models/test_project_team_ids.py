@@ -51,3 +51,4 @@ def test_unassigned_with_manual_provenance_remains_unassigned():
 
     assert project.team_ids == []
     assert project.team_sources == {}
+    assert project.team_source == "manual"
