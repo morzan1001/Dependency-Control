@@ -231,6 +231,7 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     # Projects
     await database["projects"].create_index("owner_id")
     await database["projects"].create_index("team_id")
+    await database["projects"].create_index("team_ids")
     await database["projects"].create_index("name")
     await database["projects"].create_index("members.user_id")
 

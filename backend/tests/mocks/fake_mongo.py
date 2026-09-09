@@ -1075,6 +1075,8 @@ class FakeCollection:
         self._db = db
         # Unique-index field tuples, declared up front or via create_index(..., unique=True).
         self._unique_keys: list[tuple[str, ...]] = list(unique_keys or [])
+        # Record of created index keys, for test assertion.
+        self.created_indexes: list[str] = []
 
     # -- writes -----------------------------------------------------------
 
@@ -1353,6 +1355,11 @@ class FakeCollection:
         if kwargs.get("unique"):
             fields = [keys] if isinstance(keys, str) else [key for key, _direction in keys]
             self._unique_keys.append(tuple(fields))
+        # Record the key for test assertion.
+        if isinstance(keys, str):
+            self.created_indexes.append(keys)
+        else:
+            self.created_indexes.append(keys[0][0])
 
     async def index_information(self):
         # No pre-existing indexes in the in-process fake.
