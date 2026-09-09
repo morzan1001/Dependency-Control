@@ -833,10 +833,20 @@ def _run_lookup(docs: list, spec: dict, database: Any) -> list:
             doc[as_field] = [{k: v for k, v in m.items() if not k.startswith("$")} for m in matched]
         else:
             local = _resolve_dotted(doc, spec["localField"])
+            # MongoDB joins an array localField element-wise, and matches a scalar against an array
+            # foreignField the same way; a plain == joins nothing and lets the test pass anyway.
+            wanted = local if isinstance(local, list) else [local]
             doc[as_field] = [
-                _copy.deepcopy(fd) for fd in foreign_docs if _resolve_dotted(fd, spec["foreignField"]) == local
+                _copy.deepcopy(fd)
+                for fd in foreign_docs
+                if _matches_any(_resolve_dotted(fd, spec["foreignField"]), wanted)
             ]
     return docs
+
+
+def _matches_any(foreign: Any, wanted: list) -> bool:
+    candidates = foreign if isinstance(foreign, list) else [foreign]
+    return any(candidate in wanted for candidate in candidates)
 
 
 def _run_pipeline(docs: list, pipeline: list, database: Any = None) -> list:
@@ -1061,10 +1071,9 @@ class FakeCollection:
 
     def __init__(self, db: Any = None, unique_keys: list[tuple[str, ...]] | None = None):
         self._docs: dict = {}
-        # $lookup needs to reach sibling collections.
         self._db = db
-        # Unique-index field tuples, declared up front or via create_index(..., unique=True).
         self._unique_keys: list[tuple[str, ...]] = list(unique_keys or [])
+        self.created_indexes: list[str | tuple[str, ...]] = []
 
     # -- writes -----------------------------------------------------------
 
@@ -1343,9 +1352,12 @@ class FakeCollection:
         if kwargs.get("unique"):
             fields = [keys] if isinstance(keys, str) else [key for key, _direction in keys]
             self._unique_keys.append(tuple(fields))
+        if isinstance(keys, str):
+            self.created_indexes.append(keys)
+        else:
+            self.created_indexes.append(tuple(key for key, _direction in keys))
 
     async def index_information(self):
-        # No pre-existing indexes in the in-process fake.
         return {}
 
     async def drop_index(self, *args, **kwargs):

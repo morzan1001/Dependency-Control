@@ -325,16 +325,9 @@ async def _handle_gitlab_oidc(
 
     initial_member_id = await _resolve_initial_member_id(user_repo, email=payload.user_email)
     members = [ProjectMember(user_id=initial_member_id, role="admin")] if initial_member_id else []
-    new_project = Project(
-        name=gitlab_project_path,
-        members=members,
-        gitlab_instance_id=instance_id,
-        gitlab_project_id=gitlab_project_id,
-        gitlab_project_path=gitlab_project_path,
-        default_branch=None,
-        active_analyzers=default_analyzers,
-    )
 
+    team_id = None
+    team_source = None
     if gitlab_instance.sync_teams:
         gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
         team_id = await gitlab_service.sync_team_from_gitlab(
@@ -344,8 +337,19 @@ async def _handle_gitlab_oidc(
             gitlab_project_data=gitlab_project_data,
         )
         if team_id:
-            new_project.team_id = team_id
-            new_project.team_source = "gitlab"
+            team_source = "gitlab"
+
+    new_project = Project(
+        name=gitlab_project_path,
+        members=members,
+        gitlab_instance_id=instance_id,
+        gitlab_project_id=gitlab_project_id,
+        gitlab_project_path=gitlab_project_path,
+        default_branch=None,
+        active_analyzers=default_analyzers,
+        team_id=team_id,
+        team_source=team_source,
+    )
 
     project, created = await project_repo.find_or_create_by_gitlab_key(instance_id, gitlab_project_id, new_project)
     if created:
@@ -403,6 +407,17 @@ async def _handle_github_oidc(
 
     initial_member_id = await _resolve_initial_member_id(user_repo, username=gh_payload.actor)
     members = [ProjectMember(user_id=initial_member_id, role="admin")] if initial_member_id else []
+
+    github_team_candidates = None
+    team_id = None
+    team_source = None
+    if github_instance.sync_teams:
+        sync_result = await github_service.sync_team_from_github(db, gh_payload.repository_owner, repo_path)
+        github_team_candidates = sync_result.candidate_count
+        if sync_result.team_id:
+            team_id = sync_result.team_id
+            team_source = "github"
+
     new_project = Project(
         name=repo_path,
         members=members,
@@ -411,14 +426,10 @@ async def _handle_github_oidc(
         github_repository_path=repo_path,
         default_branch=None,
         active_analyzers=default_analyzers,
+        github_team_candidates=github_team_candidates,
+        team_id=team_id,
+        team_source=team_source,
     )
-
-    if github_instance.sync_teams:
-        sync_result = await github_service.sync_team_from_github(db, gh_payload.repository_owner, repo_path)
-        new_project.github_team_candidates = sync_result.candidate_count
-        if sync_result.team_id:
-            new_project.team_id = sync_result.team_id
-            new_project.team_source = "github"
 
     project, created = await project_repo.find_or_create_by_github_key(instance_id, repo_id, new_project)
     if created:
