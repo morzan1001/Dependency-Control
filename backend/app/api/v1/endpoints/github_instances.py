@@ -1,4 +1,5 @@
 import logging
+import math
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
@@ -250,6 +251,79 @@ async def delete_instance(
     )
 
 
+def _failed_test(instance: GitHubInstance, message: str) -> GitHubInstanceTestConnectionResponse:
+    return GitHubInstanceTestConnectionResponse(
+        success=False,
+        message=message,
+        instance_name=instance.name,
+        url=instance.url,
+    )
+
+
+async def _spent_budget_note(github_service: GitHubService) -> str | None:
+    """When an exhausted core budget is what refused a probe, when it comes back; None for any other cause.
+
+    A throttled token 403s exactly like one missing read:org, and only GET /rate_limit -- which GitHub
+    does not charge -- separates them. Called on the failure path alone, so a green test costs nothing.
+    """
+    limit = await github_service.get_core_rate_limit()
+    if limit is None or limit.remaining > 0:
+        return None
+    minutes = math.ceil((limit.reset_at - datetime.now(timezone.utc)).total_seconds() / 60)
+    due = f"about {minutes} minute(s) from now" if minutes > 0 else "any moment now"
+    return f"{limit.reset_at:%Y-%m-%d %H:%M UTC}, {due}"
+
+
+async def _probe_team_access(
+    github_service: GitHubService, instance: GitHubInstance
+) -> GitHubInstanceTestConnectionResponse | str:
+    """A failure response, or the sentence naming every organisation whose teams the token reads."""
+    orgs = await github_service.get_viewer_organisations()
+    # Only a refusal can be a throttle; a 200 carrying an empty list already spent budget to answer.
+    if orgs is None and (reset := await _spent_budget_note(github_service)):
+        return _failed_test(
+            instance,
+            "OIDC endpoint reachable, but the token's GitHub API rate limit is exhausted, so its "
+            f"organisations could not be listed. The limit resets at {reset}. Wait for it, or stop "
+            "sharing this identity with another workload; the token itself was not tested.",
+        )
+
+    org_names = [str(org["login"]) for org in orgs if org.get("login")] if orgs else []
+    if not org_names:
+        return _failed_test(
+            instance,
+            "OIDC endpoint reachable, but the token cannot list its organisations. "
+            "Team sync needs read:org and an identity that is a member of the "
+            "organisation, or it will silently see only part of it.",
+        )
+
+    # Every organisation the token belongs to is one team sync will act on, so a single
+    # unreadable one is a red test: a green one hiding it is the §8 partial-team failure.
+    probes = [(name, await github_service.count_org_teams(name)) for name in org_names]
+    unreadable = [name for name, count in probes if count is None]
+    if unreadable:
+        # Exhaustion mid-loop makes every organisation after it look unreadable, so naming any of
+        # them would accuse organisations the token may well be able to read.
+        if reset := await _spent_budget_note(github_service):
+            return _failed_test(
+                instance,
+                "OIDC endpoint reachable, but the token's GitHub API rate limit is exhausted, so its "
+                f"team access could not be checked. The limit resets at {reset}. Wait for it, or stop "
+                "sharing this identity with another workload, then test again.",
+            )
+        return _failed_test(
+            instance,
+            "OIDC endpoint reachable, but the token cannot read teams in "
+            f"{', '.join(unreadable)}. Every organisation the token belongs to is "
+            "probed, so either grant it read:org there, or use a dedicated identity "
+            "that belongs only to the organisations DependencyControl covers. "
+            "Until then repositories there get partial or no teams.",
+        )
+
+    covered = ", ".join(f"{name} ({count} team(s))" for name, count in probes)
+    return f" Token reads teams in {covered}."
+
+
 @router.post("/{instance_id}/test-connection", responses=RESP_AUTH_404)
 async def test_connection(
     instance_id: str,
@@ -270,61 +344,24 @@ async def test_connection(
     try:
         jwks = await github_service.get_jwks()
 
-        if jwks and jwks.get("keys"):
-            message = f"OIDC endpoint reachable. Found {len(jwks['keys'])} signing key(s)."
-            # Only an instance that syncs teams needs organisation access; demanding it of a
-            # pure-ingest instance would fail a perfectly good setup.
-            if instance.sync_teams:
-                orgs = await github_service.get_viewer_organisations()
-                org_names = [str(org["login"]) for org in orgs if org.get("login")] if orgs else []
-                if not org_names:
-                    return GitHubInstanceTestConnectionResponse(
-                        success=False,
-                        message=(
-                            "OIDC endpoint reachable, but the token cannot list its organisations. "
-                            "Team sync needs read:org and an identity that is a member of the "
-                            "organisation, or it will silently see only part of it."
-                        ),
-                        instance_name=instance.name,
-                        url=instance.url,
-                    )
-                # Every organisation the token belongs to is one team sync will act on, so a single
-                # unreadable one is a red test: a green one hiding it is the §8 partial-team failure.
-                probes = [(name, await github_service.count_org_teams(name)) for name in org_names]
-                unreadable = [name for name, count in probes if count is None]
-                if unreadable:
-                    return GitHubInstanceTestConnectionResponse(
-                        success=False,
-                        message=(
-                            "OIDC endpoint reachable, but the token cannot read teams in "
-                            f"{', '.join(unreadable)}. Every organisation the token belongs to is "
-                            "probed, so either grant it read:org there, or use a dedicated identity "
-                            "that belongs only to the organisations DependencyControl covers. "
-                            "Until then repositories there get partial or no teams."
-                        ),
-                        instance_name=instance.name,
-                        url=instance.url,
-                    )
-                covered = ", ".join(f"{name} ({count} team(s))" for name, count in probes)
-                message += f" Token reads teams in {covered}."
-            return GitHubInstanceTestConnectionResponse(
-                success=True,
-                message=message,
-                instance_name=instance.name,
-                url=instance.url,
-            )
-        else:
-            return GitHubInstanceTestConnectionResponse(
-                success=False,
-                message="JWKS endpoint returned no signing keys",
-                instance_name=instance.name,
-                url=instance.url,
-            )
-    except Exception as e:
-        logger.exception("Connection test failed for GitHub instance '%s': %s", instance.name, e)
+        if not jwks or not jwks.get("keys"):
+            return _failed_test(instance, "JWKS endpoint returned no signing keys")
+
+        message = f"OIDC endpoint reachable. Found {len(jwks['keys'])} signing key(s)."
+        # Only an instance that syncs teams needs organisation access; demanding it of a
+        # pure-ingest instance would fail a perfectly good setup.
+        if instance.sync_teams:
+            team_access = await _probe_team_access(github_service, instance)
+            if isinstance(team_access, GitHubInstanceTestConnectionResponse):
+                return team_access
+            message += team_access
+
         return GitHubInstanceTestConnectionResponse(
-            success=False,
-            message=f"Connection failed: {e!s}",
+            success=True,
+            message=message,
             instance_name=instance.name,
             url=instance.url,
         )
+    except Exception as e:
+        logger.exception("Connection test failed for GitHub instance '%s': %s", instance.name, e)
+        return _failed_test(instance, f"Connection failed: {e!s}")

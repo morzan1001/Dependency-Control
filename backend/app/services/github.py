@@ -123,6 +123,13 @@ class GitHubTeamSyncResult(NamedTuple):
     candidate_count: int | None
 
 
+class GitHubCoreRateLimit(NamedTuple):
+    """The core budget of a token; ``remaining == 0`` is what turns every other call into a 403."""
+
+    remaining: int
+    reset_at: datetime
+
+
 class GitHubService:
     """OIDC token validation and API operations for github.com and GHES instances."""
 
@@ -340,6 +347,25 @@ class GitHubService:
         """Organisations the token's own identity belongs to. Uncached: a connection test must
         observe the token as it is now, not as it was five minutes ago."""
         return await self._api_get_paginated("/user/orgs", max_pages=None)
+
+    async def get_core_rate_limit(self) -> GitHubCoreRateLimit | None:
+        """The token's core budget, or None when it cannot be read (GHES answers 404 with rate limiting off).
+
+        GitHub does not charge this endpoint against the budget, so it keeps answering 200 while every
+        other call 403s -- which is the only way to tell an exhausted token from an unauthorised one.
+        """
+        response = await self._api_get("/rate_limit")
+        if response is None or response.status_code != 200:
+            return None
+        try:
+            core = response.json()["resources"]["core"]
+            return GitHubCoreRateLimit(
+                remaining=int(core["remaining"]),
+                reset_at=datetime.fromtimestamp(int(core["reset"]), tz=timezone.utc),
+            )
+        except (KeyError, TypeError, ValueError, OverflowError, OSError) as e:
+            logger.warning("GitHub rate limit response could not be read: %s", e)
+            return None
 
     async def get_user_public_email(self, login: str) -> str | None:
         """The public profile email, or None when the user hides it. Cached per login: this is the
