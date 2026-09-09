@@ -145,9 +145,7 @@ describe('CICDInstancesManagement GitHub team sync', () => {
     expect(within(openEditDialog(/GitHub\.com/)).queryByLabelText('Team Sync Depth')).toBeNull()
   })
 
-  it('sends sync_teams with the GitHub create payload', async () => {
-    renderManagement()
-
+  function openGitHubCreateDialog() {
     fireEvent.click(screen.getByRole('button', { name: 'Add Instance' }))
 
     const dialog = screen.getByRole('dialog')
@@ -158,11 +156,32 @@ describe('CICDInstancesManagement GitHub team sync', () => {
     fireEvent.change(within(dialog).getByLabelText('OIDC Issuer URL *'), {
       target: { value: 'https://token.actions.githubusercontent.com' },
     })
+    return dialog
+  }
+
+  it('sends sync_teams with the GitHub create payload', async () => {
+    renderManagement()
+
+    const dialog = openGitHubCreateDialog()
     fireEvent.change(within(dialog).getByLabelText('Access Token'), { target: { value: 'ghp_x' } })
     fireEvent.click(within(dialog).getByLabelText('Sync Teams'))
     fireEvent.click(within(dialog).getByRole('button', { name: 'Create Instance' }))
 
     await waitFor(() => expect(mockGitHubCreate).toHaveBeenCalled())
     expect(mockGitHubCreate.mock.calls[0][0]).toMatchObject({ sync_teams: true })
+  })
+
+  // The switch needs a token to be operable, but clearing the field afterwards leaves it on.
+  // Without the guard the backend answers a raw 422 envelope instead of the update path's sentence.
+  it('refuses to create a tokenless GitHub instance that syncs teams', () => {
+    renderManagement()
+
+    const dialog = openGitHubCreateDialog()
+    fireEvent.change(within(dialog).getByLabelText('Access Token'), { target: { value: 'ghp_x' } })
+    fireEvent.click(within(dialog).getByLabelText('Sync Teams'))
+    fireEvent.change(within(dialog).getByLabelText('Access Token'), { target: { value: '' } })
+
+    expect(within(dialog).getByLabelText('Sync Teams')).toBeChecked()
+    expect(within(dialog).getByRole('button', { name: 'Create Instance' })).toBeDisabled()
   })
 })
