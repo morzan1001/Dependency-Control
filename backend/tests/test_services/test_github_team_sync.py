@@ -11,9 +11,16 @@ from tests.mocks.github import make_github_instance
 _WINNER = {"id": 4711, "slug": "payments", "name": "Payments", "permission": "push", "parent": None}
 _RUNNER_UP = {"id": 9000, "slug": "platform", "name": "Platform", "permission": "pull", "parent": None}
 
+# Equal on every rule but depth, and the lower id is the shallower team so the id tiebreak
+# disagrees with the depth rule.
+_SHALLOW = {"id": 100, "slug": "platform", "name": "Platform", "parent": None}
+_NESTED = {"id": 900, "slug": "payments", "name": "Payments", "parent": {"id": 500, "slug": "engineering"}}
+# The grandparent holds no access to the repository, so it appears only in the organisation listing.
+_NESTED_PARENT = {"id": 500, "slug": "engineering", "name": "Engineering", "parent": None}
 
-def _service() -> GitHubService:
-    return GitHubService(make_github_instance(access_token="ghp-secret"))
+
+def _service(instance_id: str = "test-github-instance-id") -> GitHubService:
+    return GitHubService(make_github_instance(id=instance_id, access_token="ghp-secret"))
 
 
 def _user_repo(*, by_username=None, by_email=None) -> MagicMock:
@@ -373,7 +380,58 @@ class TestSyncTeamFromGithub:
 
         assert result.candidate_count == 2
         logged = " ".join(record.getMessage() for record in caplog.records)
-        assert "payments" in logged and "platform" in logged
+        assert "payments" in logged
+        assert "platform" in logged
+
+    @pytest.mark.asyncio
+    async def test_the_organisation_map_is_what_lets_the_nested_team_win(self):
+        service = _service()
+        repo_reads, org_reads, member_reads = _stub_reads(
+            service,
+            repo_teams=[_SHALLOW, _NESTED],
+            org_teams=[_SHALLOW, _NESTED_PARENT, _NESTED],
+            members=[{"login": "ada", "role": "maintainer"}],
+        )
+
+        with (
+            repo_reads,
+            org_reads,
+            member_reads,
+            patch("app.services.github.TeamRepository", return_value=_team_repo()),
+            patch("app.services.github.UserRepository", return_value=_user_repo(by_username={"_id": "u-1"})),
+        ):
+            await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+            member_read = service.get_team_members.await_args
+
+        # Depth is only computable from the organisation listing: the repository endpoint gives the
+        # nested team a parent that is not itself among the candidates.
+        assert member_read.args == ("acme", "payments", 900)
+
+    @pytest.mark.asyncio
+    async def test_each_read_is_scoped_to_the_repository_owner_the_org_and_the_instance(self):
+        service = _service("gh-1")
+        team_repo = _team_repo()
+        repo_reads, org_reads, member_reads = _stub_reads(
+            service, repo_teams=[_WINNER], members=[{"login": "ada", "role": "maintainer"}]
+        )
+
+        with (
+            repo_reads,
+            org_reads,
+            member_reads,
+            patch("app.services.github.TeamRepository", return_value=team_repo),
+            patch("app.services.github.UserRepository", return_value=_user_repo(by_username={"_id": "u-1"})),
+        ):
+            await service.sync_team_from_github(MagicMock(), "acme", "acme-labs/widgets")
+            repository_read = service.get_repository_teams.await_args
+            org_read = service.get_org_teams.await_args
+            member_read = service.get_team_members.await_args
+
+        # The repository is addressed by its own owner; teams are addressed by the organisation.
+        assert repository_read.args == ("acme-labs", "widgets")
+        assert org_read.args == ("acme",)
+        assert member_read.args == ("acme", "payments", 4711)
+        assert team_repo.get_raw_by_github_team.await_args.args == ("gh-1", 4711)
 
     @pytest.mark.asyncio
     async def test_an_unreachable_member_list_keeps_the_existing_team(self):
@@ -423,6 +481,36 @@ class TestSyncTeamFromGithub:
         team_repo.update.assert_not_called()
         warnings = " ".join(record.getMessage() for record in caplog.records if record.levelname == "WARNING")
         assert "0 of 2" in warnings
+
+    @pytest.mark.asyncio
+    async def test_a_member_that_does_not_resolve_never_blocks_the_ones_that_do(self):
+        """The routine case: a bot resolves to nobody while a real member does."""
+        service = _service()
+        existing = {"_id": "t-1", "name": "GitHub Team: acme/payments", "github_team_id": 4711, "members": []}
+        team_repo = _team_repo(existing)
+        user_repo = MagicMock()
+        user_repo.get_raw_by_username = AsyncMock(side_effect=[None, {"_id": "u-1"}])
+        user_repo.get_raw_by_email_ci = AsyncMock(return_value=None)
+        repo_reads, org_reads, member_reads = _stub_reads(
+            service,
+            repo_teams=[_WINNER],
+            members=[{"login": "dependabot", "role": "member"}, {"login": "ada", "role": "maintainer"}],
+        )
+
+        with (
+            repo_reads,
+            org_reads,
+            member_reads,
+            patch.object(service, "get_user_public_email", new=AsyncMock(return_value=None)),
+            patch("app.services.github.TeamRepository", return_value=team_repo),
+            patch("app.services.github.UserRepository", return_value=user_repo),
+        ):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult("t-1", 1)
+        assert team_repo.update.await_args.args[1]["members"] == [
+            {"user_id": "u-1", "role": "admin", "source": "github"}
+        ]
 
     @pytest.mark.asyncio
     async def test_a_team_nobody_is_left_in_still_empties_the_github_subset(self):
