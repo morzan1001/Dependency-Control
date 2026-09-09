@@ -168,6 +168,7 @@ def _rule_driven_finding_types() -> frozenset[str]:
 
 _RULE_DRIVEN_FINDING_TYPES: frozenset[str] = _rule_driven_finding_types()
 
+
 def _hosts(*urls: str) -> str:
     """The distinct hosts behind the given endpoints, read off the constants the analyzers use
     so a note can never name somewhere the code no longer calls."""

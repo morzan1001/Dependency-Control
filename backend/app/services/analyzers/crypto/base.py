@@ -1,7 +1,6 @@
 """Crypto policy rule analyzer, registered once per FindingType."""
 
 import logging
-import uuid
 from collections.abc import Sequence
 from typing import Any
 
@@ -97,7 +96,11 @@ def _build_finding_dedup(asset: CryptoAsset, rules: list[CryptoRule]) -> dict[st
                 aggregated_references.append(ref)
 
     return {
-        "id": str(uuid.uuid4()),
+        # Addressable, not a nonce: findings are keyed by ``finding_id`` everywhere the API
+        # exposes them, so a random id would make each run report new findings and leave every
+        # crypto waiver matching nothing. One finding is emitted per asset per finding type,
+        # which is exactly what this pair names.
+        "id": f"CRYPTO-{ft}-{asset.bom_ref or asset.name}",
         "type": ft,
         "severity": severity,
         "component": component_label,
