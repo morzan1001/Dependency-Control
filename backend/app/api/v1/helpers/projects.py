@@ -1,7 +1,6 @@
 """Shared helper functions for project-related operations."""
 
 import secrets
-from collections.abc import Sequence
 from typing import Any
 
 from fastapi import HTTPException
@@ -78,7 +77,7 @@ def _direct_member_role(project: Project, user_id: str) -> str | None:
 
 
 async def team_derived_role(
-    team_ids: Sequence[str],
+    team_ids: list[str],
     user_id: str,
     team_repo: TeamRepository,
 ) -> str | None:
