@@ -47,9 +47,9 @@ class TeamIdsUpdate:
 def plan_team_id_expansion(docs: list[dict[str, Any]]) -> list[TeamIdsUpdate]:
     """One update per project that lacks the multi-team fields or where they diverge from the scalar.
 
-    The scalar stays authoritative in this phase. A document whose stored list or sources already
-    equal the derived value is skipped — by the time Phase 3 writers own the list, re-running the
-    migration must never clobber their work.
+    The scalar stays authoritative in this phase. A document whose stored list and sources already
+    equal the derived value is skipped. Once writers own the list, this migration must not be re-run,
+    as any subsequent scalar change would overwrite writer-added teams.
     """
     plan: list[TeamIdsUpdate] = []
     for doc in docs:
@@ -117,7 +117,7 @@ async def run_expand(db: Any, *, batch_size: int, sleep_ms: int, execute: bool) 
     return planned, matched
 
 
-def _report(planned: int, matched: int, mode: str) -> None:
+def _report(planned: int, matched: int | None, mode: str) -> None:
     counts = [("projects planned", planned)]
     if matched is not None:
         counts.append(("projects matched", matched))

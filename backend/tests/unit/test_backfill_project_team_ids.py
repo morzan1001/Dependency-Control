@@ -18,16 +18,19 @@ _NO_SLEEP_MS = 0
 _COLLECTIONS = ("projects",)
 
 
+_MISSING = object()
+
+
 def _project(
     project_id: str,
     *,
-    team_id: str | None = None,
+    team_id: Any = _MISSING,
     team_source: str | None = None,
     team_ids: list[str] | None = None,
     team_sources: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     doc: dict[str, Any] = {"_id": project_id}
-    if team_id is not None:
+    if team_id is not _MISSING:
         doc["team_id"] = team_id
     if team_source is not None:
         doc["team_source"] = team_source
@@ -49,7 +52,6 @@ def _changed_ids(before: dict[str, dict[str, Any]], after: dict[str, dict[str, A
     return {key for key in keys if before[name].get(key) != after[name].get(key)}
 
 
-# Pure function tests
 def test_a_project_with_a_team_and_a_source_expands_to_both_fields():
     plan = plan_team_id_expansion([_project("p1", team_id="t1", team_source="manual")])
 
@@ -63,7 +65,7 @@ def test_a_project_with_a_team_but_no_source_expands_without_provenance():
 
 
 def test_a_project_without_a_team_expands_to_an_empty_list():
-    """513 of 742 production projects are in this state; they must get [] not a missing field."""
+    """513 of 742 production projects have team_id set to None; they must get [] not a missing field."""
     plan = plan_team_id_expansion([_project("p1", team_id=None)])
 
     assert plan == [TeamIdsUpdate(project_id="p1", team_ids=[], team_sources={})]
@@ -76,8 +78,8 @@ def test_a_project_with_a_falsy_team_id_expands_to_an_empty_list():
 
 
 def test_a_project_whose_stored_list_already_matches_the_derived_value_is_skipped():
-    """The migration is idempotent: a half-finished one is re-runnable, and Phase 3 writers are
-    protected from clobbering once they own the list."""
+    """The migration is idempotent: a half-finished one is re-runnable. A matching stored list
+    and sources are skipped; the scalar stays authoritative until writers own the list."""
     plan = plan_team_id_expansion(
         [_project("p1", team_id="t1", team_source="manual", team_ids=["t1"], team_sources={"t1": "manual"})]
     )
@@ -95,7 +97,15 @@ def test_a_stored_list_that_drifted_from_the_scalar_is_re_derived():
     assert plan == [TeamIdsUpdate(project_id="p1", team_ids=["t1"], team_sources={"t1": "manual"})]
 
 
-# Integration tests
+def test_stored_sources_that_drift_from_the_scalar_are_re_derived():
+    """Both list and sources must match to skip. If sources diverge, the update is planned."""
+    plan = plan_team_id_expansion(
+        [_project("p1", team_id="t1", team_source="manual", team_ids=["t1"], team_sources={})]
+    )
+
+    assert plan == [TeamIdsUpdate(project_id="p1", team_ids=["t1"], team_sources={"t1": "manual"})]
+
+
 @pytest.mark.asyncio
 async def test_a_dry_run_leaves_every_collection_byte_for_byte():
     db = FakeDatabase()
@@ -174,3 +184,15 @@ async def test_the_walk_pages_rather_than_reading_one_batch():
     assert matched == 2
     assert (await db.projects.find_one({"_id": "p1"}))["team_ids"] == ["t1"]
     assert (await db.projects.find_one({"_id": "p2"}))["team_ids"] == ["t2"]
+
+
+@pytest.mark.asyncio
+async def test_matched_count_reflects_actual_writes_not_intents():
+    """A plan intends an update for a project that does not exist; matched_count reports 0 writes
+    even though the plan listed 1 update."""
+    db = FakeDatabase()
+    plan = [TeamIdsUpdate(project_id="p1", team_ids=["t1"], team_sources={})]
+
+    matched = await apply_plan(db, plan, batch_size=_BATCH_SIZE, sleep_ms=_NO_SLEEP_MS)
+
+    assert matched == 0
