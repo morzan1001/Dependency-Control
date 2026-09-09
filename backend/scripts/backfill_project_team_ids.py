@@ -7,8 +7,8 @@ Mongo-side queries and the index can use them. It changes no application behavio
 Of 742 production projects, 229 have a team and 513 do not; both must be written.
 
 The planning half is pure so tests call it with plain dicts and no database. A document that
-already carries ``team_ids`` is skipped: by the time this runs a second time, Phase 3 writers own
-the list and re-deriving it from the scalar would undo their work.
+already carries ``team_ids`` is updated only if its stored list or sources differ from the value
+derived from the scalar — the scalar stays authoritative in this phase.
 
 Usage (in-pod): `python -m scripts.backfill_project_team_ids --help` from /app.
 
@@ -32,7 +32,7 @@ DEFAULT_BATCH_SIZE = 500
 DEFAULT_SLEEP_MS = 50
 _REPORT_LABEL_WIDTH = 30
 
-_PROJECT_PROJECTION = {"_id": 1, "team_id": 1, "team_source": 1, "team_ids": 1}
+_PROJECT_PROJECTION = {"_id": 1, "team_id": 1, "team_source": 1, "team_ids": 1, "team_sources": 1}
 
 
 @dataclass(frozen=True)
@@ -45,21 +45,26 @@ class TeamIdsUpdate:
 
 
 def plan_team_id_expansion(docs: list[dict[str, Any]]) -> list[TeamIdsUpdate]:
-    """One update per project that still lacks the multi-team fields.
+    """One update per project that lacks the multi-team fields or where they diverge from the scalar.
 
-    A document that already carries ``team_ids`` is skipped whatever it holds: by the time this
-    runs a second time, Phase 3 writers own the list and re-deriving it from the scalar would
-    undo their work.
+    The scalar stays authoritative in this phase. A document whose stored list or sources already
+    equal the derived value is skipped — by the time Phase 3 writers own the list, re-running the
+    migration must never clobber their work.
     """
     plan: list[TeamIdsUpdate] = []
     for doc in docs:
-        if "team_ids" in doc:
-            continue
         team_id = doc.get("team_id")
         source = doc.get("team_source")
-        team_ids = [team_id] if team_id else []
-        sources = {team_id: source} if team_id and source else {}
-        plan.append(TeamIdsUpdate(project_id=str(doc["_id"]), team_ids=team_ids, team_sources=sources))
+        derived_ids = [team_id] if team_id else []
+        derived_sources = {team_id: source} if team_id and source else {}
+
+        stored_ids = doc.get("team_ids")
+        stored_sources = doc.get("team_sources")
+
+        if stored_ids == derived_ids and stored_sources == derived_sources:
+            continue
+
+        plan.append(TeamIdsUpdate(project_id=str(doc["_id"]), team_ids=derived_ids, team_sources=derived_sources))
     return plan
 
 
@@ -83,37 +88,39 @@ async def _iter_project_batches(db: Any, batch_size: int, sleep_ms: int) -> Asyn
             await asyncio.sleep(sleep_ms / 1000)
 
 
-async def apply_plan(db: Any, updates: list[TeamIdsUpdate], *, batch_size: int, sleep_ms: int) -> None:
-    """Write the plan."""
+async def apply_plan(db: Any, updates: list[TeamIdsUpdate], *, batch_size: int, sleep_ms: int) -> int:
+    """Write the plan. Returns the number of matched documents."""
+    matched = 0
     for index, update in enumerate(updates, start=1):
-        await db.projects.update_one(
+        result = await db.projects.update_one(
             {"_id": update.project_id},
             {"$set": {"team_ids": update.team_ids, "team_sources": update.team_sources}},
         )
+        matched += result.matched_count
         if sleep_ms > 0 and index % batch_size == 0:
             await asyncio.sleep(sleep_ms / 1000)
+    return matched
 
 
 async def run_expand(db: Any, *, batch_size: int, sleep_ms: int, execute: bool) -> tuple[int, int]:
-    """Plan and optionally apply the expansion. Returns (planned, applied)."""
+    """Plan and optionally apply the expansion. Returns (planned, matched)."""
     planned = 0
-    applied = 0
+    matched = 0
 
     async for batch in _iter_project_batches(db, batch_size, sleep_ms):
         plan = plan_team_id_expansion(batch)
         planned += len(plan)
-        if execute:
-            await apply_plan(db, plan, batch_size=batch_size, sleep_ms=sleep_ms)
-            applied += len(plan)
-        print(f"batched={len(batch)} planned={planned} applied={applied if execute else 'N/A'}")
+        if execute and plan:
+            matched += await apply_plan(db, plan, batch_size=batch_size, sleep_ms=sleep_ms)
+        print(f"batched={len(batch)} planned={planned} matched={matched if execute else 'N/A'}")
 
-    return planned, applied
+    return planned, matched
 
 
-def _report(planned: int, mode: str) -> None:
-    counts = (
-        ("projects planned", planned),
-    )
+def _report(planned: int, matched: int, mode: str) -> None:
+    counts = [("projects planned", planned)]
+    if matched is not None:
+        counts.append(("projects matched", matched))
     print()
     for label, value in counts:
         print(f"[{mode}] {label + ':':<{_REPORT_LABEL_WIDTH}}{value}")
@@ -126,13 +133,13 @@ async def run(args: argparse.Namespace) -> int:
         mode = "EXECUTE" if args.execute else "DRY-RUN"
         print(f"[{mode}] Database: {db.name}")
 
-        planned, _ = await run_expand(
+        planned, matched = await run_expand(
             db,
             batch_size=args.batch_size,
             sleep_ms=args.sleep_ms,
             execute=args.execute,
         )
-        _report(planned, mode)
+        _report(planned, matched if args.execute else None, mode)
         if not args.execute:
             print("Dry-run (pass --execute to write).")
     except Exception as exc:
