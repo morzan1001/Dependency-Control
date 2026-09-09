@@ -52,8 +52,8 @@ The output must show `team_ids_1` exactly, with no custom name or options.
 ## 2. Deploy the revision that adds the multikey index
 
 Deploy the code that includes:
-- The `team_ids` field on projects (new in this deploy)
-- The multikey index (built by hand in step 1, where it becomes a no-op on startup)
+- The `team_ids` and `team_sources` fields on projects (new in this deploy)
+- The multikey index on `team_ids` (built by hand in step 1, where it becomes a no-op on startup)
 - The backfill migration script (will be invoked in step 3)
 
 Later deploys will add analytics and queries using `team_ids`.
@@ -94,7 +94,14 @@ scalar `team_id` to the derived list `team_ids`.
 
 ## 4. Execute the backfill
 
-Re-run the backfill Job with `--execute`:
+A Job's pod template is immutable, so the dry-run Job must be deleted before applying the execute
+run under the same name:
+
+```bash
+kubectl delete job dc-migration -n dependency-control
+```
+
+Create a new backfill Job with `--execute`:
 
 ```yaml
 workingDir: /app
@@ -111,12 +118,23 @@ Record the `projects matched` count. Expected: **742**.
 
 ## 5. Verify completion
 
+Verify both fields are present on every project:
+
 ```js
 db.projects.countDocuments({ team_ids: { $exists: false } })
 ```
 
 This must return **0**, confirming every project now carries a `team_ids` list. Projects without a
 team carry an empty list `[]`.
+
+Also check that the provenance field was populated:
+
+```js
+db.projects.countDocuments({ team_sources: { $exists: false } })
+```
+
+This must also return **0**, confirming every project now carries a `team_sources` dict. Projects
+without a team carry an empty dict `{}`.
 
 ## 6. Safe re-runs while scalar is authoritative
 
