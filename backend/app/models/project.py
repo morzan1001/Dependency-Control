@@ -11,6 +11,12 @@ from app.models.stats import Stats
 from app.models.types import MongoDocument
 
 
+def owning_team_ids(team_id: str | None) -> list[str]:
+    """The teams that own a project. The scalar is what every writer still sets, so it is the answer
+    until the write paths own the list."""
+    return [team_id] if team_id else []
+
+
 class ProjectMember(BaseModel):
     user_id: str
     role: str = PROJECT_ROLE_VIEWER
@@ -100,7 +106,7 @@ class Project(MongoDocument, CreatedAtModel):
     def _derive_team_ids(self) -> "Project":
         """The scalar is still what every writer sets, so the list is derived from it, never the
         other way round: mirroring back would revert a transfer the scalar already recorded."""
-        self.team_ids = [self.team_id] if self.team_id else []
+        self.team_ids = owning_team_ids(self.team_id)
         self.team_sources = {self.team_id: self.team_source} if self.team_id and self.team_source else {}
         return self
 

@@ -5,16 +5,14 @@ from typing import Any
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.v1.helpers.projects import is_write_superuser
+from app.api.v1.helpers.projects import is_write_superuser, team_derived_role
 from app.core.constants import (
-    PROJECT_ROLE_ADMIN,
     PROJECT_ROLE_EDITOR,
-    PROJECT_ROLE_VIEWER,
     PROJECT_ROLES,
-    TEAM_ROLE_ADMIN,
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.callgraph import CallEdge, ImportEntry, ModuleUsage
+from app.models.project import owning_team_ids
 from app.models.user import User
 from app.repositories import ProjectRepository, TeamRepository
 from app.services.aggregation.components import canonical_module_key, npm_package_key
@@ -37,24 +35,13 @@ async def _effective_project_role(
     user_id: str,
     team_repo: TeamRepository,
 ) -> str | None:
-    """Return MAX(direct member role, team-derived role), or None if not a member."""
-    roles = []
-
+    """MAX(direct member role, role from any owning team), or None if not a member."""
     direct_role = _member_role(project.get("members", []), user_id)
-    if direct_role:
-        roles.append(direct_role)
+    team_ids = owning_team_ids(project.get("team_id"))
+    team_role = await team_derived_role(team_ids, user_id, team_repo)
 
-    team_id = project.get("team_id")
-    if team_id:
-        team = await team_repo.get_raw_by_id(team_id)
-        if team:
-            team_role = _member_role(team.get("members", []), user_id)
-            if team_role:
-                roles.append(PROJECT_ROLE_ADMIN if team_role == TEAM_ROLE_ADMIN else PROJECT_ROLE_VIEWER)
-
-    if not roles:
-        return None
-    return max(roles, key=PROJECT_ROLES.index)
+    roles = [role for role in (direct_role, team_role) if role]
+    return max(roles, key=PROJECT_ROLES.index) if roles else None
 
 
 async def check_callgraph_access(
