@@ -297,8 +297,10 @@ async def test_connection(
                         success=False,
                         message=(
                             "OIDC endpoint reachable, but the token cannot read teams in "
-                            f"{', '.join(unreadable)}. Team sync needs read:org and membership in "
-                            "every organisation it covers, or repositories there get partial or no teams."
+                            f"{', '.join(unreadable)}. Every organisation the token belongs to is "
+                            "probed, so either grant it read:org there, or use a dedicated identity "
+                            "that belongs only to the organisations DependencyControl covers. "
+                            "Until then repositories there get partial or no teams."
                         ),
                         instance_name=instance.name,
                         url=instance.url,
