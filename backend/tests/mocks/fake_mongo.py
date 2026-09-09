@@ -1071,11 +1071,8 @@ class FakeCollection:
 
     def __init__(self, db: Any = None, unique_keys: list[tuple[str, ...]] | None = None):
         self._docs: dict = {}
-        # $lookup needs to reach sibling collections.
         self._db = db
-        # Unique-index field tuples, declared up front or via create_index(..., unique=True).
         self._unique_keys: list[tuple[str, ...]] = list(unique_keys or [])
-        # Record of created index keys, for test assertion.
         self.created_indexes: list[str] = []
 
     # -- writes -----------------------------------------------------------
@@ -1355,14 +1352,12 @@ class FakeCollection:
         if kwargs.get("unique"):
             fields = [keys] if isinstance(keys, str) else [key for key, _direction in keys]
             self._unique_keys.append(tuple(fields))
-        # Record the key for test assertion.
         if isinstance(keys, str):
             self.created_indexes.append(keys)
         else:
-            self.created_indexes.append(keys[0][0])
+            self.created_indexes.append(tuple(key for key, _direction in keys))
 
     async def index_information(self):
-        # No pre-existing indexes in the in-process fake.
         return {}
 
     async def drop_index(self, *args, **kwargs):

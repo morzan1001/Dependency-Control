@@ -20,17 +20,17 @@ If an index on `team_ids` already exists under a non-default name (anything othe
 db.projects.dropIndex("old_index_name")
 ```
 
-Startup cannot fix this for you and will not stop for it. MongoDB refuses to redefine an index that
-already exists under that name, answers `IndexKeySpecsConflict` (code 86), and the guard in
-`create_indexes` logs the skip and continues. The wrong index survives and the deployment succeeds,
-but team-scoped queries will collection-scan 742 projects instead of using the index.
+**This is critical**: if a hand-built index exists under a custom name, the startup call to
+`create_index` fails with `IndexOptionsConflict` (code 85). This call is unguarded — there is no
+try/catch around it in `init_db.py:234` — so the exception aborts `startup_event`, and every
+backend pod crashes on startup. The rolling update stalls at the first pod. This installation has
+hit this exact failure before.
 
 ### 1b. Build the index
 
 Do **not** pass a `name`. Omitting it gives the index the same default name `create_index` would
-generate (`team_ids_1`). Under a custom name the key exists twice as far as MongoDB is concerned:
-startup's build answers `IndexOptionsConflict` (code 85) and logs a skip on every pod start — a
-permanent alarm over a healthy index.
+generate (`team_ids_1`). Under a custom name the key exists twice as far as MongoDB is concerned,
+triggering the unguarded startup crash described above.
 
 ```js
 db.projects.createIndex({ team_ids: 1 })
@@ -39,38 +39,74 @@ db.projects.createIndex({ team_ids: 1 })
 Verify the resulting index name is `team_ids_1`:
 
 ```js
-db.projects.getIndexes() | grep -i team_ids
+db.projects.getIndexes().map(i => i.name)
 ```
 
-The output must show `team_ids_1` exactly, with no custom name or options. The first pod of the
-rollout logs no index skip.
+Or, to filter to just the team_ids indexes:
 
-## 2. Deploy Phase 1-4 code
+```js
+db.projects.getIndexes().filter(i => i.name.includes("team_ids"))
+```
 
-Deploy the revision that includes:
-- The `team_ids` field on projects (Phase 1)
-- The multikey index (this step)
-- The backfill migration script (Phase 2)
-- Analytics and queries using `team_ids` (Phases 3-4)
+The output must show `team_ids_1` exactly, with no custom name or options.
+
+### 1c. Watch the first pod rollout
+
+Verify the index name is correct before the rollout starts. Once it does, watch the deployment:
+
+```bash
+kubectl rollout status deployment/dependency-control-backend -n dependency-control
+```
+
+If any pod crashes with an index error, stop the rollout immediately — the index name is wrong and
+must be dropped and rebuilt before you continue.
+
+## 2. Deploy the revision that adds the multikey index
+
+Deploy the code that includes:
+- The `team_ids` field on projects (already present from Phase 1 of the multi-team rollout)
+- The multikey index (built by hand in step 1, no-op in startup after that)
+- The backfill migration script (will be invoked in step 3)
+- Analytics and queries using `team_ids` (come later in the rollout sequence)
 
 ## 3. Run the dry-run backfill
 
-From an `exec` pod shell (or equivalent pod access):
+Create a Kubernetes Job to run the backfill. Use the same Job manifest pattern as
+`README-deploy-waves-2-3.md` and `README-deploy-stats-accumulator.md`, with:
 
-```bash
-python -m scripts.backfill_project_team_ids
+```yaml
+workingDir: /app
+command: ["python", "-m", "scripts.backfill_project_team_ids"]
 ```
 
-Record the `projects planned` count. This run does not write anything — it only reports how many
-projects would be updated from the scalar `team_id` to the derived list `team_ids`.
+The working directory `/app` is required — the script's usage line and all invocations depend on it.
+
+Once the job completes, view the logs:
+
+```bash
+kubectl logs -n dependency-control job/backfill-project-team-ids
+```
+
+Record the `projects planned` count. Expected: **742** (229 with a team, 513 without).
+This run does not write anything — it only reports how many projects would be updated from the
+scalar `team_id` to the derived list `team_ids`.
 
 ## 4. Execute the backfill
 
-```bash
-python -m scripts.backfill_project_team_ids --execute
+Re-run the backfill Job with `--execute`:
+
+```yaml
+workingDir: /app
+command: ["python", "-m", "scripts.backfill_project_team_ids", "--execute"]
 ```
 
-Record the `projects matched` count.
+View the logs:
+
+```bash
+kubectl logs -n dependency-control job/backfill-project-team-ids
+```
+
+Record the `projects matched` count. Expected: **742**.
 
 ## 5. Verify completion
 
@@ -78,16 +114,21 @@ Record the `projects matched` count.
 db.projects.countDocuments({ team_ids: { $exists: false } })
 ```
 
-This must return 0, confirming every project now carries a `team_ids` list. Projects without a
+This must return **0**, confirming every project now carries a `team_ids` list. Projects without a
 team carry an empty list `[]`.
 
-## 6. Migration is idempotent
+## 6. Safe re-runs while scalar is authoritative
 
 The backfill derives `team_ids` from the scalar `team_id` every run. It is safe to re-run for
-verification, but once writers own the list (Phase 5 removes the scalar field), the migration must
-not be re-run — the derivation assumes the scalar is authoritative.
+verification **only while the scalar `team_id` is still authoritative** — i.e., before the write
+paths begin writing `team_ids` directly. Once writers own the list, the migration must never be
+re-run, because it would overwrite writer-added teams with a re-derivation from the single scalar
+and silently truncate every multi-team project back to one team.
 
-## 7. Phase 5 removes the scalar
+## 7. When the write paths take over
 
-When `team_id` is dropped, the `team_id` index is also dropped. The `team_ids` index remains
-permanent, as the multikey index enables team-scoped queries for all team-membership feature.
+In a later deploy, the write paths will begin writing `team_ids` directly instead of through the
+scalar. From that deploy onward, this backfill migration **must not be re-run**. At that point,
+the `team_id` field is scheduled to be removed in the following deploy, along with its index. The
+`team_ids` index remains permanent, as it enables team-scoped queries for all team-membership
+features.
