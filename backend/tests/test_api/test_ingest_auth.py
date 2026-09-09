@@ -953,10 +953,10 @@ _GITLAB_TEAM_SYNC_INSTANCE = {
 class TestIngestGitLabTeamSync:
     """GitLab OIDC ingest assigns the project's team when the instance opts in."""
 
-    def _run(self, instance_doc, team_id, project_doc=None):
+    def _run(self, instance_doc, team_id):
         from app.api.deps import get_project_for_ingest
 
-        projects_coll = create_mock_collection(find_one=project_doc)
+        projects_coll = create_mock_collection(find_one=None)
         projects_coll.find_one_and_update = AsyncMock(side_effect=lambda _q, update, **_kw: update["$setOnInsert"])
         db = create_mock_db(
             {

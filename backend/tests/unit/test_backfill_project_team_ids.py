@@ -161,7 +161,7 @@ async def test_a_run_interrupted_after_a_batch_finishes_the_job_on_the_next_pass
     await db.projects.insert_one(_project("p2", team_id="t2"))
 
     plan = plan_team_id_expansion([_project("p1", team_id="t1", team_source="manual"), _project("p2", team_id="t2")])
-    await apply_plan(db, plan[:1], batch_size=_BATCH_SIZE, sleep_ms=_NO_SLEEP_MS)
+    await apply_plan(db, plan[:1])
     assert (await db.projects.find_one({"_id": "p1"}))["team_ids"] == ["t1"]
     assert (await db.projects.find_one({"_id": "p2"})).get("team_ids") is None
 
@@ -193,6 +193,6 @@ async def test_matched_count_reflects_actual_writes_not_intents():
     db = FakeDatabase()
     plan = [TeamIdsUpdate(project_id="p1", team_ids=["t1"], team_sources={})]
 
-    matched = await apply_plan(db, plan, batch_size=_BATCH_SIZE, sleep_ms=_NO_SLEEP_MS)
+    matched = await apply_plan(db, plan)
 
     assert matched == 0

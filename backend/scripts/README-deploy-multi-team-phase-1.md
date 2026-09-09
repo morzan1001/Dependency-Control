@@ -4,8 +4,11 @@ Prod context: `gke_rd-itsecurity-sboms-prod_europe-west1_prod-1`, namespace `dep
 
 ## 1. Build the index before the deploy
 
-`create_indexes` runs in the startup path, so a build there stalls the rollout. Build it by hand
-first; the startup call then finds it and is a no-op.
+**If in doubt, skip this section.** Startup builds this index in milliseconds on 742 documents;
+everything below only matters if you choose to build it by hand.
+
+`create_indexes` runs in the startup path. Building it by hand first keeps that call a no-op — at
+the cost of the naming hazard described below, which only exists on the hand-built path.
 
 ### 1a. Check for pre-existing indexes
 
@@ -72,7 +75,7 @@ must be dropped and rebuilt before you continue.
 ## 3. Run the dry-run backfill
 
 Create a Kubernetes Job to run the backfill. Use the same Job manifest pattern as
-`README-deploy-waves-2-3.md` and `README-deploy-stats-accumulator.md`, with:
+`README-deploy-waves-2-3.md`, with:
 
 ```yaml
 workingDir: /app
@@ -80,11 +83,13 @@ command: ["python", "-m", "scripts.backfill_project_team_ids"]
 ```
 
 The working directory `/app` is required — the script's usage line and all invocations depend on it.
-Name the Job `dc-migration` (the conventional name used by the sibling migration runbooks).
+Name the Job `dc-migration` (the conventional name used by the sibling migration runbook).
 
-Once the job completes, view the logs:
+Wait for the Job, then view the logs — logs read against a still-running Job print no count line at
+all, which reads as a clean run:
 
 ```bash
+kubectl wait --for=condition=complete --timeout=30m job/dc-migration -n dependency-control
 kubectl logs -n dependency-control job/dc-migration
 ```
 
@@ -108,9 +113,10 @@ workingDir: /app
 command: ["python", "-m", "scripts.backfill_project_team_ids", "--execute"]
 ```
 
-View the logs:
+Wait for the Job, then view the logs:
 
 ```bash
+kubectl wait --for=condition=complete --timeout=30m job/dc-migration -n dependency-control
 kubectl logs -n dependency-control job/dc-migration
 ```
 
@@ -136,13 +142,19 @@ db.projects.countDocuments({ team_sources: { $exists: false } })
 This must also return **0**, confirming every project now carries a `team_sources` dict. Projects
 without a team carry an empty dict `{}`.
 
-## 6. Safe re-runs while scalar is authoritative
+## 6. Re-runs while the scalar is authoritative
 
 The backfill derives `team_ids` from the scalar `team_id` every run. It is safe to re-run for
 verification **only while the scalar `team_id` is still authoritative** — i.e., before the write
 paths begin writing `team_ids` directly. Once writers own the list, the migration must never be
 re-run, because it would overwrite writer-added teams with a re-derivation from the single scalar
 and silently truncate every multi-team project back to one team.
+
+From this backfill onward the stored `team_ids` goes stale: every team transfer writes only the
+scalar `team_id`. The deploy that first makes the application **read** `team_ids` must therefore be
+preceded by a final `--execute` run of this backfill, in the same maintenance window, before the new
+image rolls. Without it, every project transferred since the last run keeps its old team's access
+and attribution — and §5 cannot detect this, because the field is present, merely stale.
 
 ## 7. When the write paths take over
 

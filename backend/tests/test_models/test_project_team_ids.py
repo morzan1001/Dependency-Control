@@ -52,3 +52,13 @@ def test_unassigned_with_manual_provenance_remains_unassigned():
     assert project.team_ids == []
     assert project.team_sources == {}
     assert project.team_source == "manual"
+
+
+def test_a_stored_list_never_resurrects_a_cleared_scalar():
+    """The backfilled list outlives an unassignment, which only clears the scalar; adopting the
+    stored list back into the scalar would silently undo that unassignment."""
+    project = Project(name=_NAME, team_id=None, team_source="manual", team_ids=["t1"], team_sources={"t1": "gitlab"})
+
+    assert project.team_id is None
+    assert project.team_ids == []
+    assert project.team_sources == {}

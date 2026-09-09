@@ -1,7 +1,7 @@
 """Expand the scalar project team fields into the multi-team ones.
 
-Task 1 added ``Project.team_ids`` and ``Project.team_sources``, derived on read from the legacy
-scalars ``team_id`` / ``team_source``. This migration writes those derived fields into MongoDB so
+``Project.team_ids`` and ``Project.team_sources`` are derived on read from the legacy scalars
+``team_id`` / ``team_source``. This migration writes those derived fields into MongoDB so
 Mongo-side queries and the index can use them. It changes no application behaviour.
 
 Of 742 production projects, 229 have a team and 513 do not; both must be written.
@@ -88,17 +88,15 @@ async def _iter_project_batches(db: Any, batch_size: int, sleep_ms: int) -> Asyn
             await asyncio.sleep(sleep_ms / 1000)
 
 
-async def apply_plan(db: Any, updates: list[TeamIdsUpdate], *, batch_size: int, sleep_ms: int) -> int:
+async def apply_plan(db: Any, updates: list[TeamIdsUpdate]) -> int:
     """Write the plan. Returns the number of matched documents."""
     matched = 0
-    for index, update in enumerate(updates, start=1):
+    for update in updates:
         result = await db.projects.update_one(
             {"_id": update.project_id},
             {"$set": {"team_ids": update.team_ids, "team_sources": update.team_sources}},
         )
         matched += result.matched_count
-        if sleep_ms > 0 and index % batch_size == 0:
-            await asyncio.sleep(sleep_ms / 1000)
     return matched
 
 
@@ -111,7 +109,7 @@ async def run_expand(db: Any, *, batch_size: int, sleep_ms: int, execute: bool) 
         plan = plan_team_id_expansion(batch)
         planned += len(plan)
         if execute and plan:
-            matched += await apply_plan(db, plan, batch_size=batch_size, sleep_ms=sleep_ms)
+            matched += await apply_plan(db, plan)
         print(f"batched={len(batch)} planned={planned} matched={matched if execute else 'N/A'}")
 
     return planned, matched
