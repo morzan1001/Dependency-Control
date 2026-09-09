@@ -26,7 +26,19 @@ already exists under that name, answers `IndexKeySpecsConflict` (code 86), and t
 filter the next manual team creation fails in production with
 `E11000 … dup key: { github_instance_id: null, github_team_id: null }` — measured, not inferred.
 
-### 1b. Build it
+### 1b. Check for pre-existing duplicates
+
+The build in 1c fails on any, so run this first. It must return nothing:
+
+```js
+db.teams.aggregate([
+  { $match: { github_team_id: { $type: "number" } } },
+  { $group: { _id: { i: "$github_instance_id", t: "$github_team_id" }, n: { $sum: 1 } } },
+  { $match: { n: { $gt: 1 } } }
+])
+```
+
+### 1c. Build it
 
 Do **not** pass a `name`. Omitting it gives the index the same default name `create_index` would
 generate (`github_instance_id_1_github_team_id_1`). Under a custom name the key exists twice as far
@@ -53,15 +65,8 @@ Both halves of the filter are load-bearing:
   at or beyond 2³¹ as BSON `long`. Such a team would sit outside the unique scope and could be
   created twice.
 
-Check for pre-existing duplicates first; the build fails on any:
-
-```js
-db.teams.aggregate([
-  { $match: { github_team_id: { $type: "number" } } },
-  { $group: { _id: { i: "$github_instance_id", t: "$github_team_id" }, n: { $sum: 1 } } },
-  { $match: { n: { $gt: 1 } } }
-])
-```
+Verify: `db.teams.getIndexes()` lists `github_instance_id_1_github_team_id_1` with exactly the
+`partialFilterExpression` above, and the first pod of the rollout logs no index skip.
 
 ## 2. Enable the feature per instance
 
