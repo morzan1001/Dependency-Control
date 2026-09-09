@@ -24,23 +24,32 @@ _GITHUB_COM_JWKS_URI = "https://token.actions.githubusercontent.com/.well-known/
 
 _GITHUB_API_TIMEOUT = 10.0
 
-# An explicit "direct" outranks an omitted access_source, which outranks an explicit
-# "organization"/"enterprise". The field is optional on the repository-teams response.
-_ACCESS_SOURCE_RANK = {"direct": 2, "organization": 0, "enterprise": 0}
+# Direct access outranks an omitted access_source, which outranks the inherited "organization"/
+# "enterprise". A value we cannot interpret ranks as inherited too: absence is missing information,
+# while a future enum member ranked above an explicit weaker source would silently reassign teams.
+_ACCESS_SOURCE_INHERITED = 0
 _ACCESS_SOURCE_ABSENT = 1
+_ACCESS_SOURCE_DIRECT = 2
 
 _PERMISSION_RANK = {"pull": 0, "triage": 1, "push": 2, "maintain": 3, "admin": 4}
+
+
+def _team_id(team: dict[str, Any]) -> int | None:
+    """None for an id we cannot order by; such a team is skipped, never fatal to the whole repository."""
+    try:
+        return int(team["id"])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 def build_team_depth_map(org_teams: list[dict[str, Any]]) -> dict[int, int]:
     """Team id -> nesting depth from GET /orgs/{org}/teams; the repository call carries one level only."""
     parents: dict[int, int | None] = {}
     for team in org_teams:
-        team_id = team.get("id")
+        team_id = _team_id(team)
         if team_id is None:
             continue
-        parent_id = (team.get("parent") or {}).get("id")
-        parents[int(team_id)] = None if parent_id is None else int(parent_id)
+        parents[team_id] = _team_id(team.get("parent") or {})
 
     depths: dict[int, int] = {}
     for team_id, parent_id in parents.items():
@@ -60,7 +69,7 @@ def _access_source_rank(team: dict[str, Any]) -> int:
     access_source = team.get("access_source")
     if access_source is None:
         return _ACCESS_SOURCE_ABSENT
-    return _ACCESS_SOURCE_RANK.get(str(access_source), _ACCESS_SOURCE_ABSENT)
+    return _ACCESS_SOURCE_DIRECT if str(access_source) == "direct" else _ACCESS_SOURCE_INHERITED
 
 
 def _permission_rank(team: dict[str, Any]) -> int:
@@ -71,8 +80,7 @@ def _permission_rank(team: dict[str, Any]) -> int:
     return _PERMISSION_RANK.get(str(team.get("permission") or ""), -1)
 
 
-def _sort_key(team: dict[str, Any], depth_map: dict[int, int] | None) -> tuple[int, int, int, int]:
-    team_id = int(team["id"])
+def _sort_key(team_id: int, team: dict[str, Any], depth_map: dict[int, int] | None) -> tuple[int, int, int, int]:
     depth = depth_map.get(team_id, 0) if depth_map else 0
     return (-_access_source_rank(team), -depth, -_permission_rank(team), team_id)
 
@@ -86,10 +94,10 @@ def select_github_team(
     The id keeps the order total: without it two equally-ranked teams swap between syncs and the
     project's team assignment flips with nothing in the logs to explain it.
     """
-    ranked = [team for team in candidates if team.get("id") is not None]
+    ranked = [(team_id, team) for team in candidates if (team_id := _team_id(team)) is not None]
     if not ranked:
         return None
-    return min(ranked, key=lambda team: _sort_key(team, depth_map))
+    return min(ranked, key=lambda entry: _sort_key(entry[0], entry[1], depth_map))[1]
 
 
 class GitHubService:
