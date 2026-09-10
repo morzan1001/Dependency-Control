@@ -219,12 +219,9 @@ export function ApiKeysCard() {
       <CardContent>
         {isLoading ? (
           <Skeleton className="h-24 w-full" />
-        ) : isError ? (
-          <p className="text-sm text-destructive">
-            Failed to load your API keys. Any keys you hold are still live; reload to see them.
-          </p>
         ) : keys.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No API keys yet.</p>
+          // keys is also empty when no listing ever arrived; only a real one proves there are none.
+          data && <p className="text-sm text-muted-foreground">No API keys yet.</p>
         ) : (
           <ul className="divide-y rounded-md border">
             {keys.map((key) => {
@@ -288,6 +285,14 @@ export function ApiKeysCard() {
             Showing the newest {truncated.returned} of {truncated.total} keys. Revoked keys keep
             their place in the listing, so the {truncated.total - truncated.returned} older ones
             cannot be reached from here.
+          </p>
+        )}
+        {/* A failed refetch keeps the last data, so the failure sits beside the rows, not over them. */}
+        {!isLoading && isError && (
+          <p className="mt-2 text-sm text-destructive">
+            {data
+              ? 'Could not refresh this list. These rows are what the server last returned, so a key revoked or minted since is not reflected here.'
+              : 'Failed to load your API keys. Any keys you hold are still live; reload to see them.'}
           </p>
         )}
         {mintableSurfaces.length === 0 && (

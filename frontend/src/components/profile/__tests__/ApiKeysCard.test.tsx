@@ -349,6 +349,31 @@ describe("ApiKeysCard", () => {
       await screen.findByText(/Failed to load your API keys/i),
     ).toBeInTheDocument();
     expect(screen.queryByText(/No API keys yet/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Showing the newest/i)).not.toBeInTheDocument();
+  });
+
+  it("keeps the rows and calls them stale when the refetch after a revoke fails", async () => {
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    renderCard([mcpKey], {
+      limit: LIST_PAGE,
+      returned: LIST_PAGE,
+      total: TOTAL_KEYS,
+    });
+    await screen.findByText(MCP_KEY_NAME);
+    listKeys.mockRejectedValue(new Error("network unreachable"));
+
+    fireEvent.click(screen.getByRole("button", { name: MCP_REVOKE_LABEL }));
+
+    expect(
+      await screen.findByText(/Could not refresh this list/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(MCP_KEY_NAME)).toBeInTheDocument();
+    expect(
+      screen.getByText(new RegExp(`Showing the newest ${LIST_PAGE}`)),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText(/Failed to load your API keys/i),
+    ).not.toBeInTheDocument();
   });
 
   it("reports an unstamped ad-hoc-only key as not recorded rather than unused", async () => {
