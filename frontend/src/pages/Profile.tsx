@@ -5,6 +5,7 @@ import { UserDetailsCard } from '@/components/profile/UserDetailsCard';
 import { PasswordUpdateCard } from '@/components/profile/PasswordUpdateCard';
 import { TwoFactorAuthCard } from '@/components/profile/TwoFactorAuthCard';
 import { NotificationPreferencesCard } from '@/components/profile/NotificationPreferencesCard';
+import { ApiKeysCard } from '@/components/profile/ApiKeysCard';
 import { MCPApiKeysCard } from '@/components/profile/MCPApiKeysCard';
 import { AdhocApiKeysCard } from '@/components/profile/AdhocApiKeysCard';
 import { useAuth } from '@/context';
@@ -46,6 +47,15 @@ export default function ProfilePage() {
 
       <NotificationPreferencesCard key={`notif-${user?.id}`} user={user} availableChannels={notificationChannels} />
 
+      {/* Ownership alone decides listing and revoking, so a key stays reachable after a permission goes. */}
+      <ApiKeysCard />
+
+      {(canUseMcp || canUseAdhocAnalysis) && (
+        <p className="text-sm text-muted-foreground">
+          The per-surface cards below are superseded: their keys still work, and replacing them with a
+          key from the card above lets you retire them.
+        </p>
+      )}
       {canUseMcp && <MCPApiKeysCard />}
       {canUseAdhocAnalysis && <AdhocApiKeysCard />}
     </div>
