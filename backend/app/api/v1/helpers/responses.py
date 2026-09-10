@@ -17,6 +17,7 @@ RESP_400_404: _Responses = {**RESP_400, **RESP_404}
 RESP_400_401_500: _Responses = {**RESP_400, **RESP_401, **RESP_500}
 RESP_400_403_404: _Responses = {**RESP_400, **RESP_403, **RESP_404}
 RESP_400_500: _Responses = {**RESP_400, **RESP_500}
+RESP_401_404: _Responses = {**RESP_401, **RESP_404}
 RESP_403_404: _Responses = {**RESP_403, **RESP_404}
 
 RESP_AUTH: _Responses = {**RESP_401, **RESP_403}

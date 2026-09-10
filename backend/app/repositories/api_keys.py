@@ -5,6 +5,7 @@ import logging
 import secrets
 import string
 import uuid
+from collections.abc import Sequence
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -48,7 +49,7 @@ class ApiKeyRepository:
         self,
         user_id: str,
         name: str,
-        surfaces: list[str],
+        surfaces: Sequence[str],
         expires_in_days: int,
     ) -> tuple[dict[str, Any], str]:
         """Returns (stored_document, plaintext_token); the plaintext is shown once and never persisted."""

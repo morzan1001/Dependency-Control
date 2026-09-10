@@ -1,4 +1,5 @@
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, Header, HTTPException, status
@@ -10,6 +11,8 @@ from pydantic import ValidationError
 
 from app.core import security
 from app.core.config import settings
+from app.core.constants import API_KEY_SURFACE_ADHOC, API_KEY_SURFACE_MCP
+from app.core.permissions import Permissions, has_permission
 from app.db.mongodb import get_database
 from app.models.project import Project
 from app.models.system import SystemSettings
@@ -20,6 +23,7 @@ from app.repositories import (
     TeamRepository,
     UserRepository,
 )
+from app.repositories.api_keys import ApiKeyRepository
 from app.schemas.token import TokenPayload
 from app.services.gitlab import GitLabService
 
@@ -619,6 +623,68 @@ async def get_adhoc_api_key(
             detail="Token owner no longer has ad-hoc analysis access",
         )
     return key_doc
+
+
+# A key names the doors it may open; the owner's permission decides whether a named door is still
+# theirs to walk through. Both are checked on every request, so the pairing is stated once here.
+SURFACE_PERMISSIONS: dict[str, str] = {
+    API_KEY_SURFACE_MCP: Permissions.MCP_ACCESS,
+    API_KEY_SURFACE_ADHOC: Permissions.ANALYZE_ADHOC,
+}
+
+
+def require_api_key(surface: str, *, touch: bool = False) -> Callable[..., Awaitable[tuple[User, dict[str, Any]]]]:
+    """Build the dependency guarding one key-authenticated surface: it resolves the Bearer token to
+    its (owner, key document) pair and admits the caller only when the key names the surface and the
+    owner still holds that surface's permission; ``touch`` stamps the key's last use, which a
+    surface promising to persist nothing leaves off."""
+    permission = SURFACE_PERMISSIONS[surface]
+
+    async def dependency(
+        authorization: str = Header(default=""),
+        db: AsyncIOMotorDatabase = Depends(get_database),
+    ) -> tuple[User, dict[str, Any]]:
+        if not authorization.lower().startswith("bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing Bearer token",
+                headers={"WWW-Authenticate": f'Bearer realm="{surface}"'},
+            )
+        token = authorization.split(" ", 1)[1].strip()
+        key_repo = ApiKeyRepository(db)
+        key_doc = await key_repo.get_by_plaintext(token)
+        if not key_doc:
+            # Unknown, revoked and expired share one message: telling them apart would confirm to
+            # the holder of a rejected token that it once existed.
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid, revoked, or expired API key",
+            )
+
+        # A document missing user_id resolves to no user, which the next line turns into a 401.
+        user = await UserRepository(db).get_by_id(key_doc.get("user_id", ""))
+        if not user or not user.is_active:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token owner is no longer active")
+        # A write from outside ApiKeyRepository.create can leave surfaces absent or a non-list, and
+        # a bare membership test against those admits substrings and dict keys.
+        surfaces = key_doc.get("surfaces")
+        if not isinstance(surfaces, list) or surface not in surfaces:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"API key does not grant the {surface} surface",
+            )
+        # Answered second: a key that never named the surface must not learn what its owner holds.
+        if not has_permission(user.permissions, permission):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Token owner no longer has {surface} access",
+            )
+
+        if touch:
+            await key_repo.touch_last_used(key_doc.get("_id", ""))
+        return user, key_doc
+
+    return dependency
 
 
 DatabaseDep = Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)]

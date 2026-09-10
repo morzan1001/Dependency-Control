@@ -184,9 +184,10 @@ TEAM_ROLES: list[str] = list(get_args(TeamRole))
 
 # A key names the surfaces it may enter. This is deliberately not the permission vocabulary: the
 # user permissions decide what a caller may do, the key only decides which doors it opens.
-API_KEY_SURFACE_MCP = "mcp"
-API_KEY_SURFACE_ADHOC = "adhoc"
-API_KEY_SURFACES: frozenset[str] = frozenset({API_KEY_SURFACE_MCP, API_KEY_SURFACE_ADHOC})
+ApiKeySurface = Literal["mcp", "adhoc"]
+API_KEY_SURFACE_MCP: ApiKeySurface = "mcp"
+API_KEY_SURFACE_ADHOC: ApiKeySurface = "adhoc"
+API_KEY_SURFACES: frozenset[str] = frozenset(get_args(ApiKeySurface))
 
 # Weights for calculating risk scores
 SEVERITY_WEIGHTS: dict[str, float] = {
