@@ -46,6 +46,7 @@ async def test_create_stores_the_hash_and_prefix_never_the_plaintext():
     assert plaintext.startswith(_TOKEN_PREFIX)
     assert doc["token_hash"] == hash_token(plaintext)
     assert doc["prefix"] == plaintext[:_PREFIX_LENGTH]
+    assert isinstance(doc["_id"], str)
     stored = await db[_COL].find_one({"_id": doc["_id"]})
     assert plaintext not in str(stored)
 
@@ -124,6 +125,16 @@ async def test_expiry_is_clamped_to_one_year():
         expires_at = expires_at.replace(tzinfo=timezone.utc)
 
     assert expires_at < horizon
+
+
+@pytest.mark.asyncio
+async def test_the_requested_lifetime_is_honoured():
+    """Both stamps come from one clock reading, so the span is exact: a wrong unit or a lifetime
+    that ignores the request survives a ceiling-only assertion."""
+    db = FakeDatabase()
+    doc, _ = await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
+
+    assert doc["expires_at"] - doc["created_at"] == timedelta(days=_EXPIRY_DAYS)
 
 
 @pytest.mark.asyncio

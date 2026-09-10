@@ -30,8 +30,8 @@ LIST_LIMIT = 100
 
 
 def generate_plaintext_token() -> str:
-    """A fixed-length body: drawing from a punctuation-free alphabet keeps every token 64
-    characters, where stripping url-safe punctuation out of an encoding shortens it per draw."""
+    """Fixed length: a punctuation-free alphabet needs no stripping, which is what varies the
+    body elsewhere."""
     return _TOKEN_PREFIX + "".join(secrets.choice(_TOKEN_ALPHABET) for _ in range(_TOKEN_BODY_CHARS))
 
 
