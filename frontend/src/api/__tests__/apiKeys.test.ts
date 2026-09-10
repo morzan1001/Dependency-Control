@@ -70,11 +70,12 @@ describe("apiKeysApi", () => {
     expect(api.delete).toHaveBeenCalledWith(`/api-keys/${KEY_ID}`);
   });
 
-  it("enforces surface union type", () => {
-    const validPayload: ApiKeyCreatePayload = {
+  it("rejects a surface outside the closed set", () => {
+    const bad: ApiKeyCreatePayload = {
       name: "test",
-      surfaces: ["mcp", "adhoc"],
+      // @ts-expect-error surfaces is a closed union
+      surfaces: ["email"],
     };
-    expect(validPayload.surfaces).toEqual(["mcp", "adhoc"]);
+    expect(bad.surfaces).toEqual(["email"]);
   });
 });
