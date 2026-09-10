@@ -8,6 +8,7 @@ import redis.asyncio as redis
 
 from app.core.constants import API_KEY_SURFACE_ADHOC
 from app.core.permissions import Permissions
+from app.repositories.adhoc_api_keys import AdhocApiKeyRepository
 from app.repositories.api_keys import ApiKeyRepository
 
 _ANALYZE = "/api/v1/analyze"
@@ -45,8 +46,18 @@ def _shared_window(monkeypatch):
     monkeypatch.setattr(redis, "from_url", lambda *_a, **_k: fakeredis.aioredis.FakeRedis(server=server))
 
 
-async def _issue_key(db, name="ci", owner=_OWNER, permissions=(Permissions.ANALYZE_ADHOC,)):
+async def _mint_unified(db, owner, name):
     _doc, plaintext = await ApiKeyRepository(db).create(owner, name, [API_KEY_SURFACE_ADHOC], _EXPIRY_DAYS)
+    return plaintext
+
+
+async def _mint_legacy(db, owner, name):
+    _doc, plaintext = await AdhocApiKeyRepository(db).create(owner, name, _EXPIRY_DAYS)
+    return plaintext
+
+
+async def _issue_key(db, name="ci", owner=_OWNER, permissions=(Permissions.ANALYZE_ADHOC,), mint=_mint_unified):
+    plaintext = await mint(db, owner, name)
     await db.users.update_one(
         {"_id": owner},
         {
@@ -79,14 +90,19 @@ async def test_a_unified_key_produces_a_normal_analysis_result(client, db):
     assert body["findings"]
 
 
+@pytest.mark.parametrize("mint_first", [_mint_unified, _mint_legacy], ids=["both-unified", "legacy-then-unified"])
 @pytest.mark.asyncio
-async def test_the_budget_belongs_to_the_owner_and_to_no_one_else(client, db, monkeypatch):
+async def test_the_budget_belongs_to_the_owner_and_to_no_one_else(client, db, monkeypatch, mint_first):
     """Minting is uncapped, so a budget keyed on the key would be one budget per key. The second
     request comes from a different key of the same owner, and the first has spent the minute; the
     third comes from another owner, whose own minute nobody has touched — a budget collapsed to a
-    constant would refuse that one too."""
+    constant would refuse that one too.
+
+    Minting the first key in the legacy store is the shape production runs in for the overlap:
+    the two kinds resolve through different repositories and must still land in one window.
+    """
     monkeypatch.setattr("app.api.v1.endpoints.analyze.ADHOC_RATE_LIMIT_PER_MINUTE", _ONE_REQUEST_A_MINUTE)
-    first = await _issue_key(db)
+    first = await _issue_key(db, mint=mint_first)
     second = await _issue_key(db, name="ci-2")
     other_owner = await _issue_key(db, name="ci-3", owner=_OTHER_OWNER)
 

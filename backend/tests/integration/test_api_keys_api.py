@@ -38,6 +38,11 @@ _NO_KEYS = 0
 _ONE_KEY = 1
 _OVER_THE_PAGE = 3
 
+_DAMAGED_ID = "written-by-something-else"
+_NOT_A_STRING = 7
+_NOT_A_DATE = "yesterday"
+_PLACEHOLDERS = {"name": "", "prefix": "", "surfaces": [], "created_at": None, "expires_at": None}
+
 
 def _headers(permissions, subject=_OWNER):
     token = jwt.encode(
@@ -310,3 +315,54 @@ async def test_the_listing_carries_last_used_at_non_null_after_a_stamp(client, d
     assert "last_used_at" in before.json()["keys"][0]
     assert before.json()["keys"][0]["last_used_at"] is None
     assert after.json()["keys"][0]["last_used_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_a_damaged_key_is_listed_beside_the_healthy_ones_it_would_otherwise_take_down(client, db):
+    # A document written outside the repository still authenticates, so it has to stay revokable,
+    # and it may not cost its owner the rest of the page on the way.
+    healthy, _ = await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
+    await db[_COLLECTION].insert_one(
+        {"_id": _DAMAGED_ID, "user_id": _OWNER, "token_hash": "h", "prefix": None, "revoked_at": None}
+    )
+
+    listed = await client.get(f"{_BASE}/", headers=_headers(_BOTH_PERMISSIONS))
+
+    assert listed.status_code == _OK, listed.text
+    rendered = {key["id"]: key for key in listed.json()["keys"]}
+    assert set(rendered) == {healthy["_id"], _DAMAGED_ID}
+    assert rendered[healthy["_id"]]["name"] == _KEY_NAME
+    assert rendered[healthy["_id"]]["surfaces"] == _BOTH_SURFACES
+    assert {field: rendered[_DAMAGED_ID][field] for field in _PLACEHOLDERS} == _PLACEHOLDERS
+
+
+@pytest.mark.parametrize(
+    ("damage", "placeholder"),
+    [
+        pytest.param({"name": _NOT_A_STRING}, {"name": ""}, id="name-not-a-string"),
+        pytest.param({"prefix": _NOT_A_STRING}, {"prefix": ""}, id="prefix-not-a-string"),
+        # A bare string is a sequence of its characters and a dict a container of its keys, so
+        # either would answer a membership test the auth path also refuses to trust.
+        pytest.param({"surfaces": API_KEY_SURFACE_MCP}, {"surfaces": []}, id="surfaces-a-bare-string"),
+        pytest.param({"surfaces": {API_KEY_SURFACE_MCP: 1}}, {"surfaces": []}, id="surfaces-a-dict"),
+        pytest.param(
+            {"surfaces": [API_KEY_SURFACE_MCP, _NOT_A_STRING]},
+            {"surfaces": [API_KEY_SURFACE_MCP]},
+            id="surfaces-holding-a-non-string",
+        ),
+        pytest.param({"created_at": _NOT_A_DATE}, {"created_at": None}, id="created_at-not-a-date"),
+        pytest.param({"expires_at": _NOT_A_DATE}, {"expires_at": None}, id="expires_at-not-a-date"),
+        pytest.param({"revoked_at": _NOT_A_DATE}, {"revoked_at": None}, id="revoked_at-not-a-date"),
+        pytest.param({"last_used_at": _NOT_A_DATE}, {"last_used_at": None}, id="last_used_at-not-a-date"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_a_field_stored_in_the_wrong_type_renders_as_its_placeholder(client, db, damage, placeholder):
+    doc, _ = await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
+    await db[_COLLECTION].update_one({"_id": doc["_id"]}, {"$set": damage})
+
+    listed = await client.get(f"{_BASE}/", headers=_headers(_BOTH_PERMISSIONS))
+
+    assert listed.status_code == _OK, listed.text
+    key = listed.json()["keys"][0]
+    assert {field: key[field] for field in placeholder} == placeholder

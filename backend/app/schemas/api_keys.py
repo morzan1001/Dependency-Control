@@ -36,12 +36,15 @@ class ApiKeyCreate(BaseModel):
 
 
 class ApiKeyResponse(BaseModel):
+    """Every field but the id is nullable or emptyable so a document damaged in storage can still
+    be listed, and so revoked: the endpoint renders what it can rather than refusing the page."""
+
     id: str
     name: str
     prefix: str
     surfaces: list[str]
-    created_at: datetime
-    expires_at: datetime
+    created_at: datetime | None = None
+    expires_at: datetime | None = None
     revoked_at: datetime | None = None
     last_used_at: datetime | None = None
 

@@ -1,6 +1,7 @@
 """User-facing endpoints for minting, listing and revoking unified API keys."""
 
 from collections.abc import Sequence
+from datetime import datetime
 from typing import Any
 
 from fastapi import HTTPException, status
@@ -41,16 +42,36 @@ def _authorize_surfaces(user: User, surfaces: Sequence[ApiKeySurface]) -> None:
             )
 
 
+def _text(value: Any) -> str:
+    return value if isinstance(value, str) else ""
+
+
+def _moment(value: Any) -> datetime | None:
+    return ensure_utc(value) if isinstance(value, datetime) else None
+
+
+def _surfaces(value: Any) -> list[str]:
+    return [entry for entry in value if isinstance(entry, str)] if isinstance(value, list) else []
+
+
 def _to_response(doc: dict[str, Any]) -> ApiKeyResponse:
+    """Render a stored key, standing in an empty string or a null for every field a document
+    written outside ``ApiKeyRepository.create`` has lost or holds in the wrong type.
+
+    The row is rendered rather than dropped: the auth path reads only the hash, the owner and the
+    surfaces, so a document damaged anywhere else still opens doors, and hiding it would leave a
+    live credential with no way to revoke it. Refusing to render it would do worse still and cost
+    the owner every other key in the same listing.
+    """
     return ApiKeyResponse(
-        id=doc["_id"],
-        name=doc["name"],
-        prefix=doc["prefix"],
-        surfaces=doc["surfaces"],
-        created_at=ensure_utc(doc["created_at"]),
-        expires_at=ensure_utc(doc["expires_at"]),
-        revoked_at=ensure_utc(doc.get("revoked_at")),
-        last_used_at=ensure_utc(doc.get("last_used_at")),
+        id=str(doc["_id"]),
+        name=_text(doc.get("name")),
+        prefix=_text(doc.get("prefix")),
+        surfaces=_surfaces(doc.get("surfaces")),
+        created_at=_moment(doc.get("created_at")),
+        expires_at=_moment(doc.get("expires_at")),
+        revoked_at=_moment(doc.get("revoked_at")),
+        last_used_at=_moment(doc.get("last_used_at")),
     )
 
 
