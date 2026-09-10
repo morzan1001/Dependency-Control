@@ -98,24 +98,29 @@ function createdText(key: ApiKey): string {
 }
 
 function expiryText(key: ApiKey): string {
-  return key.expires_at
-    ? `expires ${formatDistanceToNow(new Date(key.expires_at), { addSuffix: true })}`
-    : 'no expiry stored';
+  if (!key.expires_at) return 'no expiry stored';
+  const distance = formatDistanceToNow(new Date(key.expires_at), { addSuffix: true });
+  return new Date(key.expires_at).getTime() < Date.now()
+    ? `expired ${distance}`
+    : `expires ${distance}`;
 }
 
 function usageText(key: ApiKey): string {
   if (key.last_used_at) {
     return `last used ${formatDistanceToNow(new Date(key.last_used_at), { addSuffix: true })}`;
   }
-  return key.surfaces.some((surface) => STAMPING_SURFACES.includes(surface))
-    ? 'never used'
-    : 'usage not recorded';
+  // An absent stamp only proves disuse when every surface the key names would have written one;
+  // a key naming any non-stamping surface may be in constant use through it.
+  const everySurfaceStamps =
+    key.surfaces.length > 0 &&
+    key.surfaces.every((surface) => STAMPING_SURFACES.includes(surface));
+  return everySurfaceStamps ? 'never used' : 'usage not recorded';
 }
 
 export function ApiKeysCard() {
   const { hasPermission } = useAuth();
   // Listing and revoking are gated on ownership alone; only minting needs a permission.
-  const { data, isLoading } = useApiKeys(true);
+  const { data, isLoading, isError } = useApiKeys();
   const [createOpen, setCreateOpen] = useState(false);
   const [newName, setNewName] = useState('');
   const [newExpiry, setNewExpiry] = useState(DEFAULT_EXPIRY_DAYS);
@@ -214,6 +219,10 @@ export function ApiKeysCard() {
       <CardContent>
         {isLoading ? (
           <Skeleton className="h-24 w-full" />
+        ) : isError ? (
+          <p className="text-sm text-destructive">
+            Failed to load your API keys. Any keys you hold are still live; reload to see them.
+          </p>
         ) : keys.length === 0 ? (
           <p className="text-sm text-muted-foreground">No API keys yet.</p>
         ) : (
@@ -276,8 +285,9 @@ export function ApiKeysCard() {
         )}
         {truncated && (
           <p className="mt-2 text-xs text-muted-foreground">
-            Showing the newest {truncated.returned} of {truncated.total} keys. Revoke the ones you
-            no longer need — the rest cannot be listed here.
+            Showing the newest {truncated.returned} of {truncated.total} keys. Revoked keys keep
+            their place in the listing, so the {truncated.total - truncated.returned} older ones
+            cannot be reached from here.
           </p>
         )}
         {mintableSurfaces.length === 0 && (

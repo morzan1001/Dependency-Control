@@ -8,11 +8,10 @@ export const apiKeyQueryKeys = {
   list: () => [...apiKeyQueryKeys.all, 'list'] as const,
 };
 
-export function useApiKeys(enabled: boolean) {
+export function useApiKeys() {
   return useQuery({
     queryKey: apiKeyQueryKeys.list(),
     queryFn: apiKeysApi.list,
-    enabled,
     staleTime: 30_000,
   });
 }

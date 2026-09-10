@@ -16,22 +16,37 @@ const NOW = "2026-09-10T12:00:00Z";
 const CREATED_AT = "2026-09-01T12:00:00Z";
 const EXPIRES_AT = "2026-12-09T12:00:00Z";
 const LAST_USED_AT = "2026-09-07T12:00:00Z";
+const REVOKED_AT = "2026-09-05T12:00:00Z";
+const LAPSED_CREATED_AT = "2025-11-12T12:00:00Z";
+const LAPSED_AT = "2026-02-10T12:00:00Z";
 const MCP_KEY_ID = "k-mcp";
 const ADHOC_KEY_ID = "k-adhoc";
+const MIXED_KEY_ID = "k-mixed";
+const REVOKED_KEY_ID = "k-revoked";
+const EXPIRED_KEY_ID = "k-expired";
 const DAMAGED_KEY_ID = "k-damaged";
 const MCP_KEY_NAME = "claude desktop";
 const ADHOC_KEY_NAME = "release pipeline";
+const MIXED_KEY_NAME = "pipeline and desktop";
+const REVOKED_KEY_NAME = "retired laptop";
+const EXPIRED_KEY_NAME = "winter runner";
 const MCP_PREFIX = "dck_abcdefgh";
 const ADHOC_PREFIX = "dck_ijklmnop";
+const MIXED_PREFIX = "dck_qrstuvwx";
+const REVOKED_PREFIX = "dck_yzabcdef";
+const EXPIRED_PREFIX = "dck_ghijklmn";
 const PLAINTEXT_TOKEN = "dck_a-token-shown-exactly-once";
 const MCP_REVOKE_LABEL = `Revoke ${MCP_KEY_NAME}`;
 const ADHOC_REVOKE_LABEL = `Revoke ${ADHOC_KEY_NAME}`;
+const REVOKED_REVOKE_LABEL = `Revoke ${REVOKED_KEY_NAME}`;
+const EXPIRED_REVOKE_LABEL = `Revoke ${EXPIRED_KEY_NAME}`;
 const DAMAGED_REVOKE_LABEL = "Revoke unnamed key";
 const SURFACE_REFUSED =
   "Permission 'mcp:access' is required for the 'mcp' surface";
 const DEFAULT_EXPIRY_DAYS = 90;
 const LIST_PAGE = 100;
 const TOTAL_KEYS = 103;
+const UNREACHABLE_KEYS = TOTAL_KEYS - LIST_PAGE;
 const NOT_CALLED = 0;
 const CALLED_ONCE = 1;
 const SHOWN_ONCE = 1;
@@ -87,6 +102,40 @@ const adhocKey: ApiKey = {
   surfaces: ["adhoc"],
   created_at: CREATED_AT,
   expires_at: EXPIRES_AT,
+  revoked_at: null,
+  last_used_at: null,
+};
+
+/** Both surfaces at once — the shape only the unified key can take. */
+const mixedKey: ApiKey = {
+  id: MIXED_KEY_ID,
+  name: MIXED_KEY_NAME,
+  prefix: MIXED_PREFIX,
+  surfaces: ["mcp", "adhoc"],
+  created_at: CREATED_AT,
+  expires_at: EXPIRES_AT,
+  revoked_at: null,
+  last_used_at: null,
+};
+
+const revokedKey: ApiKey = {
+  id: REVOKED_KEY_ID,
+  name: REVOKED_KEY_NAME,
+  prefix: REVOKED_PREFIX,
+  surfaces: ["mcp"],
+  created_at: CREATED_AT,
+  expires_at: EXPIRES_AT,
+  revoked_at: REVOKED_AT,
+  last_used_at: LAST_USED_AT,
+};
+
+const expiredKey: ApiKey = {
+  id: EXPIRED_KEY_ID,
+  name: EXPIRED_KEY_NAME,
+  prefix: EXPIRED_PREFIX,
+  surfaces: ["mcp"],
+  created_at: LAPSED_CREATED_AT,
+  expires_at: LAPSED_AT,
   revoked_at: null,
   last_used_at: null,
 };
@@ -283,9 +332,23 @@ describe("ApiKeysCard", () => {
 
     expect(
       await screen.findByText(
-        new RegExp(`Showing the newest ${LIST_PAGE} of ${TOTAL_KEYS} keys`),
+        new RegExp(
+          `Showing the newest ${LIST_PAGE} of ${TOTAL_KEYS} keys\\. ` +
+            "Revoked keys keep their place in the listing, so the " +
+            `${UNREACHABLE_KEYS} older ones cannot be reached from here\\.`,
+        ),
       ),
     ).toBeInTheDocument();
+  });
+
+  it("says the listing failed rather than that the user holds no keys", async () => {
+    listKeys.mockRejectedValue(new Error("network unreachable"));
+    render(<ApiKeysCard />, { wrapper: Wrapper });
+
+    expect(
+      await screen.findByText(/Failed to load your API keys/i),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/No API keys yet/i)).not.toBeInTheDocument();
   });
 
   it("reports an unstamped ad-hoc-only key as not recorded rather than unused", async () => {
@@ -296,11 +359,56 @@ describe("ApiKeysCard", () => {
     expect(screen.queryAllByText(/never/i)).toHaveLength(NONE);
   });
 
+  it("reports an unstamped key naming both surfaces as not recorded rather than unused", async () => {
+    renderCard([mixedKey]);
+    await screen.findByText(MIXED_KEY_NAME);
+
+    expect(screen.getByText("usage not recorded")).toBeInTheDocument();
+    expect(screen.queryAllByText(/never used/i)).toHaveLength(NONE);
+  });
+
+  it("reports an unstamped MCP-only key as never used", async () => {
+    renderCard([{ ...mcpKey, last_used_at: null }]);
+    await screen.findByText(MCP_KEY_NAME);
+
+    expect(screen.getByText("never used")).toBeInTheDocument();
+  });
+
   it("shows when a stamped key was last used", async () => {
     renderCard([mcpKey]);
     await screen.findByText(MCP_KEY_NAME);
 
     expect(screen.getByText("last used 3 days ago")).toBeInTheDocument();
+  });
+
+  it("calls a live key active and one stored without an expiry unusable", async () => {
+    renderCard([mcpKey, damagedKey]);
+    await screen.findByText(MCP_KEY_NAME);
+
+    expect(screen.getByText("Active")).toBeInTheDocument();
+    expect(screen.getByText("Unusable")).toBeInTheDocument();
+    expect(screen.getByText("usage not recorded")).toBeInTheDocument();
+  });
+
+  it("calls a revoked key revoked and stops offering to revoke it", async () => {
+    renderCard([revokedKey]);
+    await screen.findByText(REVOKED_KEY_NAME);
+
+    expect(screen.getByText("Revoked")).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: REVOKED_REVOKE_LABEL }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("calls a lapsed key expired in the past tense and still offers to revoke it", async () => {
+    renderCard([expiredKey]);
+    await screen.findByText(EXPIRED_KEY_NAME);
+
+    expect(screen.getByText("Expired")).toBeInTheDocument();
+    expect(screen.getByText("expired 7 months ago")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: EXPIRED_REVOKE_LABEL }),
+    ).toBeInTheDocument();
   });
 
   it("renders a damaged key and still offers to revoke it", async () => {
@@ -349,6 +457,20 @@ describe("ApiKeysCard", () => {
     expect(screen.getByRole("group", { name: "Surfaces" })).toContainElement(
       screen.getByLabelText("MCP"),
     );
+  });
+
+  it("hands the clipboard the minted token and nothing else", async () => {
+    await mintKey();
+    await screen.findByText(PLAINTEXT_TOKEN);
+
+    fireEvent.click(screen.getByRole("button", { name: /Copy to clipboard/i }));
+
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith(
+        expect.stringMatching(/copied/i),
+      ),
+    );
+    expect(writeText.mock.calls).toEqual([[PLAINTEXT_TOKEN]]);
   });
 
   it("tells the user to copy by hand when the clipboard refuses", async () => {

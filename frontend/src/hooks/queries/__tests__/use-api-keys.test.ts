@@ -110,7 +110,7 @@ describe("useApiKeys", () => {
     const wrapper = ({ children }: { children: ReactNode }) =>
       createElement(QueryClientProvider, { client: queryClient }, children);
     const { result } = renderHook(
-      () => ({ list: useApiKeys(true), create: useCreateApiKey() }),
+      () => ({ list: useApiKeys(), create: useCreateApiKey() }),
       { wrapper }
     );
 
@@ -140,7 +140,7 @@ describe("useApiKeys", () => {
     const wrapper = ({ children }: { children: ReactNode }) =>
       createElement(QueryClientProvider, { client: queryClient }, children);
     const { result } = renderHook(
-      () => ({ list: useApiKeys(true), revoke: useRevokeApiKey() }),
+      () => ({ list: useApiKeys(), revoke: useRevokeApiKey() }),
       { wrapper }
     );
 
