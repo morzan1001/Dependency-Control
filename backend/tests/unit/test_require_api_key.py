@@ -58,16 +58,21 @@ _WRITE_METHODS = (
 )
 
 
-def _key_doc(surfaces):
-    return {
+_ABSENT = object()
+
+
+def _key_doc(surfaces=_ABSENT):
+    doc = {
         "_id": _KEY_ID,
         "user_id": _OWNER,
         "name": _KEY_NAME,
-        "surfaces": surfaces,
         "prefix": _TOKEN[:_PREFIX_LENGTH],
         "token_hash": hash_token(_TOKEN),
         "revoked_at": None,
     }
+    if surfaces is not _ABSENT:
+        doc["surfaces"] = surfaces
+    return doc
 
 
 def _db_with_key(doc):
@@ -143,6 +148,8 @@ async def test_an_unresolvable_token_is_401_with_one_shared_message():
 
     assert exc.value.status_code == _UNAUTHORIZED
     assert exc.value.detail == _MSG_OPAQUE_KEY
+    # A distinguishing signal outside the body would be just as much of an oracle.
+    assert exc.value.headers is None
 
 
 @pytest.mark.asyncio
@@ -181,11 +188,15 @@ async def test_an_owner_without_the_surface_permission_is_403(monkeypatch, surfa
     assert exc.value.detail == f"Token owner no longer has {surface} access"
 
 
+# A document with no surfaces field at all is reachable: anything writing the collection outside
+# ApiKeyRepository.create — a migration, an operator — produces one, and it must name no surface.
 @pytest.mark.parametrize("surface", _BOTH_SURFACES)
+@pytest.mark.parametrize("names", ["the-sibling-surface", "no-surfaces-field"])
 @pytest.mark.asyncio
-async def test_a_key_that_does_not_name_the_surface_is_403(monkeypatch, surface):
+async def test_a_key_that_does_not_name_the_surface_is_403(monkeypatch, surface, names):
     other = API_KEY_SURFACE_ADHOC if surface == API_KEY_SURFACE_MCP else API_KEY_SURFACE_MCP
-    db, _ = _db_with_key(_key_doc([other]))
+    doc = _key_doc([other]) if names == "the-sibling-surface" else _key_doc()
+    db, _ = _db_with_key(doc)
     # The owner holds the permission, so only the key's surface list can turn this caller away.
     _patch_user(monkeypatch, _active_user([_SURFACE_PERMISSION[surface]]))
 
@@ -218,8 +229,8 @@ async def test_the_default_writes_nothing(monkeypatch):
 
     for method_name in _WRITE_METHODS:
         method = getattr(keys, method_name)
-        # A MagicMock answers assert_not_awaited() with another mock, so a name that is not
-        # actually stubbed would assert nothing at all.
+        # A name this collection does not stub would fail the call below with unittest.mock's
+        # "not a valid assertion" AttributeError; asserting first names the offending method.
         assert isinstance(method, AsyncMock), method_name
         method.assert_not_awaited()
 
