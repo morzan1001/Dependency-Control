@@ -10,7 +10,7 @@ from fastapi.encoders import jsonable_encoder
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import ValidationError
 
-from app.api.deps import AdhocKeyDep, DatabaseDep
+from app.api.deps import AdhocKeyOrLegacyDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.body_limit import enforce_declared_body_size, read_body_within_limit
 from app.api.v1.helpers.responses import RESP_AUTH_400
@@ -107,10 +107,11 @@ async def _enforce_rate_limit(owner_id: str) -> None:
 async def analyze(
     request: Request,
     db: DatabaseDep,
-    _key: AdhocKeyDep,
+    authenticated: AdhocKeyOrLegacyDep,
 ) -> Response:
     """Run the analysis pipeline in memory and return the result. Persists nothing."""
-    await _enforce_rate_limit(_key["user_id"])
+    _owner, key = authenticated
+    await _enforce_rate_limit(key["user_id"])
     payload = _parse_request(await read_body_within_limit(request, MAX_ADHOC_BODY_BYTES))
 
     async def _run() -> AdhocAnalyzeResponse:
