@@ -26,9 +26,14 @@
     `API key does not grant the mcp surface`.
 - `GET /api/v1/api-keys/` no longer fails the whole page when one stored key document is damaged.
   Such a key is now listed with placeholders for the fields it lost — `""` for `name` and `prefix`,
-  `[]` for `surfaces` — so it stays visible and revokable, and the keys beside it stay listed.
-  `created_at` and `expires_at` are consequently nullable in the response schema; every key minted
-  through this API still carries both.
+  `[]` for `surfaces`, `null` for a timestamp — so it stays visible, and the keys beside it stay
+  listed. `created_at` and `expires_at` are therefore nullable in the listing; on the mint response
+  they stay required, because that renders a document the server has just written.
+- `DELETE /api/v1/api-keys/{key_id}` now also accepts the id of a key whose stored `_id` is an
+  `ObjectId` rather than a string. Such a key was listed but answered 404 on revoke, so it could be
+  seen and not killed. Keys minted through this API are unaffected.
+- A damaged key document is now logged once per listing at `WARNING`, naming the key id and the
+  fields that fell back to placeholders.
 
 
 

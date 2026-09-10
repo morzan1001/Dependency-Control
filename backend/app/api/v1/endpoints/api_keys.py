@@ -1,5 +1,6 @@
 """User-facing endpoints for minting, listing and revoking unified API keys."""
 
+import logging
 from collections.abc import Sequence
 from datetime import datetime
 from typing import Any
@@ -22,6 +23,8 @@ from app.schemas.api_keys import (
     key_list_truncation,
 )
 
+logger = logging.getLogger(__name__)
+
 router = CustomAPIRouter()
 
 
@@ -42,37 +45,56 @@ def _authorize_surfaces(user: User, surfaces: Sequence[ApiKeySurface]) -> None:
             )
 
 
-def _text(value: Any) -> str:
-    return value if isinstance(value, str) else ""
-
-
-def _moment(value: Any) -> datetime | None:
-    return ensure_utc(value) if isinstance(value, datetime) else None
-
-
-def _surfaces(value: Any) -> list[str]:
-    return [entry for entry in value if isinstance(entry, str)] if isinstance(value, list) else []
-
-
 def _to_response(doc: dict[str, Any]) -> ApiKeyResponse:
     """Render a stored key, standing in an empty string or a null for every field a document
     written outside ``ApiKeyRepository.create`` has lost or holds in the wrong type.
 
-    The row is rendered rather than dropped: the auth path reads only the hash, the owner and the
-    surfaces, so a document damaged anywhere else still opens doors, and hiding it would leave a
-    live credential with no way to revoke it. Refusing to render it would do worse still and cost
-    the owner every other key in the same listing.
+    Damaged rows are rendered, not dropped. ``name``, ``prefix``, ``created_at`` and
+    ``last_used_at`` are read by nothing that authenticates, so a key damaged only there still
+    opens every door it names and has to stay visible to stay revokable. Damage to anything auth
+    does read — the hash and the owner, ``surfaces``, and the null ``revoked_at`` and future
+    ``expires_at`` ``get_by_plaintext`` also requires — has already stopped the key, and its owner
+    is still the one who clears it away. Revoke takes back both stored id types this can render;
+    an id of any other type would be listed and not revokable, and nothing is known to write one.
     """
-    return ApiKeyResponse(
-        id=str(doc["_id"]),
-        name=_text(doc.get("name")),
-        prefix=_text(doc.get("prefix")),
-        surfaces=_surfaces(doc.get("surfaces")),
-        created_at=_moment(doc.get("created_at")),
-        expires_at=_moment(doc.get("expires_at")),
-        revoked_at=_moment(doc.get("revoked_at")),
-        last_used_at=_moment(doc.get("last_used_at")),
+    key_id = str(doc["_id"])
+    damaged: list[str] = []
+
+    def text(field: str) -> str:
+        value = doc.get(field)
+        rendered = value if isinstance(value, str) else ""
+        if rendered != value:
+            damaged.append(field)
+        return rendered
+
+    def surfaces() -> list[str]:
+        value = doc.get("surfaces")
+        rendered = [entry for entry in value if isinstance(entry, str)] if isinstance(value, list) else []
+        if rendered != value:
+            damaged.append("surfaces")
+        return rendered
+
+    def moment(field: str, *, nullable: bool = False) -> datetime | None:
+        value = doc.get(field)
+        rendered = ensure_utc(value) if isinstance(value, datetime) else None
+        if rendered is None and not (nullable and value is None):
+            damaged.append(field)
+        return rendered
+
+    response = ApiKeyResponse(
+        id=key_id,
+        name=text("name"),
+        prefix=text("prefix"),
+        surfaces=surfaces(),
+        created_at=moment("created_at"),
+        expires_at=moment("expires_at"),
+        revoked_at=moment("revoked_at", nullable=True),
+        last_used_at=moment("last_used_at", nullable=True),
     )
+    if damaged:
+        # Without this the only signal a stored key is damaged is a user noticing a blank row.
+        logger.warning("API key %s stored no usable %s; listing it with placeholders", key_id, ", ".join(damaged))
+    return response
 
 
 @router.post(

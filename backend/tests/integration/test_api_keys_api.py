@@ -1,5 +1,6 @@
 """CRUD for unified API keys."""
 
+import logging
 from datetime import datetime, timedelta
 
 import pytest
@@ -319,8 +320,7 @@ async def test_the_listing_carries_last_used_at_non_null_after_a_stamp(client, d
 
 @pytest.mark.asyncio
 async def test_a_damaged_key_is_listed_beside_the_healthy_ones_it_would_otherwise_take_down(client, db):
-    # A document written outside the repository still authenticates, so it has to stay revokable,
-    # and it may not cost its owner the rest of the page on the way.
+    # One document written outside the repository may not cost its owner the rest of the page.
     healthy, _ = await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
     await db[_COLLECTION].insert_one(
         {"_id": _DAMAGED_ID, "user_id": _OWNER, "token_hash": "h", "prefix": None, "revoked_at": None}
@@ -366,3 +366,52 @@ async def test_a_field_stored_in_the_wrong_type_renders_as_its_placeholder(clien
     assert listed.status_code == _OK, listed.text
     key = listed.json()["keys"][0]
     assert {field: key[field] for field in placeholder} == placeholder
+
+
+@pytest.mark.asyncio
+async def test_a_key_whose_id_mongo_assigned_is_listed_and_still_revokable(client, db):
+    """A document inserted without an ``_id`` carries an ObjectId, and the listing can only render
+    that as its hex. Revoke has to accept the same string back, or the row is visible and
+    unkillable -- the outcome hiding it was rejected for causing."""
+    inserted = await db[_COLLECTION].insert_one(
+        {"user_id": _OWNER, "name": _KEY_NAME, "token_hash": "h", "surfaces": _BOTH_SURFACES, "revoked_at": None}
+    )
+    assert not isinstance(inserted.inserted_id, str), "Mongo must have assigned the id, or this proves nothing"
+    headers = _headers(_BOTH_PERMISSIONS)
+
+    listed = await client.get(f"{_BASE}/", headers=headers)
+    key_id = listed.json()["keys"][0]["id"]
+    revoked = await client.delete(f"{_BASE}/{key_id}", headers=headers)
+
+    assert listed.status_code == _OK, listed.text
+    assert key_id == str(inserted.inserted_id)
+    assert revoked.status_code == _OK, revoked.text
+    assert (await _stored(db, inserted.inserted_id))["revoked_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_a_damaged_document_is_reported_to_the_operator_by_id_and_field(client, db, caplog):
+    # Placeholders alone leave a damaged key detectable only by a user noticing a blank row.
+    doc, _ = await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
+    await db[_COLLECTION].update_one({"_id": doc["_id"]}, {"$unset": {"name": "", "expires_at": ""}})
+
+    with caplog.at_level(logging.WARNING, logger="app.api.v1.endpoints.api_keys"):
+        listed = await client.get(f"{_BASE}/", headers=_headers(_BOTH_PERMISSIONS))
+
+    assert listed.status_code == _OK, listed.text
+    warnings = [record.getMessage() for record in caplog.records if record.levelno == logging.WARNING]
+    assert len(warnings) == _ONE_KEY, warnings
+    assert doc["_id"] in warnings[0]
+    assert "name" in warnings[0] and "expires_at" in warnings[0]
+
+
+@pytest.mark.asyncio
+async def test_a_healthy_listing_says_nothing_to_the_operator(client, db, caplog):
+    # A warning on every healthy page would bury the one that means something.
+    await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
+
+    with caplog.at_level(logging.WARNING, logger="app.api.v1.endpoints.api_keys"):
+        listed = await client.get(f"{_BASE}/", headers=_headers(_BOTH_PERMISSIONS))
+
+    assert listed.status_code == _OK, listed.text
+    assert [record.getMessage() for record in caplog.records] == []

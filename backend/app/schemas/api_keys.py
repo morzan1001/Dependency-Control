@@ -36,8 +36,9 @@ class ApiKeyCreate(BaseModel):
 
 
 class ApiKeyResponse(BaseModel):
-    """Every field but the id is nullable or emptyable so a document damaged in storage can still
-    be listed, and so revoked: the endpoint renders what it can rather than refusing the page."""
+    """The listing's shape. Every field but the id may come back empty or null, because a document
+    damaged in storage is rendered rather than dropped and there is no honest stand-in for a
+    timestamp it has lost."""
 
     id: str
     name: str
@@ -53,6 +54,11 @@ class ApiKeyResponse(BaseModel):
 
 class ApiKeyCreateResponse(ApiKeyResponse):
     """Returned only at creation — contains the plaintext token."""
+
+    # The mint renders the document it has just written, so both are structurally present here and
+    # the published contract says so, whatever the listing has to tolerate.
+    created_at: datetime
+    expires_at: datetime
 
     token: str = Field(
         ...,
