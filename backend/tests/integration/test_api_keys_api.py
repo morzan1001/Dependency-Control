@@ -5,8 +5,9 @@ from datetime import datetime, timedelta
 import pytest
 from jose import jwt
 
+from app.api.deps import SURFACE_PERMISSIONS
 from app.core.config import settings
-from app.core.constants import API_KEY_SURFACE_ADHOC, API_KEY_SURFACE_MCP
+from app.core.constants import API_KEY_SURFACE_ADHOC, API_KEY_SURFACE_MCP, API_KEY_SURFACES
 from app.core.permissions import Permissions
 from app.repositories.api_keys import LIST_LIMIT, ApiKeyRepository
 
@@ -94,6 +95,12 @@ async def test_create_records_the_requested_surfaces_and_the_listing_reports_the
 
     listed = await client.get(f"{_BASE}/", headers=headers)
     assert listed.json()["keys"][0]["surfaces"] == [API_KEY_SURFACE_ADHOC]
+
+
+def test_every_surface_a_key_can_name_has_a_permission():
+    """Minting indexes the dependency's table with whatever the schema admitted, so a surface
+    added to the literal without a permission beside it would 500 the mint rather than refuse it."""
+    assert set(SURFACE_PERMISSIONS) == API_KEY_SURFACES
 
 
 @pytest.mark.parametrize(

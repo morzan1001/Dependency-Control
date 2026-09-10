@@ -9,6 +9,7 @@ from app.api.deps import SURFACE_PERMISSIONS, CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers.responses import RESP_401, RESP_401_404, RESP_AUTH
 from app.core import ensure_utc
+from app.core.constants import ApiKeySurface
 from app.core.permissions import has_permission
 from app.models.user import User
 from app.repositories.api_keys import LIST_LIMIT, ApiKeyRepository
@@ -23,11 +24,13 @@ from app.schemas.api_keys import (
 router = CustomAPIRouter()
 
 
-def _authorize_surfaces(user: User, surfaces: Sequence[str]) -> None:
+def _authorize_surfaces(user: User, surfaces: Sequence[ApiKeySurface]) -> None:
     """Refuse to mint a key that outranks its holder, naming the first surface they cannot reach.
 
     The pairing comes from the auth dependency's own table so a key can never be issued for a
-    surface the dependency would then refuse it.
+    surface the dependency would then refuse it. Typed on the surface literal rather than on
+    ``str``: a bare string is itself a ``Sequence[str]``, and iterating one indexes that table
+    with single characters.
     """
     for surface in surfaces:
         permission = SURFACE_PERMISSIONS[surface]
