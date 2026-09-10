@@ -24,6 +24,9 @@ const ADHOC_KEY_NAME = "release pipeline";
 const MCP_PREFIX = "dck_abcdefgh";
 const ADHOC_PREFIX = "dck_ijklmnop";
 const PLAINTEXT_TOKEN = "dck_a-token-shown-exactly-once";
+const MCP_REVOKE_LABEL = `Revoke ${MCP_KEY_NAME}`;
+const ADHOC_REVOKE_LABEL = `Revoke ${ADHOC_KEY_NAME}`;
+const DAMAGED_REVOKE_LABEL = "Revoke unnamed key";
 const SURFACE_REFUSED =
   "Permission 'mcp:access' is required for the 'mcp' surface";
 const DEFAULT_EXPIRY_DAYS = 90;
@@ -34,15 +37,23 @@ const CALLED_ONCE = 1;
 const SHOWN_ONCE = 1;
 const NONE = 0;
 
-const { listKeys, createKey, revokeKey, granted, toastError, toastSuccess } =
-  vi.hoisted(() => ({
-    listKeys: vi.fn(),
-    createKey: vi.fn(),
-    revokeKey: vi.fn(),
-    granted: { current: [] as string[] },
-    toastError: vi.fn(),
-    toastSuccess: vi.fn(),
-  }));
+const {
+  listKeys,
+  createKey,
+  revokeKey,
+  writeText,
+  granted,
+  toastError,
+  toastSuccess,
+} = vi.hoisted(() => ({
+  listKeys: vi.fn(),
+  createKey: vi.fn(),
+  revokeKey: vi.fn(),
+  writeText: vi.fn(),
+  granted: { current: [] as string[] },
+  toastError: vi.fn(),
+  toastSuccess: vi.fn(),
+}));
 
 vi.mock("@/api/apiKeys", () => ({
   apiKeysApi: { list: listKeys, create: createKey, revoke: revokeKey },
@@ -152,17 +163,21 @@ describe("ApiKeysCard", () => {
     vi.clearAllMocks();
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(NOW));
+    // App.tsx sets no mutation defaults, so neither does this: a `mutations.gcTime` here would
+    // hide whether the create mutation clears its own plaintext.
     queryClient = new QueryClient({
-      defaultOptions: {
-        queries: { retry: false },
-        // gcTime 0 lets the cache drop a mutation as soon as reset() detaches its observer.
-        mutations: { retry: false, gcTime: 0 },
-      },
+      defaultOptions: { queries: { retry: false } },
     });
     granted.current = [Permissions.MCP_ACCESS, Permissions.ANALYZE_ADHOC];
     listKeys.mockResolvedValue({ keys: [], truncated: null });
     createKey.mockResolvedValue(createdKey);
     revokeKey.mockResolvedValue(undefined);
+    // jsdom ships no Clipboard API, so the reveal dialog's copy button has nothing to call.
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText },
+    });
+    writeText.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -248,13 +263,13 @@ describe("ApiKeysCard", () => {
     renderCard([mcpKey]);
     await screen.findByText(MCP_KEY_NAME);
 
-    fireEvent.click(screen.getByRole("button", { name: /Revoke key/i }));
+    fireEvent.click(screen.getByRole("button", { name: MCP_REVOKE_LABEL }));
 
     expect(confirmed).toHaveBeenCalledTimes(CALLED_ONCE);
     expect(revokeKey.mock.calls).toHaveLength(NOT_CALLED);
 
     confirmed.mockReturnValue(true);
-    fireEvent.click(screen.getByRole("button", { name: /Revoke key/i }));
+    fireEvent.click(screen.getByRole("button", { name: MCP_REVOKE_LABEL }));
 
     await waitFor(() => expect(revokeKey).toHaveBeenCalledWith(MCP_KEY_ID));
   });
@@ -294,7 +309,7 @@ describe("ApiKeysCard", () => {
 
     expect(await screen.findByText(/Unnamed key/i)).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /Revoke key/i }));
+    fireEvent.click(screen.getByRole("button", { name: DAMAGED_REVOKE_LABEL }));
 
     expect(confirmed).toHaveBeenCalledTimes(CALLED_ONCE);
     await waitFor(() => expect(revokeKey).toHaveBeenCalledWith(DAMAGED_KEY_ID));
@@ -306,10 +321,48 @@ describe("ApiKeysCard", () => {
 
     expect(await screen.findByText(MCP_KEY_NAME)).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /Revoke key/i }),
+      screen.getByRole("button", { name: MCP_REVOKE_LABEL }),
     ).toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: /New key/i }),
     ).not.toBeInTheDocument();
+  });
+
+  it("names each row's revoke button after the key it destroys", async () => {
+    renderCard([mcpKey, adhocKey, damagedKey]);
+    await screen.findByText(MCP_KEY_NAME);
+
+    expect(
+      screen.getByRole("button", { name: MCP_REVOKE_LABEL }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: ADHOC_REVOKE_LABEL }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: DAMAGED_REVOKE_LABEL }),
+    ).toBeInTheDocument();
+  });
+
+  it("gives the surfaces checkbox group an accessible name", async () => {
+    await openCreateDialog();
+
+    expect(screen.getByRole("group", { name: "Surfaces" })).toContainElement(
+      screen.getByLabelText("MCP"),
+    );
+  });
+
+  it("tells the user to copy by hand when the clipboard refuses", async () => {
+    writeText.mockRejectedValue(new Error("denied"));
+    await mintKey();
+    await screen.findByText(PLAINTEXT_TOKEN);
+
+    fireEvent.click(screen.getByRole("button", { name: /Copy to clipboard/i }));
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(
+        expect.stringMatching(/copy it by hand/i),
+      ),
+    );
+    expect(screen.getByText(PLAINTEXT_TOKEN)).toBeInTheDocument();
   });
 });

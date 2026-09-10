@@ -85,6 +85,12 @@ function statusLabel(key: ApiKey): { text: string; tone: string } {
   return { text: 'Active', tone: 'text-emerald-600 dark:text-emerald-400' };
 }
 
+// One button per row, so the label has to name the key a screen-reader user is about to kill.
+// A damaged row carries neither name nor prefix and falls through to the placeholder the row shows.
+function revokeLabel(key: ApiKey): string {
+  return `Revoke ${key.name || key.prefix || 'unnamed key'}`;
+}
+
 function createdText(key: ApiKey): string {
   return key.created_at
     ? `created ${format(new Date(key.created_at), 'yyyy-MM-dd')}`
@@ -163,8 +169,14 @@ export function ApiKeysCard() {
 
   const copyToken = async () => {
     if (!revealedToken) return;
-    await navigator.clipboard.writeText(revealedToken);
-    toast.success('Token copied to clipboard.');
+    try {
+      await navigator.clipboard.writeText(revealedToken);
+      toast.success('Token copied to clipboard.');
+    } catch {
+      // An insecure context or a denied permission rejects the write; the token is shown once, so
+      // the user has to learn the copy failed while it is still on screen.
+      toast.error('Could not reach the clipboard. Select the token above and copy it by hand.');
+    }
   };
 
   const dismissRevealedToken = () => {
@@ -174,7 +186,7 @@ export function ApiKeysCard() {
   };
 
   const keys = data?.keys ?? [];
-  const truncated = data?.truncated ?? null;
+  const truncated = data?.truncated;
 
   return (
     <Card>
@@ -250,7 +262,7 @@ export function ApiKeysCard() {
                       variant="ghost"
                       size="icon"
                       className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                      aria-label="Revoke key"
+                      aria-label={revokeLabel(key)}
                       onClick={() => handleRevoke(key.id)}
                       disabled={revokeMutation.isPending}
                     >
@@ -296,8 +308,14 @@ export function ApiKeysCard() {
                 maxLength={MAX_NAME_LENGTH}
               />
             </div>
-            <div className="grid gap-2">
-              <span className="text-sm font-medium">Surfaces</span>
+            <div
+              className="grid gap-2"
+              role="group"
+              aria-labelledby="api-key-surfaces-label"
+            >
+              <span id="api-key-surfaces-label" className="text-sm font-medium">
+                Surfaces
+              </span>
               <p className="text-xs text-muted-foreground">
                 The key reaches the surfaces you tick here and nothing else.
               </p>

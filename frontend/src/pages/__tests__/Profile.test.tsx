@@ -42,7 +42,7 @@ const UNIFIED = 'card-unified'
 const MCP = 'card-mcp'
 const ADHOC = 'card-adhoc'
 const SUPERSEDED_NOTE = /superseded/i
-const NONE = 0
+const KEYS_NOT_DEAD = /their keys still work/i
 
 function cardOrder(): (string | null)[] {
   return screen.getAllByTestId(/^card-/).map((el) => el.getAttribute('data-testid'))
@@ -96,6 +96,8 @@ describe('ProfilePage - API key cards', () => {
     renderProfile([Permissions.MCP_ACCESS, Permissions.ANALYZE_ADHOC])
 
     const note = screen.getByText(SUPERSEDED_NOTE)
+    // A user told a working credential is dead would revoke or replace it on a false premise.
+    expect(note).toHaveTextContent(KEYS_NOT_DEAD)
     expect(note.compareDocumentPosition(screen.getByTestId(MCP))).toBe(
       Node.DOCUMENT_POSITION_FOLLOWING,
     )
@@ -107,6 +109,6 @@ describe('ProfilePage - API key cards', () => {
   it('omits the superseded note when no legacy card is rendered', () => {
     renderProfile([])
 
-    expect(screen.queryAllByText(SUPERSEDED_NOTE)).toHaveLength(NONE)
+    expect(screen.queryAllByText(SUPERSEDED_NOTE)).toHaveLength(0)
   })
 })

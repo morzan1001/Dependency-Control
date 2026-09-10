@@ -21,6 +21,9 @@ export function useCreateApiKey() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (payload: ApiKeyCreatePayload) => apiKeysApi.create(payload),
+    // The result carries the one-time plaintext. Without this, reset() only detaches the observer
+    // and the MutationCache keeps the token for the default five minutes.
+    gcTime: 0,
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: apiKeyQueryKeys.list() });
     },
