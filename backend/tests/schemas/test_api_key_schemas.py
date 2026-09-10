@@ -143,7 +143,12 @@ class TestApiKeyCreateResponse:
 
     def test_the_token_is_required(self):
         # Made optional, the one response that ever carries the plaintext could omit it.
-        assert _required(ApiKeyCreateResponse) == _required(ApiKeyResponse) | {"token"}
+        assert "token" in _required(ApiKeyCreateResponse)
+
+    def test_the_mint_promises_the_timestamps_the_listing_may_have_to_omit(self):
+        # The mint renders a document it has just written; only the listing meets damaged ones.
+        assert {"created_at", "expires_at"} <= _required(ApiKeyCreateResponse)
+        assert not {"created_at", "expires_at"} & _required(ApiKeyResponse)
 
     def test_create_response_is_response_subclass(self):
         now = datetime.now(timezone.utc)

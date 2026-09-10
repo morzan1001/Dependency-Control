@@ -36,12 +36,16 @@ class ApiKeyCreate(BaseModel):
 
 
 class ApiKeyResponse(BaseModel):
+    """The listing's shape. Every field but the id may come back empty or null, because a document
+    damaged in storage is rendered rather than dropped and there is no honest stand-in for a
+    timestamp it has lost."""
+
     id: str
     name: str
     prefix: str
     surfaces: list[str]
-    created_at: datetime
-    expires_at: datetime
+    created_at: datetime | None = None
+    expires_at: datetime | None = None
     revoked_at: datetime | None = None
     last_used_at: datetime | None = None
 
@@ -50,6 +54,11 @@ class ApiKeyResponse(BaseModel):
 
 class ApiKeyCreateResponse(ApiKeyResponse):
     """Returned only at creation — contains the plaintext token."""
+
+    # The mint renders the document it has just written, so both are structurally present here and
+    # the published contract says so, whatever the listing has to tolerate.
+    created_at: datetime
+    expires_at: datetime
 
     token: str = Field(
         ...,

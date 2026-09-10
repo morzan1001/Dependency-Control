@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any, Protocol
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -23,7 +23,9 @@ from app.repositories import (
     TeamRepository,
     UserRepository,
 )
+from app.repositories.adhoc_api_keys import AdhocApiKeyRepository
 from app.repositories.api_keys import ApiKeyRepository
+from app.repositories.mcp_api_keys import MCPApiKeyRepository
 from app.schemas.token import TokenPayload
 from app.services.gitlab import GitLabService
 
@@ -589,48 +591,95 @@ async def authorize_release_write(
     raise HTTPException(status_code=401, detail="Missing authentication credentials")
 
 
-async def get_adhoc_api_key(
-    authorization: str = Header(default=""),
-    db: AsyncIOMotorDatabase = Depends(get_database),
-) -> dict[str, Any]:
-    """Resolve an ad-hoc analysis Bearer token to its key document.
-
-    No usage timestamp is stamped: the ad-hoc endpoint persists nothing, auth included.
-    """
-    from app.core.permissions import Permissions, has_permission
-    from app.repositories.adhoc_api_keys import AdhocApiKeyRepository
-
-    if not authorization.lower().startswith("bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Bearer token",
-            headers={"WWW-Authenticate": 'Bearer realm="analyze"'},
-        )
-    token = authorization.split(" ", 1)[1].strip()
-    key_doc = await AdhocApiKeyRepository(db).get_by_plaintext(token)
-    if not key_doc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid, revoked, or expired ad-hoc API key",
-        )
-
-    user = await UserRepository(db).get_by_id(key_doc["user_id"])
-    if not user or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token owner is no longer active")
-    if not has_permission(user.permissions, Permissions.ANALYZE_ADHOC):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Token owner no longer has ad-hoc analysis access",
-        )
-    return key_doc
-
-
 # A key names the doors it may open; the owner's permission decides whether a named door is still
 # theirs to walk through. Both are checked on every request, so the pairing is stated once here.
 SURFACE_PERMISSIONS: dict[str, str] = {
     API_KEY_SURFACE_MCP: Permissions.MCP_ACCESS,
     API_KEY_SURFACE_ADHOC: Permissions.ANALYZE_ADHOC,
 }
+
+
+# Unknown, revoked and expired share one message, and so do the two key systems: telling them
+# apart would confirm to the holder of a rejected token that it once existed, and where.
+_MSG_UNRESOLVED_KEY = "Invalid, revoked, or expired API key"
+
+
+class _LegacyKeyStore(Protocol):
+    async def get_by_plaintext(self, plaintext: str) -> dict[str, Any] | None: ...
+
+
+class _StampingKeyStore(Protocol):
+    async def touch_last_used(self, key_id: str) -> None: ...
+
+
+# Each surface falls back to the store its own pre-unification keys live in, so a legacy key can
+# only ever reopen the surface it was minted for: every store rejects a foreign prefix in memory.
+_LEGACY_STORES: dict[str, Callable[[AsyncIOMotorDatabase], _LegacyKeyStore]] = {
+    API_KEY_SURFACE_ADHOC: AdhocApiKeyRepository,
+    API_KEY_SURFACE_MCP: MCPApiKeyRepository,
+}
+
+# Only the legacy stores that keep a usage timestamp. Asking a surface that persists nothing to
+# stamp one is a contradiction, and this table refuses it when the dependency is built.
+_STAMPING_LEGACY_STORES: dict[str, Callable[[AsyncIOMotorDatabase], _StampingKeyStore]] = {
+    API_KEY_SURFACE_MCP: MCPApiKeyRepository,
+}
+
+
+def _bearer_token(authorization: str, surface: str) -> str:
+    if not authorization.lower().startswith("bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing Bearer token",
+            headers={"WWW-Authenticate": f'Bearer realm="{surface}"'},
+        )
+    return authorization.split(" ", 1)[1].strip()
+
+
+async def _key_owner(db: AsyncIOMotorDatabase, key_doc: dict[str, Any]) -> User:
+    # A document missing user_id resolves to no user, which the next line turns into a 401.
+    user = await UserRepository(db).get_by_id(key_doc.get("user_id", ""))
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token owner is no longer active")
+    return user
+
+
+def _require_permission(user: User, surface: str, permission: str) -> None:
+    if not has_permission(user.permissions, permission):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Token owner no longer has {surface} access",
+        )
+
+
+async def _admit_unified_key(
+    db: AsyncIOMotorDatabase,
+    token: str,
+    surface: str,
+    permission: str,
+    touch: bool,
+) -> tuple[User, dict[str, Any]] | None:
+    """The (owner, key document) pair behind a unified token, or None when no unified key answers."""
+    key_repo = ApiKeyRepository(db)
+    key_doc = await key_repo.get_by_plaintext(token)
+    if not key_doc:
+        return None
+
+    user = await _key_owner(db, key_doc)
+    # A write from outside ApiKeyRepository.create can leave surfaces absent or a non-list, and
+    # a bare membership test against those admits substrings and dict keys.
+    surfaces = key_doc.get("surfaces")
+    if not isinstance(surfaces, list) or surface not in surfaces:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"API key does not grant the {surface} surface",
+        )
+    # Answered second: a key that never named the surface must not learn what its owner holds.
+    _require_permission(user, surface, permission)
+
+    if touch:
+        await key_repo.touch_last_used(key_doc.get("_id", ""))
+    return user, key_doc
 
 
 def require_api_key(surface: str, *, touch: bool = False) -> Callable[..., Awaitable[tuple[User, dict[str, Any]]]]:
@@ -644,45 +693,50 @@ def require_api_key(surface: str, *, touch: bool = False) -> Callable[..., Await
         authorization: str = Header(default=""),
         db: AsyncIOMotorDatabase = Depends(get_database),
     ) -> tuple[User, dict[str, Any]]:
-        if not authorization.lower().startswith("bearer "):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing Bearer token",
-                headers={"WWW-Authenticate": f'Bearer realm="{surface}"'},
-            )
-        token = authorization.split(" ", 1)[1].strip()
-        key_repo = ApiKeyRepository(db)
-        key_doc = await key_repo.get_by_plaintext(token)
-        if not key_doc:
-            # Unknown, revoked and expired share one message: telling them apart would confirm to
-            # the holder of a rejected token that it once existed.
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Invalid, revoked, or expired API key",
-            )
+        token = _bearer_token(authorization, surface)
+        admitted = await _admit_unified_key(db, token, surface, permission, touch)
+        if admitted is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_MSG_UNRESOLVED_KEY)
+        return admitted
 
-        # A document missing user_id resolves to no user, which the next line turns into a 401.
-        user = await UserRepository(db).get_by_id(key_doc.get("user_id", ""))
-        if not user or not user.is_active:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token owner is no longer active")
-        # A write from outside ApiKeyRepository.create can leave surfaces absent or a non-list, and
-        # a bare membership test against those admits substrings and dict keys.
-        surfaces = key_doc.get("surfaces")
-        if not isinstance(surfaces, list) or surface not in surfaces:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"API key does not grant the {surface} surface",
-            )
-        # Answered second: a key that never named the surface must not learn what its owner holds.
-        if not has_permission(user.permissions, permission):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"Token owner no longer has {surface} access",
-            )
+    return dependency
 
-        if touch:
-            await key_repo.touch_last_used(key_doc.get("_id", ""))
-        return user, key_doc
+
+def require_api_key_with_legacy(
+    surface: str, *, touch: bool = False
+) -> Callable[..., Awaitable[tuple[User, dict[str, Any]]]]:
+    """Build the dependency for a surface still reachable with its pre-unification key: the unified
+    store is asked first and that surface's legacy store second, on identical terms and with
+    identical answers, so a caller cannot tell which of the two admitted or refused them.
+
+    Both kinds resolve to the owner, so the (owner, key document) pair is the same shape either way
+    and no caller has to branch on a missing user. ``touch`` stamps whichever key answered, and a
+    surface whose legacy store keeps no usage timestamp cannot be built with it.
+    """
+    permission = SURFACE_PERMISSIONS[surface]
+    legacy_store = _LEGACY_STORES[surface]
+    legacy_stamp = _STAMPING_LEGACY_STORES[surface] if touch else None
+
+    async def dependency(
+        authorization: str = Header(default=""),
+        db: AsyncIOMotorDatabase = Depends(get_database),
+    ) -> tuple[User, dict[str, Any]]:
+        token = _bearer_token(authorization, surface)
+        admitted = await _admit_unified_key(db, token, surface, permission, touch)
+        if admitted is not None:
+            return admitted
+
+        # The prefixes are disjoint and each repository rejects a foreign one before it queries,
+        # so asking the second store costs a string comparison rather than another round trip.
+        legacy_doc = await legacy_store(db).get_by_plaintext(token)
+        if not legacy_doc:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_MSG_UNRESOLVED_KEY)
+
+        user = await _key_owner(db, legacy_doc)
+        _require_permission(user, surface, permission)
+        if legacy_stamp is not None:
+            await legacy_stamp(db).touch_last_used(legacy_doc.get("_id", ""))
+        return user, legacy_doc
 
     return dependency
 
@@ -691,4 +745,7 @@ DatabaseDep = Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)]
 CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
 CallgraphWriteDep = Annotated[str, Depends(authorize_callgraph_write)]
 ReleaseWriteDep = Annotated[str, Depends(authorize_release_write)]
-AdhocKeyDep = Annotated[dict[str, Any], Depends(get_adhoc_api_key)]
+AdhocKeyOrLegacyDep = Annotated[
+    tuple[User, dict[str, Any]],
+    Depends(require_api_key_with_legacy(API_KEY_SURFACE_ADHOC)),
+]

@@ -1,4 +1,39 @@
-# Release 1.9.22
+# Unreleased
+
+## 🔑 API keys
+
+- `POST /api/v1/analyze` now accepts a unified `dck_` key naming the `adhoc` surface as well as the
+  `dca_` ad-hoc key it has always taken. Existing `dca_` keys keep working unchanged; mint a
+  replacement under `/api/v1/api-keys` at your convenience.
+- Three response details on that endpoint changed with it:
+  - the 401 for an unusable token now reads `Invalid, revoked, or expired API key` (was
+    `Invalid, revoked, or expired ad-hoc API key`), so the answer no longer says which key system
+    was consulted;
+  - the 403 for an owner who lost the permission now reads `Token owner no longer has adhoc access`
+    (was `Token owner no longer has ad-hoc analysis access`);
+  - the `WWW-Authenticate` challenge sent when the `Authorization` header is missing is now
+    `Bearer realm="adhoc"` (was `realm="analyze"`).
+- `POST /api/v1/mcp` now accepts a unified `dck_` key naming the `mcp` surface as well as the `mcp_`
+  key it has always taken. Existing `mcp_` keys keep working unchanged, last-used stamp included;
+  mint a replacement under `/api/v1/api-keys` at your convenience.
+- Three response details on that endpoint changed with it:
+  - the 401 for an unusable token now reads `Invalid, revoked, or expired API key` (was
+    `Invalid, revoked, or expired MCP API key`), so the answer no longer says which key system was
+    consulted;
+  - the 403 for an owner who lost the permission now reads `Token owner no longer has mcp access`
+    (was `Token owner no longer has MCP access`);
+  - a unified key that does not name the `mcp` surface is answered 403
+    `API key does not grant the mcp surface`.
+- `GET /api/v1/api-keys/` no longer fails the whole page when one stored key document is damaged.
+  Such a key is now listed with placeholders for the fields it lost — `""` for `name` and `prefix`,
+  `[]` for `surfaces`, `null` for a timestamp — so it stays visible, and the keys beside it stay
+  listed. `created_at` and `expires_at` are therefore nullable in the listing; on the mint response
+  they stay required, because that renders a document the server has just written.
+- `DELETE /api/v1/api-keys/{key_id}` now also accepts the id of a key whose stored `_id` is an
+  `ObjectId` rather than a string. Such a key was listed but answered 404 on revoke, so it could be
+  seen and not killed. Keys minted through this API are unaffected.
+- A damaged key document is now logged once per listing at `WARNING`, naming the key id and the
+  fields that fell back to placeholders.
 
 
 

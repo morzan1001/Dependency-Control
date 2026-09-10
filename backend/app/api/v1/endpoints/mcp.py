@@ -6,21 +6,21 @@ import json
 import logging
 from typing import Any
 
-from fastapi import Header, HTTPException, Request, status
+from fastapi import Header, Request, status
 from fastapi.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.deps import DatabaseDep
+from app.api.deps import DatabaseDep, require_api_key_with_legacy
 from app.api.router import CustomAPIRouter
-from app.core.permissions import Permissions, has_permission
+from app.core.constants import API_KEY_SURFACE_MCP
 from app.models.user import User
-from app.repositories.mcp_api_keys import MCPApiKeyRepository
-from app.repositories.users import UserRepository
 from app.services.chat.tools import ChatToolRegistry, get_tool_definitions
 
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
+
+_authenticate = require_api_key_with_legacy(API_KEY_SURFACE_MCP, touch=True)
 
 SERVER_NAME = "dependency-control"
 SERVER_VERSION = "1.0"
@@ -52,38 +52,6 @@ class _RpcError(Exception):
         super().__init__(message)
         self.code = code
         self.message = message
-
-
-async def _resolve_user_from_token(authorization: str, db: AsyncIOMotorDatabase[Any]) -> tuple[User, dict[str, Any]]:
-    """Validate Bearer token and return the (user, key_doc) pair; raises HTTPException on failure."""
-    if not authorization or not authorization.lower().startswith("bearer "):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing Bearer token",
-            headers={"WWW-Authenticate": 'Bearer realm="mcp"'},
-        )
-    token = authorization.split(" ", 1)[1].strip()
-    key_repo = MCPApiKeyRepository(db)
-    key_doc = await key_repo.get_by_plaintext(token)
-    if not key_doc:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid, revoked, or expired MCP API key",
-        )
-    user_repo = UserRepository(db)
-    user = await user_repo.get_by_id(key_doc["user_id"])
-    if not user or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Token owner is no longer active",
-        )
-    if not has_permission(user.permissions, Permissions.MCP_ACCESS):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Token owner no longer has MCP access",
-        )
-    await key_repo.touch_last_used(key_doc["_id"])
-    return user, key_doc
 
 
 def _tools_list_payload() -> dict[str, Any]:
@@ -176,7 +144,7 @@ async def mcp_rpc(
     db: DatabaseDep,
     authorization: str = Header(default=""),
 ) -> Any:
-    user, _ = await _resolve_user_from_token(authorization, db)
+    user, _ = await _authenticate(authorization=authorization, db=db)
 
     try:
         payload = await request.json()
