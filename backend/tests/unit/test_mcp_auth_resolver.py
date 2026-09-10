@@ -29,6 +29,19 @@ _OPAQUE_KEY_DETAIL = "Invalid, revoked, or expired MCP API key"
 _USERS_COL = "users"
 _REACHABLE_COLLECTIONS = frozenset({_COL, _USERS_COL})
 
+# Every write create_mock_collection stubs. Authentication may perform exactly one of them, the
+# last-used stamp; anything else reaching the key collection is an unintended write.
+_STAMP_METHOD = "update_one"
+_WRITE_METHODS = (
+    "insert_one",
+    "find_one_and_update",
+    "update_one",
+    "update_many",
+    "delete_one",
+    "bulk_write",
+    "create_index",
+)
+
 
 def _key_doc():
     return {
@@ -54,6 +67,12 @@ def _patch_user(monkeypatch, user):
         "app.repositories.users.UserRepository.get_by_id",
         AsyncMock(return_value=user),
     )
+
+
+def _patch_touch_last_used(monkeypatch):
+    touch = AsyncMock()
+    monkeypatch.setattr("app.repositories.mcp_api_keys.MCPApiKeyRepository.touch_last_used", touch)
+    return touch
 
 
 def _active_user(permissions):
@@ -120,27 +139,50 @@ async def test_an_inactive_owner_is_401(monkeypatch):
     assert exc.value.status_code == _UNAUTHORIZED
 
 
+# ANALYZE_ADHOC is the sibling key system's permission: a gate widened to accept either key type
+# would hand every ad-hoc key owner the MCP tool surface, and no unrelated permission shows that.
+@pytest.mark.parametrize("permissions", [[Permissions.PROJECT_READ], [Permissions.ANALYZE_ADHOC]])
 @pytest.mark.asyncio
-async def test_an_owner_without_mcp_access_is_403(monkeypatch):
+async def test_an_owner_without_mcp_access_is_403(monkeypatch, permissions):
     db, _ = _db_with_key(_key_doc())
-    _patch_user(monkeypatch, _active_user([Permissions.PROJECT_READ]))
+    _patch_user(monkeypatch, _active_user(permissions))
+    touch = _patch_touch_last_used(monkeypatch)
 
     with pytest.raises(HTTPException) as exc:
         await _resolve_user_from_token(f"Bearer {_TOKEN}", db)
 
     assert exc.value.status_code == _FORBIDDEN
+    # A caller the gate turns away must leave no trace on the key.
+    touch.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_authentication_stamps_last_used(monkeypatch):
     db, _ = _db_with_key(_key_doc())
     _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
-    touch = AsyncMock()
-    monkeypatch.setattr("app.repositories.mcp_api_keys.MCPApiKeyRepository.touch_last_used", touch)
+    touch = _patch_touch_last_used(monkeypatch)
 
     await _resolve_user_from_token(f"Bearer {_TOKEN}", db)
 
     touch.assert_awaited_once_with(_KEY_ID)
+
+
+@pytest.mark.asyncio
+async def test_authentication_writes_only_the_last_used_stamp(monkeypatch):
+    db, keys = _db_with_key(_key_doc())
+    _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
+
+    await _resolve_user_from_token(f"Bearer {_TOKEN}", db)
+
+    for method_name in _WRITE_METHODS:
+        method = getattr(keys, method_name)
+        # A MagicMock answers assert_not_awaited() with another mock, so a name that is not
+        # actually stubbed would assert nothing at all.
+        assert isinstance(method, AsyncMock), method_name
+        if method_name == _STAMP_METHOD:
+            method.assert_awaited_once()
+        else:
+            method.assert_not_awaited()
 
 
 @pytest.mark.asyncio
