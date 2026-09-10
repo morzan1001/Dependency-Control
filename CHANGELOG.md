@@ -13,6 +13,17 @@
     (was `Token owner no longer has ad-hoc analysis access`);
   - the `WWW-Authenticate` challenge sent when the `Authorization` header is missing is now
     `Bearer realm="adhoc"` (was `realm="analyze"`).
+- `POST /api/v1/mcp` now accepts a unified `dck_` key naming the `mcp` surface as well as the `mcp_`
+  key it has always taken. Existing `mcp_` keys keep working unchanged, last-used stamp included;
+  mint a replacement under `/api/v1/api-keys` at your convenience.
+- Three response details on that endpoint changed with it:
+  - the 401 for an unusable token now reads `Invalid, revoked, or expired API key` (was
+    `Invalid, revoked, or expired MCP API key`), so the answer no longer says which key system was
+    consulted;
+  - the 403 for an owner who lost the permission now reads `Token owner no longer has mcp access`
+    (was `Token owner no longer has MCP access`);
+  - a unified key that does not name the `mcp` surface is answered 403
+    `API key does not grant the mcp surface`.
 
 
 

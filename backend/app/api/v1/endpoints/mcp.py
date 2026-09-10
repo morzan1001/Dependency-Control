@@ -10,8 +10,9 @@ from fastapi import Header, HTTPException, Request, status
 from fastapi.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.deps import DatabaseDep
+from app.api.deps import DatabaseDep, require_api_key_with_legacy
 from app.api.router import CustomAPIRouter
+from app.core.constants import API_KEY_SURFACE_MCP
 from app.core.permissions import Permissions, has_permission
 from app.models.user import User
 from app.repositories.mcp_api_keys import MCPApiKeyRepository
@@ -21,6 +22,8 @@ from app.services.chat.tools import ChatToolRegistry, get_tool_definitions
 logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
+
+_authenticate = require_api_key_with_legacy(API_KEY_SURFACE_MCP, touch=True)
 
 SERVER_NAME = "dependency-control"
 SERVER_VERSION = "1.0"
@@ -176,7 +179,7 @@ async def mcp_rpc(
     db: DatabaseDep,
     authorization: str = Header(default=""),
 ) -> Any:
-    user, _ = await _resolve_user_from_token(authorization, db)
+    user, _ = await _authenticate(authorization=authorization, db=db)
 
     try:
         payload = await request.json()
