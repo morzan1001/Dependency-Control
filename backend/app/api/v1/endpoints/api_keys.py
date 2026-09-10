@@ -1,12 +1,14 @@
 """User-facing endpoints for minting, listing and revoking unified API keys."""
 
+from collections.abc import Sequence
 from typing import Any
 
 from fastapi import HTTPException, status
 
-from app.api.deps import _SURFACE_PERMISSIONS, CurrentUserDep, DatabaseDep
+from app.api.deps import SURFACE_PERMISSIONS, CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
-from app.api.v1.helpers.responses import RESP_401, RESP_404, RESP_AUTH
+from app.api.v1.helpers.responses import RESP_401, RESP_401_404, RESP_AUTH
+from app.core import ensure_utc
 from app.core.permissions import has_permission
 from app.models.user import User
 from app.repositories.api_keys import LIST_LIMIT, ApiKeyRepository
@@ -20,17 +22,15 @@ from app.schemas.api_keys import (
 
 router = CustomAPIRouter()
 
-_RESP_401_404 = {**RESP_401, **RESP_404}
 
-
-def _authorize_surfaces(user: User, surfaces: list[str]) -> None:
+def _authorize_surfaces(user: User, surfaces: Sequence[str]) -> None:
     """Refuse to mint a key that outranks its holder, naming the first surface they cannot reach.
 
     The pairing comes from the auth dependency's own table so a key can never be issued for a
     surface the dependency would then refuse it.
     """
     for surface in surfaces:
-        permission = _SURFACE_PERMISSIONS[surface]
+        permission = SURFACE_PERMISSIONS[surface]
         if not has_permission(user.permissions, permission):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -44,10 +44,10 @@ def _to_response(doc: dict[str, Any]) -> ApiKeyResponse:
         name=doc["name"],
         prefix=doc["prefix"],
         surfaces=doc["surfaces"],
-        created_at=doc["created_at"],
-        expires_at=doc["expires_at"],
-        revoked_at=doc.get("revoked_at"),
-        last_used_at=doc.get("last_used_at"),
+        created_at=ensure_utc(doc["created_at"]),
+        expires_at=ensure_utc(doc["expires_at"]),
+        revoked_at=ensure_utc(doc.get("revoked_at")),
+        last_used_at=ensure_utc(doc.get("last_used_at")),
     )
 
 
@@ -97,7 +97,7 @@ async def list_api_keys(
 
 @router.delete(
     "/{key_id}",
-    responses=_RESP_401_404,
+    responses=RESP_401_404,
     summary="Revoke an API key",
 )
 async def revoke_api_key(

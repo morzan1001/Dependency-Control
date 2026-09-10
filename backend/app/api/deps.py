@@ -627,7 +627,7 @@ async def get_adhoc_api_key(
 
 # A key names the doors it may open; the owner's permission decides whether a named door is still
 # theirs to walk through. Both are checked on every request, so the pairing is stated once here.
-_SURFACE_PERMISSIONS: dict[str, str] = {
+SURFACE_PERMISSIONS: dict[str, str] = {
     API_KEY_SURFACE_MCP: Permissions.MCP_ACCESS,
     API_KEY_SURFACE_ADHOC: Permissions.ANALYZE_ADHOC,
 }
@@ -638,7 +638,7 @@ def require_api_key(surface: str, *, touch: bool = False) -> Callable[..., Await
     its (owner, key document) pair and admits the caller only when the key names the surface and the
     owner still holds that surface's permission; ``touch`` stamps the key's last use, which a
     surface promising to persist nothing leaves off."""
-    permission = _SURFACE_PERMISSIONS[surface]
+    permission = SURFACE_PERMISSIONS[surface]
 
     async def dependency(
         authorization: str = Header(default=""),
@@ -661,23 +661,27 @@ def require_api_key(surface: str, *, touch: bool = False) -> Callable[..., Await
                 detail="Invalid, revoked, or expired API key",
             )
 
-        user = await UserRepository(db).get_by_id(key_doc["user_id"])
+        # A document missing user_id resolves to no user, which the next line turns into a 401.
+        user = await UserRepository(db).get_by_id(key_doc.get("user_id", ""))
         if not user or not user.is_active:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token owner is no longer active")
+        # A write from outside ApiKeyRepository.create can leave surfaces absent or a non-list, and
+        # a bare membership test against those admits substrings and dict keys.
+        surfaces = key_doc.get("surfaces")
+        if not isinstance(surfaces, list) or surface not in surfaces:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"API key does not grant the {surface} surface",
+            )
+        # Answered second: a key that never named the surface must not learn what its owner holds.
         if not has_permission(user.permissions, permission):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Token owner no longer has {surface} access",
             )
-        # A key document carrying no surface list names no surface, so the gate stays closed.
-        if surface not in key_doc.get("surfaces", []):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail=f"API key does not grant the {surface} surface",
-            )
 
         if touch:
-            await key_repo.touch_last_used(key_doc["_id"])
+            await key_repo.touch_last_used(key_doc.get("_id", ""))
         return user, key_doc
 
     return dependency

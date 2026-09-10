@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
+from app.core.constants import API_KEY_SURFACES
 from app.schemas.api_keys import (
     ApiKeyCreate,
     ApiKeyCreateResponse,
@@ -13,7 +14,20 @@ from app.schemas.api_keys import (
 )
 
 
+def _required(model):
+    return {name for name, field in model.model_fields.items() if field.is_required()}
+
+
 class TestApiKeyCreate:
+    def test_name_and_surfaces_are_required(self):
+        # A default on either would mint a nameless or surface-less key from an empty request.
+        assert _required(ApiKeyCreate) == {"name", "surfaces"}
+
+    def test_the_allowed_surfaces_reach_the_published_schema(self):
+        # A bare list[str] publishes no enum, leaving a client to guess the vocabulary.
+        items = ApiKeyCreate.model_json_schema()["properties"]["surfaces"]["items"]
+        assert set(items["enum"]) == API_KEY_SURFACES
+
     def test_valid_payload_round_trips(self):
         payload = {"name": "my-key", "surfaces": ["mcp", "adhoc"], "expires_in_days": 90}
         model = ApiKeyCreate(**payload)
@@ -127,6 +141,10 @@ class TestApiKeyCreateResponse:
     def test_create_response_carries_token(self):
         assert "token" in ApiKeyCreateResponse.model_fields
 
+    def test_the_token_is_required(self):
+        # Made optional, the one response that ever carries the plaintext could omit it.
+        assert _required(ApiKeyCreateResponse) == _required(ApiKeyResponse) | {"token"}
+
     def test_create_response_is_response_subclass(self):
         now = datetime.now(timezone.utc)
         response = ApiKeyCreateResponse(
@@ -143,6 +161,10 @@ class TestApiKeyCreateResponse:
 
 
 class TestApiKeyListResponse:
+    def test_keys_is_required(self):
+        # Defaulted, a listing that failed to build its page would answer with an empty one.
+        assert _required(ApiKeyListResponse) == {"keys"}
+
     def test_list_response_shape(self):
         now = datetime.now(timezone.utc)
         response = ApiKeyListResponse(

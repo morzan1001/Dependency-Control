@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from app.core.constants import API_KEY_SURFACES
+from app.core.constants import ApiKeySurface
 
 
 class KeyListTruncation(BaseModel):
@@ -23,19 +23,16 @@ def key_list_truncation(*, returned: int, total: int, limit: int) -> KeyListTrun
 
 class ApiKeyCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=80)
-    surfaces: list[str] = Field(...)
+    # Literal rather than str so the allowed surfaces reach the published OpenAPI as an enum.
+    surfaces: list[ApiKeySurface] = Field(...)
     expires_in_days: int = Field(90, ge=1, le=365)
 
     @field_validator("surfaces", mode="after")
     @classmethod
-    def validate_and_deduplicate_surfaces(cls, v: list[str]) -> list[str]:
+    def validate_and_deduplicate_surfaces(cls, v: list[ApiKeySurface]) -> list[ApiKeySurface]:
         if not v:
             raise ValueError("surfaces must not be empty")
-        deduplicated = list(dict.fromkeys(v))
-        invalid = [s for s in deduplicated if s not in API_KEY_SURFACES]
-        if invalid:
-            raise ValueError(f"Invalid surface(s): {invalid}. Allowed: {sorted(API_KEY_SURFACES)}")
-        return deduplicated
+        return list(dict.fromkeys(v))
 
 
 class ApiKeyResponse(BaseModel):

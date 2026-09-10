@@ -59,6 +59,20 @@ _WRITE_METHODS = (
 
 
 _ABSENT = object()
+_SIBLING = object()
+
+# Everything a "surfaces" field can hold that names no surface. A bare membership test admits the
+# strings and the dict — `"mcp" in "xxmcpxx"` is a substring hit, `"mcp" in {"mcp": 1}` a key hit —
+# and raises TypeError on the null and the number.
+_NAMES_NO_SURFACE = {
+    "the-sibling-surface": _SIBLING,
+    "no-surfaces-field": _ABSENT,
+    "null": None,
+    "a-number": 123,
+    "the-bare-surface-string": API_KEY_SURFACE_MCP,
+    "a-string-containing-the-surface": f"xx{API_KEY_SURFACE_MCP}xx",
+    "a-dict-keyed-by-the-surface": {API_KEY_SURFACE_MCP: 1},
+}
 
 
 def _key_doc(surfaces=_ABSENT):
@@ -84,9 +98,10 @@ def _db_with_key(doc):
 
 
 def _patch_user(monkeypatch, user):
+    # Resolves the owner's id alone, so a key document naming nobody resolves to nobody.
     monkeypatch.setattr(
         "app.repositories.users.UserRepository.get_by_id",
-        AsyncMock(return_value=user),
+        AsyncMock(side_effect=lambda user_id: user if user_id == _OWNER else None),
     )
 
 
@@ -104,12 +119,14 @@ async def _authenticate(surface, db, *, touch=False, authorization=f"Bearer {_TO
     return await require_api_key(surface, touch=touch)(authorization=authorization, db=db)
 
 
+# RFC 7235 makes the auth scheme case-insensitive, and clients do spell it "bearer".
+@pytest.mark.parametrize("scheme", ["Bearer", "bearer"])
 @pytest.mark.asyncio
-async def test_a_valid_key_for_the_surface_returns_the_owner_and_the_key_document(monkeypatch):
+async def test_a_valid_key_for_the_surface_returns_the_owner_and_the_key_document(monkeypatch, scheme):
     db, _ = _db_with_key(_key_doc([API_KEY_SURFACE_MCP]))
     _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
 
-    user, key_doc = await _authenticate(API_KEY_SURFACE_MCP, db)
+    user, key_doc = await _authenticate(API_KEY_SURFACE_MCP, db, authorization=f"{scheme} {_TOKEN}")
 
     assert user.id == _OWNER
     assert key_doc["_id"] == _KEY_ID
@@ -188,15 +205,15 @@ async def test_an_owner_without_the_surface_permission_is_403(monkeypatch, surfa
     assert exc.value.detail == f"Token owner no longer has {surface} access"
 
 
-# A document with no surfaces field at all is reachable: anything writing the collection outside
-# ApiKeyRepository.create — a migration, an operator — produces one, and it must name no surface.
+# A malformed surfaces field is reachable: anything writing the collection outside
+# ApiKeyRepository.create — a migration, an operator — writes one, and it must name no surface.
 @pytest.mark.parametrize("surface", _BOTH_SURFACES)
-@pytest.mark.parametrize("names", ["the-sibling-surface", "no-surfaces-field"])
+@pytest.mark.parametrize("stored", _NAMES_NO_SURFACE.values(), ids=list(_NAMES_NO_SURFACE))
 @pytest.mark.asyncio
-async def test_a_key_that_does_not_name_the_surface_is_403(monkeypatch, surface, names):
-    other = API_KEY_SURFACE_ADHOC if surface == API_KEY_SURFACE_MCP else API_KEY_SURFACE_MCP
-    doc = _key_doc([other]) if names == "the-sibling-surface" else _key_doc()
-    db, _ = _db_with_key(doc)
+async def test_a_key_that_does_not_name_the_surface_is_403(monkeypatch, surface, stored):
+    if stored is _SIBLING:
+        stored = [API_KEY_SURFACE_ADHOC if surface == API_KEY_SURFACE_MCP else API_KEY_SURFACE_MCP]
+    db, _ = _db_with_key(_key_doc(stored))
     # The owner holds the permission, so only the key's surface list can turn this caller away.
     _patch_user(monkeypatch, _active_user([_SURFACE_PERMISSION[surface]]))
 
@@ -206,6 +223,50 @@ async def test_a_key_that_does_not_name_the_surface_is_403(monkeypatch, surface,
     assert exc.value.status_code == _FORBIDDEN
     assert exc.value.detail == f"API key does not grant the {surface} surface"
     assert exc.value.detail != f"Token owner no longer has {surface} access"
+
+
+@pytest.mark.parametrize("surface", _BOTH_SURFACES)
+@pytest.mark.asyncio
+async def test_the_surface_is_answered_before_the_permission(monkeypatch, surface):
+    # Checking the permission first tells the holder of a key that never named the surface whether
+    # its owner still holds that surface's permission, which is not theirs to learn.
+    other = API_KEY_SURFACE_ADHOC if surface == API_KEY_SURFACE_MCP else API_KEY_SURFACE_MCP
+    db, _ = _db_with_key(_key_doc([other]))
+    _patch_user(monkeypatch, _active_user([Permissions.PROJECT_READ]))
+
+    with pytest.raises(HTTPException) as exc:
+        await _authenticate(surface, db)
+
+    assert exc.value.detail == f"API key does not grant the {surface} surface"
+
+
+# Same provenance as a malformed surfaces field: a write that did not come from the repository.
+@pytest.mark.asyncio
+async def test_a_key_document_naming_no_owner_is_401(monkeypatch):
+    doc = _key_doc([API_KEY_SURFACE_MCP])
+    del doc["user_id"]
+    db, _ = _db_with_key(doc)
+    _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
+
+    with pytest.raises(HTTPException) as exc:
+        await _authenticate(API_KEY_SURFACE_MCP, db)
+
+    assert exc.value.status_code == _UNAUTHORIZED
+
+
+@pytest.mark.asyncio
+async def test_a_key_document_carrying_no_id_still_authenticates(monkeypatch):
+    doc = _key_doc([API_KEY_SURFACE_MCP])
+    del doc["_id"]
+    db, _ = _db_with_key(doc)
+    _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
+    touch = _patch_touch_last_used(monkeypatch)
+
+    user, _ = await _authenticate(API_KEY_SURFACE_MCP, db, touch=True)
+
+    assert user.id == _OWNER
+    # The stamp has nothing to address and matches no document; the credential is still good.
+    touch.assert_awaited_once_with("")
 
 
 @pytest.mark.parametrize("surface", _BOTH_SURFACES)
@@ -225,7 +286,9 @@ async def test_the_default_writes_nothing(monkeypatch):
     db, keys = _db_with_key(_key_doc([API_KEY_SURFACE_ADHOC]))
     _patch_user(monkeypatch, _active_user([Permissions.ANALYZE_ADHOC]))
 
-    await _authenticate(API_KEY_SURFACE_ADHOC, db)
+    # Built without touch=, because omitting it is the call shape a surface that persists nothing
+    # uses, and the promise belongs to the default rather than to a caller who passes False.
+    await require_api_key(API_KEY_SURFACE_ADHOC)(authorization=f"Bearer {_TOKEN}", db=db)
 
     for method_name in _WRITE_METHODS:
         method = getattr(keys, method_name)

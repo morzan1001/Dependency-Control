@@ -1,5 +1,7 @@
 """CRUD for unified API keys."""
 
+from datetime import datetime, timedelta
+
 import pytest
 from jose import jwt
 
@@ -20,8 +22,13 @@ _PREFIX_LENGTH = 12
 
 _OK = 200
 _CREATED = 201
+_UNAUTHORIZED = 401
 _FORBIDDEN = 403
 _NOT_FOUND = 404
+
+_TIMESTAMP_FIELDS = ("created_at", "expires_at", "revoked_at", "last_used_at")
+# BSON dates are int64 milliseconds, so a stored timestamp loses the digits below that and no more.
+_BSON_RESOLUTION = timedelta(milliseconds=1)
 
 _BOTH_SURFACES = [API_KEY_SURFACE_MCP, API_KEY_SURFACE_ADHOC]
 _BOTH_PERMISSIONS = [Permissions.MCP_ACCESS, Permissions.ANALYZE_ADHOC]
@@ -229,6 +236,58 @@ async def test_a_complete_listing_declares_no_truncation(client, db):
     listed = await client.get(f"{_BASE}/", headers=_headers(_BOTH_PERMISSIONS))
 
     assert listed.json()["truncated"] is None
+
+
+@pytest.mark.asyncio
+async def test_every_listed_timestamp_carries_a_utc_offset(client, db):
+    # Mongo returns naive UTC. Serialised without an offset, a client parses the value as local
+    # time, which moves the active/expired boundary by the server's offset.
+    repo = ApiKeyRepository(db)
+    doc, _ = await repo.create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
+    await repo.touch_last_used(doc["_id"])
+    await repo.revoke(doc["_id"], _OWNER)
+
+    listed = await client.get(f"{_BASE}/", headers=_headers(_BOTH_PERMISSIONS))
+
+    assert listed.status_code == _OK, listed.text
+    key = listed.json()["keys"][0]
+    for field in _TIMESTAMP_FIELDS:
+        assert datetime.fromisoformat(key[field]).tzinfo is not None, f"{field}: {key[field]}"
+
+
+@pytest.mark.asyncio
+async def test_the_mint_and_the_listing_report_the_same_expiry(client, db):
+    # The mint answers from the in-memory document and the listing from Mongo; the two must not
+    # describe the same key's expiry differently.
+    headers = _headers(_BOTH_PERMISSIONS)
+    created = await client.post(
+        f"{_BASE}/",
+        json={"name": _KEY_NAME, "surfaces": _BOTH_SURFACES, "expires_in_days": _EXPIRY_DAYS},
+        headers=headers,
+    )
+    listed = await client.get(f"{_BASE}/", headers=headers)
+
+    assert created.status_code == _CREATED, created.text
+    minted, relisted = created.json(), listed.json()["keys"][0]
+    for field in ("created_at", "expires_at"):
+        at_mint, at_listing = datetime.fromisoformat(minted[field]), datetime.fromisoformat(relisted[field])
+        where = f"{field}: {minted[field]} vs {relisted[field]}"
+        assert at_mint.utcoffset() == at_listing.utcoffset(), where
+        assert abs(at_mint - at_listing) < _BSON_RESOLUTION, where
+
+
+@pytest.mark.asyncio
+async def test_an_api_key_can_neither_mint_nor_list_api_keys(client, db):
+    # The surface takes a session token alone: a key able to mint keys would outlive its revocation.
+    _, plaintext = await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
+    headers = {"Authorization": f"Bearer {plaintext}"}
+
+    minted = await client.post(f"{_BASE}/", json={"name": _KEY_NAME, "surfaces": _BOTH_SURFACES}, headers=headers)
+    listed = await client.get(f"{_BASE}/", headers=headers)
+
+    assert minted.status_code == _UNAUTHORIZED, minted.text
+    assert listed.status_code == _UNAUTHORIZED, listed.text
+    assert await _key_count(db) == _ONE_KEY
 
 
 @pytest.mark.asyncio
