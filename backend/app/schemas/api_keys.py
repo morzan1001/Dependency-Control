@@ -22,16 +22,13 @@ def key_list_truncation(*, returned: int, total: int, limit: int) -> KeyListTrun
 
 
 class ApiKeyCreate(BaseModel):
-    """Request to create a new unified API key."""
-
     name: str = Field(..., min_length=1, max_length=80)
-    surfaces: list[str] = Field(..., description="Non-empty list of surfaces the key may enter (mcp, adhoc, or both)")
+    surfaces: list[str] = Field(...)
     expires_in_days: int = Field(90, ge=1, le=365)
 
-    @field_validator("surfaces", mode="before")
+    @field_validator("surfaces", mode="after")
     @classmethod
     def validate_and_deduplicate_surfaces(cls, v: list[str]) -> list[str]:
-        """Validate surfaces against allowed set and de-duplicate."""
         if not v:
             raise ValueError("surfaces must not be empty")
         deduplicated = list(dict.fromkeys(v))
@@ -42,8 +39,6 @@ class ApiKeyCreate(BaseModel):
 
 
 class ApiKeyResponse(BaseModel):
-    """Response representing an API key (without the plaintext token)."""
-
     id: str
     name: str
     prefix: str
@@ -53,7 +48,7 @@ class ApiKeyResponse(BaseModel):
     revoked_at: datetime | None = None
     last_used_at: datetime | None = None
 
-    model_config = ConfigDict(from_attributes=True, populate_by_name=True)
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ApiKeyCreateResponse(ApiKeyResponse):
@@ -69,7 +64,5 @@ class ApiKeyCreateResponse(ApiKeyResponse):
 
 
 class ApiKeyListResponse(BaseModel):
-    """Response to a key listing request."""
-
     keys: list[ApiKeyResponse]
     truncated: KeyListTruncation | None = None
