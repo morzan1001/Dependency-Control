@@ -1,4 +1,18 @@
-# Release 1.9.22
+# Unreleased
+
+## 🔑 API keys
+
+- `POST /api/v1/analyze` now accepts a unified `dck_` key naming the `adhoc` surface as well as the
+  `dca_` ad-hoc key it has always taken. Existing `dca_` keys keep working unchanged; mint a
+  replacement under `/api/v1/api-keys` at your convenience.
+- Three response details on that endpoint changed with it:
+  - the 401 for an unusable token now reads `Invalid, revoked, or expired API key` (was
+    `Invalid, revoked, or expired ad-hoc API key`), so the answer no longer says which key system
+    was consulted;
+  - the 403 for an owner who lost the permission now reads `Token owner no longer has adhoc access`
+    (was `Token owner no longer has ad-hoc analysis access`);
+  - the `WWW-Authenticate` challenge sent when the `Authorization` header is missing is now
+    `Bearer realm="adhoc"` (was `realm="analyze"`).
 
 
 
