@@ -21,6 +21,7 @@ _PREFIX_LENGTH = 12
 _FOREIGN_PREFIX = "dca_"
 _OVER_THE_PAGE = 3
 _ONE_KEY = 1
+_STALE_DAYS = 1
 
 
 @pytest.mark.asyncio
@@ -140,29 +141,33 @@ async def test_list_for_user_reports_the_population_behind_a_saturated_page():
 
 @pytest.mark.asyncio
 async def test_a_complete_listing_costs_no_count_round_trip():
+    """A page that did not saturate already knows the total, so the count has to be skipped and
+    not merely agree — asserting on the number alone passes however many round trips it took."""
     db = FakeDatabase()
     repo = MCPApiKeyRepository(db)
     await repo.create(_OWNER, _KEY_NAME, _EXPIRY_DAYS)
+    counted = AsyncMock(wraps=db[_COL].count_documents)
+    db[_COL].count_documents = counted
 
     keys, total = await repo.list_for_user(_OWNER)
 
     assert total == len(keys)
+    counted.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_touch_last_used_moves_the_timestamp_forward():
-    """The stamp is what tells an owner a key is still in use before they revoke it.
-
-    Anchored on the stored ``created_at`` rather than a fresh ``now()``: BSON dates are
-    millisecond-truncated on write, so a wall-clock sentinel can sit ahead of the stamp.
-    """
+    """The stamp is what tells an owner a key is still in use before they revoke it; the seeded
+    stale value makes the advance strict, since BSON floors dates to whole milliseconds and a
+    fresh key's two stamps otherwise land in the same one."""
     db = FakeDatabase()
     repo = MCPApiKeyRepository(db)
     doc, _ = await repo.create(_OWNER, _KEY_NAME, _EXPIRY_DAYS)
     assert (await db[_COL].find_one({"_id": doc["_id"]}))["last_used_at"] is None
+    stale = datetime.now(timezone.utc) - timedelta(days=_STALE_DAYS)
+    await db[_COL].update_one({"_id": doc["_id"]}, {"$set": {"last_used_at": stale}})
 
     await repo.touch_last_used(doc["_id"])
 
     stored = await db[_COL].find_one({"_id": doc["_id"]})
-    assert stored["last_used_at"] is not None
-    assert stored["last_used_at"] >= stored["created_at"]
+    assert stored["last_used_at"] > stale.replace(tzinfo=None)
