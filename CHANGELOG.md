@@ -1,6 +1,17 @@
-# Unreleased
+# Upgrade notes
 
 ## 🔑 API keys
+
+- The profile page now offers **one card for API keys**. A key minted there names the surfaces it may
+  enter — MCP, ad-hoc analysis, or both — so a single `dck_` key replaces the two you previously had to
+  mint separately. You are offered only the surfaces you hold the permission to mint for.
+- Your existing `dca_` and `mcp_` keys keep working, and the two older cards stay on the page so you can
+  still see and revoke them. Mint a replacement at your convenience; nothing expires early.
+- A key you own stays listed and revokable even if you lose the permission that let you mint it.
+  Previously such a key was invisible to its owner and could not be killed.
+- Where a key is used only for ad-hoc analysis, its last-used column reads *not recorded* rather than
+  *never used*: `/analyze` deliberately writes nothing when it authenticates, so there is no stamp to
+  show — the key may be in constant use.
 
 - `POST /api/v1/analyze` now accepts a unified `dck_` key naming the `adhoc` surface as well as the
   `dca_` ad-hoc key it has always taken. Existing `dca_` keys keep working unchanged; mint a
@@ -34,6 +45,31 @@
   seen and not killed. Keys minted through this API are unaffected.
 - A damaged key document is now logged once per listing at `WARNING`, naming the key id and the
   fields that fell back to placeholders.
+
+## 🛡️ Ad-hoc analysis
+
+- **A crafted SBOM can no longer stall `/api/v1/analyze`.** Every SPDX licence pattern opened with a
+  repeated whitespace class, so the engine restarted from each position inside a whitespace run and
+  backtracked the whole run each time. One component licensed `MIT` + 50k spaces + `Apache-2.0` cost
+  around 10 s of CPU in a stage the endpoint reaches synchronously, where its 180 s deadline cannot
+  interrupt it — an 80 KB request killed a uvicorn worker outright and reset the connection. Worst case
+  at 80k characters is now 6 ms, and every shape scales linearly. Licence results are unchanged.
+- **`analyzers.notes` now names every stage that puts your posted data on the wire.** It promised this
+  and carried only `osv` and `epss_kev`, so a caller who requested `deps_dev`, `outdated_packages`,
+  `end_of_life`, `hash_verification`, `maintainer_risk` or `os_malware` was told nothing while their
+  package coordinates went to `api.deps.dev`, `endoflife.date`, `pypi.org`, `registry.npmjs.org`,
+  `api.github.com` or `api.opensourcemalware.com`. `typosquatting` is now named too, saying the
+  opposite: it downloads a list and matches locally, sending nothing.
+- **A crypto finding's id is now stable across runs.** It was a fresh UUID per run, so the same CBOM
+  posted twice returned the same findings under different ids and a waiver written against
+  `finding_id` could never match a later scan. The id is now `CRYPTO-{type}-{bom_ref}`. Nothing stored
+  has to move — this installation holds no crypto assets or findings yet.
+
+## 👥 Teams
+
+- A project now also carries `team_ids` and per-team `team_sources` alongside its existing `team_id`,
+  and project access derives from **every** owning team rather than only the first. The scalar stays
+  authoritative and remains the field every writer sets; nothing about team assignment changes yet.
 
 
 
