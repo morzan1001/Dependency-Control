@@ -1,0 +1,270 @@
+"""The unified key dependency admits a caller only when the key names the surface and the owner
+still holds that surface's permission."""
+
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+from fastapi import HTTPException
+
+from app.api.deps import require_api_key
+from app.core.constants import API_KEY_SURFACE_ADHOC, API_KEY_SURFACE_MCP
+from app.core.permissions import Permissions
+from app.models.user import User
+from app.repositories.api_keys import hash_token
+from tests.mocks.mongodb import create_mock_collection, create_mock_db
+
+_COL = "api_keys"
+_TOKEN_BODY_CHARS = 64
+_TOKEN = "dck_" + "a" * _TOKEN_BODY_CHARS
+_PREFIX_LENGTH = 12
+_KEY_ID = "key-1"
+_OWNER = "user-1"
+_KEY_NAME = "claude-desktop"
+_UNAUTHORIZED = 401
+_FORBIDDEN = 403
+
+_BOTH_SURFACES = [API_KEY_SURFACE_MCP, API_KEY_SURFACE_ADHOC]
+
+# The permission each surface gates on, and the sibling surface's permission, which is the one an
+# escalation would accept in its place.
+_SURFACE_PERMISSION = {
+    API_KEY_SURFACE_MCP: Permissions.MCP_ACCESS,
+    API_KEY_SURFACE_ADHOC: Permissions.ANALYZE_ADHOC,
+}
+_SIBLING_PERMISSION = {
+    API_KEY_SURFACE_MCP: Permissions.ANALYZE_ADHOC,
+    API_KEY_SURFACE_ADHOC: Permissions.MCP_ACCESS,
+}
+
+_MSG_MISSING_BEARER = "Missing Bearer token"
+# Unknown, revoked and expired share one message: distinguishing them would confirm to a caller
+# holding a rejected token that the token once existed.
+_MSG_OPAQUE_KEY = "Invalid, revoked, or expired API key"
+
+# Asserting on the key collection alone leaves a usage or audit collection free to be read.
+_USERS_COL = "users"
+_REACHABLE_COLLECTIONS = frozenset({_COL, _USERS_COL})
+
+# Every write create_mock_collection stubs. find_one_and_update is the idiomatic way to write a
+# touch-on-read, so leaving it unchecked would let the write the default must not do slip in.
+_WRITE_METHODS = (
+    "insert_one",
+    "find_one_and_update",
+    "update_one",
+    "update_many",
+    "delete_one",
+    "bulk_write",
+    "create_index",
+)
+
+
+def _key_doc(surfaces):
+    return {
+        "_id": _KEY_ID,
+        "user_id": _OWNER,
+        "name": _KEY_NAME,
+        "surfaces": surfaces,
+        "prefix": _TOKEN[:_PREFIX_LENGTH],
+        "token_hash": hash_token(_TOKEN),
+        "revoked_at": None,
+    }
+
+
+def _db_with_key(doc):
+    keys = create_mock_collection(find_one=doc)
+    # get_by_plaintext reads through with_options(read_preference=PRIMARY); create_mock_collection
+    # does not stub it, so the strong-read alias has to point back at the same mock.
+    keys.with_options = MagicMock(return_value=keys)
+    return create_mock_db({_COL: keys}), keys
+
+
+def _patch_user(monkeypatch, user):
+    monkeypatch.setattr(
+        "app.repositories.users.UserRepository.get_by_id",
+        AsyncMock(return_value=user),
+    )
+
+
+def _patch_touch_last_used(monkeypatch):
+    touch = AsyncMock()
+    monkeypatch.setattr("app.repositories.api_keys.ApiKeyRepository.touch_last_used", touch)
+    return touch
+
+
+def _active_user(permissions):
+    return User(id=_OWNER, username="u", email="u@example.com", permissions=permissions, is_active=True)
+
+
+async def _authenticate(surface, db, *, touch=False, authorization=f"Bearer {_TOKEN}"):
+    return await require_api_key(surface, touch=touch)(authorization=authorization, db=db)
+
+
+@pytest.mark.asyncio
+async def test_a_valid_key_for_the_surface_returns_the_owner_and_the_key_document(monkeypatch):
+    db, _ = _db_with_key(_key_doc([API_KEY_SURFACE_MCP]))
+    _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
+
+    user, key_doc = await _authenticate(API_KEY_SURFACE_MCP, db)
+
+    assert user.id == _OWNER
+    assert key_doc["_id"] == _KEY_ID
+
+
+@pytest.mark.asyncio
+async def test_a_missing_header_is_401():
+    db, _ = _db_with_key(_key_doc([API_KEY_SURFACE_MCP]))
+
+    with pytest.raises(HTTPException) as exc:
+        await _authenticate(API_KEY_SURFACE_MCP, db, authorization="")
+
+    assert exc.value.status_code == _UNAUTHORIZED
+    assert exc.value.detail == _MSG_MISSING_BEARER
+
+
+@pytest.mark.asyncio
+async def test_a_non_bearer_header_is_401():
+    db, _ = _db_with_key(_key_doc([API_KEY_SURFACE_MCP]))
+
+    with pytest.raises(HTTPException) as exc:
+        await _authenticate(API_KEY_SURFACE_MCP, db, authorization=_TOKEN)
+
+    assert exc.value.status_code == _UNAUTHORIZED
+    assert exc.value.detail == _MSG_MISSING_BEARER
+
+
+@pytest.mark.asyncio
+async def test_an_unresolvable_token_is_401_with_one_shared_message():
+    # The repository filters revoked and expired keys inside the query, so unknown, revoked and
+    # expired all arrive here as the same miss and must leave with the same answer.
+    db, _ = _db_with_key(None)
+
+    with pytest.raises(HTTPException) as exc:
+        await _authenticate(API_KEY_SURFACE_MCP, db)
+
+    assert exc.value.status_code == _UNAUTHORIZED
+    assert exc.value.detail == _MSG_OPAQUE_KEY
+
+
+@pytest.mark.asyncio
+async def test_an_inactive_owner_is_401(monkeypatch):
+    db, _ = _db_with_key(_key_doc([API_KEY_SURFACE_MCP]))
+    inactive = User(
+        id=_OWNER,
+        username="u",
+        email="u@example.com",
+        permissions=[Permissions.MCP_ACCESS],
+        is_active=False,
+    )
+    _patch_user(monkeypatch, inactive)
+
+    with pytest.raises(HTTPException) as exc:
+        await _authenticate(API_KEY_SURFACE_MCP, db)
+
+    assert exc.value.status_code == _UNAUTHORIZED
+
+
+# The sibling case is the escalation this design guards against: a gate widened to accept either
+# permission would hand every ad-hoc key owner the MCP tool surface, and no unrelated permission
+# would show that.
+@pytest.mark.parametrize("surface", _BOTH_SURFACES)
+@pytest.mark.parametrize("held", ["unrelated", "sibling"])
+@pytest.mark.asyncio
+async def test_an_owner_without_the_surface_permission_is_403(monkeypatch, surface, held):
+    permission = Permissions.PROJECT_READ if held == "unrelated" else _SIBLING_PERMISSION[surface]
+    db, _ = _db_with_key(_key_doc(_BOTH_SURFACES))
+    _patch_user(monkeypatch, _active_user([permission]))
+
+    with pytest.raises(HTTPException) as exc:
+        await _authenticate(surface, db)
+
+    assert exc.value.status_code == _FORBIDDEN
+    assert exc.value.detail == f"Token owner no longer has {surface} access"
+
+
+@pytest.mark.parametrize("surface", _BOTH_SURFACES)
+@pytest.mark.asyncio
+async def test_a_key_that_does_not_name_the_surface_is_403(monkeypatch, surface):
+    other = API_KEY_SURFACE_ADHOC if surface == API_KEY_SURFACE_MCP else API_KEY_SURFACE_MCP
+    db, _ = _db_with_key(_key_doc([other]))
+    # The owner holds the permission, so only the key's surface list can turn this caller away.
+    _patch_user(monkeypatch, _active_user([_SURFACE_PERMISSION[surface]]))
+
+    with pytest.raises(HTTPException) as exc:
+        await _authenticate(surface, db)
+
+    assert exc.value.status_code == _FORBIDDEN
+    assert exc.value.detail == f"API key does not grant the {surface} surface"
+    assert exc.value.detail != f"Token owner no longer has {surface} access"
+
+
+@pytest.mark.parametrize("surface", _BOTH_SURFACES)
+@pytest.mark.asyncio
+async def test_a_key_naming_both_surfaces_satisfies_either_request(monkeypatch, surface):
+    db, _ = _db_with_key(_key_doc(_BOTH_SURFACES))
+    _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS, Permissions.ANALYZE_ADHOC]))
+
+    user, key_doc = await _authenticate(surface, db)
+
+    assert user.id == _OWNER
+    assert key_doc["_id"] == _KEY_ID
+
+
+@pytest.mark.asyncio
+async def test_the_default_writes_nothing(monkeypatch):
+    db, keys = _db_with_key(_key_doc([API_KEY_SURFACE_ADHOC]))
+    _patch_user(monkeypatch, _active_user([Permissions.ANALYZE_ADHOC]))
+
+    await _authenticate(API_KEY_SURFACE_ADHOC, db)
+
+    for method_name in _WRITE_METHODS:
+        method = getattr(keys, method_name)
+        # A MagicMock answers assert_not_awaited() with another mock, so a name that is not
+        # actually stubbed would assert nothing at all.
+        assert isinstance(method, AsyncMock), method_name
+        method.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_touch_stamps_last_used_once_with_the_key_id(monkeypatch):
+    db, _ = _db_with_key(_key_doc([API_KEY_SURFACE_MCP]))
+    _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
+    touch = _patch_touch_last_used(monkeypatch)
+
+    await _authenticate(API_KEY_SURFACE_MCP, db, touch=True)
+
+    touch.assert_awaited_once_with(_KEY_ID)
+
+
+@pytest.mark.asyncio
+async def test_authentication_reaches_no_collection_beyond_keys_and_users(monkeypatch):
+    db, _ = _db_with_key(_key_doc([API_KEY_SURFACE_MCP]))
+    _patch_user(monkeypatch, _active_user([Permissions.MCP_ACCESS]))
+
+    await _authenticate(API_KEY_SURFACE_MCP, db, touch=True)
+
+    by_item = {call.args[0] for call in db.__getitem__.call_args_list}
+    assert by_item == _REACHABLE_COLLECTIONS
+    # db.some_collection.insert_one(...) never touches __getitem__, but does land in mock_calls.
+    by_attribute = {name.split(".")[0] for name, _, _ in db.mock_calls} - {"__getitem__"}
+    assert by_attribute <= _REACHABLE_COLLECTIONS
+
+
+@pytest.mark.parametrize(
+    ("surfaces", "permissions"),
+    [
+        (_BOTH_SURFACES, [Permissions.PROJECT_READ]),
+        ([API_KEY_SURFACE_ADHOC], [Permissions.MCP_ACCESS]),
+    ],
+    ids=["owner-lost-permission", "key-lacks-surface"],
+)
+@pytest.mark.asyncio
+async def test_a_rejected_caller_is_never_stamped(monkeypatch, surfaces, permissions):
+    db, keys = _db_with_key(_key_doc(surfaces))
+    _patch_user(monkeypatch, _active_user(permissions))
+    touch = _patch_touch_last_used(monkeypatch)
+
+    with pytest.raises(HTTPException):
+        await _authenticate(API_KEY_SURFACE_MCP, db, touch=True)
+
+    touch.assert_not_awaited()
+    keys.update_one.assert_not_awaited()
