@@ -1,3 +1,42 @@
+# Release 1.9.23
+
+## 🚀 Features
+
+- feat(projects): carry team_ids and per-team team_sources (#0)
+- feat(scripts): expand project team_id into team_ids (#0)
+- feat(scripts): expand project team_id into team_ids (#0)
+- feat(scripts): expand project team_id into team_ids (#0)
+- feat(db): index projects on team_ids (#0)
+- feat(api-keys): one repository for keys that name their surfaces (#0)
+- feat(db): index the unified api_keys collection (#0)
+- feat(api-keys): request and response schemas for unified keys (#0)
+- feat(api-keys): one dependency for any key-guarded surface (#0)
+- feat(api-keys): mint, list and revoke unified keys (#0)
+- feat(api-keys): analyze accepts unified and legacy keys (#0)
+- feat(ui): client and hooks for unified API keys (#0)
+- feat(ui): one card for keys that name their surfaces (#0)
+- feat(ui): offer the unified key card on the profile page (#0)
+
+## 🐛 Fixes
+
+- fix(api-keys): mode=after for request validation, comprehensive tests, docstring cleanup (#0)
+- fix: add created_at nullability split and real refetch tests (#0)
+
+## 🧪 Tests
+
+- test: add regression tests for team_ids derivation in constructor and unassigned state (#0)
+- test(mcp): pin the MCP key auth contract (#0)
+- test(mcp): detect a widened permission gate and stray key writes (#0)
+- test(mcp): pin the MCP key repository and endpoints (#0)
+- test(api-keys): pin the primary read, the scope of a usage stamp and the expiry floor (#0)
+- test(api-keys): pin the fail-closed surface default and the header-free 401 (#0)
+
+## 📦 Build & CI
+
+- chore: release 1.9.23 — unified API keys, multi-team groundwork, ad-hoc hardening (#0)
+
+
+
 # Upgrade notes
 
 ## 🔑 API keys
