@@ -62,6 +62,20 @@ async def test_create_returns_plaintext_once_then_list_hides_it(client, db):
 
 
 @pytest.mark.asyncio
+async def test_the_listing_carries_the_last_used_stamp(client, db):
+    """The stamp is the only MCP-specific field on the card; the ad-hoc response schema has none."""
+    headers = _headers([Permissions.MCP_ACCESS])
+    created = await client.post(f"{_BASE}/", json={"name": _KEY_NAME}, headers=headers)
+    assert created.json()["last_used_at"] is None
+
+    await MCPApiKeyRepository(db).touch_last_used(created.json()["id"])
+
+    listed = await client.get(f"{_BASE}/", headers=headers)
+    assert listed.status_code == _OK, listed.text
+    assert listed.json()["keys"][0]["last_used_at"] is not None
+
+
+@pytest.mark.asyncio
 async def test_revoke_is_idempotent_and_404s_the_second_time(client, db):
     headers = _headers([Permissions.MCP_ACCESS])
     created = await client.post(f"{_BASE}/", json={"name": _KEY_NAME}, headers=headers)
@@ -94,7 +108,11 @@ async def test_a_key_is_visible_and_revocable_only_to_its_owner(client, db):
 
 # ANALYZE_ADHOC is the sibling key system's permission: a gate widened to accept either would let
 # an ad-hoc key holder mint MCP credentials, and no unrelated permission shows that.
-@pytest.mark.parametrize("permissions", [[Permissions.PROJECT_READ], [Permissions.ANALYZE_ADHOC]])
+@pytest.mark.parametrize(
+    "permissions",
+    [[Permissions.PROJECT_READ], [Permissions.ANALYZE_ADHOC]],
+    ids=["unrelated-permission", "sibling-key-surface"],
+)
 @pytest.mark.asyncio
 async def test_missing_permission_is_403(client, db, permissions):
     headers = _headers(permissions)

@@ -141,7 +141,11 @@ async def test_an_inactive_owner_is_401(monkeypatch):
 
 # ANALYZE_ADHOC is the sibling key system's permission: a gate widened to accept either key type
 # would hand every ad-hoc key owner the MCP tool surface, and no unrelated permission shows that.
-@pytest.mark.parametrize("permissions", [[Permissions.PROJECT_READ], [Permissions.ANALYZE_ADHOC]])
+@pytest.mark.parametrize(
+    "permissions",
+    [[Permissions.PROJECT_READ], [Permissions.ANALYZE_ADHOC]],
+    ids=["unrelated-permission", "sibling-key-surface"],
+)
 @pytest.mark.asyncio
 async def test_an_owner_without_mcp_access_is_403(monkeypatch, permissions):
     db, _ = _db_with_key(_key_doc())
