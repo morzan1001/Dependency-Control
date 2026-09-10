@@ -1,9 +1,10 @@
 """Unified API keys: hashed at rest, surfaces validated on write, expiry clamped, revoke idempotent."""
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from pymongo import ReadPreference
 
 from app.core.constants import API_KEY_SURFACE_ADHOC, API_KEY_SURFACE_MCP
 from app.repositories.api_keys import LIST_LIMIT, ApiKeyRepository, generate_plaintext_token, hash_token
@@ -33,6 +34,8 @@ _SURFACE_ERROR = "non-empty subset"
 _NEWEST_AGE_DAYS = 0
 _MIDDLE_AGE_DAYS = 1
 _OLDEST_AGE_DAYS = 2
+_BELOW_THE_FLOOR_DAYS = [0, -1]
+_MISSING_KEY_ID = "no-such-key"
 
 
 @pytest.mark.asyncio
@@ -124,6 +127,18 @@ async def test_expiry_is_clamped_to_one_year():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("expires_in_days", _BELOW_THE_FLOOR_DAYS)
+async def test_an_expiry_under_a_day_is_lifted_to_the_floor(expires_in_days):
+    """Without the floor the key expires no later than it was minted, and the `$gt: now` clause
+    turns it down on its very first use — a key that never authenticates at all."""
+    db = FakeDatabase()
+    repo = ApiKeyRepository(db)
+    _, plaintext = await repo.create(_OWNER, _KEY_NAME, _BOTH_SURFACES, expires_in_days)
+
+    assert await repo.get_by_plaintext(plaintext) is not None
+
+
+@pytest.mark.asyncio
 async def test_get_by_plaintext_round_trips():
     db = FakeDatabase()
     doc, plaintext = await ApiKeyRepository(db).create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
@@ -132,6 +147,21 @@ async def test_get_by_plaintext_round_trips():
 
     assert found is not None
     assert found["_id"] == doc["_id"]
+
+
+@pytest.mark.asyncio
+async def test_get_by_plaintext_reads_from_the_primary():
+    """The client carries a configurable read preference, so an authentication left on the default
+    resolves a revoked key off a lagging secondary for as long as the lag lasts. The fake returns
+    itself from `with_options`, which is why the call has to be observed rather than its effect."""
+    db = FakeDatabase()
+    repo = ApiKeyRepository(db)
+    _, plaintext = await repo.create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
+    observed = MagicMock(wraps=db[_COL].with_options)
+    db[_COL].with_options = observed
+
+    assert await repo.get_by_plaintext(plaintext) is not None
+    observed.assert_called_once_with(read_preference=ReadPreference.PRIMARY)
 
 
 @pytest.mark.asyncio
@@ -259,12 +289,19 @@ async def test_touch_last_used_moves_the_stamp_forward():
 
 @pytest.mark.asyncio
 async def test_touch_last_used_is_scoped_to_the_key():
-    """The untouched key is created first so an unfiltered write lands on it rather than on the
-    one being stamped, which a same-order pair would hide."""
+    """Stamping a key that does not exist is the order-free half: an unfiltered write lands on
+    whichever document happens to come first, so with no key addressed none may carry a stamp,
+    whatever the insertion order. Asserting only that a sibling stayed null passes as soon as the
+    addressed key is the first one."""
     db = FakeDatabase()
     repo = ApiKeyRepository(db)
-    untouched, _ = await repo.create(_OWNER, _OTHER_KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
     used, _ = await repo.create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
+    untouched, _ = await repo.create(_OWNER, _OTHER_KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
+
+    await repo.touch_last_used(_MISSING_KEY_ID)
+
+    assert (await db[_COL].find_one({"_id": used["_id"]}))["last_used_at"] is None
+    assert (await db[_COL].find_one({"_id": untouched["_id"]}))["last_used_at"] is None
 
     await repo.touch_last_used(used["_id"])
 
