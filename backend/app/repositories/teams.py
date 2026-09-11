@@ -47,6 +47,18 @@ class TeamRepository:
             {"github_instance_id": github_instance_id, "github_team_id": github_team_id}
         )
 
+    async def find_raw_by_github_org(self, github_instance_id: str, github_org: str) -> list[dict[str, Any]]:
+        """Every team bound to one organisation of one instance. Scoped to the instance: a team
+        number is unique per instance only, and two instances are two tenants."""
+        cursor = self.collection.find(
+            {
+                "github_instance_id": github_instance_id,
+                "github_org": github_org,
+                "github_team_id": {"$ne": None},
+            }
+        )
+        return await cursor.to_list(None)
+
     async def create(self, team: Team) -> Team:
         await self.collection.insert_one(team.model_dump(by_alias=True))
         return team

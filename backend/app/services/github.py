@@ -19,7 +19,7 @@ from app.core.constants import (
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
 from app.models.github_instance import GitHubInstance
-from app.models.team import Team, TeamMember
+from app.models.team import TeamMember
 from app.repositories import TeamRepository, UserRepository
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
@@ -30,12 +30,10 @@ _GITHUB_COM_JWKS_URI = "https://token.actions.githubusercontent.com/.well-known/
 
 _GITHUB_API_TIMEOUT = 10.0
 
-# Direct access outranks an omitted access_source, which outranks the inherited "organization"/
-# "enterprise". A value we cannot interpret ranks as inherited too: absence is missing information,
-# while a future enum member ranked above an explicit weaker source would silently reassign teams.
-_ACCESS_SOURCE_INHERITED = 0
-_ACCESS_SOURCE_ABSENT = 1
-_ACCESS_SOURCE_DIRECT = 2
+_DEFAULT_ACCEPT = "application/vnd.github+json"
+# Without this media type the team/repository check answers 204 with an empty body, and the
+# permissions rule loses its input.
+_REPOSITORY_ACCEPT = "application/vnd.github.v3.repository+json"
 
 _PERMISSION_RANK = {"pull": 0, "triage": 1, "push": 2, "maintain": 3, "admin": 4}
 
@@ -54,8 +52,21 @@ def _team_slug(team: dict[str, Any]) -> str | None:
     return str(slug) if slug else None
 
 
+def build_team_slug_map(org_teams: list[dict[str, Any]]) -> dict[int, str]:
+    """Team id -> current slug from GET /orgs/{org}/teams.
+
+    A stored slug would address the wrong team after a rename, so the slug the API is called with
+    is always the one the organisation listing reports for the bound team number.
+    """
+    return {
+        team_id: slug
+        for team in org_teams
+        if (team_id := _team_id(team)) is not None and (slug := _team_slug(team)) is not None
+    }
+
+
 def build_team_depth_map(org_teams: list[dict[str, Any]]) -> dict[int, int]:
-    """Team id -> nesting depth from GET /orgs/{org}/teams; the repository call carries one level only."""
+    """Team id -> nesting depth from GET /orgs/{org}/teams; the repository check carries no parent."""
     parents: dict[int, int | None] = {}
     for team in org_teams:
         team_id = _team_id(team)
@@ -77,31 +88,27 @@ def build_team_depth_map(org_teams: list[dict[str, Any]]) -> dict[int, int]:
     return depths
 
 
-def _access_source_rank(team: dict[str, Any]) -> int:
-    access_source = team.get("access_source")
-    if access_source is None:
-        return _ACCESS_SOURCE_ABSENT
-    return _ACCESS_SOURCE_DIRECT if str(access_source) == "direct" else _ACCESS_SOURCE_INHERITED
-
-
 def _permission_rank(team: dict[str, Any]) -> int:
+    """The strongest permission the team holds on the repository; -1 when the payload states none."""
     permissions = team.get("permissions")
-    # The legacy `permission` string collapses maintain onto push and triage onto pull.
-    if isinstance(permissions, dict):
-        return max((rank for name, rank in _PERMISSION_RANK.items() if permissions.get(name)), default=-1)
-    return _PERMISSION_RANK.get(str(team.get("permission") or ""), -1)
+    if not isinstance(permissions, dict):
+        return -1
+    return max((rank for name, rank in _PERMISSION_RANK.items() if permissions.get(name)), default=-1)
 
 
-def _sort_key(team_id: int, team: dict[str, Any], depth_map: dict[int, int] | None) -> tuple[int, int, int, int]:
+def _sort_key(team_id: int, team: dict[str, Any], depth_map: dict[int, int] | None) -> tuple[int, int, int]:
     depth = depth_map.get(team_id, 0) if depth_map else 0
-    return (-_access_source_rank(team), -depth, -_permission_rank(team), team_id)
+    return (-depth, -_permission_rank(team), team_id)
 
 
 def select_github_team(
     candidates: list[dict[str, Any]],
     depth_map: dict[int, int] | None = None,
 ) -> dict[str, Any] | None:
-    """Direct access, then depth, then permission, then the lowest id. Winners carry an id and a slug.
+    """Depth, then permission, then the lowest id. Winners carry an id and a slug.
+
+    The documented first rule, direct access over inherited, has no input: the team/repository
+    check reports no access_source, so ranking starts at depth.
 
     The id keeps the order total: without it two equally-ranked teams swap between syncs and the
     project's team assignment flips with nothing in the logs to explain it.
@@ -121,6 +128,20 @@ class GitHubTeamSyncResult(NamedTuple):
 
     team_id: str | None
     candidate_count: int | None
+
+
+class GitHubTeamRepoAccess(NamedTuple):
+    """``has_repo`` is None when GitHub could not answer; ``repository`` carries the permissions."""
+
+    has_repo: bool | None
+    repository: dict[str, Any] | None
+
+
+class _RepositoryCandidate(NamedTuple):
+    """A bound team that holds the repository: its Dependency Control document and its ranking entry."""
+
+    team: dict[str, Any]
+    entry: dict[str, Any]
 
 
 class GitHubService:
@@ -147,17 +168,22 @@ class GitHubService:
         """Generate cache key for this specific instance."""
         return f"github:{self._cache_key_prefix}:{suffix}"
 
-    def _get_auth_headers(self) -> dict[str, str]:
+    def _get_auth_headers(self, accept: str = _DEFAULT_ACCEPT) -> dict[str, str]:
         if not self.instance.access_token:
             raise ValueError(f"No access token configured for GitHub instance '{self.instance.name}'")
-        return {"Authorization": f"Bearer {self.instance.access_token}", "Accept": "application/vnd.github+json"}
+        return {"Authorization": f"Bearer {self.instance.access_token}", "Accept": accept}
 
     @asynccontextmanager
     async def _api_client(self) -> AsyncIterator[InstrumentedAsyncClient]:
         async with InstrumentedAsyncClient("GitHub API", timeout=_GITHUB_API_TIMEOUT) as client:
             yield client
 
-    async def _api_get(self, endpoint: str, params: dict[str, Any] | None = None) -> httpx.Response | None:
+    async def _api_get(
+        self,
+        endpoint: str,
+        params: dict[str, Any] | None = None,
+        accept: str = _DEFAULT_ACCEPT,
+    ) -> httpx.Response | None:
         if not self.instance.access_token:
             return None
 
@@ -165,7 +191,7 @@ class GitHubService:
             async with self._api_client() as client:
                 return await client.get(
                     f"{self.api_url}{endpoint}",
-                    headers=self._get_auth_headers(),
+                    headers=self._get_auth_headers(accept),
                     params=params,
                 )
         except Exception as e:
@@ -297,12 +323,34 @@ class GitHubService:
         await cache_service.set(cache_key, items, ttl_seconds=GITHUB_TEAM_SYNC_CACHE_TTL)
         return items
 
-    async def get_repository_teams(self, owner: str, repo: str) -> list[dict[str, Any]] | None:
-        """Teams with access to a repository. Returns None on API failure."""
-        return await self._get_cached_all_pages(
-            self._get_cache_key(f"repo_teams:{owner}/{repo}"),
-            f"/repos/{owner}/{repo}/teams",
-        )
+    async def get_team_repository(self, org: str, team_slug: str, owner: str, repo: str) -> GitHubTeamRepoAccess:
+        """Whether one team holds one repository, and with which permissions.
+
+        Answers on a read-only organisation token, which asking the repository for its teams
+        cannot: that requires the admin role on every single repository.
+        """
+        cache_key = self._get_cache_key(f"team_repo:{org}/{team_slug}:{owner}/{repo}")
+        cached: dict[str, Any] | None = await cache_service.get(cache_key)
+        if cached is not None:
+            return GitHubTeamRepoAccess(cached["has_repo"], cached["repository"])
+
+        endpoint = f"/orgs/{org}/teams/{team_slug}/repos/{owner}/{repo}"
+        response = await self._api_get(endpoint, accept=_REPOSITORY_ACCEPT)
+        if response is None:
+            return GitHubTeamRepoAccess(None, None)
+
+        if response.status_code == 200:
+            access = GitHubTeamRepoAccess(True, response.json())
+        elif response.status_code == 404:
+            access = GitHubTeamRepoAccess(False, None)
+        else:
+            # A refusal read as "this team does not hold the repository" would hand the repository
+            # to whichever team the API did answer for.
+            logger.warning("GitHub API GET %s returned HTTP %d", endpoint, response.status_code)
+            return GitHubTeamRepoAccess(None, None)
+
+        await cache_service.set(cache_key, access._asdict(), ttl_seconds=GITHUB_TEAM_SYNC_CACHE_TTL)
+        return access
 
     async def get_org_teams(self, org: str) -> list[dict[str, Any]] | None:
         """Every team of an organisation with its parent, for the nesting-depth map."""
@@ -421,46 +469,66 @@ class GitHubService:
             merged[member.user_id] = member.model_dump()
         return list(merged.values())
 
-    async def _upsert_team_with_members(
+    async def _sync_team_members(
         self,
         team_repo: TeamRepository,
-        existing_team: dict[str, Any] | None,
-        team_name: str,
-        description: str,
-        instance_id: str,
-        org: str,
-        team_id: int,
+        team: dict[str, Any],
         team_slug: str,
         team_members: list[TeamMember],
-    ) -> str | None:
-        if existing_team:
-            update_data: dict[str, Any] = {
-                "members": self._merge_team_members(existing_team.get("members") or [], team_members),
+    ) -> None:
+        await team_repo.update(
+            team["_id"],
+            {
+                "members": self._merge_team_members(team.get("members") or [], team_members),
                 "updated_at": datetime.now(timezone.utc),
-                # Both are renameable; the instance id and the numeric team id identify the team.
-                "github_org": org,
+                # The binding is the numeric team id, so a renamed slug has to follow it.
                 "github_team_slug": team_slug,
-            }
-            # A team manually renamed to e.g. "Payments Guild" keeps its name.
-            current_name = existing_team.get("name", "")
-            if current_name.startswith("GitHub Team:") and current_name != team_name:
-                update_data["name"] = team_name
-                update_data["description"] = description
-            await team_repo.update(existing_team["_id"], update_data)
-            return str(existing_team["_id"])
-        if team_members:
-            new_team = Team(
-                name=team_name,
-                description=description,
-                github_instance_id=instance_id,
-                github_org=org,
-                github_team_id=team_id,
-                github_team_slug=team_slug,
-                members=team_members,
+            },
+        )
+
+    async def _collect_repository_candidates(
+        self,
+        org: str,
+        owner: str,
+        repo: str,
+        bound_teams: list[dict[str, Any]],
+        slug_map: dict[int, str],
+    ) -> list[_RepositoryCandidate] | None:
+        """The bound teams that hold the repository. None when a single check went unanswered:
+        an incomplete candidate set elects a winner that the missing answers might have outranked.
+        """
+        candidates: list[_RepositoryCandidate] = []
+        for team in bound_teams:
+            team_id = team.get("github_team_id")
+            slug = slug_map.get(team_id) if isinstance(team_id, int) else None
+            if slug is None:
+                logger.debug(
+                    "Team %s is bound to GitHub team %s of %s, which the organisation listing does not show.",
+                    team.get("_id"),
+                    team_id,
+                    org,
+                )
+                continue
+
+            access = await self.get_team_repository(org, slug, owner, repo)
+            if access.has_repo is None:
+                return None
+            if not access.has_repo:
+                continue
+
+            repository = access.repository or {}
+            candidates.append(
+                _RepositoryCandidate(
+                    team,
+                    {
+                        "id": team_id,
+                        "slug": slug,
+                        "permissions": repository.get("permissions"),
+                        "role_name": repository.get("role_name"),
+                    },
+                )
             )
-            await team_repo.create(new_team)
-            return str(new_team.id)
-        return None
+        return candidates
 
     async def sync_team_from_github(
         self,
@@ -468,38 +536,56 @@ class GitHubService:
         org: str,
         repository_path: str,
     ) -> GitHubTeamSyncResult:
-        """Sync the GitHub team owning a repository to a local Team. Never raises."""
+        """Resolve the repository to one of the teams bound to this instance and organisation.
+
+        Creates nothing: a GitHub team nobody bound is a group that does not exist here.
+        Never raises.
+        """
         try:
             owner, _, repo = repository_path.partition("/")
-            candidates = await self.get_repository_teams(owner, repo)
-            if candidates is None:
-                logger.warning("Could not fetch GitHub teams for repository %s.", repository_path)
-                return GitHubTeamSyncResult(None, None)
+            team_repo = TeamRepository(db)
+            bound_teams = await team_repo.find_raw_by_github_org(str(self.instance.id), org)
+            if not bound_teams:
+                logger.info("No team is bound to GitHub organisation %s; %s keeps its team.", org, repository_path)
+                return GitHubTeamSyncResult(None, 0)
 
             org_teams = await self.get_org_teams(org)
-            # Without the map, rule 2 (depth) is skipped; the tiebreak stays total.
-            depth_map = build_team_depth_map(org_teams) if org_teams else None
-            winner = select_github_team(candidates, depth_map)
+            if org_teams is None:
+                logger.warning(
+                    "Could not list the teams of GitHub organisation %s; leaving %s untouched.",
+                    org,
+                    repository_path,
+                )
+                return GitHubTeamSyncResult(None, None)
+
+            candidates = await self._collect_repository_candidates(
+                org, owner, repo, bound_teams, build_team_slug_map(org_teams)
+            )
+            if candidates is None:
+                logger.warning(
+                    "GitHub could not say which teams hold repository %s; leaving it untouched.", repository_path
+                )
+                return GitHubTeamSyncResult(None, None)
+
+            winner = select_github_team([candidate.entry for candidate in candidates], build_team_depth_map(org_teams))
             if winner is None:
-                logger.info("No GitHub team resolved for repository %s; team_id left untouched.", repository_path)
+                logger.info("No bound team holds repository %s; team_id left untouched.", repository_path)
                 return GitHubTeamSyncResult(None, len(candidates))
 
             team_id = int(winner["id"])
             team_slug = str(winner["slug"])
             logger.info(
-                "GitHub team sync for %s: %d candidate(s) %s, using '%s' (id=%d).",
+                "GitHub team sync for %s: %d bound team(s) hold it %s, using '%s' (id=%d, role=%s).",
                 repository_path,
                 len(candidates),
-                [candidate.get("slug") for candidate in candidates],
+                [candidate.entry["slug"] for candidate in candidates],
                 team_slug,
                 team_id,
+                winner.get("role_name"),
             )
 
-            team_repo = TeamRepository(db)
-            user_repo = UserRepository(db)
-            instance_id = str(self.instance.id)
-            existing_team = await team_repo.get_raw_by_github_team(instance_id, team_id)
-            existing_team_id = str(existing_team["_id"]) if existing_team else None
+            existing_team = next(candidate.team for candidate in candidates if candidate.entry["id"] == team_id)
+            existing_team_id = str(existing_team["_id"])
 
             # An empty list is a team nobody is left in, and its members must go; only None is a failure.
             members = await self.get_team_members(org, team_slug, team_id)
@@ -513,7 +599,7 @@ class GitHubService:
                 )
                 return GitHubTeamSyncResult(existing_team_id, len(candidates))
 
-            team_members, unresolved = await self._build_team_members(members, user_repo)
+            team_members, unresolved = await self._build_team_members(members, UserRepository(db))
             if unresolved and not team_members:
                 # A token that lost profile access resolves nobody; writing that would strip the
                 # whole github subset and read as a team everyone left.
@@ -528,18 +614,8 @@ class GitHubService:
                 )
                 return GitHubTeamSyncResult(existing_team_id, len(candidates))
 
-            local_team_id = await self._upsert_team_with_members(
-                team_repo,
-                existing_team,
-                f"GitHub Team: {org}/{team_slug}",
-                f"Imported from GitHub Team {org}/{team_slug}",
-                instance_id,
-                org,
-                team_id,
-                team_slug,
-                team_members,
-            )
-            return GitHubTeamSyncResult(local_team_id, len(candidates))
+            await self._sync_team_members(team_repo, existing_team, team_slug, team_members)
+            return GitHubTeamSyncResult(existing_team_id, len(candidates))
 
         except Exception as e:
             logger.exception(

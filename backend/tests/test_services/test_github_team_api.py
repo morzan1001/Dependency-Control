@@ -1,4 +1,4 @@
-"""GitHub team-sync reads: uncapped pagination, role-tagged members, and a shared cache."""
+"""GitHub team-sync reads: the team/repository check, uncapped pagination, role-tagged members, cache."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -6,15 +6,12 @@ import fakeredis.aioredis
 import pytest
 
 from app.core.cache import CacheService
-from app.services.github import GitHubService
+from app.services.github import _REPOSITORY_ACCEPT, GitHubService, GitHubTeamRepoAccess
 from tests.mocks.github import make_github_instance
 
 _ORG_URL = "https://api.github.com/organizations/1234"
 
-# `parent` is a Team Simple: it carries no `parent` of its own, so nesting depth is not
-# derivable from the repository endpoint. The second team is the shape GitHub returns when
-# it omits the optional `permissions` and `access_source`.
-_REPO_TEAMS = [
+_ORG_TEAMS = [
     {
         "id": 4711,
         "node_id": "T_kwDOBl2Rp84AEnZn",
@@ -26,8 +23,6 @@ _REPO_TEAMS = [
         "privacy": "closed",
         "notification_setting": "notifications_enabled",
         "permission": "push",
-        "permissions": {"pull": True, "triage": True, "push": True, "maintain": False, "admin": False},
-        "access_source": "direct",
         "members_url": f"{_ORG_URL}/team/4711/members{{/member}}",
         "repositories_url": f"{_ORG_URL}/team/4711/repos",
         "parent": {
@@ -61,6 +56,18 @@ _REPO_TEAMS = [
     },
 ]
 
+# The repository object GET /orgs/{org}/teams/{slug}/repos/{owner}/{repo} answers with, trimmed to
+# the fields the sync reads. `permissions` is the team's access, not the caller's.
+_TEAM_REPOSITORY = {
+    "id": 987654,
+    "node_id": "R_kgDOBl2Rpw",
+    "name": "widgets",
+    "full_name": "acme/widgets",
+    "private": True,
+    "role_name": "maintain",
+    "permissions": {"pull": True, "triage": True, "push": True, "maintain": True, "admin": False},
+}
+
 _ORG_MEMBERSHIPS = [
     {
         "login": "acme",
@@ -88,36 +95,115 @@ def fake_cache(monkeypatch):
     return svc
 
 
-class TestRepositoryTeams:
+def _response(status_code: int, payload: dict | None = None) -> MagicMock:
+    response = MagicMock(status_code=status_code)
+    response.json = MagicMock(return_value=payload)
+    return response
+
+
+class TestTeamRepositoryCheck:
     @pytest.mark.asyncio
-    async def test_are_fetched_uncapped_from_the_repository_endpoint(self, fake_cache):
+    async def test_asks_the_team_whether_it_holds_the_repository(self, fake_cache):
         service = _service()
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_REPO_TEAMS)) as paginated:
-            result = await service.get_repository_teams("acme", "widgets")
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=_response(200, _TEAM_REPOSITORY))) as get:
+            access = await service.get_team_repository("acme", "payments", "acme", "widgets")
 
-        assert result == _REPO_TEAMS
-        assert paginated.await_args.args[0] == "/repos/acme/widgets/teams"
-        assert paginated.await_args.kwargs["max_pages"] is None
-
-    @pytest.mark.asyncio
-    async def test_the_second_call_is_served_from_the_cache(self, fake_cache):
-        service = _service()
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_REPO_TEAMS)) as paginated:
-            await service.get_repository_teams("acme", "widgets")
-            second = await service.get_repository_teams("acme", "widgets")
-
-        # Equality after a JSON round-trip: the optional fields and the nested parent survive.
-        assert second == _REPO_TEAMS
-        assert paginated.await_count == 1
+        assert access == GitHubTeamRepoAccess(True, _TEAM_REPOSITORY)
+        assert get.await_args.args[0] == "/orgs/acme/teams/payments/repos/acme/widgets"
 
     @pytest.mark.asyncio
-    async def test_a_failed_fetch_is_not_cached(self, fake_cache):
+    async def test_asks_for_the_media_type_that_carries_the_permissions(self, fake_cache):
+        """Without it GitHub answers 204 with no body and the permission rule loses its input."""
         service = _service()
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=None)) as paginated:
-            assert await service.get_repository_teams("acme", "widgets") is None
-            assert await service.get_repository_teams("acme", "widgets") is None
+        client = MagicMock()
+        client.get = AsyncMock(return_value=_response(200, _TEAM_REPOSITORY))
 
-        assert paginated.await_count == 2
+        class _ClientContext:
+            async def __aenter__(self):
+                return client
+
+            async def __aexit__(self, *_args):
+                return False
+
+        with patch.object(service, "_api_client", return_value=_ClientContext()):
+            await service.get_team_repository("acme", "payments", "acme", "widgets")
+
+        assert client.get.await_args.kwargs["headers"]["Accept"] == _REPOSITORY_ACCEPT
+
+    @pytest.mark.asyncio
+    async def test_a_404_says_the_team_does_not_hold_it(self, fake_cache):
+        service = _service()
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=_response(404))):
+            assert await service.get_team_repository("acme", "sre", "acme", "widgets") == GitHubTeamRepoAccess(
+                False, None
+            )
+
+    @pytest.mark.asyncio
+    async def test_a_refusal_is_undetermined_rather_than_a_no(self, fake_cache, caplog):
+        """Read as a no, a throttled or forbidden check hands the repository to whichever team did answer."""
+        service = _service()
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=_response(403))):
+            with caplog.at_level("WARNING", logger="app.services.github"):
+                access = await service.get_team_repository("acme", "payments", "acme", "widgets")
+
+        assert access == GitHubTeamRepoAccess(None, None)
+        warnings = [record.getMessage() for record in caplog.records if record.levelname == "WARNING"]
+        assert len(warnings) == 1, warnings
+        assert "403" in warnings[0]
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_api_is_undetermined(self, fake_cache):
+        service = _service()
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=None)):
+            assert await service.get_team_repository("acme", "payments", "acme", "widgets") == GitHubTeamRepoAccess(
+                None, None
+            )
+
+    @pytest.mark.asyncio
+    async def test_the_second_check_is_served_from_the_cache(self, fake_cache):
+        service = _service()
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=_response(200, _TEAM_REPOSITORY))) as get:
+            await service.get_team_repository("acme", "payments", "acme", "widgets")
+            second = await service.get_team_repository("acme", "payments", "acme", "widgets")
+
+        # Equality after a JSON round-trip: the permissions object survives it.
+        assert second == GitHubTeamRepoAccess(True, _TEAM_REPOSITORY)
+        assert get.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_a_negative_answer_is_cached_too(self, fake_cache):
+        """Most bound teams answer no on most repositories; refetching that is what burns the budget."""
+        service = _service()
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=_response(404))) as get:
+            first = await service.get_team_repository("acme", "sre", "acme", "widgets")
+            second = await service.get_team_repository("acme", "sre", "acme", "widgets")
+
+        assert first == second == GitHubTeamRepoAccess(False, None)
+        assert get.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_an_undetermined_answer_is_not_cached(self, fake_cache):
+        service = _service()
+        responses = [_response(500), _response(200, _TEAM_REPOSITORY)]
+        with patch.object(service, "_api_get", new=AsyncMock(side_effect=responses)):
+            assert (await service.get_team_repository("acme", "payments", "acme", "widgets")).has_repo is None
+            assert (await service.get_team_repository("acme", "payments", "acme", "widgets")).has_repo is True
+
+    @pytest.mark.asyncio
+    async def test_one_repository_never_answers_for_another(self, fake_cache):
+        service = _service()
+        responses = [_response(200, _TEAM_REPOSITORY), _response(404)]
+        with patch.object(service, "_api_get", new=AsyncMock(side_effect=responses)):
+            assert (await service.get_team_repository("acme", "payments", "acme", "widgets")).has_repo is True
+            assert (await service.get_team_repository("acme", "payments", "acme", "gadgets")).has_repo is False
+
+    @pytest.mark.asyncio
+    async def test_one_team_never_answers_for_another(self, fake_cache):
+        service = _service()
+        responses = [_response(200, _TEAM_REPOSITORY), _response(404)]
+        with patch.object(service, "_api_get", new=AsyncMock(side_effect=responses)):
+            assert (await service.get_team_repository("acme", "payments", "acme", "widgets")).has_repo is True
+            assert (await service.get_team_repository("acme", "sre", "acme", "widgets")).has_repo is False
 
 
 class TestOrgTeams:
@@ -135,7 +221,7 @@ class TestOrgTeamCount:
     @pytest.mark.asyncio
     async def test_is_fetched_uncapped_from_the_org_endpoint(self):
         service = _service()
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_REPO_TEAMS)) as paginated:
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_ORG_TEAMS)) as paginated:
             assert await service.count_org_teams("acme") == 2
 
         assert paginated.await_args.args[0] == "/orgs/acme/teams"
@@ -158,7 +244,7 @@ class TestOrgTeamCount:
     async def test_is_never_served_from_the_cache(self, fake_cache):
         """A connection test reporting a five-minute-old token state, in green, is worse than slow."""
         service = _service()
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_REPO_TEAMS)) as paginated:
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_ORG_TEAMS)) as paginated:
             await service.count_org_teams("acme")
             await service.count_org_teams("acme")
 
@@ -168,7 +254,7 @@ class TestOrgTeamCount:
     async def test_a_warm_get_org_teams_entry_does_not_answer_the_count(self, fake_cache):
         """A sync minutes earlier leaves that entry warm; a revoked token must still read red."""
         service = _service()
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_REPO_TEAMS)) as paginated:
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_ORG_TEAMS)) as paginated:
             await service.get_org_teams("acme")
             await service.count_org_teams("acme")
 
