@@ -1598,20 +1598,25 @@ def _project_member_role(project: Project, user_id: str) -> str:
 
 
 async def _count_team_admins(project: Project, db: Any) -> int:
-    """Return the number of admins on the project's owning team (0 if no team)."""
-    if not project.team_id:
-        return 0
+    """The admins every team owning the project supplies between them.
+
+    Every owner grants its admins the project, so one owner short of an admin says nothing about
+    whether the project has one; only all of them together do.
+    """
     team_repo = TeamRepository(db)
-    team = await team_repo.get_raw_by_id(project.team_id)
-    if not team:
-        return 0
-    return sum(1 for m in team.get("members", []) if m.get("role") == "admin")
+    admins = 0
+    for team_id in project.team_ids:
+        team = await team_repo.get_raw_by_id(team_id)
+        if not team:
+            continue
+        admins += sum(1 for m in team.get("members", []) if m.get("role") == TEAM_ROLE_ADMIN)
+    return admins
 
 
 async def _needs_a_surviving_direct_admin(project: Project, member_role: str, db: Any) -> bool:
     """Whether the write about to run is the one that could take the project's last admin.
 
-    The owning team can supply one, and that half cannot be guarded in the same statement, so the
+    The owning teams can supply one, and that half cannot be guarded in the same statement, so the
     conditional write is asked for only when the direct members are the project's only admins.
     """
     if member_role != PROJECT_ROLE_ADMIN:
