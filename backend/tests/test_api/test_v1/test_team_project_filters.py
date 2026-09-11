@@ -29,14 +29,16 @@ async def _seed() -> FakeDatabase:
     for project in _PROJECTS:
         await db.projects.insert_one(dict(project))
     for team_id in ("alpha", "bravo"):
-        await db.teams.insert_one(
-            {"_id": team_id, "name": team_id, "members": [{"user_id": _USER, "role": "member"}]}
-        )
+        await db.teams.insert_one({"_id": team_id, "name": team_id, "members": [{"user_id": _USER, "role": "member"}]})
     return db
 
 
 def _user() -> User:
     return User(id=_USER, username=_USER, email="u1@test.com", permissions=[Permissions.PROJECT_READ])
+
+
+def _reader_of_everything() -> User:
+    return User(id="u2", username="u2", email="u2@test.com", permissions=[Permissions.PROJECT_READ_ALL])
 
 
 @pytest.mark.asyncio
@@ -70,3 +72,27 @@ async def test_the_chat_team_risk_tool_holds_every_project_a_team_co_owns(team_i
     result = await ChatToolRegistry()._dispatch("get_team_risk_overview", {"team_id": team_id}, _user(), await _seed())
 
     assert result["project_count"] == len(expected)
+
+
+@pytest.mark.asyncio
+async def test_the_project_list_names_every_team_that_owns_a_project():
+    # read_all, so the project no team owns is in the page too and its empty list is visible.
+    page = await read_projects(_reader_of_everything(), await _seed())
+
+    named = {project.id: [(team.id, team.name) for team in project.teams] for project in page["items"]}
+
+    assert named == {
+        "co-owned": [("alpha", "alpha"), ("bravo", "bravo")],
+        "alpha-only": [("alpha", "alpha")],
+        "bravo-only": [("bravo", "bravo")],
+        "unowned": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_the_chat_project_list_names_every_team_that_owns_a_project():
+    result = await ChatToolRegistry()._dispatch("list_projects", {}, _user(), await _seed())
+
+    named = {project["id"]: [team["name"] for team in project["teams"]] for project in result["projects"]}
+
+    assert named == {"co-owned": ["alpha", "bravo"], "alpha-only": ["alpha"], "bravo-only": ["bravo"]}

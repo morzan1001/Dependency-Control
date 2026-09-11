@@ -79,6 +79,8 @@ from app.api.v1.helpers.teams import (
     fetch_and_enrich_team,
     get_member_role,
     get_team_with_access,
+    resolve_team_names,
+    team_refs,
 )
 from app.api.v1.helpers.users import (
     check_admin_or_self,
@@ -178,7 +180,9 @@ __all__ = [
     # Analytics helpers
     "require_analytics_permission",
     "resolve_sbom_refs",
+    "resolve_team_names",
     "send_password_reset_email",
     "send_system_invitation_email",
     "send_verification_email",
+    "team_refs",
 ]

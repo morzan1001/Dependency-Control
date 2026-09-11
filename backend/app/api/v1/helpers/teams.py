@@ -1,5 +1,6 @@
 """Shared helper functions for team-related operations."""
 
+from collections.abc import Iterable, Mapping
 from typing import Any
 
 from fastapi import HTTPException
@@ -13,7 +14,7 @@ from app.core.permissions import Permissions, has_permission
 from app.models.team import Team
 from app.models.user import User
 from app.repositories import TeamRepository, UserRepository
-from app.schemas.team import TeamResponse
+from app.schemas.team import TeamRef, TeamResponse
 
 _MSG_TEAM_NOT_FOUND = "Team not found"
 
@@ -80,6 +81,26 @@ def build_team_enrichment_pipeline(
         },
         {"$project": {"users_info": 0}},
     ]
+
+
+async def resolve_team_names(db: AsyncIOMotorDatabase, team_ids: Iterable[str]) -> dict[str, str]:
+    """Name every team in ``team_ids`` in one read, so a page of co-owned projects is still one query."""
+    wanted = sorted(set(team_ids))
+    if not wanted:
+        return {}
+    cursor = db.teams.find({"_id": {"$in": wanted}}, {"_id": 1, "name": 1})
+    return {str(team["_id"]): team.get("name", "") async for team in cursor}
+
+
+def team_refs(team_ids: Iterable[str], names: Mapping[str, str]) -> list[TeamRef]:
+    """The owning teams a project row displays.
+
+    Ordered by name, because the stored order is whatever the last writer's ``$setUnion`` left and a
+    project would otherwise reorder its own teams when an unrelated co-owner is added. An id the map
+    cannot name lost its team between the two reads and is dropped rather than shown blank.
+    """
+    refs = [TeamRef(id=team_id, name=name) for team_id in team_ids if (name := names.get(team_id)) is not None]
+    return sorted(refs, key=lambda ref: (ref.name, ref.id))
 
 
 async def check_team_access(

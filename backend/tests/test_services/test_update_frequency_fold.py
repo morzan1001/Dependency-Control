@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from app.schemas.analytics import ScanTimelineEntry
+from app.schemas.team import TeamRef
 from app.services.release_history import UpstreamCadenceMetrics
 from app.services.update_frequency import DAYS_PER_MONTH, compute_trend
 from app.services.update_frequency_fold import (
@@ -813,10 +814,11 @@ class TestModelConstruction:
         assert metrics.adoption_latency_days_median == 2.5
 
     def test_to_summary(self) -> None:
-        summary = _fold_golden().to_summary("p1", "Project One", team_name="Platform", branch="main", window_days=90)
+        teams = [TeamRef(id="team-1", name="Platform")]
+        summary = _fold_golden().to_summary("p1", "Project One", teams, branch="main", window_days=90)
         assert summary.project_id == "p1"
         assert summary.project_name == "Project One"
-        assert summary.team_name == "Platform"
+        assert summary.teams == teams
         assert summary.data_status == "ready"
         assert summary.branch == "main"
         assert summary.window_days == 90
@@ -833,7 +835,7 @@ class TestModelConstruction:
         deltas = _chain([_delta("s0", 0), _delta("s1", 10, patch=1)])
         summary = _fold(deltas).to_summary("p1", "Project One", window_days=90)
         assert summary.update_coverage_pct is None
-        assert summary.team_name is None
+        assert summary.teams == []
 
     def test_a_partial_row_carries_the_folded_numbers_under_the_caveat(self) -> None:
         # The fold sums what it was given; only the caller knows the window held more.

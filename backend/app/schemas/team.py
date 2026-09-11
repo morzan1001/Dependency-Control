@@ -14,6 +14,14 @@ class TeamMemberSchema(BaseModel):
     role: str
 
 
+class TeamRef(BaseModel):
+    """One owning team on a project row. The id travels with the name because a project can be
+    listed under several teams and the reader has to be able to tell two same-named ones apart."""
+
+    id: str
+    name: str
+
+
 class TeamBase(BaseModel):
     name: str
     description: str | None = None

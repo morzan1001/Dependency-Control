@@ -27,6 +27,8 @@ from app.api.v1.helpers import (
     load_from_gridfs,
     parse_sort_direction,
     resolve_sbom_refs,
+    resolve_team_names,
+    team_refs,
 )
 from app.api.v1.helpers.auth import send_project_member_added_email
 from app.api.v1.helpers.responses import (
@@ -354,16 +356,12 @@ async def read_projects(
         sort_order=direction,
     )
 
-    team_ids = [p.team_id for p in projects if p.team_id]
-    team_name_map = {}
-    if team_ids:
-        teams = await team_repo.find_many({"_id": {"$in": team_ids}}, limit=len(team_ids))
-        team_name_map = {t.id: t.name for t in teams}
+    team_name_map = await resolve_team_names(db, {team_id for p in projects for team_id in p.team_ids})
 
     enriched_projects = []
     for p in projects:
         p_data = p.model_dump()
-        p_data["team_name"] = team_name_map.get(p.team_id) if p.team_id else None
+        p_data["teams"] = team_refs(p.team_ids, team_name_map)
         enriched_projects.append(ProjectWithTeam(**p_data))
 
     return build_pagination_response(enriched_projects, total, skip, limit)

@@ -15,6 +15,7 @@ from app.models.finding import FindingType, Severity
 from app.models.license import DeploymentModel, DistributionModel, LibraryUsage
 from app.models.project import Project, Scan
 from app.schemas.datetimes import UtcDatetime
+from app.schemas.team import TeamRef
 
 
 class LicensePolicySchema(BaseModel):
@@ -83,9 +84,9 @@ class BranchInfo(BaseModel):
 
 
 class ProjectWithTeam(Project):
-    """Project with team name enrichment for list views."""
+    """Project with owning-team name enrichment for list views."""
 
-    team_name: str | None = None
+    teams: list[TeamRef] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 

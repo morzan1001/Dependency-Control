@@ -20,6 +20,7 @@ from app.api.v1.helpers.analytics import (
     require_analytics_permission,
 )
 from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_404
+from app.api.v1.helpers.teams import resolve_team_names, team_refs
 from app.core.cache import CacheKeys, CacheTTL, cache_service
 from app.core.config import settings
 from app.core.constants import SCAN_USABLE_STATUSES, SLOWEST_PACKAGES_LIMIT
@@ -265,29 +266,25 @@ async def _scoped_projects(
     user_project_ids: list[str],
     team_id: str | None,
 ) -> list[dict[str, Any]]:
-    """The caller's visible projects, each carrying its team name."""
+    """The caller's visible projects, each carrying every team that owns it.
+
+    ``team_id`` narrows to one team's holding, co-owned projects included, so a project appears in
+    each of its owners' comparisons in full. The per-team rankings therefore overlap, and the rows
+    across all of them outnumber the estate's projects.
+    """
     query: dict[str, Any] = {"_id": {"$in": user_project_ids}}
     if team_id:
-        query["team_id"] = team_id
+        query["team_ids"] = team_id
 
     projects_raw = await ProjectRepository(db).find_many_raw(
         query,
-        projection={"_id": 1, "name": 1, "team_id": 1, "deleted_branches": 1, "default_branch": 1},
+        projection={"_id": 1, "name": 1, "team_ids": 1, "deleted_branches": 1, "default_branch": 1},
         limit=len(user_project_ids),
     )
 
-    unique_team_ids = list({str(p["team_id"]) for p in projects_raw if p.get("team_id")})
-    team_names: dict[str, str] = {}
-    if unique_team_ids:
-        cursor = db.teams.find(
-            {"_id": {"$in": unique_team_ids}},
-            {"_id": 1, "name": 1},
-        )
-        async for t in cursor:
-            team_names[str(t["_id"])] = t.get("name", "")
-
+    team_names = await resolve_team_names(db, {tid for p in projects_raw for tid in p.get("team_ids") or []})
     for p in projects_raw:
-        p["team_name"] = team_names.get(p.get("team_id", ""))
+        p["teams"] = team_refs(p.get("team_ids") or [], team_names)
     return projects_raw
 
 
@@ -381,12 +378,12 @@ def _rollup_summary(
 ) -> ProjectUpdateSummary:
     project_id = str(project["_id"])
     project_name = project.get("name", "")
-    team_name = project.get("team_name")
+    teams = project.get("teams") or []
     if resolved.status not in ("ready", "partial"):
         return ProjectUpdateSummary(
             project_id=project_id,
             project_name=project_name,
-            team_name=team_name,
+            teams=teams,
             data_status=resolved.status,
             branch=resolved.branch,
             window_days=window_days,
@@ -397,7 +394,7 @@ def _rollup_summary(
     return folded.to_summary(
         project_id,
         project_name,
-        team_name,
+        teams,
         branch=resolved.branch,
         window_days=window_days,
         data_status=resolved.status,
