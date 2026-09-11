@@ -26,7 +26,7 @@ async def test_the_callgraph_role_matches_the_shared_resolver():
     db = FakeDatabase()
     await db.teams.insert_one({"_id": "t1", "name": "t1", "members": [{"user_id": _USER, "role": "member"}]})
     team_repo = TeamRepository(db)
-    project = {"_id": "p1", "members": [], "team_id": "t1"}
+    project = {"_id": "p1", "members": [], "team_ids": ["t1"]}
 
     assert await _effective_project_role(project, _USER, team_repo) == "viewer"
 
@@ -36,7 +36,7 @@ async def test_a_stronger_team_role_lifts_a_weaker_direct_member():
     """The team half of the composition has to be consulted, not just the direct half."""
     db = FakeDatabase()
     await db.teams.insert_one({"_id": "t1", "name": "t1", "members": [{"user_id": _USER, "role": "admin"}]})
-    project = {"_id": "p1", "members": [{"user_id": _USER, "role": "viewer"}], "team_id": "t1"}
+    project = {"_id": "p1", "members": [{"user_id": _USER, "role": "viewer"}], "team_ids": ["t1"]}
 
     assert await _effective_project_role(project, _USER, TeamRepository(db)) == "admin"
 
@@ -46,21 +46,21 @@ async def test_a_stronger_direct_role_is_not_lowered_by_a_weaker_team_role():
     """Adding a team must never downgrade someone who already had more."""
     db = FakeDatabase()
     await db.teams.insert_one({"_id": "t1", "name": "t1", "members": [{"user_id": _USER, "role": "member"}]})
-    project = {"_id": "p1", "members": [{"user_id": _USER, "role": "admin"}], "team_id": "t1"}
+    project = {"_id": "p1", "members": [{"user_id": _USER, "role": "admin"}], "team_ids": ["t1"]}
 
     assert await _effective_project_role(project, _USER, TeamRepository(db)) == "admin"
 
 
 @pytest.mark.asyncio
-async def test_the_resolver_ignores_a_stale_stored_team_array_and_reads_the_scalar():
-    """The resolver reads the scalar team_id only; the stored team_ids array is never consulted."""
+async def test_the_resolver_reads_the_stored_team_array_and_ignores_the_scalar():
+    """The stored list is the ownership record; a scalar left behind by a writer decides nothing."""
     db = FakeDatabase()
-    await db.teams.insert_one({"_id": "old", "name": "old", "members": [{"user_id": _USER, "role": "admin"}]})
-    await db.teams.insert_one({"_id": "new", "name": "new", "members": [{"user_id": _USER, "role": "member"}]})
+    await db.teams.insert_one({"_id": "stored", "name": "stored", "members": [{"user_id": _USER, "role": "admin"}]})
+    await db.teams.insert_one({"_id": "scalar", "name": "scalar", "members": [{"user_id": _USER, "role": "member"}]})
     team_repo = TeamRepository(db)
-    project = {"_id": "p1", "members": [], "team_id": "new", "team_ids": ["old"]}
+    project = {"_id": "p1", "members": [], "team_id": "scalar", "team_ids": ["stored"]}
 
-    assert await _effective_project_role(project, _USER, team_repo) == "viewer"
+    assert await _effective_project_role(project, _USER, team_repo) == "admin"
 
 
 _GATE_USER = User(id=_USER, username=_USER, email="u1@test.com", permissions=[Permissions.PROJECT_READ])
@@ -98,7 +98,7 @@ async def _seed_gate_db(direct_role: str | None, team_role: str | None) -> FakeD
         {
             "_id": "p1",
             "name": "p1",
-            "team_id": "t1",
+            "team_ids": ["t1"],
             "members": [{"user_id": _USER, "role": direct_role}] if direct_role else [],
         }
     )
@@ -127,3 +127,40 @@ async def test_both_gates_reach_the_same_verdict(direct_role, team_role, write, 
 
     assert project_allowed == callgraph_allowed
     assert project_allowed == allowed
+
+
+# A project role is not on its own a licence to read projects: the resource gate wants both, and
+# a surface that asks only for the role hands a member with no project permission the whole graph.
+_UNREADING_USER = User(id=_USER, username=_USER, email="u1@test.com", permissions=[Permissions.ANALYTICS_READ])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("direct_role", "team_role", "write", "_allowed"), _GATE_MATRIX)
+async def test_neither_gate_admits_a_member_holding_no_project_read(direct_role, team_role, write, _allowed):
+    db = await _seed_gate_db(direct_role, team_role)
+    required_role = PROJECT_ROLE_EDITOR if write else None
+
+    assert not await _allows(check_project_access("p1", _UNREADING_USER, db, required_role=required_role))
+    assert not await _allows(check_callgraph_access("p1", _UNREADING_USER, db, require_write=write))
+
+
+@pytest.mark.asyncio
+async def test_read_all_still_admits_a_reader_who_is_no_member():
+    """The permission the members' check accepts in place of project:read is still accepted."""
+    db = await _seed_gate_db(None, None)
+    reader = User(id="outsider", username="outsider", email="o@test.com", permissions=[Permissions.PROJECT_READ_ALL])
+
+    assert await _allows(check_project_access("p1", reader, db))
+    assert await _allows(check_callgraph_access("p1", reader, db))
+
+
+@pytest.mark.asyncio
+async def test_read_all_stands_in_for_project_read_on_a_write():
+    """read_all is no write permission, but it is a project-read one, and the members' check wants
+    only that: an editor holding it and nothing else still writes. The write path is where the two
+    are told apart, because a read request never reaches the check."""
+    db = await _seed_gate_db(PROJECT_ROLE_EDITOR, None)
+    editor = User(id=_USER, username=_USER, email="u1@test.com", permissions=[Permissions.PROJECT_READ_ALL])
+
+    assert await _allows(check_project_access("p1", editor, db, required_role=PROJECT_ROLE_EDITOR))
+    assert await _allows(check_callgraph_access("p1", editor, db, require_write=True))

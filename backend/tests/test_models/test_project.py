@@ -88,8 +88,3 @@ class TestProjectGitHubTeamProvenance:
     def test_team_source_accepts_github(self):
         assert Project(name="p", team_source="github").team_source == "github"
 
-    def test_github_team_candidates_defaults_to_none(self):
-        assert Project(name="p").github_team_candidates is None
-
-    def test_github_team_candidates_records_an_ambiguous_match(self):
-        assert Project(name="p", github_team_candidates=3).github_team_candidates == 3

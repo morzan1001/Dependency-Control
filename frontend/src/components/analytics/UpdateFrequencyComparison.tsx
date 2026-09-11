@@ -38,6 +38,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { OwningTeamsCell } from '@/components/teams/OwningTeamsCell'
 import { useUpdateFrequencyComparison } from '@/hooks/queries/use-analytics'
 import { useTeams } from '@/hooks/queries/use-teams'
 import { formatDate, formatCoveragePct, formatUpdatesPerMonth } from '@/lib/utils'
@@ -423,7 +424,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                 <TableHead>#</TableHead>
                 <TableHead>Project</TableHead>
                 <TableHead>Branch</TableHead>
-                <TableHead>Team</TableHead>
+                <TableHead>Teams</TableHead>
                 <HintHeader align="right" hint="Version changes per month, measured over the selected window (updates ÷ window in months). Not extrapolated from scan spacing.">
                   Updates/Mo
                 </HintHeader>
@@ -465,7 +466,7 @@ function ProjectRankingTable({ projects }: Readonly<{ projects: ProjectUpdateSum
                       NO_VALUE
                     )}
                   </TableCell>
-                  <TableCell className="text-muted-foreground">{project.team_name || NO_VALUE}</TableCell>
+                  <TableCell className="text-muted-foreground"><OwningTeamsCell teams={project.teams} /></TableCell>
                   {project.data_status === 'ready' || project.data_status === 'partial' ? (
                     <MeasuredCells project={project} />
                   ) : (

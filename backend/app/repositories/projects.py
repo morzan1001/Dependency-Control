@@ -6,7 +6,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pymongo import ReadPreference, ReturnDocument
 
-from app.core.constants import PROJECT_ROLE_ADMIN
+from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_SOURCE_MANUAL
 from app.core.metrics import track_db_operation
 from app.models.project import Project
 from app.schemas.projections import ProjectMinimal, ProjectWithScanId
@@ -15,12 +15,230 @@ _COL = "projects"
 _MEMBERS_USER_ID = "members.user_id"
 
 
+UpdateOps = dict[str, Any] | list[dict[str, Any]]
+
+# A project whose ``team_ids`` is absent or explicitly null. Measured against the server: this
+# matches both, ``$size: 0`` matches neither, and neither shape answers an ownership filter — such a
+# project sits in no team view and in no unassigned view at once. Normalising it to ``[]`` at
+# startup is what lets everything downstream spell unassigned ``{"team_ids": {"$size": 0}}``.
+UNSHAPED_OWNERS: dict[str, Any] = {"team_ids": {"$in": [None]}}
+
+
+def _owned_by(source: str) -> dict[str, Any]:
+    """The team_sources entries this provider wrote, as an array of ``{k, v}`` documents."""
+    return {
+        "$filter": {
+            "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
+            "as": "entry",
+            "cond": {"$eq": ["$$entry.v", source]},
+        }
+    }
+
+
+def _sources_except(source: str) -> dict[str, Any]:
+    """The provenance map without the entries ``source`` wrote."""
+    return {
+        "$arrayToObject": {
+            "$filter": {
+                "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
+                "as": "entry",
+                "cond": {"$ne": ["$$entry.v", source]},
+            }
+        }
+    }
+
+
+# Owners no provenance entry names. They predate the field, and reading them as anything but a
+# hand assignment would let a provider retire an owner it cannot be shown to have set.
+_UNPROVENANCED = {
+    "$setDifference": [
+        {"$ifNull": ["$team_ids", []]},
+        {
+            "$map": {
+                "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
+                "as": "entry",
+                "in": "$$entry.k",
+            }
+        },
+    ]
+}
+
+
+def _retired_by(source: str) -> dict[str, Any]:
+    """The owners a ``source`` write replaces."""
+    named = {"$map": {"input": _owned_by(source), "as": "entry", "in": "$$entry.k"}}
+    if source != TEAM_SOURCE_MANUAL:
+        return named
+    return {"$setUnion": [named, _UNPROVENANCED]}
+
+
+def owners_replaced_by(project: Project, source: str) -> set[str]:
+    """``_retired_by`` in Python, for the callers that must size the result before writing it."""
+    named = {team_id for team_id, entry in project.team_sources.items() if entry == source}
+    if source != TEAM_SOURCE_MANUAL:
+        return named
+    return named | (set(project.team_ids) - set(project.team_sources))
+
+
+# Read against the freshly written list, so it has to run in a stage of its own.
+_MIRRORED_OWNER = {
+    "$cond": [
+        {"$in": [{"$ifNull": ["$team_id", None]}, {"$ifNull": ["$team_ids", []]}]},
+        "$team_id",
+        {"$ifNull": [{"$arrayElemAt": [{"$ifNull": ["$team_ids", []]}, 0]}, None]},
+    ]
+}
+
+_MIRRORED_SOURCE = {
+    "$ifNull": [
+        {
+            "$arrayElemAt": [
+                {
+                    "$map": {
+                        "input": {
+                            "$filter": {
+                                "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
+                                "as": "entry",
+                                "cond": {"$eq": ["$$entry.k", {"$ifNull": ["$team_id", None]}]},
+                            }
+                        },
+                        "as": "entry",
+                        "in": "$$entry.v",
+                    }
+                },
+                0,
+            ]
+        },
+        None,
+    ]
+}
+
+
+def scalar_mirror_stages() -> list[dict[str, Any]]:
+    """Point the legacy scalars at one of the stored owners, so the queries still reading them see
+    a team that genuinely owns the project rather than one it lost.
+
+    The incumbent is kept whenever it is still an owner: the array's order is whatever ``$setUnion``
+    produced, and letting it decide would flip the team a project lists under whenever a co-owner
+    with a lower id is added.
+    """
+    return [
+        {"$set": {"team_id": _MIRRORED_OWNER}},
+        {"$set": {"team_source": _MIRRORED_SOURCE}},
+    ]
+
+
+def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[str, Any]]:
+    """A pipeline update replacing exactly the owners ``source`` set, leaving the others alone.
+
+    A pipeline and not two modifiers: ``$pull`` plus ``$addToSet`` on ``team_ids`` in one classic
+    update is rejected with code 40, and splitting it into two writes exposes an empty ``team_ids``
+    to concurrent readers, which is indistinguishable from an unassigned project.
+
+    Both stored fields are read through ``$ifNull`` because a document missing either one would
+    otherwise be written ``team_ids: null`` — a value that matches neither ``{"$size": 0}`` nor an
+    element equality, so the project would drop out of the unassigned view and every ownership
+    view at once.
+    """
+    return [
+        {
+            "$set": {
+                "team_ids": {
+                    "$setUnion": [
+                        {"$setDifference": [{"$ifNull": ["$team_ids", []]}, _retired_by(source)]},
+                        team_ids,
+                    ]
+                },
+                "team_sources": {"$mergeObjects": [_sources_except(source), dict.fromkeys(team_ids, source)]},
+            }
+        },
+        *scalar_mirror_stages(),
+    ]
+
+
+def add_team_pipeline(team_id: str, source: str) -> list[dict[str, Any]]:
+    """Add one owner, leaving every other entry — including another provider's — as it is."""
+    return [
+        {
+            "$set": {
+                "team_ids": {"$setUnion": [{"$ifNull": ["$team_ids", []]}, [team_id]]},
+                "team_sources": {"$mergeObjects": [{"$ifNull": ["$team_sources", {}]}, {team_id: source}]},
+            }
+        },
+        *scalar_mirror_stages(),
+    ]
+
+
+def remove_team_pipeline(team_id: str) -> list[dict[str, Any]]:
+    """Remove one owner whatever wrote it, and the scalars with it when it was the mirrored one.
+
+    ``$pull`` and ``$unset`` would express the first half in one classic update, but not the
+    second: only a pipeline can point the scalars at a remaining owner in the same write.
+    """
+    return [
+        {
+            "$set": {
+                "team_ids": {"$setDifference": [{"$ifNull": ["$team_ids", []]}, [team_id]]},
+                "team_sources": {
+                    "$arrayToObject": {
+                        "$filter": {
+                            "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
+                            "as": "entry",
+                            "cond": {"$ne": ["$$entry.k", team_id]},
+                        }
+                    }
+                },
+            }
+        },
+        *scalar_mirror_stages(),
+    ]
+
+
+def literal_set_stage(fields: dict[str, Any]) -> dict[str, Any]:
+    """A ``$set`` stage writing stored values, for a pipeline that also computes some.
+
+    ``$literal`` because a stage reads a bare string beginning with ``$`` as a field path.
+    """
+    return {"$set": {name: {"$literal": value} for name, value in fields.items()}}
+
+
+def ownership_fields(team_ids: list[str], source: str) -> dict[str, Any]:
+    """The stored ownership of a project being inserted, scalars included.
+
+    Sorted, because that is the order ``$setUnion`` leaves behind: an unsorted insert would have
+    the first sync reorder the list and move the scalars to a different owner for no reason.
+    """
+    owners = sorted(set(team_ids))
+    return {
+        "team_ids": owners,
+        "team_sources": dict.fromkeys(owners, source),
+        "team_id": owners[0] if owners else None,
+        "team_source": source if owners else None,
+    }
+
+
 def _surviving_admin_filter(user_id: str, required: bool) -> dict[str, Any]:
     """Match only while a member other than ``user_id`` is an admin, so a write that would take
     the last one finds nothing to write to instead of racing a count from an earlier read."""
     if not required:
         return {}
     return {"members": {"$elemMatch": {"user_id": {"$ne": user_id}, "role": PROJECT_ROLE_ADMIN}}}
+
+
+def surviving_owner_admin_filter(incumbent_admin_owners: list[str]) -> dict[str, Any]:
+    """Match only while the project still holds an admin — a direct member, or one of the owners
+    that supplies one and the write leaves in place.
+
+    The same shape as ``_surviving_admin_filter`` and for the same reason: two concurrent writes
+    each taking one of the last two admin-supplying owners both pass a check made beforehand, and
+    the project ends up with nobody who can administer it.
+    """
+    return {
+        "$or": [
+            {"members": {"$elemMatch": {"role": PROJECT_ROLE_ADMIN}}},
+            {"team_ids": {"$in": incumbent_admin_owners}},
+        ]
+    }
 
 
 class ProjectRepository:
@@ -137,9 +355,15 @@ class ProjectRepository:
                 await self.collection.update_one({"_id": project_id}, {"$set": update_data})
         return await self.get_by_id(project_id)
 
-    async def update_raw(self, project_id: str, update_ops: dict[str, Any]) -> None:
+    async def update_raw(self, project_id: str, update_ops: UpdateOps, guard: dict[str, Any] | None = None) -> bool:
+        """``update_ops`` reaches the server verbatim: modifiers as a document, a pipeline as a list.
+
+        ``guard`` joins the write's own filter so a condition established beforehand cannot go
+        stale in between. False when it no longer held.
+        """
         with track_db_operation(_COL, "update_one"):
-            await self.collection.update_one({"_id": project_id}, update_ops)
+            result = await self.collection.update_one({"_id": project_id, **(guard or {})}, update_ops)
+        return bool(result.matched_count)
 
     async def delete(self, project_id: str) -> bool:
         with track_db_operation(_COL, "delete_one"):
@@ -207,8 +431,18 @@ class ProjectRepository:
             return await self.collection.aggregate(pipeline).to_list(limit)
 
     async def update_many(self, query: dict[str, Any], update_data: dict[str, Any]) -> int:
+        """``update_data`` is a document of field values; use ``update_many_raw`` for operators."""
         with track_db_operation(_COL, "update_many"):
             result = await self.collection.update_many(query, {"$set": update_data})
+        return result.modified_count
+
+    async def update_many_raw(self, query: dict[str, Any], update_ops: UpdateOps) -> int:
+        """``update_ops`` reaches the server verbatim: modifiers as a document, a pipeline as a list.
+
+        Counts modified, not matched: a pipeline that recomputes the value already stored reports 0.
+        """
+        with track_db_operation(_COL, "update_many"):
+            result = await self.collection.update_many(query, update_ops)
         return result.modified_count
 
     async def add_member(self, project_id: str, member_data: dict[str, Any]) -> bool:

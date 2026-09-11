@@ -162,46 +162,28 @@ describe('ProjectSettings GitHub PR decoration', () => {
   })
 })
 
-describe('ProjectSettings GitHub team assignment', () => {
+describe('ProjectSettings team ownership', () => {
   beforeEach(() => {
-    mockUseTeams.mockReturnValue({ data: [] })
+    mockUpdate.mockClear()
+    mockUseTeams.mockReturnValue({ data: [{ id: 't1', name: 'Payments', members: [] }] })
     mockUseGitHubInstances.mockReturnValue(githubInstances(true))
   })
 
-  it('names the team a rule picked out of several candidates', () => {
-    mockUseTeams.mockReturnValue({
-      data: [
-        { id: 't0', name: 'Platform' },
-        { id: 't1', name: 'Payments' },
-      ],
-    })
+  it('leaves ownership out of the settings form, which would otherwise save a stale owner set', async () => {
+    renderSettings(githubProject({ team_ids: ['t1'], team_sources: { t1: 'gitlab' } }))
 
-    renderSettings(githubProject({ team_id: 't1', team_source: 'github', github_team_candidates: 3 }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
 
-    expect(screen.getByText('3 teams matched, using Payments')).toBeInTheDocument()
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1]).not.toHaveProperty('team_id')
+    expect(mockUpdate.mock.calls[0][1]).not.toHaveProperty('team_ids')
   })
 
-  // The candidate count is recorded even when the provenance guard refuses the assignment, so the
-  // note would otherwise credit the tiebreak with the operator's own choice.
-  it('stays silent when the team was assigned by hand', () => {
-    mockUseTeams.mockReturnValue({ data: [{ id: 't1', name: 'Atlas' }] })
+  it('offers the owning teams next to the form rather than one team picker inside it', () => {
+    renderSettings(githubProject({ team_ids: ['t1'], team_sources: { t1: 'gitlab' } }))
 
-    renderSettings(githubProject({ team_id: 't1', team_source: 'manual', github_team_candidates: 3 }))
-
-    expect(screen.queryByText(/teams matched/)).toBeNull()
-  })
-
-  it('stays silent when exactly one team matched', () => {
-    mockUseTeams.mockReturnValue({ data: [{ id: 't1', name: 'Payments' }] })
-
-    renderSettings(githubProject({ team_id: 't1', team_source: 'github', github_team_candidates: 1 }))
-
-    expect(screen.queryByText(/teams matched/)).toBeNull()
-  })
-
-  it('stays silent for a project that predates the field', () => {
-    renderSettings(githubProject({ team_id: 't1', team_source: 'github' }))
-
-    expect(screen.queryByText(/teams matched/)).toBeNull()
+    expect(screen.getByText('Owning Teams')).toBeInTheDocument()
+    expect(screen.getByText('Payments')).toBeInTheDocument()
+    expect(screen.queryByText('No Team')).toBeNull()
   })
 })

@@ -4,6 +4,16 @@ export interface TeamMember {
   role: string;
 }
 
+// Whoever established a team's ownership of a project. A provider's entry is restored by its next
+// sync, so the UI has to say which kind an owner is before offering to remove it.
+export type TeamSource = 'gitlab' | 'github' | 'manual';
+
+// One owning team as the project list, the comparison rows and the chat tools name it.
+export interface TeamRef {
+  id: string;
+  name: string;
+}
+
 export interface Team {
   id: string;
   name: string;

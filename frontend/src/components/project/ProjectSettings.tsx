@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
 import { useAppConfig } from '@/hooks/queries/use-system'
-import { useTeams } from '@/hooks/queries/use-teams'
 import { projectKeys, useProjectBranches, useUpdateProjectNotifications } from '@/hooks/queries/use-projects'
 import { useProjectWebhooks, useCreateProjectWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
 import { useGitLabInstances, useGitHubInstances } from '@/hooks/queries/use-instances'
@@ -10,10 +9,10 @@ import { WebhookCreate } from '@/types/webhook'
 import { Project, ProjectUpdate } from '@/types/project'
 import { hasSettingsSchema, getSettingsSchema } from '@/lib/analyzer-settings-schemas'
 import { AnalyzerSettingsDialog } from './AnalyzerSettingsDialog'
+import { ProjectOwningTeams } from './ProjectOwningTeams'
 import { User } from '@/types/user'
 import { getErrorMessage } from '@/lib/utils'
 import { memberPreferences, enforcedPreferences } from '@/lib/notification-preferences'
-import { githubTeamCandidatesNote } from '@/lib/github-team'
 import { useAuth } from '@/context/useAuth'
 import {
   isProjectAdmin,
@@ -82,7 +81,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const isMember = !!project.members?.some(m => m.user_id === userId)
   
   const [name, setName] = useState(project.name)
-  const [teamId, setTeamId] = useState<string | undefined>(project.team_id || "none")
   const [retentionDays, setRetentionDays] = useState(project.retention_days || 90)
   const [retentionAction, setRetentionAction] = useState<string>(project.retention_action || 'delete')
   const [analyzers, setAnalyzers] = useState<string[]>(project.active_analyzers || [])
@@ -135,7 +133,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     return user.notification_preferences || {};
   })
 
-  const { data: teams } = useTeams();
   const { data: branches } = useProjectBranches(projectId);
   const { data: appConfig } = useAppConfig();
   const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useProjectWebhooks(projectId);
@@ -153,15 +150,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     ? githubInstances?.items.find((i) => i.id === project.github_instance_id)
     : undefined;
   const githubHasToken = linkedGithubInstance?.has_access_token ?? false;
-  // The count is recorded even when the provenance guard refuses the assignment, so the note is
-  // only honest about a team the sync actually chose.
-  const teamCandidatesNote =
-    project.team_source === "github"
-      ? githubTeamCandidatesNote(
-          project.github_team_candidates,
-          teams?.find((team) => team.id === project.team_id)?.name
-        )
-      : null;
 
   const deleteProjectMutation = useMutation({
     mutationFn: () => projectApi.delete(projectId),
@@ -225,7 +213,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     e?.preventDefault()
     updateProjectMutation.mutate({
       name,
-      team_id: teamId === "none" ? null : teamId,
       retention_days: retentionDays,
       retention_action: retentionAction as 'delete' | 'archive' | 'none',
       active_analyzers: analyzers,
@@ -278,22 +265,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                         value={name} 
                         onChange={(e) => setName(e.target.value)} 
                     />
-                </div>
-                <div className="grid gap-2">
-                    <Label htmlFor="team">Team</Label>
-                    <Select value={teamId} onValueChange={setTeamId}>
-                        <SelectTrigger>
-                            <SelectValue placeholder="Select a team" />
-                        </SelectTrigger>
-                        <SelectContent>
-                            <SelectItem value="none">No Team</SelectItem>
-                            {teams?.map((team) => (
-                                <SelectItem key={team.id} value={team.id}>
-                                    {team.name}
-                                </SelectItem>
-                            ))}
-                        </SelectContent>
-                    </Select>
                 </div>
                 <div className="grid gap-2">
                     <Label htmlFor="defaultBranch">Default Branch</Label>
@@ -427,9 +398,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                                     </>
                                 )}
                             </div>
-                            {teamCandidatesNote && (
-                                <p className="text-xs text-muted-foreground">{teamCandidatesNote}</p>
-                            )}
                             <p className="text-xs text-muted-foreground pt-2">
                                 This project was created from a GitHub instance. The link is managed by the GitHub Actions OIDC trust and isn't editable here.
                             </p>
@@ -620,6 +588,10 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
             </form>
         </CardContent>
       </Card>
+
+      {/* Its own card, not a field of the form above: each change takes effect on its own route, so
+          a form saved from a stale page cannot undo an owner a sync established in the meantime. */}
+      <ProjectOwningTeams project={project} projectId={projectId} canManage={canUpdate} />
 
       {openSettingsAnalyzer && (() => {
         const schema = getSettingsSchema(openSettingsAnalyzer)

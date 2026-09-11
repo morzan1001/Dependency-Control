@@ -11,7 +11,7 @@ from pydantic import ValidationError
 
 from app.core import security
 from app.core.config import settings
-from app.core.constants import API_KEY_SURFACE_ADHOC, API_KEY_SURFACE_MCP
+from app.core.constants import API_KEY_SURFACE_ADHOC, API_KEY_SURFACE_MCP, MAX_PROJECT_TEAMS
 from app.core.permissions import Permissions, has_permission
 from app.db.mongodb import get_database
 from app.models.project import Project
@@ -20,10 +20,15 @@ from app.models.user import User
 from app.repositories import (
     ProjectRepository,
     SystemSettingsRepository,
-    TeamRepository,
     UserRepository,
 )
 from app.repositories.api_keys import ApiKeyRepository
+from app.repositories.projects import (
+    literal_set_stage,
+    owners_replaced_by,
+    ownership_fields,
+    replace_team_subset_pipeline,
+)
 from app.schemas.token import TokenPayload
 from app.services.gitlab import GitLabService
 
@@ -180,81 +185,78 @@ async def _resolve_initial_member_id(
     return None
 
 
-async def _should_overwrite_team_id_from_sync(
-    project_team_id: str | None,
-    team_repo: TeamRepository,
-    team_source: str | None = None,
-) -> bool:
-    """Whether VCS sync may overwrite project.team_id.
+def _within_cap(source: str, would_own: set[str], repository_path: str) -> bool:
+    """Whether the owners a sync would leave behind stay inside the cap.
 
-    A manual team_source is never reverted by sync. For legacy projects
-    (team_source unknown), overwrite only when there is no team, the team is
-    missing, or the current team itself came from a sync.
+    The cap bounds the project, not one provider's answer, so it is measured against the whole
+    result. Refused rather than truncated: which owner to drop — this provider's, the other's, or
+    one assigned by hand — is not a question a sync can answer.
     """
-    if team_source == "manual":
-        return False
-    if not project_team_id:
+    if len(would_own) <= MAX_PROJECT_TEAMS:
         return True
-    current_team = await team_repo.get_raw_by_id(project_team_id)
-    if not current_team:
-        return True
-    return bool(current_team.get("gitlab_group_id") or current_team.get("github_team_id"))
+    logger.warning(
+        "%s sync would leave %s with %d owning teams, past the cap of %d; leaving its owners untouched.",
+        source,
+        repository_path,
+        len(would_own),
+        MAX_PROJECT_TEAMS,
+    )
+    return False
 
 
-async def _gitlab_team_sync_update(
+def _new_project_owners(source: str, resolved: list[str] | None, repository_path: str) -> list[str]:
+    """The owners to store on a project this ingest is creating."""
+    owners = sorted(set(resolved or []))
+    return owners if _within_cap(source, set(owners), repository_path) else []
+
+
+def _team_subset_stages(project: Project, source: str, resolved: list[str] | None, repository_path: str) -> list[dict]:
+    """The ownership stages this provider contributes, empty when there is nothing for it to write.
+
+    ``None`` from the provider is "it could not be asked", which must never read as "no team holds
+    this repository": the first leaves the owners it set alone, the second drops every one of them.
+    """
+    if resolved is None:
+        return []
+    owners = sorted(set(resolved))
+    owned_here = owners_replaced_by(project, source)
+    if not _within_cap(source, (set(project.team_ids) - owned_here) | set(owners), repository_path):
+        return []
+    # Every CI job of every pipeline arrives here, so an unchanged owner set writes nothing. The
+    # second half catches a document whose provenance names an owner the list never gained.
+    if owned_here == set(owners) and owned_here <= set(project.team_ids):
+        return []
+    return replace_team_subset_pipeline(source, owners)
+
+
+async def _gitlab_team_sync_stages(
     project: Project,
     gitlab_project_id: int,
     gitlab_project_path: str,
     gitlab_service: "GitLabService",
     db: AsyncIOMotorDatabase,
-) -> dict:
-    """Return the team_id update GitLab sync should merge, or an empty dict to skip."""
+) -> list[dict]:
+    """The ownership stages GitLab sync contributes to this ingest's update."""
     gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
-    team_id = await gitlab_service.sync_team_from_gitlab(
+    resolved = await gitlab_service.sync_team_from_gitlab(
         db,
         gitlab_project_id,
         gitlab_project_path,
         gitlab_project_data=gitlab_project_data,
     )
-    if not team_id or project.team_id == team_id:
-        return {}
-    team_repo = TeamRepository(db)
-    if await _should_overwrite_team_id_from_sync(project.team_id, team_repo, project.team_source):
-        # Stamp gitlab provenance so a later manual reassignment is not reverted on sync.
-        return {"team_id": team_id, "team_source": "gitlab"}
-    logger.info(
-        f"Keeping manual team assignment for project {project.id} ({gitlab_project_path}); "
-        f"GitLab sync would have set team_id={team_id}."
-    )
-    return {}
+    return _team_subset_stages(project, "gitlab", resolved.team_ids, gitlab_project_path)
 
 
-async def _github_team_sync_update(
+async def _github_team_sync_stages(
     project: Project,
     github_org: str,
     repository_path: str,
     github_service: "GitHubService",
     db: AsyncIOMotorDatabase,
-) -> dict:
-    """Return the team update GitHub sync should merge, or an empty dict to skip."""
+) -> list[dict]:
+    """The ownership stages GitHub sync contributes to this ingest's update."""
     result = await github_service.sync_team_from_github(db, github_org, repository_path)
-    updates: dict = {}
-    # None means the candidate list was never determined; keep the last known count.
-    if result.candidate_count is not None and result.candidate_count != project.github_team_candidates:
-        updates["github_team_candidates"] = result.candidate_count
-    if not result.team_id or project.team_id == result.team_id:
-        return updates
-    team_repo = TeamRepository(db)
-    if await _should_overwrite_team_id_from_sync(project.team_id, team_repo, project.team_source):
-        # Stamp github provenance so a later manual reassignment is not reverted on sync.
-        updates["team_id"] = result.team_id
-        updates["team_source"] = "github"
-        return updates
-    logger.info(
-        f"Keeping manual team assignment for project {project.id} ({repository_path}); "
-        f"GitHub sync would have set team_id={result.team_id}."
-    )
-    return updates
+    return _team_subset_stages(project, "github", result.team_ids, repository_path)
 
 
 async def _sync_project_name(
@@ -262,21 +264,29 @@ async def _sync_project_name(
     new_path: str,
     project_repo: ProjectRepository,
     path_field: str = "gitlab_project_path",
-    extra_updates: dict | None = None,
+    ownership_stages: list[dict] | None = None,
 ) -> Project:
-    """Sync project path/name if the VCS project was renamed."""
-    updates: dict = extra_updates or {}
+    """Apply the rename and the resolved ownership as one update.
+
+    The ownership half is a pipeline, which cannot be merged into the ``$set`` document the rename
+    is: both become stages of one pipeline instead, so an ingest still writes the project once.
+    """
+    stages: list[dict] = []
+    renamed: dict = {}
     current_path = getattr(project, path_field, None)
     if current_path and current_path != new_path:
-        updates[path_field] = new_path
+        renamed[path_field] = new_path
         if project.name == current_path:
-            updates["name"] = new_path
+            renamed["name"] = new_path
+    if renamed:
+        stages.append(literal_set_stage(renamed))
+    stages.extend(ownership_stages or [])
 
-    if updates:
-        await project_repo.update(project.id, updates)
-        for key, value in updates.items():
-            setattr(project, key, value)
-    return project
+    if not stages:
+        return project
+    await project_repo.update_raw(project.id, stages)
+    # The owners are computed server-side, so the caller is handed what was stored, not a guess.
+    return await project_repo.get_by_id_strong(project.id) or project
 
 
 async def _handle_gitlab_oidc(
@@ -306,11 +316,11 @@ async def _handle_gitlab_oidc(
 
     if project_data:
         project = Project(**project_data)
-        extra_updates: dict = {}
+        ownership_stages: list[dict] = []
 
         if gitlab_instance.sync_teams:
-            extra_updates.update(
-                await _gitlab_team_sync_update(project, gitlab_project_id, gitlab_project_path, gitlab_service, db)
+            ownership_stages = await _gitlab_team_sync_stages(
+                project, gitlab_project_id, gitlab_project_path, gitlab_service, db
             )
 
         return await _sync_project_name(
@@ -318,7 +328,7 @@ async def _handle_gitlab_oidc(
             gitlab_project_path,
             project_repo,
             path_field="gitlab_project_path",
-            extra_updates=extra_updates,
+            ownership_stages=ownership_stages,
         )
 
     if not gitlab_instance.auto_create_projects:
@@ -330,18 +340,16 @@ async def _handle_gitlab_oidc(
     initial_member_id = await _resolve_initial_member_id(user_repo, email=payload.user_email)
     members = [ProjectMember(user_id=initial_member_id, role="admin")] if initial_member_id else []
 
-    team_id = None
-    team_source = None
+    owners: list[str] = []
     if gitlab_instance.sync_teams:
         gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
-        team_id = await gitlab_service.sync_team_from_gitlab(
+        resolved = await gitlab_service.sync_team_from_gitlab(
             db,
             gitlab_project_id,
             gitlab_project_path,
             gitlab_project_data=gitlab_project_data,
         )
-        if team_id:
-            team_source = "gitlab"
+        owners = _new_project_owners("gitlab", resolved.team_ids, gitlab_project_path)
 
     new_project = Project(
         name=gitlab_project_path,
@@ -351,8 +359,7 @@ async def _handle_gitlab_oidc(
         gitlab_project_path=gitlab_project_path,
         default_branch=None,
         active_analyzers=default_analyzers,
-        team_id=team_id,
-        team_source=team_source,
+        **ownership_fields(owners, "gitlab"),
     )
 
     project, created = await project_repo.find_or_create_by_gitlab_key(instance_id, gitlab_project_id, new_project)
@@ -388,11 +395,11 @@ async def _handle_github_oidc(
     project_data = await project_repo.get_raw_by_github_composite_key(instance_id, repo_id)
     if project_data:
         project = Project(**project_data)
-        extra_updates: dict = {}
+        ownership_stages: list[dict] = []
 
         if github_instance.sync_teams:
-            extra_updates.update(
-                await _github_team_sync_update(project, gh_payload.repository_owner, repo_path, github_service, db)
+            ownership_stages = await _github_team_sync_stages(
+                project, gh_payload.repository_owner, repo_path, github_service, db
             )
 
         return await _sync_project_name(
@@ -400,7 +407,7 @@ async def _handle_github_oidc(
             repo_path,
             project_repo,
             path_field="github_repository_path",
-            extra_updates=extra_updates,
+            ownership_stages=ownership_stages,
         )
 
     if not github_instance.auto_create_projects:
@@ -412,15 +419,10 @@ async def _handle_github_oidc(
     initial_member_id = await _resolve_initial_member_id(user_repo, username=gh_payload.actor)
     members = [ProjectMember(user_id=initial_member_id, role="admin")] if initial_member_id else []
 
-    github_team_candidates = None
-    team_id = None
-    team_source = None
+    owners: list[str] = []
     if github_instance.sync_teams:
         sync_result = await github_service.sync_team_from_github(db, gh_payload.repository_owner, repo_path)
-        github_team_candidates = sync_result.candidate_count
-        if sync_result.team_id:
-            team_id = sync_result.team_id
-            team_source = "github"
+        owners = _new_project_owners("github", sync_result.team_ids, repo_path)
 
     new_project = Project(
         name=repo_path,
@@ -430,9 +432,7 @@ async def _handle_github_oidc(
         github_repository_path=repo_path,
         default_branch=None,
         active_analyzers=default_analyzers,
-        github_team_candidates=github_team_candidates,
-        team_id=team_id,
-        team_source=team_source,
+        **ownership_fields(owners, "github"),
     )
 
     project, created = await project_repo.find_or_create_by_github_key(instance_id, repo_id, new_project)

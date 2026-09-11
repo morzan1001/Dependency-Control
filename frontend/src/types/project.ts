@@ -1,5 +1,6 @@
 import { PaginatedResponse } from './common';
 import type { EnhancedStats } from './scan';
+import type { TeamRef, TeamSource } from './team';
 
 export type { EnhancedStats } from './scan';
 
@@ -25,9 +26,11 @@ export interface Project {
   id: string;
   name: string;
   owner_id?: string; // access is controlled via team/member admins
-  team_id?: string;
-  team_name?: string;
-  team_source?: 'gitlab' | 'github' | 'manual';
+  // Every team that owns the project. The detail read answers ids and their provenance; the list
+  // read and the analytics rows answer resolved names.
+  team_ids?: string[];
+  team_sources?: Record<string, TeamSource>;
+  teams?: TeamRef[];
   members?: ProjectMember[];
   active_analyzers?: string[];
   retention_days?: number;
@@ -45,7 +48,6 @@ export interface Project {
   github_instance_id?: string;
   github_repository_id?: string;
   github_repository_path?: string;
-  github_team_candidates?: number;
   github_pr_comments_enabled?: boolean;
   stats?: EnhancedStats | null;
   last_scan_at?: string;
@@ -64,7 +66,6 @@ export interface ProjectCreate {
 
 export interface ProjectUpdate {
   name?: string;
-  team_id?: string | null;
   active_analyzers?: string[];
   retention_days?: number;
   retention_action?: RetentionAction;

@@ -58,6 +58,27 @@
 
 
 
+# Upgrade notes for 1.9.27 — a project can belong to several teams
+
+**This release changes what per-team numbers mean.** A project now belongs to a list of teams rather than
+one, and it counts **fully at every** owning team. Per-team figures are therefore no longer additive:
+adding up the teams will exceed the estate total. That is correct, not a bug.
+
+- `team_id` on a project is replaced by `team_ids`, and each owner records who established it —
+  a GitLab sync, a GitHub sync, or a person. A sync only ever replaces the owners **it** set, so a team
+  someone added by hand is never removed by CI, and a repository that moves loses the team it left.
+- The project list and the API now report `teams: [{id, name}]` where they used to report a single
+  `team_name`. A project with no owner reports `[]`.
+- Ownership moved out of the project settings form into its own card: add and remove owners individually.
+  Removing an owner a provider established only lasts until the next sync re-establishes it, and the UI
+  says so. A project cannot be left with no team able to administer it, and 16 owners is the cap.
+- Everyone in **any** owning team reaches the project, with the strongest role any of those teams grants —
+  so gaining a co-owner can never take access away from anyone who already had it.
+
+**Metabase dashboards are not adjusted by this release.** Cards that read `projects.team_id` will
+undercount every co-owned project, and cards that group on the team without unwinding will bucket by the
+whole owner list. They need fixing separately.
+
 # Upgrade notes for 1.9.24 — the legacy API key systems are gone
 
 **Both older key systems have been removed.** `dca_` keys (ad-hoc analysis) and `mcp_` keys (MCP) no

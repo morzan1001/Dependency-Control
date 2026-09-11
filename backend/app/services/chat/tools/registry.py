@@ -10,6 +10,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
 from app.api.v1.helpers.projects import build_user_project_query
+from app.api.v1.helpers.teams import resolve_team_names, team_refs
 from app.core.constants import (
     MAX_COMPLIANCE_REPORT_PAGE,
     MAX_CRYPTO_ASSET_PAGE,
@@ -305,16 +306,13 @@ class ChatToolRegistry:
             limit = _clamp_limit(args.get("limit"), 15, maximum=MAX_SUMMARY_ROWS)
             cursor = db["projects"].find(query, sort=[("last_scan_at", -1)], limit=limit)
             projects = await cursor.to_list(length=limit)
-            return {
-                "projects": [
-                    _serialize_doc(
-                        p,
-                        ["_id", "name", "team_id", "stats", "last_scan_at", "created_at"],
-                    )
-                    for p in projects
-                ],
-                "count": len(projects),
-            }
+            team_names = await resolve_team_names(db, {tid for p in projects for tid in p.get("team_ids") or []})
+            rows = []
+            for p in projects:
+                row = _serialize_doc(p, ["_id", "name", "stats", "last_scan_at", "created_at"])
+                row["teams"] = [ref.model_dump() for ref in team_refs(p.get("team_ids") or [], team_names)]
+                rows.append(row)
+            return {"projects": rows, "count": len(rows)}
 
         if tool_name == "get_project_details":
             project = await self._get_authorized_project(args["project_id"], user_project_query, db)
@@ -639,7 +637,7 @@ class ChatToolRegistry:
                 user.permissions, Permissions.TEAM_READ_ALL
             ):
                 return {"error": _ERR_ACCESS_DENIED}
-            query = {**user_project_query, "team_id": args["team_id"]}
+            query = {**user_project_query, "team_ids": args["team_id"]}
             projects, projects_total = await bounded_read(
                 db["projects"], query, subject="team projects", limit=_TEAM_PROJECT_READ
             )
@@ -1303,7 +1301,7 @@ class ChatToolRegistry:
                 return {"error": _ERR_ACCESS_DENIED}
             projects, projects_total = await bounded_read(
                 db["projects"],
-                {"team_id": args["team_id"]},
+                {"team_ids": args["team_id"]},
                 subject="team projects",
                 limit=_TEAM_RISK_PROJECT_READ,
                 projection={"_id": 1, "name": 1, "stats": 1, "last_scan_at": 1},

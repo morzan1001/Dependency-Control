@@ -24,8 +24,16 @@ def _seed_team(db, _id, name, **fields):
     db.teams._docs[_id] = doc
 
 
-def _seed_project(db, _id, team_id, **fields):
-    doc = {"_id": _id, "name": _id, "team_id": team_id}
+def _seed_project(db, _id, team_id, team_source=None, **fields):
+    """A project as the phase-1 migration leaves it: the owner in the list, the scalar mirroring it."""
+    doc = {
+        "_id": _id,
+        "name": _id,
+        "team_ids": [team_id] if team_id else [],
+        "team_sources": {team_id: team_source} if team_id and team_source else {},
+        "team_id": team_id,
+        "team_source": team_source,
+    }
     doc.update(fields)
     db.projects._docs[_id] = doc
 
@@ -194,14 +202,26 @@ class TestBackfillProvenance:
         # to 'manual' on read and survives the next sync merge.
         assert members["legacy-u"].get("source") != "gitlab"
 
-    def test_stamps_team_source_gitlab_on_projects_of_synced_team(self):
+    def test_stamps_the_owner_entry_of_projects_of_a_synced_team(self):
         db = FakeDatabase()
         _seed_team(db, "t-synced", "GitLab Group: acme", gitlab_instance_id="inst-a", gitlab_group_id=42)
         _seed_project(db, "p1", "t-synced", gitlab_instance_id="inst-a", gitlab_project_id=1)
 
         asyncio.run(_backfill_member_and_team_provenance(db))
 
+        assert db.projects._docs["p1"]["team_sources"] == {"t-synced": "gitlab"}
         assert db.projects._docs["p1"]["team_source"] == "gitlab"
+
+    def test_leaves_a_co_owner_this_team_did_not_supply_alone(self):
+        db = FakeDatabase()
+        _seed_team(db, "t-synced", "GitLab Group: acme", gitlab_instance_id="inst-a", gitlab_group_id=42)
+        _seed_project(db, "p1", "t-synced", gitlab_instance_id="inst-a", gitlab_project_id=1)
+        db.projects._docs["p1"]["team_ids"].append("t-hand")
+        db.projects._docs["p1"]["team_sources"]["t-hand"] = "manual"
+
+        asyncio.run(_backfill_member_and_team_provenance(db))
+
+        assert db.projects._docs["p1"]["team_sources"] == {"t-synced": "gitlab", "t-hand": "manual"}
 
     def test_does_not_stamp_team_source_for_manual_team_projects(self):
         db = FakeDatabase()
@@ -210,7 +230,7 @@ class TestBackfillProvenance:
 
         asyncio.run(_backfill_member_and_team_provenance(db))
 
-        assert db.projects._docs["p1"].get("team_source") is None
+        assert db.projects._docs["p1"].get("team_sources") == {}
 
     def test_does_not_overwrite_existing_team_source(self):
         db = FakeDatabase()
@@ -220,6 +240,7 @@ class TestBackfillProvenance:
 
         asyncio.run(_backfill_member_and_team_provenance(db))
 
+        assert db.projects._docs["p1"]["team_sources"] == {"t-synced": "manual"}
         assert db.projects._docs["p1"]["team_source"] == "manual"
 
     def test_idempotent_second_run_is_noop(self):
@@ -266,7 +287,7 @@ class TestBackfillProvenance:
         original_update_many = db.projects.update_many
 
         async def failing_update_many(query, update, **kwargs):
-            if query.get("team_id") == "t-bad":
+            if query.get("team_ids") == "t-bad":
                 raise RuntimeError("boom")
             return await original_update_many(query, update, **kwargs)
 
@@ -276,7 +297,7 @@ class TestBackfillProvenance:
             asyncio.run(_backfill_member_and_team_provenance(db))  # must NOT raise
 
         # The good team's project must still have been stamped despite the bad team failing.
-        assert db.projects._docs["p-good"]["team_source"] == "gitlab"
+        assert db.projects._docs["p-good"]["team_sources"] == {"t-good": "gitlab"}
         assert any("t-bad" in r.message for r in caplog.records)
 
 

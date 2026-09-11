@@ -1,6 +1,23 @@
-"""Mock MongoDB objects for testing repository logic without a real database."""
+"""Mock MongoDB objects for testing repository logic without a real database.
+
+This double records calls; it does not store documents. It still rejects an update whose
+modifiers touch overlapping paths, because the server rejects that at parse time and a test
+asserting such a call would otherwise prove a write that can never land.
+"""
 
 from unittest.mock import AsyncMock, MagicMock
+
+from tests.mocks.fake_mongo import assert_no_path_conflict
+
+
+def _validating_update(result):
+    """An update method that answers with a canned result once the update parses."""
+
+    def _update(_filter, update, *_args, **_kwargs):
+        assert_no_path_conflict(update)
+        return result
+
+    return AsyncMock(side_effect=_update)
 
 
 def create_mock_collection(**method_returns):
@@ -14,14 +31,16 @@ def create_mock_collection(**method_returns):
     collection = MagicMock()
     collection.find_one = AsyncMock(return_value=method_returns.get("find_one"))
     collection.insert_one = AsyncMock(return_value=MagicMock(inserted_id="mock-id"))
-    collection.find_one_and_update = AsyncMock(return_value=method_returns.get("find_one_and_update"))
-    collection.update_one = AsyncMock(return_value=MagicMock(modified_count=1))
-    collection.update_many = AsyncMock(return_value=MagicMock(modified_count=1))
+    collection.find_one_and_update = _validating_update(method_returns.get("find_one_and_update"))
+    collection.update_one = _validating_update(MagicMock(modified_count=1))
+    collection.update_many = _validating_update(MagicMock(modified_count=1))
     collection.delete_one = AsyncMock(return_value=MagicMock(deleted_count=1))
     collection.count_documents = AsyncMock(return_value=method_returns.get("count_documents", 0))
     collection.distinct = AsyncMock(return_value=method_returns.get("distinct", []))
     collection.bulk_write = AsyncMock(return_value=MagicMock(modified_count=method_returns.get("bulk_write", 0)))
     collection.create_index = AsyncMock(return_value=None)
+    # A read preference selects a server, not a collection: with_options answers with the same data.
+    collection.with_options = MagicMock(return_value=collection)
 
     # find() returns a chainable cursor mock
     cursor = MagicMock()

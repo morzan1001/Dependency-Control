@@ -907,16 +907,43 @@ class TestScopeAndTeams:
         assert [p.project_id for p in comparison.projects] == [PROJECT]
 
     @pytest.mark.asyncio
-    async def test_rows_carry_the_team_name(self):
+    async def test_a_row_names_every_team_that_owns_it(self):
+        db = FakeDatabase()
+        await db.teams.insert_many([{"_id": "team-1", "name": "Platform"}, {"_id": "team-2", "name": "Alpha"}])
+        await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ())
+        await _seed_scan(db, "s2", _days_ago(50), {"requests": "2.1.0"}, ())
+        await _build_ledger(db)
+
+        comparison = await _co_owned_comparison(db, ["team-1", "team-2"], filter_team="team-1")
+
+        assert [(t.id, t.name) for t in comparison.projects[0].teams] == [("team-2", "Alpha"), ("team-1", "Platform")]
+
+    @pytest.mark.asyncio
+    async def test_a_co_owned_project_is_ranked_under_each_of_its_owners(self):
+        db = FakeDatabase()
+        await db.teams.insert_many([{"_id": "team-1", "name": "Platform"}, {"_id": "team-2", "name": "Alpha"}])
+        await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ())
+        await _seed_scan(db, "s2", _days_ago(50), {"requests": "2.1.0"}, ())
+        await _build_ledger(db)
+        await _seed_co_owned(db, ["team-1", "team-2"])
+
+        under_each = [await _rollup_comparison(db, [PROJECT], team) for team in ("team-1", "team-2")]
+
+        assert [[p.project_id for p in c.projects] for c in under_each] == [[PROJECT], [PROJECT]]
+
+    @pytest.mark.asyncio
+    async def test_a_project_no_team_owns_is_ranked_under_no_team(self):
         db = FakeDatabase()
         await db.teams.insert_one({"_id": "team-1", "name": "Platform"})
         await _seed_scan(db, "s1", _days_ago(60), {"requests": "2.0.0"}, ())
         await _seed_scan(db, "s2", _days_ago(50), {"requests": "2.1.0"}, ())
         await _build_ledger(db)
 
-        comparison = await _comparison(db, [PROJECT], team_id="team-1")
+        unfiltered = await _comparison(db, [PROJECT])
+        under_team = await _rollup_comparison(db, [PROJECT], "team-1")
 
-        assert comparison.projects[0].team_name == "Platform"
+        assert ([p.project_id for p in unfiltered.projects], unfiltered.projects[0].teams) == ([PROJECT], [])
+        assert under_team.projects == []
 
 
 async def _seed_projects(db: FakeDatabase, project_ids: list[str], team_id: str | None = None) -> None:
@@ -925,11 +952,34 @@ async def _seed_projects(db: FakeDatabase, project_ids: list[str], team_id: str 
             {
                 "_id": project_id,
                 "name": f"Project {project_id}",
-                "team_id": team_id,
+                "team_ids": [team_id] if team_id else [],
                 "default_branch": None,
                 "deleted_branches": [],
             }
         )
+
+
+async def _seed_co_owned(db: FakeDatabase, owners: list[str]) -> None:
+    await db.projects.insert_one(
+        {
+            "_id": PROJECT,
+            "name": f"Project {PROJECT}",
+            "team_ids": owners,
+            "default_branch": None,
+            "deleted_branches": [],
+        }
+    )
+
+
+async def _rollup_comparison(db: FakeDatabase, project_ids: list[str], team_id: str) -> UpdateFrequencyComparison:
+    """The comparison over projects already seeded, narrowed to one owning team."""
+    payload = await _compute_comparison_from_rollup(db, project_ids, team_id, window_days=WINDOW_DAYS)
+    return UpdateFrequencyComparison(**payload)
+
+
+async def _co_owned_comparison(db: FakeDatabase, owners: list[str], *, filter_team: str) -> UpdateFrequencyComparison:
+    await _seed_co_owned(db, owners)
+    return await _rollup_comparison(db, [PROJECT], filter_team)
 
 
 async def _comparison(

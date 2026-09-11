@@ -477,7 +477,7 @@ class TestTeamSyncNamespaceCheck:
                 ),
             )
         )
-        assert result is None
+        assert result.team_ids is None
 
     def test_returns_none_when_no_project_data(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
@@ -490,7 +490,7 @@ class TestTeamSyncNamespaceCheck:
                 gitlab_project_data=None,
             )
         )
-        assert result is None
+        assert result.team_ids is None
 
 
 class TestTeamSyncGroupMembers:
@@ -627,7 +627,7 @@ class TestTeamSyncGroupMembers:
             )
 
             # Should return existing team ID
-            assert result == "existing-team-id"
+            assert result.team_ids == ["existing-team-id"]
             # Should have called update_one to set members
             teams_coll.update_one.assert_called_once()
 
@@ -648,7 +648,7 @@ class TestTeamSyncSilentReturnsAreLogged:
                 )
             )
 
-        assert result is None
+        assert result.team_ids is None
         assert any("999" in r.message and "project details" in r.message.lower() for r in caplog.records), (
             f"Expected warning naming project_id 999 and 'project details'. Got: {[r.message for r in caplog.records]}"
         )
@@ -670,7 +670,7 @@ class TestTeamSyncSilentReturnsAreLogged:
                 )
             )
 
-        assert result is None
+        assert result.team_ids is None
         assert any("777" in r.message and "user namespace" in r.message.lower() for r in caplog.records), (
             f"Expected info naming project_id 777 and 'user namespace'. Got: {[r.message for r in caplog.records]}"
         )
@@ -697,7 +697,7 @@ class TestTeamSyncSilentReturnsAreLogged:
                     )
                 )
 
-        assert result is None
+        assert result.team_ids is None
         assert any("555" in r.message for r in caplog.records), (
             f"Expected the warning to mention project_id 555 so operators can locate the orphaned project. "
             f"Got: {[r.message for r in caplog.records]}"
@@ -724,7 +724,7 @@ class TestTeamSyncSilentReturnsAreLogged:
                     )
                 )
 
-        assert result is None
+        assert result.team_ids is None
         # error log must include the project id so operators can find the orphan
         assert any("222" in r.message for r in caplog.records), (
             f"Expected error log to include project_id 222. Got: {[r.message for r in caplog.records]}"
@@ -809,6 +809,7 @@ class TestTeamSyncInstanceScoping:
     """GitLab team matching must be scoped to the (instance, group) composite key; two instances owning a group with the SAME path must NOT collide."""
 
     def _sync(self, instance, teams_coll, group_id, group_path):
+        """The one team the group resolves to, or None."""
         service = GitLabService(instance)
         members = [GitLabMember(username="dev", email="dev@test.com", access_level=30)]
         user_doc = {"_id": "uid", "username": "dev"}
@@ -816,7 +817,7 @@ class TestTeamSyncInstanceScoping:
         db = create_mock_db({"teams": teams_coll, "users": users_coll})
         with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
             mock_members.return_value = members
-            return asyncio.run(
+            result = asyncio.run(
                 service.sync_team_from_gitlab(
                     db=db,
                     gitlab_project_id=100,
@@ -828,6 +829,7 @@ class TestTeamSyncInstanceScoping:
                     ),
                 )
             )
+        return result.team_ids[0] if result.team_ids else None
 
     def test_same_group_path_across_instances_does_not_collide(self):
         """Instance A and B both own a group at path 'shared-grp' (same group id, different instances); syncing B must create a NEW team, not adopt/mutate A's."""
@@ -917,7 +919,7 @@ class TestTeamSyncMergeSemantics:
                 )
             )
 
-        assert result == "team-1"
+        assert result.team_ids == ["team-1"]
         teams_coll.update_one.assert_called_once()
         update_set = teams_coll.update_one.call_args[0][1]["$set"]
         merged = {m["user_id"]: m for m in update_set["members"]}
@@ -1003,7 +1005,7 @@ class TestTeamSyncEmaillessMembers:
         users_coll.insert_one.assert_not_called()
         # The only member was skipped -> empty member set -> no new team created.
         teams_coll.insert_one.assert_not_called()
-        assert result is None
+        assert result.team_ids == []
 
     def test_member_without_email_or_username_is_skipped(self, gitlab_instance_a, caplog):
         service = GitLabService(gitlab_instance_a)

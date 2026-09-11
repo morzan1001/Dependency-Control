@@ -2,7 +2,7 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, NamedTuple
 
 import httpx
 from motor.motor_asyncio import AsyncIOMotorDatabase
@@ -29,6 +29,16 @@ from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 logger = logging.getLogger(__name__)
 
 _GITLAB_API_TIMEOUT = 10.0
+
+
+class GitLabTeamSyncResult(NamedTuple):
+    """The Dependency Control teams GitLab says own the project — at most the one group's.
+
+    ``team_ids`` is None when GitLab could not be asked, which is not the empty list: the first
+    leaves the project's GitLab owner alone, the second retires it.
+    """
+
+    team_ids: list[str] | None
 
 
 class GitLabService:
@@ -521,15 +531,19 @@ class GitLabService:
         gitlab_project_id: int,
         gitlab_project_path: str,
         gitlab_project_data: GitLabProjectDetails | None = None,
-    ) -> str | None:
-        """Sync GitLab group members to a local Team and return its id, or None on any failure."""
+    ) -> GitLabTeamSyncResult:
+        """Sync the GitLab group's members to a local Team and report which team owns the project.
+
+        Undetermined on any failure: the owning group is what GitLab was asked for, and an
+        unanswered question must not read as "this project has no GitLab owner".
+        """
         team_repo = TeamRepository(db)
         user_repo = UserRepository(db)
 
         try:
             target = await self._resolve_sync_target_group(gitlab_project_id, gitlab_project_path, gitlab_project_data)
             if target is None:
-                return None
+                return GitLabTeamSyncResult(None)
             group_id, group_path = target
             team_name = f"GitLab Group: {group_path}"
             description = f"Imported from GitLab Group {group_path}"
@@ -545,19 +559,22 @@ class GitLabService:
                 # is unsafe: two instances owning a same-path group would collide cross-tenant.
                 team = await team_repo.get_raw_by_gitlab_group(instance_id, group_id)
                 if team:
-                    return str(team["_id"])
+                    return GitLabTeamSyncResult([str(team["_id"])])
                 logger.warning(
                     f"No existing team for group '{team_name}' (group_id={group_id}); "
-                    f"project_id={gitlab_project_id} will be left without a team_id."
+                    f"the owner of project_id={gitlab_project_id} stays undetermined."
                 )
-                return None
+                return GitLabTeamSyncResult(None)
 
             # Match ONLY by the (instance, group) composite key (see no-members branch above).
             existing_team = await team_repo.get_raw_by_gitlab_group(instance_id, group_id)
             team_members = await self._build_team_members(members, user_repo)
-            return await self._upsert_team_with_members(
+            team_id = await self._upsert_team_with_members(
                 team_repo, existing_team, team_name, description, instance_id, group_id, team_members
             )
+            # No team and none creatable is an answer, not a failure: the group's members are all
+            # strangers here, so nothing in Dependency Control owns the project.
+            return GitLabTeamSyncResult([team_id] if team_id else [])
 
         except Exception as e:
             logger.exception(
@@ -567,4 +584,4 @@ class GitLabService:
                 type(e).__name__,
                 e,
             )
-            return None
+            return GitLabTeamSyncResult(None)

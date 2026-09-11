@@ -1045,7 +1045,7 @@ async def compute_update_frequency_comparison(
         return ProjectUpdateSummary(
             project_id=_project_key(project),
             project_name=project.get("name", ""),
-            team_name=project.get("team_name"),
+            teams=project.get("teams") or [],
             data_status=status,
             branch=branch,
             window_days=window_days,
@@ -1054,7 +1054,7 @@ async def compute_update_frequency_comparison(
     async def _compute_single(project: dict[str, Any]) -> ProjectUpdateSummary:
         project_id = _project_key(project)
         project_name = project.get("name", "")
-        team_name = project.get("team_name")
+        teams = project.get("teams") or []
 
         branches = by_project.get(project_id, {})
         primary = select_primary_branch(branches, project.get("default_branch"), project.get("deleted_branches"))
@@ -1083,7 +1083,7 @@ async def compute_update_frequency_comparison(
             return ProjectUpdateSummary(
                 project_id=metrics.project_id,
                 project_name=metrics.project_name,
-                team_name=team_name,
+                teams=teams,
                 # The walk reads the very scans coverage is measured against, so it
                 # cannot fall behind them the way the delta ledger can.
                 data_status="ready",

@@ -263,32 +263,50 @@ class TestUpdateTeam:
 
 
 class TestDeleteTeam:
-    def test_cascades_project_unassignment(self, admin_user):
+    def test_the_deleted_team_stops_owning_every_project_and_its_co_owners_stay(self, admin_user):
+        """Deleting a team is the reaper for its id: nothing else removes an owner whose team is
+        gone, and a co-owner must not be reaped with it."""
         from app.api.v1.endpoints.teams import delete_team
 
-        mock_team_repo = MagicMock()
-        mock_team_repo.delete = AsyncMock()
-
-        mock_proj_repo = MagicMock()
-        mock_proj_repo.update_many = AsyncMock(return_value=2)
-
-        mock_db = MagicMock()
-        mock_db.webhooks.delete_many = AsyncMock(return_value=MagicMock(deleted_count=0))
+        db = _fake_db_with_team([("admin-1", TEAM_ROLE_ADMIN)])
+        asyncio.run(
+            db.projects.insert_one(
+                {
+                    "_id": "p-shared",
+                    "name": "shared",
+                    "team_ids": ["team-1", "team-keep"],
+                    "team_sources": {"team-1": "gitlab", "team-keep": "manual"},
+                    "team_id": "team-1",
+                    "team_source": "gitlab",
+                }
+            )
+        )
+        asyncio.run(
+            db.projects.insert_one(
+                {
+                    "_id": "p-sole",
+                    "name": "sole",
+                    "team_ids": ["team-1"],
+                    "team_sources": {"team-1": "gitlab"},
+                    "team_id": "team-1",
+                    "team_source": "gitlab",
+                }
+            )
+        )
 
         with patch(f"{MODULE}.check_team_access", new_callable=AsyncMock):
-            with patch(f"{MODULE}.TeamRepository", return_value=mock_team_repo):
-                # Patched at source: delete_team uses a function-level import
-                with patch("app.repositories.ProjectRepository", return_value=mock_proj_repo):
-                    asyncio.run(
-                        delete_team(
-                            team_id="team-1",
-                            current_user=admin_user,
-                            db=mock_db,
-                        )
-                    )
+            asyncio.run(delete_team(team_id="team-1", current_user=admin_user, db=db))
 
-        mock_proj_repo.update_many.assert_called_once_with({"team_id": "team-1"}, {"team_id": None})
-        mock_team_repo.delete.assert_called_once_with("team-1")
+        shared = db.projects._docs["p-shared"]
+        assert shared["team_ids"] == ["team-keep"]
+        assert shared["team_sources"] == {"team-keep": "manual"}
+        assert shared["team_id"] == "team-keep"
+        assert shared["team_source"] == "manual"
+
+        sole = db.projects._docs["p-sole"]
+        assert sole["team_ids"] == []
+        assert sole["team_id"] is None
+        assert "team-1" not in db.teams._docs
 
 
 class TestAddTeamMember:
@@ -479,29 +497,14 @@ class TestDeleteTeamPermissions:
     def test_user_with_team_delete_bypasses_ownership_check(self, admin_user):
         from app.api.v1.endpoints.teams import delete_team
 
-        mock_team_repo = MagicMock()
-        mock_team_repo.delete = AsyncMock()
-        mock_proj_repo = MagicMock()
-        mock_proj_repo.update_many = AsyncMock(return_value=0)
-
-        mock_db = MagicMock()
-        mock_db.webhooks.delete_many = AsyncMock(return_value=MagicMock(deleted_count=0))
+        db = _fake_db_with_team([("admin-1", TEAM_ROLE_ADMIN)])
 
         # check_team_access is NOT called when has_permission("team:delete") is True
         with patch(f"{MODULE}.check_team_access", new_callable=AsyncMock) as mock_access:
-            with patch(f"{MODULE}.TeamRepository", return_value=mock_team_repo):
-                # Patched at source: delete_team uses a function-level import
-                with patch("app.repositories.ProjectRepository", return_value=mock_proj_repo):
-                    asyncio.run(
-                        delete_team(
-                            team_id="team-1",
-                            current_user=admin_user,
-                            db=mock_db,
-                        )
-                    )
+            asyncio.run(delete_team(team_id="team-1", current_user=admin_user, db=db))
 
         mock_access.assert_not_called()
-        mock_team_repo.delete.assert_called_once()
+        assert "team-1" not in db.teams._docs
 
     def test_user_without_team_delete_must_be_owner(self, regular_user):
         from app.api.v1.endpoints.teams import delete_team

@@ -104,22 +104,8 @@ class ScopeResolver:
         return ResolvedScope(scope="global", scope_id=None, project_ids=None)
 
     async def _resolve_user(self) -> ResolvedScope:
-        # Super-users with PROJECT_READ_ALL see every project under the user scope.
-        from app.core.permissions import Permissions, has_permission
-
-        perms = getattr(self.user, "permissions", None)
-        if perms is not None and has_permission(perms, Permissions.PROJECT_READ_ALL):
-            all_ids = await self._list_all_project_ids()
-            return ResolvedScope(scope="user", scope_id=None, project_ids=all_ids)
-
         project_ids = await self._list_user_project_ids()
         return ResolvedScope(scope="user", scope_id=None, project_ids=project_ids)
-
-    async def _list_all_project_ids(self) -> list[str]:
-        """Return every project_id in the database — super-user escape hatch."""
-        cursor = self.db.projects.find({}, {"_id": 1}).limit(scope_probe_limit())
-        docs = ensure_whole_scope(await cursor.to_list(length=scope_probe_limit()))
-        return [str(d["_id"]) for d in docs]
 
     async def _check_project_member(self, project_id: str) -> bool:
         from app.api.v1.helpers.projects import check_project_access
@@ -145,23 +131,20 @@ class ScopeResolver:
     async def _list_team_project_ids(self, team_id: str) -> list[str]:
         from app.repositories.projects import ProjectRepository
 
-        projects = await ProjectRepository(self.db).find_many_minimal({"team_id": team_id}, limit=scope_probe_limit())
+        projects = await ProjectRepository(self.db).find_many_minimal({"team_ids": team_id}, limit=scope_probe_limit())
         return [str(p.id) for p in ensure_whole_scope(projects)]
 
     async def _list_user_project_ids(self) -> list[str]:
-        """Return all project IDs the current user has any access to."""
+        """Every project the user may see, under the same query the project routes are filtered by.
+
+        Shared rather than restated: two spellings of one access rule drift, and the half that
+        drifts is invisible until someone is shown a project the other spelling would have hidden.
+        A read-all user gets an empty filter, which is the whole collection.
+        """
+        from app.api.v1.helpers.projects import build_user_project_query
         from app.repositories.teams import TeamRepository
 
-        team_repo = TeamRepository(self.db)
-        user_teams = await team_repo.find_by_member(str(self.user.id))
-        team_ids = [t.id for t in user_teams]
-
-        query: dict = {
-            "$or": [
-                {"members.user_id": str(self.user.id)},
-                {"team_id": {"$in": team_ids}},
-            ]
-        }
+        query = await build_user_project_query(self.user, TeamRepository(self.db))
         cursor = self.db.projects.find(query, {"_id": 1}).limit(scope_probe_limit())
         docs = ensure_whole_scope(await cursor.to_list(length=scope_probe_limit()))
         return [str(d["_id"]) for d in docs]

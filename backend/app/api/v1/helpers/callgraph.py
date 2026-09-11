@@ -5,14 +5,18 @@ from typing import Any
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.v1.helpers.projects import is_write_superuser, max_project_role, team_derived_role
+from app.api.v1.helpers.projects import (
+    is_write_superuser,
+    max_project_role,
+    may_read_projects,
+    team_derived_role,
+)
 from app.core.constants import (
     PROJECT_ROLE_EDITOR,
     PROJECT_ROLES,
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.callgraph import CallEdge, ImportEntry, ModuleUsage
-from app.models.project import owning_team_ids
 from app.models.user import User
 from app.repositories import ProjectRepository, TeamRepository
 from app.services.aggregation.components import canonical_module_key, npm_package_key
@@ -37,8 +41,7 @@ async def _effective_project_role(
 ) -> str | None:
     """MAX(direct member role, role from any owning team), or None if not a member."""
     direct_role = _member_role(project.get("members", []), user_id)
-    team_ids = owning_team_ids(project.get("team_id"))
-    team_role = await team_derived_role(team_ids, user_id, team_repo)
+    team_role = await team_derived_role(project.get("team_ids") or [], user_id, team_repo)
 
     return max_project_role(direct_role, team_role)
 
@@ -52,7 +55,8 @@ async def check_callgraph_access(
     """Verify callgraph access and return the raw project document, or raise 403/404.
 
     Mirrors ``check_project_access``: project:update/project:delete is the write
-    superuser, project:read_all is read-only, members need editor or admin to write.
+    superuser, project:read_all is read-only, members need editor or admin to write,
+    and a member must hold a project-read permission besides their role.
     """
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
@@ -69,6 +73,9 @@ async def check_callgraph_access(
 
     role = await _effective_project_role(project, str(user.id), team_repo)
     if role is None:
+        raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
+
+    if not may_read_projects(user):
         raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
 
     if require_write and PROJECT_ROLES.index(role) < PROJECT_ROLES.index(PROJECT_ROLE_EDITOR):

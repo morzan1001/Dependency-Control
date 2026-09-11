@@ -18,6 +18,7 @@ from app.schemas.analytics import (
     SlowPackage,
     UpdateFrequencyMetrics,
 )
+from app.schemas.team import TeamRef
 from app.services.release_history import UpstreamCadenceMetrics
 from app.services.update_frequency import (
     ECOSYSTEM_DOMINANCE_THRESHOLD,
@@ -117,7 +118,7 @@ class FoldedWindow:
         self,
         project_id: str,
         project_name: str,
-        team_name: str | None = None,
+        teams: list[TeamRef] | None = None,
         *,
         branch: str | None = None,
         window_days: int,
@@ -132,7 +133,7 @@ class FoldedWindow:
         return ProjectUpdateSummary(
             project_id=project_id,
             project_name=project_name,
-            team_name=team_name,
+            teams=teams or [],
             data_status=data_status,
             branch=branch,
             window_days=window_days,

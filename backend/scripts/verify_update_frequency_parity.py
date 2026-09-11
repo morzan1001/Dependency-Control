@@ -95,7 +95,7 @@ _SCALAR_FIELDS = (
 # Everything a comparison row shows.
 _SUMMARY_FIELDS = (
     "project_name",
-    "team_name",
+    "teams",
     "data_status",
     "branch",
     "window_days",

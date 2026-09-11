@@ -6,7 +6,7 @@ import fakeredis.aioredis
 import pytest
 
 from app.core.cache import CacheService
-from app.services.github import _REPOSITORY_ACCEPT, GitHubService, GitHubTeamRepoAccess
+from app.services.github import _REPOSITORY_ACCEPT, GitHubService
 from tests.mocks.github import make_github_instance
 
 _ORG_URL = "https://api.github.com/organizations/1234"
@@ -108,12 +108,12 @@ class TestTeamRepositoryCheck:
         with patch.object(service, "_api_get", new=AsyncMock(return_value=_response(200, _TEAM_REPOSITORY))) as get:
             access = await service.get_team_repository("acme", "payments", "acme", "widgets")
 
-        assert access == GitHubTeamRepoAccess(True, _TEAM_REPOSITORY)
+        assert access is True
         assert get.await_args.args[0] == "/orgs/acme/teams/payments/repos/acme/widgets"
 
     @pytest.mark.asyncio
     async def test_asks_for_the_media_type_that_carries_the_permissions(self, fake_cache):
-        """Without it GitHub answers 204 with no body and the permission rule loses its input."""
+        """Without it GitHub answers 204, and holding the repository stops looking like a 200."""
         service = _service()
         client = MagicMock()
         client.get = AsyncMock(return_value=_response(200, _TEAM_REPOSITORY))
@@ -134,9 +134,7 @@ class TestTeamRepositoryCheck:
     async def test_a_404_says_the_team_does_not_hold_it(self, fake_cache):
         service = _service()
         with patch.object(service, "_api_get", new=AsyncMock(return_value=_response(404))):
-            assert await service.get_team_repository("acme", "sre", "acme", "widgets") == GitHubTeamRepoAccess(
-                False, None
-            )
+            assert await service.get_team_repository("acme", "sre", "acme", "widgets") is False
 
     @pytest.mark.asyncio
     async def test_a_refusal_is_undetermined_rather_than_a_no(self, fake_cache, caplog):
@@ -146,7 +144,7 @@ class TestTeamRepositoryCheck:
             with caplog.at_level("WARNING", logger="app.services.github"):
                 access = await service.get_team_repository("acme", "payments", "acme", "widgets")
 
-        assert access == GitHubTeamRepoAccess(None, None)
+        assert access is None
         warnings = [record.getMessage() for record in caplog.records if record.levelname == "WARNING"]
         assert len(warnings) == 1, warnings
         assert "403" in warnings[0]
@@ -155,9 +153,7 @@ class TestTeamRepositoryCheck:
     async def test_an_unreachable_api_is_undetermined(self, fake_cache):
         service = _service()
         with patch.object(service, "_api_get", new=AsyncMock(return_value=None)):
-            assert await service.get_team_repository("acme", "payments", "acme", "widgets") == GitHubTeamRepoAccess(
-                None, None
-            )
+            assert await service.get_team_repository("acme", "payments", "acme", "widgets") is None
 
     @pytest.mark.asyncio
     async def test_the_second_check_is_served_from_the_cache(self, fake_cache):
@@ -166,8 +162,7 @@ class TestTeamRepositoryCheck:
             await service.get_team_repository("acme", "payments", "acme", "widgets")
             second = await service.get_team_repository("acme", "payments", "acme", "widgets")
 
-        # Equality after a JSON round-trip: the permissions object survives it.
-        assert second == GitHubTeamRepoAccess(True, _TEAM_REPOSITORY)
+        assert second is True
         assert get.await_count == 1
 
     @pytest.mark.asyncio
@@ -178,7 +173,7 @@ class TestTeamRepositoryCheck:
             first = await service.get_team_repository("acme", "sre", "acme", "widgets")
             second = await service.get_team_repository("acme", "sre", "acme", "widgets")
 
-        assert first == second == GitHubTeamRepoAccess(False, None)
+        assert first is False and second is False
         assert get.await_count == 1
 
     @pytest.mark.asyncio
@@ -186,24 +181,24 @@ class TestTeamRepositoryCheck:
         service = _service()
         responses = [_response(500), _response(200, _TEAM_REPOSITORY)]
         with patch.object(service, "_api_get", new=AsyncMock(side_effect=responses)):
-            assert (await service.get_team_repository("acme", "payments", "acme", "widgets")).has_repo is None
-            assert (await service.get_team_repository("acme", "payments", "acme", "widgets")).has_repo is True
+            assert await service.get_team_repository("acme", "payments", "acme", "widgets") is None
+            assert await service.get_team_repository("acme", "payments", "acme", "widgets") is True
 
     @pytest.mark.asyncio
     async def test_one_repository_never_answers_for_another(self, fake_cache):
         service = _service()
         responses = [_response(200, _TEAM_REPOSITORY), _response(404)]
         with patch.object(service, "_api_get", new=AsyncMock(side_effect=responses)):
-            assert (await service.get_team_repository("acme", "payments", "acme", "widgets")).has_repo is True
-            assert (await service.get_team_repository("acme", "payments", "acme", "gadgets")).has_repo is False
+            assert await service.get_team_repository("acme", "payments", "acme", "widgets") is True
+            assert await service.get_team_repository("acme", "payments", "acme", "gadgets") is False
 
     @pytest.mark.asyncio
     async def test_one_team_never_answers_for_another(self, fake_cache):
         service = _service()
         responses = [_response(200, _TEAM_REPOSITORY), _response(404)]
         with patch.object(service, "_api_get", new=AsyncMock(side_effect=responses)):
-            assert (await service.get_team_repository("acme", "payments", "acme", "widgets")).has_repo is True
-            assert (await service.get_team_repository("acme", "sre", "acme", "widgets")).has_repo is False
+            assert await service.get_team_repository("acme", "payments", "acme", "widgets") is True
+            assert await service.get_team_repository("acme", "sre", "acme", "widgets") is False
 
 
 class TestOrgTeams:

@@ -18,6 +18,7 @@ from app.core.permissions import Permissions, has_permission
 from app.models.project import Project
 from app.models.user import User
 from app.repositories import ProjectRepository, TeamRepository
+from app.repositories.projects import surviving_owner_admin_filter
 
 _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 
@@ -36,7 +37,9 @@ async def build_user_project_query(
     return {
         "$or": [
             {"members.user_id": str(user.id)},
-            {"team_id": {"$in": team_ids}},
+            # An element test, not a scalar equality: a project answers to every team that owns it,
+            # so a co-owner's members see it whichever owner a writer left in the scalar.
+            {"team_ids": {"$in": team_ids}},
         ]
     }
 
@@ -52,6 +55,16 @@ _WRITE_SUPERUSER_PERMISSIONS = [Permissions.PROJECT_UPDATE, Permissions.PROJECT_
 def is_write_superuser(user: User) -> bool:
     """True if the user is a global write superuser (manage any project)."""
     return has_permission(user.permissions, _WRITE_SUPERUSER_PERMISSIONS)
+
+
+def may_read_projects(user: User) -> bool:
+    """Whether the user holds a project-read permission at all.
+
+    A project role says which projects, this says whether the user reads projects; every resource
+    gate wants both, and one that settles for the role alone hands a member with no project
+    permission the resource anyway.
+    """
+    return has_permission(user.permissions, [Permissions.PROJECT_READ, Permissions.PROJECT_READ_ALL])
 
 
 def _is_write_request(required_role: str | None) -> bool:
@@ -96,6 +109,29 @@ async def team_derived_role(
                 granted = PROJECT_ROLE_ADMIN if member.get("role") == TEAM_ROLE_ADMIN else PROJECT_ROLE_VIEWER
                 role = max_project_role(role, granted)
     return role
+
+
+async def admin_survival_guard(
+    project: Project,
+    surviving_owners: set[str],
+    team_repo: TeamRepository,
+) -> dict[str, Any]:
+    """The write filter under which an ownership change keeps someone able to administer the project.
+
+    A filter rather than a verdict: which teams supply an admin is answered from the ``teams``
+    collection and cannot be part of a query on ``projects``, but *which of them the project still
+    holds* can, and that is the half a concurrent write invalidates. An empty filter is a write
+    that brings its own admin along; one naming no owner matches nothing, which is the refusal.
+    """
+    incumbent: list[str] = []
+    for owner_id in sorted(surviving_owners):
+        team = await team_repo.get_raw_by_id(owner_id)
+        if not team or not any(member.get("role") == TEAM_ROLE_ADMIN for member in team.get("members", [])):
+            continue
+        if owner_id not in project.team_ids:
+            return {}
+        incumbent.append(owner_id)
+    return surviving_owner_admin_filter(incumbent)
 
 
 async def _resolve_effective_role(
@@ -145,7 +181,7 @@ async def check_project_access(
     if not is_member:
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
-    if Permissions.PROJECT_READ not in user.permissions and Permissions.PROJECT_READ_ALL not in user.permissions:
+    if not may_read_projects(user):
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     if required_role:

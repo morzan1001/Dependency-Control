@@ -173,6 +173,16 @@ PROJECT_ROLE_EDITOR = "editor"
 PROJECT_ROLE_VIEWER = "viewer"
 PROJECT_ROLES = [PROJECT_ROLE_VIEWER, PROJECT_ROLE_EDITOR, PROJECT_ROLE_ADMIN]
 
+# Owning teams per project. Every project access resolves each owner's document to derive the
+# caller's role, so the list is a per-request cost, and a sync resolving past this many teams has
+# gone wrong in a way that would hand the project to everyone rather than to its owners.
+MAX_PROJECT_TEAMS = 16
+
+# Provenance of one owning-team entry. An owner that no team_sources entry names is read as this
+# one: nothing can establish which provider put it there, and naming a provider by guess would
+# have that provider's next sync retire an owner nobody chose to retire.
+TEAM_SOURCE_MANUAL = "manual"
+
 # Upper bound on a user-entered policy comment, shared by the audit entry and the request bodies.
 POLICY_COMMENT_MAX_LENGTH = 1000
 

@@ -10,6 +10,7 @@ from app.core.permissions import ALL_PERMISSIONS
 from app.core.security import get_password_hash
 from app.db.mongodb import get_database
 from app.models.user import User
+from app.repositories.projects import UNSHAPED_OWNERS, scalar_mirror_stages
 from app.services.crypto_policy.seeder import seed_crypto_policies
 
 logger = logging.getLogger(__name__)
@@ -111,7 +112,7 @@ async def _backfill_synced_team_gitlab_ids(database: AsyncIOMotorDatabase[Any]) 
             if team.get("gitlab_instance_id"):
                 continue
 
-            linked = await projects.find({"team_id": team_id}, {"gitlab_instance_id": 1}).to_list(None)
+            linked = await projects.find({"team_ids": team_id}, {"gitlab_instance_id": 1}).to_list(None)
             instance_ids = {p.get("gitlab_instance_id") for p in linked if p.get("gitlab_instance_id")}
 
             if len(instance_ids) != 1:
@@ -157,8 +158,8 @@ async def _backfill_synced_team_gitlab_ids(database: AsyncIOMotorDatabase[Any]) 
 
 
 async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[Any]) -> None:
-    """Idempotent provenance backfill: stamp team_source="gitlab" on projects linked to a
-    gitlab-synced team, but only where team_source is unset (never overwrite "manual").
+    """Idempotent provenance backfill: stamp "gitlab" on the owner entry of projects owned by a
+    gitlab-synced team, but only where that entry is unset (never overwrite "manual").
 
     Members are intentionally left unstamped: stamping existing members "gitlab" would put
     manually-added members inside the gitlab subset the next sync's merge replaces, silently
@@ -185,11 +186,14 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
             if not team.get("gitlab_group_id"):
                 continue
 
-            # $nin matches both missing fields and null, so already-stamped projects
-            # ("manual" or "gitlab") are left untouched.
+            # Per owner, not per project: a project can hold several, and only this one's entry
+            # is known to have come from GitLab. Without it the next sync sees no owner of its
+            # own to replace and leaves a transferred project owned by both teams.
+            provenance = f"team_sources.{team_id}"
+            # $nin matches both missing fields and null, so already-stamped owners are untouched.
             result = await projects.update_many(
-                {"team_id": team_id, "team_source": {"$nin": ["manual", "gitlab"]}},
-                {"$set": {"team_source": "gitlab"}},
+                {"team_ids": team_id, provenance: {"$nin": ["manual", "gitlab", "github"]}},
+                [{"$set": {provenance: "gitlab"}}, *scalar_mirror_stages()],
             )
             projects_stamped += getattr(result, "modified_count", 0) or 0
         except Exception:
@@ -203,13 +207,24 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
 
     if synced_teams:
         logger.info(
-            "Provenance backfill complete: %d project(s) stamped team_source=gitlab "
+            "Provenance backfill complete: %d project(s) stamped an owner gitlab "
             "across %d synced team(s), %d team(s) failed and skipped. "
             "(Members intentionally left unstamped so manually-added members survive merges.)",
             projects_stamped,
             len(synced_teams),
             failed,
         )
+
+
+async def _normalise_unowned_projects(database: AsyncIOMotorDatabase[Any]) -> None:
+    """Give every project an owner array, so unassigned has one spelling instead of three.
+
+    Idempotent: the filter never matches a document that already carries an array.
+    """
+    result = await database["projects"].update_many(UNSHAPED_OWNERS, {"$set": {"team_ids": []}})
+    normalised = getattr(result, "modified_count", 0) or 0
+    if normalised:
+        logger.info("Owner normalisation: gave %d project(s) with no team_ids an empty owner list", normalised)
 
 
 async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
@@ -223,6 +238,8 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
     await _backfill_synced_team_gitlab_ids(database)
     # Runs after the instance-id backfill so teams that just gained their instance id are included.
     await _backfill_member_and_team_provenance(database)
+    # After the provenance backfill, whose pipeline writes team_ids on the projects it stamps.
+    await _normalise_unowned_projects(database)
 
     # Users
     await database["users"].create_index("username", unique=True)
@@ -230,7 +247,15 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     # Projects
     await database["projects"].create_index("owner_id")
+    # Nothing reads team_id any more; it survives only because the write mirror still maintains it.
+    # TODO(phase 8): drop this index in the same migration that drops the scalar, so a document
+    # rewritten by the cutover is not indexed on a field that no longer exists.
     await database["projects"].create_index("team_id")
+    # Multikey: serves the element equality every ownership filter is, the $in a member's visible
+    # scope is, and the $in [None] the normaliser above is. The project list sorts after filtering
+    # and this index cannot supply that order, so it blocking-sorts the matched set; a compound
+    # {team_ids, <sort key>} would remove it (measured), but only one sort key can be picked and the
+    # list offers six, so at this collection size the sort is left to run in memory.
     await database["projects"].create_index("team_ids")
     await database["projects"].create_index("name")
     await database["projects"].create_index("members.user_id")

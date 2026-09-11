@@ -5,6 +5,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from app.schemas.team import TeamRef
+
 
 class CVEEnrichmentResult(BaseModel):
     """Result of CVE enrichment data processing from process_cve_enrichments()."""
@@ -435,7 +437,7 @@ class ProjectUpdateSummary(BaseModel):
 
     project_id: str
     project_name: str
-    team_name: str | None = None
+    teams: list[TeamRef] = Field(default_factory=list)
     data_status: UpdateDataStatus
     # Branch the metrics describe; projects rarely carry a default_branch, so the
     # row has to say which one was picked.

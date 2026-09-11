@@ -14,6 +14,7 @@ from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import (
+    admin_survival_guard,
     aggregate_stats_by_category,
     apply_system_settings_enforcement,
     build_pagination_response,
@@ -26,8 +27,11 @@ from app.api.v1.helpers import (
     load_from_gridfs,
     parse_sort_direction,
     resolve_sbom_refs,
+    resolve_team_names,
+    team_refs,
 )
 from app.api.v1.helpers.auth import send_project_member_added_email
+from app.api.v1.helpers.projects import max_project_role
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
@@ -35,7 +39,14 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
     RESP_AUTH_404_500,
 )
-from app.core.constants import PROJECT_ROLE_ADMIN, SCAN_USABLE_STATUSES
+from app.core.constants import (
+    MAX_PROJECT_TEAMS,
+    PROJECT_ROLE_ADMIN,
+    PROJECT_ROLE_VIEWER,
+    SCAN_USABLE_STATUSES,
+    TEAM_ROLE_ADMIN,
+    TEAM_SOURCE_MANUAL,
+)
 from app.core.permissions import Permissions, has_permission
 from app.core.risk_scoring import risk_score_expr
 from app.core.trufflehog import SECRET_DESCRIPTION_PREFIX, resolve_detector_name
@@ -57,6 +68,14 @@ from app.repositories import (
     UserRepository,
     WaiverRepository,
 )
+from app.repositories.projects import (
+    add_team_pipeline,
+    literal_set_stage,
+    owners_replaced_by,
+    ownership_fields,
+    remove_team_pipeline,
+    replace_team_subset_pipeline,
+)
 from app.schemas.project import (
     BranchInfo,
     BranchTip,
@@ -68,6 +87,7 @@ from app.schemas.project import (
     ProjectMemberInvite,
     ProjectMemberUpdate,
     ProjectNotificationSettings,
+    ProjectTeamAssignment,
     ProjectUpdate,
     ProjectWithTeam,
     RecentScan,
@@ -91,11 +111,13 @@ logger = logging.getLogger(__name__)
 MONGO_GROUP = "$group"
 
 _MSG_PROJECT_NOT_FOUND = "Project not found"
+_MSG_TEAM_NOT_FOUND = "Team not found"
 _MSG_SCAN_NOT_FOUND = "Scan not found"
 _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 _MSG_ALREADY_A_MEMBER = "User already a member"
 _MSG_LAST_ADMIN_REMOVE = "Cannot remove the last admin. Add another admin first."
 _MSG_LAST_ADMIN_DEMOTE = "Cannot demote the last admin. Add another admin first."
+_MSG_LAST_ADMIN_OWNER = "This would leave the project without an admin; add one first"
 
 _SCAN_HISTORY_PAGE_SIZE = 100
 
@@ -243,9 +265,8 @@ async def create_project(
     project = Project(
         id=project_id,
         name=project_in.name,
-        team_id=project_in.team_id,
         # A user-chosen team is a manual assignment.
-        team_source="manual" if project_in.team_id else None,
+        **ownership_fields([project_in.team_id] if project_in.team_id else [], TEAM_SOURCE_MANUAL),
         api_key_hash=api_key_hash,
         active_analyzers=project_in.active_analyzers,
         retention_days=(project_in.retention_days if project_in.retention_days is not None else 90),
@@ -312,7 +333,7 @@ async def read_projects(
     if search:
         search_query["name"] = {"$regex": re.escape(search), "$options": "i"}
     if team_id:
-        search_query["team_id"] = team_id
+        search_query["team_ids"] = team_id
 
     permission_query = await build_user_project_query(current_user, team_repo)
 
@@ -335,16 +356,12 @@ async def read_projects(
         sort_order=direction,
     )
 
-    team_ids = [p.team_id for p in projects if p.team_id]
-    team_name_map = {}
-    if team_ids:
-        teams = await team_repo.find_many({"_id": {"$in": team_ids}}, limit=len(team_ids))
-        team_name_map = {t.id: t.name for t in teams}
+    team_name_map = await resolve_team_names(db, {team_id for p in projects for team_id in p.team_ids})
 
     enriched_projects = []
     for p in projects:
         p_data = p.model_dump()
-        p_data["team_name"] = team_name_map.get(p.team_id) if p.team_id else None
+        p_data["teams"] = team_refs(p.team_ids, team_name_map)
         enriched_projects.append(ProjectWithTeam(**p_data))
 
     return build_pagination_response(enriched_projects, total, skip, limit)
@@ -404,26 +421,51 @@ async def read_all_scans(
     return scans
 
 
-def _merge_team_members(data: dict[str, Any], t_users: dict[str, str]) -> None:
-    """Merge team members into project members list, skipping duplicates."""
-    team_data = data.get("team_data")
-    if not team_data:
-        return
+# Every owning team's member ids as one flat list. A field path across two array levels answers
+# an array per team, which the $in below can never match an id against.
+_OWNING_TEAM_MEMBER_IDS = {
+    "$reduce": {
+        "input": {"$ifNull": ["$team_data", []]},
+        "initialValue": [],
+        "in": {
+            "$setUnion": [
+                "$$value",
+                {"$map": {"input": {"$ifNull": ["$$this.members", []]}, "as": "m", "in": "$$m.user_id"}},
+            ]
+        },
+    }
+}
 
+
+def _merge_team_members(data: dict[str, Any], t_users: dict[str, str]) -> None:
+    """Add the members the owning teams bring in, each at the strongest role any of them grants.
+
+    Strongest and not first: ``team_ids`` is in whatever order the last writer left it and the join
+    answers in the teams collection's, so a first-wins merge would hand a user who is an admin of
+    one owner and a plain member of another a different role from one request to the next. Someone
+    already named in the project's own members keeps that entry — it is theirs to be removed from.
+    """
     existing_ids = {m["user_id"] for m in data["members"]}
-    for tm in team_data.get("members", []):
-        uid = tm["user_id"]
-        if uid in existing_ids:
-            continue
-        role = "admin" if tm.get("role") in ["admin"] else "viewer"
-        data["members"].append(
-            {
+    inherited: dict[str, dict[str, Any]] = {}
+
+    # By id, so the team named as the source of a role two owners grant equally is always the same.
+    for team in sorted(data.get("team_data") or [], key=lambda team: str(team.get("_id"))):
+        for tm in team.get("members", []):
+            uid = tm["user_id"]
+            if uid in existing_ids:
+                continue
+            role = PROJECT_ROLE_ADMIN if tm.get("role") == TEAM_ROLE_ADMIN else PROJECT_ROLE_VIEWER
+            held = inherited.get(uid)
+            if held is not None and max_project_role(held["role"], role) == held["role"]:
+                continue
+            inherited[uid] = {
                 "user_id": uid,
                 "role": role,
                 "username": t_users.get(uid),
-                "inherited_from": f"Team: {team_data.get('name')}",
+                "inherited_from": f"Team: {team.get('name')}",
             }
-        )
+
+    data["members"].extend(inherited.values())
 
 
 @router.get("/{project_id}", summary="Get project details", responses=RESP_AUTH_404)
@@ -435,18 +477,18 @@ async def read_project(
     """Get a specific project by ID."""
     project_repo = ProjectRepository(db)
 
-    # Single aggregation to avoid N+1 team/user lookups.
+    # Single aggregation to avoid N+1 team/user lookups. The owning teams stay an array: an array
+    # localField joins many, and unwinding them would answer one copy of the project per owner.
     pipeline: list[dict[str, Any]] = [
         {"$match": {"_id": project_id}},
         {
             "$lookup": {
                 "from": "teams",
-                "localField": "team_id",
+                "localField": "team_ids",
                 "foreignField": "_id",
                 "as": "team_data",
             }
         },
-        {"$unwind": {"path": "$team_data", "preserveNullAndEmptyArrays": True}},
         {
             "$lookup": {
                 "from": "users",
@@ -461,7 +503,7 @@ async def read_project(
         {
             "$lookup": {
                 "from": "users",
-                "let": {"team_member_ids": {"$ifNull": ["$team_data.members.user_id", []]}},
+                "let": {"team_member_ids": _OWNING_TEAM_MEMBER_IDS},
                 "pipeline": [
                     {"$match": {"$expr": {"$in": [{"$toString": "$_id"}, "$$team_member_ids"]}}},
                     {"$project": {"_id": 1, "username": 1}},
@@ -513,20 +555,48 @@ async def _load_project_for_update(
     return await check_project_access(project_id, current_user, db, required_role="admin")
 
 
-async def _assert_can_transfer_team(
+async def _assert_may_hand_to_team(
     project: Project,
-    project_in: ProjectUpdate,
+    team_id: str | None,
     current_user: User,
     team_repo: TeamRepository,
 ) -> None:
-    """Block team transfers unless the actor is a global admin or member of the target team."""
-    if not project_in.team_id or project_in.team_id == project.team_id:
+    """Block handing a project to a team unless the actor is a write superuser or one of its members.
+
+    An id nothing resolves to is refused ahead of the ownership check, so both routes answer 404
+    for it: it grants nobody anything and no sync would ever reap it.
+    """
+    if not team_id:
         return
+    if not await team_repo.get_by_id(team_id):
+        raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
+    if team_id in project.team_ids:
+        return
+    if len(project.team_ids) >= MAX_PROJECT_TEAMS:
+        raise HTTPException(status_code=400, detail=f"A project may be owned by at most {MAX_PROJECT_TEAMS} teams")
     if is_write_superuser(current_user):
         return
-    is_member = await team_repo.is_member(project_in.team_id, str(current_user.id))
-    if not is_member:
+    if not await team_repo.is_member(team_id, str(current_user.id)):
         raise HTTPException(status_code=403, detail="You are not a member of the target team")
+
+
+async def _admin_survival_guard_for(
+    project: Project,
+    chosen: str | None,
+    current_user: User,
+    team_repo: TeamRepository,
+) -> dict[str, Any]:
+    """The guard for replacing the project's hand-assigned owners with ``chosen``.
+
+    Same rule as removing one owner: a write superuser may leave a project only they can
+    administer, because they are the ones who can undo it.
+    """
+    if is_write_superuser(current_user):
+        return {}
+    surviving = set(project.team_ids) - owners_replaced_by(project, TEAM_SOURCE_MANUAL)
+    if chosen:
+        surviving.add(chosen)
+    return await admin_survival_guard(project, surviving, team_repo)
 
 
 async def _assert_gitlab_mr_token_present(
@@ -611,13 +681,18 @@ async def update_project(
     team_repo = TeamRepository(db)
 
     project = await _load_project_for_update(project_id, current_user, db)
-    await _assert_can_transfer_team(project, project_in, current_user, team_repo)
+    await _assert_may_hand_to_team(project, project_in.team_id, current_user, team_repo)
 
     update_data = dict(project_in.model_dump(exclude_unset=True))
-    # Stamp manual provenance only when the team actually changes, so an unrelated
-    # edit can't flip a sync-assigned project to "manual".
-    if "team_id" in update_data and update_data["team_id"] != project.team_id:
-        update_data["team_source"] = "manual"
+    # team_id names the caller's own assignment, so it replaces the owners marked manual and
+    # leaves a provider's alone — only that provider retires those. /teams adds one without
+    # displacing another; this route is the single-team picker, and says exactly that.
+    ownership_stages: list[dict] = []
+    guard: dict[str, Any] = {}
+    if "team_id" in update_data:
+        chosen = update_data.pop("team_id")
+        ownership_stages = replace_team_subset_pipeline(TEAM_SOURCE_MANUAL, [chosen] if chosen else [])
+        guard = await _admin_survival_guard_for(project, chosen, current_user, team_repo)
     await _assert_gitlab_mr_token_present(project, update_data, db)
     await _assert_github_pr_token_present(project, update_data, db)
 
@@ -631,14 +706,86 @@ async def update_project(
     # Capture the pre-update license policy so we can audit transitions.
     old_license_policy = _resolve_license_policy(project)
 
-    if update_data:
-        await project_repo.update(project_id, update_data)
+    stages = ([literal_set_stage(update_data)] if update_data else []) + ownership_stages
+    # An unguarded write matching nothing means the project is gone, which the read below answers.
+    if stages and not await project_repo.update_raw(project_id, stages, guard) and guard:
+        raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_OWNER)
 
-    updated_project = await project_repo.get_by_id(project_id)
+    updated_project = await project_repo.get_by_id_strong(project_id)
     if not updated_project:
         raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 
     await _audit_license_policy_change(db, project_id, old_license_policy, updated_project, current_user)
+    return updated_project
+
+
+@router.post("/{project_id}/teams", summary="Add an owning team", responses=RESP_AUTH_400_404)
+async def add_project_team(
+    project_id: str,
+    assignment: ProjectTeamAssignment,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+) -> Project:
+    """Add a team as an owner of the project. Requires 'admin' role.
+
+    Ownership is what grants a team's members access, so this is an access grant and takes the same
+    rule as a transfer: the caller hands out only what they are part of, unless they may write to
+    every project anyway.
+
+    A team that already owns the project is answered with the project as it stands. Writing the
+    entry again would restamp it as a hand assignment, which is how a provider's owner would come
+    to outlive the sync that is supposed to retire it — and this route grants ownership, it does
+    not decide who established it.
+    """
+    project_repo = ProjectRepository(db)
+    team_repo = TeamRepository(db)
+
+    project = await _load_project_for_update(project_id, current_user, db)
+    await _assert_may_hand_to_team(project, assignment.team_id, current_user, team_repo)
+
+    if assignment.team_id not in project.team_ids:
+        await project_repo.update_raw(project_id, add_team_pipeline(assignment.team_id, TEAM_SOURCE_MANUAL))
+
+    updated_project = await project_repo.get_by_id_strong(project_id)
+    if not updated_project:
+        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
+    return updated_project
+
+
+@router.delete("/{project_id}/teams/{team_id}", summary="Remove an owning team", responses=RESP_AUTH_400_404)
+async def remove_project_team(
+    project_id: str,
+    team_id: str,
+    current_user: CurrentUserDep,
+    db: DatabaseDep,
+) -> Project:
+    """Stop a team owning the project, whichever provider assigned it. Requires 'admin' role.
+
+    The project-admin gate is the whole rule: a project admin is either a direct member or an admin
+    of one of the owning teams, so requiring more would only stop the admins of one owner from
+    touching another's entry — which is exactly how a project stuck with a wrong owner stays stuck.
+
+    Taking the last team that supplies an admin is refused for everyone but a write superuser: it
+    leaves a project only they can administer, which is the state they alone can undo.
+    """
+    project_repo = ProjectRepository(db)
+    team_repo = TeamRepository(db)
+
+    project = await _load_project_for_update(project_id, current_user, db)
+    if team_id not in project.team_ids:
+        raise HTTPException(status_code=404, detail="That team does not own this project")
+
+    guard: dict[str, Any] = {}
+    if not is_write_superuser(current_user):
+        guard = await admin_survival_guard(project, set(project.team_ids) - {team_id}, team_repo)
+
+    # An unguarded write matching nothing means the project is gone, which the read below answers.
+    if not await project_repo.update_raw(project_id, remove_team_pipeline(team_id), guard) and guard:
+        raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_OWNER)
+
+    updated_project = await project_repo.get_by_id_strong(project_id)
+    if not updated_project:
+        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
     return updated_project
 
 
@@ -1449,20 +1596,25 @@ def _project_member_role(project: Project, user_id: str) -> str:
 
 
 async def _count_team_admins(project: Project, db: Any) -> int:
-    """Return the number of admins on the project's owning team (0 if no team)."""
-    if not project.team_id:
-        return 0
+    """The admins every team owning the project supplies between them.
+
+    Every owner grants its admins the project, so one owner short of an admin says nothing about
+    whether the project has one; only all of them together do.
+    """
     team_repo = TeamRepository(db)
-    team = await team_repo.get_raw_by_id(project.team_id)
-    if not team:
-        return 0
-    return sum(1 for m in team.get("members", []) if m.get("role") == "admin")
+    admins = 0
+    for team_id in project.team_ids:
+        team = await team_repo.get_raw_by_id(team_id)
+        if not team:
+            continue
+        admins += sum(1 for m in team.get("members", []) if m.get("role") == TEAM_ROLE_ADMIN)
+    return admins
 
 
 async def _needs_a_surviving_direct_admin(project: Project, member_role: str, db: Any) -> bool:
     """Whether the write about to run is the one that could take the project's last admin.
 
-    The owning team can supply one, and that half cannot be guarded in the same statement, so the
+    The owning teams can supply one, and that half cannot be guarded in the same statement, so the
     conditional write is asked for only when the direct members are the project's only admins.
     """
     if member_role != PROJECT_ROLE_ADMIN:

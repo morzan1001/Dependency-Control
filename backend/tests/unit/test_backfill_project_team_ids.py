@@ -58,14 +58,18 @@ def test_a_project_with_a_team_and_a_source_expands_to_both_fields():
     assert plan == [TeamIdsUpdate(project_id="p1", team_ids=["t1"], team_sources={"t1": "manual"})]
 
 
-def test_a_project_with_a_team_but_no_source_expands_without_provenance():
+def test_a_project_with_a_team_but_no_source_expands_to_a_hand_assignment():
+    """218 production projects had an owner and no team_source on 2026-09-11. An owner left out of
+    the map belongs to no provider, so no sync could ever retire it; naming a provider would have
+    that provider's next sync retire an owner on no evidence at all."""
     plan = plan_team_id_expansion([_project("p1", team_id="t1")])
 
-    assert plan == [TeamIdsUpdate(project_id="p1", team_ids=["t1"], team_sources={})]
+    assert plan == [TeamIdsUpdate(project_id="p1", team_ids=["t1"], team_sources={"t1": "manual"})]
 
 
 def test_a_project_without_a_team_expands_to_an_empty_list():
-    """513 of 742 production projects have team_id set to None; they must get [] not a missing field."""
+    """311 of 750 production projects had no team_id on 2026-09-11; they must get [] rather than a
+    missing field, which answers no ownership filter and no $size test."""
     plan = plan_team_id_expansion([_project("p1", team_id=None)])
 
     assert plan == [TeamIdsUpdate(project_id="p1", team_ids=[], team_sources={})]
@@ -136,7 +140,7 @@ async def test_the_dry_run_report_names_exactly_what_an_execute_run_changes():
     assert planned == matched
     assert _changed_ids(before, after, "projects") == {"p1"}
     assert after["projects"]["p1"]["team_ids"] == ["t1"]
-    assert after["projects"]["p1"]["team_sources"] == {}
+    assert after["projects"]["p1"]["team_sources"] == {"t1": "manual"}
 
 
 @pytest.mark.asyncio

@@ -43,6 +43,7 @@ from app.api.v1.helpers.integrations import (
 )
 from app.api.v1.helpers.pagination import build_pagination_response
 from app.api.v1.helpers.projects import (
+    admin_survival_guard,
     apply_system_settings_enforcement,
     build_user_project_query,
     check_project_access,
@@ -78,6 +79,8 @@ from app.api.v1.helpers.teams import (
     fetch_and_enrich_team,
     get_member_role,
     get_team_with_access,
+    resolve_team_names,
+    team_refs,
 )
 from app.api.v1.helpers.users import (
     check_admin_or_self,
@@ -113,8 +116,9 @@ __all__ = [
     "TYPE_CATEGORY_MAP",
     # Integration helpers
     "SlackOAuthError",
-    "aggregate_stats_by_category",
     # Project helpers
+    "admin_survival_guard",
+    "aggregate_stats_by_category",
     "apply_system_settings_enforcement",
     "build_findings_severity_map",
     "build_hotspot_priority_reasons",
@@ -176,7 +180,9 @@ __all__ = [
     # Analytics helpers
     "require_analytics_permission",
     "resolve_sbom_refs",
+    "resolve_team_names",
     "send_password_reset_email",
     "send_system_invitation_email",
     "send_verification_email",
+    "team_refs",
 ]
