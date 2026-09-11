@@ -5,8 +5,9 @@ from typing import Any, NoReturn, Self
 import pytest
 import redis.asyncio as redis
 
+from app.core.constants import API_KEY_SURFACE_ADHOC
 from app.core.metrics import REGISTRY
-from app.repositories.adhoc_api_keys import AdhocApiKeyRepository
+from app.repositories.api_keys import ApiKeyRepository
 
 _ANALYZE = "/api/v1/analyze"
 _RATE_LIMIT_PREFIX = "dc:adhoc:rl:"
@@ -22,7 +23,7 @@ _OWNER = "adhoc-user"
 
 
 async def _issue_key(db, name="ci"):
-    doc, plaintext = await AdhocApiKeyRepository(db).create(_OWNER, name, 30)
+    doc, plaintext = await ApiKeyRepository(db).create(_OWNER, name, [API_KEY_SURFACE_ADHOC], 30)
     await db.users.update_one(
         {"_id": _OWNER},
         {

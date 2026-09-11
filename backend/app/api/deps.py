@@ -1,6 +1,6 @@
 import logging
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Annotated, Any, Protocol
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -23,9 +23,7 @@ from app.repositories import (
     TeamRepository,
     UserRepository,
 )
-from app.repositories.adhoc_api_keys import AdhocApiKeyRepository
 from app.repositories.api_keys import ApiKeyRepository
-from app.repositories.mcp_api_keys import MCPApiKeyRepository
 from app.schemas.token import TokenPayload
 from app.services.gitlab import GitLabService
 
@@ -599,31 +597,9 @@ SURFACE_PERMISSIONS: dict[str, str] = {
 }
 
 
-# Unknown, revoked and expired share one message, and so do the two key systems: telling them
-# apart would confirm to the holder of a rejected token that it once existed, and where.
+# Unknown, revoked and expired share one message: telling them apart would confirm to the holder
+# of a rejected token that it once existed.
 _MSG_UNRESOLVED_KEY = "Invalid, revoked, or expired API key"
-
-
-class _LegacyKeyStore(Protocol):
-    async def get_by_plaintext(self, plaintext: str) -> dict[str, Any] | None: ...
-
-
-class _StampingKeyStore(Protocol):
-    async def touch_last_used(self, key_id: str) -> None: ...
-
-
-# Each surface falls back to the store its own pre-unification keys live in, so a legacy key can
-# only ever reopen the surface it was minted for: every store rejects a foreign prefix in memory.
-_LEGACY_STORES: dict[str, Callable[[AsyncIOMotorDatabase], _LegacyKeyStore]] = {
-    API_KEY_SURFACE_ADHOC: AdhocApiKeyRepository,
-    API_KEY_SURFACE_MCP: MCPApiKeyRepository,
-}
-
-# Only the legacy stores that keep a usage timestamp. Asking a surface that persists nothing to
-# stamp one is a contradiction, and this table refuses it when the dependency is built.
-_STAMPING_LEGACY_STORES: dict[str, Callable[[AsyncIOMotorDatabase], _StampingKeyStore]] = {
-    API_KEY_SURFACE_MCP: MCPApiKeyRepository,
-}
 
 
 def _bearer_token(authorization: str, surface: str) -> str:
@@ -702,50 +678,11 @@ def require_api_key(surface: str, *, touch: bool = False) -> Callable[..., Await
     return dependency
 
 
-def require_api_key_with_legacy(
-    surface: str, *, touch: bool = False
-) -> Callable[..., Awaitable[tuple[User, dict[str, Any]]]]:
-    """Build the dependency for a surface still reachable with its pre-unification key: the unified
-    store is asked first and that surface's legacy store second, on identical terms and with
-    identical answers, so a caller cannot tell which of the two admitted or refused them.
-
-    Both kinds resolve to the owner, so the (owner, key document) pair is the same shape either way
-    and no caller has to branch on a missing user. ``touch`` stamps whichever key answered, and a
-    surface whose legacy store keeps no usage timestamp cannot be built with it.
-    """
-    permission = SURFACE_PERMISSIONS[surface]
-    legacy_store = _LEGACY_STORES[surface]
-    legacy_stamp = _STAMPING_LEGACY_STORES[surface] if touch else None
-
-    async def dependency(
-        authorization: str = Header(default=""),
-        db: AsyncIOMotorDatabase = Depends(get_database),
-    ) -> tuple[User, dict[str, Any]]:
-        token = _bearer_token(authorization, surface)
-        admitted = await _admit_unified_key(db, token, surface, permission, touch)
-        if admitted is not None:
-            return admitted
-
-        # The prefixes are disjoint and each repository rejects a foreign one before it queries,
-        # so asking the second store costs a string comparison rather than another round trip.
-        legacy_doc = await legacy_store(db).get_by_plaintext(token)
-        if not legacy_doc:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=_MSG_UNRESOLVED_KEY)
-
-        user = await _key_owner(db, legacy_doc)
-        _require_permission(user, surface, permission)
-        if legacy_stamp is not None:
-            await legacy_stamp(db).touch_last_used(legacy_doc.get("_id", ""))
-        return user, legacy_doc
-
-    return dependency
-
-
 DatabaseDep = Annotated[AsyncIOMotorDatabase[Any], Depends(get_database)]
 CurrentUserDep = Annotated[User, Depends(get_current_active_user)]
 CallgraphWriteDep = Annotated[str, Depends(authorize_callgraph_write)]
 ReleaseWriteDep = Annotated[str, Depends(authorize_release_write)]
-AdhocKeyOrLegacyDep = Annotated[
+AdhocKeyDep = Annotated[
     tuple[User, dict[str, Any]],
-    Depends(require_api_key_with_legacy(API_KEY_SURFACE_ADHOC)),
+    Depends(require_api_key(API_KEY_SURFACE_ADHOC)),
 ]

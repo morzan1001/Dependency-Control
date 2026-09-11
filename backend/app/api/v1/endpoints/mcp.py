@@ -10,7 +10,7 @@ from fastapi import Header, Request, status
 from fastapi.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.deps import DatabaseDep, require_api_key_with_legacy
+from app.api.deps import DatabaseDep, require_api_key
 from app.api.router import CustomAPIRouter
 from app.core.constants import API_KEY_SURFACE_MCP
 from app.models.user import User
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
 
-_authenticate = require_api_key_with_legacy(API_KEY_SURFACE_MCP, touch=True)
+_authenticate = require_api_key(API_KEY_SURFACE_MCP, touch=True)
 
 SERVER_NAME = "dependency-control"
 SERVER_VERSION = "1.0"

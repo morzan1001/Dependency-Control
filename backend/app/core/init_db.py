@@ -555,42 +555,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
         name="conversation_cascade_delete",
     )
 
-    # MCP API keys
-    mcp_api_keys = database["mcp_api_keys"]
-    await mcp_api_keys.create_index(
-        [("user_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)],
-        name="mcp_keys_user_listing",
-    )
-    await mcp_api_keys.create_index(
-        [("token_hash", pymongo.ASCENDING)],
-        name="mcp_keys_token_lookup",
-        unique=True,
-    )
-    # TTL: Mongo expires docs after expires_at, no housekeeping job needed.
-    await mcp_api_keys.create_index(
-        [("expires_at", pymongo.ASCENDING)],
-        name="mcp_keys_ttl",
-        expireAfterSeconds=0,
-    )
-
-    # Ad-hoc analysis API keys
-    adhoc_api_keys = database["adhoc_api_keys"]
-    await adhoc_api_keys.create_index(
-        [("user_id", pymongo.ASCENDING), ("created_at", pymongo.DESCENDING)],
-        name="adhoc_keys_user_listing",
-    )
-    await adhoc_api_keys.create_index(
-        [("token_hash", pymongo.ASCENDING)],
-        name="adhoc_keys_token_lookup",
-        unique=True,
-    )
-    # TTL: Mongo expires docs after expires_at, no housekeeping job needed.
-    await adhoc_api_keys.create_index(
-        [("expires_at", pymongo.ASCENDING)],
-        name="adhoc_keys_ttl",
-        expireAfterSeconds=0,
-    )
-
     # Unified API keys
     api_keys = database["api_keys"]
     await api_keys.create_index(
