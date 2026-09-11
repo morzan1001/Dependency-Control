@@ -31,6 +31,7 @@ from app.api.v1.helpers import (
     team_refs,
 )
 from app.api.v1.helpers.auth import send_project_member_added_email
+from app.api.v1.helpers.projects import max_project_role
 from app.api.v1.helpers.responses import (
     RESP_AUTH,
     RESP_AUTH_400_404,
@@ -38,7 +39,6 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
     RESP_AUTH_404_500,
 )
-from app.api.v1.helpers.projects import max_project_role
 from app.core.constants import (
     MAX_PROJECT_TEAMS,
     PROJECT_ROLE_ADMIN,
