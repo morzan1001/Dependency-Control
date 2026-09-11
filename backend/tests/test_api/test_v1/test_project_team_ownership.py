@@ -143,6 +143,38 @@ async def test_the_owner_cap_is_refused_rather_than_silently_truncated():
 
 
 @pytest.mark.asyncio
+async def test_the_picker_is_refused_at_the_cap_though_it_would_leave_the_project_under_it():
+    """A decision, not an oversight: the picker replaces the manual owners, so this project would
+    come out of the write with one. The cap is checked on the stored list because the check is the
+    one both routes share, and a picker that alone read the post-state would be the only caller
+    whose refusal depended on provenance. Refusing costs an operator one removal first; the shared
+    reading is what keeps the cap impossible to argue past.
+    """
+    owners = [f"t-{n}" for n in range(MAX_PROJECT_TEAMS)]
+    project = _project(team_ids=owners, team_sources=dict.fromkeys(owners, "manual"))
+    db = await _db_with(project, _team("t-extra", _ACTOR))
+
+    with pytest.raises(HTTPException) as raised:
+        await _put(db, project, _superuser(), team_id="t-extra")
+
+    assert raised.value.status_code == 400
+    assert str(MAX_PROJECT_TEAMS) in raised.value.detail
+
+
+@pytest.mark.asyncio
+async def test_the_picker_at_the_cap_still_moves_the_project_to_a_team_that_already_owns_it():
+    """The cap gate is skipped for an incumbent, so the picker can still narrow a capped project
+    down to one of its own owners — which is the way back under the cap."""
+    owners = [f"t-{n}" for n in range(MAX_PROJECT_TEAMS)]
+    project = _project(team_ids=owners, team_sources=dict.fromkeys(owners, "manual"))
+    db = await _db_with(project, *[_team(owner, _ACTOR) for owner in owners])
+
+    updated = await _put(db, project, _superuser(), team_id="t-0")
+
+    assert updated.team_ids == ["t-0"]
+
+
+@pytest.mark.asyncio
 async def test_adding_an_owner_twice_changes_nothing_the_second_time():
     project = _project(team_ids=["t-1"], team_sources={"t-1": "manual"}, team_id="t-1", team_source="manual")
     db = await _db_with(project, _team("t-1", _ACTOR))

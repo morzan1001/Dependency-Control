@@ -101,6 +101,26 @@ describe('ProjectOwningTeams', () => {
     expect(screen.queryByText(/sync/)).not.toBeInTheDocument()
   })
 
+  // Every owner carried over from the scalar era arrives with no team_sources entry, so this
+  // default decides the warning shown for the whole legacy set until the backfill stamps them.
+  it('reads an owner no provenance names as hand-assigned', async () => {
+    renderEditor(project({ team_ids: ['t1'], team_sources: {} }))
+
+    expect(screen.getByText('Manual')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Payments' }))
+
+    expect(await screen.findByText(/assigned by hand/)).toBeInTheDocument()
+    expect(screen.queryByText(/sync/)).not.toBeInTheDocument()
+  })
+
+  it('warns per owner, so an un-provenanced one does not take a co-owner’s provider warning', async () => {
+    renderEditor(project({ team_ids: ['t1', 't2'], team_sources: { t2: 'gitlab' } }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Remove Payments' }))
+    expect(await screen.findByText(/assigned by hand/)).toBeInTheDocument()
+  })
+
   it('shows which provider established each owner', () => {
     renderEditor(project())
 
