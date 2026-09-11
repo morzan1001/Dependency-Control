@@ -1,4 +1,12 @@
-# Release 1.9.26
+# Release 1.9.27
+
+## 📦 Build & CI
+
+- chore: release 1.9.27 — projects owned by several teams (#0)
+
+
+
+# Release 1.9.27
 
 ## 📦 Build & CI
 
