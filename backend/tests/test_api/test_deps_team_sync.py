@@ -183,7 +183,7 @@ async def test_a_legacy_owner_with_no_provenance_is_not_retired_by_a_sync():
 
     It is read as a hand assignment, so a provider adds beside it rather than over it. Naming a
     provider instead would have that provider's next ingest retire an owner on no evidence — and
-    503 production projects reach the cutover in exactly this shape.
+    218 production projects were in exactly this shape on 2026-09-11.
     """
     db = FakeDatabase()
     project = await _seed(db, team_ids=["legacy"], team_sources={}, team_id="legacy")

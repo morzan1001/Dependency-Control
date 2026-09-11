@@ -3,7 +3,8 @@
 This migration writes ``team_ids`` / ``team_sources`` from the legacy scalars ``team_id`` /
 ``team_source`` so Mongo-side queries and the index can use them.
 
-Of 742 production projects, 229 have a team and 513 do not; both must be written.
+A project with no team is written too, as ``[]`` and ``{}``: absent and null answer no ownership
+filter and no ``$size`` test, so leaving one unwritten hides it from every team view at once.
 
 The planning half is pure so tests call it with plain dicts and no database. A document that
 already carries ``team_ids`` is updated only if its stored list or sources differ from the value
