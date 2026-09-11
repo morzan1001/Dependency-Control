@@ -122,6 +122,7 @@ class TestTransferTeamSuperuser:
     def _hand_over(user, project, team_repo, team_id="new-team"):
         from app.api.v1.endpoints.projects import _assert_may_hand_to_team
 
+        team_repo.get_by_id = AsyncMock(return_value={"_id": team_id})
         return asyncio.run(_assert_may_hand_to_team(project, team_id, user, team_repo))
 
     def test_update_holder_can_transfer_without_target_membership(self):
@@ -235,8 +236,8 @@ class TestUpdateProjectTeamAssignment:
     def _build_update_project_mocks(self, project: "Project"):
         """Return the mocked collaborators for update_project."""
         project_repo = MagicMock()
-        project_repo.update_raw = AsyncMock(return_value=None)
-        project_repo.get_by_id = AsyncMock(return_value=project)
+        project_repo.update_raw = AsyncMock(return_value=True)
+        project_repo.get_by_id_strong = AsyncMock(return_value=project)
 
         team_repo = MagicMock()
         team_repo.is_member = AsyncMock(return_value=True)

@@ -1,20 +1,29 @@
-"""Adding and removing an owning team by hand: who may, and what ends up stored.
+"""Changing a project's owners by hand: who may, and what ends up stored.
 
 The project-admin gate itself is ``check_project_access`` and is tested with the rest of it; these
-drive the two routes past it to pin the rules that are theirs alone — the target-team rule, the
-owner cap, and the refusal to leave a project nobody can administer.
+drive the three routes past it to pin the rules that are theirs alone — the target-team rule, the
+owner cap, provenance, and the refusal to leave a project nobody can administer.
+
+The picker (``PUT`` with ``team_id``) is here alongside the two ``/teams`` routes because the last
+rule has to read the same on all of them: the same guard, the same status, the same message.
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
-from app.api.v1.endpoints.projects import add_project_team, remove_project_team
+from app.api.v1.endpoints.projects import (
+    _MSG_LAST_ADMIN_OWNER,
+    add_project_team,
+    remove_project_team,
+    update_project,
+)
 from app.core.constants import MAX_PROJECT_TEAMS
 from app.models.project import Project, ProjectMember
 from app.models.user import User
-from app.schemas.project import ProjectTeamAssignment
+from app.repositories.projects import ProjectRepository, replace_team_subset_pipeline
+from app.schemas.project import ProjectTeamAssignment, ProjectUpdate
 from tests.mocks.fake_mongo import FakeDatabase
 
 MODULE = "app.api.v1.endpoints.projects"
@@ -44,6 +53,10 @@ def _team(team_id: str, *admins: str) -> dict:
     return {"_id": team_id, "name": team_id, "members": [{"user_id": a, "role": "admin"} for a in admins]}
 
 
+def _team_of_plain_members(team_id: str, *members: str) -> dict:
+    return {"_id": team_id, "name": team_id, "members": [{"user_id": m, "role": "member"} for m in members]}
+
+
 def _project(**ownership) -> Project:
     return Project(id="p-1", name="demo", **ownership)
 
@@ -56,6 +69,16 @@ async def _add(db, project, team_id, user):
 async def _remove(db, project, team_id, user):
     with patch(f"{MODULE}._load_project_for_update", AsyncMock(return_value=project)):
         return await remove_project_team("p-1", team_id, user, db)
+
+
+async def _put(db, project, user, **body):
+    settings = MagicMock(retention_mode=None, rescan_mode=None)
+    with (
+        patch(f"{MODULE}._load_project_for_update", AsyncMock(return_value=project)),
+        patch(f"{MODULE}.deps.get_system_settings", AsyncMock(return_value=settings)),
+        patch(f"{MODULE}._audit_license_policy_change", AsyncMock()),
+    ):
+        return await update_project("p-1", ProjectUpdate(**body), user, db)
 
 
 @pytest.mark.asyncio
@@ -127,6 +150,126 @@ async def test_adding_an_owner_twice_changes_nothing_the_second_time():
     updated = await _add(db, project, "t-1", _user())
 
     assert updated.team_ids == ["t-1"]
+
+
+@pytest.mark.asyncio
+async def test_posting_a_provider_s_owner_does_not_claim_it_as_a_hand_assignment():
+    """Restamping the entry would exempt it from the retirement its own provider's next sync
+    applies, so any project admin could pin a team the provider no longer resolves."""
+    project = _project(
+        team_ids=["gh-a"], team_sources={"gh-a": "github"}, team_id="gh-a", team_source="github"
+    )
+    db = await _db_with(project, _team("gh-a", "someone-else"))
+
+    updated = await _add(db, project, "gh-a", _user())
+
+    assert updated.team_sources == {"gh-a": "github"}
+
+    await ProjectRepository(db).update_raw("p-1", replace_team_subset_pipeline("github", []))
+
+    assert (await db.projects.find_one({"_id": "p-1"}))["team_ids"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_hand_assignment_replaces_an_owner_no_provenance_names():
+    """An owner predating team_sources is read as a hand assignment, which is the only reading
+    that leaves anything able to retire it."""
+    project = _project(team_ids=["legacy", "gl-a"], team_sources={"gl-a": "gitlab"})
+    db = await _db_with(project, _team("t-new", _ACTOR), _team("gl-a", _ACTOR))
+
+    updated = await _put(db, project, _user(), team_id="t-new")
+
+    assert sorted(updated.team_ids) == ["gl-a", "t-new"]
+    assert updated.team_sources == {"gl-a": "gitlab", "t-new": "manual"}
+
+
+@pytest.mark.asyncio
+async def test_the_picker_refuses_the_last_team_supplying_an_admin_as_the_removal_does():
+    """The identical outcome through DELETE is a 400, so this one is too — same guard, same
+    status, same message."""
+    project = _project(team_ids=["t-1"], team_sources={"t-1": "manual"})
+    db = await _db_with(project, _team("t-1", _ACTOR))
+
+    with pytest.raises(HTTPException) as put_raised:
+        await _put(db, project, _user(), team_id=None)
+    with pytest.raises(HTTPException) as delete_raised:
+        await _remove(db, project, "t-1", _user())
+
+    assert put_raised.value.status_code == delete_raised.value.status_code == 400
+    assert put_raised.value.detail == delete_raised.value.detail == _MSG_LAST_ADMIN_OWNER
+    assert (await db.projects.find_one({"_id": "p-1"}))["team_ids"] == ["t-1"]
+
+
+@pytest.mark.asyncio
+async def test_the_picker_refuses_a_replacement_that_supplies_no_admin():
+    project = _project(team_ids=["t-1"], team_sources={"t-1": "manual"})
+    db = await _db_with(project, _team("t-1", _ACTOR), _team_of_plain_members("t-2", _ACTOR))
+
+    with pytest.raises(HTTPException) as raised:
+        await _put(db, project, _user(), team_id="t-2")
+
+    assert raised.value.status_code == 400
+    assert (await db.projects.find_one({"_id": "p-1"}))["team_ids"] == ["t-1"]
+
+
+@pytest.mark.asyncio
+async def test_the_picker_allows_a_replacement_that_brings_its_own_admin():
+    project = _project(team_ids=["t-1"], team_sources={"t-1": "manual"})
+    db = await _db_with(project, _team("t-1", _ACTOR), _team("t-2", _ACTOR, "other-admin"))
+
+    updated = await _put(db, project, _user(), team_id="t-2")
+
+    assert updated.team_ids == ["t-2"]
+
+
+@pytest.mark.asyncio
+async def test_a_write_superuser_may_empty_the_owners_through_the_picker():
+    project = _project(team_ids=["t-1"], team_sources={"t-1": "manual"})
+    db = await _db_with(project, _team("t-1", "someone-else"))
+
+    updated = await _put(db, project, _superuser(), team_id=None)
+
+    assert updated.team_ids == []
+
+
+@pytest.mark.asyncio
+async def test_the_picker_leaves_a_provider_s_owner_holding_the_project():
+    project = _project(
+        team_ids=["gl-a", "t-hand"], team_sources={"gl-a": "gitlab", "t-hand": "manual"}, team_id="gl-a"
+    )
+    db = await _db_with(project, _team("gl-a", "gitlab-admin"), _team("t-hand", _ACTOR))
+
+    updated = await _put(db, project, _user(), team_id=None)
+
+    assert updated.team_ids == ["gl-a"]
+
+
+@pytest.mark.asyncio
+async def test_the_picker_answers_404_for_a_team_that_does_not_exist():
+    """POST answers 404 for an id nothing resolves to; a superuser must not slip one past here."""
+    project = _project()
+    db = await _db_with(project)
+
+    with pytest.raises(HTTPException) as raised:
+        await _put(db, project, _superuser(), team_id="t-ghost")
+
+    assert raised.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_a_rename_reads_the_project_back_from_the_primary():
+    """Under secondaryPreferred — the chart default — an ordinary read echoes pre-write ownership."""
+    project = _project(team_ids=["t-1"], team_sources={"t-1": "manual"})
+    db = await _db_with(project, _team("t-1", _ACTOR))
+    repo = ProjectRepository(db)
+
+    with (
+        patch.object(ProjectRepository, "get_by_id", AsyncMock(side_effect=AssertionError("read off-primary"))),
+        patch(f"{MODULE}.ProjectRepository", return_value=repo),
+    ):
+        updated = await _put(db, project, _user(), name="Renamed")
+
+    assert updated.name == "Renamed"
 
 
 @pytest.mark.asyncio

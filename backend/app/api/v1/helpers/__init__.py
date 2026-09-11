@@ -43,12 +43,12 @@ from app.api.v1.helpers.integrations import (
 )
 from app.api.v1.helpers.pagination import build_pagination_response
 from app.api.v1.helpers.projects import (
+    admin_survival_guard,
     apply_system_settings_enforcement,
     build_user_project_query,
     check_project_access,
     generate_project_api_key,
     is_write_superuser,
-    project_keeps_an_admin_without,
 )
 from app.api.v1.helpers.responses import (
     RESP_400,
@@ -114,8 +114,9 @@ __all__ = [
     "TYPE_CATEGORY_MAP",
     # Integration helpers
     "SlackOAuthError",
-    "aggregate_stats_by_category",
     # Project helpers
+    "admin_survival_guard",
+    "aggregate_stats_by_category",
     "apply_system_settings_enforcement",
     "build_findings_severity_map",
     "build_hotspot_priority_reasons",
@@ -172,7 +173,6 @@ __all__ = [
     "parse_madge_format",
     "parse_sort_direction",
     "process_cve_enrichments",
-    "project_keeps_an_admin_without",
     # Ingest helpers
     "process_findings_ingest",
     # Analytics helpers

@@ -248,9 +248,13 @@ features.
 - `POST /api/v1/projects/{id}/teams` and `DELETE /api/v1/projects/{id}/teams/{team_id}` add and
   remove one owner. `PUT /api/v1/projects/{id}` with `team_id` still works and now means "the team
   this project is assigned to by hand": it replaces the manually-assigned owners and leaves a
-  provider's entry alone.
+  provider's entry alone. Posting a team that already owns the project answers with the project
+  unchanged — it does not reclaim a provider's entry as a hand assignment.
+- Both `PUT` with `team_id` and `DELETE …/teams/{team_id}` refuse with **400** when the change
+  would leave the project with nobody able to administer it. Only a write superuser may.
 - A project may have at most 16 owning teams, counted across every provider and every hand
   assignment. A sync whose result would exceed it leaves the project's owners untouched and logs
   `past the cap`; grep for it after the deploy.
 - An owner stored without a `team_sources` entry is read as a hand assignment, so no sync retires
-  it. §6b's second query lists them; the backfill stamps them `manual` so none are left.
+  it and `PUT` with `team_id` replaces it along with the rest of the manual set. §6b's second
+  query lists them; the backfill stamps them `manual` so none are left.

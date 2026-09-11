@@ -18,6 +18,7 @@ from app.core.permissions import Permissions, has_permission
 from app.models.project import Project
 from app.models.user import User
 from app.repositories import ProjectRepository, TeamRepository
+from app.repositories.projects import surviving_owner_admin_filter
 
 _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 
@@ -98,21 +99,27 @@ async def team_derived_role(
     return role
 
 
-async def project_keeps_an_admin_without(
+async def admin_survival_guard(
     project: Project,
-    team_id: str,
+    surviving_owners: set[str],
     team_repo: TeamRepository,
-) -> bool:
-    """Whether anyone would still administer the project once ``team_id`` stops owning it."""
-    if any(member.role == PROJECT_ROLE_ADMIN for member in project.members):
-        return True
-    for owner_id in project.team_ids:
-        if owner_id == team_id:
-            continue
+) -> dict[str, Any]:
+    """The write filter under which an ownership change keeps someone able to administer the project.
+
+    A filter rather than a verdict: which teams supply an admin is answered from the ``teams``
+    collection and cannot be part of a query on ``projects``, but *which of them the project still
+    holds* can, and that is the half a concurrent write invalidates. An empty filter is a write
+    that brings its own admin along; one naming no owner matches nothing, which is the refusal.
+    """
+    incumbent: list[str] = []
+    for owner_id in sorted(surviving_owners):
         team = await team_repo.get_raw_by_id(owner_id)
-        if team and any(member.get("role") == TEAM_ROLE_ADMIN for member in team.get("members", [])):
-            return True
-    return False
+        if not team or not any(member.get("role") == TEAM_ROLE_ADMIN for member in team.get("members", [])):
+            continue
+        if owner_id not in project.team_ids:
+            return {}
+        incumbent.append(owner_id)
+    return surviving_owner_admin_filter(incumbent)
 
 
 async def _resolve_effective_role(
