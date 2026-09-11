@@ -22,13 +22,13 @@ def _user(uid: str, permissions):
     )
 
 
-def _project(members=None, team_id=None):
+def _project(members=None, team_ids=None):
     return Project(
         id="proj-1",
         name="Test",
         owner_id="owner-x",
         members=members or [],
-        team_id=team_id,
+        team_ids=team_ids or [],
     )
 
 
@@ -118,50 +118,53 @@ class TestLoadProjectForUpdateRoutesThroughGate:
 
 
 class TestTransferTeamSuperuser:
+    @staticmethod
+    def _hand_over(user, project, team_repo, team_id="new-team"):
+        from app.api.v1.endpoints.projects import _assert_may_hand_to_team
+
+        return asyncio.run(_assert_may_hand_to_team(project, team_id, user, team_repo))
+
     def test_update_holder_can_transfer_without_target_membership(self):
-        from app.api.v1.endpoints.projects import _assert_can_transfer_team
-        from app.schemas.project import ProjectUpdate
-
-        user = _update_user()
-        project = _project(team_id="old-team")
-        project_in = ProjectUpdate(team_id="new-team")
-
         team_repo = MagicMock()
         team_repo.is_member = AsyncMock(return_value=False)
 
         # project:update bypasses target-team membership.
-        asyncio.run(_assert_can_transfer_team(project, project_in, user, team_repo))
+        self._hand_over(_update_user(), _project(team_ids=["old-team"]), team_repo)
         team_repo.is_member.assert_not_called()
 
     def test_delete_only_holder_can_transfer_without_target_membership(self):
         """project:delete is part of the write-superuser set, so a delete-only non-member may also transfer the team."""
-        from app.api.v1.endpoints.projects import _assert_can_transfer_team
-        from app.schemas.project import ProjectUpdate
-
-        user = _delete_only_user()
-        project = _project(team_id="old-team")
-        project_in = ProjectUpdate(team_id="new-team")
-
         team_repo = MagicMock()
         team_repo.is_member = AsyncMock(return_value=False)
 
-        asyncio.run(_assert_can_transfer_team(project, project_in, user, team_repo))
+        self._hand_over(_delete_only_user(), _project(team_ids=["old-team"]), team_repo)
         team_repo.is_member.assert_not_called()
 
     def test_nonmember_without_update_denied_transfer(self):
-        from app.api.v1.endpoints.projects import _assert_can_transfer_team
-        from app.schemas.project import ProjectUpdate
-
-        user = _plain_member()
-        project = _project(team_id="old-team")
-        project_in = ProjectUpdate(team_id="new-team")
-
         team_repo = MagicMock()
         team_repo.is_member = AsyncMock(return_value=False)
 
         with pytest.raises(HTTPException) as exc_info:
-            asyncio.run(_assert_can_transfer_team(project, project_in, user, team_repo))
+            self._hand_over(_plain_member(), _project(team_ids=["old-team"]), team_repo)
         assert exc_info.value.status_code == 403
+
+    def test_a_team_that_already_owns_the_project_is_no_transfer_at_all(self):
+        team_repo = MagicMock()
+        team_repo.is_member = AsyncMock(return_value=False)
+
+        self._hand_over(_plain_member(), _project(team_ids=["old-team"]), team_repo, team_id="old-team")
+        team_repo.is_member.assert_not_called()
+
+    def test_the_owner_cap_stops_even_a_superuser(self):
+        from app.core.constants import MAX_PROJECT_TEAMS
+
+        team_repo = MagicMock()
+        team_repo.is_member = AsyncMock(return_value=True)
+        project = _project(team_ids=[f"t-{n}" for n in range(MAX_PROJECT_TEAMS)])
+
+        with pytest.raises(HTTPException) as exc_info:
+            self._hand_over(_update_user(), project, team_repo)
+        assert exc_info.value.status_code == 400
 
 
 class TestDeleteProjectRoutesThroughGate:
@@ -225,13 +228,14 @@ class TestDeleteProjectRoutesThroughGate:
         assert exc_info.value.status_code == 403
 
 
-class TestUpdateProjectTeamSourceProvenance:
-    """team_source='manual' must be stamped only when team_id actually changes, so echoing back the current team_id on an unrelated edit does not flip provenance."""
+class TestUpdateProjectTeamAssignment:
+    """team_id on the update body is the caller's own assignment: it replaces the owners marked
+    manual and leaves a provider's entry to that provider."""
 
     def _build_update_project_mocks(self, project: "Project"):
         """Return the mocked collaborators for update_project."""
         project_repo = MagicMock()
-        project_repo.update = AsyncMock(return_value=None)
+        project_repo.update_raw = AsyncMock(return_value=None)
         project_repo.get_by_id = AsyncMock(return_value=project)
 
         team_repo = MagicMock()
@@ -253,7 +257,7 @@ class TestUpdateProjectTeamSourceProvenance:
             patch(f"{ENDPOINTS}.ProjectRepository", return_value=project_repo),
             patch(f"{ENDPOINTS}.TeamRepository", return_value=team_repo),
             patch(f"{ENDPOINTS}._load_project_for_update", new_callable=AsyncMock, return_value=project),
-            patch(f"{ENDPOINTS}._assert_can_transfer_team", new_callable=AsyncMock),
+            patch(f"{ENDPOINTS}._assert_may_hand_to_team", new_callable=AsyncMock),
             patch(f"{ENDPOINTS}._assert_gitlab_mr_token_present", new_callable=AsyncMock),
             patch(f"{ENDPOINTS}.deps.get_system_settings", new_callable=AsyncMock, return_value=system_settings),
             patch(f"{ENDPOINTS}.apply_system_settings_enforcement", side_effect=lambda d, *_: d),
@@ -261,68 +265,53 @@ class TestUpdateProjectTeamSourceProvenance:
         ):
             asyncio.run(update_project("proj-1", project_in, user, MagicMock()))
 
-        return project_repo.update
+        return project_repo.update_raw
 
-    def test_same_team_id_does_not_stamp_manual(self):
-        """PATCHing with the same team_id must leave team_source unchanged."""
-        from app.schemas.project import ProjectUpdate
-
-        project = Project(
+    @staticmethod
+    def _project_owned_by_gitlab():
+        return Project(
             id="proj-1",
             name="Test",
             owner_id="owner-x",
             members=[],
+            team_ids=["team-abc"],
+            team_sources={"team-abc": "gitlab"},
             team_id="team-abc",
             team_source="gitlab",
         )
-        user = _update_user()
-        # Frontend echoes back the same team_id it already has.
-        project_in = ProjectUpdate(name="Renamed", team_id="team-abc")
 
-        mock_update = self._run_update(project, project_in, user)
-
-        mock_update.assert_awaited_once()
-        call_kwargs = mock_update.call_args[0][1]  # second positional arg is the update dict
-        assert "team_source" not in call_kwargs, "team_source must NOT be written when team_id is unchanged"
-
-    def test_different_team_id_stamps_manual(self):
-        """PATCHing with a different team_id must set team_source='manual'."""
+    def test_a_team_in_the_body_replaces_the_manual_owners_only(self):
+        from app.repositories.projects import literal_set_stage, replace_team_subset_pipeline
         from app.schemas.project import ProjectUpdate
 
-        project = Project(
-            id="proj-1",
-            name="Test",
-            owner_id="owner-x",
-            members=[],
-            team_id="team-abc",
-            team_source="gitlab",
+        mock_update = self._run_update(
+            self._project_owned_by_gitlab(), ProjectUpdate(name="Renamed", team_id="team-xyz"), _update_user()
         )
-        user = _update_user()
-        project_in = ProjectUpdate(team_id="team-xyz")
-
-        mock_update = self._run_update(project, project_in, user)
 
         mock_update.assert_awaited_once()
-        call_kwargs = mock_update.call_args[0][1]
-        assert call_kwargs.get("team_source") == "manual", "team_source must be set to 'manual' when team_id changes"
+        assert mock_update.call_args[0][1] == [
+            literal_set_stage({"name": "Renamed"}),
+            *replace_team_subset_pipeline("manual", ["team-xyz"]),
+        ]
 
-    def test_no_team_id_in_payload_does_not_stamp_manual(self):
-        """PATCHing with no team_id field must not touch team_source."""
+    def test_a_null_team_gives_up_the_manual_assignment_and_keeps_the_provider_s(self):
+        from app.repositories.projects import replace_team_subset_pipeline
         from app.schemas.project import ProjectUpdate
 
-        project = Project(
-            id="proj-1",
-            name="Test",
-            owner_id="owner-x",
-            members=[],
-            team_id="team-abc",
-            team_source="gitlab",
+        mock_update = self._run_update(
+            self._project_owned_by_gitlab(), ProjectUpdate(team_id=None), _update_user()
         )
-        user = _update_user()
-        project_in = ProjectUpdate(name="Only a rename")
-
-        mock_update = self._run_update(project, project_in, user)
 
         mock_update.assert_awaited_once()
-        call_kwargs = mock_update.call_args[0][1]
-        assert "team_source" not in call_kwargs
+        assert mock_update.call_args[0][1] == replace_team_subset_pipeline("manual", [])
+
+    def test_a_body_without_a_team_leaves_every_owner_alone(self):
+        from app.repositories.projects import literal_set_stage
+        from app.schemas.project import ProjectUpdate
+
+        mock_update = self._run_update(
+            self._project_owned_by_gitlab(), ProjectUpdate(name="Only a rename"), _update_user()
+        )
+
+        mock_update.assert_awaited_once()
+        assert mock_update.call_args[0][1] == [literal_set_stage({"name": "Only a rename"})]

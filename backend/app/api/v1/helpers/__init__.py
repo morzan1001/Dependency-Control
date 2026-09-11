@@ -48,6 +48,7 @@ from app.api.v1.helpers.projects import (
     check_project_access,
     generate_project_api_key,
     is_write_superuser,
+    project_keeps_an_admin_without,
 )
 from app.api.v1.helpers.responses import (
     RESP_400,
@@ -171,6 +172,7 @@ __all__ = [
     "parse_madge_format",
     "parse_sort_direction",
     "process_cve_enrichments",
+    "project_keeps_an_admin_without",
     # Ingest helpers
     "process_findings_ingest",
     # Analytics helpers

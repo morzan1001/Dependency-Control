@@ -98,6 +98,23 @@ async def team_derived_role(
     return role
 
 
+async def project_keeps_an_admin_without(
+    project: Project,
+    team_id: str,
+    team_repo: TeamRepository,
+) -> bool:
+    """Whether anyone would still administer the project once ``team_id`` stops owning it."""
+    if any(member.role == PROJECT_ROLE_ADMIN for member in project.members):
+        return True
+    for owner_id in project.team_ids:
+        if owner_id == team_id:
+            continue
+        team = await team_repo.get_raw_by_id(owner_id)
+        if team and any(member.get("role") == TEAM_ROLE_ADMIN for member in team.get("members", [])):
+            return True
+    return False
+
+
 async def _resolve_effective_role(
     project: Project,
     user: User,
