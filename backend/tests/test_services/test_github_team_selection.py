@@ -5,7 +5,11 @@ from typing import Any, ClassVar
 
 import pytest
 
-from app.services.github import build_team_depth_map, build_team_slug_map, select_github_team
+from app.services.github import (
+    build_team_depth_map,
+    build_team_slug_map,
+    select_github_team,
+)
 
 _PERMISSION_LADDER = ["pull", "triage", "push", "maintain", "admin"]
 
@@ -45,20 +49,20 @@ _CASES = [
     ),
     pytest.param(
         [_candidate(1, "platform", permission="admin"), _candidate(2, "payments")],
-        None,
+        {},
         "platform",
-        id="rule2-skipped-without-a-depth-map-falls-through-to-permission",
+        id="rule2-skipped-when-no-team-is-nested-falls-through-to-permission",
     ),
     pytest.param(
         [_candidate(1, "readers", permission="pull"), _candidate(2, "owners", permission="admin")],
-        None,
+        {},
         "owners",
         id="rule3-strongest-permission-wins",
     ),
     pytest.param(
         # The lower id belongs to the weaker team, so only rule 3 can pick the stated one.
         [_candidate(2, "stated", permission="pull"), _candidate(1, "unstated", permissions={})],
-        None,
+        {},
         "stated",
         id="rule3-a-payload-stating-no-permission-ranks-below-pull",
     ),
@@ -79,18 +83,34 @@ def test_the_tiebreak_picks_one_team(candidates, depth_map, expected_slug):
 
 
 @pytest.mark.parametrize(
+    "unstated",
+    [
+        pytest.param({"id": 1, "slug": "unstated", "role_name": "pull"}, id="permissions-absent"),
+        pytest.param({"id": 1, "slug": "unstated", "permissions": None}, id="permissions-null"),
+        pytest.param({"id": 1, "slug": "unstated", "permissions": ["pull"]}, id="permissions-not-an-object"),
+    ],
+)
+def test_a_body_carrying_no_permissions_object_ranks_below_the_weakest_stated_one(unstated):
+    """A 200 without the repository media type omits `permissions`; ranking it as pull would let it
+    outrank a team that really holds push on the lower id."""
+    winner = select_github_team([unstated, _candidate(2, "stated", permission="pull")], {})
+    assert winner is not None
+    assert winner["slug"] == "stated"
+
+
+@pytest.mark.parametrize(
     ("lower", "higher"),
     [("pull", "triage"), ("triage", "push"), ("push", "maintain"), ("maintain", "admin")],
 )
 def test_the_permission_ladder_orders_every_adjacent_pair(lower, higher):
     candidates = [_candidate(1, "lower", permission=lower), _candidate(2, "higher", permission=higher)]
-    winner = select_github_team(candidates, None)
+    winner = select_github_team(candidates, {})
     assert winner is not None
     assert winner["slug"] == "higher"
 
 
 def test_no_candidates_resolve_to_no_team():
-    assert select_github_team([], None) is None
+    assert select_github_team([], {}) is None
 
 
 def test_access_source_is_no_longer_an_input():
@@ -100,7 +120,7 @@ def test_access_source_is_no_longer_an_input():
     inherited = _candidate(1, "inherited", permission="admin")
     inherited["access_source"] = "organization"
 
-    winner = select_github_team([direct, inherited], None)
+    winner = select_github_team([direct, inherited], {})
     assert winner is not None
     assert winner["slug"] == "inherited"
 
@@ -118,9 +138,9 @@ def test_access_source_is_no_longer_an_input():
 )
 def test_a_team_whose_id_cannot_be_ordered_by_is_skipped_rather_than_fatal(malformed):
     """`id` is required and numeric on the response; a malformed entry must not take the repository down."""
-    assert select_github_team([malformed], None) is None
+    assert select_github_team([malformed], {}) is None
 
-    winner = select_github_team([malformed, _candidate(5, "sound")], None)
+    winner = select_github_team([malformed, _candidate(5, "sound")], {})
     assert winner is not None
     assert winner["slug"] == "sound"
 
@@ -135,10 +155,10 @@ def test_a_team_whose_id_cannot_be_ordered_by_is_skipped_rather_than_fatal(malfo
 )
 def test_a_team_that_cannot_be_addressed_by_slug_is_skipped_rather_than_fatal(malformed):
     """The members endpoint is slug-addressed, so an unaddressable winner is no winner at all."""
-    assert select_github_team([malformed], None) is None
+    assert select_github_team([malformed], {}) is None
 
     # The malformed team outranks the sound one on permission and on id, so only the filter saves it.
-    winner = select_github_team([malformed, _candidate(5, "sound")], None)
+    winner = select_github_team([malformed, _candidate(5, "sound")], {})
     assert winner is not None
     assert winner["slug"] == "sound"
 
@@ -158,7 +178,7 @@ class TestStability:
         assert first["slug"] == second["slug"] == "alpha"
 
     def test_the_winner_does_not_depend_on_the_order_the_checks_answered_in(self):
-        winners = {select_github_team(list(order), None)["slug"] for order in permutations(self._CANDIDATES)}
+        winners = {select_github_team(list(order), {})["slug"] for order in permutations(self._CANDIDATES)}
         assert winners == {"alpha"}
 
 
@@ -225,3 +245,4 @@ class TestDepthMap:
     def test_a_team_whose_id_cannot_be_ordered_by_is_left_out(self, malformed):
         org_teams = [malformed, {"id": 3, "slug": "sound", "parent": None}]
         assert build_team_depth_map(org_teams) == {3: 0}
+

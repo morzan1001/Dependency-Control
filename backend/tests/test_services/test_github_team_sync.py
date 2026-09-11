@@ -1,5 +1,7 @@
 """GitHub team sync: member resolution, merge semantics and the resolution of a repository to a bound team."""
 
+import asyncio
+import time
 from contextlib import contextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -432,17 +434,50 @@ class TestSyncTeamFromGithub:
         assert team_repo.update.await_args.args[1]["github_team_slug"] == "payments"
 
     @pytest.mark.asyncio
-    async def test_a_binding_the_organisation_no_longer_lists_is_skipped(self, caplog):
+    async def test_a_binding_the_organisation_no_longer_lists_leaves_everything_untouched(self, caplog):
         service = _service()
         team_repo = _team_repo(_bound("t-gone", 6666, slug="dissolved", name="Dissolved"))
 
         with _sync_stubs(service, team_repo) as stubs:
-            with caplog.at_level("DEBUG", logger="app.services.github"):
+            with caplog.at_level("WARNING", logger="app.services.github"):
                 result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
 
-        assert result == GitHubTeamSyncResult(None, 0)
+        assert result == GitHubTeamSyncResult(None, None)
         stubs.checks.assert_not_awaited()
-        assert any("6666" in record.getMessage() for record in caplog.records if record.levelname == "DEBUG")
+        team_repo.update.assert_not_called()
+        assert any("6666" in record.getMessage() for record in caplog.records if record.levelname == "WARNING")
+
+    @pytest.mark.asyncio
+    async def test_a_bound_team_the_listing_hides_never_hands_the_repository_to_a_visible_one(self):
+        """A secret team is absent from the organisation listing. Skipping it elected whichever
+        team did answer and reported one candidate — a confident wrong answer."""
+        service = _service()
+        team_repo = _team_repo(
+            _bound("t-hidden", 900, slug="cards", name="Cards"),
+            _bound("t-visible", 100, slug="platform", name="Platform"),
+        )
+        visible_only = [team for team in _ORG_TEAMS if team["id"] != 900]
+        access = {"cards": _holds(), "platform": _holds()}
+
+        with _sync_stubs(service, team_repo, org_teams=visible_only, access=access):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult(None, None)
+        team_repo.update.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_binding_carrying_no_team_number_is_undetermined_rather_than_ignored(self):
+        """The repository query filters these out; reaching the sync means the filter stopped working."""
+        service = _service()
+        unnumbered = _bound("t-halfway", 4711)
+        unnumbered["github_team_id"] = None
+        team_repo = _team_repo(unnumbered)
+
+        with _sync_stubs(service, team_repo, access={"payments": _holds()}) as stubs:
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult(None, None)
+        stubs.checks.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_the_holders_and_the_winner_are_logged(self, caplog):
@@ -557,3 +592,57 @@ class TestSyncTeamFromGithub:
             result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
 
         assert result == GitHubTeamSyncResult(None, None)
+
+
+class TestResolutionCost:
+    """The checks run inside the ingest request, so their cost is the request's."""
+
+    _SLOW_CHECK = 0.05
+
+    @staticmethod
+    def _many_bound_teams(count: int):
+        org_teams = [{"id": 1000 + index, "slug": f"t{index}", "parent": None} for index in range(count)]
+        bound = [_bound(f"t-{index}", 1000 + index, slug=f"t{index}", name=f"T{index}") for index in range(count)]
+        return org_teams, bound
+
+    @pytest.mark.asyncio
+    async def test_the_checks_do_not_add_up(self):
+        """Ten bound teams against a slow GitHub cost one check, not ten."""
+        count = 10
+        org_teams, bound = self._many_bound_teams(count)
+        service = _service()
+
+        async def _slow_check(_org, _slug, _owner, _repo):
+            await asyncio.sleep(self._SLOW_CHECK)
+            return GitHubTeamRepoAccess(False, None)
+
+        with _sync_stubs(service, _team_repo(*bound), org_teams=org_teams) as stubs:
+            stubs.checks.side_effect = _slow_check
+            started = time.perf_counter()
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+            elapsed = time.perf_counter() - started
+
+        assert result == GitHubTeamSyncResult(None, 0)
+        assert stubs.checks.await_count == count
+        assert elapsed < self._SLOW_CHECK * count / 2
+
+    @pytest.mark.asyncio
+    async def test_a_github_that_never_answers_bounds_the_ingest_and_stays_undetermined(self, caplog):
+        service = _service()
+        org_teams, bound = self._many_bound_teams(2)
+
+        async def _never_answers(*_args, **_kwargs):
+            await asyncio.sleep(60)
+            raise AssertionError("the resolution step should have been abandoned")
+
+        with _sync_stubs(service, _team_repo(*bound), org_teams=org_teams) as stubs:
+            stubs.checks.side_effect = _never_answers
+            with patch("app.services.github._GITHUB_RESOLUTION_TIMEOUT", 0.05):
+                with caplog.at_level("WARNING", logger="app.services.github"):
+                    started = time.perf_counter()
+                    result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+                    elapsed = time.perf_counter() - started
+
+        assert result == GitHubTeamSyncResult(None, None)
+        assert elapsed < 1
+        assert any("acme/widgets" in record.getMessage() for record in caplog.records)

@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import urllib.parse
 from collections.abc import AsyncIterator
@@ -29,6 +30,10 @@ _GITHUB_COM_JWKS_URI = "https://token.actions.githubusercontent.com/.well-known/
 
 
 _GITHUB_API_TIMEOUT = 10.0
+
+# The resolution runs inside the ingest request. The per-team checks are concurrent, so this bounds
+# the whole step rather than one call, and a GitHub that answers slowly costs an ingest this much once.
+_GITHUB_RESOLUTION_TIMEOUT = 30.0
 
 _DEFAULT_ACCEPT = "application/vnd.github+json"
 # Without this media type the team/repository check answers 204 with an empty body, and the
@@ -96,14 +101,13 @@ def _permission_rank(team: dict[str, Any]) -> int:
     return max((rank for name, rank in _PERMISSION_RANK.items() if permissions.get(name)), default=-1)
 
 
-def _sort_key(team_id: int, team: dict[str, Any], depth_map: dict[int, int] | None) -> tuple[int, int, int]:
-    depth = depth_map.get(team_id, 0) if depth_map else 0
-    return (-depth, -_permission_rank(team), team_id)
+def _sort_key(team_id: int, team: dict[str, Any], depth_map: dict[int, int]) -> tuple[int, int, int]:
+    return (-depth_map.get(team_id, 0), -_permission_rank(team), team_id)
 
 
 def select_github_team(
     candidates: list[dict[str, Any]],
-    depth_map: dict[int, int] | None = None,
+    depth_map: dict[int, int],
 ) -> dict[str, Any] | None:
     """Depth, then permission, then the lowest id. Winners carry an id and a slug.
 
@@ -486,6 +490,37 @@ class GitHubService:
             },
         )
 
+    @staticmethod
+    def _address_bound_teams(
+        org: str,
+        owner: str,
+        repo: str,
+        bound_teams: list[dict[str, Any]],
+        slug_map: dict[int, str],
+    ) -> list[tuple[dict[str, Any], int, str]] | None:
+        """Each bound team with the slug to ask about it, or None when one of them cannot be asked.
+
+        The organisation listing omits the teams the token cannot see, secret ones above all. Skipping
+        such a binding would hand the repository to whichever team did answer and report that as a
+        determined result, which is the very failure the per-team check exists to avoid.
+        """
+        addressed = []
+        for team in bound_teams:
+            team_id = team.get("github_team_id")
+            if not isinstance(team_id, int) or (slug := slug_map.get(team_id)) is None:
+                logger.warning(
+                    "Team %s is bound to GitHub team %s of %s, which the organisation listing does not "
+                    "show; the owner of %s/%s stays undetermined until the binding is corrected.",
+                    team.get("_id"),
+                    team_id,
+                    org,
+                    owner,
+                    repo,
+                )
+                return None
+            addressed.append((team, team_id, slug))
+        return addressed
+
     async def _collect_repository_candidates(
         self,
         org: str,
@@ -497,20 +532,16 @@ class GitHubService:
         """The bound teams that hold the repository. None when a single check went unanswered:
         an incomplete candidate set elects a winner that the missing answers might have outranked.
         """
-        candidates: list[_RepositoryCandidate] = []
-        for team in bound_teams:
-            team_id = team.get("github_team_id")
-            slug = slug_map.get(team_id) if isinstance(team_id, int) else None
-            if slug is None:
-                logger.debug(
-                    "Team %s is bound to GitHub team %s of %s, which the organisation listing does not show.",
-                    team.get("_id"),
-                    team_id,
-                    org,
-                )
-                continue
+        addressed = self._address_bound_teams(org, owner, repo, bound_teams, slug_map)
+        if addressed is None:
+            return None
 
-            access = await self.get_team_repository(org, slug, owner, repo)
+        accesses = await asyncio.gather(
+            *(self.get_team_repository(org, slug, owner, repo) for _team, _team_id, slug in addressed)
+        )
+
+        candidates: list[_RepositoryCandidate] = []
+        for (team, team_id, slug), access in zip(addressed, accesses, strict=True):
             if access.has_repo is None:
                 return None
             if not access.has_repo:
@@ -529,6 +560,29 @@ class GitHubService:
                 )
             )
         return candidates
+
+    async def _resolve_repository_holders(
+        self,
+        org: str,
+        owner: str,
+        repo: str,
+        bound_teams: list[dict[str, Any]],
+    ) -> tuple[dict[int, int], list[_RepositoryCandidate]] | None:
+        """The nesting-depth map and the bound teams holding the repository, or None when GitHub
+        could not answer for all of them."""
+        org_teams = await self.get_org_teams(org)
+        if org_teams is None:
+            logger.warning(
+                "Could not list the teams of GitHub organisation %s; leaving %s/%s untouched.", org, owner, repo
+            )
+            return None
+
+        candidates = await self._collect_repository_candidates(
+            org, owner, repo, bound_teams, build_team_slug_map(org_teams)
+        )
+        if candidates is None:
+            return None
+        return build_team_depth_map(org_teams), candidates
 
     async def sync_team_from_github(
         self,
@@ -549,25 +603,26 @@ class GitHubService:
                 logger.info("No team is bound to GitHub organisation %s; %s keeps its team.", org, repository_path)
                 return GitHubTeamSyncResult(None, 0)
 
-            org_teams = await self.get_org_teams(org)
-            if org_teams is None:
+            try:
+                holders = await asyncio.wait_for(
+                    self._resolve_repository_holders(org, owner, repo, bound_teams), _GITHUB_RESOLUTION_TIMEOUT
+                )
+            except TimeoutError:
                 logger.warning(
-                    "Could not list the teams of GitHub organisation %s; leaving %s untouched.",
-                    org,
+                    "Resolving the owning team of %s took longer than %.0fs; leaving it untouched.",
                     repository_path,
+                    _GITHUB_RESOLUTION_TIMEOUT,
                 )
                 return GitHubTeamSyncResult(None, None)
 
-            candidates = await self._collect_repository_candidates(
-                org, owner, repo, bound_teams, build_team_slug_map(org_teams)
-            )
-            if candidates is None:
+            if holders is None:
                 logger.warning(
                     "GitHub could not say which teams hold repository %s; leaving it untouched.", repository_path
                 )
                 return GitHubTeamSyncResult(None, None)
+            depth_map, candidates = holders
 
-            winner = select_github_team([candidate.entry for candidate in candidates], build_team_depth_map(org_teams))
+            winner = select_github_team([candidate.entry for candidate in candidates], depth_map)
             if winner is None:
                 logger.info("No bound team holds repository %s; team_id left untouched.", repository_path)
                 return GitHubTeamSyncResult(None, len(candidates))
