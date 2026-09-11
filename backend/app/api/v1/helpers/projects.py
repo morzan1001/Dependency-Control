@@ -57,6 +57,16 @@ def is_write_superuser(user: User) -> bool:
     return has_permission(user.permissions, _WRITE_SUPERUSER_PERMISSIONS)
 
 
+def may_read_projects(user: User) -> bool:
+    """Whether the user holds a project-read permission at all.
+
+    A project role says which projects, this says whether the user reads projects; every resource
+    gate wants both, and one that settles for the role alone hands a member with no project
+    permission the resource anyway.
+    """
+    return has_permission(user.permissions, [Permissions.PROJECT_READ, Permissions.PROJECT_READ_ALL])
+
+
 def _is_write_request(required_role: str | None) -> bool:
     """Return True when ``required_role`` denotes a write (editor/admin) request."""
     return required_role in _WRITE_ROLES
@@ -171,7 +181,7 @@ async def check_project_access(
     if not is_member:
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
-    if Permissions.PROJECT_READ not in user.permissions and Permissions.PROJECT_READ_ALL not in user.permissions:
+    if not may_read_projects(user):
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     if required_role:

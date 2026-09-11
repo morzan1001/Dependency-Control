@@ -5,7 +5,12 @@ from typing import Any
 from fastapi import HTTPException
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.v1.helpers.projects import is_write_superuser, max_project_role, team_derived_role
+from app.api.v1.helpers.projects import (
+    is_write_superuser,
+    max_project_role,
+    may_read_projects,
+    team_derived_role,
+)
 from app.core.constants import (
     PROJECT_ROLE_EDITOR,
     PROJECT_ROLES,
@@ -50,7 +55,8 @@ async def check_callgraph_access(
     """Verify callgraph access and return the raw project document, or raise 403/404.
 
     Mirrors ``check_project_access``: project:update/project:delete is the write
-    superuser, project:read_all is read-only, members need editor or admin to write.
+    superuser, project:read_all is read-only, members need editor or admin to write,
+    and a member must hold a project-read permission besides their role.
     """
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
@@ -67,6 +73,9 @@ async def check_callgraph_access(
 
     role = await _effective_project_role(project, str(user.id), team_repo)
     if role is None:
+        raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
+
+    if not may_read_projects(user):
         raise HTTPException(status_code=403, detail=_MSG_ACCESS_DENIED)
 
     if require_write and PROJECT_ROLES.index(role) < PROJECT_ROLES.index(PROJECT_ROLE_EDITOR):

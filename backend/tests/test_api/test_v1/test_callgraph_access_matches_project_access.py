@@ -127,3 +127,28 @@ async def test_both_gates_reach_the_same_verdict(direct_role, team_role, write, 
 
     assert project_allowed == callgraph_allowed
     assert project_allowed == allowed
+
+
+# A project role is not on its own a licence to read projects: the resource gate wants both, and
+# a surface that asks only for the role hands a member with no project permission the whole graph.
+_UNREADING_USER = User(id=_USER, username=_USER, email="u1@test.com", permissions=[Permissions.ANALYTICS_READ])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("direct_role", "team_role", "write", "_allowed"), _GATE_MATRIX)
+async def test_neither_gate_admits_a_member_holding_no_project_read(direct_role, team_role, write, _allowed):
+    db = await _seed_gate_db(direct_role, team_role)
+    required_role = PROJECT_ROLE_EDITOR if write else None
+
+    assert not await _allows(check_project_access("p1", _UNREADING_USER, db, required_role=required_role))
+    assert not await _allows(check_callgraph_access("p1", _UNREADING_USER, db, require_write=write))
+
+
+@pytest.mark.asyncio
+async def test_read_all_still_admits_a_reader_who_is_no_member():
+    """The permission the members' check accepts in place of project:read is still accepted."""
+    db = await _seed_gate_db(None, None)
+    reader = User(id="outsider", username="outsider", email="o@test.com", permissions=[Permissions.PROJECT_READ_ALL])
+
+    assert await _allows(check_project_access("p1", reader, db))
+    assert await _allows(check_callgraph_access("p1", reader, db))
