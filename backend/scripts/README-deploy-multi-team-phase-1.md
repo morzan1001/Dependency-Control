@@ -142,6 +142,10 @@ db.projects.countDocuments({ team_sources: { $exists: false } })
 This must also return **0**, confirming every project now carries a `team_sources` dict. Projects
 without a team carry an empty dict `{}`.
 
+A present map is not a complete one: an owner listed in `team_ids` that the map does not name
+belongs to no provider, so no sync can ever retire it. §6b's second query counts those and must
+also return **0**.
+
 ## 6. HARD GATE — the final backfill and the deploy that stops deriving
 
 Read this section before scheduling the deploy that removes `Project._derive_team_ids`.
@@ -172,13 +176,15 @@ workingDir: /app
 command: ["python", "-m", "scripts.backfill_project_team_ids", "--verify"]
 ```
 
-It prints `projects disagreeing:` and exits **0** when the count is zero, **2** when it is not.
-Expected: **0**.
+It prints `projects disagreeing:` and `owners with no provenance:`, and exits **0** only when both
+counts are zero, **2** otherwise. Expected: **0** and **0**.
 
-### 6b. The same check from mongosh
+### 6b. The same two checks from mongosh
 
-`--verify` runs exactly this filter; a count of `0` means a re-run of the backfill would plan
-nothing:
+`--verify` runs exactly these filters, in this order. The first counts a document whenever its
+stored `team_ids` or `team_sources` says anything other than the scalar does — including a document
+that never received the backfill, and one whose `team_ids` is `null`, which is the one shape that no
+longer loads into the model at all. A count of `0` means a re-run of the backfill would plan nothing:
 
 ```js
 db.projects.countDocuments({
@@ -187,19 +193,35 @@ db.projects.countDocuments({
         { "$cond": [ { "$in": [ { "$ifNull": ["$team_id", null] }, [null, ""] ] }, [], ["$team_id"] ] } ] },
     { "$ne": [ { "$objectToArray": "$team_sources" },
         { "$cond": [
-            { "$or": [ { "$in": [ { "$ifNull": ["$team_id", null] }, [null, ""] ] },
-                       { "$in": [ { "$ifNull": ["$team_source", null] }, [null, ""] ] } ] },
+            { "$in": [ { "$ifNull": ["$team_id", null] }, [null, ""] ] },
             [],
-            [ { "k": "$team_id", "v": "$team_source" } ] ] } ] }
+            [ { "k": "$team_id",
+                "v": { "$cond": [ { "$in": [ { "$ifNull": ["$team_source", null] }, [null, ""] ] },
+                                  "manual", "$team_source" ] } } ] ] } ] }
   ] }
 })
 ```
 
-It counts a document whenever its stored `team_ids` or `team_sources` says anything other than the
-scalar does — including a document that never received the backfill, and one whose `team_ids` is
-`null`, which is the one shape that no longer loads into the model at all. To see which projects
-disagree rather than how many, pass the same filter to `db.projects.find(…, {team_id: 1, team_ids: 1,
-team_source: 1, team_sources: 1})`.
+The second counts the projects holding an owner that `team_sources` does not name. That owner
+belongs to no provider, so no sync can ever retire it: the repository moves between groups and the
+group it left keeps its access for good. The backfill writes `manual` for a scalar owner whose
+`team_source` is absent — the 503 production projects in that state — precisely so this count
+reaches zero; unlike the first check it stays meaningful after the cutover, because no writer from
+that deploy on can produce the shape.
+
+```js
+db.projects.countDocuments({
+  "$expr": { "$ne": [
+    { "$setDifference": [
+        { "$ifNull": ["$team_ids", []] },
+        { "$map": { "input": { "$objectToArray": { "$ifNull": ["$team_sources", {}] } },
+                    "as": "entry", "in": "$$entry.k" } } ] },
+    [] ] }
+})
+```
+
+To see which projects either query selects rather than how many, pass the same filter to
+`db.projects.find(…, {team_id: 1, team_ids: 1, team_source: 1, team_sources: 1})`.
 
 ## 7. When the write paths take over
 
@@ -227,5 +249,8 @@ features.
   remove one owner. `PUT /api/v1/projects/{id}` with `team_id` still works and now means "the team
   this project is assigned to by hand": it replaces the manually-assigned owners and leaves a
   provider's entry alone.
-- A project may have at most 16 owning teams. A sync resolving more than that leaves the project's
-  owners untouched and logs `past the cap`; grep for it after the deploy.
+- A project may have at most 16 owning teams, counted across every provider and every hand
+  assignment. A sync whose result would exceed it leaves the project's owners untouched and logs
+  `past the cap`; grep for it after the deploy.
+- An owner stored without a `team_sources` entry is read as a hand assignment, so no sync retires
+  it. §6b's second query lists them; the backfill stamps them `manual` so none are left.

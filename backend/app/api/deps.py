@@ -23,7 +23,12 @@ from app.repositories import (
     UserRepository,
 )
 from app.repositories.api_keys import ApiKeyRepository
-from app.repositories.projects import literal_set_stage, ownership_fields, replace_team_subset_pipeline
+from app.repositories.projects import (
+    literal_set_stage,
+    owners_replaced_by,
+    ownership_fields,
+    replace_team_subset_pipeline,
+)
 from app.schemas.token import TokenPayload
 from app.services.gitlab import GitLabService
 
@@ -180,35 +185,43 @@ async def _resolve_initial_member_id(
     return None
 
 
-def _resolved_owners(source: str, resolved: list[str] | None, repository_path: str) -> list[str] | None:
-    """The owners this provider resolved, or None when its answer must not be acted on.
+def _within_cap(source: str, would_own: set[str], repository_path: str) -> bool:
+    """Whether the owners a sync would leave behind stay inside the cap.
 
-    ``None`` from the provider is "it could not be asked", which must never read as "no team holds
-    this repository": the first leaves the owners it set alone, the second drops every one of them.
-    A resolution past the cap is refused rather than truncated — which of them to drop is not a
-    question a sync can answer.
+    The cap bounds the project, not one provider's answer, so it is measured against the whole
+    result. Refused rather than truncated: which owner to drop — this provider's, the other's, or
+    one assigned by hand — is not a question a sync can answer.
     """
-    if resolved is None:
-        return None
-    owners = sorted(set(resolved))
-    if len(owners) > MAX_PROJECT_TEAMS:
-        logger.warning(
-            "%s sync resolved %d owning teams for %s, past the cap of %d; leaving its owners untouched.",
-            source,
-            len(owners),
-            repository_path,
-            MAX_PROJECT_TEAMS,
-        )
-        return None
-    return owners
+    if len(would_own) <= MAX_PROJECT_TEAMS:
+        return True
+    logger.warning(
+        "%s sync would leave %s with %d owning teams, past the cap of %d; leaving its owners untouched.",
+        source,
+        repository_path,
+        len(would_own),
+        MAX_PROJECT_TEAMS,
+    )
+    return False
+
+
+def _new_project_owners(source: str, resolved: list[str] | None, repository_path: str) -> list[str]:
+    """The owners to store on a project this ingest is creating."""
+    owners = sorted(set(resolved or []))
+    return owners if _within_cap(source, set(owners), repository_path) else []
 
 
 def _team_subset_stages(project: Project, source: str, resolved: list[str] | None, repository_path: str) -> list[dict]:
-    """The ownership stages this provider contributes, empty when there is nothing for it to write."""
-    owners = _resolved_owners(source, resolved, repository_path)
-    if owners is None:
+    """The ownership stages this provider contributes, empty when there is nothing for it to write.
+
+    ``None`` from the provider is "it could not be asked", which must never read as "no team holds
+    this repository": the first leaves the owners it set alone, the second drops every one of them.
+    """
+    if resolved is None:
         return []
-    owned_here = {team_id for team_id, entry in project.team_sources.items() if entry == source}
+    owners = sorted(set(resolved))
+    owned_here = owners_replaced_by(project, source)
+    if not _within_cap(source, (set(project.team_ids) - owned_here) | set(owners), repository_path):
+        return []
     # Every CI job of every pipeline arrives here, so an unchanged owner set writes nothing. The
     # second half catches a document whose provenance names an owner the list never gained.
     if owned_here == set(owners) and owned_here <= set(project.team_ids):
@@ -336,7 +349,7 @@ async def _handle_gitlab_oidc(
             gitlab_project_path,
             gitlab_project_data=gitlab_project_data,
         )
-        owners = _resolved_owners("gitlab", resolved.team_ids, gitlab_project_path) or []
+        owners = _new_project_owners("gitlab", resolved.team_ids, gitlab_project_path)
 
     new_project = Project(
         name=gitlab_project_path,
@@ -409,7 +422,7 @@ async def _handle_github_oidc(
     owners: list[str] = []
     if github_instance.sync_teams:
         sync_result = await github_service.sync_team_from_github(db, gh_payload.repository_owner, repo_path)
-        owners = _resolved_owners("github", sync_result.team_ids, repo_path) or []
+        owners = _new_project_owners("github", sync_result.team_ids, repo_path)
 
     new_project = Project(
         name=repo_path,

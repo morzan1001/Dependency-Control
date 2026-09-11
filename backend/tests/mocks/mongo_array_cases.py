@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from app.repositories.projects import add_team_pipeline, remove_team_pipeline, replace_team_subset_pipeline
-from scripts.backfill_project_team_ids import drift_filter
+from scripts.backfill_project_team_ids import drift_filter, provenance_gap_filter
 
 _CONFLICT = 40
 _BAD_VALUE = 2
@@ -523,8 +523,10 @@ TEAM_OWNERSHIP_CASES = [
             "team_source": "manual",
         },
     ),
+    # Why POST /teams answers an owner it already holds without writing: the pipeline would restamp
+    # the entry, and a provider's owner marked by hand outlives every sync of that provider.
     UpdateCase(
-        "adding an owner a provider already set claims it by hand",
+        "re-adding an owner rewrites its provenance",
         {"team_id": "gl-a", "team_source": "gitlab", "team_ids": ["gl-a"], "team_sources": {"gl-a": "gitlab"}},
         add_team_pipeline("gl-a", "manual"),
         expected={
@@ -532,6 +534,28 @@ TEAM_OWNERSHIP_CASES = [
             "team_sources": {"gl-a": "manual"},
             "team_id": "gl-a",
             "team_source": "manual",
+        },
+    ),
+    UpdateCase(
+        "a provider leaves an owner no provenance names alone",
+        {"team_ids": ["legacy", "gl-a"], "team_sources": {"gl-a": "gitlab"}},
+        replace_team_subset_pipeline("gitlab", ["gl-b"]),
+        expected={
+            "team_ids": ["gl-b", "legacy"],
+            "team_sources": {"gl-b": "gitlab"},
+            "team_id": "gl-b",
+            "team_source": "gitlab",
+        },
+    ),
+    UpdateCase(
+        "the hand assignment replaces an owner no provenance names",
+        {"team_ids": ["legacy", "gl-a"], "team_sources": {"gl-a": "gitlab"}},
+        replace_team_subset_pipeline("manual", ["m1"]),
+        expected={
+            "team_ids": ["gl-a", "m1"],
+            "team_sources": {"gl-a": "gitlab", "m1": "manual"},
+            "team_id": "gl-a",
+            "team_source": "gitlab",
         },
     ),
     UpdateCase(
@@ -585,9 +609,11 @@ DRIFT_DOCS = [
 ]
 
 # The release gate for dropping the derivation: every document whose stored fields say something
-# other than the scalar does, and nothing else.
+# other than the scalar does, and nothing else. Document 4 is the one an owner-with-no-provenance
+# backfill used to leave behind and the gate used to call clean.
 TEAM_DRIFT_CASES = [
-    FindCase("projects disagreeing with their scalar", DRIFT_DOCS, drift_filter(), [5, 6, 7, 8, 9, 10, 11, 12, 13]),
+    FindCase("projects disagreeing with their scalar", DRIFT_DOCS, drift_filter(), [4, 5, 6, 7, 8, 9, 10, 11, 12, 13]),
+    FindCase("projects holding an owner no provenance names", DRIFT_DOCS, provenance_gap_filter(), [4, 8, 12]),
 ]
 
 ARRAY_EXPRESSION_CASES = [

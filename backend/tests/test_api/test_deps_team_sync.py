@@ -178,6 +178,23 @@ async def test_a_subset_recorded_but_never_stored_is_written_out():
 
 
 @pytest.mark.asyncio
+async def test_a_legacy_owner_with_no_provenance_is_not_retired_by_a_sync():
+    """The branch the per-project provenance gate used to own: an owner predating team_sources.
+
+    It is read as a hand assignment, so a provider adds beside it rather than over it. Naming a
+    provider instead would have that provider's next ingest retire an owner on no evidence — and
+    503 production projects reach the cutover in exactly this shape.
+    """
+    db = FakeDatabase()
+    project = await _seed(db, team_ids=["legacy"], team_sources={}, team_id="legacy")
+
+    stored, _ = await _gitlab_sync(db, project, ["gl-new"])
+
+    assert sorted(stored["team_ids"]) == ["gl-new", "legacy"]
+    assert stored["team_sources"] == {"gl-new": "gitlab"}
+
+
+@pytest.mark.asyncio
 async def test_a_resolution_past_the_cap_leaves_the_owners_alone(caplog):
     db = FakeDatabase()
     project = await _seed(db, team_ids=["gl-a"], team_sources={"gl-a": "gitlab"}, team_id="gl-a")
@@ -188,6 +205,34 @@ async def test_a_resolution_past_the_cap_leaves_the_owners_alone(caplog):
     assert stages == []
     assert stored["team_ids"] == ["gl-a"]
     assert any("past the cap" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_the_cap_counts_every_owner_and_not_one_provider_s_answer(caplog):
+    """A cap that bounds only the resolution lets a full manual roster plus a two-team sync store
+    18 owners on a project the routes would have refused a seventeenth."""
+    owners = [f"m-{n}" for n in range(MAX_PROJECT_TEAMS)]
+    db = FakeDatabase()
+    project = await _seed(db, team_ids=owners, team_sources=dict.fromkeys(owners, "manual"))
+
+    with caplog.at_level("WARNING", logger="app.api.deps"):
+        stored, stages = await _gitlab_sync(db, project, ["gl-a", "gl-b"])
+
+    assert stages == []
+    assert stored["team_ids"] == owners
+    assert any("past the cap" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_a_sync_that_stays_inside_the_cap_still_writes():
+    owners = [f"m-{n}" for n in range(MAX_PROJECT_TEAMS - 1)]
+    db = FakeDatabase()
+    project = await _seed(db, team_ids=owners, team_sources=dict.fromkeys(owners, "manual"))
+
+    stored, stages = await _gitlab_sync(db, project, ["gl-a"])
+
+    assert stages != []
+    assert sorted(stored["team_ids"]) == sorted([*owners, "gl-a"])
 
 
 @pytest.mark.asyncio

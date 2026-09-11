@@ -6,7 +6,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorCollection, AsyncIOMotorDatabase
 from pymongo import ReadPreference, ReturnDocument
 
-from app.core.constants import PROJECT_ROLE_ADMIN
+from app.core.constants import PROJECT_ROLE_ADMIN, TEAM_SOURCE_MANUAL
 from app.core.metrics import track_db_operation
 from app.models.project import Project
 from app.schemas.projections import ProjectMinimal, ProjectWithScanId
@@ -40,6 +40,38 @@ def _sources_except(source: str) -> dict[str, Any]:
             }
         }
     }
+
+
+# Owners no provenance entry names. They predate the field, and reading them as anything but a
+# hand assignment would let a provider retire an owner it cannot be shown to have set.
+_UNPROVENANCED = {
+    "$setDifference": [
+        {"$ifNull": ["$team_ids", []]},
+        {
+            "$map": {
+                "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
+                "as": "entry",
+                "in": "$$entry.k",
+            }
+        },
+    ]
+}
+
+
+def _retired_by(source: str) -> dict[str, Any]:
+    """The owners a ``source`` write replaces."""
+    named = {"$map": {"input": _owned_by(source), "as": "entry", "in": "$$entry.k"}}
+    if source != TEAM_SOURCE_MANUAL:
+        return named
+    return {"$setUnion": [named, _UNPROVENANCED]}
+
+
+def owners_replaced_by(project: Project, source: str) -> set[str]:
+    """``_retired_by`` in Python, for the callers that must size the result before writing it."""
+    named = {team_id for team_id, entry in project.team_sources.items() if entry == source}
+    if source != TEAM_SOURCE_MANUAL:
+        return named
+    return named | (set(project.team_ids) - set(project.team_sources))
 
 
 # Read against the freshly written list, so it has to run in a stage of its own.
@@ -107,12 +139,7 @@ def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[
             "$set": {
                 "team_ids": {
                     "$setUnion": [
-                        {
-                            "$setDifference": [
-                                {"$ifNull": ["$team_ids", []]},
-                                {"$map": {"input": _owned_by(source), "as": "entry", "in": "$$entry.k"}},
-                            ]
-                        },
+                        {"$setDifference": [{"$ifNull": ["$team_ids", []]}, _retired_by(source)]},
                         team_ids,
                     ]
                 },
@@ -190,6 +217,22 @@ def _surviving_admin_filter(user_id: str, required: bool) -> dict[str, Any]:
     if not required:
         return {}
     return {"members": {"$elemMatch": {"user_id": {"$ne": user_id}, "role": PROJECT_ROLE_ADMIN}}}
+
+
+def surviving_owner_admin_filter(incumbent_admin_owners: list[str]) -> dict[str, Any]:
+    """Match only while the project still holds an admin — a direct member, or one of the owners
+    that supplies one and the write leaves in place.
+
+    The same shape as ``_surviving_admin_filter`` and for the same reason: two concurrent writes
+    each taking one of the last two admin-supplying owners both pass a check made beforehand, and
+    the project ends up with nobody who can administer it.
+    """
+    return {
+        "$or": [
+            {"members": {"$elemMatch": {"role": PROJECT_ROLE_ADMIN}}},
+            {"team_ids": {"$in": incumbent_admin_owners}},
+        ]
+    }
 
 
 class ProjectRepository:
@@ -306,10 +349,15 @@ class ProjectRepository:
                 await self.collection.update_one({"_id": project_id}, {"$set": update_data})
         return await self.get_by_id(project_id)
 
-    async def update_raw(self, project_id: str, update_ops: UpdateOps) -> None:
-        """``update_ops`` reaches the server verbatim: modifiers as a document, a pipeline as a list."""
+    async def update_raw(self, project_id: str, update_ops: UpdateOps, guard: dict[str, Any] | None = None) -> bool:
+        """``update_ops`` reaches the server verbatim: modifiers as a document, a pipeline as a list.
+
+        ``guard`` joins the write's own filter so a condition established beforehand cannot go
+        stale in between. False when it no longer held.
+        """
         with track_db_operation(_COL, "update_one"):
-            await self.collection.update_one({"_id": project_id}, update_ops)
+            result = await self.collection.update_one({"_id": project_id, **(guard or {})}, update_ops)
+        return bool(result.matched_count)
 
     async def delete(self, project_id: str) -> bool:
         with track_db_operation(_COL, "delete_one"):

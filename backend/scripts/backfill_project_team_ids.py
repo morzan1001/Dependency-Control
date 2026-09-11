@@ -9,17 +9,18 @@ The planning half is pure so tests call it with plain dicts and no database. A d
 already carries ``team_ids`` is updated only if its stored list or sources differ from the value
 derived from the scalar — the scalar stays authoritative in this phase.
 
-``--verify`` counts the documents that still disagree with their scalar. It is the release gate for
-the deploy that stops deriving the fields on read: from that image on, whatever is stored is what
-readers act on, and every team transfer made since the last ``--execute`` run wrote the scalar only.
+``--verify`` counts the documents that still disagree with their scalar, and separately the ones
+holding an owner no provenance entry names. It is the release gate for the deploy that stops
+deriving the fields on read: from that image on, whatever is stored is what readers act on, and
+every team transfer made since the last ``--execute`` run wrote the scalar only.
 See ``README-deploy-multi-team-phase-1.md`` §6.
 
 Usage (in-pod): `python -m scripts.backfill_project_team_ids --help` from /app.
 
 Exit codes:
-    0 — completed (dry-run, execute, or a --verify that found no disagreement)
+    0 — completed (dry-run, execute, or a --verify that found nothing)
     1 — connection or runtime error
-    2 — --verify found documents whose stored fields disagree with the scalar
+    2 — --verify found documents disagreeing with the scalar or holding an un-provenanced owner
 """
 
 import argparse
@@ -32,6 +33,7 @@ from typing import Any
 from motor.motor_asyncio import AsyncIOMotorClient
 
 from app.core.config import settings
+from app.core.constants import TEAM_SOURCE_MANUAL
 
 DEFAULT_BATCH_SIZE = 500
 DEFAULT_SLEEP_MS = 50
@@ -44,6 +46,9 @@ _PROJECT_PROJECTION = {"_id": 1, "team_id": 1, "team_source": 1, "team_ids": 1, 
 _NO_TEAM = [None, ""]
 _SCALAR_ID = {"$ifNull": ["$team_id", None]}
 _SCALAR_SOURCE = {"$ifNull": ["$team_source", None]}
+# A legacy scalar with no source names a provider nothing can identify, so the entry is written as
+# a hand assignment. Guessing a provider would have that provider's next sync retire the owner.
+_DERIVED_SOURCE = {"$cond": [{"$in": [_SCALAR_SOURCE, _NO_TEAM]}, TEAM_SOURCE_MANUAL, "$team_source"]}
 
 
 def drift_filter() -> dict[str, Any]:
@@ -56,6 +61,9 @@ def drift_filter() -> dict[str, Any]:
 
     ``team_sources`` is compared as ``$objectToArray`` output because an absent map yields null
     there, which no document expression can be written to equal by accident.
+
+    A scalar owner whose ``team_source`` is absent derives a ``manual`` entry, so a document left
+    with no provenance for it disagrees here rather than reading as finished.
     """
     return {
         "$expr": {
@@ -71,9 +79,9 @@ def drift_filter() -> dict[str, Any]:
                         {"$objectToArray": "$team_sources"},
                         {
                             "$cond": [
-                                {"$or": [{"$in": [_SCALAR_ID, _NO_TEAM]}, {"$in": [_SCALAR_SOURCE, _NO_TEAM]}]},
+                                {"$in": [_SCALAR_ID, _NO_TEAM]},
                                 [],
-                                [{"k": "$team_id", "v": "$team_source"}],
+                                [{"k": "$team_id", "v": _DERIVED_SOURCE}],
                             ]
                         },
                     ]
@@ -83,9 +91,43 @@ def drift_filter() -> dict[str, Any]:
     }
 
 
+def provenance_gap_filter() -> dict[str, Any]:
+    """Selects every project holding an owner that no ``team_sources`` entry names.
+
+    Such an entry belongs to no provider, so no sync can ever retire it: the repository moves
+    between groups and the owner it left keeps its access forever. Unlike the scalar comparison
+    this stays meaningful after the cutover — no writer may produce the shape, so a count above
+    zero is a document an older one left behind.
+    """
+    return {
+        "$expr": {
+            "$ne": [
+                {
+                    "$setDifference": [
+                        {"$ifNull": ["$team_ids", []]},
+                        {
+                            "$map": {
+                                "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
+                                "as": "entry",
+                                "in": "$$entry.k",
+                            }
+                        },
+                    ]
+                },
+                [],
+            ]
+        }
+    }
+
+
 async def count_drift(db: Any) -> int:
     """How many projects disagree with their scalar. Zero is the gate for dropping the derivation."""
     return await db.projects.count_documents(drift_filter())
+
+
+async def count_provenance_gaps(db: Any) -> int:
+    """How many projects hold an owner no provenance entry names."""
+    return await db.projects.count_documents(provenance_gap_filter())
 
 
 @dataclass(frozen=True)
@@ -103,13 +145,17 @@ def plan_team_id_expansion(docs: list[dict[str, Any]]) -> list[TeamIdsUpdate]:
     The scalar stays authoritative in this phase. A document whose stored list and sources already
     equal the derived value is skipped. Once writers own the list, this migration must not be re-run,
     as any subsequent scalar change would overwrite writer-added teams.
+
+    An owner whose ``team_source`` is absent is written as a hand assignment rather than left
+    without one: an entry no provenance names belongs to no provider, so no sync could retire it,
+    and no evidence exists for naming one of them instead.
     """
     plan: list[TeamIdsUpdate] = []
     for doc in docs:
         team_id = doc.get("team_id")
         source = doc.get("team_source")
         derived_ids = [team_id] if team_id else []
-        derived_sources = {team_id: source} if team_id and source else {}
+        derived_sources = {team_id: source or TEAM_SOURCE_MANUAL} if team_id else {}
 
         stored_ids = doc.get("team_ids")
         stored_sources = doc.get("team_sources")
@@ -178,13 +224,15 @@ def _report(planned: int, matched: int | None, mode: str) -> None:
 
 
 async def run_verify(db: Any) -> int:
-    """Report the disagreement count and return the process exit code."""
+    """Report both counts and return the process exit code."""
     drifted = await count_drift(db)
+    gaps = await count_provenance_gaps(db)
     print(f"[VERIFY] {'projects disagreeing:':<{_REPORT_LABEL_WIDTH}}{drifted}")
-    if drifted:
+    print(f"[VERIFY] {'owners with no provenance:':<{_REPORT_LABEL_WIDTH}}{gaps}")
+    if drifted or gaps:
         print("GATE FAILED — run --execute before rolling the image that stops deriving the fields.")
         return EXIT_DRIFT_FOUND
-    print("Gate passed — every project's stored team fields match its scalar.")
+    print("Gate passed — every stored owner matches the scalar and names the source that set it.")
     return 0
 
 
@@ -232,7 +280,10 @@ def main() -> int:
     mode.add_argument(
         "--verify",
         action="store_true",
-        help=f"Count projects whose stored team fields disagree with the scalar; exit {EXIT_DRIFT_FOUND} if any do.",
+        help=(
+            "Count projects whose stored team fields disagree with the scalar and projects holding "
+            f"an owner no provenance entry names; exit {EXIT_DRIFT_FOUND} if either is above zero."
+        ),
     )
     parser.set_defaults(execute=False)
     parser.add_argument(

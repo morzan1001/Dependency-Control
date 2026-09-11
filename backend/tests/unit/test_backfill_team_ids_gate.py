@@ -1,20 +1,25 @@
-"""The release gate for dropping the derivation: no stored document may disagree with its scalar.
+"""The release gate for dropping the derivation: no stored document may disagree with its scalar,
+and no owner may be listed that no provenance entry names.
 
 The gate has to be exactly as strict as the migration itself, so the two are checked against one
 corpus rather than each other's description. It also has to survive the runbook: an operator who
-pastes the mongosh spelling must run the same filter the script runs.
+pastes the mongosh spellings must run the filters the script runs.
 """
 
 import json
 import pathlib
+from unittest.mock import AsyncMock
 
 import pytest
 
+import scripts.backfill_project_team_ids as backfill
 from scripts.backfill_project_team_ids import (
     EXIT_DRIFT_FOUND,
     count_drift,
+    count_provenance_gaps,
     drift_filter,
     plan_team_id_expansion,
+    provenance_gap_filter,
     run_verify,
 )
 from tests.mocks.fake_mongo import FakeDatabase
@@ -88,11 +93,45 @@ async def test_verify_reports_success_only_on_a_clean_database():
     assert await run_verify(await _seeded(_CLEAN, _TRANSFERRED)) == EXIT_DRIFT_FOUND
 
 
-def test_the_runbook_publishes_the_filter_the_script_runs():
-    """An operator pastes the mongosh spelling; if it drifts from the script it checks nothing."""
+def _published_filters() -> list[dict]:
+    """Every ``countDocuments`` argument the runbook's gate section publishes, in order."""
     body = _RUNBOOK.read_text()
-    section = body.index(_GATE_SECTION)
-    start = body.index(_COUNT_CALL, section) + len(_COUNT_CALL)
-    end = body.index("\n})", start) + 2  # keep the closing brace, drop the call's own paren
+    cursor = body.index(_GATE_SECTION)
+    filters = []
+    while (call := body.find(_COUNT_CALL, cursor)) != -1:
+        start = call + len(_COUNT_CALL)
+        end = body.index("\n})", start) + 2  # keep the closing brace, drop the call's own paren
+        filters.append(json.loads(body[start:end]))
+        cursor = end
+    return filters
 
-    assert json.loads(body[start:end]) == drift_filter()
+
+def test_the_runbook_publishes_the_filters_the_script_runs():
+    """An operator pastes the mongosh spellings; if they drift from the script they check nothing."""
+    assert _published_filters() == [drift_filter(), provenance_gap_filter()]
+
+
+@pytest.mark.asyncio
+async def test_the_gate_catches_an_owner_no_provenance_names():
+    """An entry no team_sources key names belongs to no provider, so no sync can retire it."""
+    db = await _seeded({"_id": "p", "team_ids": ["A"], "team_sources": {}})
+
+    assert await count_provenance_gaps(db) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_fully_provenanced_project_has_no_gap():
+    db = await _seeded(_CLEAN, {"_id": "empty", "team_ids": [], "team_sources": {}})
+
+    assert await count_provenance_gaps(db) == 0
+
+
+@pytest.mark.asyncio
+async def test_the_gate_answers_to_a_gap_on_its_own(monkeypatch):
+    """Past the cutover a co-owned project disagrees with its scalar by design, so §7 retires the
+    scalar comparison — while an owner no provenance names is still one no sync can retire. The
+    gate has to fail on that count alone, or the check goes with the comparison."""
+    db = await _seeded({"_id": "p", "team_ids": ["A"], "team_sources": {}})
+    monkeypatch.setattr(backfill, "count_drift", AsyncMock(return_value=0))
+
+    assert await run_verify(db) == EXIT_DRIFT_FOUND

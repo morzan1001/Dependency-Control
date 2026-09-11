@@ -58,10 +58,13 @@ def test_a_project_with_a_team_and_a_source_expands_to_both_fields():
     assert plan == [TeamIdsUpdate(project_id="p1", team_ids=["t1"], team_sources={"t1": "manual"})]
 
 
-def test_a_project_with_a_team_but_no_source_expands_without_provenance():
+def test_a_project_with_a_team_but_no_source_expands_to_a_hand_assignment():
+    """503 production projects have no team_source. An owner left out of the map belongs to no
+    provider, so no sync could ever retire it; naming a provider would have that provider's next
+    sync retire an owner on no evidence at all."""
     plan = plan_team_id_expansion([_project("p1", team_id="t1")])
 
-    assert plan == [TeamIdsUpdate(project_id="p1", team_ids=["t1"], team_sources={})]
+    assert plan == [TeamIdsUpdate(project_id="p1", team_ids=["t1"], team_sources={"t1": "manual"})]
 
 
 def test_a_project_without_a_team_expands_to_an_empty_list():
@@ -136,7 +139,7 @@ async def test_the_dry_run_report_names_exactly_what_an_execute_run_changes():
     assert planned == matched
     assert _changed_ids(before, after, "projects") == {"p1"}
     assert after["projects"]["p1"]["team_ids"] == ["t1"]
-    assert after["projects"]["p1"]["team_sources"] == {}
+    assert after["projects"]["p1"]["team_sources"] == {"t1": "manual"}
 
 
 @pytest.mark.asyncio
