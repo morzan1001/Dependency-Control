@@ -37,7 +37,9 @@ async def build_user_project_query(
     return {
         "$or": [
             {"members.user_id": str(user.id)},
-            {"team_id": {"$in": team_ids}},
+            # An element test, not a scalar equality: a project answers to every team that owns it,
+            # so a co-owner's members see it whichever owner a writer left in the scalar.
+            {"team_ids": {"$in": team_ids}},
         ]
     }
 

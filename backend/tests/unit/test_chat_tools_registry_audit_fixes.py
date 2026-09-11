@@ -151,7 +151,7 @@ class TestComplianceReportsVisibility:
             "name": "team-a",
             "members": [{"user_id": "u-1", "role": "member"}],
         }
-        db.projects._docs["p-1"] = {"_id": "p-1", "name": "P1", "team_id": "t-1"}
+        db.projects._docs["p-1"] = {"_id": "p-1", "name": "P1", "team_ids": ["t-1"], "team_id": "t-1"}
 
         repo_instance = MagicMock()
         repo_instance.list = AsyncMock(return_value=[])

@@ -29,7 +29,7 @@ def _seed_projects(db, count: int, *, member: bool = False, team_id: str | None 
         if member:
             doc["members"] = [{"user_id": _USER}]
         if team_id:
-            doc["team_id"] = team_id
+            doc["team_ids"] = [team_id]
         db.projects._docs[doc["_id"]] = doc
 
 
