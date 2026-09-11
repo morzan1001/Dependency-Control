@@ -1,4 +1,13 @@
-# Release 1.9.24
+# Release 1.9.26
+
+## 📦 Build & CI
+
+- chore: release 1.9.25 — GitHub team resolution without repository admin (#0)
+- chore: release 1.9.26 — bind a team to a GitHub team (#0)
+
+
+
+# Release 1.9.26
 
 ## 🐛 Fixes
 
