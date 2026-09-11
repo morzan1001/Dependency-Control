@@ -1,5 +1,6 @@
 import { Finding } from './scan';
 import type { Severity, SeverityBreakdown } from './common';
+import type { TeamRef } from './team';
 
 export type { Severity, SeverityBreakdown } from './common';
 
@@ -550,7 +551,7 @@ export type UpdateDataStatus = 'ready' | 'partial' | 'pending' | 'insufficient_d
 export interface ProjectUpdateSummary {
     project_id: string;
     project_name: string;
-    team_name: string | null;
+    teams: TeamRef[];
     // The branch the numbers were measured on; picked heuristically without a default branch.
     branch: string | null;
     window_days: number;

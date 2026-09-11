@@ -38,13 +38,13 @@ function collectFromToolResult(
       obj.project_name.length,
     );
   }
-  if (typeof obj.team_name === 'string' && typeof obj.team_id === 'string') {
-    add(
-      `team:${obj.team_id}`,
-      obj.team_name,
-      `[${obj.team_name}](/teams/${obj.team_id})`,
-      obj.team_name.length,
-    );
+  if (Array.isArray(obj.teams)) {
+    for (const owner of obj.teams) {
+      const ref = owner as Record<string, unknown>;
+      if (typeof ref?.id === 'string' && typeof ref.name === 'string') {
+        add(`team:${ref.id}`, ref.name, `[${ref.name}](/teams/${ref.id})`, ref.name.length);
+      }
+    }
   }
   // Finding deep-link: prefer the UUID `id`, fall back to `finding_id`.
   if (

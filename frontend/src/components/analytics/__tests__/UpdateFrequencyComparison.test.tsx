@@ -55,7 +55,7 @@ const WINDOW_SCAN_CAP = 1000;
 const makeProject = (idx: number): ProjectUpdateSummary => ({
   project_id: `p${idx}`,
   project_name: `project-${idx}`,
-  team_name: null,
+  teams: [],
   // Distinct per project: a branch cell that ignored its row would still read "main".
   branch: `release/${idx}.x`,
   window_days: 90,
@@ -77,7 +77,7 @@ const makeUnmeasured = (
 ): ProjectUpdateSummary => ({
   project_id: name,
   project_name: name,
-  team_name: null,
+  teams: [],
   branch: null,
   window_days: 90,
   scan_count: null,
@@ -235,6 +235,25 @@ describe("UpdateFrequencyComparison", () => {
     // Each row shows its own branch, so neither a constant nor a neighbour's value passes.
     expect(within(rowFor("project-1")).getByText("release/1.x")).toBeInTheDocument();
     expect(within(rowFor("project-2")).getByText("release/2.x")).toBeInTheDocument();
+  });
+
+  it("names every team that owns a project, and says when none does", async () => {
+    mockedComparison.mockResolvedValue(
+      makeComparison(1, {
+        projects: [
+          { ...makeProject(1), teams: [{ id: "t1", name: "Payments" }, { id: "t2", name: "Platform" }] },
+          { ...makeProject(2), teams: [] },
+        ],
+      }),
+    );
+    renderComparison();
+    clickLoad();
+
+    await screen.findByText("Project Ranking");
+    const owned = within(rowFor("project-1"));
+    expect(owned.getByText("Payments")).toBeInTheDocument();
+    expect(owned.getByTitle("Payments, Platform")).toBeInTheDocument();
+    expect(within(rowFor("project-2")).getByText("Unassigned")).toBeInTheDocument();
   });
 
   it("shows a partially covered project's numbers with the caveat, not as a failure", async () => {

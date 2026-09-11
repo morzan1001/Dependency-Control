@@ -10,7 +10,7 @@ interface ProjectStub {
   name: string
   owner_id?: string
   members?: { user_id: string }[]
-  team_id?: string
+  team_ids?: string[]
 }
 
 // useProjects returns only the first 100-project page (no Project 150); useProjectsDropdown paginates the full list, so the dialog must use the latter.
@@ -25,7 +25,14 @@ const projectBeyondFirstPage: ProjectStub = {
   name: 'Project 150',
   owner_id: targetUserId,
 }
-const allProjects: ProjectStub[] = [...firstPage, projectBeyondFirstPage]
+// The user's team is the second of two owners, so a lookup that reads one owner misses this one.
+const coOwnedProject: ProjectStub = {
+  id: 'p-200',
+  name: 'Project 200',
+  owner_id: 'someone-else',
+  team_ids: ['team-other', 'team-target'],
+}
+const allProjects: ProjectStub[] = [...firstPage, projectBeyondFirstPage, coOwnedProject]
 
 vi.mock('@/hooks/queries/use-projects', () => ({
   // First page only: omits Project 150.
@@ -43,7 +50,14 @@ vi.mock('@/hooks/queries/use-projects', () => ({
 }))
 
 vi.mock('@/hooks/queries/use-teams', () => ({
-  useTeams: () => ({ data: [], isLoading: false, error: null }),
+  useTeams: () => ({
+    data: [
+      { id: 'team-other', name: 'Other', members: [{ user_id: 'someone-else' }] },
+      { id: 'team-target', name: 'Target', members: [{ user_id: targetUserId }] },
+    ],
+    isLoading: false,
+    error: null,
+  }),
 }))
 
 const noopMutation = () => ({ mutate: vi.fn(), isPending: false })
@@ -83,5 +97,15 @@ describe('UserDetailsDialog - project membership', () => {
 
     expect(screen.getByText('Project 150')).toBeInTheDocument()
     expect(screen.queryByText('No projects found.')).not.toBeInTheDocument()
+  })
+
+  it("lists a project any of whose owning teams the user belongs to", () => {
+    render(
+      <MemoryRouter>
+        <UserDetailsDialog user={makeUser()} open onOpenChange={() => {}} />
+      </MemoryRouter>,
+    )
+
+    expect(screen.getByText('Project 200')).toBeInTheDocument()
   })
 })

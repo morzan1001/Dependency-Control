@@ -13,6 +13,7 @@ import { useScrollContainer, createScrollObserver } from '@/hooks/use-scroll-con
 import { formatDate } from '@/lib/utils'
 import { DEFAULT_PAGE_SIZE } from '@/lib/constants'
 import { ScanStatusBadge } from '@/components/scans/ScanStatusBadge'
+import { OwningTeamsCell } from '@/components/teams/OwningTeamsCell'
 
 const DASHBOARD_STATS_SKELETON_IDS = ['ds1', 'ds2', 'ds3', 'ds4']
 const DASHBOARD_ACTIVITY_SKELETON_IDS = ['da1', 'da2', 'da3', 'da4', 'da5']
@@ -274,7 +275,7 @@ export default function Dashboard() {
                             <th className="w-auto h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('name')}>
                                 Name {renderSortIcon('name')}
                             </th>
-                            <th className="w-[150px] h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">Team</th>
+                            <th className="w-[150px] h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0">Teams</th>
                             <th className="w-[150px] h-12 px-4 text-left align-middle font-medium text-muted-foreground [&:has([role=checkbox])]:pr-0 cursor-pointer hover:text-foreground" onClick={() => handleSort('last_scan_at')}>
                                 Last Scan {renderSortIcon('last_scan_at')}
                             </th>
@@ -317,7 +318,7 @@ export default function Dashboard() {
                                             onClick={() => navigate(`/projects/${project.id}`)}
                                         >
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 font-medium">{project.name}</td>
-                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.team_name || '-'}</td>
+                                            <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 overflow-hidden"><OwningTeamsCell teams={project.teams} /></td>
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0">{project.last_scan_at ? formatDate(project.last_scan_at) : 'Never'}</td>
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-destructive font-bold">{project.stats?.critical || 0}</td>
                                             <td className="p-4 align-middle [&:has([role=checkbox])]:pr-0 text-severity-high font-bold">{project.stats?.high || 0}</td>

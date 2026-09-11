@@ -50,6 +50,21 @@ describe('linkifyAssistantMarkdown', () => {
     expect(linkifyAssistantMarkdown(content, [])).toBe(content);
   });
 
+  it('links every owning team a project row names, not only its first', () => {
+    const entities = collectEntitiesFromToolCalls([
+      toolCall({
+        project_id: 'p9',
+        project_name: 'acme-api',
+        teams: [
+          { id: 't1', name: 'Payments' },
+          { id: 't2', name: 'Platform' },
+        ],
+      }),
+    ]);
+    const out = linkifyAssistantMarkdown('Payments and Platform own acme-api today.', entities);
+    expect(out).toBe('[Payments](/teams/t1) and [Platform](/teams/t2) own [acme-api](/projects/p9) today.');
+  });
+
   it('links project entity mentions', () => {
     const entities = collectEntitiesFromToolCalls([
       toolCall({ project_id: 'p9', project_name: 'acme-api' }),
