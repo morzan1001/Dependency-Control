@@ -29,6 +29,67 @@ def _owned_by(source: str) -> dict[str, Any]:
     }
 
 
+def _sources_except(source: str) -> dict[str, Any]:
+    """The provenance map without the entries ``source`` wrote."""
+    return {
+        "$arrayToObject": {
+            "$filter": {
+                "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
+                "as": "entry",
+                "cond": {"$ne": ["$$entry.v", source]},
+            }
+        }
+    }
+
+
+# Read against the freshly written list, so it has to run in a stage of its own.
+_MIRRORED_OWNER = {
+    "$cond": [
+        {"$in": [{"$ifNull": ["$team_id", None]}, {"$ifNull": ["$team_ids", []]}]},
+        "$team_id",
+        {"$ifNull": [{"$arrayElemAt": [{"$ifNull": ["$team_ids", []]}, 0]}, None]},
+    ]
+}
+
+_MIRRORED_SOURCE = {
+    "$ifNull": [
+        {
+            "$arrayElemAt": [
+                {
+                    "$map": {
+                        "input": {
+                            "$filter": {
+                                "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
+                                "as": "entry",
+                                "cond": {"$eq": ["$$entry.k", {"$ifNull": ["$team_id", None]}]},
+                            }
+                        },
+                        "as": "entry",
+                        "in": "$$entry.v",
+                    }
+                },
+                0,
+            ]
+        },
+        None,
+    ]
+}
+
+
+def scalar_mirror_stages() -> list[dict[str, Any]]:
+    """Point the legacy scalars at one of the stored owners, so the queries still reading them see
+    a team that genuinely owns the project rather than one it lost.
+
+    The incumbent is kept whenever it is still an owner: the array's order is whatever ``$setUnion``
+    produced, and letting it decide would flip the team a project lists under whenever a co-owner
+    with a lower id is added.
+    """
+    return [
+        {"$set": {"team_id": _MIRRORED_OWNER}},
+        {"$set": {"team_source": _MIRRORED_SOURCE}},
+    ]
+
+
 def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[str, Any]]:
     """A pipeline update replacing exactly the owners ``source`` set, leaving the others alone.
 
@@ -55,23 +116,72 @@ def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[
                         team_ids,
                     ]
                 },
+                "team_sources": {"$mergeObjects": [_sources_except(source), dict.fromkeys(team_ids, source)]},
+            }
+        },
+        *scalar_mirror_stages(),
+    ]
+
+
+def add_team_pipeline(team_id: str, source: str) -> list[dict[str, Any]]:
+    """Add one owner, leaving every other entry — including another provider's — as it is."""
+    return [
+        {
+            "$set": {
+                "team_ids": {"$setUnion": [{"$ifNull": ["$team_ids", []]}, [team_id]]},
+                "team_sources": {"$mergeObjects": [{"$ifNull": ["$team_sources", {}]}, {team_id: source}]},
+            }
+        },
+        *scalar_mirror_stages(),
+    ]
+
+
+def remove_team_pipeline(team_id: str) -> list[dict[str, Any]]:
+    """Remove one owner whatever wrote it, and the scalars with it when it was the mirrored one.
+
+    ``$pull`` and ``$unset`` would express the first half in one classic update, but not the
+    second: only a pipeline can point the scalars at a remaining owner in the same write.
+    """
+    return [
+        {
+            "$set": {
+                "team_ids": {"$setDifference": [{"$ifNull": ["$team_ids", []]}, [team_id]]},
                 "team_sources": {
-                    "$mergeObjects": [
-                        {
-                            "$arrayToObject": {
-                                "$filter": {
-                                    "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
-                                    "as": "entry",
-                                    "cond": {"$ne": ["$$entry.v", source]},
-                                }
-                            }
-                        },
-                        dict.fromkeys(team_ids, source),
-                    ]
+                    "$arrayToObject": {
+                        "$filter": {
+                            "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
+                            "as": "entry",
+                            "cond": {"$ne": ["$$entry.k", team_id]},
+                        }
+                    }
                 },
             }
-        }
+        },
+        *scalar_mirror_stages(),
     ]
+
+
+def literal_set_stage(fields: dict[str, Any]) -> dict[str, Any]:
+    """A ``$set`` stage writing stored values, for a pipeline that also computes some.
+
+    ``$literal`` because a stage reads a bare string beginning with ``$`` as a field path.
+    """
+    return {"$set": {name: {"$literal": value} for name, value in fields.items()}}
+
+
+def ownership_fields(team_ids: list[str], source: str) -> dict[str, Any]:
+    """The stored ownership of a project being inserted, scalars included.
+
+    Sorted, because that is the order ``$setUnion`` leaves behind: an unsorted insert would have
+    the first sync reorder the list and move the scalars to a different owner for no reason.
+    """
+    owners = sorted(set(team_ids))
+    return {
+        "team_ids": owners,
+        "team_sources": dict.fromkeys(owners, source),
+        "team_id": owners[0] if owners else None,
+        "team_source": source if owners else None,
+    }
 
 
 def _surviving_admin_filter(user_id: str, required: bool) -> dict[str, Any]:

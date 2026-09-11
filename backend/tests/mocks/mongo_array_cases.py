@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.repositories.projects import replace_team_subset_pipeline
+from app.repositories.projects import add_team_pipeline, remove_team_pipeline, replace_team_subset_pipeline
 from scripts.backfill_project_team_ids import drift_filter
 
 _CONFLICT = 40
@@ -398,7 +398,7 @@ PIPELINE_UPDATE_CASES = [
     ),
 ]
 
-# The ownership write phase 4 performs, and the exact hazard it is guarded against: without
+# The ownership writes phase 4 performs, and the exact hazard they are guarded against: without
 # $ifNull a document missing either field is written team_ids: null, which then matches neither
 # the unassigned filter nor an ownership one.
 TEAM_OWNERSHIP_CASES = [
@@ -412,43 +412,150 @@ TEAM_OWNERSHIP_CASES = [
         expected={
             "team_ids": ["gh-z", "gl-a", "gl-c", "manual-b"],
             "team_sources": {"manual-b": "manual", "gh-z": "github", "gl-c": "gitlab", "gl-a": "gitlab"},
+            "team_id": "gh-z",
+            "team_source": "github",
         },
     ),
     UpdateCase(
         "a sync that resolved nothing keeps the manual co-owner",
         {"team_ids": ["manual-b"], "team_sources": {"manual-b": "manual"}},
         replace_team_subset_pipeline("gitlab", []),
-        expected={"team_ids": ["manual-b"], "team_sources": {"manual-b": "manual"}},
+        expected={
+            "team_ids": ["manual-b"],
+            "team_sources": {"manual-b": "manual"},
+            "team_id": "manual-b",
+            "team_source": "manual",
+        },
     ),
     UpdateCase(
         "a sync drops the owner it no longer resolves",
         {"team_ids": ["gl-a", "manual-b"], "team_sources": {"gl-a": "gitlab", "manual-b": "manual"}},
         replace_team_subset_pipeline("gitlab", ["gl-c"]),
-        expected={"team_ids": ["gl-c", "manual-b"], "team_sources": {"manual-b": "manual", "gl-c": "gitlab"}},
+        expected={
+            "team_ids": ["gl-c", "manual-b"],
+            "team_sources": {"manual-b": "manual", "gl-c": "gitlab"},
+            "team_id": "gl-c",
+            "team_source": "gitlab",
+        },
+    ),
+    UpdateCase(
+        "the scalars follow the owner a sync replaced",
+        {"team_id": "gl-a", "team_source": "gitlab", "team_ids": ["gl-a"], "team_sources": {"gl-a": "gitlab"}},
+        replace_team_subset_pipeline("gitlab", ["gl-b"]),
+        expected={
+            "team_ids": ["gl-b"],
+            "team_sources": {"gl-b": "gitlab"},
+            "team_id": "gl-b",
+            "team_source": "gitlab",
+        },
+    ),
+    UpdateCase(
+        "the scalars stay on an owner the sync did not touch",
+        {
+            "team_id": "manual-b",
+            "team_source": "manual",
+            "team_ids": ["manual-b"],
+            "team_sources": {"manual-b": "manual"},
+        },
+        replace_team_subset_pipeline("github", ["gh-a"]),
+        expected={
+            "team_ids": ["gh-a", "manual-b"],
+            "team_sources": {"manual-b": "manual", "gh-a": "github"},
+            "team_id": "manual-b",
+            "team_source": "manual",
+        },
     ),
     UpdateCase(
         "the guard turns absent fields into an empty list",
         {"name": "x"},
         replace_team_subset_pipeline("github", []),
-        expected={"name": "x", "team_ids": [], "team_sources": {}},
+        expected={"name": "x", "team_ids": [], "team_sources": {}, "team_id": None, "team_source": None},
     ),
     UpdateCase(
         "the guard writes the resolved owners onto absent fields",
         {"name": "x"},
         replace_team_subset_pipeline("github", ["gh-1"]),
-        expected={"name": "x", "team_ids": ["gh-1"], "team_sources": {"gh-1": "github"}},
+        expected={
+            "name": "x",
+            "team_ids": ["gh-1"],
+            "team_sources": {"gh-1": "github"},
+            "team_id": "gh-1",
+            "team_source": "github",
+        },
     ),
     UpdateCase(
         "only team_ids is absent",
         {"team_sources": {"m": "manual"}},
         replace_team_subset_pipeline("gitlab", ["g1"]),
-        expected={"team_ids": ["g1"], "team_sources": {"m": "manual", "g1": "gitlab"}},
+        expected={
+            "team_ids": ["g1"],
+            "team_sources": {"m": "manual", "g1": "gitlab"},
+            "team_id": "g1",
+            "team_source": "gitlab",
+        },
     ),
     UpdateCase(
         "an unguarded pipeline stores null",
         {"name": "x"},
         [{"$set": {"team_ids": {"$setUnion": [{"$setDifference": ["$team_ids", []]}, ["gh-1"]]}}}],
         expected={"name": "x", "team_ids": None},
+    ),
+    UpdateCase(
+        "adding an owner by hand leaves the provider's alone",
+        {"team_id": "gl-a", "team_source": "gitlab", "team_ids": ["gl-a"], "team_sources": {"gl-a": "gitlab"}},
+        add_team_pipeline("m1", "manual"),
+        expected={
+            "team_ids": ["gl-a", "m1"],
+            "team_sources": {"gl-a": "gitlab", "m1": "manual"},
+            "team_id": "gl-a",
+            "team_source": "gitlab",
+        },
+    ),
+    UpdateCase(
+        "adding an owner onto absent fields",
+        {"name": "x"},
+        add_team_pipeline("m1", "manual"),
+        expected={
+            "name": "x",
+            "team_ids": ["m1"],
+            "team_sources": {"m1": "manual"},
+            "team_id": "m1",
+            "team_source": "manual",
+        },
+    ),
+    UpdateCase(
+        "adding an owner a provider already set claims it by hand",
+        {"team_id": "gl-a", "team_source": "gitlab", "team_ids": ["gl-a"], "team_sources": {"gl-a": "gitlab"}},
+        add_team_pipeline("gl-a", "manual"),
+        expected={
+            "team_ids": ["gl-a"],
+            "team_sources": {"gl-a": "manual"},
+            "team_id": "gl-a",
+            "team_source": "manual",
+        },
+    ),
+    UpdateCase(
+        "removing the mirrored owner moves the scalars to a survivor",
+        {
+            "team_id": "gl-a",
+            "team_source": "gitlab",
+            "team_ids": ["gl-a", "m1"],
+            "team_sources": {"gl-a": "gitlab", "m1": "manual"},
+        },
+        remove_team_pipeline("gl-a"),
+        expected={"team_ids": ["m1"], "team_sources": {"m1": "manual"}, "team_id": "m1", "team_source": "manual"},
+    ),
+    UpdateCase(
+        "removing the last owner empties both shapes",
+        {"team_id": "m1", "team_source": "manual", "team_ids": ["m1"], "team_sources": {"m1": "manual"}},
+        remove_team_pipeline("m1"),
+        expected={"team_ids": [], "team_sources": {}, "team_id": None, "team_source": None},
+    ),
+    UpdateCase(
+        "removing an owner a project never had",
+        {"name": "x"},
+        remove_team_pipeline("m1"),
+        expected={"name": "x", "team_ids": [], "team_sources": {}, "team_id": None, "team_source": None},
     ),
 ]
 

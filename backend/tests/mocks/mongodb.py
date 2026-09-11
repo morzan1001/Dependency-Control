@@ -39,6 +39,8 @@ def create_mock_collection(**method_returns):
     collection.distinct = AsyncMock(return_value=method_returns.get("distinct", []))
     collection.bulk_write = AsyncMock(return_value=MagicMock(modified_count=method_returns.get("bulk_write", 0)))
     collection.create_index = AsyncMock(return_value=None)
+    # A read preference selects a server, not a collection: with_options answers with the same data.
+    collection.with_options = MagicMock(return_value=collection)
 
     # find() returns a chainable cursor mock
     cursor = MagicMock()
