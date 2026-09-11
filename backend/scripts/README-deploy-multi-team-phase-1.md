@@ -211,3 +211,21 @@ by design, so the gate is meaningful only up to and including the deploy in §6.
 At that point the `team_id` field and its index are scheduled for removal in a subsequent deploy.
 The `team_ids` index remains permanent, as it enables team-scoped queries for all team-membership
 features.
+
+### 7a. What changes for an operator on that deploy
+
+- Every ownership write keeps `team_id` / `team_source` pointing at one of the stored owners, so
+  the queries still reading the scalar — the project list, the team filter, analytics — keep
+  working. A co-owned project appears under **one** of its owners there until those queries move
+  to `team_ids` in the next deploy; access itself already reads the list.
+- A GitHub or GitLab sync replaces only the owners it set itself. A team assigned by hand survives
+  every ingest, and a repository that moved between groups loses the group it left.
+- **Unbinding a GitHub team now takes effect.** With no bound team left holding a repository, the
+  next ingest retires that repository's GitHub-sourced owners. Removing a binding is therefore a
+  change of ownership, not only of resolution.
+- `POST /api/v1/projects/{id}/teams` and `DELETE /api/v1/projects/{id}/teams/{team_id}` add and
+  remove one owner. `PUT /api/v1/projects/{id}` with `team_id` still works and now means "the team
+  this project is assigned to by hand": it replaces the manually-assigned owners and leaves a
+  provider's entry alone.
+- A project may have at most 16 owning teams. A sync resolving more than that leaves the project's
+  owners untouched and logs `past the cap`; grep for it after the deploy.
