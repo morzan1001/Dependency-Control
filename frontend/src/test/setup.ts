@@ -12,6 +12,11 @@ if (globalThis.IntersectionObserver === undefined) {
     intersectionObserverStub;
 }
 
+// jsdom lacks scrollIntoView; Radix's Select calls it on the item it focuses when the list opens.
+if (typeof Element !== 'undefined' && Element.prototype.scrollIntoView === undefined) {
+  Element.prototype.scrollIntoView = (): void => undefined;
+}
+
 // jsdom lacks ResizeObserver; Radix's useSize constructs one on mount.
 const resizeObserverStub = class {
   observe = (): void => undefined;

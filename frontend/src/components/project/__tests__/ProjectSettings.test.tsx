@@ -161,3 +161,29 @@ describe('ProjectSettings GitHub PR decoration', () => {
     expect(screen.queryByLabelText('Pull Request Decoration')).toBeNull()
   })
 })
+
+describe('ProjectSettings team ownership', () => {
+  beforeEach(() => {
+    mockUpdate.mockClear()
+    mockUseTeams.mockReturnValue({ data: [{ id: 't1', name: 'Payments', members: [] }] })
+    mockUseGitHubInstances.mockReturnValue(githubInstances(true))
+  })
+
+  it('leaves ownership out of the settings form, which would otherwise save a stale owner set', async () => {
+    renderSettings(githubProject({ team_ids: ['t1'], team_sources: { t1: 'gitlab' } }))
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1]).not.toHaveProperty('team_id')
+    expect(mockUpdate.mock.calls[0][1]).not.toHaveProperty('team_ids')
+  })
+
+  it('offers the owning teams next to the form rather than one team picker inside it', () => {
+    renderSettings(githubProject({ team_ids: ['t1'], team_sources: { t1: 'gitlab' } }))
+
+    expect(screen.getByText('Owning Teams')).toBeInTheDocument()
+    expect(screen.getByText('Payments')).toBeInTheDocument()
+    expect(screen.queryByText('No Team')).toBeNull()
+  })
+})
