@@ -1,5 +1,5 @@
 import { api, buildQueryParams } from '@/api/client';
-import { Team, TeamCreate, TeamMemberCreate } from '@/types/team';
+import { Team, TeamCreate, TeamGitHubBinding, TeamMemberCreate } from '@/types/team';
 
 export const teamApi = {
   getAll: async (search?: string, sortBy = 'name', sortOrder = 'asc'): Promise<Team[]> => {
@@ -39,6 +39,16 @@ export const teamApi = {
 
   updateMember: async (teamId: string, userId: string, role: string): Promise<Team> => {
     const response = await api.put<Team>(`/teams/${teamId}/members/${userId}`, { role });
+    return response.data;
+  },
+
+  setGithubBinding: async (teamId: string, data: TeamGitHubBinding): Promise<Team> => {
+    const response = await api.put<Team>(`/teams/${teamId}/github-binding`, data);
+    return response.data;
+  },
+
+  clearGithubBinding: async (teamId: string): Promise<Team> => {
+    const response = await api.delete<Team>(`/teams/${teamId}/github-binding`);
     return response.data;
   }
 };

@@ -46,6 +46,14 @@ export interface GitHubInstanceList {
   pages: number;
 }
 
+export interface GitHubOrgTeam {
+  id: number;
+  slug: string;
+  name: string;
+  parent_slug?: string | null;
+  parent_name?: string | null;
+}
+
 export interface GitHubInstanceTestConnectionResponse {
   success: boolean;
   message: string;
