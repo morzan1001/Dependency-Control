@@ -18,14 +18,16 @@ from tests.mocks.mongo_array_cases import (
     ELEM_MATCH_CASES,
     PIPELINE_UPDATE_CASES,
     PULL_CASES,
+    TEAM_DRIFT_CASES,
+    TEAM_OWNERSHIP_CASES,
     UNWIND_CASES,
     run_agg_case,
     run_find_case,
     run_update_case,
 )
 
-_UPDATE_CASES = [*CONFLICT_CASES, *ADD_TO_SET_CASES, *PULL_CASES, *PIPELINE_UPDATE_CASES]
-_FIND_CASES = [*ARRAY_MATCH_CASES, *ELEM_MATCH_CASES]
+_UPDATE_CASES = [*CONFLICT_CASES, *ADD_TO_SET_CASES, *PULL_CASES, *PIPELINE_UPDATE_CASES, *TEAM_OWNERSHIP_CASES]
+_FIND_CASES = [*ARRAY_MATCH_CASES, *ELEM_MATCH_CASES, *TEAM_DRIFT_CASES]
 _AGG_CASES = [*UNWIND_CASES, *ARRAY_EXPRESSION_CASES]
 
 
@@ -96,4 +98,5 @@ async def test_a_pipeline_update_replaces_owners_in_one_write():
         [{"$set": {"team_ids": {"$setUnion": [{"$setDifference": ["$team_ids", ["gitlab-a"]]}, ["gitlab-c"]]}}}],
     )
 
-    assert (await collection.find_one({"_id": "p"}))["team_ids"] == ["manual-b", "gitlab-c"]
+    # Measured on the server: $setUnion answers in BSON order, not in the order it was fed.
+    assert (await collection.find_one({"_id": "p"}))["team_ids"] == ["gitlab-c", "manual-b"]

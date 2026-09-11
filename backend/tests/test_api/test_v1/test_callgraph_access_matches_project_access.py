@@ -26,7 +26,7 @@ async def test_the_callgraph_role_matches_the_shared_resolver():
     db = FakeDatabase()
     await db.teams.insert_one({"_id": "t1", "name": "t1", "members": [{"user_id": _USER, "role": "member"}]})
     team_repo = TeamRepository(db)
-    project = {"_id": "p1", "members": [], "team_id": "t1"}
+    project = {"_id": "p1", "members": [], "team_ids": ["t1"]}
 
     assert await _effective_project_role(project, _USER, team_repo) == "viewer"
 
@@ -36,7 +36,7 @@ async def test_a_stronger_team_role_lifts_a_weaker_direct_member():
     """The team half of the composition has to be consulted, not just the direct half."""
     db = FakeDatabase()
     await db.teams.insert_one({"_id": "t1", "name": "t1", "members": [{"user_id": _USER, "role": "admin"}]})
-    project = {"_id": "p1", "members": [{"user_id": _USER, "role": "viewer"}], "team_id": "t1"}
+    project = {"_id": "p1", "members": [{"user_id": _USER, "role": "viewer"}], "team_ids": ["t1"]}
 
     assert await _effective_project_role(project, _USER, TeamRepository(db)) == "admin"
 
@@ -46,21 +46,21 @@ async def test_a_stronger_direct_role_is_not_lowered_by_a_weaker_team_role():
     """Adding a team must never downgrade someone who already had more."""
     db = FakeDatabase()
     await db.teams.insert_one({"_id": "t1", "name": "t1", "members": [{"user_id": _USER, "role": "member"}]})
-    project = {"_id": "p1", "members": [{"user_id": _USER, "role": "admin"}], "team_id": "t1"}
+    project = {"_id": "p1", "members": [{"user_id": _USER, "role": "admin"}], "team_ids": ["t1"]}
 
     assert await _effective_project_role(project, _USER, TeamRepository(db)) == "admin"
 
 
 @pytest.mark.asyncio
-async def test_the_resolver_ignores_a_stale_stored_team_array_and_reads_the_scalar():
-    """The resolver reads the scalar team_id only; the stored team_ids array is never consulted."""
+async def test_the_resolver_reads_the_stored_team_array_and_ignores_the_scalar():
+    """The stored list is the ownership record; a scalar left behind by a writer decides nothing."""
     db = FakeDatabase()
-    await db.teams.insert_one({"_id": "old", "name": "old", "members": [{"user_id": _USER, "role": "admin"}]})
-    await db.teams.insert_one({"_id": "new", "name": "new", "members": [{"user_id": _USER, "role": "member"}]})
+    await db.teams.insert_one({"_id": "stored", "name": "stored", "members": [{"user_id": _USER, "role": "admin"}]})
+    await db.teams.insert_one({"_id": "scalar", "name": "scalar", "members": [{"user_id": _USER, "role": "member"}]})
     team_repo = TeamRepository(db)
-    project = {"_id": "p1", "members": [], "team_id": "new", "team_ids": ["old"]}
+    project = {"_id": "p1", "members": [], "team_id": "scalar", "team_ids": ["stored"]}
 
-    assert await _effective_project_role(project, _USER, team_repo) == "viewer"
+    assert await _effective_project_role(project, _USER, team_repo) == "admin"
 
 
 _GATE_USER = User(id=_USER, username=_USER, email="u1@test.com", permissions=[Permissions.PROJECT_READ])
@@ -98,7 +98,7 @@ async def _seed_gate_db(direct_role: str | None, team_role: str | None) -> FakeD
         {
             "_id": "p1",
             "name": "p1",
-            "team_id": "t1",
+            "team_ids": ["t1"],
             "members": [{"user_id": _USER, "role": direct_role}] if direct_role else [],
         }
     )

@@ -576,7 +576,7 @@ def _substitute_var(expr, prefix: str, value):
 def _eval_map(doc: dict, spec: dict):
     items = _eval_expr(doc, spec.get("input"))
     if not isinstance(items, list):
-        return []
+        return None
     prefix = f"$${spec.get('as', 'this')}"
     return [_eval_expr(doc, _substitute_var(spec.get("in"), prefix, item)) for item in items]
 
@@ -584,7 +584,7 @@ def _eval_map(doc: dict, spec: dict):
 def _eval_filter(doc: dict, spec: dict):
     items = _eval_expr(doc, spec.get("input"))
     if not isinstance(items, list):
-        return []
+        return None
     prefix = f"$${spec.get('as', 'this')}"
     return [item for item in items if _eval_bool(doc, _substitute_var(spec.get("cond"), prefix, item))]
 
@@ -614,6 +614,10 @@ def _eval_expr(doc: dict, expr):
         if expr.startswith("$"):
             return _resolve_dotted(doc, expr[1:])
         return expr
+    if isinstance(expr, list):
+        # An array is an expression too: the server evaluates every element, so a field path
+        # inside one resolves rather than reaching the document as the literal string "$field".
+        return [_eval_expr(doc, element) for element in expr]
     if not isinstance(expr, dict):
         return expr
 
@@ -669,8 +673,12 @@ def _eval_expr(doc: dict, expr):
         return len(val)
     if "$setDifference" in expr:
         a, b = (_eval_expr(doc, e) for e in expr["$setDifference"])
-        a = a if isinstance(a, list) else []
-        b = b if isinstance(b, list) else []
+        # A null operand answers null rather than an empty array, which is how an unguarded
+        # pipeline ends up storing team_ids: null instead of failing.
+        if a is None or b is None:
+            return None
+        if not isinstance(a, list) or not isinstance(b, list):
+            raise OperationFailure("both operands of $setDifference must be arrays", 17048)
         out: list = []
         for item in a:
             if item not in b and item not in out:
@@ -701,10 +709,16 @@ def _eval_expr(doc: dict, expr):
         union: list = []
         for operand in expr["$setUnion"]:
             vals = _eval_expr(doc, operand)
-            for item in vals if isinstance(vals, list) else []:
+            if vals is None:
+                return None
+            if not isinstance(vals, list):
+                raise OperationFailure("All operands of $setUnion must be arrays", 17043)
+            for item in vals:
                 if item not in union:
                     union.append(item)
-        return union
+        # Measured: the server returns the union in BSON order, unlike $setDifference, which
+        # keeps the order of its first operand.
+        return sorted(union, key=_bson_sort_key)
     if "$toLower" in expr:
         val = _eval_expr(doc, expr["$toLower"])
         return str(val).lower() if val is not None else None

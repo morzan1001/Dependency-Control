@@ -15,6 +15,65 @@ _COL = "projects"
 _MEMBERS_USER_ID = "members.user_id"
 
 
+UpdateOps = dict[str, Any] | list[dict[str, Any]]
+
+
+def _owned_by(source: str) -> dict[str, Any]:
+    """The team_sources entries this provider wrote, as an array of ``{k, v}`` documents."""
+    return {
+        "$filter": {
+            "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
+            "as": "entry",
+            "cond": {"$eq": ["$$entry.v", source]},
+        }
+    }
+
+
+def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[str, Any]]:
+    """A pipeline update replacing exactly the owners ``source`` set, leaving the others alone.
+
+    A pipeline and not two modifiers: ``$pull`` plus ``$addToSet`` on ``team_ids`` in one classic
+    update is rejected with code 40, and splitting it into two writes exposes an empty ``team_ids``
+    to concurrent readers, which is indistinguishable from an unassigned project.
+
+    Both stored fields are read through ``$ifNull`` because a document missing either one would
+    otherwise be written ``team_ids: null`` — a value that matches neither ``{"$size": 0}`` nor an
+    element equality, so the project would drop out of the unassigned view and every ownership
+    view at once.
+    """
+    return [
+        {
+            "$set": {
+                "team_ids": {
+                    "$setUnion": [
+                        {
+                            "$setDifference": [
+                                {"$ifNull": ["$team_ids", []]},
+                                {"$map": {"input": _owned_by(source), "as": "entry", "in": "$$entry.k"}},
+                            ]
+                        },
+                        team_ids,
+                    ]
+                },
+                "team_sources": {
+                    "$mergeObjects": [
+                        {
+                            "$arrayToObject": {
+                                "$filter": {
+                                    "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
+                                    "as": "entry",
+                                    "cond": {"$ne": ["$$entry.v", source]},
+                                }
+                            }
+                        },
+                        dict.fromkeys(team_ids, source),
+                    ]
+                },
+            }
+        }
+    ]
+
+
 def _surviving_admin_filter(user_id: str, required: bool) -> dict[str, Any]:
     """Match only while a member other than ``user_id`` is an admin, so a write that would take
     the last one finds nothing to write to instead of racing a count from an earlier read."""
@@ -137,7 +196,8 @@ class ProjectRepository:
                 await self.collection.update_one({"_id": project_id}, {"$set": update_data})
         return await self.get_by_id(project_id)
 
-    async def update_raw(self, project_id: str, update_ops: dict[str, Any]) -> None:
+    async def update_raw(self, project_id: str, update_ops: UpdateOps) -> None:
+        """``update_ops`` reaches the server verbatim: modifiers as a document, a pipeline as a list."""
         with track_db_operation(_COL, "update_one"):
             await self.collection.update_one({"_id": project_id}, update_ops)
 
@@ -207,8 +267,18 @@ class ProjectRepository:
             return await self.collection.aggregate(pipeline).to_list(limit)
 
     async def update_many(self, query: dict[str, Any], update_data: dict[str, Any]) -> int:
+        """``update_data`` is a document of field values; use ``update_many_raw`` for operators."""
         with track_db_operation(_COL, "update_many"):
             result = await self.collection.update_many(query, {"$set": update_data})
+        return result.modified_count
+
+    async def update_many_raw(self, query: dict[str, Any], update_ops: UpdateOps) -> int:
+        """``update_ops`` reaches the server verbatim: modifiers as a document, a pipeline as a list.
+
+        Counts modified, not matched: a pipeline that recomputes the value already stored reports 0.
+        """
+        with track_db_operation(_COL, "update_many"):
+            result = await self.collection.update_many(query, update_ops)
         return result.modified_count
 
     async def add_member(self, project_id: str, member_data: dict[str, Any]) -> bool:

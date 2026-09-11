@@ -12,7 +12,6 @@ from app.core.constants import (
 )
 from app.core.permissions import Permissions, has_permission
 from app.models.callgraph import CallEdge, ImportEntry, ModuleUsage
-from app.models.project import owning_team_ids
 from app.models.user import User
 from app.repositories import ProjectRepository, TeamRepository
 from app.services.aggregation.components import canonical_module_key, npm_package_key
@@ -37,8 +36,7 @@ async def _effective_project_role(
 ) -> str | None:
     """MAX(direct member role, role from any owning team), or None if not a member."""
     direct_role = _member_role(project.get("members", []), user_id)
-    team_ids = owning_team_ids(project.get("team_id"))
-    team_role = await team_derived_role(team_ids, user_id, team_repo)
+    team_role = await team_derived_role(project.get("team_ids") or [], user_id, team_repo)
 
     return max_project_role(direct_role, team_role)
 

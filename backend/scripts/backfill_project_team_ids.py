@@ -1,8 +1,7 @@
 """Expand the scalar project team fields into the multi-team ones.
 
-``Project.team_ids`` and ``Project.team_sources`` are derived on read from the legacy scalars
-``team_id`` / ``team_source``. This migration writes those derived fields into MongoDB so
-Mongo-side queries and the index can use them. It changes no application behaviour.
+This migration writes ``team_ids`` / ``team_sources`` from the legacy scalars ``team_id`` /
+``team_source`` so Mongo-side queries and the index can use them.
 
 Of 742 production projects, 229 have a team and 513 do not; both must be written.
 
@@ -10,11 +9,17 @@ The planning half is pure so tests call it with plain dicts and no database. A d
 already carries ``team_ids`` is updated only if its stored list or sources differ from the value
 derived from the scalar — the scalar stays authoritative in this phase.
 
+``--verify`` counts the documents that still disagree with their scalar. It is the release gate for
+the deploy that stops deriving the fields on read: from that image on, whatever is stored is what
+readers act on, and every team transfer made since the last ``--execute`` run wrote the scalar only.
+See ``README-deploy-multi-team-phase-1.md`` §6.
+
 Usage (in-pod): `python -m scripts.backfill_project_team_ids --help` from /app.
 
 Exit codes:
-    0 — completed (dry-run or execute)
+    0 — completed (dry-run, execute, or a --verify that found no disagreement)
     1 — connection or runtime error
+    2 — --verify found documents whose stored fields disagree with the scalar
 """
 
 import argparse
@@ -31,8 +36,56 @@ from app.core.config import settings
 DEFAULT_BATCH_SIZE = 500
 DEFAULT_SLEEP_MS = 50
 _REPORT_LABEL_WIDTH = 30
+EXIT_DRIFT_FOUND = 2
 
 _PROJECT_PROJECTION = {"_id": 1, "team_id": 1, "team_source": 1, "team_ids": 1, "team_sources": 1}
+
+# Both spellings of "this project has no team": Pydantic reads "" as absent, so the query must too.
+_NO_TEAM = [None, ""]
+_SCALAR_ID = {"$ifNull": ["$team_id", None]}
+_SCALAR_SOURCE = {"$ifNull": ["$team_source", None]}
+
+
+def drift_filter() -> dict[str, Any]:
+    """Selects every project whose stored team fields differ from what the scalar says.
+
+    Equivalent to ``plan_team_id_expansion`` expressed server-side, so a count of 0 means a re-run
+    of this migration would plan nothing. Both stored fields are compared raw rather than through
+    ``$ifNull``: an absent or null ``team_ids`` is itself a disagreement, and the second is the one
+    shape that no longer loads into the model at all.
+
+    ``team_sources`` is compared as ``$objectToArray`` output because an absent map yields null
+    there, which no document expression can be written to equal by accident.
+    """
+    return {
+        "$expr": {
+            "$or": [
+                {
+                    "$ne": [
+                        "$team_ids",
+                        {"$cond": [{"$in": [_SCALAR_ID, _NO_TEAM]}, [], ["$team_id"]]},
+                    ]
+                },
+                {
+                    "$ne": [
+                        {"$objectToArray": "$team_sources"},
+                        {
+                            "$cond": [
+                                {"$or": [{"$in": [_SCALAR_ID, _NO_TEAM]}, {"$in": [_SCALAR_SOURCE, _NO_TEAM]}]},
+                                [],
+                                [{"k": "$team_id", "v": "$team_source"}],
+                            ]
+                        },
+                    ]
+                },
+            ]
+        }
+    }
+
+
+async def count_drift(db: Any) -> int:
+    """How many projects disagree with their scalar. Zero is the gate for dropping the derivation."""
+    return await db.projects.count_documents(drift_filter())
 
 
 @dataclass(frozen=True)
@@ -124,12 +177,26 @@ def _report(planned: int, matched: int | None, mode: str) -> None:
         print(f"[{mode}] {label + ':':<{_REPORT_LABEL_WIDTH}}{value}")
 
 
+async def run_verify(db: Any) -> int:
+    """Report the disagreement count and return the process exit code."""
+    drifted = await count_drift(db)
+    print(f"[VERIFY] {'projects disagreeing:':<{_REPORT_LABEL_WIDTH}}{drifted}")
+    if drifted:
+        print("GATE FAILED — run --execute before rolling the image that stops deriving the fields.")
+        return EXIT_DRIFT_FOUND
+    print("Gate passed — every project's stored team fields match its scalar.")
+    return 0
+
+
 async def run(args: argparse.Namespace) -> int:
     client: AsyncIOMotorClient = AsyncIOMotorClient(settings.MONGODB_URL)
     try:
         db = client[settings.DATABASE_NAME]
-        mode = "EXECUTE" if args.execute else "DRY-RUN"
+        mode = "VERIFY" if args.verify else "EXECUTE" if args.execute else "DRY-RUN"
         print(f"[{mode}] Database: {db.name}")
+
+        if args.verify:
+            return await run_verify(db)
 
         planned, matched = await run_expand(
             db,
@@ -161,6 +228,11 @@ def main() -> int:
         dest="execute",
         action="store_false",
         help="Report the plan without writing (the default).",
+    )
+    mode.add_argument(
+        "--verify",
+        action="store_true",
+        help=f"Count projects whose stored team fields disagree with the scalar; exit {EXIT_DRIFT_FOUND} if any do.",
     )
     parser.set_defaults(execute=False)
     parser.add_argument(

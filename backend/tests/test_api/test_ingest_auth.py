@@ -929,7 +929,8 @@ class TestIngestGitHubTeamSync:
         assert inserted["team_id"] == "t-9"
         assert inserted["team_source"] == "github"
         assert inserted["github_team_candidates"] == 3
-        assert inserted["team_ids"] == ["t-9"]
+        # The model no longer fabricates the list from the scalar; phase 4 makes this writer set it.
+        assert inserted["team_ids"] == []
 
     def test_an_auto_created_project_without_a_team_is_still_created(self):
         instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
@@ -994,4 +995,5 @@ class TestIngestGitLabTeamSync:
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
         assert inserted["team_id"] == "t-gl-1"
         assert inserted["team_source"] == "gitlab"
-        assert inserted["team_ids"] == ["t-gl-1"]
+        # The model no longer fabricates the list from the scalar; phase 4 makes this writer set it.
+        assert inserted["team_ids"] == []

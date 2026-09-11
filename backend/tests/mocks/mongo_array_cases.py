@@ -10,6 +10,9 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from app.repositories.projects import replace_team_subset_pipeline
+from scripts.backfill_project_team_ids import drift_filter
+
 _CONFLICT = 40
 _BAD_VALUE = 2
 _TYPE_MISMATCH = 14
@@ -380,6 +383,104 @@ PIPELINE_UPDATE_CASES = [
         [{"$set": {"copy": "$$ROOT.n"}}],
         expected={"t": ["A", "B"], "s": {"A": "gitlab"}, "n": 1, "copy": 1},
     ),
+    # $setUnion answers in BSON order, unlike $setDifference, which keeps its first operand's.
+    UpdateCase(
+        "$setUnion reorders the result",
+        {"t": ["zeta", "alpha"]},
+        [{"$set": {"t": {"$setUnion": ["$t", ["mid"]]}}}],
+        expected={"t": ["alpha", "mid", "zeta"]},
+    ),
+    UpdateCase(
+        "$setDifference keeps the first operand's order",
+        {"t": ["zeta", "alpha", "mid"]},
+        [{"$set": {"t": {"$setDifference": ["$t", ["mid"]]}}}],
+        expected={"t": ["zeta", "alpha"]},
+    ),
+]
+
+# The ownership write phase 4 performs, and the exact hazard it is guarded against: without
+# $ifNull a document missing either field is written team_ids: null, which then matches neither
+# the unassigned filter nor an ownership one.
+TEAM_OWNERSHIP_CASES = [
+    UpdateCase(
+        "a provider replaces only the owners it set",
+        {
+            "team_ids": ["gl-a", "manual-b", "gh-z"],
+            "team_sources": {"gl-a": "gitlab", "manual-b": "manual", "gh-z": "github"},
+        },
+        replace_team_subset_pipeline("gitlab", ["gl-c", "gl-a"]),
+        expected={
+            "team_ids": ["gh-z", "gl-a", "gl-c", "manual-b"],
+            "team_sources": {"manual-b": "manual", "gh-z": "github", "gl-c": "gitlab", "gl-a": "gitlab"},
+        },
+    ),
+    UpdateCase(
+        "a sync that resolved nothing keeps the manual co-owner",
+        {"team_ids": ["manual-b"], "team_sources": {"manual-b": "manual"}},
+        replace_team_subset_pipeline("gitlab", []),
+        expected={"team_ids": ["manual-b"], "team_sources": {"manual-b": "manual"}},
+    ),
+    UpdateCase(
+        "a sync drops the owner it no longer resolves",
+        {"team_ids": ["gl-a", "manual-b"], "team_sources": {"gl-a": "gitlab", "manual-b": "manual"}},
+        replace_team_subset_pipeline("gitlab", ["gl-c"]),
+        expected={"team_ids": ["gl-c", "manual-b"], "team_sources": {"manual-b": "manual", "gl-c": "gitlab"}},
+    ),
+    UpdateCase(
+        "the guard turns absent fields into an empty list",
+        {"name": "x"},
+        replace_team_subset_pipeline("github", []),
+        expected={"name": "x", "team_ids": [], "team_sources": {}},
+    ),
+    UpdateCase(
+        "the guard writes the resolved owners onto absent fields",
+        {"name": "x"},
+        replace_team_subset_pipeline("github", ["gh-1"]),
+        expected={"name": "x", "team_ids": ["gh-1"], "team_sources": {"gh-1": "github"}},
+    ),
+    UpdateCase(
+        "only team_ids is absent",
+        {"team_sources": {"m": "manual"}},
+        replace_team_subset_pipeline("gitlab", ["g1"]),
+        expected={"team_ids": ["g1"], "team_sources": {"m": "manual", "g1": "gitlab"}},
+    ),
+    UpdateCase(
+        "an unguarded pipeline stores null",
+        {"name": "x"},
+        [{"$set": {"team_ids": {"$setUnion": [{"$setDifference": ["$team_ids", []]}, ["gh-1"]]}}}],
+        expected={"name": "x", "team_ids": None},
+    ),
+]
+
+DRIFT_DOCS = [
+    {"team_id": "T1", "team_source": "manual", "team_ids": ["T1"], "team_sources": {"T1": "manual"}},
+    {"team_ids": [], "team_sources": {}},
+    {"team_id": None, "team_source": None, "team_ids": [], "team_sources": {}},
+    {"team_id": "", "team_source": None, "team_ids": [], "team_sources": {}},
+    {"team_id": "T1", "team_ids": ["T1"], "team_sources": {}},
+    # A transfer wrote the scalar only: the stored owner and its provenance are both a run behind.
+    {
+        "team_id": "T_new",
+        "team_source": "github",
+        "team_ids": ["T_old"],
+        "team_sources": {"T_old": "github", "M1": "manual"},
+    },
+    {"team_id": "T1", "team_source": "manual"},
+    {"name": "never-backfilled"},
+    {"team_id": "T1", "team_source": "manual", "team_ids": ["T1", "T2"], "team_sources": {"T1": "manual"}},
+    {"team_id": "T1", "team_source": "manual", "team_ids": ["T1"], "team_sources": {"T1": "gitlab"}},
+    {"team_id": None, "team_source": None, "team_ids": ["T1"], "team_sources": {"T1": "manual"}},
+    {"team_id": None, "team_ids": None, "team_sources": {}},
+    {"team_id": "T1", "team_source": "manual", "team_ids": ["T1"]},
+    # Only the provenance map is missing, and the scalar has no team: the list alone cannot tell
+    # this apart from a finished backfill, so the gate has to compare the map raw.
+    {"team_ids": [], "team_source": None},
+]
+
+# The release gate for dropping the derivation: every document whose stored fields say something
+# other than the scalar does, and nothing else.
+TEAM_DRIFT_CASES = [
+    FindCase("projects disagreeing with their scalar", DRIFT_DOCS, drift_filter(), [5, 6, 7, 8, 9, 10, 11, 12, 13]),
 ]
 
 ARRAY_EXPRESSION_CASES = [
@@ -425,6 +526,32 @@ ARRAY_EXPRESSION_CASES = [
         [{"t": 1}, {"x": 9}],
         [{"$group": {"_id": None, "a": {"$addToSet": "$t"}}}],
         [{"_id": None, "a": [1]}],
+    ),
+    # An array literal is an expression: every element is evaluated, and a missing field inside
+    # one becomes null rather than dropping out.
+    AggCase(
+        "an array literal evaluates its elements",
+        [{"team_id": "T1"}, {"x": 1}],
+        [{"$project": {"a": ["$team_id", 1]}}],
+        [{"a": ["T1", 1]}, {"a": [None, 1]}],
+    ),
+    # Null in, null out for every array operator here — which is how an unguarded pipeline
+    # silently stores a null instead of failing.
+    AggCase(
+        "array operators propagate a missing input",
+        [{"x": 1}],
+        [
+            {
+                "$project": {
+                    "d": {"$setDifference": ["$nope", []]},
+                    "u": {"$setUnion": ["$nope", []]},
+                    "m": {"$map": {"input": "$nope", "as": "e", "in": "$$e"}},
+                    "f": {"$filter": {"input": "$nope", "as": "e", "cond": True}},
+                    "o": {"$objectToArray": "$nope"},
+                }
+            }
+        ],
+        [{"d": None, "u": None, "m": None, "f": None, "o": None}],
     ),
 ]
 

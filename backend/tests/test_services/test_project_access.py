@@ -29,13 +29,13 @@ def _user(uid: str, permissions):
     )
 
 
-def _project(members=None, team_id=None):
+def _project(members=None, team_ids=()):
     return Project(
         id="proj-1",
         name="Test",
         owner_id="owner-x",
         members=members or [],
-        team_id=team_id,
+        team_ids=list(team_ids),
     )
 
 
@@ -95,7 +95,7 @@ class TestSeamBNoDowngrade:
         user = _user("ed-1", [Permissions.PROJECT_READ])
         project = _project(
             members=[ProjectMember(user_id=str(user.id), role=PROJECT_ROLE_EDITOR)],
-            team_id="team-1",
+            team_ids=["team-1"],
         )
         # Plain team member would map to viewer — must NOT downgrade the editor.
         team_doc = {
@@ -111,7 +111,7 @@ class TestSeamBNoDowngrade:
         user = _user("up-1", [Permissions.PROJECT_READ])
         project = _project(
             members=[ProjectMember(user_id=str(user.id), role=PROJECT_ROLE_VIEWER)],
-            team_id="team-1",
+            team_ids=["team-1"],
         )
         team_doc = {
             "_id": "team-1",

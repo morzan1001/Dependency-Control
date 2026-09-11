@@ -25,13 +25,13 @@ HELPERS_WEBHOOKS = "app.api.v1.helpers.webhooks"
 class TestCheckProjectAccess:
     """Tests for check_project_access — the primary project security gate."""
 
-    def _make_project(self, owner_id="owner-1", members=None, team_id=None):
+    def _make_project(self, owner_id="owner-1", members=None, team_ids=()):
         return Project(
             id="proj-1",
             name="Test",
             owner_id=owner_id,
             members=members or [],
-            team_id=team_id,
+            team_ids=list(team_ids),
         )
 
     def test_raises_404_when_project_not_found(self, regular_user):
@@ -221,7 +221,7 @@ class TestCheckProjectAccess:
     def test_team_admin_gets_project_admin_role(self, regular_user):
         from app.api.v1.helpers.projects import check_project_access
 
-        project = self._make_project(owner_id="other", team_id="team-1")
+        project = self._make_project(owner_id="other", team_ids=["team-1"])
         mock_proj_repo = MagicMock()
         mock_proj_repo.get_by_id = AsyncMock(return_value=project)
 
@@ -247,7 +247,7 @@ class TestCheckProjectAccess:
     def test_team_member_gets_viewer_role(self, regular_user):
         from app.api.v1.helpers.projects import check_project_access
 
-        project = self._make_project(owner_id="other", team_id="team-1")
+        project = self._make_project(owner_id="other", team_ids=["team-1"])
         mock_proj_repo = MagicMock()
         mock_proj_repo.get_by_id = AsyncMock(return_value=project)
 

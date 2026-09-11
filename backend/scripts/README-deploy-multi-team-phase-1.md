@@ -142,24 +142,72 @@ db.projects.countDocuments({ team_sources: { $exists: false } })
 This must also return **0**, confirming every project now carries a `team_sources` dict. Projects
 without a team carry an empty dict `{}`.
 
-## 6. Re-runs while the scalar is authoritative
+## 6. HARD GATE — the final backfill and the deploy that stops deriving
 
-The backfill derives `team_ids` from the scalar `team_id` every run. It is safe to re-run for
-verification **only while the scalar `team_id` is still authoritative** — i.e., before the write
-paths begin writing `team_ids` directly. Once writers own the list, the migration must never be
-re-run, because it would overwrite writer-added teams with a re-derivation from the single scalar
-and silently truncate every multi-team project back to one team.
+Read this section before scheduling the deploy that removes `Project._derive_team_ids`.
 
-From this backfill onward the stored `team_ids` goes stale: every team transfer writes only the
-scalar `team_id`. The deploy that first makes the application **read** `team_ids` must therefore be
-preceded by a final `--execute` run of this backfill, in the same maintenance window, before the new
-image rolls. Without it, every project transferred since the last run keeps its old team's access
-and attribution — and §5 cannot detect this, because the field is present, merely stale.
+Between this backfill and that deploy, the stored `team_ids` goes stale on every team change: the
+writers set the scalar `team_id` only, and the model quietly re-derives the list from it on every
+read, so the drift is invisible. A measured example — stored `team_id='T_new'`,
+`team_ids=['T_old']`, `team_sources={'T_old':'github','M1':'manual'}` — reads back today as
+`team_ids=['T_new']`, `team_sources={'T_new':'github'}`. The moment the derivation goes, that same
+document grants `T_old` access to a project it no longer owns and denies it to `T_new`.
+
+**The gate, in order, inside one maintenance window:**
+
+1. Run this backfill with `--execute` (§4).
+2. Run `--verify` and confirm it reports **0** (below). Do not skip it: §5 checks only that the
+   fields exist, and a stale field exists.
+3. Roll the image that stops deriving. If the deploy is postponed past this window, start again
+   at step 1 — anything that changed a team in between has re-armed the drift.
+
+Do not roll that image on its own. Once the derivation is gone, the stored list is what readers
+act on, and nothing maintains it until the deploy that converts the write paths. The two ship
+together.
+
+### 6a. Run the verification
+
+```yaml
+workingDir: /app
+command: ["python", "-m", "scripts.backfill_project_team_ids", "--verify"]
+```
+
+It prints `projects disagreeing:` and exits **0** when the count is zero, **2** when it is not.
+Expected: **0**.
+
+### 6b. The same check from mongosh
+
+`--verify` runs exactly this filter; a count of `0` means a re-run of the backfill would plan
+nothing:
+
+```js
+db.projects.countDocuments({
+  "$expr": { "$or": [
+    { "$ne": ["$team_ids",
+        { "$cond": [ { "$in": [ { "$ifNull": ["$team_id", null] }, [null, ""] ] }, [], ["$team_id"] ] } ] },
+    { "$ne": [ { "$objectToArray": "$team_sources" },
+        { "$cond": [
+            { "$or": [ { "$in": [ { "$ifNull": ["$team_id", null] }, [null, ""] ] },
+                       { "$in": [ { "$ifNull": ["$team_source", null] }, [null, ""] ] } ] },
+            [],
+            [ { "k": "$team_id", "v": "$team_source" } ] ] } ] }
+  ] }
+})
+```
+
+It counts a document whenever its stored `team_ids` or `team_sources` says anything other than the
+scalar does — including a document that never received the backfill, and one whose `team_ids` is
+`null`, which is the one shape that no longer loads into the model at all. To see which projects
+disagree rather than how many, pass the same filter to `db.projects.find(…, {team_id: 1, team_ids: 1,
+team_source: 1, team_sources: 1})`.
 
 ## 7. When the write paths take over
 
-In a later deploy, the write paths will begin writing `team_ids` directly instead of through the
-scalar. From that deploy onward, this backfill migration **must not be re-run**. At that point,
-the `team_id` field and its index are scheduled for removal in a subsequent deploy. The
-`team_ids` index remains permanent, as it enables team-scoped queries for all team-membership
+From the deploy that converts the write paths onward, this backfill **must not be re-run**: it
+re-derives the list from the single scalar and would truncate every multi-team project back to one
+team. `--verify` shares that fate — after the cutover a co-owned project disagrees with its scalar
+by design, so the gate is meaningful only up to and including the deploy in §6.
+
+At that point the `team_id` field and its index are scheduled for removal in a subsequent deploy.
+The `team_ids` index remains permanent, as it enables team-scoped queries for all team-membership
 features.
