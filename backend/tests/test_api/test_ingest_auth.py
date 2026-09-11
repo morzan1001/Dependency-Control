@@ -871,7 +871,7 @@ class TestIngestGitHubTeamSync:
                 payload = {"repository_id": "123456", "repository": "acme/widgets", "repository_owner": "acme"}
                 payload.update(payload_overrides)
                 mock_svc.validate_oidc_token = AsyncMock(return_value=make_github_oidc_payload(**payload))
-                mock_svc.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult(*sync_result))
+                mock_svc.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult(sync_result))
                 MockService.return_value = mock_svc
 
                 asyncio.run(
@@ -881,22 +881,22 @@ class TestIngestGitHubTeamSync:
 
     def test_sync_is_not_called_when_the_instance_has_it_off(self):
         mock_svc, projects_coll, _ = self._run(
-            {**_TEAM_SYNC_INSTANCE, "sync_teams": False}, ("t-9", 1), project_doc=_TEAM_SYNC_PROJECT
+            {**_TEAM_SYNC_INSTANCE, "sync_teams": False}, ["t-9"], project_doc=_TEAM_SYNC_PROJECT
         )
         mock_svc.sync_team_from_github.assert_not_called()
         projects_coll.update_one.assert_not_called()
 
     def test_sync_is_not_called_on_auto_create_when_the_instance_has_it_off(self):
         instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": False, "auto_create_projects": True}
-        mock_svc, projects_coll, _ = self._run(instance, ("t-9", 1))
+        mock_svc, projects_coll, _ = self._run(instance, ["t-9"])
         mock_svc.sync_team_from_github.assert_not_called()
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
+        assert inserted["team_ids"] == []
         assert inserted["team_id"] is None
-        assert inserted["github_team_candidates"] is None
 
     def test_the_owning_org_comes_from_the_token(self):
         mock_svc, _, db = self._run(
-            {**_TEAM_SYNC_INSTANCE, "sync_teams": True}, ("t-9", 1), project_doc=_TEAM_SYNC_PROJECT
+            {**_TEAM_SYNC_INSTANCE, "sync_teams": True}, ["t-9"], project_doc=_TEAM_SYNC_PROJECT
         )
         mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme", "acme/widgets")
 
@@ -904,41 +904,43 @@ class TestIngestGitHubTeamSync:
         """Pins which claim sources the org; the two agree in real tokens, so nothing else would catch a swap."""
         mock_svc, _, db = self._run(
             {**_TEAM_SYNC_INSTANCE, "sync_teams": True},
-            ("t-9", 1),
+            ["t-9"],
             project_doc=_TEAM_SYNC_PROJECT,
             repository_owner="acme-org",
         )
         mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme-org", "acme/widgets")
 
-    def test_the_team_and_the_candidate_count_are_written_to_the_project(self):
+    def test_every_resolved_owner_is_written_to_the_project(self):
+        """The guarded pipeline reaches the server, not a $set of the scalar: that is what keeps a
+        manual co-owner and the other provider's entry out of this write."""
+        from app.repositories.projects import replace_team_subset_pipeline
+
         _, projects_coll, _ = self._run(
-            {**_TEAM_SYNC_INSTANCE, "sync_teams": True}, ("t-9", 3), project_doc=_TEAM_SYNC_PROJECT
+            {**_TEAM_SYNC_INSTANCE, "sync_teams": True}, ["t-9", "t-4"], project_doc=_TEAM_SYNC_PROJECT
         )
         assert projects_coll.update_one.await_args.args[0] == {"_id": "proj-gh-1"}
-        update = projects_coll.update_one.await_args.args[1]["$set"]
-        assert update["team_id"] == "t-9"
-        assert update["team_source"] == "github"
-        assert update["github_team_candidates"] == 3
+        assert projects_coll.update_one.await_args.args[1] == replace_team_subset_pipeline("github", ["t-4", "t-9"])
 
-    def test_an_auto_created_project_carries_the_synced_team(self):
+    def test_an_auto_created_project_carries_every_synced_team(self):
         instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
-        mock_svc, projects_coll, db = self._run(instance, ("t-9", 3), repository_owner="acme-org")
+        mock_svc, projects_coll, db = self._run(instance, ["t-9", "t-4"], repository_owner="acme-org")
         # The auto-create call site sources the org from the same claim as the existing-project one.
         mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme-org", "acme/widgets")
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
-        assert inserted["team_id"] == "t-9"
+        assert inserted["team_ids"] == ["t-4", "t-9"]
+        assert inserted["team_sources"] == {"t-4": "github", "t-9": "github"}
+        # The scalars are the first owner in the order a later sync would leave the list in.
+        assert inserted["team_id"] == "t-4"
         assert inserted["team_source"] == "github"
-        assert inserted["github_team_candidates"] == 3
-        # The model no longer fabricates the list from the scalar; phase 4 makes this writer set it.
-        assert inserted["team_ids"] == []
 
     def test_an_auto_created_project_without_a_team_is_still_created(self):
         instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
-        _, projects_coll, _ = self._run(instance, (None, 0))
+        _, projects_coll, _ = self._run(instance, [])
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
+        assert inserted["team_ids"] == []
+        assert inserted["team_sources"] == {}
         assert inserted["team_id"] is None
         assert inserted["team_source"] is None
-        assert inserted["github_team_candidates"] == 0
 
 
 _GITLAB_TEAM_SYNC_INSTANCE = {
@@ -954,8 +956,9 @@ _GITLAB_TEAM_SYNC_INSTANCE = {
 class TestIngestGitLabTeamSync:
     """GitLab OIDC ingest assigns the project's team when the instance opts in."""
 
-    def _run(self, instance_doc, team_id):
+    def _run(self, instance_doc, team_ids):
         from app.api.deps import get_project_for_ingest
+        from app.services.gitlab import GitLabTeamSyncResult
 
         projects_coll = create_mock_collection(find_one=None)
         projects_coll.find_one_and_update = AsyncMock(side_effect=lambda _q, update, **_kw: update["$setOnInsert"])
@@ -980,7 +983,7 @@ class TestIngestGitLabTeamSync:
                     )
                 )
                 mock_svc.get_project_details = AsyncMock(return_value={})
-                mock_svc.sync_team_from_gitlab = AsyncMock(return_value=team_id)
+                mock_svc.sync_team_from_gitlab = AsyncMock(return_value=GitLabTeamSyncResult(team_ids))
                 MockService.return_value = mock_svc
 
                 asyncio.run(
@@ -990,10 +993,10 @@ class TestIngestGitLabTeamSync:
 
     def test_an_auto_created_project_carries_the_synced_team(self):
         instance = {**_GITLAB_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
-        mock_svc, projects_coll, db = self._run(instance, "t-gl-1")
+        mock_svc, projects_coll, db = self._run(instance, ["t-gl-1"])
         mock_svc.sync_team_from_gitlab.assert_awaited_once_with(db, 99, "group/new-project", gitlab_project_data={})
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
+        assert inserted["team_ids"] == ["t-gl-1"]
+        assert inserted["team_sources"] == {"t-gl-1": "gitlab"}
         assert inserted["team_id"] == "t-gl-1"
         assert inserted["team_source"] == "gitlab"
-        # The model no longer fabricates the list from the scalar; phase 4 makes this writer set it.
-        assert inserted["team_ids"] == []

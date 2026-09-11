@@ -13,7 +13,6 @@ import { AnalyzerSettingsDialog } from './AnalyzerSettingsDialog'
 import { User } from '@/types/user'
 import { getErrorMessage } from '@/lib/utils'
 import { memberPreferences, enforcedPreferences } from '@/lib/notification-preferences'
-import { githubTeamCandidatesNote } from '@/lib/github-team'
 import { useAuth } from '@/context/useAuth'
 import {
   isProjectAdmin,
@@ -153,15 +152,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     ? githubInstances?.items.find((i) => i.id === project.github_instance_id)
     : undefined;
   const githubHasToken = linkedGithubInstance?.has_access_token ?? false;
-  // The count is recorded even when the provenance guard refuses the assignment, so the note is
-  // only honest about a team the sync actually chose.
-  const teamCandidatesNote =
-    project.team_source === "github"
-      ? githubTeamCandidatesNote(
-          project.github_team_candidates,
-          teams?.find((team) => team.id === project.team_id)?.name
-        )
-      : null;
 
   const deleteProjectMutation = useMutation({
     mutationFn: () => projectApi.delete(projectId),
@@ -427,9 +417,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                                     </>
                                 )}
                             </div>
-                            {teamCandidatesNote && (
-                                <p className="text-xs text-muted-foreground">{teamCandidatesNote}</p>
-                            )}
                             <p className="text-xs text-muted-foreground pt-2">
                                 This project was created from a GitHub instance. The link is managed by the GitHub Actions OIDC trust and isn't editable here.
                             </p>

@@ -6,7 +6,7 @@ import pytest
 
 from app.models.team import Team, TeamMember
 from app.repositories.teams import TeamRepository
-from app.services.github import GitHubService, GitHubTeamRepoAccess, GitHubTeamSyncResult
+from app.services.github import GitHubService, GitHubTeamSyncResult
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.github import make_github_instance
 
@@ -15,19 +15,13 @@ _ORG_TEAMS = [
     {"id": 9000, "slug": "platform", "name": "Platform", "parent": None},
 ]
 
-_HOLDS = GitHubTeamRepoAccess(
-    True,
-    {"role_name": "maintain", "permissions": {"pull": True, "triage": True, "push": True, "maintain": True}},
-)
-
-
 def _service():
     return GitHubService(make_github_instance(id="gh-1", access_token="ghp-secret"))
 
 
 def _stubbed_reads(service, holders=("payments",)):
     async def _check(_org, team_slug, _owner, _repo):
-        return _HOLDS if team_slug in holders else GitHubTeamRepoAccess(False, None)
+        return team_slug in holders
 
     return (
         patch.object(service, "get_org_teams", new=AsyncMock(return_value=_ORG_TEAMS)),
@@ -60,7 +54,7 @@ async def _assert_the_maintainer_lands_in_the_bound_team(db) -> None:
     with org_reads, check_reads, member_reads:
         result = await service.sync_team_from_github(db, "acme", "acme/widgets")
 
-    assert result == GitHubTeamSyncResult("t-1", 1)
+    assert result == GitHubTeamSyncResult(["t-1"])
     team = await repo.get_raw_by_github_team("gh-1", 4711)
     assert team["name"] == "Payments Guild"
     assert team["github_team_slug"] == "payments"
@@ -76,7 +70,7 @@ async def _assert_an_unbound_github_group_is_not_adopted(db) -> None:
     with org_reads, check_reads, member_reads:
         result = await service.sync_team_from_github(db, "acme", "acme/widgets")
 
-    assert result == GitHubTeamSyncResult(None, 0)
+    assert result == GitHubTeamSyncResult([])
     assert await repo.count({}) == 0
 
 
@@ -109,7 +103,7 @@ async def _assert_a_second_sync_merges_into_the_bound_team(db) -> None:
     with org_reads, check_reads, member_reads:
         result = await service.sync_team_from_github(db, "acme", "acme/widgets")
 
-    assert result == GitHubTeamSyncResult("t-1", 1)
+    assert result == GitHubTeamSyncResult(["t-1"])
     assert await repo.count({}) == 2
 
     team = await repo.get_raw_by_github_team("gh-1", 4711)
@@ -133,7 +127,7 @@ async def _assert_the_organisation_case_does_not_decide(db) -> None:
     with org_reads, check_reads, member_reads:
         result = await service.sync_team_from_github(db, "acme", "acme/widgets")
 
-    assert result == GitHubTeamSyncResult("t-1", 1)
+    assert result == GitHubTeamSyncResult(["t-1"])
     team = await repo.get_raw_by_github_team("gh-1", 4711)
     assert team["members"] == [{"user_id": "u-1", "role": "admin", "source": "github"}]
 
@@ -155,7 +149,7 @@ async def test_a_binding_stored_in_another_case_still_resolves_on_real_mongo(db)
 
 
 @pytest.mark.asyncio
-async def test_a_repository_whose_github_group_nobody_bound_keeps_its_team():
+async def test_a_repository_whose_github_group_nobody_bound_gains_no_owner():
     """The group exists on GitHub and holds the repository; without a binding it is not a team here."""
     await _assert_an_unbound_github_group_is_not_adopted(FakeDatabase())
 
@@ -173,7 +167,7 @@ async def test_a_repository_lands_in_the_bound_team_with_its_maintainer_as_admin
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_a_repository_whose_github_group_nobody_bound_keeps_its_team_on_real_mongo(db):
+async def test_a_repository_whose_github_group_nobody_bound_gains_no_owner_on_real_mongo(db):
     await _assert_an_unbound_github_group_is_not_adopted(db)
 
 

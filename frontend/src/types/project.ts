@@ -45,7 +45,6 @@ export interface Project {
   github_instance_id?: string;
   github_repository_id?: string;
   github_repository_path?: string;
-  github_team_candidates?: number;
   github_pr_comments_enabled?: boolean;
   stats?: EnhancedStats | null;
   last_scan_at?: string;

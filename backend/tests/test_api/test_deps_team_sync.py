@@ -1,254 +1,202 @@
-"""Tests for the hybrid team_id update guard used by _handle_gitlab_oidc and _handle_github_oidc."""
+"""What an ingest's team sync writes: its own owners, and nobody else's.
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+Every case applies the stages the writer produced to a seeded document and asserts on what is
+stored afterwards, because the whole point of the phase is the end state of one atomic write —
+a test that only inspected the returned stages would pass on a pipeline that stores the wrong thing.
+"""
 
-from app.api.deps import (
-    _github_team_sync_update,
-    _gitlab_team_sync_update,
-    _should_overwrite_team_id_from_sync,
-)
+from unittest.mock import AsyncMock, MagicMock
+
+import pytest
+
+from app.api.deps import _github_team_sync_stages, _gitlab_team_sync_stages
+from app.core.constants import MAX_PROJECT_TEAMS
 from app.models.project import Project
+from app.repositories.projects import ProjectRepository
 from app.services.github import GitHubTeamSyncResult
+from app.services.gitlab import GitLabTeamSyncResult
+from tests.mocks.fake_mongo import FakeDatabase
+
+_PROJECT_ID = "p-1"
 
 
-def _team_repo_with(raw_team):
-    repo = MagicMock()
-    repo.get_raw_by_id = AsyncMock(return_value=raw_team)
-    return repo
+async def _seed(db, **ownership) -> Project:
+    doc = {
+        "_id": _PROJECT_ID,
+        "name": "grp/proj",
+        "gitlab_instance_id": "inst-1",
+        "gitlab_project_id": 100,
+        "github_instance_id": "gh-1",
+        "github_repository_id": "123456",
+        **ownership,
+    }
+    await db.projects.insert_one(doc)
+    return Project(**doc)
 
 
-def _project(team_id=None):
-    return Project(id="p-1", name="proj", team_id=team_id, gitlab_instance_id="inst-1", gitlab_project_id=100)
+async def _apply(db, project: Project, stages: list[dict]) -> dict:
+    if stages:
+        await ProjectRepository(db).update_raw(str(project.id), stages)
+    return await db.projects.find_one({"_id": str(project.id)})
 
 
-def _service_returning(team_id):
-    svc = MagicMock()
-    svc.get_project_details = AsyncMock(return_value=MagicMock())
-    svc.sync_team_from_gitlab = AsyncMock(return_value=team_id)
-    return svc
+async def _gitlab_sync(db, project: Project, resolved: list[str] | None) -> tuple[dict, list[dict]]:
+    service = MagicMock()
+    service.get_project_details = AsyncMock(return_value=MagicMock())
+    service.sync_team_from_gitlab = AsyncMock(return_value=GitLabTeamSyncResult(resolved))
+    stages = await _gitlab_team_sync_stages(project, 100, "grp/proj", service, db)
+    return await _apply(db, project, stages), stages
 
 
-def _github_project(team_id=None, candidates=None):
-    return Project(
-        id="p-gh",
-        name="acme/widgets",
-        team_id=team_id,
-        github_instance_id="gh-1",
-        github_repository_id="123456",
-        github_team_candidates=candidates,
+async def _github_sync(db, project: Project, resolved: list[str] | None) -> tuple[dict, list[dict]]:
+    service = MagicMock()
+    service.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult(resolved))
+    stages = await _github_team_sync_stages(project, "acme", "acme/widgets", service, db)
+    return await _apply(db, project, stages), stages
+
+
+@pytest.mark.asyncio
+async def test_a_sync_does_not_evict_a_manual_co_owner():
+    """The one that matters: a CI ingest runs on every pipeline, so a blind replace would delete
+    an operator's assignment within minutes of them making it."""
+    db = FakeDatabase()
+    project = await _seed(
+        db,
+        team_ids=["gl-old", "by-hand"],
+        team_sources={"gl-old": "gitlab", "by-hand": "manual"},
+        team_id="gl-old",
+        team_source="gitlab",
     )
 
+    stored, _ = await _gitlab_sync(db, project, ["gl-new"])
 
-def _github_service_returning(result):
-    svc = MagicMock()
-    svc.sync_team_from_github = AsyncMock(return_value=result)
-    return svc
-
-
-class TestShouldOverwriteTeamIdFromSync:
-    def test_returns_true_when_project_has_no_team(self):
-        repo = _team_repo_with(None)
-        assert asyncio.run(_should_overwrite_team_id_from_sync(None, repo)) is True
-
-    def test_returns_true_when_project_team_id_is_empty_string(self):
-        repo = _team_repo_with(None)
-        assert asyncio.run(_should_overwrite_team_id_from_sync("", repo)) is True
-
-    def test_returns_true_when_current_team_was_synced_from_gitlab(self):
-        repo = _team_repo_with(
-            {"_id": "t-1", "name": "GitLab Group: bkg", "gitlab_group_id": 875, "gitlab_instance_id": "inst-1"}
-        )
-        assert asyncio.run(_should_overwrite_team_id_from_sync("t-1", repo)) is True
-
-    def test_returns_false_when_current_team_is_manual(self):
-        repo = _team_repo_with({"_id": "t-2", "name": "Atlas"})
-        assert asyncio.run(_should_overwrite_team_id_from_sync("t-2", repo)) is False
-
-    def test_returns_false_when_gitlab_group_id_is_none_explicitly(self):
-        repo = _team_repo_with({"_id": "t-3", "name": "Avengers", "gitlab_group_id": None})
-        assert asyncio.run(_should_overwrite_team_id_from_sync("t-3", repo)) is False
-
-    def test_returns_true_when_referenced_team_was_deleted(self):
-        repo = _team_repo_with(None)
-        assert asyncio.run(_should_overwrite_team_id_from_sync("orphan-id", repo)) is True
+    assert sorted(stored["team_ids"]) == ["by-hand", "gl-new"]
+    assert stored["team_sources"] == {"by-hand": "manual", "gl-new": "gitlab"}
 
 
-class TestShouldOverwriteTeamIdProvenanceGate:
-    """A manual reassignment must never be reverted by sync even when the target team is GitLab-synced; project provenance is authoritative, not the target team's gitlab_group_id."""
+@pytest.mark.asyncio
+async def test_a_project_that_moved_group_loses_the_owner_it_left():
+    """The mirror image: a union would keep the old group forever, so every transfer would widen
+    access instead of moving it."""
+    db = FakeDatabase()
+    project = await _seed(db, team_ids=["gl-old"], team_sources={"gl-old": "gitlab"}, team_id="gl-old")
 
-    def test_manual_team_source_blocks_overwrite_even_for_gitlab_team(self):
-        repo = _team_repo_with(
-            {"_id": "t-1", "name": "GitLab Group: other", "gitlab_group_id": 999, "gitlab_instance_id": "inst-1"}
-        )
-        result = asyncio.run(_should_overwrite_team_id_from_sync("t-1", repo, team_source="manual"))
-        assert result is False
+    stored, _ = await _gitlab_sync(db, project, ["gl-new"])
 
-    def test_gitlab_team_source_allows_overwrite(self):
-        repo = _team_repo_with(
-            {"_id": "t-1", "name": "GitLab Group: x", "gitlab_group_id": 5, "gitlab_instance_id": "inst-1"}
-        )
-        result = asyncio.run(_should_overwrite_team_id_from_sync("t-1", repo, team_source="gitlab"))
-        assert result is True
+    assert stored["team_ids"] == ["gl-new"]
+    assert stored["team_sources"] == {"gl-new": "gitlab"}
+    assert stored["team_id"] == "gl-new"
+    assert stored["team_source"] == "gitlab"
 
 
-class TestGitlabTeamSyncUpdate:
-    """Integration: _gitlab_team_sync_update wires sync_team_from_gitlab + hybrid guard."""
+@pytest.mark.asyncio
+async def test_a_sync_that_could_not_be_asked_writes_nothing():
+    db = FakeDatabase()
+    project = await _seed(db, team_ids=["gl-old"], team_sources={"gl-old": "gitlab"}, team_id="gl-old")
 
-    def test_returns_empty_when_sync_returns_none(self):
-        project = _project(team_id=None)
-        svc = _service_returning(None)
-        result = asyncio.run(_gitlab_team_sync_update(project, 100, "grp/proj", svc, MagicMock()))
-        assert result == {}
+    stored, stages = await _gitlab_sync(db, project, None)
 
-    def test_returns_empty_when_sync_returns_same_team(self):
-        project = _project(team_id="t-same")
-        svc = _service_returning("t-same")
-        # No team_repo lookup must happen on the no-change path
-        with patch("app.api.deps.TeamRepository") as TR:
-            result = asyncio.run(_gitlab_team_sync_update(project, 100, "grp/proj", svc, MagicMock()))
-            assert result == {}
-            TR.assert_not_called()
-
-    def test_assigns_team_when_project_has_none(self):
-        project = _project(team_id=None)
-        svc = _service_returning("t-new")
-        with patch("app.api.deps.TeamRepository") as TR:
-            TR.return_value.get_raw_by_id = AsyncMock(return_value=None)
-            result = asyncio.run(_gitlab_team_sync_update(project, 100, "grp/proj", svc, MagicMock()))
-        # A sync-driven assignment must stamp gitlab provenance.
-        assert result == {"team_id": "t-new", "team_source": "gitlab"}
-
-    def test_overwrites_team_when_current_came_from_gitlab(self):
-        project = _project(team_id="t-old-gitlab")
-        svc = _service_returning("t-new-gitlab")
-        with patch("app.api.deps.TeamRepository") as TR:
-            TR.return_value.get_raw_by_id = AsyncMock(return_value={"_id": "t-old-gitlab", "gitlab_group_id": 875})
-            result = asyncio.run(_gitlab_team_sync_update(project, 100, "grp/proj", svc, MagicMock()))
-        assert result == {"team_id": "t-new-gitlab", "team_source": "gitlab"}
-
-    def test_keeps_manual_team_assignment(self, caplog):
-        project = _project(team_id="t-manual")
-        project.team_source = "manual"
-        svc = _service_returning("t-new-from-sync")
-        with patch("app.api.deps.TeamRepository") as TR:
-            TR.return_value.get_raw_by_id = AsyncMock(
-                return_value={"_id": "t-manual", "name": "Atlas"}  # no gitlab_group_id
-            )
-            with caplog.at_level("INFO", logger="app.api.deps"):
-                result = asyncio.run(_gitlab_team_sync_update(project, 100, "grp/proj", svc, MagicMock()))
-        assert result == {}
-        assert any("Keeping manual team assignment" in r.message for r in caplog.records), (
-            f"Expected info log about kept manual assignment. Got: {[r.message for r in caplog.records]}"
-        )
-
-    def test_manual_provenance_blocks_overwrite_to_another_gitlab_team(self):
-        project = _project(team_id="t-manual-but-gitlab")
-        project.team_source = "manual"
-        svc = _service_returning("t-sync-target")
-        with patch("app.api.deps.TeamRepository") as TR:
-            TR.return_value.get_raw_by_id = AsyncMock(
-                return_value={"_id": "t-manual-but-gitlab", "gitlab_group_id": 321, "gitlab_instance_id": "inst-1"}
-            )
-            result = asyncio.run(_gitlab_team_sync_update(project, 100, "grp/proj", svc, MagicMock()))
-        assert result == {}
+    assert stages == []
+    assert stored["team_ids"] == ["gl-old"]
 
 
-class TestShouldOverwriteTeamIdAcrossProviders:
-    """Either provenance field means the current team came from a sync."""
+@pytest.mark.asyncio
+async def test_a_sync_that_resolved_nothing_retires_its_own_owners_only():
+    db = FakeDatabase()
+    project = await _seed(
+        db,
+        team_ids=["gl-old", "by-hand"],
+        team_sources={"gl-old": "gitlab", "by-hand": "manual"},
+        team_id="gl-old",
+    )
 
-    def test_a_github_synced_team_is_overwritable(self):
-        repo = _team_repo_with(
-            {
-                "_id": "t-gh",
-                "name": "GitHub Team: acme/payments",
-                "github_instance_id": "gh-1",
-                "github_team_id": 4711,
-            }
-        )
-        assert asyncio.run(_should_overwrite_team_id_from_sync("t-gh", repo, team_source="github")) is True
+    stored, _ = await _gitlab_sync(db, project, [])
 
-    def test_a_gitlab_synced_team_is_still_overwritable(self):
-        repo = _team_repo_with(
-            {"_id": "t-gl", "name": "GitLab Group: bkg", "gitlab_instance_id": "gl-1", "gitlab_group_id": 875}
-        )
-        assert asyncio.run(_should_overwrite_team_id_from_sync("t-gl", repo, team_source="gitlab")) is True
-
-    def test_a_manual_project_assignment_is_never_reverted_by_github_sync(self):
-        repo = _team_repo_with({"_id": "t-gh", "github_team_id": 4711})
-        assert asyncio.run(_should_overwrite_team_id_from_sync("t-gh", repo, team_source="manual")) is False
-
-    def test_a_manual_team_is_still_not_overwritable(self):
-        repo = _team_repo_with({"_id": "t-manual", "name": "Atlas", "github_team_id": None})
-        assert asyncio.run(_should_overwrite_team_id_from_sync("t-manual", repo)) is False
+    assert stored["team_ids"] == ["by-hand"]
+    assert stored["team_sources"] == {"by-hand": "manual"}
+    assert stored["team_id"] == "by-hand"
+    assert stored["team_source"] == "manual"
 
 
-class TestGithubTeamSyncUpdate:
-    """Integration: _github_team_sync_update wires sync_team_from_github + hybrid guard."""
+@pytest.mark.asyncio
+async def test_one_provider_never_touches_the_other_provider_s_owner():
+    db = FakeDatabase()
+    project = await _seed(
+        db,
+        team_ids=["gl-a", "gh-a"],
+        team_sources={"gl-a": "gitlab", "gh-a": "github"},
+        team_id="gl-a",
+    )
 
-    def test_assigns_the_team_and_stamps_github_provenance(self):
-        svc = _github_service_returning(GitHubTeamSyncResult("t-new", 1))
-        db = MagicMock()
-        with patch("app.api.deps.TeamRepository") as TR:
-            TR.return_value.get_raw_by_id = AsyncMock(return_value=None)
-            result = asyncio.run(_github_team_sync_update(_github_project(), "acme", "acme/widgets", svc, db))
-        assert result == {"github_team_candidates": 1, "team_id": "t-new", "team_source": "github"}
-        svc.sync_team_from_github.assert_awaited_once_with(db, "acme", "acme/widgets")
-        TR.assert_called_once_with(db)
+    stored, _ = await _github_sync(db, project, ["gh-b"])
 
-    def test_records_an_ambiguous_match(self):
-        svc = _github_service_returning(GitHubTeamSyncResult("t-new", 3))
-        with patch("app.api.deps.TeamRepository") as TR:
-            TR.return_value.get_raw_by_id = AsyncMock(return_value=None)
-            result = asyncio.run(_github_team_sync_update(_github_project(), "acme", "acme/widgets", svc, MagicMock()))
-        assert result["github_team_candidates"] == 3
+    assert sorted(stored["team_ids"]) == ["gh-b", "gl-a"]
+    assert stored["team_sources"] == {"gl-a": "gitlab", "gh-b": "github"}
+    # The incumbent scalar still owns the project, so nothing moves it.
+    assert stored["team_id"] == "gl-a"
 
-    def test_an_undetermined_count_does_not_clobber_the_recorded_one(self):
-        svc = _github_service_returning(GitHubTeamSyncResult(None, None))
-        result = asyncio.run(
-            _github_team_sync_update(_github_project(candidates=3), "acme", "acme/widgets", svc, MagicMock())
-        )
-        assert result == {}
 
-    def test_an_unchanged_count_is_not_rewritten(self):
-        svc = _github_service_returning(GitHubTeamSyncResult("t-same", 2))
-        result = asyncio.run(
-            _github_team_sync_update(
-                _github_project(team_id="t-same", candidates=2), "acme", "acme/widgets", svc, MagicMock()
-            )
-        )
-        assert result == {}
+@pytest.mark.asyncio
+async def test_github_attaches_every_team_that_holds_the_repository():
+    db = FakeDatabase()
+    project = await _seed(db, team_ids=[], team_sources={})
 
-    def test_overwrites_a_legacy_team_that_itself_came_from_github(self):
-        svc = _github_service_returning(GitHubTeamSyncResult("t-new-github", 1))
-        with patch("app.api.deps.TeamRepository") as TR:
-            TR.return_value.get_raw_by_id = AsyncMock(return_value={"_id": "t-old-github", "github_team_id": 4711})
-            result = asyncio.run(
-                _github_team_sync_update(
-                    _github_project(team_id="t-old-github"), "acme", "acme/widgets", svc, MagicMock()
-                )
-            )
-        assert result == {"github_team_candidates": 1, "team_id": "t-new-github", "team_source": "github"}
-        # The guard must be asked about the project's current team, not the sync target.
-        TR.return_value.get_raw_by_id.assert_awaited_once_with("t-old-github")
+    stored, _ = await _github_sync(db, project, ["gh-b", "gh-a"])
 
-    def test_a_repository_with_no_team_leaves_team_id_untouched(self):
-        svc = _github_service_returning(GitHubTeamSyncResult(None, 0))
-        with patch("app.api.deps.TeamRepository") as TR:
-            result = asyncio.run(
-                _github_team_sync_update(_github_project(team_id="t-keep"), "acme", "acme/widgets", svc, MagicMock())
-            )
-        assert result == {"github_team_candidates": 0}
-        TR.assert_not_called()
+    assert stored["team_ids"] == ["gh-a", "gh-b"]
+    assert stored["team_sources"] == {"gh-a": "github", "gh-b": "github"}
 
-    def test_keeps_a_manual_team_assignment_and_says_so(self, caplog):
-        project = _github_project(team_id="t-manual")
-        project.team_source = "manual"
-        svc = _github_service_returning(GitHubTeamSyncResult("t-from-sync", 1))
-        with patch("app.api.deps.TeamRepository") as TR:
-            TR.return_value.get_raw_by_id = AsyncMock(return_value={"_id": "t-manual", "name": "Atlas"})
-            with caplog.at_level("INFO", logger="app.api.deps"):
-                result = asyncio.run(_github_team_sync_update(project, "acme", "acme/widgets", svc, MagicMock()))
-        assert result == {"github_team_candidates": 1}
-        messages = [record.getMessage() for record in caplog.records]
-        assert any("Keeping manual team assignment" in message for message in messages), messages
+
+@pytest.mark.asyncio
+async def test_an_unchanged_subset_is_not_rewritten():
+    """Every CI job of every pipeline runs this; re-writing an unchanged owner set is a write
+    per ingest for nothing."""
+    db = FakeDatabase()
+    project = await _seed(
+        db,
+        team_ids=["gl-a", "by-hand"],
+        team_sources={"gl-a": "gitlab", "by-hand": "manual"},
+        team_id="gl-a",
+    )
+
+    _, stages = await _gitlab_sync(db, project, ["gl-a"])
+
+    assert stages == []
+
+
+@pytest.mark.asyncio
+async def test_a_subset_recorded_but_never_stored_is_written_out():
+    """team_sources naming an owner team_ids does not hold is a document an older writer left
+    behind; treating it as unchanged would keep it broken forever."""
+    db = FakeDatabase()
+    project = await _seed(db, team_ids=[], team_sources={"gl-a": "gitlab"})
+
+    stored, stages = await _gitlab_sync(db, project, ["gl-a"])
+
+    assert stages != []
+    assert stored["team_ids"] == ["gl-a"]
+
+
+@pytest.mark.asyncio
+async def test_a_resolution_past_the_cap_leaves_the_owners_alone(caplog):
+    db = FakeDatabase()
+    project = await _seed(db, team_ids=["gl-a"], team_sources={"gl-a": "gitlab"}, team_id="gl-a")
+
+    with caplog.at_level("WARNING", logger="app.api.deps"):
+        stored, stages = await _gitlab_sync(db, project, [f"gl-{n}" for n in range(MAX_PROJECT_TEAMS + 1)])
+
+    assert stages == []
+    assert stored["team_ids"] == ["gl-a"]
+    assert any("past the cap" in record.getMessage() for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_the_service_is_asked_about_the_repository_the_token_names():
+    db = FakeDatabase()
+    project = await _seed(db, team_ids=[], team_sources={})
+    service = MagicMock()
+    service.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult([]))
+
+    await _github_team_sync_stages(project, "acme-org", "acme/widgets", service, db)
+
+    service.sync_team_from_github.assert_awaited_once_with(db, "acme-org", "acme/widgets")
