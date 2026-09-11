@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { teamApi } from '@/api/teams';
-import { TeamCreate, TeamMemberCreate } from '@/types/team';
+import { TeamCreate, TeamGitHubBinding, TeamMemberCreate } from '@/types/team';
 
 export const teamKeys = {
   all: ['teams'] as const,
@@ -86,6 +86,29 @@ export const useRemoveTeamMember = () => {
       teamApi.removeMember(teamId, userId),
     onSuccess: (_, variables) => {
       queryClient.invalidateQueries({ queryKey: teamKeys.detail(variables.teamId) });
+      queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
+    },
+  });
+};
+
+export const useSetTeamGithubBinding = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ teamId, data }: { teamId: string; data: TeamGitHubBinding }) =>
+      teamApi.setGithubBinding(teamId, data),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: teamKeys.detail(variables.teamId) });
+      queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
+    },
+  });
+};
+
+export const useClearTeamGithubBinding = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (teamId: string) => teamApi.clearGithubBinding(teamId),
+    onSuccess: (_, teamId) => {
+      queryClient.invalidateQueries({ queryKey: teamKeys.detail(teamId) });
       queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
     },
   });

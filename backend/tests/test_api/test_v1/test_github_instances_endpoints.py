@@ -242,3 +242,96 @@ class TestConnectionProbesEveryOrganisation:
 
         assert result.success is True
         assert "acme (0 team(s))" in result.message
+
+
+class TestBindingPickerListings:
+    """What the team-binding dialog offers; a picker that cannot list makes binding guesswork."""
+
+    @staticmethod
+    def _run(endpoint, admin_user, instance, **service_returns):
+        mock_repo = _make_repo_mock(get_by_id=instance)
+        service = MagicMock()
+        for name, value in service_returns.items():
+            setattr(service, name, AsyncMock(return_value=value))
+
+        with (
+            patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo),
+            patch(f"{MODULE}.GitHubService", return_value=service),
+        ):
+            return asyncio.run(endpoint)
+
+    def test_the_organisations_of_the_token_are_offered(self, admin_user):
+        from app.api.v1.endpoints.github_instances import list_instance_organisations
+
+        result = self._run(
+            list_instance_organisations(instance_id="gh-1", db=MagicMock(), current_user=admin_user),
+            admin_user,
+            make_github_instance(access_token="ghp-test-token"),
+            get_viewer_organisations=[{"login": "acme"}, {"login": "globex"}, {}],
+        )
+
+        assert result == ["acme", "globex"]
+
+    def test_a_token_that_cannot_list_organisations_is_a_bad_gateway(self, admin_user):
+        from app.api.v1.endpoints.github_instances import list_instance_organisations
+
+        with pytest.raises(HTTPException) as excinfo:
+            self._run(
+                list_instance_organisations(instance_id="gh-1", db=MagicMock(), current_user=admin_user),
+                admin_user,
+                make_github_instance(access_token="ghp-test-token"),
+                get_viewer_organisations=None,
+            )
+
+        assert excinfo.value.status_code == 502
+
+    def test_each_team_is_offered_with_the_parent_that_tells_it_apart(self, admin_user):
+        from app.api.v1.endpoints.github_instances import list_organisation_teams
+
+        result = self._run(
+            list_organisation_teams(instance_id="gh-1", org="acme", db=MagicMock(), current_user=admin_user),
+            admin_user,
+            make_github_instance(access_token="ghp-test-token"),
+            get_org_teams=[
+                {"id": 4711, "slug": "payments", "name": "Payments", "parent": None},
+                {
+                    "id": 900,
+                    "slug": "cards",
+                    "name": "Cards",
+                    "parent": {"id": 4711, "slug": "payments", "name": "Payments"},
+                },
+            ],
+        )
+
+        assert [(team.id, team.slug, team.name, team.parent_slug) for team in result] == [
+            (4711, "payments", "Payments", None),
+            (900, "cards", "Cards", "payments"),
+        ]
+
+    def test_an_unreadable_organisation_is_a_bad_gateway(self, admin_user):
+        from app.api.v1.endpoints.github_instances import list_organisation_teams
+
+        with pytest.raises(HTTPException) as excinfo:
+            self._run(
+                list_organisation_teams(instance_id="gh-1", org="acme", db=MagicMock(), current_user=admin_user),
+                admin_user,
+                make_github_instance(access_token="ghp-test-token"),
+                get_org_teams=None,
+            )
+
+        assert excinfo.value.status_code == 502
+
+    def test_an_unknown_instance_is_not_found(self, admin_user):
+        from app.api.v1.endpoints.github_instances import list_organisation_teams
+
+        mock_repo = _make_repo_mock(get_by_id=None)
+
+        with patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo):
+            with pytest.raises(HTTPException) as excinfo:
+                asyncio.run(
+                    list_organisation_teams(
+                        instance_id="gh-absent", org="acme", db=MagicMock(), current_user=admin_user
+                    )
+                )
+
+        assert excinfo.value.status_code == 404

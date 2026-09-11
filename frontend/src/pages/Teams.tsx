@@ -13,6 +13,7 @@ import { TeamMembersDialog } from '@/components/teams/TeamMembersDialog';
 import { AddMemberDialog } from '@/components/teams/AddMemberDialog';
 import { DeleteTeamDialog } from '@/components/teams/DeleteTeamDialog';
 import { TeamWebhooksDialog } from '@/components/teams/TeamWebhooksDialog';
+import { TeamGitHubBindingDialog } from '@/components/teams/TeamGitHubBindingDialog';
 import { useCurrentUser } from '@/hooks/queries/use-users';
 import { canManageTeamWebhooks } from '@/lib/team-roles';
 import { ArrowUp, ArrowDown } from 'lucide-react';
@@ -33,6 +34,7 @@ export default function TeamsPage() {
   const [isAddMemberOpen, setIsAddMemberOpen] = useState(false);
   const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [isWebhooksOpen, setIsWebhooksOpen] = useState(false);
+  const [isGithubBindingOpen, setIsGithubBindingOpen] = useState(false);
   const [selectedTeamId, setSelectedTeamId] = useState<string | null>(null);
   const [selectedTeamIdForAddMember, setSelectedTeamIdForAddMember] = useState<string | null>(null);
   const [teamToDelete, setTeamToDelete] = useState<string | null>(null);
@@ -69,6 +71,11 @@ export default function TeamsPage() {
   const openWebhooksDialog = (team: Team) => {
     setWebhookTeamId(team.id);
     setIsWebhooksOpen(true);
+  };
+
+  const openGithubBindingDialog = (team: Team) => {
+    setSelectedTeamId(team.id);
+    setIsGithubBindingOpen(true);
   };
 
   if (isLoading) {
@@ -134,6 +141,7 @@ export default function TeamsPage() {
             onAddMember={openAddMemberDialog}
             onDelete={handleDeleteClick}
             onManageWebhooks={openWebhooksDialog}
+            onManageGithubBinding={openGithubBindingDialog}
           />
         ))}
       </div>
@@ -145,8 +153,15 @@ export default function TeamsPage() {
         onClose={() => setIsEditOpen(false)} 
       />
 
-      <TeamMembersDialog 
-        team={selectedTeam} 
+      <TeamGitHubBindingDialog
+        key={`binding-${selectedTeam?.id}`}
+        team={selectedTeam}
+        isOpen={isGithubBindingOpen}
+        onClose={() => setIsGithubBindingOpen(false)}
+      />
+
+      <TeamMembersDialog
+        team={selectedTeam}
         isOpen={isManageMembersOpen} 
         onClose={() => setIsManageMembersOpen(false)} 
       />

@@ -1,5 +1,6 @@
 """Repository for teams."""
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -43,9 +44,28 @@ class TeamRepository:
         )
 
     async def get_raw_by_github_team(self, github_instance_id: str, github_team_id: int) -> dict[str, Any] | None:
+        """The team already holding a binding. The unique index is built by hand before the deploy
+        and its build can be skipped, so the binding endpoint checks the pair here as well."""
         return await self.collection.find_one(
             {"github_instance_id": github_instance_id, "github_team_id": github_team_id}
         )
+
+    async def find_raw_by_github_org(self, github_instance_id: str, github_org: str) -> list[dict[str, Any]]:
+        """Every team bound to one organisation of one instance. Scoped to the instance: a team
+        number is unique per instance only, and two instances are two tenants."""
+        cursor = self.collection.find(
+            {
+                "github_instance_id": github_instance_id,
+                # GitHub organisation names differ only in case, so an equality match reports
+                # "nobody holds this repository" whenever the binding was stored in another case.
+                "github_org": {"$regex": f"^{re.escape(github_org)}$", "$options": "i"},
+                # A binding without a team number addresses no team on GitHub. Keeping it would
+                # leave every repository of the organisation undetermined instead of resolving
+                # against the teams that are bound properly.
+                "github_team_id": {"$ne": None},
+            }
+        )
+        return await cursor.to_list(None)
 
     async def create(self, team: Team) -> Team:
         await self.collection.insert_one(team.model_dump(by_alias=True))

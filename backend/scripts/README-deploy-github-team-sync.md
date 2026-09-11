@@ -79,6 +79,30 @@ Then run Test Connection. It probes every organisation the token belongs to and 
 the number of teams it can read, so the coverage is visible per organisation; one organisation it
 cannot read teams for turns the whole test red and is named in the message.
 
-## 3. No backfill
+## 3. Bind the teams — nothing resolves before this
+
+Resolution asks, per team bound to the instance and organisation, whether it holds the repository.
+A GitHub team nobody bound is not a team here, so an organisation with no bindings resolves nothing
+and every project keeps the team it has. Sync creates no team, ever.
+
+Bind in the UI: Teams → the team's GitHub button (needs `system:manage`) → pick the instance, the
+organisation and one of its teams → Save. The organisation listing supplies the slug, so a team the
+token cannot see cannot be bound, and a second team cannot take a binding another team already holds
+(HTTP 409). The same button removes a binding.
+
+The production instance is already bound for 15 teams and 210 of 212 projects were backfilled by
+hand, so this section is for new teams and for corrections.
+
+Keep the bindings true to GitHub. A bound team that the organisation listing no longer shows —
+deleted, or turned secret to this token — makes every repository of that organisation
+**undetermined**: no `team_id` is written and no candidate count is stamped, and each ingest logs
+
+```
+Team <id> is bound to GitHub team <n> of <org>, which the organisation listing does not show
+```
+
+at WARNING. Re-bind or clear the team to clear it.
+
+## 4. No backfill
 
 Existing GitHub-linked projects gain a team on their next ingest, not retroactively.

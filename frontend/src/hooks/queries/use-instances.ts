@@ -38,3 +38,17 @@ export const useGitLabInstances = gitlab.useInstances;
 const github = createInstanceHooks<GitHubInstanceList>(githubInstancesApi, githubInstanceKeys);
 
 export const useGitHubInstances = github.useInstances;
+
+export const useGitHubOrgs = (instanceId: string | null) =>
+  useQuery({
+    queryKey: [...githubInstanceKeys.all, instanceId, 'orgs'] as const,
+    queryFn: () => githubInstancesApi.listOrgs(instanceId as string),
+    enabled: !!instanceId,
+  });
+
+export const useGitHubOrgTeams = (instanceId: string | null, org: string | null) =>
+  useQuery({
+    queryKey: [...githubInstanceKeys.all, instanceId, 'orgs', org, 'teams'] as const,
+    queryFn: () => githubInstancesApi.listOrgTeams(instanceId as string, org as string),
+    enabled: !!instanceId && !!org,
+  });

@@ -1,48 +1,16 @@
-"""The repository→team tiebreak (design §5). Fixtures mirror GET /repos/{owner}/{repo}/teams."""
+"""The candidate→team tiebreak. Fixtures mirror the entries built from the team/repository check."""
 
 from itertools import permutations
 from typing import Any, ClassVar
 
 import pytest
 
-from app.services.github import build_team_depth_map, select_github_team
-
-
-def _team(
-    team_id: int,
-    slug: str,
-    *,
-    permission: str = "pull",
-    permissions: dict[str, bool] | None = None,
-    access_source: str | None = None,
-    parent: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    team: dict[str, Any] = {
-        "id": team_id,
-        "node_id": f"T_kwDO{team_id}",
-        "url": f"https://api.github.com/organizations/1/team/{team_id}",
-        "html_url": f"https://github.com/orgs/acme/teams/{slug}",
-        "name": slug.replace("-", " ").title(),
-        "slug": slug,
-        "description": None,
-        "privacy": "closed",
-        "notification_setting": "notifications_enabled",
-        "permission": permission,
-        "parent": parent,
-    }
-    # Both are optional on the response: absent keys, never nulls.
-    if permissions is not None:
-        team["permissions"] = permissions
-    if access_source is not None:
-        team["access_source"] = access_source
-    return team
-
-
-_PARENT_PLATFORM = {"id": 1, "node_id": "T_kwDO1", "name": "Platform", "slug": "platform"}
-
-# The legacy `permission` string collapses maintain onto push, so only the object separates these two.
-_LEGACY_PUSH = {"pull": True, "triage": True, "push": True, "maintain": False, "admin": False}
-_LEGACY_PUSH_WITH_MAINTAIN = {"pull": True, "triage": True, "push": True, "maintain": True, "admin": False}
+from app.services.github import (
+    build_org_team_options,
+    build_team_depth_map,
+    build_team_slug_map,
+    select_github_team,
+)
 
 _PERMISSION_LADDER = ["pull", "triage", "push", "maintain", "admin"]
 
@@ -51,109 +19,59 @@ def _permissions_up_to(level: str) -> dict[str, bool]:
     """The object GitHub sends for a team at `level`: every weaker permission is true as well."""
     return {name: _PERMISSION_LADDER.index(name) <= _PERMISSION_LADDER.index(level) for name in _PERMISSION_LADDER}
 
+
+def _candidate(
+    team_id: int,
+    slug: str,
+    *,
+    permission: str = "pull",
+    permissions: dict[str, bool] | None = None,
+) -> dict[str, Any]:
+    return {
+        "id": team_id,
+        "slug": slug,
+        "permissions": _permissions_up_to(permission) if permissions is None else permissions,
+        "role_name": permission,
+    }
+
+
 _CASES = [
     pytest.param(
-        [_team(1, "org-wide", access_source="organization"), _team(2, "direct", access_source="direct")],
-        None,
-        "direct",
-        id="rule1-direct-beats-organization",
-    ),
-    pytest.param(
-        [_team(1, "org-wide", access_source="organization"), _team(2, "unstated")],
-        None,
-        "unstated",
-        id="rule1-absent-beats-organization",
-    ),
-    pytest.param(
-        [_team(1, "enterprise-wide", access_source="enterprise"), _team(2, "unstated")],
-        None,
-        "unstated",
-        id="rule1-absent-beats-enterprise",
-    ),
-    pytest.param(
-        [_team(1, "unstated"), _team(2, "direct", access_source="direct")],
-        None,
-        "direct",
-        id="rule1-direct-beats-absent",
-    ),
-    pytest.param(
-        [
-            _team(1, "direct-shallow", access_source="direct"),
-            _team(2, "org-deep", access_source="organization", parent=_PARENT_PLATFORM),
-        ],
-        {1: 0, 2: 1},
-        "direct-shallow",
-        id="rule1-outranks-rule2-depth",
-    ),
-    pytest.param(
-        [_team(1, "future-source", access_source="scim_provisioned"), _team(2, "direct", access_source="direct")],
-        None,
-        "direct",
-        id="rule1-an-unrecognised-source-loses-to-direct",
-    ),
-    pytest.param(
-        [_team(1, "future-source", access_source="scim_provisioned"), _team(2, "unstated")],
-        None,
-        "unstated",
-        id="rule1-an-unrecognised-source-ranks-below-an-absent-one",
-    ),
-    pytest.param(
-        [
-            _team(1, "direct-reader", permission="pull", access_source="direct"),
-            _team(2, "org-admin", permission="admin", access_source="organization"),
-        ],
-        None,
-        "direct-reader",
-        id="rule1-outranks-rule3-permission",
-    ),
-    pytest.param(
-        [_team(1, "platform"), _team(2, "payments", parent=_PARENT_PLATFORM)],
+        [_candidate(1, "platform"), _candidate(2, "payments")],
         {1: 0, 2: 1},
         "payments",
         id="rule2-deeper-team-wins",
     ),
     pytest.param(
-        [_team(1, "platform", permission="admin"), _team(2, "payments", parent=_PARENT_PLATFORM)],
+        [_candidate(1, "platform", permission="admin"), _candidate(2, "payments")],
         {1: 0, 2: 1},
         "payments",
         id="rule2-outranks-rule3-permission",
     ),
     pytest.param(
-        [_team(1, "platform", permission="admin"), _team(2, "payments", parent=_PARENT_PLATFORM)],
-        None,
+        [_candidate(1, "platform", permission="admin"), _candidate(2, "payments")],
+        {},
         "platform",
-        id="rule2-skipped-without-a-depth-map-falls-through-to-permission",
+        id="rule2-skipped-when-no-team-is-nested-falls-through-to-permission",
     ),
     pytest.param(
-        [_team(1, "readers", permission="pull"), _team(2, "owners", permission="admin")],
-        None,
+        [_candidate(1, "readers", permission="pull"), _candidate(2, "owners", permission="admin")],
+        {},
         "owners",
-        id="rule3-permission-string",
+        id="rule3-strongest-permission-wins",
     ),
     pytest.param(
-        [
-            _team(1, "pushers", permission="push", permissions=_LEGACY_PUSH),
-            _team(2, "maintainers", permission="push", permissions=_LEGACY_PUSH_WITH_MAINTAIN),
-        ],
-        None,
-        "maintainers",
-        id="rule3-permissions-object-outranks-the-legacy-string",
+        # The lower id belongs to the weaker team, so only rule 3 can pick the stated one.
+        [_candidate(2, "stated", permission="pull"), _candidate(1, "unstated", permissions={})],
+        {},
+        "stated",
+        id="rule3-a-payload-stating-no-permission-ranks-below-pull",
     ),
     pytest.param(
-        # A custom repository role puts its own name in `permission`.
-        [_team(1, "custom-role", permission="triage_and_deploy"), _team(2, "readers", permission="pull")],
-        None,
-        "readers",
-        id="rule3-an-unrecognised-permission-ranks-below-pull",
-    ),
-    pytest.param(
-        [
-            _team(42, "beta", permission="push", access_source="direct"),
-            _team(7, "alpha", permission="push", access_source="direct"),
-        ],
+        [_candidate(42, "beta", permission="push"), _candidate(7, "alpha", permission="push")],
         {42: 1, 7: 1},
         "alpha",
-        id="rule4-lowest-id-breaks-the-tie-rules-1-to-3-cannot",
+        id="rule4-lowest-id-breaks-the-tie-rules-2-and-3-cannot",
     ),
 ]
 
@@ -166,36 +84,64 @@ def test_the_tiebreak_picks_one_team(candidates, depth_map, expected_slug):
 
 
 @pytest.mark.parametrize(
+    "unstated",
+    [
+        pytest.param({"id": 1, "slug": "unstated", "role_name": "pull"}, id="permissions-absent"),
+        pytest.param({"id": 1, "slug": "unstated", "permissions": None}, id="permissions-null"),
+        pytest.param({"id": 1, "slug": "unstated", "permissions": ["pull"]}, id="permissions-not-an-object"),
+    ],
+)
+def test_a_body_carrying_no_permissions_object_ranks_below_the_weakest_stated_one(unstated):
+    """A 200 without the repository media type omits `permissions`; ranking it as pull would let it
+    outrank a team that really holds push on the lower id."""
+    winner = select_github_team([unstated, _candidate(2, "stated", permission="pull")], {})
+    assert winner is not None
+    assert winner["slug"] == "stated"
+
+
+@pytest.mark.parametrize(
     ("lower", "higher"),
     [("pull", "triage"), ("triage", "push"), ("push", "maintain"), ("maintain", "admin")],
 )
 def test_the_permission_ladder_orders_every_adjacent_pair(lower, higher):
-    candidates = [
-        _team(1, "lower", permissions=_permissions_up_to(lower)),
-        _team(2, "higher", permissions=_permissions_up_to(higher)),
-    ]
-    winner = select_github_team(candidates, None)
+    candidates = [_candidate(1, "lower", permission=lower), _candidate(2, "higher", permission=higher)]
+    winner = select_github_team(candidates, {})
     assert winner is not None
     assert winner["slug"] == "higher"
 
 
 def test_no_candidates_resolve_to_no_team():
-    assert select_github_team([], None) is None
+    assert select_github_team([], {}) is None
+
+
+def test_access_source_is_no_longer_an_input():
+    """The check endpoint reports none, so the tiebreak must not rank on a value it cannot see."""
+    direct = _candidate(9, "direct", permission="pull")
+    direct["access_source"] = "direct"
+    inherited = _candidate(1, "inherited", permission="admin")
+    inherited["access_source"] = "organization"
+
+    winner = select_github_team([direct, inherited], {})
+    assert winner is not None
+    assert winner["slug"] == "inherited"
 
 
 @pytest.mark.parametrize(
     "malformed",
     [
-        pytest.param({"slug": "broken", "permission": "admin"}, id="id-missing"),
-        pytest.param({"id": None, "slug": "broken", "permission": "admin"}, id="id-null"),
-        pytest.param({"id": "MDQ6VGVhbTE=", "slug": "broken", "permission": "admin"}, id="id-not-a-number"),
+        pytest.param({"slug": "broken", "permissions": _permissions_up_to("admin")}, id="id-missing"),
+        pytest.param({"id": None, "slug": "broken", "permissions": _permissions_up_to("admin")}, id="id-null"),
+        pytest.param(
+            {"id": "MDQ6VGVhbTE=", "slug": "broken", "permissions": _permissions_up_to("admin")},
+            id="id-not-a-number",
+        ),
     ],
 )
 def test_a_team_whose_id_cannot_be_ordered_by_is_skipped_rather_than_fatal(malformed):
     """`id` is required and numeric on the response; a malformed entry must not take the repository down."""
-    assert select_github_team([malformed], None) is None
+    assert select_github_team([malformed], {}) is None
 
-    winner = select_github_team([malformed, _team(5, "sound")], None)
+    winner = select_github_team([malformed, _candidate(5, "sound")], {})
     assert winner is not None
     assert winner["slug"] == "sound"
 
@@ -203,17 +149,17 @@ def test_a_team_whose_id_cannot_be_ordered_by_is_skipped_rather_than_fatal(malfo
 @pytest.mark.parametrize(
     "malformed",
     [
-        pytest.param({"id": 1, "permission": "admin"}, id="slug-missing"),
-        pytest.param({"id": 1, "slug": None, "permission": "admin"}, id="slug-null"),
-        pytest.param({"id": 1, "slug": "", "permission": "admin"}, id="slug-empty"),
+        pytest.param({"id": 1, "permissions": _permissions_up_to("admin")}, id="slug-missing"),
+        pytest.param({"id": 1, "slug": None, "permissions": _permissions_up_to("admin")}, id="slug-null"),
+        pytest.param({"id": 1, "slug": "", "permissions": _permissions_up_to("admin")}, id="slug-empty"),
     ],
 )
 def test_a_team_that_cannot_be_addressed_by_slug_is_skipped_rather_than_fatal(malformed):
     """The members endpoint is slug-addressed, so an unaddressable winner is no winner at all."""
-    assert select_github_team([malformed], None) is None
+    assert select_github_team([malformed], {}) is None
 
     # The malformed team outranks the sound one on permission and on id, so only the filter saves it.
-    winner = select_github_team([malformed, _team(5, "sound")], None)
+    winner = select_github_team([malformed, _candidate(5, "sound")], {})
     assert winner is not None
     assert winner["slug"] == "sound"
 
@@ -222,9 +168,9 @@ class TestStability:
     """Two syncs of one repository must not flip the project's team."""
 
     _CANDIDATES: ClassVar[list[dict[str, Any]]] = [
-        _team(42, "beta", permission="push", access_source="direct"),
-        _team(7, "alpha", permission="push", access_source="direct"),
-        _team(19, "gamma", permission="push", access_source="direct"),
+        _candidate(42, "beta", permission="push"),
+        _candidate(7, "alpha", permission="push"),
+        _candidate(19, "gamma", permission="push"),
     ]
 
     def test_the_same_candidate_set_yields_the_same_winner_twice(self):
@@ -232,9 +178,29 @@ class TestStability:
         second = select_github_team(list(self._CANDIDATES), {42: 1, 7: 1, 19: 1})
         assert first["slug"] == second["slug"] == "alpha"
 
-    def test_the_winner_does_not_depend_on_the_order_github_returned(self):
-        winners = {select_github_team(list(order), None)["slug"] for order in permutations(self._CANDIDATES)}
+    def test_the_winner_does_not_depend_on_the_order_the_checks_answered_in(self):
+        winners = {select_github_team(list(order), {})["slug"] for order in permutations(self._CANDIDATES)}
         assert winners == {"alpha"}
+
+
+class TestSlugMap:
+    def test_maps_the_team_number_onto_the_slug_the_organisation_reports(self):
+        org_teams = [{"id": 1, "slug": "platform"}, {"id": 2, "slug": "payments"}]
+        assert build_team_slug_map(org_teams) == {1: "platform", 2: "payments"}
+
+    @pytest.mark.parametrize(
+        "malformed",
+        [
+            pytest.param({"slug": "nameless"}, id="id-missing"),
+            pytest.param({"id": None, "slug": "nulled"}, id="id-null"),
+            pytest.param({"id": "MDQ6VGVhbTE=", "slug": "opaque"}, id="id-not-a-number"),
+            pytest.param({"id": 9}, id="slug-missing"),
+            pytest.param({"id": 9, "slug": None}, id="slug-null"),
+            pytest.param({"id": 9, "slug": ""}, id="slug-empty"),
+        ],
+    )
+    def test_an_entry_that_cannot_address_a_team_is_left_out(self, malformed):
+        assert build_team_slug_map([malformed, {"id": 3, "slug": "sound"}]) == {3: "sound"}
 
 
 class TestDepthMap:
@@ -280,3 +246,35 @@ class TestDepthMap:
     def test_a_team_whose_id_cannot_be_ordered_by_is_left_out(self, malformed):
         org_teams = [malformed, {"id": 3, "slug": "sound", "parent": None}]
         assert build_team_depth_map(org_teams) == {3: 0}
+
+
+class TestOrgTeamOptions:
+    """What the binding UI is offered to choose from."""
+
+    def test_the_parent_tells_two_teams_of_the_same_name_apart(self):
+        org_teams = [
+            {"id": 1, "slug": "cards", "name": "Cards", "parent": {"id": 9, "slug": "payments", "name": "Payments"}},
+            {"id": 2, "slug": "cards-eng", "name": "Cards", "parent": None},
+        ]
+        assert build_org_team_options(org_teams) == [
+            {"id": 1, "slug": "cards", "name": "Cards", "parent_slug": "payments", "parent_name": "Payments"},
+            {"id": 2, "slug": "cards-eng", "name": "Cards", "parent_slug": None, "parent_name": None},
+        ]
+
+    def test_a_nameless_team_is_offered_under_its_slug(self):
+        options = build_org_team_options([{"id": 1, "slug": "payments", "parent": None}])
+        assert options[0]["name"] == "payments"
+
+    @pytest.mark.parametrize(
+        "malformed",
+        [
+            pytest.param({"slug": "nameless"}, id="id-missing"),
+            pytest.param({"id": None, "slug": "nulled"}, id="id-null"),
+            pytest.param({"id": 9}, id="slug-missing"),
+            pytest.param({"id": 9, "slug": ""}, id="slug-empty"),
+        ],
+    )
+    def test_an_entry_that_cannot_address_a_team_is_not_offered(self, malformed):
+        """Binding to it would store a pair no check endpoint can be built from."""
+        options = build_org_team_options([malformed, {"id": 3, "slug": "sound", "name": "Sound"}])
+        assert [option["id"] for option in options] == [3]

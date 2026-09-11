@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, status
+from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo.errors import DuplicateKeyError
 
 from app.api import deps
 from app.api.deps import CurrentUserDep, DatabaseDep
@@ -15,19 +17,27 @@ from app.api.v1.helpers import (
     get_member_role,
     get_team_with_access,
 )
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400_404, RESP_AUTH_404
+from app.api.v1.helpers.responses import (
+    RESP_AUTH,
+    RESP_AUTH_400_404,
+    RESP_AUTH_400_404_409_502,
+    RESP_AUTH_404,
+)
 from app.core.constants import TEAM_ROLE_ADMIN
-from app.core.permissions import has_permission
+from app.core.permissions import Permissions, has_permission
 from app.models.team import Team, TeamMember
 from app.models.user import User
 from app.repositories import TeamRepository, UserRepository
+from app.repositories.github_instances import GitHubInstanceRepository
 from app.schemas.team import (
     TeamCreate,
+    TeamGitHubBindingUpdate,
     TeamMemberAdd,
     TeamMemberUpdate,
     TeamResponse,
     TeamUpdate,
 )
+from app.services.github import GitHubService, build_team_slug_map
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +45,8 @@ router = CustomAPIRouter()
 
 _MSG_ALREADY_IN_TEAM = "User already in team"
 _MSG_LAST_ADMIN = "Cannot remove the last admin. Add another admin first."
+_MSG_TEAM_NOT_FOUND = "Team not found"
+_BINDING_FIELDS = ("github_instance_id", "github_org", "github_team_id", "github_team_slug")
 
 
 @router.post("/", response_model=TeamResponse, status_code=status.HTTP_201_CREATED, responses=RESP_AUTH)
@@ -108,7 +120,7 @@ async def read_team(
     pipeline = build_team_enrichment_pipeline({"_id": team_id})
     result = await team_repo.aggregate(pipeline, limit=1)
     if not result:
-        raise HTTPException(status_code=404, detail="Team not found")
+        raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
 
     return result[0]
 
@@ -160,6 +172,125 @@ async def delete_team(
 
     team_repo = TeamRepository(db)
     await team_repo.delete(team_id)
+
+
+async def _resolve_bound_team_slug(binding: TeamGitHubBindingUpdate, db: AsyncIOMotorDatabase) -> str:
+    """The slug the organisation reports for the bound team number.
+
+    Reading it here rather than taking it from the caller is also what proves the team exists:
+    a binding to a number no organisation carries would resolve nothing, silently, forever.
+    """
+    instance = await GitHubInstanceRepository(db).get_by_id(binding.github_instance_id)
+    if not instance:
+        raise HTTPException(
+            status_code=404, detail=f"GitHub instance with ID {binding.github_instance_id} not found"
+        )
+
+    org_teams = await GitHubService(instance).get_org_teams(binding.github_org)
+    if org_teams is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                f"Could not list the teams of organisation '{binding.github_org}' on instance "
+                f"'{instance.name}'. The token needs read:org there."
+            ),
+        )
+
+    slug = build_team_slug_map(org_teams).get(binding.github_team_id)
+    if slug is None:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"GitHub organisation '{binding.github_org}' has no team with id {binding.github_team_id} "
+                f"that instance '{instance.name}' can see."
+            ),
+        )
+    return slug
+
+
+async def _reject_taken_binding(team_repo: TeamRepository, team_id: str, binding: TeamGitHubBindingUpdate) -> None:
+    """Two teams bound to one GitHub team would make the repository's owner ambiguous."""
+    holder = await team_repo.get_raw_by_github_team(binding.github_instance_id, binding.github_team_id)
+    if holder is not None and str(holder["_id"]) != team_id:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Team '{holder.get('name')}' is already bound to GitHub team {binding.github_team_id}.",
+        )
+
+
+@router.put("/{team_id}/github-binding", responses=RESP_AUTH_400_404_409_502)
+async def set_team_github_binding(
+    team_id: str,
+    binding_in: TeamGitHubBindingUpdate,
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    db: DatabaseDep,
+) -> TeamResponse:
+    """Bind a team to a GitHub team, which is what makes that team resolvable from an ingest.
+
+    Gated on system:manage rather than team administration: a binding decides which repositories
+    of the whole estate land in this team, and team membership grants access to them.
+    """
+    team_repo = TeamRepository(db)
+    if not await team_repo.get_raw_by_id(team_id):
+        raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
+
+    slug = await _resolve_bound_team_slug(binding_in, db)
+    await _reject_taken_binding(team_repo, team_id, binding_in)
+
+    try:
+        await team_repo.update(
+            team_id,
+            {
+                "github_instance_id": binding_in.github_instance_id,
+                "github_org": binding_in.github_org,
+                "github_team_id": binding_in.github_team_id,
+                "github_team_slug": slug,
+                "updated_at": datetime.now(timezone.utc),
+            },
+        )
+    except DuplicateKeyError:
+        # The unique index caught a binding written between the check above and this write.
+        raise HTTPException(
+            status_code=409,
+            detail=f"Another team was just bound to GitHub team {binding_in.github_team_id}.",
+        )
+
+    logger.info(
+        "Team %s bound to GitHub team %d (%s/%s) by %s",
+        team_id.replace("\n", "_").replace("\r", "_"),
+        binding_in.github_team_id,
+        binding_in.github_org,
+        slug,
+        current_user.username,
+    )
+    return await fetch_and_enrich_team(team_id, db)
+
+
+@router.delete("/{team_id}/github-binding", responses=RESP_AUTH_404)
+async def clear_team_github_binding(
+    team_id: str,
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    db: DatabaseDep,
+) -> TeamResponse:
+    """Remove a team's GitHub binding. Its repositories keep the team they have; no later ingest
+    resolves to it until it is bound again."""
+    team_repo = TeamRepository(db)
+    if not await team_repo.get_raw_by_id(team_id):
+        raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
+
+    # Nulled rather than unset: the unique index's partial filter selects on type, so a null pair
+    # is outside the unique scope and any number of cleared teams coexist.
+    await team_repo.update(
+        team_id,
+        {**dict.fromkeys(_BINDING_FIELDS), "updated_at": datetime.now(timezone.utc)},
+    )
+
+    logger.info(
+        "GitHub binding removed from team %s by %s",
+        team_id.replace("\n", "_").replace("\r", "_"),
+        current_user.username,
+    )
+    return await fetch_and_enrich_team(team_id, db)
 
 
 @router.post("/{team_id}/members", responses=RESP_AUTH_400_404)

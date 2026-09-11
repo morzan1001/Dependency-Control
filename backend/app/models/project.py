@@ -76,7 +76,7 @@ class Project(MongoDocument, CreatedAtModel):
         None, description="GitHub repository path (owner/repo). For display purposes."
     )
     github_team_candidates: int | None = Field(
-        None, description="How many GitHub teams matched the repository on the last sync."
+        None, description="How many bound GitHub teams held the repository on the last sync."
     )
     github_pr_comments_enabled: bool = Field(
         False, description="Enable posting scan results as comments on pull requests"

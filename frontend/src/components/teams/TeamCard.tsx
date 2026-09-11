@@ -4,7 +4,7 @@ import { useCurrentUser } from '@/hooks/queries/use-users';
 import { canUpdateTeam, canDeleteTeam, canManageTeamMembers, canManageTeamWebhooks } from '@/lib/team-roles';
 import { Card, CardContent, CardHeader, CardTitle, CardFooter } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { UserPlus, Trash2, Edit, Bell } from 'lucide-react';
+import { UserPlus, Trash2, Edit, Bell, Link2 } from 'lucide-react';
 
 interface TeamCardProps {
   team: Team;
@@ -13,16 +13,27 @@ interface TeamCardProps {
   onAddMember: (teamId: string) => void;
   onDelete: (teamId: string) => void;
   onManageWebhooks: (team: Team) => void;
+  onManageGithubBinding: (team: Team) => void;
 }
 
-export function TeamCard({ team, onEdit, onManageMembers, onAddMember, onDelete, onManageWebhooks }: TeamCardProps) {
-  const { permissions } = useAuth();
+export function TeamCard({
+  team,
+  onEdit,
+  onManageMembers,
+  onAddMember,
+  onDelete,
+  onManageWebhooks,
+  onManageGithubBinding,
+}: TeamCardProps) {
+  const { permissions, hasPermission } = useAuth();
   const { data: currentUser } = useCurrentUser();
 
   const canEdit = currentUser ? canUpdateTeam(team, currentUser.id, permissions) : false;
   const canRemove = currentUser ? canDeleteTeam(team, currentUser.id, permissions) : false;
   const canManageMembers = currentUser ? canManageTeamMembers(team, currentUser.id, permissions) : false;
   const canWebhooks = currentUser ? canManageTeamWebhooks(team, currentUser.id, permissions) : false;
+  // A binding decides which repositories of the whole estate land in this team.
+  const canBind = hasPermission('system:manage');
 
   return (
     <Card
@@ -34,6 +45,20 @@ export function TeamCard({ team, onEdit, onManageMembers, onAddMember, onDelete,
           {team.name}
         </CardTitle>
         <div className="flex items-center gap-1">
+            {canBind && (
+              <Button
+                variant="ghost"
+                size="icon"
+                className="h-8 w-8"
+                aria-label="GitHub binding"
+                onClick={(e: React.MouseEvent) => {
+                  e.stopPropagation();
+                  onManageGithubBinding(team);
+                }}
+              >
+                  <Link2 className={`h-4 w-4 ${team.github_team_id == null ? 'text-muted-foreground' : ''}`} />
+              </Button>
+            )}
             {canWebhooks && (
               <Button
                 variant="ghost"
