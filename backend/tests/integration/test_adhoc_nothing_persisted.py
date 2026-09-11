@@ -690,9 +690,10 @@ def injected_database() -> Any:
 
 
 async def _seed_adhoc_key(db: Any) -> str:
-    from app.repositories.adhoc_api_keys import AdhocApiKeyRepository
+    from app.core.constants import API_KEY_SURFACE_ADHOC
+    from app.repositories.api_keys import ApiKeyRepository
 
-    _doc, plaintext = await AdhocApiKeyRepository(db).create(_KEY_OWNER, _KEY_NAME, _KEY_DAYS)
+    _doc, plaintext = await ApiKeyRepository(db).create(_KEY_OWNER, _KEY_NAME, [API_KEY_SURFACE_ADHOC], _KEY_DAYS)
     await db.users.insert_one(
         {
             "_id": _KEY_OWNER,

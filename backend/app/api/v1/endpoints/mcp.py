@@ -1,4 +1,4 @@
-"""MCP JSON-RPC 2.0 endpoint (protocol 2025-03-26); external LLM clients authenticate with an MCP API key and call the chat tool registry under the key owner's permissions."""
+"""MCP JSON-RPC 2.0 endpoint (protocol 2025-03-26); external LLM clients authenticate with an API key naming the MCP surface and call the chat tool registry under the key owner's permissions."""
 
 from __future__ import annotations
 
@@ -10,7 +10,7 @@ from fastapi import Header, Request, status
 from fastapi.responses import JSONResponse
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
-from app.api.deps import DatabaseDep, require_api_key_with_legacy
+from app.api.deps import DatabaseDep, require_api_key
 from app.api.router import CustomAPIRouter
 from app.core.constants import API_KEY_SURFACE_MCP
 from app.models.user import User
@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 
 router = CustomAPIRouter()
 
-_authenticate = require_api_key_with_legacy(API_KEY_SURFACE_MCP, touch=True)
+_authenticate = require_api_key(API_KEY_SURFACE_MCP, touch=True)
 
 SERVER_NAME = "dependency-control"
 SERVER_VERSION = "1.0"
@@ -134,8 +134,8 @@ async def _dispatch(method: str, params: dict[str, Any], user: User, db: AsyncIO
     "",
     summary="MCP JSON-RPC endpoint",
     description=(
-        "Model Context Protocol endpoint for external LLM clients. "
-        "Authenticate with an MCP API key in the Authorization: Bearer header."
+        "Model Context Protocol endpoint for external LLM clients. Authenticate with an API key "
+        "naming the MCP surface, sent in the Authorization: Bearer header."
     ),
 )
 @router.post("/", include_in_schema=False)

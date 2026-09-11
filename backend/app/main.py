@@ -8,7 +8,6 @@ from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
 
 from app.api import health
 from app.api.v1.endpoints import (
-    adhoc_keys,
     analytics,
     analyze,
     api_keys,
@@ -28,7 +27,6 @@ from app.api.v1.endpoints import (
     inventory,
     invitations,
     mcp,
-    mcp_keys,
     notifications,
     policy_audit,
     pqc_migration,
@@ -164,7 +162,7 @@ app.get("/metrics", include_in_schema=False)(metrics_endpoint)
 app.include_router(health.router, prefix="/health", tags=["health"])
 app.include_router(auth.router, prefix=f"{settings.API_V1_STR}", tags=["auth"])
 app.include_router(ingest.router, prefix=f"{settings.API_V1_STR}", tags=["ingest"])
-app.include_router(cbom_ingest.router, prefix=f"{settings.API_V1_STR}", tags=["cbom-ingest"])
+app.include_router(cbom_ingest.router, prefix=f"{settings.API_V1_STR}", tags=["ingest"])
 app.include_router(projects.router, prefix=f"{settings.API_V1_STR}/projects", tags=["projects"])
 app.include_router(users.router, prefix=f"{settings.API_V1_STR}/users", tags=["users"])
 app.include_router(teams.router, prefix=f"{settings.API_V1_STR}/teams", tags=["teams"])
@@ -210,9 +208,7 @@ app.include_router(compliance_reports.router, prefix=f"{settings.API_V1_STR}", t
 app.include_router(pqc_migration.router, prefix=f"{settings.API_V1_STR}", tags=["pqc-migration"])
 app.include_router(scripts.router, prefix=f"{settings.API_V1_STR}", tags=["scripts"])
 app.include_router(chat.router, prefix=f"{settings.API_V1_STR}/chat", tags=["chat"])
-app.include_router(mcp_keys.router, prefix=f"{settings.API_V1_STR}/mcp-keys", tags=["mcp-keys"])
 app.include_router(mcp.router, prefix=f"{settings.API_V1_STR}/mcp", tags=["mcp"])
-app.include_router(adhoc_keys.router, prefix=f"{settings.API_V1_STR}/analyze-keys", tags=["adhoc-keys"])
 app.include_router(api_keys.router, prefix=f"{settings.API_V1_STR}/api-keys", tags=["api-keys"])
 app.include_router(analyze.router, prefix=f"{settings.API_V1_STR}", tags=["analyze"])
 

@@ -222,7 +222,7 @@ The secret-scan template pulls `trufflesecurity/trufflehog:latest`, so new detec
 
 ## 🤖 MCP Integration
 
-Dependency Control exposes its tool suite over [Model Context Protocol](https://modelcontextprotocol.io) so Claude Desktop, Cursor & Co. can query your security data directly. Create a token under **Profile → MCP API Keys** (requires `mcp:access`), then point your client at `POST /api/v1/mcp`:
+Dependency Control exposes its tool suite over [Model Context Protocol](https://modelcontextprotocol.io) so Claude Desktop, Cursor & Co. can query your security data directly. Create a key under **Profile → API Keys** with the **MCP** surface ticked (requires `mcp:access`), then point your client at `POST /api/v1/mcp`:
 
 ```json
 {
@@ -230,7 +230,7 @@ Dependency Control exposes its tool suite over [Model Context Protocol](https://
     "dependency-control": {
       "type": "http",
       "url": "https://your-dependency-control.example.com/api/v1/mcp",
-      "headers": { "Authorization": "Bearer mcp_YOUR_TOKEN_HERE" }
+      "headers": { "Authorization": "Bearer dck_YOUR_TOKEN_HERE" }
     }
   }
 }

@@ -5,8 +5,9 @@ import asyncio
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from app.core.constants import API_KEY_SURFACE_ADHOC
 from app.core.permissions import Permissions
-from app.repositories.adhoc_api_keys import AdhocApiKeyRepository
+from app.repositories.api_keys import ApiKeyRepository
 from app.schemas.adhoc import AdhocAnalyzeResponse
 from app.services.analysis import adhoc
 
@@ -65,7 +66,7 @@ _TWO_COMPONENT_SBOM = {
 
 
 async def _issue_key(db, permissions=(Permissions.ANALYZE_ADHOC,)):
-    doc, plaintext = await AdhocApiKeyRepository(db).create("adhoc-user", "ci", 30)
+    doc, plaintext = await ApiKeyRepository(db).create("adhoc-user", "ci", [API_KEY_SURFACE_ADHOC], 30)
     await db.users.insert_one(
         {
             "_id": "adhoc-user",
@@ -185,7 +186,7 @@ async def test_unauthenticated_request_is_rejected(db):
 @pytest.mark.asyncio
 async def test_revoked_key_is_rejected(client, db):
     doc, token = await _issue_key(db)
-    await AdhocApiKeyRepository(db).revoke(doc["_id"], "adhoc-user")
+    await ApiKeyRepository(db).revoke(doc["_id"], "adhoc-user")
 
     resp = await client.post(_ANALYZE, json={"sboms": [_SBOM]}, headers=_bearer(token))
 

@@ -102,7 +102,6 @@ class CBOMIngestResponse(BaseModel):
     response_model=CBOMIngestResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Ingest CBOM",
-    tags=["cbom-ingest"],
     dependencies=[Depends(_enforce_body_size_limit)],
 )
 async def ingest_cbom(

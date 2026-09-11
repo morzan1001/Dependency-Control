@@ -130,6 +130,9 @@ async def test_a_valid_key_for_the_surface_returns_the_owner_and_the_key_documen
 
     assert user.id == _OWNER
     assert key_doc["_id"] == _KEY_ID
+    # The ad-hoc rate limiter reads this field off the key document by name, and keys the caller's
+    # window on it; renaming it collapses every caller into one bucket or raises.
+    assert key_doc["user_id"] == _OWNER
 
 
 @pytest.mark.asyncio

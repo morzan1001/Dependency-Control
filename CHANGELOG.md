@@ -37,7 +37,26 @@
 
 
 
-# Upgrade notes
+# Upgrade notes for 1.9.24 — the legacy API key systems are gone
+
+**Both older key systems have been removed.** `dca_` keys (ad-hoc analysis) and `mcp_` keys (MCP) no
+longer exist, along with the two cards that managed them and the endpoints behind them:
+
+- `GET|POST|DELETE /api/v1/analyze-keys/...` — removed
+- `GET|POST|DELETE /api/v1/mcp-keys/...` — removed
+
+Mint one key under **Profile → API keys** instead and tick the surfaces it should open. A single
+`dck_` key can serve both `/api/v1/analyze` and `/api/v1/mcp`.
+
+`/api/v1/analyze` and `/api/v1/mcp` are otherwise unchanged: same request shapes, same status codes,
+same messages. Only the accepted token prefix narrowed to `dck_`. Everything a unified key could do
+before this release, it still does.
+
+Nothing else about a key changed — listing and revoking still need only ownership, so a key you own
+stays visible and revocable even if you lose the permission that let you mint it; `/analyze` still
+records no usage stamp, so an ad-hoc-only key's last-used column still reads *not recorded*.
+
+# Upgrade notes for 1.9.23
 
 ## 🔑 API keys
 
