@@ -43,6 +43,7 @@ def seeded(db):
     db.projects._docs[_PROJECT] = {
         "_id": _PROJECT,
         "name": _PROJECT,
+        "team_ids": [_TEAM],
         "team_id": _TEAM,
         "latest_scan_id": _SCAN,
         "default_branch": "main",
@@ -126,7 +127,12 @@ async def test_the_byte_cap_note_names_the_population_not_the_page(seeded, admin
 async def test_team_projects_cut_at_the_ceiling_names_the_team_s_whole_holding(seeded, admin_user):
     population = _TEAM_PROJECT_READ + _OVER_THE_CEILING
     for index in range(population):
-        seeded.projects._docs[f"tp-{index}"] = {"_id": f"tp-{index}", "name": f"p{index}", "team_id": _TEAM}
+        seeded.projects._docs[f"tp-{index}"] = {
+            "_id": f"tp-{index}",
+            "name": f"p{index}",
+            "team_ids": [_TEAM],
+            "team_id": _TEAM,
+        }
 
     result = await ChatToolRegistry().execute_tool("get_team_projects", {"team_id": _TEAM}, admin_user, seeded)
 

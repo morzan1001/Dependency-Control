@@ -639,7 +639,7 @@ class ChatToolRegistry:
                 user.permissions, Permissions.TEAM_READ_ALL
             ):
                 return {"error": _ERR_ACCESS_DENIED}
-            query = {**user_project_query, "team_id": args["team_id"]}
+            query = {**user_project_query, "team_ids": args["team_id"]}
             projects, projects_total = await bounded_read(
                 db["projects"], query, subject="team projects", limit=_TEAM_PROJECT_READ
             )
@@ -1303,7 +1303,7 @@ class ChatToolRegistry:
                 return {"error": _ERR_ACCESS_DENIED}
             projects, projects_total = await bounded_read(
                 db["projects"],
-                {"team_id": args["team_id"]},
+                {"team_ids": args["team_id"]},
                 subject="team projects",
                 limit=_TEAM_RISK_PROJECT_READ,
                 projection={"_id": 1, "name": 1, "stats": 1, "last_scan_at": 1},

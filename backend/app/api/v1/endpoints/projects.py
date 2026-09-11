@@ -331,7 +331,7 @@ async def read_projects(
     if search:
         search_query["name"] = {"$regex": re.escape(search), "$options": "i"}
     if team_id:
-        search_query["team_id"] = team_id
+        search_query["team_ids"] = team_id
 
     permission_query = await build_user_project_query(current_user, team_repo)
 
