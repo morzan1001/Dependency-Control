@@ -93,6 +93,28 @@ def build_team_depth_map(org_teams: list[dict[str, Any]]) -> dict[int, int]:
     return depths
 
 
+def build_org_team_options(org_teams: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The teams of an organisation a human can bind to, with the parent that tells two same-named
+    nested teams apart. An entry that cannot address a team is left out, as it is everywhere else."""
+    options = []
+    for team in org_teams:
+        team_id = _team_id(team)
+        slug = _team_slug(team)
+        if team_id is None or slug is None:
+            continue
+        parent = team.get("parent") or {}
+        options.append(
+            {
+                "id": team_id,
+                "slug": slug,
+                "name": str(team.get("name") or slug),
+                "parent_slug": _team_slug(parent),
+                "parent_name": str(parent["name"]) if parent.get("name") else None,
+            }
+        )
+    return options
+
+
 def _permission_rank(team: dict[str, Any]) -> int:
     """The strongest permission the team holds on the repository; -1 when the payload states none."""
     permissions = team.get("permissions")

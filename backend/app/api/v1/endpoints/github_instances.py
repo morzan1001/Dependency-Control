@@ -8,7 +8,13 @@ from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import build_pagination_response
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_AUTH_400_404_500, RESP_AUTH_404
+from app.api.v1.helpers.responses import (
+    RESP_AUTH,
+    RESP_AUTH_400,
+    RESP_AUTH_400_404_500,
+    RESP_AUTH_404,
+    RESP_AUTH_404_502,
+)
 from app.core.permissions import Permissions
 from app.models.github_instance import GitHubInstance
 from app.models.user import User
@@ -20,8 +26,9 @@ from app.schemas.github_instance import (
     GitHubInstanceResponse,
     GitHubInstanceTestConnectionResponse,
     GitHubInstanceUpdate,
+    GitHubOrgTeam,
 )
-from app.services.github import GitHubService
+from app.services.github import GitHubService, build_org_team_options
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
@@ -248,6 +255,50 @@ async def delete_instance(
         f"Deleted GitHub instance '{instance.name}' by user {current_user.username} "
         f"(force={force}, orphaned_projects={project_count})"
     )
+
+
+async def _load_instance(instance_id: str, db: DatabaseDep) -> GitHubInstance:
+    instance = await GitHubInstanceRepository(db).get_by_id(instance_id)
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"GitHub instance with ID {instance_id} not found"
+        )
+    return instance
+
+
+@router.get("/{instance_id}/orgs", responses=RESP_AUTH_404_502)
+async def list_instance_organisations(
+    instance_id: str,
+    db: DatabaseDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+) -> list[str]:
+    """The organisations this instance's token belongs to, to pick from when binding a team."""
+    instance = await _load_instance(instance_id, db)
+    orgs = await GitHubService(instance).get_viewer_organisations()
+    if orgs is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Could not list the organisations of instance '{instance.name}'. The token needs read:org.",
+        )
+    return [str(org["login"]) for org in orgs if org.get("login")]
+
+
+@router.get("/{instance_id}/orgs/{org}/teams", responses=RESP_AUTH_404_502)
+async def list_organisation_teams(
+    instance_id: str,
+    org: str,
+    db: DatabaseDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+) -> list[GitHubOrgTeam]:
+    """The teams of one organisation, to pick from when binding a team."""
+    instance = await _load_instance(instance_id, db)
+    org_teams = await GitHubService(instance).get_org_teams(org)
+    if org_teams is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Could not list the teams of organisation '{org}'. The token needs read:org there.",
+        )
+    return [GitHubOrgTeam(**option) for option in build_org_team_options(org_teams)]
 
 
 @router.post("/{instance_id}/test-connection", responses=RESP_AUTH_404)

@@ -44,6 +44,8 @@ class TeamRepository:
         )
 
     async def get_raw_by_github_team(self, github_instance_id: str, github_team_id: int) -> dict[str, Any] | None:
+        """The team already holding a binding. The unique index is built by hand before the deploy
+        and its build can be skipped, so the binding endpoint checks the pair here as well."""
         return await self.collection.find_one(
             {"github_instance_id": github_instance_id, "github_team_id": github_team_id}
         )

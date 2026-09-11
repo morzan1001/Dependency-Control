@@ -28,11 +28,23 @@ class TeamUpdate(BaseModel):
     description: str | None = None
 
 
+class TeamGitHubBindingUpdate(BaseModel):
+    """The team is named by its number; the slug is read back from the organisation listing."""
+
+    github_instance_id: str
+    github_org: str
+    github_team_id: int
+
+
 class TeamResponse(TeamBase):
     id: PyObjectId = Field(validation_alias="_id")
     members: list[TeamMemberSchema]
     created_at: datetime
     updated_at: datetime
+    github_instance_id: str | None = None
+    github_org: str | None = None
+    github_team_id: int | None = None
+    github_team_slug: str | None = None
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 
