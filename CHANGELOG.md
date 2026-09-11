@@ -1,4 +1,16 @@
-# Release 1.9.23
+# Release 1.9.24
+
+## 🐛 Fixes
+
+- fix(api): file CBOM ingest under the ingest tag with its siblings (#0)
+
+## 📦 Build & CI
+
+- chore: release 1.9.24 — retire the legacy API key systems (#0)
+
+
+
+# Release 1.9.24
 
 ## 🚀 Features
 
