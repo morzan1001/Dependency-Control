@@ -29,7 +29,13 @@ _RUNBOOK = pathlib.Path(__file__).parents[2] / "scripts" / "README-deploy-multi-
 _COUNT_CALL = "db.projects.countDocuments("
 _GATE_SECTION = "### 6b."
 
-_CLEAN = {"_id": "clean", "team_id": "t1", "team_source": "manual", "team_ids": ["t1"], "team_sources": {"t1": "manual"}}
+_CLEAN = {
+    "_id": "clean",
+    "team_id": "t1",
+    "team_source": "manual",
+    "team_ids": ["t1"],
+    "team_sources": {"t1": "manual"},
+}
 # A transfer that wrote the scalar and nothing else — invisible while the model still derives.
 _TRANSFERRED = {
     "_id": "transferred",
@@ -97,6 +103,9 @@ def _published_filters() -> list[dict]:
     """Every ``countDocuments`` argument the runbook's gate section publishes, in order."""
     body = _RUNBOOK.read_text()
     cursor = body.index(_GATE_SECTION)
+    # Bounded to the gate's own section: later sections publish counts of their own, and reading
+    # those as gate filters would compare the gate against a query it never runs.
+    body = body[: body.index("\n## ", cursor)]
     filters = []
     while (call := body.find(_COUNT_CALL, cursor)) != -1:
         start = call + len(_COUNT_CALL)

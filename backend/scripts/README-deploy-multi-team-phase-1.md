@@ -258,3 +258,63 @@ features.
 - An owner stored without a `team_sources` entry is read as a hand assignment, so no sync retires
   it and `PUT` with `team_id` replaces it along with the rest of the manual set. §6b's second
   query lists them; the backfill stamps them `manual` so none are left.
+
+## 8. The deploy that moves the reads onto the list
+
+Nothing reads the scalar `team_id` from that deploy on. It is still written, and its index still
+exists, so this deploy is reversible; both go in the cutover deploy.
+
+### 8a. Numbers that change, and by how much
+
+A project counts **in full at every team that owns it**. Per-team figures therefore stop adding up
+to the estate's — summing them exceeds it by one project per extra owner. That is the intended
+result, not drift; a check that reconciles the two is now checking for the wrong thing.
+
+### 8b. Startup normalises the owner shape — nothing to run by hand
+
+`create_indexes` now sets `team_ids: []` on any project whose field is absent or null. Both shapes
+answer no ownership filter and no `$size` test, so such a project was in no team view at all. It is
+idempotent. Grep the first pod's log for:
+
+```
+Owner normalisation: gave N project(s) with no team_ids an empty owner list
+```
+
+Expect **N = 0**: §5's check already reported zero projects without the field. A non-zero N means
+something wrote a bare document after the backfill — worth a look, not a rollback. Confirm after
+the rollout:
+
+```js
+db.projects.countDocuments({ team_ids: { $in: [null] } })   // must be 0
+db.projects.countDocuments({ team_ids: { $size: 0 } })      // the projects no team owns
+```
+
+### 8c. Stored numbers that need recomputing
+
+| What | Stale? | Recompute path |
+| --- | --- | --- |
+| `scan_update_deltas`, `scan_outdated_sets` | No — keyed by scan and branch, no team dimension. The team enters only when the comparison is read. | — |
+| `projects.stats` | No — per project, no team dimension. | — |
+| Team-scoped `compliance_reports` | **Yes.** Each stored `summary` covers the projects the team owned when the report ran, which under the scalar excluded every project attributed to a co-owner. | **None exists.** Reports are point-in-time artifacts and nothing rewrites one. Re-request the affected reports: `db.compliance_reports.find({scope: "team"}, {_id: 1, scope_id: 1, requested_at: 1})`. |
+| Redis `update_freq_cmp:*` and `update_frequency:*` | **Yes**, for up to 30 minutes. The cached row carries the retired `team_name` key, which deserialises into a row with an empty team list. | Self-healing on TTL. To avoid serving it: `redis-cli --scan --pattern 'update_freq*' \| xargs -r redis-cli del`. |
+
+### 8d. API contract
+
+`team_name: string \| null` is gone from the project list and from the update-frequency comparison
+row. Both now carry `teams: [{id, name}]`, ordered by name, empty when no team owns the project. The
+chat `list_projects` tool carries the same field instead of a bare `team_id`. The frontend consumes
+this in the next phase; until then the team column renders blank.
+
+### 8e. Metabase
+
+A knowing hard cut. No card or saved query is defined in this repository, so the list below is by
+field rather than by card — find the cards with Metabase's own "usage" view on the `projects` table.
+
+- Anything reading `projects.team_id` still resolves, and to one arbitrary owner: the answers stay
+  plausible and undercount every co-owned project. This is the dangerous class.
+- Anything grouping by `projects.team_ids` buckets by the **whole array**, so `["A","B"]` and
+  `["B","A"]` are two different groups and neither is team A. A per-team card must `$unwind` first.
+- Anything that unwinds and then totals double-counts co-owned projects. An estate total must not
+  unwind; a per-team breakdown must.
+- "No team" is `team_ids: {$size: 0}` once §8b has run. `team_ids: null` matches nothing and
+  `team_id: null` will stop matching anything at the cutover.
