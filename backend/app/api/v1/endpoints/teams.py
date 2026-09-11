@@ -29,6 +29,7 @@ from app.models.team import Team, TeamMember
 from app.models.user import User
 from app.repositories import TeamRepository, UserRepository
 from app.repositories.github_instances import GitHubInstanceRepository
+from app.repositories.projects import remove_team_pipeline
 from app.schemas.team import (
     TeamCreate,
     TeamGitHubBindingUpdate,
@@ -161,7 +162,7 @@ async def delete_team(
     safe_team_id = team_id.replace("\n", "_").replace("\r", "_")
 
     project_repo = ProjectRepository(db)
-    updated_count = await project_repo.update_many({"team_id": team_id}, {"team_id": None})
+    updated_count = await project_repo.update_many_raw({"team_ids": team_id}, remove_team_pipeline(team_id))
 
     if updated_count > 0:
         logger.info("Team %s deleted: unassigned from %d project(s)", safe_team_id, updated_count)
