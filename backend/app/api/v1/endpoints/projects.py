@@ -36,7 +36,15 @@ from app.api.v1.helpers.responses import (
     RESP_AUTH_404,
     RESP_AUTH_404_500,
 )
-from app.core.constants import MAX_PROJECT_TEAMS, PROJECT_ROLE_ADMIN, SCAN_USABLE_STATUSES, TEAM_SOURCE_MANUAL
+from app.api.v1.helpers.projects import max_project_role
+from app.core.constants import (
+    MAX_PROJECT_TEAMS,
+    PROJECT_ROLE_ADMIN,
+    PROJECT_ROLE_VIEWER,
+    SCAN_USABLE_STATUSES,
+    TEAM_ROLE_ADMIN,
+    TEAM_SOURCE_MANUAL,
+)
 from app.core.permissions import Permissions, has_permission
 from app.core.risk_scoring import risk_score_expr
 from app.core.trufflehog import SECRET_DESCRIPTION_PREFIX, resolve_detector_name
@@ -415,26 +423,51 @@ async def read_all_scans(
     return scans
 
 
-def _merge_team_members(data: dict[str, Any], t_users: dict[str, str]) -> None:
-    """Merge team members into project members list, skipping duplicates."""
-    team_data = data.get("team_data")
-    if not team_data:
-        return
+# Every owning team's member ids as one flat list. A field path across two array levels answers
+# an array per team, which the $in below can never match an id against.
+_OWNING_TEAM_MEMBER_IDS = {
+    "$reduce": {
+        "input": {"$ifNull": ["$team_data", []]},
+        "initialValue": [],
+        "in": {
+            "$setUnion": [
+                "$$value",
+                {"$map": {"input": {"$ifNull": ["$$this.members", []]}, "as": "m", "in": "$$m.user_id"}},
+            ]
+        },
+    }
+}
 
+
+def _merge_team_members(data: dict[str, Any], t_users: dict[str, str]) -> None:
+    """Add the members the owning teams bring in, each at the strongest role any of them grants.
+
+    Strongest and not first: ``team_ids`` is in whatever order the last writer left it and the join
+    answers in the teams collection's, so a first-wins merge would hand a user who is an admin of
+    one owner and a plain member of another a different role from one request to the next. Someone
+    already named in the project's own members keeps that entry — it is theirs to be removed from.
+    """
     existing_ids = {m["user_id"] for m in data["members"]}
-    for tm in team_data.get("members", []):
-        uid = tm["user_id"]
-        if uid in existing_ids:
-            continue
-        role = "admin" if tm.get("role") in ["admin"] else "viewer"
-        data["members"].append(
-            {
+    inherited: dict[str, dict[str, Any]] = {}
+
+    # By id, so the team named as the source of a role two owners grant equally is always the same.
+    for team in sorted(data.get("team_data") or [], key=lambda team: str(team.get("_id"))):
+        for tm in team.get("members", []):
+            uid = tm["user_id"]
+            if uid in existing_ids:
+                continue
+            role = PROJECT_ROLE_ADMIN if tm.get("role") == TEAM_ROLE_ADMIN else PROJECT_ROLE_VIEWER
+            held = inherited.get(uid)
+            if held is not None and max_project_role(held["role"], role) == held["role"]:
+                continue
+            inherited[uid] = {
                 "user_id": uid,
                 "role": role,
                 "username": t_users.get(uid),
-                "inherited_from": f"Team: {team_data.get('name')}",
+                "inherited_from": f"Team: {team.get('name')}",
             }
-        )
+
+    data["members"].extend(inherited.values())
 
 
 @router.get("/{project_id}", summary="Get project details", responses=RESP_AUTH_404)
@@ -446,18 +479,18 @@ async def read_project(
     """Get a specific project by ID."""
     project_repo = ProjectRepository(db)
 
-    # Single aggregation to avoid N+1 team/user lookups.
+    # Single aggregation to avoid N+1 team/user lookups. The owning teams stay an array: an array
+    # localField joins many, and unwinding them would answer one copy of the project per owner.
     pipeline: list[dict[str, Any]] = [
         {"$match": {"_id": project_id}},
         {
             "$lookup": {
                 "from": "teams",
-                "localField": "team_id",
+                "localField": "team_ids",
                 "foreignField": "_id",
                 "as": "team_data",
             }
         },
-        {"$unwind": {"path": "$team_data", "preserveNullAndEmptyArrays": True}},
         {
             "$lookup": {
                 "from": "users",
@@ -472,7 +505,7 @@ async def read_project(
         {
             "$lookup": {
                 "from": "users",
-                "let": {"team_member_ids": {"$ifNull": ["$team_data.members.user_id", []]}},
+                "let": {"team_member_ids": _OWNING_TEAM_MEMBER_IDS},
                 "pipeline": [
                     {"$match": {"$expr": {"$in": [{"$toString": "$_id"}, "$$team_member_ids"]}}},
                     {"$project": {"_id": 1, "username": 1}},
