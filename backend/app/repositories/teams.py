@@ -1,5 +1,6 @@
 """Repository for teams."""
 
+import re
 from datetime import datetime
 from typing import Any
 
@@ -53,7 +54,12 @@ class TeamRepository:
         cursor = self.collection.find(
             {
                 "github_instance_id": github_instance_id,
-                "github_org": github_org,
+                # GitHub organisation names differ only in case, so an equality match reports
+                # "nobody holds this repository" whenever the binding was stored in another case.
+                "github_org": {"$regex": f"^{re.escape(github_org)}$", "$options": "i"},
+                # A binding without a team number addresses no team on GitHub. Keeping it would
+                # leave every repository of the organisation undetermined instead of resolving
+                # against the teams that are bound properly.
                 "github_team_id": {"$ne": None},
             }
         )

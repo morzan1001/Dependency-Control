@@ -62,6 +62,41 @@ async def _assert_the_org_listing_is_scoped(db) -> None:
     assert await repo.find_raw_by_github_org("gh-3", "acme") == []
 
 
+async def _assert_the_stored_case_does_not_decide(db) -> None:
+    repo = await _seed(db)
+    await repo.create(
+        Team(
+            id="t-caps",
+            name="Ops",
+            github_instance_id="gh-1",
+            github_org="ACME",
+            github_team_id=99,
+            github_team_slug="ops",
+        )
+    )
+
+    # GitHub answers with whichever spelling the caller used; the OIDC claim is lower-case.
+    assert {team["_id"] for team in await repo.find_raw_by_github_org("gh-1", "acme")} == {"t-a", "t-caps"}
+    assert {team["_id"] for team in await repo.find_raw_by_github_org("gh-1", "AcMe")} == {"t-a", "t-caps"}
+
+
+async def _assert_the_organisation_is_matched_whole(db) -> None:
+    repo = await _seed(db)
+
+    assert await repo.find_raw_by_github_org("gh-1", "acm") == []
+    # The dot stands for itself: an unescaped one would match the hyphen of acme-labs.
+    assert await repo.find_raw_by_github_org("gh-1", "acme.labs") == []
+
+
+async def _assert_a_binding_without_a_team_number_is_left_out(db) -> None:
+    repo = await _seed(db)
+    await repo.create(Team(id="t-half", name="Halfway", github_instance_id="gh-1", github_org="acme"))
+
+    # Such a team addresses no team on GitHub, and returning it leaves the whole organisation
+    # undetermined instead of resolving against the teams that are bound properly.
+    assert [team["_id"] for team in await repo.find_raw_by_github_org("gh-1", "acme")] == ["t-a"]
+
+
 @pytest.mark.asyncio
 async def test_lookup_is_scoped_to_the_instance():
     await _assert_scoped_to_the_instance(FakeDatabase())
@@ -72,10 +107,43 @@ async def test_the_bound_teams_of_an_organisation_exclude_every_other_binding():
     await _assert_the_org_listing_is_scoped(FakeDatabase())
 
 
+@pytest.mark.asyncio
+async def test_an_organisation_bound_in_another_case_is_still_found():
+    await _assert_the_stored_case_does_not_decide(FakeDatabase())
+
+
+@pytest.mark.asyncio
+async def test_the_organisation_name_is_matched_whole_and_literally():
+    await _assert_the_organisation_is_matched_whole(FakeDatabase())
+
+
+@pytest.mark.asyncio
+async def test_a_binding_without_a_team_number_is_not_returned():
+    await _assert_a_binding_without_a_team_number_is_left_out(FakeDatabase())
+
+
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
 async def test_lookup_is_scoped_to_the_instance_on_real_mongo(db):
     await _assert_scoped_to_the_instance(db)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_an_organisation_bound_in_another_case_is_still_found_on_real_mongo(db):
+    await _assert_the_stored_case_does_not_decide(db)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_the_organisation_name_is_matched_whole_and_literally_on_real_mongo(db):
+    await _assert_the_organisation_is_matched_whole(db)
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_binding_without_a_team_number_is_not_returned_on_real_mongo(db):
+    await _assert_a_binding_without_a_team_number_is_left_out(db)
 
 
 @pytest.mark.live_mongo

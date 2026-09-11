@@ -122,9 +122,36 @@ async def _assert_a_second_sync_merges_into_the_bound_team(db) -> None:
     assert other["members"] == [{"user_id": "u-other", "role": "member", "source": "github"}]
 
 
+async def _assert_the_organisation_case_does_not_decide(db) -> None:
+    """The OIDC claim is lower-case; a binding stored in GitHub's own spelling must still match."""
+    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
+    repo = TeamRepository(db)
+    await repo.create(_bound_team(github_org="Acme"))
+    service = _service()
+    org_reads, check_reads, member_reads = _stubbed_reads(service)
+
+    with org_reads, check_reads, member_reads:
+        result = await service.sync_team_from_github(db, "acme", "acme/widgets")
+
+    assert result == GitHubTeamSyncResult("t-1", 1)
+    team = await repo.get_raw_by_github_team("gh-1", 4711)
+    assert team["members"] == [{"user_id": "u-1", "role": "admin", "source": "github"}]
+
+
 @pytest.mark.asyncio
 async def test_a_repository_lands_in_the_bound_team_with_its_maintainer_as_admin():
     await _assert_the_maintainer_lands_in_the_bound_team(FakeDatabase())
+
+
+@pytest.mark.asyncio
+async def test_a_binding_stored_in_another_case_still_resolves():
+    await _assert_the_organisation_case_does_not_decide(FakeDatabase())
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_binding_stored_in_another_case_still_resolves_on_real_mongo(db):
+    await _assert_the_organisation_case_does_not_decide(db)
 
 
 @pytest.mark.asyncio
