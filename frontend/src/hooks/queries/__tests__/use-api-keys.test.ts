@@ -30,13 +30,13 @@ describe("useCreateApiKey", () => {
     mocked(apiKeysApi.create).mockResolvedValue({
       id: "k1",
       name: "test",
-      prefix: "dca_test",
+      prefix: "dck_test",
       surfaces: ["mcp"],
       created_at: "2026-09-01T10:00:00Z",
       expires_at: "2026-10-01T10:00:00Z",
       revoked_at: null,
       last_used_at: null,
-      token: "dca_secret",
+      token: "dck_secret",
     });
 
     const wrapper = ({ children }: { children: ReactNode }) =>
@@ -95,13 +95,13 @@ describe("useApiKeys", () => {
     mocked(apiKeysApi.create).mockResolvedValue({
       id: "k1",
       name: "test",
-      prefix: "dca_test",
+      prefix: "dck_test",
       surfaces: ["mcp"],
       created_at: "2026-09-01T10:00:00Z",
       expires_at: "2026-10-01T10:00:00Z",
       revoked_at: null,
       last_used_at: null,
-      token: "dca_secret",
+      token: "dck_secret",
     });
 
     const queryClient = new QueryClient({

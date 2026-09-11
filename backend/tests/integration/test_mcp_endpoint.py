@@ -51,8 +51,8 @@ async def _issue_unified_key(db, surfaces=(API_KEY_SURFACE_MCP,), permissions=(P
     return doc, plaintext
 
 
-async def _last_used(db, collection, key_id):
-    return (await db[collection].find_one({"_id": key_id}))["last_used_at"]
+async def _last_used(db, key_id):
+    return (await db[_UNIFIED_COL].find_one({"_id": key_id}))["last_used_at"]
 
 
 def _bearer(token):
@@ -110,9 +110,9 @@ async def test_a_revoked_unified_key_gets_no_tools(client, db):
 @pytest.mark.asyncio
 async def test_admitting_a_unified_key_stamps_its_last_use(client, db):
     doc, token = await _issue_unified_key(db)
-    assert await _last_used(db, _UNIFIED_COL, doc["_id"]) is None, "a fresh key must start unstamped"
+    assert await _last_used(db, doc["_id"]) is None, "a fresh key must start unstamped"
 
     resp = await client.post(_MCP, json=_TOOLS_LIST, headers=_bearer(token))
 
     assert resp.status_code == _OK, resp.text
-    assert await _last_used(db, _UNIFIED_COL, doc["_id"]) is not None
+    assert await _last_used(db, doc["_id"]) is not None

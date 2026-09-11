@@ -1,4 +1,4 @@
-"""MCP JSON-RPC 2.0 endpoint (protocol 2025-03-26); external LLM clients authenticate with an MCP API key and call the chat tool registry under the key owner's permissions."""
+"""MCP JSON-RPC 2.0 endpoint (protocol 2025-03-26); external LLM clients authenticate with an API key naming the MCP surface and call the chat tool registry under the key owner's permissions."""
 
 from __future__ import annotations
 
@@ -134,8 +134,8 @@ async def _dispatch(method: str, params: dict[str, Any], user: User, db: AsyncIO
     "",
     summary="MCP JSON-RPC endpoint",
     description=(
-        "Model Context Protocol endpoint for external LLM clients. "
-        "Authenticate with an MCP API key in the Authorization: Bearer header."
+        "Model Context Protocol endpoint for external LLM clients. Authenticate with an API key "
+        "naming the MCP surface, sent in the Authorization: Bearer header."
     ),
 )
 @router.post("/", include_in_schema=False)

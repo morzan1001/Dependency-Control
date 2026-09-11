@@ -480,13 +480,13 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     id: "mcp",
     title: "MCP (External LLM access)",
     description:
-      "Lets a user mint personal API keys for external LLM clients (Claude Desktop, Cursor, custom bots) to call the DependencyControl tool surface over MCP.",
+      "Lets a user mint a personal API key opening the MCP surface, so external LLM clients (Claude Desktop, Cursor, custom bots) can call the DependencyControl tool surface over MCP.",
     permissions: [
       {
         id: Permissions.MCP_ACCESS,
         label: "MCP Access",
         description:
-          "Create and manage personal MCP API keys and use them against /api/v1/mcp",
+          "Mint a personal API key naming the MCP surface and use it against /api/v1/mcp. Listing and revoking a key needs only ownership, so withdrawing this leaves the user's existing keys reachable.",
       },
     ],
   },
@@ -494,13 +494,13 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     id: "analyze",
     title: "Ad-hoc Analysis",
     description:
-      "Lets a user mint personal API keys for POST /api/v1/analyze, the stateless endpoint that analyses a posted SBOM in memory and stores nothing.",
+      "Lets a user mint a personal API key opening the ad-hoc analysis surface: POST /api/v1/analyze analyses a posted SBOM in memory and stores nothing.",
     permissions: [
       {
         id: Permissions.ANALYZE_ADHOC,
         label: "Ad-hoc Analysis",
         description:
-          "Create and manage personal ad-hoc analysis API keys and use them against /api/v1/analyze",
+          "Mint a personal API key naming the ad-hoc analysis surface and use it against /api/v1/analyze. Listing and revoking a key needs only ownership, so withdrawing this leaves the user's existing keys reachable.",
       },
     ],
   },

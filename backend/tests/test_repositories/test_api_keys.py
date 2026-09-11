@@ -266,6 +266,25 @@ async def test_list_for_user_reports_the_population_behind_a_saturated_page():
 
 
 @pytest.mark.asyncio
+async def test_a_complete_listing_costs_no_count_round_trip():
+    """A page that did not saturate already knows the total, so the count has to be skipped and
+    not merely agree — asserting on the number alone passes however many round trips it took."""
+    db = FakeDatabase()
+    repo = ApiKeyRepository(db)
+    await repo.create(_OWNER, _KEY_NAME, _BOTH_SURFACES, _EXPIRY_DAYS)
+    counted = AsyncMock(wraps=db[_COL].count_documents)
+    db[_COL].count_documents = counted
+
+    keys, total = await repo.list_for_user(_OWNER)
+
+    assert total == len(keys)
+    # A non-async stand-in answers assert_not_awaited with unittest.mock's "not a valid assertion"
+    # AttributeError instead of a failure naming this invariant.
+    assert isinstance(counted, AsyncMock)
+    counted.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_list_for_user_returns_the_newest_first():
     """The page truncates at LIST_LIMIT, so the order decides which keys an owner ever sees;
     the ages are seeded out of insertion order to keep the assertion about the sort."""

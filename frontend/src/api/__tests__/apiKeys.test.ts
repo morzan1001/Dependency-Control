@@ -13,8 +13,8 @@ vi.mock("@/api/client", () => ({
 
 const KEY_ID = "k1";
 const KEY_NAME = "unified-key";
-const KEY_PREFIX = "dca_unified123";
-const PLAINTEXT_TOKEN = "dca_unified_secret";
+const KEY_PREFIX = "dck_unified123";
+const PLAINTEXT_TOKEN = "dck_unified_secret";
 const CREATED_AT = "2026-09-01T10:00:00Z";
 const EXPIRES_AT = "2026-12-10T10:00:00Z";
 
