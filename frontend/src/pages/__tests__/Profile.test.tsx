@@ -1,4 +1,6 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen } from '@testing-library/react'
+import type { ReactNode } from 'react'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 import ProfilePage from '../Profile'
@@ -21,7 +23,7 @@ vi.mock('@/hooks/queries/use-system', () => ({
   useAppConfig: () => ({ data: {} }),
 }))
 
-// Keep the page test about which key cards appear and in what order; stub every card body.
+// Keep the page test about which key cards appear; stub every card body.
 vi.mock('@/components/profile/UserDetailsCard', () => ({ UserDetailsCard: () => null }))
 vi.mock('@/components/profile/PasswordUpdateCard', () => ({ PasswordUpdateCard: () => null }))
 vi.mock('@/components/profile/TwoFactorAuthCard', () => ({ TwoFactorAuthCard: () => null }))
@@ -31,26 +33,25 @@ vi.mock('@/components/profile/NotificationPreferencesCard', () => ({
 vi.mock('@/components/profile/ApiKeysCard', () => ({
   ApiKeysCard: () => <div data-testid="card-unified" />,
 }))
-vi.mock('@/components/profile/MCPApiKeysCard', () => ({
-  MCPApiKeysCard: () => <div data-testid="card-mcp" />,
-}))
-vi.mock('@/components/profile/AdhocApiKeysCard', () => ({
-  AdhocApiKeysCard: () => <div data-testid="card-adhoc" />,
-}))
 
 const UNIFIED = 'card-unified'
-const MCP = 'card-mcp'
-const ADHOC = 'card-adhoc'
+const MCP_CARD_HEADING = /MCP API Keys/i
+const ADHOC_CARD_HEADING = /Ad-hoc Analysis API Keys/i
 const SUPERSEDED_NOTE = /superseded/i
-const KEYS_NOT_DEAD = /their keys still work/i
+const NONE = 0
 
 function cardOrder(): (string | null)[] {
   return screen.getAllByTestId(/^card-/).map((el) => el.getAttribute('data-testid'))
 }
 
+function Providers({ children }: { children: ReactNode }) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>
+}
+
 function renderProfile(permissions: string[]) {
   granted.current = permissions
-  render(<ProfilePage />)
+  render(<ProfilePage />, { wrapper: Providers })
 }
 
 beforeEach(() => {
@@ -58,57 +59,34 @@ beforeEach(() => {
 })
 
 describe('ProfilePage - API key cards', () => {
-  it('renders the unified card above both legacy cards', () => {
+  it('renders the unified card as the only API key card', () => {
     renderProfile([Permissions.MCP_ACCESS, Permissions.ANALYZE_ADHOC])
 
-    expect(cardOrder()).toEqual([UNIFIED, MCP, ADHOC])
+    expect(cardOrder()).toEqual([UNIFIED])
   })
 
   it.each([
-    ['MCP only', [Permissions.MCP_ACCESS], MCP, ADHOC],
-    ['ad-hoc only', [Permissions.ANALYZE_ADHOC], ADHOC, MCP],
-  ])(
-    'renders the unified card for a user holding %s',
-    (_label, permissions, presentLegacy, absentLegacy) => {
-      renderProfile(permissions as string[])
+    ['MCP access', [Permissions.MCP_ACCESS]],
+    ['ad-hoc analysis', [Permissions.ANALYZE_ADHOC]],
+  ])('renders the unified card for a user holding only %s', (_label, permissions) => {
+    renderProfile(permissions as string[])
 
-      expect(screen.getByTestId(UNIFIED)).toBeInTheDocument()
-      expect(screen.getByTestId(presentLegacy as string)).toBeInTheDocument()
-      expect(screen.queryByTestId(absentLegacy as string)).not.toBeInTheDocument()
-    },
-  )
+    expect(screen.getByTestId(UNIFIED)).toBeInTheDocument()
+  })
 
+  // Ownership alone governs listing and revoking, so losing the permission that
+  // minted a key must not strand it beyond its owner's reach.
   it('renders the unified card for a user holding neither surface permission', () => {
     renderProfile([])
 
     expect(screen.getByTestId(UNIFIED)).toBeInTheDocument()
-    expect(screen.queryByTestId(MCP)).not.toBeInTheDocument()
-    expect(screen.queryByTestId(ADHOC)).not.toBeInTheDocument()
   })
 
-  it('keeps each legacy card behind its own surface permission', () => {
-    renderProfile([Permissions.MCP_ACCESS])
-
-    expect(cardOrder()).toEqual([UNIFIED, MCP])
-  })
-
-  it('announces the legacy cards as superseded above them, without calling their keys dead', () => {
+  it('renders no per-surface key card and no superseded note', () => {
     renderProfile([Permissions.MCP_ACCESS, Permissions.ANALYZE_ADHOC])
 
-    const note = screen.getByText(SUPERSEDED_NOTE)
-    // A user told a working credential is dead would revoke or replace it on a false premise.
-    expect(note).toHaveTextContent(KEYS_NOT_DEAD)
-    expect(note.compareDocumentPosition(screen.getByTestId(MCP))).toBe(
-      Node.DOCUMENT_POSITION_FOLLOWING,
-    )
-    expect(note.compareDocumentPosition(screen.getByTestId(UNIFIED))).toBe(
-      Node.DOCUMENT_POSITION_PRECEDING,
-    )
-  })
-
-  it('omits the superseded note when no legacy card is rendered', () => {
-    renderProfile([])
-
-    expect(screen.queryAllByText(SUPERSEDED_NOTE)).toHaveLength(0)
+    expect(screen.queryByText(MCP_CARD_HEADING)).not.toBeInTheDocument()
+    expect(screen.queryByText(ADHOC_CARD_HEADING)).not.toBeInTheDocument()
+    expect(screen.queryAllByText(SUPERSEDED_NOTE)).toHaveLength(NONE)
   })
 })
