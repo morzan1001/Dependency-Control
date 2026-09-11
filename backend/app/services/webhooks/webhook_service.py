@@ -462,11 +462,13 @@ class WebhookService:
             )
 
             try:
-                project_doc = await db.projects.find_one({"_id": project_id}, {"team_id": 1})
-                team_id = project_doc.get("team_id") if project_doc else None
-                if team_id:
+                project_doc = await db.projects.find_one({"_id": project_id}, {"team_ids": 1})
+                owners = (project_doc or {}).get("team_ids") or []
+                if owners:
                     webhooks.extend(
-                        await self._fetch_webhooks_by_query(db, {**base_conditions, "team_id": team_id}, "team")
+                        await self._fetch_webhooks_by_query(
+                            db, {**base_conditions, "team_id": {"$in": owners}}, "team"
+                        )
                     )
             except Exception as e:
                 logger.exception("Failed to look up team webhooks for project %s: %s", project_id, e)

@@ -195,9 +195,8 @@ class NotificationService:
 
                 targets[member.user_id] = m_prefs
 
-        if project.team_id:
-            team_data = await db.teams.find_one({"_id": project.team_id})
-            if team_data:
+        if project.team_ids:
+            async for team_data in db.teams.find({"_id": {"$in": project.team_ids}}):
                 for tm in team_data.get("members", []):
                     uid = tm["user_id"]
                     if uid not in targets:
