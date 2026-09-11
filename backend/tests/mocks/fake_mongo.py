@@ -539,6 +539,30 @@ def _match_all(docs: list, query: dict) -> list:
 
 
 _REMOVE = object()  # sentinel: field omitted from the output document
+_ABSENT = object()  # sentinel: the path reached nothing, so the element contributes nothing
+
+
+def _traverse_expr_path(value, path: str):
+    """One field path as an aggregation expression reads it.
+
+    An array maps the rest of the path over its elements *without* flattening, so a path crossing
+    two array levels answers an array of arrays — which is what ``$in`` and ``$size`` then see.
+    Query matching flattens instead, which is why this cannot be ``_resolve_dotted``.
+    """
+    if isinstance(value, list):
+        reached = [_traverse_expr_path(element, path) for element in value if isinstance(element, dict)]
+        return [item for item in reached if item is not _ABSENT]
+    if not isinstance(value, dict):
+        return _ABSENT
+    head, _, rest = path.partition(".")
+    if head not in value:
+        return _ABSENT
+    return _traverse_expr_path(value[head], rest) if rest else value[head]
+
+
+def _resolve_expr_path(doc: dict, path: str):
+    resolved = _traverse_expr_path(doc, path)
+    return None if resolved is _ABSENT else resolved
 
 
 def _to_number(value):
@@ -589,6 +613,19 @@ def _eval_filter(doc: dict, spec: dict):
     return [item for item in items if _eval_bool(doc, _substitute_var(spec.get("cond"), prefix, item))]
 
 
+def _eval_reduce(doc: dict, spec: dict):
+    items = _eval_expr(doc, spec.get("input"))
+    if items is None or items is _REMOVE:
+        return None
+    if not isinstance(items, list):
+        raise OperationFailure(f"$reduce requires that 'input' be an array, found: {items}", 40080)
+    accumulated = _eval_expr(doc, spec.get("initialValue"))
+    for item in items:
+        body = _substitute_var(_substitute_var(spec.get("in"), "$$this", item), "$$value", accumulated)
+        accumulated = _eval_expr(doc, body)
+    return accumulated
+
+
 def _eval_let(doc: dict, spec: dict):
     body = spec.get("in")
     for var, value_expr in (spec.get("vars") or {}).items():
@@ -610,9 +647,9 @@ def _eval_expr(doc: dict, expr):
         if expr == "$$ROOT":
             return doc
         if expr.startswith("$$ROOT."):
-            return _resolve_dotted(doc, expr[len("$$ROOT.") :])
+            return _resolve_expr_path(doc, expr[len("$$ROOT.") :])
         if expr.startswith("$"):
-            return _resolve_dotted(doc, expr[1:])
+            return _resolve_expr_path(doc, expr[1:])
         return expr
     if isinstance(expr, list):
         # An array is an expression too: the server evaluates every element, so a field path
@@ -644,10 +681,13 @@ def _eval_expr(doc: dict, expr):
         return _truncate_date(_eval_expr(doc, spec.get("date")), spec.get("unit", "day"))
     if "$first" in expr:
         return _eval_expr(doc, expr["$first"])
+    if "$reduce" in expr:
+        return _eval_reduce(doc, expr["$reduce"])
     if "$ifNull" in expr:
         primary, fallback = expr["$ifNull"]
         val = _eval_expr(doc, primary)
-        return val if val is not None else _eval_expr(doc, fallback)
+        # A path that reached nothing is missing, not null, and $ifNull falls back on both.
+        return val if val is not None and val is not _REMOVE else _eval_expr(doc, fallback)
     if "$toDouble" in expr:
         return _to_number(_eval_expr(doc, expr["$toDouble"]))
     if "$split" in expr:

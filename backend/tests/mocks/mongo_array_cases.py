@@ -616,6 +616,26 @@ TEAM_DRIFT_CASES = [
     FindCase("projects holding an owner no provenance names", DRIFT_DOCS, provenance_gap_filter(), [4, 8, 12]),
 ]
 
+# An outer element that lacks the inner array contributes nothing rather than a null.
+_NESTED_ARRAY_DOCS = [
+    {"td": [{"m": [{"u": "a"}, {"u": "b"}]}, {"m": [{"u": "c"}]}]},
+    {"td": [{"m": [{"u": "a"}]}, {"name": "no-inner-array"}]},
+    {"td": []},
+]
+
+_FLATTENED_MEMBER_IDS = {
+    "$reduce": {
+        "input": {"$ifNull": ["$td", []]},
+        "initialValue": [],
+        "in": {
+            "$setUnion": [
+                "$$value",
+                {"$map": {"input": {"$ifNull": ["$$this.m", []]}, "as": "e", "in": "$$e.u"}},
+            ]
+        },
+    }
+}
+
 ARRAY_EXPRESSION_CASES = [
     AggCase(
         "$objectToArray over a map field",
@@ -681,10 +701,25 @@ ARRAY_EXPRESSION_CASES = [
                     "m": {"$map": {"input": "$nope", "as": "e", "in": "$$e"}},
                     "f": {"$filter": {"input": "$nope", "as": "e", "cond": True}},
                     "o": {"$objectToArray": "$nope"},
+                    "r": {"$reduce": {"input": "$nope", "initialValue": [], "in": "$$value"}},
                 }
             }
         ],
-        [{"d": None, "u": None, "m": None, "f": None, "o": None}],
+        [{"d": None, "u": None, "m": None, "f": None, "o": None, "r": None}],
+    ),
+    # A path crossing two array levels answers one array per outer element, unflattened — so the
+    # owning teams' member ids reach $in as an array of arrays it can never match against.
+    AggCase(
+        "a field path across two arrays nests",
+        _NESTED_ARRAY_DOCS,
+        [{"$project": {"p": "$td.m.u"}}],
+        [{"p": [["a", "b"], ["c"]]}, {"p": [["a"]]}, {"p": []}],
+    ),
+    AggCase(
+        "$reduce flattens what the path nests",
+        _NESTED_ARRAY_DOCS,
+        [{"$project": {"p": _FLATTENED_MEMBER_IDS}}],
+        [{"p": ["a", "b", "c"]}, {"p": ["a"]}, {"p": []}],
     ),
 ]
 
