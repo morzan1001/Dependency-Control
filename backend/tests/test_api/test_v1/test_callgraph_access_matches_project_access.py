@@ -152,3 +152,15 @@ async def test_read_all_still_admits_a_reader_who_is_no_member():
 
     assert await _allows(check_project_access("p1", reader, db))
     assert await _allows(check_callgraph_access("p1", reader, db))
+
+
+@pytest.mark.asyncio
+async def test_read_all_stands_in_for_project_read_on_a_write():
+    """read_all is no write permission, but it is a project-read one, and the members' check wants
+    only that: an editor holding it and nothing else still writes. The write path is where the two
+    are told apart, because a read request never reaches the check."""
+    db = await _seed_gate_db(PROJECT_ROLE_EDITOR, None)
+    editor = User(id=_USER, username=_USER, email="u1@test.com", permissions=[Permissions.PROJECT_READ_ALL])
+
+    assert await _allows(check_project_access("p1", editor, db, required_role=PROJECT_ROLE_EDITOR))
+    assert await _allows(check_callgraph_access("p1", editor, db, require_write=True))
