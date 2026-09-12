@@ -1,4 +1,12 @@
-# Release 1.9.27
+# Release 1.9.28
+
+## 📦 Build & CI
+
+- chore: release 1.9.28 — pick several owning teams in one go (#0)
+
+
+
+# Release 1.9.28
 
 ## 📦 Build & CI
 
