@@ -68,8 +68,8 @@ describe('ProjectOwningTeams', () => {
   it('adds one owner through the add route and leaves the others in place', async () => {
     renderEditor(project())
 
-    fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'Identity' }))
+    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Identity' }))
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
 
     await waitFor(() => expect(addTeam).toHaveBeenCalledWith('p1', 't3'))
@@ -80,9 +80,9 @@ describe('ProjectOwningTeams', () => {
   it('adds every team the user ticked, each through its own add call', async () => {
     renderEditor(project({ team_ids: ['t1'], team_sources: { t1: 'gitlab' } }))
 
-    fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'Platform' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Identity' }))
+    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Platform' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Identity' }))
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
 
     await waitFor(() => expect(addTeam).toHaveBeenCalledTimes(2))
@@ -93,10 +93,10 @@ describe('ProjectOwningTeams', () => {
   it('offers only the teams that do not already own the project', async () => {
     renderEditor(project())
 
-    fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
+    fireEvent.click(screen.getByRole('combobox'))
 
-    expect(await screen.findByRole('checkbox', { name: 'Identity' })).toBeInTheDocument()
-    expect(screen.queryByRole('checkbox', { name: 'Payments' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('option', { name: 'Identity' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Payments' })).not.toBeInTheDocument()
   })
 
   it('names the teams that landed and the ones that did not when only some are added', async () => {
@@ -107,9 +107,9 @@ describe('ProjectOwningTeams', () => {
     )
     renderEditor(project({ team_ids: ['t1'], team_sources: { t1: 'gitlab' } }))
 
-    fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'Platform' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Identity' }))
+    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Platform' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Identity' }))
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
 
     await waitFor(() =>
@@ -119,15 +119,15 @@ describe('ProjectOwningTeams', () => {
       ),
     )
     expect(toastSuccess).not.toHaveBeenCalled()
-    expect(screen.getByRole('checkbox', { name: 'Identity' })).toBeChecked()
+    expect(screen.getByRole('option', { name: 'Identity' })).toHaveAttribute('aria-selected', 'true')
   })
 
   it('reports the failure and claims nothing when no selected team is added', async () => {
     addTeam.mockRejectedValue({ response: { data: { detail: 'Team no longer exists' } } })
     renderEditor(project({ team_ids: ['t1'], team_sources: { t1: 'gitlab' } }))
 
-    fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'Platform' }))
+    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Platform' }))
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
 
     await waitFor(() =>
@@ -143,9 +143,9 @@ describe('ProjectOwningTeams', () => {
     const ids = ['t1', ...Array.from({ length: 14 }, (_, i) => `filler${i}`)]
     renderEditor(project({ team_ids: ids, team_sources: {} }))
 
-    fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'Platform' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Identity' }))
+    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Platform' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Identity' }))
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
 
     await waitFor(() =>
@@ -159,23 +159,26 @@ describe('ProjectOwningTeams', () => {
   it('closes the picker and counts what landed once every add succeeds', async () => {
     renderEditor(project({ team_ids: ['t1'], team_sources: { t1: 'gitlab' } }))
 
-    fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
-    fireEvent.click(await screen.findByRole('checkbox', { name: 'Platform' }))
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Identity' }))
+    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Platform' }))
+    fireEvent.click(screen.getByRole('option', { name: 'Identity' }))
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
 
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('2 owning teams added'))
-    expect(screen.queryByRole('checkbox', { name: 'Platform' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: 'Platform' })).not.toBeInTheDocument()
   })
 
-  it('says how much room is left while the user picks', async () => {
-    renderEditor(project())
+  it('names the picks on the control and says there when they outrun the room left', async () => {
+    const ids = ['t1', ...Array.from({ length: 14 }, (_, i) => `filler${i}`)]
+    renderEditor(project({ team_ids: ids, team_sources: {} }))
 
-    fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
-    expect(await screen.findByText('0 selected · room for 14 more.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('combobox'))
+    fireEvent.click(await screen.findByRole('option', { name: 'Platform' }))
+    expect(screen.getByRole('combobox')).toHaveTextContent('Platform')
 
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Identity' }))
-    expect(screen.getByText('1 selected · room for 14 more.')).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('option', { name: 'Identity' }))
+    expect(screen.getByRole('combobox')).toHaveTextContent('2 selected, room for 1 more')
+    expect(screen.getByRole('combobox')).toHaveAttribute('aria-invalid', 'true')
   })
 
   it('warns that a provider will re-establish the owner it created', async () => {
@@ -265,7 +268,7 @@ describe('ProjectOwningTeams', () => {
     const ids = Array.from({ length: 16 }, (_, i) => `t${i}`)
     renderEditor(project({ team_ids: ids, team_sources: {} }))
 
-    expect(screen.getByRole('button', { name: /Add Team/ })).toBeDisabled()
+    expect(screen.getByRole('combobox')).toBeDisabled()
     expect(screen.getByText(/most owners it may have \(16\)/)).toBeInTheDocument()
   })
 
@@ -273,7 +276,8 @@ describe('ProjectOwningTeams', () => {
     renderEditor(project(), false)
 
     expect(screen.getByText('Payments')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /Add Team/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Add' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: /^Remove / })).not.toBeInTheDocument()
   })
 
