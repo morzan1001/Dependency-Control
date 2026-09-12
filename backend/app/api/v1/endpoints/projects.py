@@ -438,7 +438,8 @@ _OWNING_TEAM_MEMBER_IDS = {
 
 
 def _merge_team_members(data: dict[str, Any], t_users: dict[str, str]) -> None:
-    """Add the members the owning teams bring in, each at the strongest role any of them grants.
+    """Add the members the owning teams bring in, each at the strongest role any of them grants and
+    named with every owner it comes from.
 
     Strongest and not first: ``team_ids`` is in whatever order the last writer left it and the join
     answers in the teams collection's, so a first-wins merge would hand a user who is an admin of
@@ -446,26 +447,29 @@ def _merge_team_members(data: dict[str, Any], t_users: dict[str, str]) -> None:
     already named in the project's own members keeps that entry — it is theirs to be removed from.
     """
     existing_ids = {m["user_id"] for m in data["members"]}
-    inherited: dict[str, dict[str, Any]] = {}
+    roles: dict[str, str | None] = {}
+    owners: dict[str, set[str]] = {}
 
-    # By id, so the team named as the source of a role two owners grant equally is always the same.
+    # Teams by id and their names sorted below, so the same owners answer the same rows in the same
+    # order and spell the same string however the join ordered them.
     for team in sorted(data.get("team_data") or [], key=lambda team: str(team.get("_id"))):
         for tm in team.get("members", []):
             uid = tm["user_id"]
             if uid in existing_ids:
                 continue
             role = PROJECT_ROLE_ADMIN if tm.get("role") == TEAM_ROLE_ADMIN else PROJECT_ROLE_VIEWER
-            held = inherited.get(uid)
-            if held is not None and max_project_role(held["role"], role) == held["role"]:
-                continue
-            inherited[uid] = {
-                "user_id": uid,
-                "role": role,
-                "username": t_users.get(uid),
-                "inherited_from": f"Team: {team.get('name')}",
-            }
+            roles[uid] = max_project_role(roles.get(uid), role)
+            owners.setdefault(uid, set()).add(str(team.get("name")))
 
-    data["members"].extend(inherited.values())
+    data["members"].extend(
+        {
+            "user_id": uid,
+            "role": roles[uid],
+            "username": t_users.get(uid),
+            "inherited_from": "Team: " + ", ".join(sorted(names)),
+        }
+        for uid, names in owners.items()
+    )
 
 
 @router.get("/{project_id}", summary="Get project details", responses=RESP_AUTH_404)
