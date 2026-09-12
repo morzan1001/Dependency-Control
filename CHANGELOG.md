@@ -1,4 +1,12 @@
-# Release 1.9.29
+# Release 1.9.30
+
+## 📦 Build & CI
+
+- chore: release 1.9.30 - the team dropdown is back in the settings form (#0)
+
+
+
+# Release 1.9.30
 
 ## 📦 Build & CI
 
