@@ -3,13 +3,14 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
 import { projectKeys } from '@/hooks/queries/use-projects'
 import { useTeams } from '@/hooks/queries/use-teams'
-import { getErrorMessage } from '@/lib/utils'
+import { cn, getErrorMessage } from '@/lib/utils'
 import { MAX_PROJECT_TEAMS } from '@/lib/constants'
 import { Project } from '@/types/project'
 import type { TeamSource } from '@/types/team'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { Users } from 'lucide-react'
 import { toast } from 'sonner'
@@ -22,13 +23,6 @@ import {
   DialogTitle,
   DialogTrigger,
 } from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import {
   Table,
   TableBody,
@@ -71,38 +65,86 @@ export function ProjectOwningTeams({ project, projectId, canManage }: ProjectOwn
   const queryClient = useQueryClient()
   const { data: teams } = useTeams()
   const [isAddOpen, setIsAddOpen] = useState(false)
-  const [teamToAdd, setTeamToAdd] = useState<string | undefined>(undefined)
+  const [selectedTeamIds, setSelectedTeamIds] = useState<string[]>([])
   const [ownerToRemove, setOwnerToRemove] = useState<Owner | null>(null)
 
   const teamIds = useMemo(() => project.team_ids ?? [], [project.team_ids])
 
-  const owners: Owner[] = useMemo(() => {
-    const names = new Map((teams ?? []).map((team) => [team.id, team.name]))
-    return teamIds
-      .map((id) => ({ id, name: names.get(id), source: project.team_sources?.[id] ?? 'manual' }))
-      .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id))
-  }, [teams, teamIds, project.team_sources])
+  const teamNames = useMemo(
+    () => new Map((teams ?? []).map((team) => [team.id, team.name])),
+    [teams],
+  )
+  const teamLabel = (id: string) => teamNames.get(id) || id
+
+  const owners: Owner[] = useMemo(
+    () =>
+      teamIds
+        .map((id) => ({ id, name: teamNames.get(id), source: project.team_sources?.[id] ?? 'manual' }))
+        .sort((a, b) => (a.name || a.id).localeCompare(b.name || b.id)),
+    [teamNames, teamIds, project.team_sources],
+  )
 
   const addableTeams = (teams ?? []).filter((team) => !teamIds.includes(team.id))
   const atCap = teamIds.length >= MAX_PROJECT_TEAMS
+  const room = MAX_PROJECT_TEAMS - teamIds.length
+  const overRoom = selectedTeamIds.length > room
 
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: projectKeys.detail(projectId) })
     queryClient.invalidateQueries({ queryKey: projectKeys.lists() })
   }
 
-  const addTeamMutation = useMutation({
-    mutationFn: (teamId: string) => projectApi.addTeam(projectId, teamId),
-    onSuccess: () => {
-      invalidate()
-      setIsAddOpen(false)
-      setTeamToAdd(undefined)
-      toast.success('Owning team added')
+  const addTeamsMutation = useMutation({
+    // There is no bulk route, so each team is its own POST; running them one after another
+    // keeps a failure attributable to the team that caused it.
+    mutationFn: async (ids: string[]) => {
+      const added: string[] = []
+      const failed: string[] = []
+      const reasons = new Set<string>()
+      for (const id of ids) {
+        try {
+          await projectApi.addTeam(projectId, id)
+          added.push(id)
+        } catch (error) {
+          failed.push(id)
+          reasons.add(getErrorMessage(error))
+        }
+      }
+      return { added, failed, reason: [...reasons].join(' · ') }
     },
-    onError: (error) => {
-      toast.error('Failed to add owning team', { description: getErrorMessage(error) })
+    onSuccess: ({ added, failed, reason }) => {
+      invalidate()
+      setSelectedTeamIds(failed)
+      if (failed.length === 0) {
+        setIsAddOpen(false)
+        toast.success(added.length === 1 ? 'Owning team added' : `${added.length} owning teams added`)
+        return
+      }
+      if (added.length === 0) {
+        toast.error(`Failed to add ${failed.map(teamLabel).join(', ')}`, { description: reason })
+        return
+      }
+      toast.warning(
+        `Added ${added.map(teamLabel).join(', ')} — ${failed.map(teamLabel).join(', ')} could not be added`,
+        { description: reason },
+      )
     },
   })
+
+  const addSelectedTeams = () => {
+    if (overRoom) {
+      toast.error(`A project may have ${MAX_PROJECT_TEAMS} owning teams at most`, {
+        description: `There is room for ${room} more, but ${selectedTeamIds.length} are selected. Nothing was added.`,
+      })
+      return
+    }
+    addTeamsMutation.mutate(selectedTeamIds)
+  }
+
+  const toggleTeam = (id: string) =>
+    setSelectedTeamIds((current) =>
+      current.includes(id) ? current.filter((selected) => selected !== id) : [...current, id],
+    )
 
   const removeTeamMutation = useMutation({
     mutationFn: (teamId: string) => projectApi.removeTeam(projectId, teamId),
@@ -126,41 +168,60 @@ export function ProjectOwningTeams({ project, projectId, canManage }: ProjectOwn
           </CardDescription>
         </div>
         {canManage && (
-          <Dialog open={isAddOpen} onOpenChange={setIsAddOpen}>
+          <Dialog
+            open={isAddOpen}
+            onOpenChange={(open) => {
+              setIsAddOpen(open)
+              if (!open) setSelectedTeamIds([])
+            }}
+          >
             <DialogTrigger asChild>
               <Button className="gap-2" disabled={atCap}>
                 <Users className="h-4 w-4" />
-                Add Team
+                Add Teams
               </Button>
             </DialogTrigger>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>Add Owning Team</DialogTitle>
+                <DialogTitle>Add Owning Teams</DialogTitle>
                 <DialogDescription>
-                  The team joins the owners this project already has; none of them is replaced.
+                  Every team you tick joins the owners this project already has; none of them is
+                  replaced.
                 </DialogDescription>
               </DialogHeader>
-              <div className="grid gap-2 py-4">
-                <Label htmlFor="owning-team">Team</Label>
-                <Select value={teamToAdd} onValueChange={setTeamToAdd}>
-                  <SelectTrigger id="owning-team">
-                    <SelectValue placeholder="Select a team" />
-                  </SelectTrigger>
-                  <SelectContent>
+              {addableTeams.length === 0 ? (
+                <p className="py-4 text-sm text-muted-foreground">
+                  Every team you can see already owns this project.
+                </p>
+              ) : (
+                <div className="grid gap-3 py-2">
+                  <div className="max-h-64 space-y-2 overflow-y-auto pr-1">
                     {addableTeams.map((team) => (
-                      <SelectItem key={team.id} value={team.id}>
-                        {team.name}
-                      </SelectItem>
+                      <div key={team.id} className="flex items-center gap-2">
+                        <Checkbox
+                          id={`owning-team-${team.id}`}
+                          checked={selectedTeamIds.includes(team.id)}
+                          onCheckedChange={() => toggleTeam(team.id)}
+                        />
+                        <Label htmlFor={`owning-team-${team.id}`} className="font-normal">
+                          {team.name}
+                        </Label>
+                      </div>
                     ))}
-                  </SelectContent>
-                </Select>
-              </div>
+                  </div>
+                  <p className={cn('text-sm', overRoom ? 'text-destructive' : 'text-muted-foreground')}>
+                    {overRoom
+                      ? `${selectedTeamIds.length} selected, but there is room for only ${room} more.`
+                      : `${selectedTeamIds.length} selected · room for ${room} more.`}
+                  </p>
+                </div>
+              )}
               <DialogFooter>
                 <Button
-                  onClick={() => teamToAdd && addTeamMutation.mutate(teamToAdd)}
-                  disabled={!teamToAdd || addTeamMutation.isPending}
+                  onClick={addSelectedTeams}
+                  disabled={selectedTeamIds.length === 0 || addTeamsMutation.isPending}
                 >
-                  {addTeamMutation.isPending ? 'Adding...' : 'Add'}
+                  {addTeamsMutation.isPending ? 'Adding...' : 'Add'}
                 </Button>
               </DialogFooter>
             </DialogContent>
