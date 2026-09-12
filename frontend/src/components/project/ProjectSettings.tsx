@@ -1,7 +1,9 @@
-import { useState } from 'react'
+import { useCallback, useMemo, useRef, useState } from 'react'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import { projectApi } from '@/api/projects'
 import { useAppConfig } from '@/hooks/queries/use-system'
+import { useTeams } from '@/hooks/queries/use-teams'
+import { useClickOutside } from '@/hooks/use-click-outside'
 import { projectKeys, useProjectBranches, useUpdateProjectNotifications } from '@/hooks/queries/use-projects'
 import { useProjectWebhooks, useCreateProjectWebhook, useDeleteWebhook } from '@/hooks/queries/use-webhooks'
 import { useGitLabInstances, useGitHubInstances } from '@/hooks/queries/use-instances'
@@ -9,9 +11,9 @@ import { WebhookCreate } from '@/types/webhook'
 import { Project, ProjectUpdate } from '@/types/project'
 import { hasSettingsSchema, getSettingsSchema } from '@/lib/analyzer-settings-schemas'
 import { AnalyzerSettingsDialog } from './AnalyzerSettingsDialog'
-import { ProjectOwningTeams } from './ProjectOwningTeams'
+import type { TeamRef } from '@/types/team'
 import { User } from '@/types/user'
-import { getErrorMessage } from '@/lib/utils'
+import { cn, getErrorMessage } from '@/lib/utils'
 import { memberPreferences, enforcedPreferences } from '@/lib/notification-preferences'
 import { useAuth } from '@/context/useAuth'
 import {
@@ -31,7 +33,7 @@ import { Checkbox } from '@/components/ui/checkbox'
 import { Switch } from '@/components/ui/switch'
 import { WebhookManager } from '@/components/WebhookManager'
 import { CryptoPolicyOverridePage } from '@/pages/project/CryptoPolicyOverridePage'
-import { AlertTriangle, RefreshCw, Copy, Trash2, Info, Settings } from 'lucide-react'
+import { AlertTriangle, RefreshCw, Copy, Trash2, Info, Settings, Check, ChevronDown } from 'lucide-react'
 import { toast } from "sonner"
 import { useNavigate } from 'react-router-dom'
 import { AVAILABLE_ANALYZERS, ANALYZER_CATEGORIES, NOTIFICATION_CHANNELS, NOTIFICATION_EVENTS } from '@/lib/constants'
@@ -65,6 +67,67 @@ interface ProjectSettingsProps {
   user: User
 }
 
+interface TeamPickerProps {
+  teams: TeamRef[]
+  selectedIds: string[]
+  onToggle: (id: string) => void
+}
+
+function TeamPicker({ teams, selectedIds, onToggle }: TeamPickerProps) {
+  const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+  const close = useCallback(() => setOpen(false), [])
+  useClickOutside(containerRef, close, open)
+
+  const selectedNames = teams.filter((team) => selectedIds.includes(team.id)).map((team) => team.name)
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative"
+      onKeyDown={(event) => event.key === 'Escape' && close()}
+    >
+      <button
+        type="button"
+        id="teams"
+        role="combobox"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        onClick={() => setOpen(!open)}
+        className="flex h-10 w-full items-center justify-between gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+      >
+        <span className={cn('truncate text-left', selectedNames.length === 0 && 'text-muted-foreground')}>
+          {selectedNames.length > 0 ? selectedNames.join(', ') : 'No Team'}
+        </span>
+        <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
+      </button>
+
+      {open && (
+        <div className="absolute z-50 mt-1 w-full rounded-md border bg-popover text-popover-foreground shadow-md">
+          <div role="listbox" aria-multiselectable className="max-h-64 overflow-y-auto p-1">
+            {teams.map((team) => {
+              const selected = selectedIds.includes(team.id)
+              return (
+                <button
+                  key={team.id}
+                  type="button"
+                  role="option"
+                  aria-selected={selected}
+                  onClick={() => onToggle(team.id)}
+                  className="flex w-full items-center gap-2 rounded-sm px-2 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground"
+                >
+                  <Check className={cn('h-4 w-4 shrink-0', selected ? 'opacity-100' : 'opacity-0')} />
+                  <span className="truncate">{team.name}</span>
+                </button>
+              )
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export function ProjectSettings({ project, projectId, user }: ProjectSettingsProps) {
   const queryClient = useQueryClient()
   const { permissions } = useAuth()
@@ -81,6 +144,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
   const isMember = !!project.members?.some(m => m.user_id === userId)
   
   const [name, setName] = useState(project.name)
+  const [teamIds, setTeamIds] = useState<string[]>(project.team_ids ?? [])
   const [retentionDays, setRetentionDays] = useState(project.retention_days || 90)
   const [retentionAction, setRetentionAction] = useState<string>(project.retention_action || 'delete')
   const [analyzers, setAnalyzers] = useState<string[]>(project.active_analyzers || [])
@@ -133,6 +197,7 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     return user.notification_preferences || {};
   })
 
+  const { data: teams } = useTeams();
   const { data: branches } = useProjectBranches(projectId);
   const { data: appConfig } = useAppConfig();
   const { data: webhooks, isLoading: isLoadingWebhooks, refetch: refetchWebhooks } = useProjectWebhooks(projectId);
@@ -209,10 +274,26 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
     refetchWebhooks()
   }
 
+  // An owning team the caller cannot see is still an owner, and leaving it out of the options
+  // would have the whole-set save drop it without anyone choosing to.
+  const teamOptions: TeamRef[] = useMemo(() => {
+    const visible = (teams ?? []).map((team) => ({ id: team.id, name: team.name }))
+    const unseen = (project.team_ids ?? [])
+      .filter((id) => !visible.some((team) => team.id === id))
+      .map((id) => ({ id, name: id }))
+    return [...visible, ...unseen].sort((a, b) => a.name.localeCompare(b.name))
+  }, [teams, project.team_ids])
+
+  const toggleTeam = (id: string) =>
+    setTeamIds((current) =>
+      current.includes(id) ? current.filter((selected) => selected !== id) : [...current, id],
+    )
+
   const handleUpdate = (e?: React.FormEvent) => {
     e?.preventDefault()
     updateProjectMutation.mutate({
       name,
+      team_ids: teamIds,
       retention_days: retentionDays,
       retention_action: retentionAction as 'delete' | 'archive' | 'none',
       active_analyzers: analyzers,
@@ -265,6 +346,13 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
                         value={name} 
                         onChange={(e) => setName(e.target.value)} 
                     />
+                </div>
+                <div className="grid gap-2">
+                    <Label htmlFor="teams">Teams</Label>
+                    <TeamPicker teams={teamOptions} selectedIds={teamIds} onToggle={toggleTeam} />
+                    <p className="text-xs text-muted-foreground">
+                        Every selected team's members can open this project, and it is listed under each of them.
+                    </p>
                 </div>
                 <div className="grid gap-2">
                     <Label htmlFor="defaultBranch">Default Branch</Label>
@@ -588,10 +676,6 @@ export function ProjectSettings({ project, projectId, user }: ProjectSettingsPro
             </form>
         </CardContent>
       </Card>
-
-      {/* Its own card, not a field of the form above: each change takes effect on its own route, so
-          a form saved from a stale page cannot undo an owner a sync established in the meantime. */}
-      <ProjectOwningTeams project={project} projectId={projectId} canManage={canUpdate} />
 
       {openSettingsAnalyzer && (() => {
         const schema = getSettingsSchema(openSettingsAnalyzer)

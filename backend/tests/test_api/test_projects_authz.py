@@ -119,11 +119,11 @@ class TestLoadProjectForUpdateRoutesThroughGate:
 
 class TestTransferTeamSuperuser:
     @staticmethod
-    def _hand_over(user, project, team_repo, team_id="new-team"):
-        from app.api.v1.endpoints.projects import _assert_may_hand_to_team
+    def _hand_over(user, project, team_repo, chosen=("new-team",)):
+        from app.api.v1.endpoints.projects import _assert_may_hand_to_teams
 
-        team_repo.get_by_id = AsyncMock(return_value={"_id": team_id})
-        return asyncio.run(_assert_may_hand_to_team(project, team_id, user, team_repo))
+        team_repo.get_by_id = AsyncMock(side_effect=lambda team_id: {"_id": team_id})
+        return asyncio.run(_assert_may_hand_to_teams(project, set(chosen), user, team_repo))
 
     def test_update_holder_can_transfer_without_target_membership(self):
         team_repo = MagicMock()
@@ -153,7 +153,7 @@ class TestTransferTeamSuperuser:
         team_repo = MagicMock()
         team_repo.is_member = AsyncMock(return_value=False)
 
-        self._hand_over(_plain_member(), _project(team_ids=["old-team"]), team_repo, team_id="old-team")
+        self._hand_over(_plain_member(), _project(team_ids=["old-team"]), team_repo, chosen=("old-team",))
         team_repo.is_member.assert_not_called()
 
     def test_the_owner_cap_stops_even_a_superuser(self):
@@ -161,10 +161,10 @@ class TestTransferTeamSuperuser:
 
         team_repo = MagicMock()
         team_repo.is_member = AsyncMock(return_value=True)
-        project = _project(team_ids=[f"t-{n}" for n in range(MAX_PROJECT_TEAMS)])
+        picked = [f"t-{n}" for n in range(MAX_PROJECT_TEAMS + 1)]
 
         with pytest.raises(HTTPException) as exc_info:
-            self._hand_over(_update_user(), project, team_repo)
+            self._hand_over(_update_user(), _project(), team_repo, chosen=picked)
         assert exc_info.value.status_code == 400
 
 
@@ -230,8 +230,8 @@ class TestDeleteProjectRoutesThroughGate:
 
 
 class TestUpdateProjectTeamAssignment:
-    """team_id on the update body is the caller's own assignment: it replaces the owners marked
-    manual and leaves a provider's entry to that provider."""
+    """team_ids on the update body is the whole owner set the picker showed, so it reaches the
+    server as one pipeline that keeps each retained owner's provenance."""
 
     def _build_update_project_mocks(self, project: "Project"):
         """Return the mocked collaborators for update_project."""
@@ -258,7 +258,7 @@ class TestUpdateProjectTeamAssignment:
             patch(f"{ENDPOINTS}.ProjectRepository", return_value=project_repo),
             patch(f"{ENDPOINTS}.TeamRepository", return_value=team_repo),
             patch(f"{ENDPOINTS}._load_project_for_update", new_callable=AsyncMock, return_value=project),
-            patch(f"{ENDPOINTS}._assert_may_hand_to_team", new_callable=AsyncMock),
+            patch(f"{ENDPOINTS}._assert_may_hand_to_teams", new_callable=AsyncMock),
             patch(f"{ENDPOINTS}._assert_gitlab_mr_token_present", new_callable=AsyncMock),
             patch(f"{ENDPOINTS}.deps.get_system_settings", new_callable=AsyncMock, return_value=system_settings),
             patch(f"{ENDPOINTS}.apply_system_settings_enforcement", side_effect=lambda d, *_: d),
@@ -281,32 +281,34 @@ class TestUpdateProjectTeamAssignment:
             team_source="gitlab",
         )
 
-    def test_a_team_in_the_body_replaces_the_manual_owners_only(self):
-        from app.repositories.projects import literal_set_stage, replace_team_subset_pipeline
+    def test_the_picked_teams_reach_the_server_as_the_whole_owner_set(self):
+        from app.repositories.projects import literal_set_stage, set_owners_pipeline
         from app.schemas.project import ProjectUpdate
 
         mock_update = self._run_update(
-            self._project_owned_by_gitlab(), ProjectUpdate(name="Renamed", team_id="team-xyz"), _update_user()
+            self._project_owned_by_gitlab(),
+            ProjectUpdate(name="Renamed", team_ids=["team-xyz", "team-abc"]),
+            _update_user(),
         )
 
         mock_update.assert_awaited_once()
         assert mock_update.call_args[0][1] == [
             literal_set_stage({"name": "Renamed"}),
-            *replace_team_subset_pipeline("manual", ["team-xyz"]),
+            *set_owners_pipeline(["team-abc", "team-xyz"]),
         ]
 
-    def test_a_null_team_gives_up_the_manual_assignment_and_keeps_the_provider_s(self):
-        from app.repositories.projects import replace_team_subset_pipeline
+    def test_an_empty_pick_gives_up_every_owner(self):
+        from app.repositories.projects import set_owners_pipeline
         from app.schemas.project import ProjectUpdate
 
         mock_update = self._run_update(
-            self._project_owned_by_gitlab(), ProjectUpdate(team_id=None), _update_user()
+            self._project_owned_by_gitlab(), ProjectUpdate(team_ids=[]), _update_user()
         )
 
         mock_update.assert_awaited_once()
-        assert mock_update.call_args[0][1] == replace_team_subset_pipeline("manual", [])
+        assert mock_update.call_args[0][1] == set_owners_pipeline([])
 
-    def test_a_body_without_a_team_leaves_every_owner_alone(self):
+    def test_a_body_without_teams_leaves_every_owner_alone(self):
         from app.repositories.projects import literal_set_stage
         from app.schemas.project import ProjectUpdate
 

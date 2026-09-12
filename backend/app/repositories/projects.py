@@ -48,36 +48,18 @@ def _sources_except(source: str) -> dict[str, Any]:
     }
 
 
-# Owners no provenance entry names. They predate the field, and reading them as anything but a
-# hand assignment would let a provider retire an owner it cannot be shown to have set.
-_UNPROVENANCED = {
-    "$setDifference": [
-        {"$ifNull": ["$team_ids", []]},
-        {
-            "$map": {
-                "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
-                "as": "entry",
-                "in": "$$entry.k",
-            }
-        },
-    ]
-}
-
-
 def _retired_by(source: str) -> dict[str, Any]:
-    """The owners a ``source`` write replaces."""
-    named = {"$map": {"input": _owned_by(source), "as": "entry", "in": "$$entry.k"}}
-    if source != TEAM_SOURCE_MANUAL:
-        return named
-    return {"$setUnion": [named, _UNPROVENANCED]}
+    """The owners a ``source`` write replaces — the ones its own provenance entries name.
+
+    An owner no entry names is therefore never retired by a sync: nothing shows that provider set
+    it, and the picker is the only writer that may take it away.
+    """
+    return {"$map": {"input": _owned_by(source), "as": "entry", "in": "$$entry.k"}}
 
 
 def owners_replaced_by(project: Project, source: str) -> set[str]:
     """``_retired_by`` in Python, for the callers that must size the result before writing it."""
-    named = {team_id for team_id, entry in project.team_sources.items() if entry == source}
-    if source != TEAM_SOURCE_MANUAL:
-        return named
-    return named | (set(project.team_ids) - set(project.team_sources))
+    return {team_id for team_id, entry in project.team_sources.items() if entry == source}
 
 
 # Read against the freshly written list, so it has to run in a stage of its own.
@@ -156,13 +138,38 @@ def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[
     ]
 
 
-def add_team_pipeline(team_id: str, source: str) -> list[dict[str, Any]]:
-    """Add one owner, leaving every other entry — including another provider's — as it is."""
+def _sources_kept(team_ids: list[str]) -> dict[str, Any]:
+    """The provenance entries naming one of ``team_ids``."""
+    return {
+        "$arrayToObject": {
+            "$filter": {
+                "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
+                "as": "entry",
+                "cond": {"$in": ["$$entry.k", {"$literal": team_ids}]},
+            }
+        }
+    }
+
+
+def set_owners_pipeline(team_ids: list[str]) -> list[dict[str, Any]]:
+    """A pipeline update making ``team_ids`` the project's entire owner set.
+
+    An owner that stays keeps the provenance it had. Restamping one a provider established as a
+    hand assignment would exempt it from that provider's next sync for good, so the new map takes
+    the stored entry wherever there is one and reads the rest as hand-assigned. An owner left out
+    goes whatever set it, and returns only when its provider still resolves it.
+
+    A pipeline because the map is a function of the stored one, which no classic modifier can
+    read — and ``$set`` beside ``$pull`` on ``team_ids`` is rejected with code 40 in any case.
+    """
+    owners = sorted(set(team_ids))
     return [
         {
             "$set": {
-                "team_ids": {"$setUnion": [{"$ifNull": ["$team_ids", []]}, [team_id]]},
-                "team_sources": {"$mergeObjects": [{"$ifNull": ["$team_sources", {}]}, {team_id: source}]},
+                "team_ids": {"$literal": owners},
+                "team_sources": {
+                    "$mergeObjects": [dict.fromkeys(owners, TEAM_SOURCE_MANUAL), _sources_kept(owners)]
+                },
             }
         },
         *scalar_mirror_stages(),

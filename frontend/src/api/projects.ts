@@ -37,16 +37,6 @@ export const projectApi = {
     await api.delete(`/projects/${id}`);
   },
 
-  addTeam: async (projectId: string, teamId: string): Promise<Project> => {
-    const response = await api.post<Project>(`/projects/${projectId}/teams`, { team_id: teamId });
-    return response.data;
-  },
-
-  removeTeam: async (projectId: string, teamId: string): Promise<Project> => {
-    const response = await api.delete<Project>(`/projects/${projectId}/teams/${teamId}`);
-    return response.data;
-  },
-
   getBranches: async (id: string): Promise<BranchInfo[]> => {
     const response = await api.get<BranchInfo[]>(`/projects/${id}/branches`);
     return response.data;

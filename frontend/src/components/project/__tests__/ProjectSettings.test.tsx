@@ -165,25 +165,60 @@ describe('ProjectSettings GitHub PR decoration', () => {
 describe('ProjectSettings team ownership', () => {
   beforeEach(() => {
     mockUpdate.mockClear()
-    mockUseTeams.mockReturnValue({ data: [{ id: 't1', name: 'Payments', members: [] }] })
+    mockUseTeams.mockReturnValue({
+      data: [
+        { id: 't1', name: 'Payments', members: [] },
+        { id: 't2', name: 'Platform', members: [] },
+      ],
+    })
     mockUseGitHubInstances.mockReturnValue(githubInstances(true))
   })
 
-  it('leaves ownership out of the settings form, which would otherwise save a stale owner set', async () => {
+  it('saves the picked teams with the rest of the form', async () => {
     renderSettings(githubProject({ team_ids: ['t1'], team_sources: { t1: 'gitlab' } }))
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Teams' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'Platform' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1].team_ids).toEqual(['t1', 't2'])
+  })
+
+  it('names the teams it holds on the closed control', () => {
+    renderSettings(githubProject({ team_ids: ['t1', 't2'], team_sources: { t1: 'gitlab', t2: 'manual' } }))
+
+    expect(screen.getByRole('combobox', { name: 'Teams' })).toHaveTextContent('Payments, Platform')
+    expect(screen.queryByText('Owning Teams')).toBeNull()
+  })
+
+  it('deselects a team the project holds, whichever sync established it', async () => {
+    renderSettings(githubProject({ team_ids: ['t1', 't2'], team_sources: { t1: 'gitlab', t2: 'manual' } }))
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Teams' }))
+    fireEvent.click(await screen.findByRole('option', { name: 'Payments' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
+
+    await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
+    expect(mockUpdate.mock.calls[0][1].team_ids).toEqual(['t2'])
+  })
+
+  it('says No Team when the project has no owner', () => {
+    renderSettings(githubProject({ team_ids: [] }))
+
+    expect(screen.getByRole('combobox', { name: 'Teams' })).toHaveTextContent('No Team')
+  })
+
+  // The teams list answers only the caller's own teams, so an owner outside them has no option
+  // of its own — and a save stating the whole set would drop it without anyone choosing to.
+  it('keeps an owner the caller cannot see selected and saves it back', async () => {
+    renderSettings(githubProject({ team_ids: ['t1', 't9'], team_sources: { t9: 'github' } }))
+
+    expect(screen.getByRole('combobox', { name: 'Teams' })).toHaveTextContent('Payments, t9')
 
     fireEvent.click(screen.getByRole('button', { name: 'Save Changes' }))
 
     await waitFor(() => expect(mockUpdate).toHaveBeenCalled())
-    expect(mockUpdate.mock.calls[0][1]).not.toHaveProperty('team_id')
-    expect(mockUpdate.mock.calls[0][1]).not.toHaveProperty('team_ids')
-  })
-
-  it('offers the owning teams next to the form rather than one team picker inside it', () => {
-    renderSettings(githubProject({ team_ids: ['t1'], team_sources: { t1: 'gitlab' } }))
-
-    expect(screen.getByText('Owning Teams')).toBeInTheDocument()
-    expect(screen.getByText('Payments')).toBeInTheDocument()
-    expect(screen.queryByText('No Team')).toBeNull()
+    expect(mockUpdate.mock.calls[0][1].team_ids).toEqual(['t1', 't9'])
   })
 })

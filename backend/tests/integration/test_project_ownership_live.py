@@ -6,12 +6,12 @@ The shared operator table pins the pipeline's semantics; this pins the path arou
 """
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
-from app.api.v1.endpoints.projects import remove_project_team
+from app.api.v1.endpoints.projects import update_project
 from app.models.project import Project
 from app.models.user import User
 from app.repositories.projects import (
@@ -19,7 +19,9 @@ from app.repositories.projects import (
     owners_replaced_by,
     remove_team_pipeline,
     replace_team_subset_pipeline,
+    set_owners_pipeline,
 )
+from app.schemas.project import ProjectUpdate
 from tests.mocks.fake_mongo import FakeDatabase
 
 _PROJECT = {
@@ -85,11 +87,11 @@ _LEGACY_PROJECT = {
 }
 
 
-async def _assert_a_legacy_owner_outlives_a_sync_but_not_the_hand_assignment(db) -> None:
+async def _assert_a_legacy_owner_outlives_a_sync_but_not_the_picker(db) -> None:
     """An owner no provenance entry names belongs to no provider, so a sync must add beside it.
 
-    Read as anything but a hand assignment it would be immortal: no provider owns the entry, so
-    none can retire it, and the picker replaces only what it is told is manual.
+    Nothing else can retire it either, which is why the picker — the one writer that states the
+    whole owner set — has to be able to leave it out.
     """
     repo = ProjectRepository(db)
     await db.projects.insert_one(dict(_LEGACY_PROJECT))
@@ -100,7 +102,7 @@ async def _assert_a_legacy_owner_outlives_a_sync_but_not_the_hand_assignment(db)
     assert sorted(after_sync.team_ids) == ["gl-new", "legacy"]
     assert after_sync.team_sources == {"gl-new": "gitlab"}
 
-    await repo.update_raw("p-legacy", replace_team_subset_pipeline("manual", ["by-hand"]))
+    await repo.update_raw("p-legacy", set_owners_pipeline(["by-hand", "gl-new"]))
 
     after_picker = Project(**await db.projects.find_one({"_id": "p-legacy"}))
     assert sorted(after_picker.team_ids) == ["by-hand", "gl-new"]
@@ -118,7 +120,7 @@ _RACE_PROJECT = {
 }
 
 
-async def _assert_two_concurrent_removals_cannot_both_take_the_last_admin(db) -> None:
+async def _assert_two_concurrent_saves_cannot_both_take_the_last_admin(db) -> None:
     """Both callers read the project before either writes, so a check made in Python passes twice
     and the project is left with no owner and nobody able to add one back."""
     await db.projects.insert_one(dict(_RACE_PROJECT))
@@ -127,13 +129,16 @@ async def _assert_two_concurrent_removals_cannot_both_take_the_last_admin(db) ->
 
     project = Project(**await db.projects.find_one({"_id": "p-race"}))
     actor = User(id="u", username="u", email="u@test.com", permissions=[])
+    settings = MagicMock(retention_mode=None, rescan_mode=None)
 
-    with patch(
-        "app.api.v1.endpoints.projects._load_project_for_update", AsyncMock(return_value=project)
+    with (
+        patch("app.api.v1.endpoints.projects._load_project_for_update", AsyncMock(return_value=project)),
+        patch("app.api.v1.endpoints.projects.deps.get_system_settings", AsyncMock(return_value=settings)),
+        patch("app.api.v1.endpoints.projects._audit_license_policy_change", AsyncMock()),
     ):
         outcomes = await asyncio.gather(
-            remove_project_team("p-race", "t-a", actor, db),
-            remove_project_team("p-race", "t-b", actor, db),
+            update_project("p-race", ProjectUpdate(team_ids=["t-b"]), actor, db),
+            update_project("p-race", ProjectUpdate(team_ids=["t-a"]), actor, db),
             return_exceptions=True,
         )
 
@@ -152,10 +157,10 @@ _MIXED_PROJECT = {
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("source", ["gitlab", "github", "manual"])
+@pytest.mark.parametrize("source", ["gitlab", "github"])
 async def test_the_python_mirror_names_the_owners_the_pipeline_retires(source):
-    """The cap and the picker size the outcome in Python before the server computes it, so the two
-    spellings have to select the same entries or one of them is deciding about a different set."""
+    """Ingest sizes the outcome in Python before the server computes it, so the two spellings have
+    to select the same entries or one of them is deciding about a different set."""
     db = FakeDatabase()
     await db.projects.insert_one(dict(_MIXED_PROJECT))
     project = Project(**_MIXED_PROJECT)
@@ -167,20 +172,20 @@ async def test_the_python_mirror_names_the_owners_the_pipeline_retires(source):
 
 
 @pytest.mark.asyncio
-async def test_a_legacy_owner_outlives_a_sync_but_not_the_hand_assignment():
-    await _assert_a_legacy_owner_outlives_a_sync_but_not_the_hand_assignment(FakeDatabase())
+async def test_a_legacy_owner_outlives_a_sync_but_not_the_picker():
+    await _assert_a_legacy_owner_outlives_a_sync_but_not_the_picker(FakeDatabase())
 
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_a_legacy_owner_outlives_a_sync_but_not_the_hand_assignment_on_real_mongo(db):
-    await _assert_a_legacy_owner_outlives_a_sync_but_not_the_hand_assignment(db)
+async def test_a_legacy_owner_outlives_a_sync_but_not_the_picker_on_real_mongo(db):
+    await _assert_a_legacy_owner_outlives_a_sync_but_not_the_picker(db)
 
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_two_concurrent_removals_cannot_both_take_the_last_admin_on_real_mongo(db):
-    await _assert_two_concurrent_removals_cannot_both_take_the_last_admin(db)
+async def test_two_concurrent_saves_cannot_both_take_the_last_admin_on_real_mongo(db):
+    await _assert_two_concurrent_saves_cannot_both_take_the_last_admin(db)
 
 
 @pytest.mark.asyncio

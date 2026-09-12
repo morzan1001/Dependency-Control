@@ -35,9 +35,6 @@ export const TEAM_ROLES = [
   { value: 'admin', label: 'Admin' },
 ] as const;
 
-// Mirrors the backend cap: a further owner is refused with 400.
-export const MAX_PROJECT_TEAMS = 16;
-
 export const DEFAULT_PAGE_SIZE = 50;
 export const SMALL_PAGE_SIZE = 20;
 export const PROJECT_GRID_PAGE_SIZE = 12;
