@@ -6,19 +6,24 @@ import { ProjectOwningTeams } from '../ProjectOwningTeams'
 import type { Project } from '@/types/project'
 import type { Team } from '@/types/team'
 
-const { addTeam, removeTeam, updateProject, useTeamsMock, toastError } = vi.hoisted(() => ({
-  addTeam: vi.fn(),
-  removeTeam: vi.fn(),
-  updateProject: vi.fn(),
-  useTeamsMock: vi.fn(),
-  toastError: vi.fn(),
-}))
+const { addTeam, removeTeam, updateProject, useTeamsMock, toastError, toastSuccess, toastWarning } =
+  vi.hoisted(() => ({
+    addTeam: vi.fn(),
+    removeTeam: vi.fn(),
+    updateProject: vi.fn(),
+    useTeamsMock: vi.fn(),
+    toastError: vi.fn(),
+    toastSuccess: vi.fn(),
+    toastWarning: vi.fn(),
+  }))
 
 vi.mock('@/api/projects', () => ({
   projectApi: { addTeam, removeTeam, update: updateProject },
 }))
 vi.mock('@/hooks/queries/use-teams', () => ({ useTeams: () => useTeamsMock() }))
-vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: toastError } }))
+vi.mock('sonner', () => ({
+  toast: { success: toastSuccess, error: toastError, warning: toastWarning },
+}))
 
 function team(id: string, name: string): Team {
   return { id, name, members: [], created_at: '', updated_at: '' }
@@ -64,8 +69,7 @@ describe('ProjectOwningTeams', () => {
     renderEditor(project())
 
     fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
-    fireEvent.click(await screen.findByRole('combobox'))
-    fireEvent.click(await screen.findByRole('option', { name: 'Identity' }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Identity' }))
     fireEvent.click(screen.getByRole('button', { name: 'Add' }))
 
     await waitFor(() => expect(addTeam).toHaveBeenCalledWith('p1', 't3'))
@@ -73,14 +77,105 @@ describe('ProjectOwningTeams', () => {
     expect(updateProject).not.toHaveBeenCalled()
   })
 
+  it('adds every team the user ticked, each through its own add call', async () => {
+    renderEditor(project({ team_ids: ['t1'], team_sources: { t1: 'gitlab' } }))
+
+    fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Platform' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Identity' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => expect(addTeam).toHaveBeenCalledTimes(2))
+    expect(addTeam).toHaveBeenCalledWith('p1', 't2')
+    expect(addTeam).toHaveBeenCalledWith('p1', 't3')
+  })
+
   it('offers only the teams that do not already own the project', async () => {
     renderEditor(project())
 
     fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
-    fireEvent.click(await screen.findByRole('combobox'))
 
-    expect(await screen.findByRole('option', { name: 'Identity' })).toBeInTheDocument()
-    expect(screen.queryByRole('option', { name: 'Payments' })).not.toBeInTheDocument()
+    expect(await screen.findByRole('checkbox', { name: 'Identity' })).toBeInTheDocument()
+    expect(screen.queryByRole('checkbox', { name: 'Payments' })).not.toBeInTheDocument()
+  })
+
+  it('names the teams that landed and the ones that did not when only some are added', async () => {
+    addTeam.mockImplementation((_projectId: string, teamId: string) =>
+      teamId === 't3'
+        ? Promise.reject({ response: { data: { detail: 'Team no longer exists' } } })
+        : Promise.resolve(project()),
+    )
+    renderEditor(project({ team_ids: ['t1'], team_sources: { t1: 'gitlab' } }))
+
+    fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Platform' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Identity' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() =>
+      expect(toastWarning).toHaveBeenCalledWith(
+        'Added Platform — Identity could not be added',
+        { description: 'Team no longer exists' },
+      ),
+    )
+    expect(toastSuccess).not.toHaveBeenCalled()
+    expect(screen.getByRole('checkbox', { name: 'Identity' })).toBeChecked()
+  })
+
+  it('reports the failure and claims nothing when no selected team is added', async () => {
+    addTeam.mockRejectedValue({ response: { data: { detail: 'Team no longer exists' } } })
+    renderEditor(project({ team_ids: ['t1'], team_sources: { t1: 'gitlab' } }))
+
+    fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Platform' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith('Failed to add Platform', {
+        description: 'Team no longer exists',
+      }),
+    )
+    expect(toastSuccess).not.toHaveBeenCalled()
+    expect(toastWarning).not.toHaveBeenCalled()
+  })
+
+  it('refuses a selection larger than the room left before sending a single request', async () => {
+    const ids = ['t1', ...Array.from({ length: 14 }, (_, i) => `filler${i}`)]
+    renderEditor(project({ team_ids: ids, team_sources: {} }))
+
+    fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Platform' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Identity' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith('A project may have 16 owning teams at most', {
+        description: 'There is room for 1 more, but 2 are selected. Nothing was added.',
+      }),
+    )
+    expect(addTeam).not.toHaveBeenCalled()
+  })
+
+  it('closes the picker and counts what landed once every add succeeds', async () => {
+    renderEditor(project({ team_ids: ['t1'], team_sources: { t1: 'gitlab' } }))
+
+    fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
+    fireEvent.click(await screen.findByRole('checkbox', { name: 'Platform' }))
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Identity' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Add' }))
+
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith('2 owning teams added'))
+    expect(screen.queryByRole('checkbox', { name: 'Platform' })).not.toBeInTheDocument()
+  })
+
+  it('says how much room is left while the user picks', async () => {
+    renderEditor(project())
+
+    fireEvent.click(screen.getByRole('button', { name: /Add Team/ }))
+    expect(await screen.findByText('0 selected · room for 14 more.')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Identity' }))
+    expect(screen.getByText('1 selected · room for 14 more.')).toBeInTheDocument()
   })
 
   it('warns that a provider will re-establish the owner it created', async () => {
