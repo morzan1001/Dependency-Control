@@ -37,6 +37,13 @@ _USER_IDS = ["u-both", "u-alpha", "u-bravo", "u-direct", "u-zulu"]
 _TEAM_ORDERS = [(_ALPHA, _BRAVO), (_BRAVO, _ALPHA)]
 _ORDER_IDS = ["alpha-first", "bravo-first"]
 
+# The live shape the report came from: two owners with the same two members, admin in both. The ids
+# run against the names so a walk in join or id order spells the owners in the other order.
+_PROD_PROJECT = "eef7095b-1d5c-47d9-ae68-77ad20734680"
+_PROD_MEMBERS = [{"user_id": "a119abd", "role": "admin"}, {"user_id": "a105022", "role": "admin"}]
+_TOURISTS = {"_id": "1f0a0000-0000-0000-0000-000000000001", "name": "The TOURists", "members": _PROD_MEMBERS}
+_PICKACHU = {"_id": "9c0b0000-0000-0000-0000-000000000002", "name": "Pickachu", "members": _PROD_MEMBERS}
+
 
 def _user(uid: str, *permissions: str) -> User:
     granted = list(permissions) or [Permissions.PROJECT_READ]
@@ -57,6 +64,23 @@ async def _seed(db, *, team_order=(_ALPHA, _BRAVO), team_ids: list[str] | None =
             "team_ids": owners,
             "team_id": owners[0] if owners else None,
             "members": [{"user_id": "u-direct", "role": "editor"}],
+        }
+    )
+    return db
+
+
+async def _seed_prod_shape(db, *, team_order=(_TOURISTS, _PICKACHU)):
+    for team in team_order:
+        await db.teams.insert_one(dict(team))
+    for member in _PROD_MEMBERS:
+        await db.users.insert_one({"_id": member["user_id"], "username": member["user_id"]})
+    await db.projects.insert_one(
+        {
+            "_id": _PROD_PROJECT,
+            "name": "prod-shape",
+            "team_ids": [team["_id"] for team in team_order],
+            "team_id": team_order[0]["_id"],
+            "members": [],
         }
     )
     return db
@@ -105,14 +129,25 @@ async def _assert_a_stranger_is_refused(db) -> None:
         assert raised.value.status_code == 403
 
 
-async def _assert_the_inherited_role_names_the_team_that_granted_it(db) -> None:
+async def _assert_an_inherited_member_names_every_owner_it_comes_from(db) -> None:
     project = await read_project(_PROJECT, _user("u-direct"), db)
     inherited = {member.user_id: member.inherited_from for member in project.members}
 
     assert inherited["u-alpha"] == "Team: Alpha"
     assert inherited["u-bravo"] == "Team: Bravo"
-    assert inherited["u-both"] == "Team: Bravo"
+    assert inherited["u-both"] == "Team: Alpha, Bravo"
     assert inherited["u-direct"] is None
+
+
+async def _assert_both_owners_of_the_same_two_members_are_named(db) -> None:
+    """The reported project: co-owners with identical membership, and one of them went unnamed."""
+    project = await read_project(_PROD_PROJECT, _user("a119abd"), db)
+    merged = {member.user_id: (member.role, member.inherited_from, member.username) for member in project.members}
+
+    assert merged == {
+        "a119abd": ("admin", "Team: Pickachu, The TOURists", "a119abd"),
+        "a105022": ("admin", "Team: Pickachu, The TOURists", "a105022"),
+    }
 
 
 @pytest.mark.asyncio
@@ -175,14 +210,31 @@ async def test_a_stranger_is_refused_on_real_mongo(db):
 
 
 @pytest.mark.asyncio
-async def test_the_inherited_role_names_the_team_that_granted_it(db):
-    await _assert_the_inherited_role_names_the_team_that_granted_it(await _seed(db))
+@pytest.mark.parametrize("team_order", _TEAM_ORDERS, ids=_ORDER_IDS)
+async def test_an_inherited_member_names_every_owner_it_comes_from(db, team_order):
+    """Both insertion orders spell the same string, so the names are sorted and not appended in
+    whatever order the join answered."""
+    await _assert_an_inherited_member_names_every_owner_it_comes_from(await _seed(db, team_order=team_order))
 
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_the_inherited_role_names_the_team_that_granted_it_on_real_mongo(db):
-    await _assert_the_inherited_role_names_the_team_that_granted_it(await _seed(db))
+@pytest.mark.parametrize("team_order", _TEAM_ORDERS, ids=_ORDER_IDS)
+async def test_an_inherited_member_names_every_owner_it_comes_from_on_real_mongo(db, team_order):
+    await _assert_an_inherited_member_names_every_owner_it_comes_from(await _seed(db, team_order=team_order))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("team_order", [(_TOURISTS, _PICKACHU), (_PICKACHU, _TOURISTS)], ids=["tourists-first", "pickachu-first"])
+async def test_both_owners_of_the_same_two_members_are_named(db, team_order):
+    await _assert_both_owners_of_the_same_two_members_are_named(await _seed_prod_shape(db, team_order=team_order))
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+@pytest.mark.parametrize("team_order", [(_TOURISTS, _PICKACHU), (_PICKACHU, _TOURISTS)], ids=["tourists-first", "pickachu-first"])
+async def test_both_owners_of_the_same_two_members_are_named_on_real_mongo(db, team_order):
+    await _assert_both_owners_of_the_same_two_members_are_named(await _seed_prod_shape(db, team_order=team_order))
 
 
 @pytest.mark.asyncio
