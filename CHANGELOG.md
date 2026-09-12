@@ -1,4 +1,12 @@
-# Release 1.9.28
+# Release 1.9.29
+
+## 📦 Build & CI
+
+- chore: release 1.9.29 - owning teams in a plain multi-select dropdown (#0)
+
+
+
+# Release 1.9.29
 
 ## 📦 Build & CI
 
