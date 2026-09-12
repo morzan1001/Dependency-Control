@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from app.repositories.projects import add_team_pipeline, remove_team_pipeline, replace_team_subset_pipeline
+from app.repositories.projects import remove_team_pipeline, replace_team_subset_pipeline, set_owners_pipeline
 from scripts.backfill_project_team_ids import drift_filter, provenance_gap_filter
 
 _CONFLICT = 40
@@ -500,10 +500,12 @@ TEAM_OWNERSHIP_CASES = [
         [{"$set": {"team_ids": {"$setUnion": [{"$setDifference": ["$team_ids", []]}, ["gh-1"]]}}}],
         expected={"name": "x", "team_ids": None},
     ),
+    # The picker shows a sync's owners beside the hand-assigned ones, so a retained entry keeping
+    # its provenance is what stops any project admin from laundering one into an immortal owner.
     UpdateCase(
-        "adding an owner by hand leaves the provider's alone",
+        "the whole-set write keeps a retained owner's provenance and stamps the new one",
         {"team_id": "gl-a", "team_source": "gitlab", "team_ids": ["gl-a"], "team_sources": {"gl-a": "gitlab"}},
-        add_team_pipeline("m1", "manual"),
+        set_owners_pipeline(["gl-a", "m1"]),
         expected={
             "team_ids": ["gl-a", "m1"],
             "team_sources": {"gl-a": "gitlab", "m1": "manual"},
@@ -512,9 +514,20 @@ TEAM_OWNERSHIP_CASES = [
         },
     ),
     UpdateCase(
-        "adding an owner onto absent fields",
+        "the whole-set write drops a deselected owner whatever established it",
+        {
+            "team_id": "gl-a",
+            "team_source": "gitlab",
+            "team_ids": ["gl-a", "m1"],
+            "team_sources": {"gl-a": "gitlab", "m1": "manual"},
+        },
+        set_owners_pipeline(["m1"]),
+        expected={"team_ids": ["m1"], "team_sources": {"m1": "manual"}, "team_id": "m1", "team_source": "manual"},
+    ),
+    UpdateCase(
+        "the whole-set write onto absent fields",
         {"name": "x"},
-        add_team_pipeline("m1", "manual"),
+        set_owners_pipeline(["m1"]),
         expected={
             "name": "x",
             "team_ids": ["m1"],
@@ -523,18 +536,22 @@ TEAM_OWNERSHIP_CASES = [
             "team_source": "manual",
         },
     ),
-    # Why POST /teams answers an owner it already holds without writing: the pipeline would restamp
-    # the entry, and a provider's owner marked by hand outlives every sync of that provider.
     UpdateCase(
-        "re-adding an owner rewrites its provenance",
-        {"team_id": "gl-a", "team_source": "gitlab", "team_ids": ["gl-a"], "team_sources": {"gl-a": "gitlab"}},
-        add_team_pipeline("gl-a", "manual"),
+        "a retained owner no provenance names is stamped as hand-assigned",
+        {"team_ids": ["legacy"], "team_sources": {}},
+        set_owners_pipeline(["legacy"]),
         expected={
-            "team_ids": ["gl-a"],
-            "team_sources": {"gl-a": "manual"},
-            "team_id": "gl-a",
+            "team_ids": ["legacy"],
+            "team_sources": {"legacy": "manual"},
+            "team_id": "legacy",
             "team_source": "manual",
         },
+    ),
+    UpdateCase(
+        "picking nothing empties both shapes",
+        {"team_id": "gl-a", "team_source": "gitlab", "team_ids": ["gl-a"], "team_sources": {"gl-a": "gitlab"}},
+        set_owners_pipeline([]),
+        expected={"team_ids": [], "team_sources": {}, "team_id": None, "team_source": None},
     ),
     UpdateCase(
         "a provider leaves an owner no provenance names alone",
@@ -544,17 +561,6 @@ TEAM_OWNERSHIP_CASES = [
             "team_ids": ["gl-b", "legacy"],
             "team_sources": {"gl-b": "gitlab"},
             "team_id": "gl-b",
-            "team_source": "gitlab",
-        },
-    ),
-    UpdateCase(
-        "the hand assignment replaces an owner no provenance names",
-        {"team_ids": ["legacy", "gl-a"], "team_sources": {"gl-a": "gitlab"}},
-        replace_team_subset_pipeline("manual", ["m1"]),
-        expected={
-            "team_ids": ["gl-a", "m1"],
-            "team_sources": {"gl-a": "gitlab", "m1": "manual"},
-            "team_id": "gl-a",
             "team_source": "gitlab",
         },
     ),

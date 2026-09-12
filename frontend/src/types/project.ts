@@ -66,6 +66,8 @@ export interface ProjectCreate {
 
 export interface ProjectUpdate {
   name?: string;
+  // The whole owner set, not a change to it: whatever is left out stops owning the project.
+  team_ids?: string[];
   active_analyzers?: string[];
   retention_days?: number;
   retention_action?: RetentionAction;

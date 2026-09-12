@@ -132,14 +132,10 @@ class ProjectCreate(BaseModel):
     )
 
 
-class ProjectTeamAssignment(BaseModel):
-    team_id: str = Field(..., min_length=1, description="Team to add as an owner of the project")
-
-
 class ProjectUpdate(BaseModel):
     name: str | None = Field(None, description="New name for the project")
-    team_id: str | None = Field(
-        None, description="The team this project is assigned to by hand; null gives up that assignment"
+    team_ids: list[str] | None = Field(
+        None, description="Every team that is to own this project; the whole set, empty gives up ownership"
     )
     active_analyzers: list[str] | None = Field(None, description="Updated list of active analyzers")
     retention_days: int | None = Field(None, description="Number of days to keep scan history", ge=1)

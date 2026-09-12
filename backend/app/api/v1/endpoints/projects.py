@@ -69,12 +69,9 @@ from app.repositories import (
     WaiverRepository,
 )
 from app.repositories.projects import (
-    add_team_pipeline,
     literal_set_stage,
-    owners_replaced_by,
     ownership_fields,
-    remove_team_pipeline,
-    replace_team_subset_pipeline,
+    set_owners_pipeline,
 )
 from app.schemas.project import (
     BranchInfo,
@@ -87,7 +84,6 @@ from app.schemas.project import (
     ProjectMemberInvite,
     ProjectMemberUpdate,
     ProjectNotificationSettings,
-    ProjectTeamAssignment,
     ProjectUpdate,
     ProjectWithTeam,
     RecentScan,
@@ -559,48 +555,45 @@ async def _load_project_for_update(
     return await check_project_access(project_id, current_user, db, required_role="admin")
 
 
-async def _assert_may_hand_to_team(
+async def _assert_may_hand_to_teams(
     project: Project,
-    team_id: str | None,
+    chosen: set[str],
     current_user: User,
     team_repo: TeamRepository,
 ) -> None:
-    """Block handing a project to a team unless the actor is a write superuser or one of its members.
+    """Block an owner set the caller may not hand the project to, before anything is written.
 
-    An id nothing resolves to is refused ahead of the ownership check, so both routes answer 404
-    for it: it grants nobody anything and no sync would ever reap it.
+    Only the owners being gained are checked. One the project already holds was granted by an
+    earlier write, and re-checking it would stop an admin of one owner from editing the rest.
+
+    An id nothing resolves to is refused with 404 ahead of the membership check: it grants nobody
+    anything and no sync would ever reap it.
     """
-    if not team_id:
-        return
-    if not await team_repo.get_by_id(team_id):
-        raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
-    if team_id in project.team_ids:
-        return
-    if len(project.team_ids) >= MAX_PROJECT_TEAMS:
+    if len(chosen) > MAX_PROJECT_TEAMS:
         raise HTTPException(status_code=400, detail=f"A project may be owned by at most {MAX_PROJECT_TEAMS} teams")
-    if is_write_superuser(current_user):
-        return
-    if not await team_repo.is_member(team_id, str(current_user.id)):
-        raise HTTPException(status_code=403, detail="You are not a member of the target team")
+    for team_id in sorted(chosen - set(project.team_ids)):
+        if not await team_repo.get_by_id(team_id):
+            raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
+        if is_write_superuser(current_user):
+            continue
+        if not await team_repo.is_member(team_id, str(current_user.id)):
+            raise HTTPException(status_code=403, detail="You are not a member of the target team")
 
 
 async def _admin_survival_guard_for(
     project: Project,
-    chosen: str | None,
+    chosen: set[str],
     current_user: User,
     team_repo: TeamRepository,
 ) -> dict[str, Any]:
-    """The guard for replacing the project's hand-assigned owners with ``chosen``.
+    """The guard for making ``chosen`` the project's whole owner set.
 
-    Same rule as removing one owner: a write superuser may leave a project only they can
-    administer, because they are the ones who can undo it.
+    A write superuser may leave a project only they can administer, because they are the ones who
+    can undo it.
     """
     if is_write_superuser(current_user):
         return {}
-    surviving = set(project.team_ids) - owners_replaced_by(project, TEAM_SOURCE_MANUAL)
-    if chosen:
-        surviving.add(chosen)
-    return await admin_survival_guard(project, surviving, team_repo)
+    return await admin_survival_guard(project, chosen, team_repo)
 
 
 async def _assert_gitlab_mr_token_present(
@@ -680,22 +673,21 @@ async def update_project(
     current_user: CurrentUserDep,
     db: DatabaseDep,
 ) -> Project:
-    """Update project details (name, team, active analyzers). Requires 'admin' role."""
+    """Update project details (name, owning teams, active analyzers). Requires 'admin' role."""
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
     project = await _load_project_for_update(project_id, current_user, db)
-    await _assert_may_hand_to_team(project, project_in.team_id, current_user, team_repo)
 
     update_data = dict(project_in.model_dump(exclude_unset=True))
-    # team_id names the caller's own assignment, so it replaces the owners marked manual and
-    # leaves a provider's alone — only that provider retires those. /teams adds one without
-    # displacing another; this route is the single-team picker, and says exactly that.
+    # The picker sends every owner it showed, a sync's included, so the write keeps each retained
+    # owner's provenance rather than claiming the lot as hand-assigned.
     ownership_stages: list[dict] = []
     guard: dict[str, Any] = {}
-    if "team_id" in update_data:
-        chosen = update_data.pop("team_id")
-        ownership_stages = replace_team_subset_pipeline(TEAM_SOURCE_MANUAL, [chosen] if chosen else [])
+    if "team_ids" in update_data:
+        chosen = set(update_data.pop("team_ids") or [])
+        await _assert_may_hand_to_teams(project, chosen, current_user, team_repo)
+        ownership_stages = set_owners_pipeline(sorted(chosen))
         guard = await _admin_survival_guard_for(project, chosen, current_user, team_repo)
     await _assert_gitlab_mr_token_present(project, update_data, db)
     await _assert_github_pr_token_present(project, update_data, db)
@@ -720,76 +712,6 @@ async def update_project(
         raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
 
     await _audit_license_policy_change(db, project_id, old_license_policy, updated_project, current_user)
-    return updated_project
-
-
-@router.post("/{project_id}/teams", summary="Add an owning team", responses=RESP_AUTH_400_404)
-async def add_project_team(
-    project_id: str,
-    assignment: ProjectTeamAssignment,
-    current_user: CurrentUserDep,
-    db: DatabaseDep,
-) -> Project:
-    """Add a team as an owner of the project. Requires 'admin' role.
-
-    Ownership is what grants a team's members access, so this is an access grant and takes the same
-    rule as a transfer: the caller hands out only what they are part of, unless they may write to
-    every project anyway.
-
-    A team that already owns the project is answered with the project as it stands. Writing the
-    entry again would restamp it as a hand assignment, which is how a provider's owner would come
-    to outlive the sync that is supposed to retire it — and this route grants ownership, it does
-    not decide who established it.
-    """
-    project_repo = ProjectRepository(db)
-    team_repo = TeamRepository(db)
-
-    project = await _load_project_for_update(project_id, current_user, db)
-    await _assert_may_hand_to_team(project, assignment.team_id, current_user, team_repo)
-
-    if assignment.team_id not in project.team_ids:
-        await project_repo.update_raw(project_id, add_team_pipeline(assignment.team_id, TEAM_SOURCE_MANUAL))
-
-    updated_project = await project_repo.get_by_id_strong(project_id)
-    if not updated_project:
-        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
-    return updated_project
-
-
-@router.delete("/{project_id}/teams/{team_id}", summary="Remove an owning team", responses=RESP_AUTH_400_404)
-async def remove_project_team(
-    project_id: str,
-    team_id: str,
-    current_user: CurrentUserDep,
-    db: DatabaseDep,
-) -> Project:
-    """Stop a team owning the project, whichever provider assigned it. Requires 'admin' role.
-
-    The project-admin gate is the whole rule: a project admin is either a direct member or an admin
-    of one of the owning teams, so requiring more would only stop the admins of one owner from
-    touching another's entry — which is exactly how a project stuck with a wrong owner stays stuck.
-
-    Taking the last team that supplies an admin is refused for everyone but a write superuser: it
-    leaves a project only they can administer, which is the state they alone can undo.
-    """
-    project_repo = ProjectRepository(db)
-    team_repo = TeamRepository(db)
-
-    project = await _load_project_for_update(project_id, current_user, db)
-    if team_id not in project.team_ids:
-        raise HTTPException(status_code=404, detail="That team does not own this project")
-
-    guard: dict[str, Any] = {}
-    if not is_write_superuser(current_user):
-        guard = await admin_survival_guard(project, set(project.team_ids) - {team_id}, team_repo)
-
-    # An unguarded write matching nothing means the project is gone, which the read below answers.
-    if not await project_repo.update_raw(project_id, remove_team_pipeline(team_id), guard) and guard:
-        raise HTTPException(status_code=400, detail=_MSG_LAST_ADMIN_OWNER)
-
-    updated_project = await project_repo.get_by_id_strong(project_id)
-    if not updated_project:
-        raise HTTPException(status_code=404, detail=_MSG_PROJECT_NOT_FOUND)
     return updated_project
 
 
