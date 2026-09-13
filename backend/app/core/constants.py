@@ -183,6 +183,24 @@ MAX_PROJECT_TEAMS = 16
 # have that provider's next sync retire an owner nobody chose to retire.
 TEAM_SOURCE_MANUAL = "manual"
 
+TEAM_SOURCE_GITLAB = "gitlab"
+TEAM_SOURCE_GITHUB = "github"
+# The providers a bare, un-instanced provenance value can name. Such a value predates
+# ``backfill_team_source_instances`` and belongs to no instance, so no sync retires its owner.
+TEAM_SOURCE_PROVIDERS: tuple[str, ...] = (TEAM_SOURCE_GITLAB, TEAM_SOURCE_GITHUB)
+
+# A provider alone cannot say which sync established an owner, and two instances of one provider
+# then read each other's owners as their own and retire them, alternating, on every CI run. A
+# colon-joined string keeps the value a plain scalar, so the $objectToArray provenance arithmetic
+# and its $eq on the value stay exactly as they are; instance ids are uuid4 and carry no colon.
+TEAM_SOURCE_SEPARATOR = ":"
+
+
+def team_source(provider: str, instance_id: str) -> str:
+    """The provenance value for an owner that one instance of ``provider`` established."""
+    return f"{provider}{TEAM_SOURCE_SEPARATOR}{instance_id}"
+
+
 # Upper bound on a user-entered policy comment, shared by the audit entry and the request bodies.
 POLICY_COMMENT_MAX_LENGTH = 1000
 

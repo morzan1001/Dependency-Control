@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from app.api.deps import _github_team_sync_stages, _gitlab_team_sync_stages
-from app.core.constants import MAX_PROJECT_TEAMS
+from app.core.constants import MAX_PROJECT_TEAMS, TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.project import Project
 from app.repositories.projects import ProjectRepository
 from app.services.github import GitHubTeamSyncResult
@@ -18,15 +18,21 @@ from app.services.gitlab import GitLabTeamSyncResult
 from tests.mocks.fake_mongo import FakeDatabase
 
 _PROJECT_ID = "p-1"
+_GITLAB_INSTANCE = "inst-1"
+_GITHUB_INSTANCE = "gh-1"
+_SECOND_GITLAB_INSTANCE = "inst-2"
+_GITLAB = team_source(TEAM_SOURCE_GITLAB, _GITLAB_INSTANCE)
+_SECOND_GITLAB = team_source(TEAM_SOURCE_GITLAB, _SECOND_GITLAB_INSTANCE)
+_GITHUB = team_source(TEAM_SOURCE_GITHUB, _GITHUB_INSTANCE)
 
 
 async def _seed(db, **ownership) -> Project:
     doc = {
         "_id": _PROJECT_ID,
         "name": "grp/proj",
-        "gitlab_instance_id": "inst-1",
+        "gitlab_instance_id": _GITLAB_INSTANCE,
         "gitlab_project_id": 100,
-        "github_instance_id": "gh-1",
+        "github_instance_id": _GITHUB_INSTANCE,
         "github_repository_id": "123456",
         **ownership,
     }
@@ -40,18 +46,20 @@ async def _apply(db, project: Project, stages: list[dict]) -> dict:
     return await db.projects.find_one({"_id": str(project.id)})
 
 
-async def _gitlab_sync(db, project: Project, resolved: list[str] | None) -> tuple[dict, list[dict]]:
+async def _gitlab_sync(
+    db, project: Project, resolved: list[str] | None, instance_id: str = _GITLAB_INSTANCE
+) -> tuple[dict, list[dict]]:
     service = MagicMock()
     service.get_project_details = AsyncMock(return_value=MagicMock())
     service.sync_team_from_gitlab = AsyncMock(return_value=GitLabTeamSyncResult(resolved))
-    stages = await _gitlab_team_sync_stages(project, 100, "grp/proj", service, db)
+    stages = await _gitlab_team_sync_stages(project, instance_id, 100, "grp/proj", service, db)
     return await _apply(db, project, stages), stages
 
 
 async def _github_sync(db, project: Project, resolved: list[str] | None) -> tuple[dict, list[dict]]:
     service = MagicMock()
     service.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult(resolved))
-    stages = await _github_team_sync_stages(project, "acme", "acme/widgets", service, db)
+    stages = await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme", "acme/widgets", service, db)
     return await _apply(db, project, stages), stages
 
 
@@ -63,15 +71,15 @@ async def test_a_sync_does_not_evict_a_manual_co_owner():
     project = await _seed(
         db,
         team_ids=["gl-old", "by-hand"],
-        team_sources={"gl-old": "gitlab", "by-hand": "manual"},
+        team_sources={"gl-old": _GITLAB, "by-hand": "manual"},
         team_id="gl-old",
-        team_source="gitlab",
+        team_source=_GITLAB,
     )
 
     stored, _ = await _gitlab_sync(db, project, ["gl-new"])
 
     assert sorted(stored["team_ids"]) == ["by-hand", "gl-new"]
-    assert stored["team_sources"] == {"by-hand": "manual", "gl-new": "gitlab"}
+    assert stored["team_sources"] == {"by-hand": "manual", "gl-new": _GITLAB}
 
 
 @pytest.mark.asyncio
@@ -79,20 +87,20 @@ async def test_a_project_that_moved_group_loses_the_owner_it_left():
     """The mirror image: a union would keep the old group forever, so every transfer would widen
     access instead of moving it."""
     db = FakeDatabase()
-    project = await _seed(db, team_ids=["gl-old"], team_sources={"gl-old": "gitlab"}, team_id="gl-old")
+    project = await _seed(db, team_ids=["gl-old"], team_sources={"gl-old": _GITLAB}, team_id="gl-old")
 
     stored, _ = await _gitlab_sync(db, project, ["gl-new"])
 
     assert stored["team_ids"] == ["gl-new"]
-    assert stored["team_sources"] == {"gl-new": "gitlab"}
+    assert stored["team_sources"] == {"gl-new": _GITLAB}
     assert stored["team_id"] == "gl-new"
-    assert stored["team_source"] == "gitlab"
+    assert stored["team_source"] == _GITLAB
 
 
 @pytest.mark.asyncio
 async def test_a_sync_that_could_not_be_asked_writes_nothing():
     db = FakeDatabase()
-    project = await _seed(db, team_ids=["gl-old"], team_sources={"gl-old": "gitlab"}, team_id="gl-old")
+    project = await _seed(db, team_ids=["gl-old"], team_sources={"gl-old": _GITLAB}, team_id="gl-old")
 
     stored, stages = await _gitlab_sync(db, project, None)
 
@@ -106,7 +114,7 @@ async def test_a_sync_that_resolved_nothing_retires_its_own_owners_only():
     project = await _seed(
         db,
         team_ids=["gl-old", "by-hand"],
-        team_sources={"gl-old": "gitlab", "by-hand": "manual"},
+        team_sources={"gl-old": _GITLAB, "by-hand": "manual"},
         team_id="gl-old",
     )
 
@@ -124,16 +132,36 @@ async def test_one_provider_never_touches_the_other_provider_s_owner():
     project = await _seed(
         db,
         team_ids=["gl-a", "gh-a"],
-        team_sources={"gl-a": "gitlab", "gh-a": "github"},
+        team_sources={"gl-a": _GITLAB, "gh-a": _GITHUB},
         team_id="gl-a",
     )
 
     stored, _ = await _github_sync(db, project, ["gh-b"])
 
     assert sorted(stored["team_ids"]) == ["gh-b", "gl-a"]
-    assert stored["team_sources"] == {"gl-a": "gitlab", "gh-b": "github"}
+    assert stored["team_sources"] == {"gl-a": _GITLAB, "gh-b": _GITHUB}
     # The incumbent scalar still owns the project, so nothing moves it.
     assert stored["team_id"] == "gl-a"
+
+
+@pytest.mark.asyncio
+async def test_one_gitlab_instance_never_touches_another_gitlab_instance_s_owner():
+    """Two instances of one provider, the shape this installation already has. A source naming the
+    provider alone makes each ingest read the other's owner as its own, so the two retire each
+    other's team in turn and the project's owners alternate on every CI run."""
+    db = FakeDatabase()
+    project = await _seed(
+        db,
+        team_ids=["gl-a", "gl-b"],
+        team_sources={"gl-a": _GITLAB, "gl-b": _SECOND_GITLAB},
+        team_id="gl-a",
+        team_source=_GITLAB,
+    )
+
+    stored, _ = await _gitlab_sync(db, project, ["gl-b-moved"], instance_id=_SECOND_GITLAB_INSTANCE)
+
+    assert sorted(stored["team_ids"]) == ["gl-a", "gl-b-moved"]
+    assert stored["team_sources"] == {"gl-a": _GITLAB, "gl-b-moved": _SECOND_GITLAB}
 
 
 @pytest.mark.asyncio
@@ -144,7 +172,7 @@ async def test_github_attaches_every_team_that_holds_the_repository():
     stored, _ = await _github_sync(db, project, ["gh-b", "gh-a"])
 
     assert stored["team_ids"] == ["gh-a", "gh-b"]
-    assert stored["team_sources"] == {"gh-a": "github", "gh-b": "github"}
+    assert stored["team_sources"] == {"gh-a": _GITHUB, "gh-b": _GITHUB}
 
 
 @pytest.mark.asyncio
@@ -155,7 +183,7 @@ async def test_an_unchanged_subset_is_not_rewritten():
     project = await _seed(
         db,
         team_ids=["gl-a", "by-hand"],
-        team_sources={"gl-a": "gitlab", "by-hand": "manual"},
+        team_sources={"gl-a": _GITLAB, "by-hand": "manual"},
         team_id="gl-a",
     )
 
@@ -169,7 +197,7 @@ async def test_a_subset_recorded_but_never_stored_is_written_out():
     """team_sources naming an owner team_ids does not hold is a document an older writer left
     behind; treating it as unchanged would keep it broken forever."""
     db = FakeDatabase()
-    project = await _seed(db, team_ids=[], team_sources={"gl-a": "gitlab"})
+    project = await _seed(db, team_ids=[], team_sources={"gl-a": _GITLAB})
 
     stored, stages = await _gitlab_sync(db, project, ["gl-a"])
 
@@ -191,13 +219,13 @@ async def test_a_legacy_owner_with_no_provenance_is_not_retired_by_a_sync():
     stored, _ = await _gitlab_sync(db, project, ["gl-new"])
 
     assert sorted(stored["team_ids"]) == ["gl-new", "legacy"]
-    assert stored["team_sources"] == {"gl-new": "gitlab"}
+    assert stored["team_sources"] == {"gl-new": _GITLAB}
 
 
 @pytest.mark.asyncio
 async def test_a_resolution_past_the_cap_leaves_the_owners_alone(caplog):
     db = FakeDatabase()
-    project = await _seed(db, team_ids=["gl-a"], team_sources={"gl-a": "gitlab"}, team_id="gl-a")
+    project = await _seed(db, team_ids=["gl-a"], team_sources={"gl-a": _GITLAB}, team_id="gl-a")
 
     with caplog.at_level("WARNING", logger="app.api.deps"):
         stored, stages = await _gitlab_sync(db, project, [f"gl-{n}" for n in range(MAX_PROJECT_TEAMS + 1)])
@@ -242,7 +270,7 @@ async def test_the_service_is_asked_about_the_repository_the_token_names():
     service = MagicMock()
     service.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult([]))
 
-    await _github_team_sync_stages(project, "acme-org", "acme/widgets", service, db)
+    await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme-org", "acme/widgets", service, db)
 
     service.sync_team_from_github.assert_awaited_once_with(
         db, "acme-org", "acme/widgets", owner_budget=MAX_PROJECT_TEAMS
@@ -258,11 +286,11 @@ async def test_the_provider_is_told_how_much_room_the_project_has_left():
     project = await _seed(
         db,
         team_ids=[*others, "gh-a"],
-        team_sources={**dict.fromkeys(others, "manual"), "gh-a": "github"},
+        team_sources={**dict.fromkeys(others, "manual"), "gh-a": _GITHUB},
     )
     service = MagicMock()
     service.sync_team_from_github = AsyncMock(return_value=GitHubTeamSyncResult(["gh-a"]))
 
-    await _github_team_sync_stages(project, "acme-org", "acme/widgets", service, db)
+    await _github_team_sync_stages(project, _GITHUB_INSTANCE, "acme-org", "acme/widgets", service, db)
 
     assert service.sync_team_from_github.await_args.kwargs == {"owner_budget": MAX_PROJECT_TEAMS - 4}

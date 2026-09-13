@@ -12,6 +12,7 @@ import pytest
 from fastapi import HTTPException
 
 from app.api.v1.endpoints.projects import update_project
+from app.core.constants import TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.project import Project
 from app.models.user import User
 from app.repositories.projects import (
@@ -24,13 +25,17 @@ from app.repositories.projects import (
 from app.schemas.project import ProjectUpdate
 from tests.mocks.fake_mongo import FakeDatabase
 
+_GITLAB_A = team_source(TEAM_SOURCE_GITLAB, "gl-inst-a")
+_GITLAB_B = team_source(TEAM_SOURCE_GITLAB, "gl-inst-b")
+_GITHUB_A = team_source(TEAM_SOURCE_GITHUB, "gh-inst-a")
+
 _PROJECT = {
     "_id": "p-live",
     "name": "demo",
     "team_ids": ["gl-stale", "kept-by-hand"],
-    "team_sources": {"gl-stale": "gitlab", "kept-by-hand": "manual"},
+    "team_sources": {"gl-stale": _GITLAB_A, "kept-by-hand": "manual"},
     "team_id": "gl-stale",
-    "team_source": "gitlab",
+    "team_source": _GITLAB_A,
 }
 
 
@@ -38,15 +43,15 @@ async def _assert_a_sync_keeps_the_manual_co_owner(db) -> None:
     repo = ProjectRepository(db)
     await db.projects.insert_one(dict(_PROJECT))
 
-    await repo.update_raw("p-live", replace_team_subset_pipeline("gitlab", ["gl-fresh"]))
+    await repo.update_raw("p-live", replace_team_subset_pipeline(_GITLAB_A, ["gl-fresh"]))
 
     project = Project(**await db.projects.find_one({"_id": "p-live"}))
     assert sorted(project.team_ids) == ["gl-fresh", "kept-by-hand"]
-    assert project.team_sources == {"kept-by-hand": "manual", "gl-fresh": "gitlab"}
+    assert project.team_sources == {"kept-by-hand": "manual", "gl-fresh": _GITLAB_A}
     # The scalar named the owner that was just retired, so it follows the list rather than a team
     # that no longer owns anything.
     assert project.team_id == "gl-fresh"
-    assert project.team_source == "gitlab"
+    assert project.team_source == _GITLAB_A
     # The project must stay findable: an ownership write that stored null would drop it out of
     # the unassigned view and every ownership view at once.
     assert await db.projects.count_documents({"team_ids": {"$size": 0}}) == 0
@@ -69,13 +74,54 @@ async def _assert_an_untouched_document_gains_both_shapes(db) -> None:
     repo = ProjectRepository(db)
     await db.projects.insert_one({"_id": "p-bare", "name": "never-owned"})
 
-    await repo.update_raw("p-bare", replace_team_subset_pipeline("github", []))
+    await repo.update_raw("p-bare", replace_team_subset_pipeline(_GITHUB_A, []))
 
     stored = await db.projects.find_one({"_id": "p-bare"})
     assert stored["team_ids"] == []
     assert stored["team_sources"] == {}
     assert stored["team_id"] is None
     assert await db.projects.count_documents({"team_ids": {"$size": 0}}) == 1
+
+
+_TWO_INSTANCE_PROJECT = {
+    "_id": "p-two-gitlabs",
+    "name": "owned-from-two-instances",
+    "team_ids": ["gl-a-team", "gl-b-team", "kept-by-hand"],
+    "team_sources": {"gl-a-team": _GITLAB_A, "gl-b-team": _GITLAB_B, "kept-by-hand": "manual"},
+    "team_id": "gl-a-team",
+    "team_source": _GITLAB_A,
+}
+
+
+async def _assert_two_gitlab_instances_do_not_retire_each_other_s_owner(db) -> None:
+    """The production shape: two GitLab instances, each holding a different team on one project.
+
+    Under a provider-wide source each ingest reads the other's owner as its own, so B's run deletes
+    A's team, A's next run deletes B's, and the project's owners alternate on every CI run. Both
+    directions are exercised, because a one-sided check passes on exactly that alternation.
+    """
+    repo = ProjectRepository(db)
+    await db.projects.insert_one(dict(_TWO_INSTANCE_PROJECT))
+
+    await repo.update_raw("p-two-gitlabs", replace_team_subset_pipeline(_GITLAB_B, ["gl-b-moved"]))
+
+    after_b = Project(**await db.projects.find_one({"_id": "p-two-gitlabs"}))
+    assert sorted(after_b.team_ids) == ["gl-a-team", "gl-b-moved", "kept-by-hand"]
+    assert after_b.team_sources == {
+        "gl-a-team": _GITLAB_A,
+        "gl-b-moved": _GITLAB_B,
+        "kept-by-hand": "manual",
+    }
+
+    await repo.update_raw("p-two-gitlabs", replace_team_subset_pipeline(_GITLAB_A, ["gl-a-moved"]))
+
+    after_a = Project(**await db.projects.find_one({"_id": "p-two-gitlabs"}))
+    assert sorted(after_a.team_ids) == ["gl-a-moved", "gl-b-moved", "kept-by-hand"]
+    assert after_a.team_sources == {
+        "gl-a-moved": _GITLAB_A,
+        "gl-b-moved": _GITLAB_B,
+        "kept-by-hand": "manual",
+    }
 
 
 _LEGACY_PROJECT = {
@@ -96,17 +142,17 @@ async def _assert_a_legacy_owner_outlives_a_sync_but_not_the_picker(db) -> None:
     repo = ProjectRepository(db)
     await db.projects.insert_one(dict(_LEGACY_PROJECT))
 
-    await repo.update_raw("p-legacy", replace_team_subset_pipeline("gitlab", ["gl-new"]))
+    await repo.update_raw("p-legacy", replace_team_subset_pipeline(_GITLAB_A, ["gl-new"]))
 
     after_sync = Project(**await db.projects.find_one({"_id": "p-legacy"}))
     assert sorted(after_sync.team_ids) == ["gl-new", "legacy"]
-    assert after_sync.team_sources == {"gl-new": "gitlab"}
+    assert after_sync.team_sources == {"gl-new": _GITLAB_A}
 
     await repo.update_raw("p-legacy", set_owners_pipeline(["by-hand", "gl-new"]))
 
     after_picker = Project(**await db.projects.find_one({"_id": "p-legacy"}))
     assert sorted(after_picker.team_ids) == ["by-hand", "gl-new"]
-    assert after_picker.team_sources == {"by-hand": "manual", "gl-new": "gitlab"}
+    assert after_picker.team_sources == {"by-hand": "manual", "gl-new": _GITLAB_A}
     assert await db.projects.count_documents({"team_ids": "legacy"}) == 0
 
 
@@ -152,12 +198,12 @@ _MIXED_PROJECT = {
     "_id": "p-mirror",
     "name": "mixed",
     "team_ids": ["gl-a", "gh-a", "by-hand", "legacy"],
-    "team_sources": {"gl-a": "gitlab", "gh-a": "github", "by-hand": "manual"},
+    "team_sources": {"gl-a": _GITLAB_A, "gh-a": _GITHUB_A, "by-hand": "manual"},
 }
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("source", ["gitlab", "github"])
+@pytest.mark.parametrize("source", [_GITLAB_A, _GITHUB_A])
 async def test_the_python_mirror_names_the_owners_the_pipeline_retires(source):
     """Ingest sizes the outcome in Python before the server computes it, so the two spellings have
     to select the same entries or one of them is deciding about a different set."""
@@ -169,6 +215,17 @@ async def test_the_python_mirror_names_the_owners_the_pipeline_retires(source):
 
     stored = await db.projects.find_one({"_id": "p-mirror"})
     assert set(_MIXED_PROJECT["team_ids"]) - set(stored["team_ids"]) == owners_replaced_by(project, source)
+
+
+@pytest.mark.asyncio
+async def test_two_gitlab_instances_do_not_retire_each_other_s_owner():
+    await _assert_two_gitlab_instances_do_not_retire_each_other_s_owner(FakeDatabase())
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_two_gitlab_instances_do_not_retire_each_other_s_owner_on_real_mongo(db):
+    await _assert_two_gitlab_instances_do_not_retire_each_other_s_owner(db)
 
 
 @pytest.mark.asyncio

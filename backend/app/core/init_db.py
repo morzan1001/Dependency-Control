@@ -5,6 +5,7 @@ from typing import Any
 import pymongo
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import TEAM_SOURCE_GITLAB, team_source
 from app.core.metrics import update_db_stats
 from app.core.permissions import ALL_PERMISSIONS
 from app.core.security import get_password_hash
@@ -158,8 +159,12 @@ async def _backfill_synced_team_gitlab_ids(database: AsyncIOMotorDatabase[Any]) 
 
 
 async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[Any]) -> None:
-    """Idempotent provenance backfill: stamp "gitlab" on the owner entry of projects owned by a
-    gitlab-synced team, but only where that entry is unset (never overwrite "manual").
+    """Idempotent provenance backfill: stamp the GitLab instance that holds the group on the owner
+    entry of projects owned by a gitlab-synced team, but only where that entry is unset.
+
+    A team with no ``gitlab_instance_id`` is skipped rather than stamped with the provider alone:
+    a value naming no instance is retired by no sync, and one naming the wrong instance hands the
+    owner to that instance's next ingest to delete.
 
     Members are intentionally left unstamped: stamping existing members "gitlab" would put
     manually-added members inside the gitlab subset the next sync's merge replaces, silently
@@ -172,28 +177,35 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
     # both manual teams (field absent) and teams with an explicit null.
     cursor = teams.find(
         {"gitlab_group_id": {"$ne": None}},
-        {"_id": 1, "gitlab_group_id": 1},
+        {"_id": 1, "gitlab_group_id": 1, "gitlab_instance_id": 1},
     )
     synced_teams = await cursor.to_list(None)
 
     projects_stamped = 0
+    unattributable = 0
     failed = 0
     for team in synced_teams:
         team_id = team.get("_id")
         # Per-team isolation: this runs before index creation, so an unhandled raise
         # would crash startup for every other team/project.
         try:
-            if not team.get("gitlab_group_id"):
+            instance_id = team.get("gitlab_instance_id")
+            if not team.get("gitlab_group_id") or not instance_id:
+                unattributable += 1
                 continue
 
             # Per owner, not per project: a project can hold several, and only this one's entry
             # is known to have come from GitLab. Without it the next sync sees no owner of its
             # own to replace and leaves a transferred project owned by both teams.
             provenance = f"team_sources.{team_id}"
-            # $nin matches both missing fields and null, so already-stamped owners are untouched.
+            # Absent and null, and nothing else: any stored value already names a source, and
+            # overwriting one would move an owner between instances on a startup.
             result = await projects.update_many(
-                {"team_ids": team_id, provenance: {"$nin": ["manual", "gitlab", "github"]}},
-                [{"$set": {provenance: "gitlab"}}, *scalar_mirror_stages()],
+                {"team_ids": team_id, provenance: {"$in": [None]}},
+                [
+                    {"$set": {provenance: team_source(TEAM_SOURCE_GITLAB, instance_id)}},
+                    *scalar_mirror_stages(),
+                ],
             )
             projects_stamped += getattr(result, "modified_count", 0) or 0
         except Exception:
@@ -207,11 +219,13 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
 
     if synced_teams:
         logger.info(
-            "Provenance backfill complete: %d project(s) stamped an owner gitlab "
-            "across %d synced team(s), %d team(s) failed and skipped. "
+            "Provenance backfill complete: %d project(s) stamped an owner with its GitLab instance "
+            "across %d synced team(s), %d team(s) named no instance and were left unstamped, "
+            "%d team(s) failed and skipped. "
             "(Members intentionally left unstamped so manually-added members survive merges.)",
             projects_stamped,
             len(synced_teams),
+            unattributable,
             failed,
         )
 

@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
-from app.core.constants import MAX_PROJECT_TEAMS
+from app.core.constants import MAX_PROJECT_TEAMS, TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.system import SystemSettings
 from tests.mocks.github import make_github_oidc_payload
 from tests.mocks.gitlab import make_oidc_payload
@@ -924,7 +924,10 @@ class TestIngestGitHubTeamSync:
             {**_TEAM_SYNC_INSTANCE, "sync_teams": True}, ["t-9", "t-4"], project_doc=_TEAM_SYNC_PROJECT
         )
         assert projects_coll.update_one.await_args.args[0] == {"_id": "proj-gh-1"}
-        assert projects_coll.update_one.await_args.args[1] == replace_team_subset_pipeline("github", ["t-4", "t-9"])
+        expected_source = team_source(TEAM_SOURCE_GITHUB, _TEAM_SYNC_INSTANCE["_id"])
+        assert projects_coll.update_one.await_args.args[1] == replace_team_subset_pipeline(
+            expected_source, ["t-4", "t-9"]
+        )
 
     def test_an_auto_created_project_carries_every_synced_team(self):
         instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
@@ -934,10 +937,11 @@ class TestIngestGitHubTeamSync:
         mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme-org", "acme/widgets")
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
         assert inserted["team_ids"] == ["t-4", "t-9"]
-        assert inserted["team_sources"] == {"t-4": "github", "t-9": "github"}
+        expected_source = team_source(TEAM_SOURCE_GITHUB, _TEAM_SYNC_INSTANCE["_id"])
+        assert inserted["team_sources"] == {"t-4": expected_source, "t-9": expected_source}
         # The scalars are the first owner in the order a later sync would leave the list in.
         assert inserted["team_id"] == "t-4"
-        assert inserted["team_source"] == "github"
+        assert inserted["team_source"] == expected_source
 
     def test_an_auto_created_project_without_a_team_is_still_created(self):
         instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
@@ -1003,6 +1007,7 @@ class TestIngestGitLabTeamSync:
         mock_svc.sync_team_from_gitlab.assert_awaited_once_with(db, 99, "group/new-project", gitlab_project_data={})
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
         assert inserted["team_ids"] == ["t-gl-1"]
-        assert inserted["team_sources"] == {"t-gl-1": "gitlab"}
+        expected_source = team_source(TEAM_SOURCE_GITLAB, _GITLAB_TEAM_SYNC_INSTANCE["_id"])
+        assert inserted["team_sources"] == {"t-gl-1": expected_source}
         assert inserted["team_id"] == "t-gl-1"
-        assert inserted["team_source"] == "gitlab"
+        assert inserted["team_source"] == expected_source

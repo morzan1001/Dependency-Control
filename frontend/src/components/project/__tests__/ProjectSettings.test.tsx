@@ -175,7 +175,7 @@ describe('ProjectSettings team ownership', () => {
   })
 
   it('saves the picked teams with the rest of the form', async () => {
-    renderSettings(githubProject({ team_ids: ['t1'], team_sources: { t1: 'gitlab' } }))
+    renderSettings(githubProject({ team_ids: ['t1'], team_sources: { t1: 'gitlab:gl-1' } }))
 
     fireEvent.click(screen.getByRole('combobox', { name: 'Teams' }))
     fireEvent.click(await screen.findByRole('option', { name: 'Platform' }))
@@ -186,14 +186,14 @@ describe('ProjectSettings team ownership', () => {
   })
 
   it('names the teams it holds on the closed control', () => {
-    renderSettings(githubProject({ team_ids: ['t1', 't2'], team_sources: { t1: 'gitlab', t2: 'manual' } }))
+    renderSettings(githubProject({ team_ids: ['t1', 't2'], team_sources: { t1: 'gitlab:gl-1', t2: 'manual' } }))
 
     expect(screen.getByRole('combobox', { name: 'Teams' })).toHaveTextContent('Payments, Platform')
     expect(screen.queryByText('Owning Teams')).toBeNull()
   })
 
   it('deselects a team the project holds, whichever sync established it', async () => {
-    renderSettings(githubProject({ team_ids: ['t1', 't2'], team_sources: { t1: 'gitlab', t2: 'manual' } }))
+    renderSettings(githubProject({ team_ids: ['t1', 't2'], team_sources: { t1: 'gitlab:gl-1', t2: 'manual' } }))
 
     fireEvent.click(screen.getByRole('combobox', { name: 'Teams' }))
     fireEvent.click(await screen.findByRole('option', { name: 'Payments' }))
@@ -212,7 +212,7 @@ describe('ProjectSettings team ownership', () => {
   // The teams list answers only the caller's own teams, so an owner outside them has no option
   // of its own — and a save stating the whole set would drop it without anyone choosing to.
   it('keeps an owner the caller cannot see selected and saves it back', async () => {
-    renderSettings(githubProject({ team_ids: ['t1', 't9'], team_sources: { t9: 'github' } }))
+    renderSettings(githubProject({ team_ids: ['t1', 't9'], team_sources: { t9: 'github:gh-1' } }))
 
     expect(screen.getByRole('combobox', { name: 'Teams' })).toHaveTextContent('Payments, t9')
 

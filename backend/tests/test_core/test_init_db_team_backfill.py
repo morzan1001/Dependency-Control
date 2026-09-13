@@ -10,6 +10,7 @@ import asyncio
 import pytest
 from pymongo.errors import DuplicateKeyError, OperationFailure
 
+from app.core.constants import TEAM_SOURCE_GITLAB, team_source
 from app.core.init_db import (
     _backfill_member_and_team_provenance,
     _backfill_synced_team_gitlab_ids,
@@ -209,8 +210,8 @@ class TestBackfillProvenance:
 
         asyncio.run(_backfill_member_and_team_provenance(db))
 
-        assert db.projects._docs["p1"]["team_sources"] == {"t-synced": "gitlab"}
-        assert db.projects._docs["p1"]["team_source"] == "gitlab"
+        assert db.projects._docs["p1"]["team_sources"] == {"t-synced": team_source(TEAM_SOURCE_GITLAB, "inst-a")}
+        assert db.projects._docs["p1"]["team_source"] == team_source(TEAM_SOURCE_GITLAB, "inst-a")
 
     def test_leaves_a_co_owner_this_team_did_not_supply_alone(self):
         db = FakeDatabase()
@@ -221,7 +222,22 @@ class TestBackfillProvenance:
 
         asyncio.run(_backfill_member_and_team_provenance(db))
 
-        assert db.projects._docs["p1"]["team_sources"] == {"t-synced": "gitlab", "t-hand": "manual"}
+        assert db.projects._docs["p1"]["team_sources"] == {
+            "t-synced": team_source(TEAM_SOURCE_GITLAB, "inst-a"),
+            "t-hand": "manual",
+        }
+
+    def test_a_synced_team_naming_no_instance_leaves_the_owner_unstamped(self):
+        """Stamping the provider alone would leave a value no sync retires; stamping a guessed
+        instance would hand the owner to that instance's next ingest to delete. Unstamped reads as
+        hand-assigned, which keeps it."""
+        db = FakeDatabase()
+        _seed_team(db, "t-no-instance", "GitLab Group: acme", gitlab_group_id=42)
+        _seed_project(db, "p1", "t-no-instance")
+
+        asyncio.run(_backfill_member_and_team_provenance(db))
+
+        assert db.projects._docs["p1"]["team_sources"] == {}
 
     def test_does_not_stamp_team_source_for_manual_team_projects(self):
         db = FakeDatabase()
@@ -297,7 +313,7 @@ class TestBackfillProvenance:
             asyncio.run(_backfill_member_and_team_provenance(db))  # must NOT raise
 
         # The good team's project must still have been stamped despite the bad team failing.
-        assert db.projects._docs["p-good"]["team_sources"] == {"t-good": "gitlab"}
+        assert db.projects._docs["p-good"]["team_sources"] == {"t-good": team_source(TEAM_SOURCE_GITLAB, "inst-a")}
         assert any("t-bad" in r.message for r in caplog.records)
 
 
