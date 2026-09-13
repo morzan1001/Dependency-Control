@@ -628,7 +628,6 @@ class GitHubService:
     async def _refresh_team(
         self,
         team_repo: TeamRepository,
-        team: dict[str, Any],
         org: str,
         holder: "_RepositoryHolder",
         team_members: list[TeamMember] | None,
@@ -638,6 +637,7 @@ class GitHubService:
         ``team_members`` is None to leave the stored members alone, which the rename must not hang
         on: barely a login resolves here, so a name would otherwise never follow a renamed team.
         """
+        team = holder.team
         updates: dict[str, Any] = self._renamed_fields(team, org, holder.slug)
         if team_members is not None:
             updates["members"] = self._merge_team_members(team.get("members") or [], team_members)
@@ -941,7 +941,7 @@ class GitHubService:
     ) -> None:
         """Refresh one holding team. Best effort: the team owns the project either way."""
         members = await self._resolve_holder_members(user_repo, org, holder, repository_path)
-        await self._refresh_team(team_repo, holder.team, org, holder, members)
+        await self._refresh_team(team_repo, org, holder, members)
 
     async def sync_team_from_github(
         self,

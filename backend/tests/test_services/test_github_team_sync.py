@@ -282,7 +282,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, team, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-gh", source="github")])
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-gh", source="github")])
 
         assert repo.update_with_binding.await_args.args[1]["members"] == [
             {"user_id": "u-manual", "role": "admin", "source": "manual"},
@@ -297,7 +297,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, team, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source="github")])
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source="github")])
 
         update = repo.update_with_binding.await_args.args[1]
         assert "name" not in update
@@ -310,7 +310,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, team, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source="github")])
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source="github")])
 
         update = repo.update_with_binding.await_args.args[1]
         assert update["name"] == "GitHub Team: acme/payments"
@@ -323,7 +323,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, team, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source="github")])
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source="github")])
 
         assert "name" not in repo.update_with_binding.await_args.args[1]
 
@@ -334,7 +334,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, team, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source="github")])
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source="github")])
 
         assert repo.update_with_binding.await_args.args[3] == {"slug": "payments"}
 
@@ -346,7 +346,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, team, "acme", _RepositoryHolder(team, 4711, "payments"), None)
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), None)
 
         update = repo.update_with_binding.await_args.args[1]
         assert update["name"] == "GitHub Team: acme/payments"
@@ -359,7 +359,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, team, "acme", _RepositoryHolder(team, 4711, "payments"), None)
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), None)
 
         repo.update_with_binding.assert_not_called()
 
