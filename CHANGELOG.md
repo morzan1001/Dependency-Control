@@ -1,4 +1,12 @@
-# Release 1.9.34
+# Release 1.9.35
+
+## 📦 Build & CI
+
+- chore: bump VERSION to 1.9.35 (#0)
+
+
+
+# Release 1.9.35
 
 
 
