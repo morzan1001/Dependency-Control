@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { teamApi } from '@/api/teams';
-import { TeamCreate, TeamGitHubBinding, TeamMemberCreate } from '@/types/team';
+import { TeamCreate, TeamGitHubBinding, TeamGitLabBinding, TeamMemberCreate } from '@/types/team';
 
 export const teamKeys = {
   all: ['teams'] as const,
@@ -107,6 +107,29 @@ export const useClearTeamGithubBinding = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (teamId: string) => teamApi.clearGithubBinding(teamId),
+    onSuccess: (_, teamId) => {
+      queryClient.invalidateQueries({ queryKey: teamKeys.detail(teamId) });
+      queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
+    },
+  });
+};
+
+export const useSetTeamGitlabBinding = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ teamId, data }: { teamId: string; data: TeamGitLabBinding }) =>
+      teamApi.setGitlabBinding(teamId, data),
+    onSuccess: (_, variables) => {
+      queryClient.invalidateQueries({ queryKey: teamKeys.detail(variables.teamId) });
+      queryClient.invalidateQueries({ queryKey: teamKeys.lists() });
+    },
+  });
+};
+
+export const useClearTeamGitlabBinding = () => {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (teamId: string) => teamApi.clearGitlabBinding(teamId),
     onSuccess: (_, teamId) => {
       queryClient.invalidateQueries({ queryKey: teamKeys.detail(teamId) });
       queryClient.invalidateQueries({ queryKey: teamKeys.lists() });

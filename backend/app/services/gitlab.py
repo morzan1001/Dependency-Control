@@ -31,6 +31,36 @@ logger = logging.getLogger(__name__)
 _GITLAB_API_TIMEOUT = 10.0
 
 
+class GitLabGroupLookup(NamedTuple):
+    """One group read back from an instance.
+
+    ``reachable`` separates "this instance carries no such group" from "the instance did not
+    answer": the first is the caller's mistake, the second is not.
+    """
+
+    reachable: bool
+    group: dict[str, Any] | None
+
+
+def build_group_options(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The groups a human can bind to, with the full path that tells two same-named subgroups
+    apart. An entry that cannot address a group is left out, as it is everywhere else."""
+    options = []
+    for group in groups:
+        group_id = group.get("id")
+        full_path = group.get("full_path") or group.get("path")
+        if not isinstance(group_id, int) or not full_path:
+            continue
+        options.append(
+            {
+                "id": group_id,
+                "full_path": str(full_path),
+                "name": str(group.get("name") or full_path),
+            }
+        )
+    return options
+
+
 class GitLabTeamSyncResult(NamedTuple):
     """The Dependency Control teams GitLab says own the project — at most the one group's.
 
@@ -355,6 +385,32 @@ class GitLabService:
         members = await self._api_get_paginated(f"/groups/{group_id}/members/all", max_pages=None)
         return [GitLabMember(**m) for m in members] if members else None
 
+    async def get_groups(self, search: str | None = None) -> list[dict[str, Any]] | None:
+        """The groups this instance's token can see, to pick from when binding a team.
+
+        GitLab scopes /groups to the token's own memberships, or to everything for an
+        administrator; ``search`` is what reaches a group beyond the pagination cap.
+        """
+        params: dict[str, Any] = {"order_by": "path", "sort": "asc"}
+        if search:
+            params["search"] = search
+        return await self._api_get_paginated("/groups", params=params)
+
+    async def get_group(self, group_id: int) -> GitLabGroupLookup:
+        """One group by its numeric id."""
+        response = await self._api_get(f"/groups/{group_id}")
+        if response is None:
+            return GitLabGroupLookup(reachable=False, group=None)
+        if response.status_code == 200:
+            group: dict[str, Any] = response.json()
+            return GitLabGroupLookup(reachable=True, group=group)
+        # 404 is also what GitLab answers for a group the token may not see, which is the same
+        # answer for a binding: this instance cannot resolve it.
+        if response.status_code == 404:
+            return GitLabGroupLookup(reachable=True, group=None)
+        logger.error("GitLab GET /groups/%s answered %s", group_id, response.status_code)
+        return GitLabGroupLookup(reachable=False, group=None)
+
     async def _resolve_group_by_path(self, group_path: str) -> dict[str, Any] | None:
         """Resolve a GitLab group by its full path. Returns group dict with 'id' key."""
         import urllib.parse
@@ -491,6 +547,7 @@ class GitLabService:
         description: str,
         instance_id: str,
         group_id: int,
+        group_path: str,
         team_members: list[TeamMember],
     ) -> str | None:
         now = datetime.now(timezone.utc)
@@ -499,6 +556,9 @@ class GitLabService:
             merged_members = self._merge_team_members(existing_team.get("members") or [], team_members)
             update_data: dict = {
                 "members": merged_members,
+                # Restamped every sync: a group that was renamed or moved keeps the path GitLab
+                # reports now, including on a team bound by hand before any sync ran.
+                "gitlab_group_path": group_path,
                 "updated_at": now,
             }
             # Sync name only if it still has the auto-generated GitLab prefix.
@@ -519,6 +579,7 @@ class GitLabService:
                 description=description,
                 gitlab_instance_id=instance_id,
                 gitlab_group_id=group_id,
+                gitlab_group_path=group_path,
                 members=team_members,
             )
             await team_repo.create(new_team)
@@ -570,7 +631,7 @@ class GitLabService:
             existing_team = await team_repo.get_raw_by_gitlab_group(instance_id, group_id)
             team_members = await self._build_team_members(members, user_repo)
             team_id = await self._upsert_team_with_members(
-                team_repo, existing_team, team_name, description, instance_id, group_id, team_members
+                team_repo, existing_team, team_name, description, instance_id, group_id, group_path, team_members
             )
             # No team and none creatable is an answer, not a failure: the group's members are all
             # strangers here, so nothing in Dependency Control owns the project.

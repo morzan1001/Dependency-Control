@@ -8,20 +8,27 @@ from app.api import deps
 from app.api.deps import DatabaseDep
 from app.api.router import CustomAPIRouter
 from app.api.v1.helpers import build_pagination_response
-from app.api.v1.helpers.responses import RESP_AUTH, RESP_AUTH_400, RESP_AUTH_400_404_500, RESP_AUTH_404
+from app.api.v1.helpers.responses import (
+    RESP_AUTH,
+    RESP_AUTH_400,
+    RESP_AUTH_400_404_500,
+    RESP_AUTH_404,
+    RESP_AUTH_404_502,
+)
 from app.core.permissions import Permissions
 from app.models.gitlab_instance import GitLabInstance
 from app.models.user import User
 from app.repositories import ProjectRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.schemas.gitlab_instance import (
+    GitLabGroupOption,
     GitLabInstanceCreate,
     GitLabInstanceList,
     GitLabInstanceResponse,
     GitLabInstanceTestConnectionResponse,
     GitLabInstanceUpdate,
 )
-from app.services.gitlab import GitLabService
+from app.services.gitlab import GitLabService, build_group_options
 
 router = CustomAPIRouter()
 logger = logging.getLogger(__name__)
@@ -256,6 +263,32 @@ async def delete_instance(
         f"Deleted GitLab instance '{instance.name}' by user {current_user.username} "
         f"(force={force}, orphaned_projects={project_count})"
     )
+
+
+@router.get("/{instance_id}/groups", responses=RESP_AUTH_404_502)
+async def list_instance_groups(
+    instance_id: str,
+    db: DatabaseDep,
+    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
+    search: str | None = None,
+) -> list[GitLabGroupOption]:
+    """The groups this instance's token can see, to pick from when binding a team."""
+    instance = await GitLabInstanceRepository(db).get_by_id(instance_id)
+    if not instance:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail=f"GitLab instance with ID {instance_id} not found"
+        )
+
+    groups = await GitLabService(instance).get_groups(search)
+    if groups is None:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=(
+                f"Could not list the groups of instance '{instance.name}'. "
+                f"It needs an access token that can read them."
+            ),
+        )
+    return [GitLabGroupOption(**option) for option in build_group_options(groups)]
 
 
 @router.post("/{instance_id}/test-connection", responses=RESP_AUTH_404)

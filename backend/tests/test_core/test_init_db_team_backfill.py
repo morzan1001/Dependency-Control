@@ -363,3 +363,20 @@ class TestTeamsUniqueIndexGuard:
 
 if __name__ == "__main__":
     pytest.main([__file__, "-q"])
+
+
+class TestStartupBuildsTheBindingKeys:
+    """create_team_indexes is what the live index tests build; startup has to still call it,
+    or the uniqueness those tests prove would never reach a deployed installation."""
+
+    @staticmethod
+    def _team_index_keys(db):
+        return [keys for keys in db["teams"].created_indexes if isinstance(keys, tuple)]
+
+    def test_both_provider_bindings_get_their_unique_key(self):
+        db = FakeDatabase()
+
+        asyncio.run(create_indexes(db))
+
+        assert ("gitlab_instance_id", "gitlab_group_id") in self._team_index_keys(db)
+        assert ("github_instance_id", "github_team_id") in self._team_index_keys(db)

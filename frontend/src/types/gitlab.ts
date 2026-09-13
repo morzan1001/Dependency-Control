@@ -49,6 +49,12 @@ export interface GitLabInstanceList {
   pages: number;
 }
 
+export interface GitLabGroupOption {
+  id: number;
+  full_path: string;
+  name: string;
+}
+
 export interface GitLabInstanceTestConnectionResponse {
   success: boolean;
   message: string;

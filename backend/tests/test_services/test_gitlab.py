@@ -1,7 +1,7 @@
 """Tests for GitLabService multi-instance support."""
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -211,3 +211,56 @@ class TestGitLabServiceOIDC:
                         assert result.project_id == "42"
                         mock_invalidate.assert_called_once()
                         assert call_count == 2
+
+
+class TestGroupLookup:
+    """A binding to a group the instance cannot resolve would silently own nothing, so the
+    lookup has to separate "no such group" from "the instance did not answer"."""
+
+    @staticmethod
+    def _lookup(service, response):
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)):
+            return asyncio.run(service.get_group(77))
+
+    def test_a_group_the_instance_carries_is_returned(self, gitlab_instance_a):
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"id": 77, "full_path": "mo/edge"}
+
+        lookup = self._lookup(GitLabService(gitlab_instance_a), response)
+
+        assert (lookup.reachable, lookup.group["full_path"]) == (True, "mo/edge")
+
+    def test_a_group_the_instance_does_not_carry_is_reachable_and_absent(self, gitlab_instance_a):
+        lookup = self._lookup(GitLabService(gitlab_instance_a), MagicMock(status_code=404))
+
+        assert (lookup.reachable, lookup.group) == (True, None)
+
+    def test_an_unanswered_request_is_not_an_absent_group(self, gitlab_instance_a):
+        lookup = self._lookup(GitLabService(gitlab_instance_a), None)
+
+        assert (lookup.reachable, lookup.group) == (False, None)
+
+    def test_a_refused_request_is_not_an_absent_group(self, gitlab_instance_a):
+        lookup = self._lookup(GitLabService(gitlab_instance_a), MagicMock(status_code=403))
+
+        assert (lookup.reachable, lookup.group) == (False, None)
+
+
+class TestGroupListing:
+    def test_the_search_term_is_passed_to_gitlab(self, gitlab_instance_a):
+        service = GitLabService(gitlab_instance_a)
+
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=[])) as paginated:
+            asyncio.run(service.get_groups("edge"))
+
+        endpoint, kwargs = paginated.await_args[0][0], paginated.await_args[1]
+        assert endpoint == "/groups"
+        assert kwargs["params"]["search"] == "edge"
+
+    def test_no_search_term_asks_for_no_filter(self, gitlab_instance_a):
+        service = GitLabService(gitlab_instance_a)
+
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=[])) as paginated:
+            asyncio.run(service.get_groups())
+
+        assert "search" not in paginated.await_args[1]["params"]

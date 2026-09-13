@@ -26,32 +26,32 @@ const TEAM: Team = {
   updated_at: "2026-01-01T00:00:00Z",
 };
 
-function renderCard(onManageGithubBinding = vi.fn()) {
+function renderCard(onManageBinding = vi.fn(), team: Team = TEAM) {
   render(
     <TeamCard
-      team={TEAM}
+      team={team}
       onEdit={vi.fn()}
       onManageMembers={vi.fn()}
       onAddMember={vi.fn()}
       onDelete={vi.fn()}
       onManageWebhooks={vi.fn()}
-      onManageGithubBinding={onManageGithubBinding}
+      onManageBinding={onManageBinding}
     />,
   );
-  return onManageGithubBinding;
+  return onManageBinding;
 }
 
 beforeEach(() => {
   granted.current = [];
 });
 
-describe("TeamCard GitHub binding", () => {
+describe("TeamCard binding", () => {
   it("is offered to a system administrator", () => {
     granted.current = ["system:manage"];
 
     const open = renderCard();
 
-    fireEvent.click(screen.getByRole("button", { name: "GitHub binding" }));
+    fireEvent.click(screen.getByRole("button", { name: "Team binding" }));
 
     expect(open).toHaveBeenCalledWith(TEAM);
   });
@@ -61,6 +61,24 @@ describe("TeamCard GitHub binding", () => {
 
     renderCard();
 
-    expect(screen.queryByRole("button", { name: "GitHub binding" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Team binding" })).not.toBeInTheDocument();
+  });
+
+  it("reads as bound for a team only GitLab resolves to", () => {
+    granted.current = ["system:manage"];
+
+    renderCard(vi.fn(), { ...TEAM, gitlab_instance_id: "gl-1", gitlab_group_id: 77 });
+
+    const icon = screen.getByRole("button", { name: "Team binding" }).querySelector("svg");
+    expect(icon).not.toHaveClass("text-muted-foreground");
+  });
+
+  it("reads as unbound for a team no provider resolves to", () => {
+    granted.current = ["system:manage"];
+
+    renderCard();
+
+    const icon = screen.getByRole("button", { name: "Team binding" }).querySelector("svg");
+    expect(icon).toHaveClass("text-muted-foreground");
   });
 });
