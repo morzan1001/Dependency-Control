@@ -19,12 +19,12 @@ def _service(*, sync_teams=False):
     return GitHubService(make_github_instance(id="gh-1", access_token="ghp-secret", sync_teams=sync_teams))
 
 
-def _stubbed_reads(service, holders=("payments",), repo_map=None):
+def _stubbed_reads(service, holders=("payments",), repo_map=None, org_teams=None):
     async def _check(_org, team_slug, _owner, _repo):
         return team_slug in holders
 
     return (
-        patch.object(service, "get_org_teams", new=AsyncMock(return_value=_ORG_TEAMS)),
+        patch.object(service, "get_org_teams", new=AsyncMock(return_value=org_teams or _ORG_TEAMS)),
         patch.object(service, "get_team_repository", new=AsyncMock(side_effect=_check)),
         patch.object(service, "get_team_members", new=AsyncMock(return_value=[{"login": "ada", "role": "maintainer"}])),
         patch.object(service, "get_org_repository_map", new=AsyncMock(return_value=repo_map or {})),
@@ -83,7 +83,8 @@ async def _assert_an_unbound_github_group_becomes_a_team(db) -> None:
 
 
 async def _assert_the_group_is_not_created_twice(db) -> None:
-    """Once created the team is bound, so the next scan resolves it through the cheap direct check."""
+    """Once created the team is bound, so the next scan resolves it through the direct check and
+    the map only confirms that nothing else has been granted access since."""
     await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
     repo = TeamRepository(db)
     service = _service(sync_teams=True)
@@ -97,7 +98,75 @@ async def _assert_the_group_is_not_created_twice(db) -> None:
 
     assert await repo.count({}) == 1
     assert second == first
-    assert map_reads.new.await_count == 1
+
+
+async def _assert_a_team_of_the_same_name_is_adopted(db) -> None:
+    """The four groups this matched in production are teams the owner has under their own name."""
+    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
+    repo = TeamRepository(db)
+    await repo.create(Team(id="t-llama", name="Shangri Llama"))
+    service = _service(sync_teams=True)
+    org_teams = [{"id": 9000, "slug": "team-shangri-llama", "name": "team-shangri-llama", "parent": None}]
+    org_reads, check_reads, member_reads, map_reads = _stubbed_reads(
+        service, holders=(), repo_map=_HELD_BY_PLATFORM, org_teams=org_teams
+    )
+
+    with org_reads, check_reads, member_reads, map_reads:
+        result = await service.sync_team_from_github(db, "acme", "acme/widgets")
+
+    assert result == GitHubTeamSyncResult(["t-llama"])
+    assert await repo.count({}) == 1
+    adopted = await repo.get_raw_by_github_team("gh-1", 9000)
+    assert adopted["_id"] == "t-llama"
+    assert adopted["name"] == "Shangri Llama"
+    assert adopted["github_team_slug"] == "team-shangri-llama"
+    assert adopted["members"] == [{"user_id": "u-1", "role": "admin", "source": "github"}]
+
+
+async def _sync_against_the_existing_team(db, existing: Team) -> tuple[GitHubTeamSyncResult, TeamRepository]:
+    repo = TeamRepository(db)
+    await repo.create(existing)
+    service = _service(sync_teams=True)
+    org_reads, check_reads, member_reads, map_reads = _stubbed_reads(service, holders=(), repo_map=_HELD_BY_PLATFORM)
+
+    with org_reads, check_reads, member_reads, map_reads:
+        return await service.sync_team_from_github(db, "acme", "acme/widgets"), repo
+
+
+async def _assert_a_team_bound_to_another_instance_is_not_stolen(db) -> None:
+    """Two instances are two tenants, and the same name on both is two different teams."""
+    result, repo = await _sync_against_the_existing_team(
+        db,
+        Team(
+            id="t-elsewhere",
+            name="Platform",
+            github_instance_id="gh-2",
+            github_org="other",
+            github_team_id=1234,
+            github_team_slug="platform",
+        ),
+    )
+
+    created = await repo.get_raw_by_github_team("gh-1", 9000)
+    assert created["name"] == "GitHub Team: acme/platform"
+    assert result == GitHubTeamSyncResult([created["_id"]])
+
+    untouched = await repo.get_raw_by_github_team("gh-2", 1234)
+    assert (untouched["_id"], untouched["github_org"], untouched["github_team_id"]) == ("t-elsewhere", "other", 1234)
+
+
+async def _assert_a_team_synced_from_gitlab_is_not_adopted(db) -> None:
+    """Both syncs replace the member subset they own; one team fed by two would never settle."""
+    result, repo = await _sync_against_the_existing_team(
+        db, Team(id="t-gitlab", name="Platform", gitlab_instance_id="gl-1", gitlab_group_id=77)
+    )
+
+    created = await repo.get_raw_by_github_team("gh-1", 9000)
+    assert created["name"] == "GitHub Team: acme/platform"
+    assert result == GitHubTeamSyncResult([created["_id"]])
+
+    untouched = await repo.get_raw_by_id("t-gitlab")
+    assert (untouched["github_team_id"], untouched["gitlab_group_id"]) == (None, 77)
 
 
 async def _assert_an_unbound_github_group_is_not_adopted(db) -> None:
@@ -216,6 +285,39 @@ async def test_a_group_already_created_is_adopted_rather_than_created_again_on_r
 @pytest.mark.asyncio
 async def test_a_repository_whose_github_group_nobody_bound_gains_no_owner_while_creation_is_off():
     await _assert_an_unbound_github_group_is_not_adopted(FakeDatabase())
+
+
+@pytest.mark.asyncio
+async def test_a_group_whose_team_already_exists_under_its_own_name_is_adopted():
+    await _assert_a_team_of_the_same_name_is_adopted(FakeDatabase())
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_group_whose_team_already_exists_under_its_own_name_is_adopted_on_real_mongo(db):
+    await _assert_a_team_of_the_same_name_is_adopted(db)
+
+
+@pytest.mark.asyncio
+async def test_a_team_bound_to_another_instance_is_not_adopted():
+    await _assert_a_team_bound_to_another_instance_is_not_stolen(FakeDatabase())
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_team_bound_to_another_instance_is_not_adopted_on_real_mongo(db):
+    await _assert_a_team_bound_to_another_instance_is_not_stolen(db)
+
+
+@pytest.mark.asyncio
+async def test_a_team_gitlab_already_syncs_is_not_adopted():
+    await _assert_a_team_synced_from_gitlab_is_not_adopted(FakeDatabase())
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_team_gitlab_already_syncs_is_not_adopted_on_real_mongo(db):
+    await _assert_a_team_synced_from_gitlab_is_not_adopted(db)
 
 
 @pytest.mark.asyncio

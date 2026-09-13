@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from app.core.constants import MAX_PROJECT_TEAMS
 from app.models.system import SystemSettings
 from tests.mocks.github import make_github_oidc_payload
 from tests.mocks.gitlab import make_oidc_payload
@@ -898,7 +899,9 @@ class TestIngestGitHubTeamSync:
         mock_svc, _, db = self._run(
             {**_TEAM_SYNC_INSTANCE, "sync_teams": True}, ["t-9"], project_doc=_TEAM_SYNC_PROJECT
         )
-        mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme", "acme/widgets")
+        mock_svc.sync_team_from_github.assert_awaited_once_with(
+            db, "acme", "acme/widgets", owner_budget=MAX_PROJECT_TEAMS
+        )
 
     def test_the_org_is_the_repository_owner_claim_not_the_path_prefix(self):
         """Pins which claim sources the org; the two agree in real tokens, so nothing else would catch a swap."""
@@ -908,7 +911,9 @@ class TestIngestGitHubTeamSync:
             project_doc=_TEAM_SYNC_PROJECT,
             repository_owner="acme-org",
         )
-        mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme-org", "acme/widgets")
+        mock_svc.sync_team_from_github.assert_awaited_once_with(
+            db, "acme-org", "acme/widgets", owner_budget=MAX_PROJECT_TEAMS
+        )
 
     def test_every_resolved_owner_is_written_to_the_project(self):
         """The guarded pipeline reaches the server, not a $set of the scalar: that is what keeps a
@@ -924,7 +929,8 @@ class TestIngestGitHubTeamSync:
     def test_an_auto_created_project_carries_every_synced_team(self):
         instance = {**_TEAM_SYNC_INSTANCE, "sync_teams": True, "auto_create_projects": True}
         mock_svc, projects_coll, db = self._run(instance, ["t-9", "t-4"], repository_owner="acme-org")
-        # The auto-create call site sources the org from the same claim as the existing-project one.
+        # The auto-create call site sources the org from the same claim as the existing-project one,
+        # and a project being created has the whole cap to itself.
         mock_svc.sync_team_from_github.assert_awaited_once_with(db, "acme-org", "acme/widgets")
         inserted = projects_coll.find_one_and_update.await_args.args[1]["$setOnInsert"]
         assert inserted["team_ids"] == ["t-4", "t-9"]
