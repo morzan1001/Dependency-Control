@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.core.constants import TEAM_SOURCE_GITHUB
+from app.core.constants import TEAM_SOURCE_GITHUB, team_source
 from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember
 from app.repositories.teams import TeamRepository
 from app.services.github import GitHubService, GitHubTeamSyncResult
@@ -15,6 +15,10 @@ _ORG_TEAMS = [
     {"id": 4711, "slug": "payments", "name": "Payments", "parent": None},
     {"id": 9000, "slug": "platform", "name": "Platform", "parent": None},
 ]
+
+# The member subset the syncing instance owns, and one another instance owns.
+_OWN = team_source(TEAM_SOURCE_GITHUB, "gh-1")
+_THEIRS = team_source(TEAM_SOURCE_GITHUB, "gh-2")
 
 def _service(*, sync_teams=False):
     return GitHubService(make_github_instance(id="gh-1", access_token="ghp-secret", sync_teams=sync_teams))
@@ -64,7 +68,7 @@ async def _assert_the_maintainer_lands_in_the_bound_team(db) -> None:
     team = await _binding_holder(repo, "gh-1", 4711)
     assert team["name"] == "Payments Guild"
     assert team["bindings"][0]["slug"] == "payments"
-    assert team["members"] == [{"user_id": "u-1", "role": "admin", "source": "github"}]
+    assert team["members"] == [{"user_id": "u-1", "role": "admin", "source": _OWN}]
 
 
 _HELD_BY_PLATFORM = {"acme/widgets": [9000]}
@@ -84,7 +88,7 @@ async def _assert_an_unbound_github_group_becomes_a_team(db) -> None:
     assert result == GitHubTeamSyncResult([team["_id"]])
     assert team["name"] == "GitHub Team: acme/platform"
     assert (team["bindings"][0]["org"], team["bindings"][0]["slug"]) == ("acme", "platform")
-    assert team["members"] == [{"user_id": "u-1", "role": "admin", "source": "github"}]
+    assert team["members"] == [{"user_id": "u-1", "role": "admin", "source": _OWN}]
 
 
 async def _assert_the_group_is_not_created_twice(db) -> None:
@@ -125,7 +129,7 @@ async def _assert_a_team_of_the_same_name_is_adopted(db) -> None:
     assert adopted["_id"] == "t-llama"
     assert adopted["name"] == "Shangri Llama"
     assert adopted["bindings"][0]["slug"] == "team-shangri-llama"
-    assert adopted["members"] == [{"user_id": "u-1", "role": "admin", "source": "github"}]
+    assert adopted["members"] == [{"user_id": "u-1", "role": "admin", "source": _OWN}]
 
 
 async def _sync_against_the_existing_team(db, existing: Team) -> tuple[GitHubTeamSyncResult, TeamRepository]:
@@ -221,7 +225,8 @@ async def _assert_a_second_sync_merges_into_the_bound_team(db) -> None:
         _bound_team(
             members=[
                 TeamMember(user_id="u-manual", role="admin", source="manual"),
-                TeamMember(user_id="u-departed", role="member", source="github"),
+                TeamMember(user_id="u-departed", role="member", source=_OWN),
+                TeamMember(user_id="u-theirs", role="member", source=_THEIRS),
             ]
         )
     )
@@ -231,7 +236,7 @@ async def _assert_a_second_sync_merges_into_the_bound_team(db) -> None:
             id="t-other",
             name="Billing",
             bindings=[_github(instance_id="gh-2")],
-            members=[TeamMember(user_id="u-other", role="member", source="github")],
+            members=[TeamMember(user_id="u-other", role="member", source=_THEIRS)],
         )
     )
     service = _service()
@@ -246,11 +251,12 @@ async def _assert_a_second_sync_merges_into_the_bound_team(db) -> None:
     team = await _binding_holder(repo, "gh-1", 4711)
     assert team["members"] == [
         {"user_id": "u-manual", "role": "admin", "source": "manual"},
-        {"user_id": "u-1", "role": "admin", "source": "github"},
+        {"user_id": "u-theirs", "role": "member", "source": _THEIRS},
+        {"user_id": "u-1", "role": "admin", "source": _OWN},
     ]
 
     other = await _binding_holder(repo, "gh-2", 4711)
-    assert other["members"] == [{"user_id": "u-other", "role": "member", "source": "github"}]
+    assert other["members"] == [{"user_id": "u-other", "role": "member", "source": _THEIRS}]
 
 
 async def _assert_the_organisation_case_does_not_decide(db) -> None:
@@ -266,7 +272,7 @@ async def _assert_the_organisation_case_does_not_decide(db) -> None:
 
     assert result == GitHubTeamSyncResult(["t-1"])
     team = await _binding_holder(repo, "gh-1", 4711)
-    assert team["members"] == [{"user_id": "u-1", "role": "admin", "source": "github"}]
+    assert team["members"] == [{"user_id": "u-1", "role": "admin", "source": _OWN}]
 
 
 @pytest.mark.asyncio

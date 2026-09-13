@@ -21,11 +21,12 @@ from app.core.constants import (
     TEAM_ROLE_ADMIN,
     TEAM_ROLE_MEMBER,
     TEAM_SOURCE_GITHUB,
+    team_source,
 )
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
 from app.models.github_instance import GitHubInstance
-from app.models.team import GitHubTeamBinding, Team, TeamMember, binding_of
+from app.models.team import GitHubTeamBinding, Team, TeamMember, binding_of, merge_team_members
 from app.repositories import TeamRepository, UserRepository
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
@@ -571,12 +572,18 @@ class GitHubService:
             return await user_repo.get_raw_by_email_ci(email)
         return None
 
+    @property
+    def _member_source(self) -> str:
+        """The provenance of a member this instance resolves, and the subset its sync replaces."""
+        return team_source(TEAM_SOURCE_GITHUB, str(self.instance.id))
+
     async def _build_team_members(
         self,
         members: list[dict[str, Any]],
         user_repo: UserRepository,
     ) -> tuple[list[TeamMember], int]:
-        """Map GitHub members onto existing local users, tagged source="github", plus the unresolved count."""
+        """Map GitHub members onto existing local users, tagged with this instance, plus the
+        unresolved count."""
         resolved: dict[str, TeamMember] = {}
         unresolved = 0
         for member in members:
@@ -595,23 +602,8 @@ class GitHubService:
             previous = resolved.get(user_id)
             if previous is not None and previous.role == TEAM_ROLE_ADMIN:
                 continue
-            resolved[user_id] = TeamMember(user_id=user_id, role=role, source="github")
+            resolved[user_id] = TeamMember(user_id=user_id, role=role, source=self._member_source)
         return list(resolved.values()), unresolved
-
-    @staticmethod
-    def _merge_team_members(
-        existing_members: list[dict[str, Any]],
-        github_members: list[TeamMember],
-    ) -> list[dict[str, Any]]:
-        """Keep manual members; replace the github-sourced subset so departed members disappear."""
-        merged: dict[str, dict[str, Any]] = {}
-        # Untagged members default to manual so pre-existing members are preserved.
-        for raw in existing_members:
-            if raw.get("source", "manual") != "github":
-                merged[raw["user_id"]] = {**raw, "source": "manual"}
-        for member in github_members:
-            merged[member.user_id] = member.model_dump()
-        return list(merged.values())
 
     @staticmethod
     def _renamed_fields(team: dict[str, Any], org: str, team_slug: str) -> dict[str, Any]:
@@ -640,7 +632,7 @@ class GitHubService:
         team = holder.team
         updates: dict[str, Any] = self._renamed_fields(team, org, holder.slug)
         if team_members is not None:
-            updates["members"] = self._merge_team_members(team.get("members") or [], team_members)
+            updates["members"] = merge_team_members(team.get("members") or [], team_members, self._member_source)
         binding = binding_of(team, str(self.instance.id)) or {}
         # The binding is the numeric team id, so a renamed slug has to follow it.
         binding_fields = {"slug": holder.slug} if binding.get("slug") != holder.slug else {}

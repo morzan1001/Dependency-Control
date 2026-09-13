@@ -115,7 +115,9 @@ async def _assert_a_second_run_disturbs_neither_the_other_binding_nor_its_owners
         f"github:{_A}:4711",
         f"github:{_B}:8150",
     ]
-    assert team["members"] == [{"user_id": "u-ada", "role": "admin", "source": "github"}]
+    # Each instance resolved the same person; the entry names whichever synced last, and one entry
+    # is what matters — two would break add_member's $ne guard.
+    assert team["members"] == [{"user_id": "u-ada", "role": "admin", "source": _SOURCE_B}]
 
 
 async def _assert_a_rename_on_one_instance_leaves_the_other_binding_alone(db) -> None:

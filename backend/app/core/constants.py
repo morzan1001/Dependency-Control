@@ -178,26 +178,28 @@ PROJECT_ROLES = [PROJECT_ROLE_VIEWER, PROJECT_ROLE_EDITOR, PROJECT_ROLE_ADMIN]
 # gone wrong in a way that would hand the project to everyone rather than to its owners.
 MAX_PROJECT_TEAMS = 16
 
-# Provenance of one owning-team entry. An owner that no team_sources entry names is read as this
-# one: nothing can establish which provider put it there, and naming a provider by guess would
-# have that provider's next sync retire an owner nobody chose to retire.
+# Provenance of one owning-team entry, and of one team member. An entry no provenance value names
+# is read as this one: nothing can establish which provider put it there, and naming a provider by
+# guess would have that provider's next sync retire an owner, or drop a member, nobody chose to.
 TEAM_SOURCE_MANUAL = "manual"
 
 TEAM_SOURCE_GITLAB = "gitlab"
 TEAM_SOURCE_GITHUB = "github"
 # The providers a bare, un-instanced provenance value can name. Such a value predates
-# ``backfill_team_source_instances`` and belongs to no instance, so no sync retires its owner.
+# ``backfill_team_source_instances`` / ``backfill_team_member_sources`` and belongs to no instance,
+# so no sync retires its owner or replaces its member.
 TEAM_SOURCE_PROVIDERS: tuple[str, ...] = (TEAM_SOURCE_GITLAB, TEAM_SOURCE_GITHUB)
 
-# A provider alone cannot say which sync established an owner, and two instances of one provider
-# then read each other's owners as their own and retire them, alternating, on every CI run. A
-# colon-joined string keeps the value a plain scalar, so the $objectToArray provenance arithmetic
-# and its $eq on the value stay exactly as they are; instance ids are uuid4 and carry no colon.
+# A provider alone cannot say which sync established an owner or a member, and two instances of one
+# provider then read each other's entries as their own and retire them, alternating, on every CI
+# run. A colon-joined string keeps the value a plain scalar, so the $objectToArray provenance
+# arithmetic and its $eq on the value stay exactly as they are; instance ids are uuid4 and carry no
+# colon.
 TEAM_SOURCE_SEPARATOR = ":"
 
 
 def team_source(provider: str, instance_id: str) -> str:
-    """The provenance value for an owner that one instance of ``provider`` established."""
+    """The provenance value for an owner or a member that one instance of ``provider`` established."""
     return f"{provider}{TEAM_SOURCE_SEPARATOR}{instance_id}"
 
 

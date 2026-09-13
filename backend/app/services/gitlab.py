@@ -13,6 +13,7 @@ from app.core.constants import (
     GITLAB_JWKS_CACHE_TTL,
     GITLAB_JWKS_URI_CACHE_TTL,
     TEAM_SOURCE_GITLAB,
+    team_source,
 )
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.gitlab_api import (
@@ -23,7 +24,7 @@ from app.models.gitlab_api import (
     OIDCPayload,
 )
 from app.models.gitlab_instance import GitLabInstance
-from app.models.team import GitLabGroupBinding, Team, TeamMember
+from app.models.team import GitLabGroupBinding, Team, TeamMember, merge_team_members
 from app.repositories import TeamRepository, UserRepository
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
@@ -475,6 +476,11 @@ class GitLabService:
         )
         return group_id, group_path
 
+    @property
+    def _member_source(self) -> str:
+        """The provenance of a member this instance resolves, and the subset its sync replaces."""
+        return team_source(TEAM_SOURCE_GITLAB, str(self.instance.id))
+
     async def _build_team_members(
         self,
         gitlab_members: list[GitLabMember],
@@ -482,9 +488,9 @@ class GitLabService:
     ) -> list[TeamMember]:
         """Resolve each GitLab member to an EXISTING local user and map to TeamMember.
 
-        Tagged ``source="gitlab"`` so the merge in ``_upsert_team_with_members`` refreshes
-        only the gitlab-sourced subset. Members without a local account are skipped — sync
-        never creates users (see ``_find_user``).
+        Tagged with this instance so the merge in ``_upsert_team_with_members`` refreshes only the
+        subset this instance established. Members without a local account are skipped — sync never
+        creates users (see ``_find_user``).
         """
         team_members: list[TeamMember] = []
         for member in gitlab_members:
@@ -500,7 +506,7 @@ class GitLabService:
                 continue
             role = "admin" if member.access_level >= GITLAB_ADMIN_MIN_ACCESS else "member"
             user_id = str(user.get("_id", user.get("id")))
-            team_members.append(TeamMember(user_id=user_id, role=role, source="gitlab"))
+            team_members.append(TeamMember(user_id=user_id, role=role, source=self._member_source))
         return team_members
 
     async def _find_user(
@@ -521,25 +527,6 @@ class GitLabService:
             return await user_repo.get_raw_by_username(member.username)
         return None
 
-    @staticmethod
-    def _merge_team_members(
-        existing_members: list[dict[str, Any]],
-        gitlab_members: list[TeamMember],
-    ) -> list[dict[str, Any]]:
-        """Merge freshly-fetched GitLab members into the existing member list.
-
-        Manual members are kept; the gitlab-sourced subset is replaced by
-        ``gitlab_members`` (departed members disappear); on overlap the gitlab entry wins.
-        """
-        merged: dict[str, dict[str, Any]] = {}
-        # Untagged members default to manual so pre-existing members are preserved.
-        for raw in existing_members:
-            if raw.get("source", "manual") != "gitlab":
-                merged[raw["user_id"]] = {**raw, "source": "manual"}
-        for gm in gitlab_members:
-            merged[gm.user_id] = gm.model_dump()
-        return list(merged.values())
-
     async def _upsert_team_with_members(
         self,
         team_repo: TeamRepository,
@@ -554,8 +541,10 @@ class GitLabService:
         now = datetime.now(timezone.utc)
         binding = GitLabGroupBinding(instance_id=instance_id, external_id=group_id, path=group_path)
         if existing_team:
-            # Merge, not replace: keep manual members, refresh only the gitlab-sourced subset.
-            merged_members = self._merge_team_members(existing_team.get("members") or [], team_members)
+            # Merge, not replace: refresh only the subset this instance established.
+            merged_members = merge_team_members(
+                existing_team.get("members") or [], team_members, self._member_source
+            )
             update_data: dict = {"members": merged_members, "updated_at": now}
             # Sync name only if it still has the auto-generated GitLab prefix.
             # If the team was manually renamed (e.g. to "BOS"), keep the custom name.
