@@ -204,6 +204,16 @@ def _within_cap(source: str, would_own: set[str], repository_path: str) -> bool:
     return False
 
 
+def _owner_budget(project: Project, source: str) -> int:
+    """How many owners this provider's answer may leave behind: the cap minus the owners it does not
+    replace.
+
+    Handed to the provider rather than only checked here, so a resolution past the cap is refused
+    before it creates the teams for a write that is then refused.
+    """
+    return MAX_PROJECT_TEAMS - len(set(project.team_ids) - owners_replaced_by(project, source))
+
+
 def _new_project_owners(source: str, resolved: list[str] | None, repository_path: str) -> list[str]:
     """The owners to store on a project this ingest is creating."""
     owners = sorted(set(resolved or []))
@@ -255,7 +265,9 @@ async def _github_team_sync_stages(
     db: AsyncIOMotorDatabase,
 ) -> list[dict]:
     """The ownership stages GitHub sync contributes to this ingest's update."""
-    result = await github_service.sync_team_from_github(db, github_org, repository_path)
+    result = await github_service.sync_team_from_github(
+        db, github_org, repository_path, owner_budget=_owner_budget(project, "github")
+    )
     return _team_subset_stages(project, "github", result.team_ids, repository_path)
 
 

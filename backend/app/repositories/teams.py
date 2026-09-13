@@ -1,10 +1,11 @@
 """Repository for teams."""
 
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any
 
 from motor.motor_asyncio import AsyncIOMotorDatabase
+from pymongo import ReturnDocument
 
 from app.core.constants import TEAM_ROLE_ADMIN
 from app.core.metrics import track_db_operation
@@ -49,6 +50,30 @@ class TeamRepository:
         return await self.collection.find_one(
             {"github_instance_id": github_instance_id, "github_team_id": github_team_id}
         )
+
+    async def find_raw_unbound(self) -> list[dict[str, Any]]:
+        """Every team no provider binding claims, with the name a GitHub group is matched against.
+
+        A team already bound is somebody's: another instance's, another group's, or GitLab's, whose
+        sync would then fight this one over the same member list.
+        """
+        cursor = self.collection.find(
+            {"github_instance_id": None, "github_team_id": None, "gitlab_group_id": None},
+            {"name": 1},
+        )
+        return await cursor.to_list(None)
+
+    async def bind_github_team(self, team_id: str, binding: dict[str, Any]) -> dict[str, Any] | None:
+        """Bind a team that carries no binding yet to a GitHub team; None when it carries one by now.
+
+        The unbound condition is part of the filter, so two ingests cannot both adopt one team.
+        """
+        adopted: dict[str, Any] | None = await self.collection.find_one_and_update(
+            {"_id": team_id, "github_instance_id": None, "github_team_id": None, "gitlab_group_id": None},
+            {"$set": {**binding, "updated_at": datetime.now(timezone.utc)}},
+            return_document=ReturnDocument.AFTER,
+        )
+        return adopted
 
     async def find_raw_by_github_org(self, github_instance_id: str, github_org: str) -> list[dict[str, Any]]:
         """Every team bound to one organisation of one instance. Scoped to the instance: a team
