@@ -3,15 +3,13 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { Team } from "@/types/team";
+import type { Team, TeamBinding } from "@/types/team";
 
 import { TeamBindingDialog } from "../TeamBindingDialog";
 
 const {
-  setGithubBinding,
-  clearGithubBinding,
-  setGitlabBinding,
-  clearGitlabBinding,
+  setBinding,
+  clearBinding,
   listInstances,
   listOrgs,
   listOrgTeams,
@@ -19,10 +17,8 @@ const {
   listGroups,
   toastError,
 } = vi.hoisted(() => ({
-  setGithubBinding: vi.fn(),
-  clearGithubBinding: vi.fn(),
-  setGitlabBinding: vi.fn(),
-  clearGitlabBinding: vi.fn(),
+  setBinding: vi.fn(),
+  clearBinding: vi.fn(),
   listInstances: vi.fn(),
   listOrgs: vi.fn(),
   listOrgTeams: vi.fn(),
@@ -32,7 +28,7 @@ const {
 }));
 
 vi.mock("@/api/teams", () => ({
-  teamApi: { setGithubBinding, clearGithubBinding, setGitlabBinding, clearGitlabBinding },
+  teamApi: { setBinding, clearBinding },
 }));
 
 vi.mock("@/api/github-instances", () => ({
@@ -47,12 +43,16 @@ vi.mock("sonner", () => ({
   toast: { error: toastError, success: vi.fn() },
 }));
 
-const INSTANCE = { id: "gh-1", name: "GitHub.com" };
-const GITLAB_INSTANCE = { id: "gl-1", name: "GitLab Corp" };
-const GITHUB_LIST = { items: [INSTANCE], total: 1, page: 1, size: 100, pages: 1 };
-const GITLAB_LIST = { items: [GITLAB_INSTANCE], total: 1, page: 1, size: 100, pages: 1 };
-const NO_INSTANCES = { items: [], total: 0, page: 1, size: 100, pages: 1 };
+const GITHUB = { id: "gh-1", name: "GitHub.com", is_active: true, sync_teams: true };
+// This installation runs two GitLab instances, one of which does not sync teams.
+const GITLAB = { id: "gl-1", name: "GitLab Corp", is_active: true, sync_teams: true };
+const GITLAB_NO_SYNC = { id: "gl-2", name: "GitLab Legacy", is_active: true, sync_teams: false };
+
+const listOf = (items: object[]) => ({ items, total: items.length, page: 1, size: 100, pages: 1 });
+const NO_INSTANCES = listOf([]);
 const NOTHING_CONFIGURED = /No active GitHub or GitLab instance is configured/;
+const SYNC_OFF_OPTION = /GitLab Legacy — team sync off, assigns nothing/;
+
 const ORG_TEAMS = [
   { id: 4711, slug: "payments", name: "Payments", parent_slug: null, parent_name: null },
   { id: 900, slug: "cards", name: "Cards", parent_slug: "payments", parent_name: "Payments" },
@@ -62,29 +62,36 @@ const GROUPS = [
   { id: 12, full_path: "mo", name: "MO" },
 ];
 
-function team(overrides: Partial<Team> = {}): Team {
+const GITHUB_BINDING: TeamBinding = {
+  provider: "github",
+  instance_id: "gh-1",
+  org: "Acme",
+  slug: "payments",
+  external_id: 4711,
+};
+const GITLAB_BINDING: TeamBinding = {
+  provider: "gitlab",
+  instance_id: "gl-1",
+  path: "mo/edge",
+  external_id: 77,
+};
+const LEGACY_BINDING: TeamBinding = {
+  provider: "gitlab",
+  instance_id: "gl-2",
+  path: "mo/attic",
+  external_id: 5,
+};
+
+function team(bindings: TeamBinding[] = []): Team {
   return {
     id: "t-1",
     name: "Payments Guild",
     members: [],
+    bindings,
     created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
-    ...overrides,
   };
 }
-
-const BOUND = team({
-  github_instance_id: "gh-1",
-  github_org: "Acme",
-  github_team_id: 4711,
-  github_team_slug: "payments",
-});
-
-const GITLAB_BOUND = team({
-  gitlab_instance_id: "gl-1",
-  gitlab_group_id: 77,
-  gitlab_group_path: "mo/edge",
-});
 
 function Wrapper({ children }: { children: ReactNode }) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -93,11 +100,6 @@ function Wrapper({ children }: { children: ReactNode }) {
 
 function renderDialog(subject: Team) {
   render(<TeamBindingDialog team={subject} isOpen onClose={() => {}} />, { wrapper: Wrapper });
-}
-
-async function pickProvider(name: "GitHub" | "GitLab") {
-  fireEvent.click(await screen.findByLabelText("Provider"));
-  fireEvent.click(await screen.findByRole("option", { name }));
 }
 
 async function saveBinding() {
@@ -112,147 +114,102 @@ async function openSelect(label: string) {
   fireEvent.click(trigger);
 }
 
-async function pickOption(label: string, optionName: string) {
+async function pickOption(label: string, optionName: string | RegExp) {
   await openSelect(label);
   fireEvent.click(await screen.findByRole("option", { name: optionName }));
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
-  listInstances.mockResolvedValue(GITHUB_LIST);
-  listGitlabInstances.mockResolvedValue(GITLAB_LIST);
+  listInstances.mockResolvedValue(listOf([GITHUB]));
+  listGitlabInstances.mockResolvedValue(listOf([GITLAB, GITLAB_NO_SYNC]));
   listOrgs.mockResolvedValue(["Acme"]);
   listOrgTeams.mockResolvedValue(ORG_TEAMS);
   listGroups.mockResolvedValue(GROUPS);
-  setGithubBinding.mockResolvedValue(BOUND);
-  clearGithubBinding.mockResolvedValue(team());
-  setGitlabBinding.mockResolvedValue(GITLAB_BOUND);
-  clearGitlabBinding.mockResolvedValue(team());
+  setBinding.mockResolvedValue(team([GITLAB_BINDING]));
+  clearBinding.mockResolvedValue(team());
 });
 
 describe("TeamBindingDialog", () => {
-  it("offers both providers, because a team can be bound on either", async () => {
-    renderDialog(team());
+  it("lists every binding the team holds, each naming the instance it is held on", async () => {
+    renderDialog(team([GITHUB_BINDING, GITLAB_BINDING, LEGACY_BINDING]));
 
-    fireEvent.click(await screen.findByLabelText("Provider"));
-
-    expect(await screen.findByRole("option", { name: "GitHub" })).toBeInTheDocument();
-    expect(await screen.findByRole("option", { name: "GitLab" })).toBeInTheDocument();
-  });
-
-  it("says a team nothing resolves to is unbound on either provider and offers nothing to remove", async () => {
-    renderDialog(team());
-
-    expect(await screen.findAllByText("Not bound")).toHaveLength(2);
-    expect(screen.queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Save Binding/ })).toBeDisabled();
-  });
-
-  it("shows both bindings at once, because holding one does not release the other", () => {
-    renderDialog(
-      team({
-        github_org: "Acme",
-        github_team_id: 4711,
-        github_team_slug: "payments",
-        gitlab_group_id: 77,
-        gitlab_group_path: "mo/edge",
-      }),
-    );
-
+    expect(await screen.findByText("GitHub · GitHub.com")).toBeInTheDocument();
     expect(screen.getByText("Acme/payments (#4711)")).toBeInTheDocument();
+    expect(screen.getByText("GitLab · GitLab Corp")).toBeInTheDocument();
     expect(screen.getByText("mo/edge (#77)")).toBeInTheDocument();
+    expect(screen.getByText("GitLab · GitLab Legacy")).toBeInTheDocument();
+    expect(screen.getByText("mo/attic (#5)")).toBeInTheDocument();
   });
 
-  it("says what removing a binding costs, so a mis-binding is reversed knowingly", () => {
-    renderDialog(BOUND);
+  it("offers nothing to remove for a team no instance resolves to", async () => {
+    renderDialog(team());
 
-    expect(screen.getByText(/retired on their next sync/)).toBeInTheDocument();
+    expect(await screen.findByLabelText("Instance")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Remove/ })).not.toBeInTheDocument();
+    expect(screen.queryByText(/retired on their next sync/)).not.toBeInTheDocument();
   });
 
-  it("sends the team number as a number, which is what the binding is stored on", async () => {
-    renderDialog(BOUND);
+  it("does not offer an instance this team is already bound to", async () => {
+    renderDialog(team([GITHUB_BINDING, GITLAB_BINDING]));
 
-    await saveBinding();
+    await openSelect("Instance");
 
-    await waitFor(() =>
-      expect(setGithubBinding).toHaveBeenCalledWith("t-1", {
-        github_instance_id: "gh-1",
-        github_org: "Acme",
-        github_team_id: 4711,
-      }),
-    );
+    expect(await screen.findByRole("option", { name: SYNC_OFF_OPTION })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "GitLab Corp" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: "GitHub.com" })).not.toBeInTheDocument();
   });
 
-  it("removes a GitHub mis-binding", async () => {
-    renderDialog(BOUND);
+  it("keeps a binding listed and removable once its instance is gone", async () => {
+    listGitlabInstances.mockResolvedValue(listOf([GITLAB_NO_SYNC]));
+    renderDialog(team([GITLAB_BINDING]));
 
-    fireEvent.click(screen.getByRole("button", { name: "Remove GitHub binding" }));
+    expect(await screen.findByText("mo/edge (#77)")).toBeInTheDocument();
+    expect(await screen.findByText(/this binding can only be removed/)).toBeInTheDocument();
+    expect(screen.getByText("GitLab · gl-1")).toBeInTheDocument();
 
-    await waitFor(() => expect(clearGithubBinding).toHaveBeenCalledWith("t-1"));
+    fireEvent.click(screen.getByRole("button", { name: "Remove the binding on gl-1" }));
+
+    await waitFor(() => expect(clearBinding).toHaveBeenCalledWith("t-1", "gl-1"));
   });
 
-  it("surfaces the refusal when the GitHub team is already bound elsewhere", async () => {
-    setGithubBinding.mockRejectedValue({
-      response: { data: { detail: "Team 'Payments' is already bound to GitHub team 4711." } },
-    });
-    renderDialog(BOUND);
+  it("keeps a binding on a deactivated instance removable", async () => {
+    listGitlabInstances.mockResolvedValue(listOf([{ ...GITLAB, is_active: false }]));
+    renderDialog(team([GITLAB_BINDING]));
 
-    await saveBinding();
+    expect(await screen.findByText(/this binding can only be removed/)).toBeInTheDocument();
 
-    await waitFor(() =>
-      expect(toastError).toHaveBeenCalledWith("Team 'Payments' is already bound to GitHub team 4711."),
-    );
+    fireEvent.click(screen.getByRole("button", { name: "Remove the binding on GitLab Corp" }));
+
+    await waitFor(() => expect(clearBinding).toHaveBeenCalledWith("t-1", "gl-1"));
+
+    await openSelect("Instance");
+    expect(screen.queryByRole("option", { name: "GitLab Corp" })).not.toBeInTheDocument();
   });
 
-  it("offers the organisation's teams with the parent that tells a nested one apart", async () => {
-    renderDialog(BOUND);
+  it("removes one binding and leaves the others, because each instance stands alone", async () => {
+    renderDialog(team([GITHUB_BINDING, GITLAB_BINDING]));
 
-    await openSelect("GitHub team");
+    fireEvent.click(await screen.findByRole("button", { name: "Remove the binding on GitHub.com" }));
 
-    expect(await screen.findByRole("option", { name: "Cards (cards) — under Payments" })).toBeInTheDocument();
+    await waitFor(() => expect(clearBinding).toHaveBeenCalledWith("t-1", "gh-1"));
+    expect(clearBinding).toHaveBeenCalledTimes(1);
   });
 
-  it("opens on GitLab for a team only GitLab resolves to", async () => {
-    renderDialog(GITLAB_BOUND);
+  it("says what removing a binding costs, so a mis-binding is reversed knowingly", async () => {
+    renderDialog(team([GITLAB_BINDING]));
 
-    expect(await screen.findByLabelText("Group")).toBeInTheDocument();
+    expect(await screen.findByText(/retired on their next sync/)).toBeInTheDocument();
   });
 
-  it("sends the group number as a number, which is what the binding is stored on", async () => {
-    renderDialog(GITLAB_BOUND);
-
-    await saveBinding();
-
-    await waitFor(() =>
-      expect(setGitlabBinding).toHaveBeenCalledWith("t-1", {
-        gitlab_instance_id: "gl-1",
-        gitlab_group_id: 77,
-      }),
-    );
-  });
-
-  it("offers the instance's groups by the full path that tells two same-named subgroups apart", async () => {
-    renderDialog(GITLAB_BOUND);
-
-    await openSelect("Group");
-
-    expect(await screen.findByRole("option", { name: "Edge (mo/edge)" })).toBeInTheDocument();
-  });
-
-  it("removes a GitLab mis-binding", async () => {
-    renderDialog(GITLAB_BOUND);
-
-    fireEvent.click(screen.getByRole("button", { name: "Remove GitLab binding" }));
-
-    await waitFor(() => expect(clearGitlabBinding).toHaveBeenCalledWith("t-1"));
-  });
-
-  it("surfaces the refusal when the GitLab group is already bound elsewhere", async () => {
-    setGitlabBinding.mockRejectedValue({
+  it("names the team that already holds the group when the write is refused", async () => {
+    setBinding.mockRejectedValue({
       response: { data: { detail: "Team 'Platform' is already bound to GitLab group 77." } },
     });
-    renderDialog(GITLAB_BOUND);
+    renderDialog(team());
 
+    await pickOption("Instance", "GitLab Corp");
+    await pickOption("Group", "Edge (mo/edge)");
     await saveBinding();
 
     await waitFor(() =>
@@ -260,57 +217,87 @@ describe("TeamBindingDialog", () => {
     );
   });
 
-  it("binds on GitLab a team that only GitHub resolves to, without touching the GitHub binding", async () => {
-    renderDialog(BOUND);
+  it("binds the picked GitLab instance, sending the group number as a number", async () => {
+    renderDialog(team([GITHUB_BINDING]));
 
-    await pickProvider("GitLab");
     await pickOption("Instance", "GitLab Corp");
     await pickOption("Group", "Edge (mo/edge)");
     await saveBinding();
 
     await waitFor(() =>
-      expect(setGitlabBinding).toHaveBeenCalledWith("t-1", {
-        gitlab_instance_id: "gl-1",
-        gitlab_group_id: 77,
+      expect(setBinding).toHaveBeenCalledWith("t-1", {
+        provider: "gitlab",
+        instance_id: "gl-1",
+        external_id: 77,
       }),
     );
-    expect(setGithubBinding).not.toHaveBeenCalled();
   });
 
-  it("offers no GitHub section to an installation without a GitHub instance", async () => {
+  it("binds the picked GitHub instance, sending the team number as a number", async () => {
+    renderDialog(team([GITLAB_BINDING]));
+
+    await pickOption("Instance", "GitHub.com");
+    await pickOption("Organisation", "Acme");
+    await pickOption("GitHub team", "Cards (cards) — under Payments");
+    await saveBinding();
+
+    await waitFor(() =>
+      expect(setBinding).toHaveBeenCalledWith("t-1", {
+        provider: "github",
+        instance_id: "gh-1",
+        org: "Acme",
+        external_id: 900,
+      }),
+    );
+  });
+
+  it("offers the instance's groups by the full path that tells two same-named subgroups apart", async () => {
+    renderDialog(team());
+
+    await pickOption("Instance", "GitLab Corp");
+    await openSelect("Group");
+
+    expect(await screen.findByRole("option", { name: "Edge (mo/edge)" })).toBeInTheDocument();
+  });
+
+  it("marks an instance that does not sync teams as assigning nothing", async () => {
+    renderDialog(team());
+
+    await pickOption("Instance", SYNC_OFF_OPTION);
+
+    expect(
+      await screen.findByText(/Team sync is off on GitLab Legacy, so a binding there assigns nothing/),
+    ).toBeInTheDocument();
+  });
+
+  it("says a binding held on an instance without team sync assigns nothing", async () => {
+    renderDialog(team([LEGACY_BINDING]));
+
+    expect(await screen.findByText(/Team sync is off on this instance/)).toBeInTheDocument();
+  });
+
+  it("picks the only instance on offer, so a single-instance installation needs no choice", async () => {
     listInstances.mockResolvedValue(NO_INSTANCES);
+    listGitlabInstances.mockResolvedValue(listOf([GITLAB]));
     renderDialog(team());
 
     expect(await screen.findByLabelText("Group")).toBeInTheDocument();
-    expect(screen.queryByLabelText("Provider")).not.toBeInTheDocument();
-    expect(screen.queryByText("Select a GitHub instance")).not.toBeInTheDocument();
-    expect(screen.getAllByText("Not bound")).toHaveLength(1);
   });
 
-  it("promises only the provider the installation has", async () => {
-    listGitlabInstances.mockResolvedValue(NO_INSTANCES);
+  it("offers no GitHub instance to an installation without one", async () => {
+    listInstances.mockResolvedValue(NO_INSTANCES);
     renderDialog(team());
 
+    await openSelect("Instance");
+
+    expect(await screen.findByRole("option", { name: "GitLab Corp" })).toBeInTheDocument();
+    expect(screen.queryByText("GitHub")).not.toBeInTheDocument();
     expect(
-      await screen.findByText(/Repositories held by the bound GitHub team are assigned to Payments Guild/),
+      screen.getByText(/Repositories held by a bound GitLab group are assigned to Payments Guild/),
     ).toBeInTheDocument();
-    expect(screen.queryByText(/GitLab group/)).not.toBeInTheDocument();
   });
 
-  it("keeps a binding removable once its provider has no active instance left", async () => {
-    listGitlabInstances.mockResolvedValue(NO_INSTANCES);
-    renderDialog(GITLAB_BOUND);
-
-    expect(await screen.findByText("mo/edge (#77)")).toBeInTheDocument();
-    expect(await screen.findByText(/this binding can only be removed/)).toBeInTheDocument();
-    expect(screen.queryByLabelText("Group")).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "Remove GitLab binding" }));
-
-    await waitFor(() => expect(clearGitlabBinding).toHaveBeenCalledWith("t-1"));
-  });
-
-  it("names where instances are managed when neither provider is configured", async () => {
+  it("names where instances are managed when none is active", async () => {
     listInstances.mockResolvedValue(NO_INSTANCES);
     listGitlabInstances.mockResolvedValue(NO_INSTANCES);
     renderDialog(team());
@@ -320,13 +307,21 @@ describe("TeamBindingDialog", () => {
     );
     expect(screen.queryByLabelText("Instance")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Save Binding/ })).not.toBeInTheDocument();
-    expect(screen.queryByText("Not bound")).not.toBeInTheDocument();
+  });
+
+  it("says so when the team already holds a binding on every active instance", async () => {
+    renderDialog(team([GITHUB_BINDING, GITLAB_BINDING, LEGACY_BINDING]));
+
+    expect(
+      await screen.findByText("This team already holds a binding on every active instance."),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Instance")).not.toBeInTheDocument();
   });
 
   it("waits for both instance lists before declaring the installation empty", async () => {
-    let releaseGithub: (list: typeof GITHUB_LIST) => void = () => {};
+    let releaseGithub: (list: ReturnType<typeof listOf>) => void = () => {};
     listInstances.mockReturnValue(
-      new Promise<typeof GITHUB_LIST>((resolve) => {
+      new Promise<ReturnType<typeof listOf>>((resolve) => {
         releaseGithub = resolve;
       }),
     );
@@ -336,9 +331,9 @@ describe("TeamBindingDialog", () => {
     await waitFor(() => expect(listGitlabInstances).toHaveBeenCalled());
     expect(screen.queryByText(NOTHING_CONFIGURED)).not.toBeInTheDocument();
 
-    releaseGithub(GITHUB_LIST);
+    releaseGithub(listOf([GITHUB]));
 
-    expect(await screen.findByLabelText("Instance")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Organisation")).toBeInTheDocument();
     expect(screen.queryByText(NOTHING_CONFIGURED)).not.toBeInTheDocument();
   });
 });

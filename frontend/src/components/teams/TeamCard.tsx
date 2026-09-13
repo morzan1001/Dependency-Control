@@ -34,7 +34,7 @@ export function TeamCard({
   const canWebhooks = currentUser ? canManageTeamWebhooks(team, currentUser.id, permissions) : false;
   // A binding decides which repositories of the whole estate land in this team.
   const canBind = hasPermission('system:manage');
-  const isBound = team.github_team_id != null || team.gitlab_group_id != null;
+  const isBound = team.bindings.length > 0;
 
   return (
     <Card

@@ -16,6 +16,29 @@ export interface TeamRef {
   name: string;
 }
 
+// The numeric id identifies the group or team; the slug and the path move when one is renamed,
+// so the server reads them back on every write and they are display only.
+export interface TeamGitHubBinding {
+  provider: 'github';
+  instance_id: string;
+  external_id: number;
+  org: string;
+  slug?: string | null;
+}
+
+export interface TeamGitLabBinding {
+  provider: 'gitlab';
+  instance_id: string;
+  external_id: number;
+  path?: string | null;
+}
+
+export type TeamBinding = TeamGitHubBinding | TeamGitLabBinding;
+
+export type BindingProvider = TeamBinding['provider'];
+
+export type TeamBindingRequest = Omit<TeamGitHubBinding, 'slug'> | Omit<TeamGitLabBinding, 'path'>;
+
 export interface Team {
   id: string;
   name: string;
@@ -23,24 +46,8 @@ export interface Team {
   members: TeamMember[];
   created_at: string;
   updated_at: string;
-  github_instance_id?: string | null;
-  github_org?: string | null;
-  github_team_id?: number | null;
-  github_team_slug?: string | null;
-  gitlab_instance_id?: string | null;
-  gitlab_group_id?: number | null;
-  gitlab_group_path?: string | null;
-}
-
-export interface TeamGitHubBinding {
-  github_instance_id: string;
-  github_org: string;
-  github_team_id: number;
-}
-
-export interface TeamGitLabBinding {
-  gitlab_instance_id: string;
-  gitlab_group_id: number;
+  // One entry per instance, of either provider, in any number.
+  bindings: TeamBinding[];
 }
 
 export interface TeamCreate {

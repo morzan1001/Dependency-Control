@@ -1,11 +1,6 @@
 import { useState } from 'react';
-import { Team } from '@/types/team';
-import {
-  useSetTeamGithubBinding,
-  useClearTeamGithubBinding,
-  useSetTeamGitlabBinding,
-  useClearTeamGitlabBinding,
-} from '@/hooks/queries/use-teams';
+import { BindingProvider, Team, TeamBinding, TeamBindingRequest } from '@/types/team';
+import { useSetTeamBinding, useClearTeamBinding } from '@/hooks/queries/use-teams';
 import {
   useGitHubInstances,
   useGitHubOrgs,
@@ -14,13 +9,14 @@ import {
   useGitLabGroups,
 } from '@/hooks/queries/use-instances';
 import { useDebounce } from '@/hooks/use-debounce';
-import { GitHubInstance } from '@/types/github';
-import { GitLabInstance } from '@/types/gitlab';
 import {
-  githubBindingSummary,
+  bindingSummary,
   githubTeamOptionLabel,
-  gitlabBindingSummary,
   gitlabGroupOptionLabel,
+  instanceOptionLabel,
+  providerInstances,
+  ProviderInstance,
+  PROVIDER_LABEL,
 } from '@/lib/team-binding';
 import { extractErrorMessage } from '@/lib/errors';
 import { Button } from '@/components/ui/button';
@@ -37,17 +33,16 @@ import {
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
 import { toast } from "sonner"
 
-type Provider = 'github' | 'gitlab';
-
-const PROVIDER_LABEL: Record<Provider, string> = { github: 'GitHub', gitlab: 'GitLab' };
-
 const STALE_INSTANCE_NOTE = 'No active instance; this binding can only be removed.';
+const SYNC_OFF_NOTE = 'Team sync is off on this instance, so this binding assigns nothing.';
 
 interface TeamBindingDialogProps {
   team: Team | null;
@@ -55,16 +50,16 @@ interface TeamBindingDialogProps {
   onClose: () => void;
 }
 
-function bindingDescription(teamName: string, providers: Provider[]): string {
-  const suffix = `are assigned to ${teamName} on their next scan.`;
+function bindingDescription(teamName: string, providers: BindingProvider[]): string {
+  const suffix = `are assigned to ${teamName} on their next scan. A team holds one binding per instance.`;
   if (providers.length === 2) {
-    return `Repositories held by the bound GitHub team or GitLab group ${suffix} A team can hold one binding per provider.`;
+    return `Repositories held by a bound GitHub team or GitLab group ${suffix}`;
   }
   if (providers[0] === 'github') {
-    return `Repositories held by the bound GitHub team ${suffix} A team can hold one GitHub binding.`;
+    return `Repositories held by a bound GitHub team ${suffix}`;
   }
   if (providers[0] === 'gitlab') {
-    return `Repositories held by the bound GitLab group ${suffix} A team can hold one GitLab binding.`;
+    return `Repositories held by a bound GitLab group ${suffix}`;
   }
   return `Repositories held by a bound team or group ${suffix}`;
 }
@@ -78,37 +73,36 @@ function FieldRow({ label, htmlFor, children }: { label: string; htmlFor: string
   );
 }
 
-function CurrentBinding({
-  label,
-  summary,
+function BoundInstance({
+  binding,
+  instance,
   note,
   onRemove,
   isRemoving,
 }: {
-  label: string;
-  summary: string | null;
+  binding: TeamBinding;
+  instance?: ProviderInstance;
   note?: string;
   onRemove: () => void;
   isRemoving: boolean;
 }) {
+  const instanceName = instance?.name ?? binding.instance_id;
   return (
     <div className="grid grid-cols-4 items-baseline gap-4">
-      <Label className="text-right">{label}</Label>
+      <Label className="text-right">{`${PROVIDER_LABEL[binding.provider]} · ${instanceName}`}</Label>
       <div className="col-span-3">
         <div className="flex items-center gap-2">
-          <span className="text-sm text-muted-foreground truncate">{summary ?? 'Not bound'}</span>
-          {summary && (
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={onRemove}
-              disabled={isRemoving}
-              aria-label={`Remove ${label} binding`}
-            >
-              Remove
-            </Button>
-          )}
+          <span className="text-sm text-muted-foreground truncate">{bindingSummary(binding)}</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={onRemove}
+            disabled={isRemoving}
+            aria-label={`Remove the binding on ${instanceName}`}
+          >
+            Remove
+          </Button>
         </div>
         {note && <p className="mt-1 text-xs text-muted-foreground">{note}</p>}
       </div>
@@ -116,31 +110,40 @@ function CurrentBinding({
   );
 }
 
+// Both providers answer a refusal the same way: the 409 names the team that already holds the
+// group, and that name is the whole value of the message.
+function useBindingWrite(teamId: string, onSaved: () => void) {
+  const setBinding = useSetTeamBinding();
+  const write = (data: TeamBindingRequest) =>
+    setBinding.mutate(
+      { teamId, data },
+      {
+        onSuccess: () => {
+          onSaved();
+          toast.success("Binding saved");
+        },
+        onError: (error) => toast.error(extractErrorMessage(error)),
+      },
+    );
+  return { write, isPending: setBinding.isPending };
+}
+
 function GitHubBindingForm({
-  team,
-  instances,
+  teamId,
+  instanceId,
   onSaved,
 }: {
-  team: Team;
-  instances: GitHubInstance[];
+  teamId: string;
+  instanceId: string;
   onSaved: () => void;
 }) {
-  const [instanceId, setInstanceId] = useState<string | null>(team.github_instance_id ?? null);
-  const [org, setOrg] = useState<string | null>(team.github_org ?? null);
-  const [githubTeamId, setGithubTeamId] = useState<string | null>(
-    team.github_team_id != null ? String(team.github_team_id) : null,
-  );
+  const [org, setOrg] = useState<string | null>(null);
+  const [githubTeamId, setGithubTeamId] = useState<string | null>(null);
 
   const { data: orgs, isLoading: orgsLoading, error: orgsError } = useGitHubOrgs(instanceId);
   const { data: orgTeams, isLoading: teamsLoading, error: teamsError } = useGitHubOrgTeams(instanceId, org);
 
-  const setBinding = useSetTeamGithubBinding();
-
-  const pickInstance = (value: string) => {
-    setInstanceId(value);
-    setOrg(null);
-    setGithubTeamId(null);
-  };
+  const { write, isPending } = useBindingWrite(teamId, onSaved);
 
   const pickOrg = (value: string) => {
     setOrg(value);
@@ -149,39 +152,15 @@ function GitHubBindingForm({
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!instanceId || !org || !githubTeamId) return;
-    setBinding.mutate(
-      { teamId: team.id, data: { github_instance_id: instanceId, github_org: org, github_team_id: Number(githubTeamId) } },
-      {
-        onSuccess: () => {
-          onSaved();
-          toast.success("GitHub binding saved");
-        },
-        onError: (error) => toast.error(extractErrorMessage(error)),
-      },
-    );
+    if (!org || !githubTeamId) return;
+    write({ provider: 'github', instance_id: instanceId, org, external_id: Number(githubTeamId) });
   };
 
   return (
     <form onSubmit={handleSave}>
       <div className="grid gap-4 py-4">
-        <FieldRow label="Instance" htmlFor="binding-instance">
-          <Select value={instanceId ?? ''} onValueChange={pickInstance}>
-            <SelectTrigger id="binding-instance">
-              <SelectValue placeholder="Select a GitHub instance" />
-            </SelectTrigger>
-            <SelectContent>
-              {instances.map((instance) => (
-                <SelectItem key={instance.id} value={instance.id}>
-                  {instance.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </FieldRow>
-
         <FieldRow label="Organisation" htmlFor="binding-org">
-          <Select value={org ?? ''} onValueChange={pickOrg} disabled={!instanceId || orgsLoading}>
+          <Select value={org ?? ''} onValueChange={pickOrg} disabled={orgsLoading}>
             <SelectTrigger id="binding-org">
               <SelectValue placeholder={orgsLoading ? 'Loading...' : 'Select an organisation'} />
             </SelectTrigger>
@@ -213,8 +192,8 @@ function GitHubBindingForm({
         </FieldRow>
       </div>
       <DialogFooter>
-        <Button type="submit" disabled={!instanceId || !org || !githubTeamId || setBinding.isPending}>
-          {setBinding.isPending ? 'Saving...' : 'Save Binding'}
+        <Button type="submit" disabled={!org || !githubTeamId || isPending}>
+          {isPending ? 'Saving...' : 'Save Binding'}
         </Button>
       </DialogFooter>
     </form>
@@ -222,18 +201,15 @@ function GitHubBindingForm({
 }
 
 function GitLabBindingForm({
-  team,
-  instances,
+  teamId,
+  instanceId,
   onSaved,
 }: {
-  team: Team;
-  instances: GitLabInstance[];
+  teamId: string;
+  instanceId: string;
   onSaved: () => void;
 }) {
-  const [instanceId, setInstanceId] = useState<string | null>(team.gitlab_instance_id ?? null);
-  const [groupId, setGroupId] = useState<string | null>(
-    team.gitlab_group_id != null ? String(team.gitlab_group_id) : null,
-  );
+  const [groupId, setGroupId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
 
   const debouncedSearch = useDebounce(search);
@@ -243,58 +219,28 @@ function GitLabBindingForm({
     debouncedSearch,
   );
 
-  const setBinding = useSetTeamGitlabBinding();
-
-  const pickInstance = (value: string) => {
-    setInstanceId(value);
-    setGroupId(null);
-  };
+  const { write, isPending } = useBindingWrite(teamId, onSaved);
 
   const handleSave = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!instanceId || !groupId) return;
-    setBinding.mutate(
-      { teamId: team.id, data: { gitlab_instance_id: instanceId, gitlab_group_id: Number(groupId) } },
-      {
-        onSuccess: () => {
-          onSaved();
-          toast.success("GitLab binding saved");
-        },
-        onError: (error) => toast.error(extractErrorMessage(error)),
-      },
-    );
+    if (!groupId) return;
+    write({ provider: 'gitlab', instance_id: instanceId, external_id: Number(groupId) });
   };
 
   return (
     <form onSubmit={handleSave}>
       <div className="grid gap-4 py-4">
-        <FieldRow label="Instance" htmlFor="binding-instance">
-          <Select value={instanceId ?? ''} onValueChange={pickInstance}>
-            <SelectTrigger id="binding-instance">
-              <SelectValue placeholder="Select a GitLab instance" />
-            </SelectTrigger>
-            <SelectContent>
-              {instances.map((instance) => (
-                <SelectItem key={instance.id} value={instance.id}>
-                  {instance.name}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        </FieldRow>
-
         <FieldRow label="Find group" htmlFor="binding-group-search">
           <Input
             id="binding-group-search"
             placeholder="Filter by name or path"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            disabled={!instanceId}
           />
         </FieldRow>
 
         <FieldRow label="Group" htmlFor="binding-group">
-          <Select value={groupId ?? ''} onValueChange={setGroupId} disabled={!instanceId || groupsLoading}>
+          <Select value={groupId ?? ''} onValueChange={setGroupId} disabled={groupsLoading}>
             <SelectTrigger id="binding-group">
               <SelectValue placeholder={groupsLoading ? 'Loading...' : 'Select a group'} />
             </SelectTrigger>
@@ -310,8 +256,8 @@ function GitLabBindingForm({
         </FieldRow>
       </div>
       <DialogFooter>
-        <Button type="submit" disabled={!instanceId || !groupId || setBinding.isPending}>
-          {setBinding.isPending ? 'Saving...' : 'Save Binding'}
+        <Button type="submit" disabled={!groupId || isPending}>
+          {isPending ? 'Saving...' : 'Save Binding'}
         </Button>
       </DialogFooter>
     </form>
@@ -319,45 +265,48 @@ function GitLabBindingForm({
 }
 
 export function TeamBindingDialog({ team, isOpen, onClose }: TeamBindingDialogProps) {
-  // Opens on the provider the team already answers for, which is the one an operator came to correct.
-  const [provider, setProvider] = useState<Provider>(
-    team?.github_team_id == null && team?.gitlab_group_id != null ? 'gitlab' : 'github',
-  );
+  const [pickedInstanceId, setPickedInstanceId] = useState<string | null>(null);
 
-  const { data: githubInstances, isLoading: githubLoading } = useGitHubInstances({ active_only: true });
-  const { data: gitlabInstances, isLoading: gitlabLoading } = useGitLabInstances({ active_only: true });
+  const { data: githubInstances, isLoading: githubLoading } = useGitHubInstances();
+  const { data: gitlabInstances, isLoading: gitlabLoading } = useGitLabInstances();
 
-  const clearGithub = useClearTeamGithubBinding();
-  const clearGitlab = useClearTeamGitlabBinding();
+  const clearBinding = useClearTeamBinding();
 
   const instancesLoading = githubLoading || gitlabLoading;
-  const githubItems = githubInstances?.items ?? [];
-  const gitlabItems = gitlabInstances?.items ?? [];
+  const instances = providerInstances(githubInstances?.items ?? [], gitlabInstances?.items ?? []);
+  const instanceById = new Map(instances.map((instance) => [instance.id, instance]));
 
-  const available: Provider[] = [
-    ...(githubItems.length > 0 ? (['github'] as const) : []),
-    ...(gitlabItems.length > 0 ? (['gitlab'] as const) : []),
+  const bindings = team?.bindings ?? [];
+  const bound = new Set(bindings.map((binding) => binding.instance_id));
+  const offerable = instances.filter((instance) => instance.is_active && !bound.has(instance.id));
+
+  const activeProviders = [
+    ...new Set(instances.filter((instance) => instance.is_active).map((i) => i.provider)),
   ];
-  const activeProvider = available.includes(provider) ? provider : available[0];
+  const offerableProviders = [...new Set(offerable.map((instance) => instance.provider))];
 
-  const githubSummary = team ? githubBindingSummary(team) : null;
-  const gitlabSummary = team ? gitlabBindingSummary(team) : null;
-  // A binding outlives its instance, and only this row can still clear it.
-  const showGithubBinding = available.includes('github') || githubSummary != null;
-  const showGitlabBinding = available.includes('gitlab') || gitlabSummary != null;
+  // With a single candidate the pick is already made; the select stays for changing it.
+  const selected = offerable.find(
+    (instance) => instance.id === (pickedInstanceId ?? (offerable.length === 1 ? offerable[0].id : null)),
+  );
 
-  const staleNote = (summary: string | null, providerAvailable: boolean) =>
-    !instancesLoading && summary != null && !providerAvailable ? STALE_INSTANCE_NOTE : undefined;
+  // A binding outlives the instance it names, and only its row can still clear it.
+  const bindingNote = (binding: TeamBinding) => {
+    if (instancesLoading) return undefined;
+    const instance = instanceById.get(binding.instance_id);
+    if (!instance?.is_active) return STALE_INSTANCE_NOTE;
+    return instance.sync_teams ? undefined : SYNC_OFF_NOTE;
+  };
 
-  const remove = (mutation: ReturnType<typeof useClearTeamGithubBinding>, label: string) => {
+  const remove = (instanceId: string) => {
     if (!team) return;
-    mutation.mutate(team.id, {
-      onSuccess: () => {
-        onClose();
-        toast.success(`${label} binding removed`);
+    clearBinding.mutate(
+      { teamId: team.id, instanceId },
+      {
+        onSuccess: () => toast.success("Binding removed"),
+        onError: (error) => toast.error(extractErrorMessage(error)),
       },
-      onError: (error) => toast.error(extractErrorMessage(error)),
-    });
+    );
   };
 
   return (
@@ -366,30 +315,22 @@ export function TeamBindingDialog({ team, isOpen, onClose }: TeamBindingDialogPr
         <DialogHeader>
           <DialogTitle>Team Binding</DialogTitle>
           <DialogDescription>
-            {bindingDescription(team?.name ?? '', available)}
+            {bindingDescription(team?.name ?? '', activeProviders)}
           </DialogDescription>
         </DialogHeader>
 
-        {(showGithubBinding || showGitlabBinding) && (
+        {bindings.length > 0 && (
           <div className="grid gap-4 border-b pb-4">
-            {showGithubBinding && (
-              <CurrentBinding
-                label="GitHub"
-                summary={githubSummary}
-                note={staleNote(githubSummary, available.includes('github'))}
-                onRemove={() => remove(clearGithub, 'GitHub')}
-                isRemoving={clearGithub.isPending}
+            {bindings.map((binding) => (
+              <BoundInstance
+                key={binding.instance_id}
+                binding={binding}
+                instance={instanceById.get(binding.instance_id)}
+                note={bindingNote(binding)}
+                onRemove={() => remove(binding.instance_id)}
+                isRemoving={clearBinding.isPending}
               />
-            )}
-            {showGitlabBinding && (
-              <CurrentBinding
-                label="GitLab"
-                summary={gitlabSummary}
-                note={staleNote(gitlabSummary, available.includes('gitlab'))}
-                onRemove={() => remove(clearGitlab, 'GitLab')}
-                isRemoving={clearGitlab.isPending}
-              />
-            )}
+            ))}
             <p className="text-xs text-muted-foreground">
               Removing a binding stops that provider from making this team an owner. The projects it owns
               by that provenance are retired on their next sync; projects owned another way keep the team.
@@ -397,38 +338,66 @@ export function TeamBindingDialog({ team, isOpen, onClose }: TeamBindingDialogPr
           </div>
         )}
 
-        {!instancesLoading && available.length === 0 && (
+        {!instancesLoading && activeProviders.length === 0 && (
           <p className="text-sm text-muted-foreground">
             No active GitHub or GitLab instance is configured, so no binding can be made. Instances are
             managed under Settings &rarr; Integrations.
           </p>
         )}
 
-        {available.length > 1 && (
-          <div className="grid grid-cols-4 items-center gap-4">
-            <Label htmlFor="binding-provider" className="text-right">Provider</Label>
-            <div className="col-span-3">
-              <Select value={provider} onValueChange={(value) => setProvider(value as Provider)}>
-                <SelectTrigger id="binding-provider">
-                  <SelectValue />
+        {!instancesLoading && activeProviders.length > 0 && offerable.length === 0 && (
+          <p className="text-sm text-muted-foreground">
+            This team already holds a binding on every active instance.
+          </p>
+        )}
+
+        {offerable.length > 0 && (
+          <div className="grid gap-2">
+            <FieldRow label="Instance" htmlFor="binding-instance">
+              <Select value={selected?.id ?? ''} onValueChange={setPickedInstanceId}>
+                <SelectTrigger id="binding-instance">
+                  <SelectValue placeholder="Select an instance" />
                 </SelectTrigger>
                 <SelectContent>
-                  {available.map((option) => (
-                    <SelectItem key={option} value={option}>
-                      {PROVIDER_LABEL[option]}
-                    </SelectItem>
+                  {offerableProviders.map((provider) => (
+                    <SelectGroup key={provider}>
+                      <SelectLabel>{PROVIDER_LABEL[provider]}</SelectLabel>
+                      {offerable
+                        .filter((instance) => instance.provider === provider)
+                        .map((instance) => (
+                          <SelectItem key={instance.id} value={instance.id}>
+                            {instanceOptionLabel(instance)}
+                          </SelectItem>
+                        ))}
+                    </SelectGroup>
                   ))}
                 </SelectContent>
               </Select>
-            </div>
+            </FieldRow>
+            {selected && !selected.sync_teams && (
+              <p className="text-xs text-muted-foreground">
+                Team sync is off on {selected.name}, so a binding there assigns nothing until it is
+                switched on under Settings &rarr; Integrations.
+              </p>
+            )}
           </div>
         )}
 
-        {team && activeProvider === 'github' && (
-          <GitHubBindingForm team={team} instances={githubItems} onSaved={onClose} />
+        {team && selected?.provider === 'github' && (
+          <GitHubBindingForm
+            key={selected.id}
+            teamId={team.id}
+            instanceId={selected.id}
+            onSaved={() => setPickedInstanceId(null)}
+          />
         )}
-        {team && activeProvider === 'gitlab' && (
-          <GitLabBindingForm team={team} instances={gitlabItems} onSaved={onClose} />
+        {team && selected?.provider === 'gitlab' && (
+          <GitLabBindingForm
+            key={selected.id}
+            teamId={team.id}
+            instanceId={selected.id}
+            onSaved={() => setPickedInstanceId(null)}
+          />
         )}
       </DialogContent>
     </Dialog>

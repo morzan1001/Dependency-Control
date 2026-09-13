@@ -22,6 +22,7 @@ const TEAM: Team = {
   id: "t-1",
   name: "Payments Guild",
   members: [{ user_id: "u-1", role: "admin" }],
+  bindings: [],
   created_at: "2026-01-01T00:00:00Z",
   updated_at: "2026-01-01T00:00:00Z",
 };
@@ -64,10 +65,13 @@ describe("TeamCard binding", () => {
     expect(screen.queryByRole("button", { name: "Team binding" })).not.toBeInTheDocument();
   });
 
-  it("reads as bound for a team only GitLab resolves to", () => {
+  it("reads as bound for a team only one instance resolves to", () => {
     granted.current = ["system:manage"];
 
-    renderCard(vi.fn(), { ...TEAM, gitlab_instance_id: "gl-1", gitlab_group_id: 77 });
+    renderCard(vi.fn(), {
+      ...TEAM,
+      bindings: [{ provider: "gitlab", instance_id: "gl-1", external_id: 77, path: "mo/edge" }],
+    });
 
     const icon = screen.getByRole("button", { name: "Team binding" }).querySelector("svg");
     expect(icon).not.toHaveClass("text-muted-foreground");

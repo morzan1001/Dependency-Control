@@ -1,22 +1,15 @@
 import { describe, it, expect } from 'vitest'
 
 import {
-  githubBindingSummary,
+  bindingSummary,
   githubTeamOptionLabel,
-  gitlabBindingSummary,
   gitlabGroupOptionLabel,
+  instanceOptionLabel,
+  providerInstances,
 } from '@/lib/team-binding'
-import type { Team } from '@/types/team'
 
-function team(binding: Partial<Team>): Team {
-  return {
-    id: 't-1',
-    name: 'Payments Guild',
-    members: [],
-    created_at: '2026-01-01T00:00:00Z',
-    updated_at: '2026-01-01T00:00:00Z',
-    ...binding,
-  }
+function instance(overrides: Partial<{ id: string; name: string; is_active: boolean; sync_teams: boolean }> = {}) {
+  return { id: 'i-1', name: 'Instance', is_active: true, sync_teams: true, ...overrides }
 }
 
 describe('githubTeamOptionLabel', () => {
@@ -33,41 +26,66 @@ describe('githubTeamOptionLabel', () => {
   })
 })
 
-describe('githubBindingSummary', () => {
-  it('reports the organisation and the number the binding points at', () => {
-    expect(
-      githubBindingSummary(team({ github_org: 'Acme', github_team_slug: 'payments', github_team_id: 4711 }))
-    ).toBe('Acme/payments (#4711)')
-  })
-
-  it('renders nothing for a team no repository resolves to', () => {
-    expect(githubBindingSummary(team({}))).toBeNull()
-    expect(githubBindingSummary(team({ github_org: 'Acme' }))).toBeNull()
-  })
-
-  it('still reports a binding whose slug was never written', () => {
-    expect(githubBindingSummary(team({ github_org: 'Acme', github_team_id: 4711 }))).toBe('Acme/? (#4711)')
-  })
-})
-
 describe('gitlabGroupOptionLabel', () => {
   it('names the full path so two same-named subgroups are distinguishable', () => {
     expect(gitlabGroupOptionLabel({ id: 77, full_path: 'mo/edge', name: 'Edge' })).toBe('Edge (mo/edge)')
   })
 })
 
-describe('gitlabBindingSummary', () => {
-  it('reports the path and the number the binding points at', () => {
-    expect(gitlabBindingSummary(team({ gitlab_group_path: 'mo/edge', gitlab_group_id: 77 }))).toBe(
-      'mo/edge (#77)'
+describe('bindingSummary', () => {
+  it('reports the organisation and the number a GitHub binding points at', () => {
+    expect(
+      bindingSummary({
+        provider: 'github',
+        instance_id: 'gh-1',
+        org: 'Acme',
+        slug: 'payments',
+        external_id: 4711,
+      })
+    ).toBe('Acme/payments (#4711)')
+  })
+
+  it('reports the path and the number a GitLab binding points at', () => {
+    expect(
+      bindingSummary({ provider: 'gitlab', instance_id: 'gl-1', path: 'mo/edge', external_id: 77 })
+    ).toBe('mo/edge (#77)')
+  })
+
+  it('still reports a binding whose slug or path was never read back', () => {
+    expect(
+      bindingSummary({ provider: 'github', instance_id: 'gh-1', org: 'Acme', external_id: 4711 })
+    ).toBe('Acme/? (#4711)')
+    expect(bindingSummary({ provider: 'gitlab', instance_id: 'gl-1', external_id: 77 })).toBe('? (#77)')
+  })
+})
+
+describe('providerInstances', () => {
+  it('tags each instance with the provider whose binding it would take', () => {
+    const merged = providerInstances([instance({ id: 'gh-1' })], [instance({ id: 'gl-1' })])
+
+    expect(merged.map((i) => [i.id, i.provider])).toEqual([
+      ['gh-1', 'github'],
+      ['gl-1', 'gitlab'],
+    ])
+  })
+
+  it('carries activity and team sync through, which decide whether an instance can be offered', () => {
+    const [merged] = providerInstances([], [instance({ is_active: false, sync_teams: false })])
+
+    expect(merged).toMatchObject({ is_active: false, sync_teams: false })
+  })
+})
+
+describe('instanceOptionLabel', () => {
+  it('names an instance that syncs teams by itself', () => {
+    expect(instanceOptionLabel({ ...instance({ name: 'GitLab Corp' }), provider: 'gitlab' })).toBe(
+      'GitLab Corp'
     )
   })
 
-  it('renders nothing for a team no project resolves to', () => {
-    expect(gitlabBindingSummary(team({}))).toBeNull()
-  })
-
-  it('still reports a binding whose path was never written', () => {
-    expect(gitlabBindingSummary(team({ gitlab_group_id: 77 }))).toBe('? (#77)')
+  it('says a binding on an instance without team sync assigns nothing', () => {
+    expect(
+      instanceOptionLabel({ ...instance({ name: 'GitLab Legacy', sync_teams: false }), provider: 'gitlab' })
+    ).toBe('GitLab Legacy — team sync off, assigns nothing')
   })
 })

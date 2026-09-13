@@ -1,5 +1,5 @@
 import { api, buildQueryParams } from '@/api/client';
-import { Team, TeamCreate, TeamGitHubBinding, TeamGitLabBinding, TeamMemberCreate } from '@/types/team';
+import { Team, TeamBindingRequest, TeamCreate, TeamMemberCreate } from '@/types/team';
 
 export const teamApi = {
   getAll: async (search?: string, sortBy = 'name', sortOrder = 'asc'): Promise<Team[]> => {
@@ -42,23 +42,13 @@ export const teamApi = {
     return response.data;
   },
 
-  setGithubBinding: async (teamId: string, data: TeamGitHubBinding): Promise<Team> => {
-    const response = await api.put<Team>(`/teams/${teamId}/github-binding`, data);
+  setBinding: async (teamId: string, data: TeamBindingRequest): Promise<Team> => {
+    const response = await api.put<Team>(`/teams/${teamId}/bindings`, data);
     return response.data;
   },
 
-  clearGithubBinding: async (teamId: string): Promise<Team> => {
-    const response = await api.delete<Team>(`/teams/${teamId}/github-binding`);
-    return response.data;
-  },
-
-  setGitlabBinding: async (teamId: string, data: TeamGitLabBinding): Promise<Team> => {
-    const response = await api.put<Team>(`/teams/${teamId}/gitlab-binding`, data);
-    return response.data;
-  },
-
-  clearGitlabBinding: async (teamId: string): Promise<Team> => {
-    const response = await api.delete<Team>(`/teams/${teamId}/gitlab-binding`);
+  clearBinding: async (teamId: string, instanceId: string): Promise<Team> => {
+    const response = await api.delete<Team>(`/teams/${teamId}/bindings/${instanceId}`);
     return response.data;
   }
 };
