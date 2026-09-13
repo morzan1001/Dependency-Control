@@ -167,6 +167,25 @@ async def _assert_a_team_this_instance_already_holds_is_not_stolen(db) -> None:
     assert _binding_keys(untouched) == ["github:gh-1:1234"]
 
 
+async def _assert_the_team_this_instance_holds_is_no_second_answer_to_the_name(db) -> None:
+    """Two teams answer to "Platform", but one of them is this instance's own and therefore not a
+    candidate at all. Read as one the pair would look ambiguous, and the group that has a perfectly
+    good team waiting for it would get a duplicate instead."""
+    repo = TeamRepository(db)
+    await repo.create(Team(id="t-held", name="Platform", bindings=[_github(external_id=1234, org="other")]))
+    await repo.create(Team(id="t-free", name="Platform"))
+    service = _service(sync_teams=True)
+    org_reads, check_reads, member_reads, map_reads = _stubbed_reads(service, holders=(), repo_map=_HELD_BY_PLATFORM)
+
+    with org_reads, check_reads, member_reads, map_reads:
+        result = await service.sync_team_from_github(db, "acme", "acme/widgets")
+
+    assert result == GitHubTeamSyncResult(["t-free"])
+    assert await repo.count({}) == 2
+    assert _binding_keys(await repo.get_raw_by_id("t-free")) == ["github:gh-1:9000"]
+    assert _binding_keys(await repo.get_raw_by_id("t-held")) == ["github:gh-1:1234"]
+
+
 async def _assert_a_team_synced_from_gitlab_is_adopted_for_github_too(db) -> None:
     """Nothing of this instance holds it, so one team can answer for the group on both providers."""
     result, repo = await _sync_against_the_existing_team(
@@ -358,3 +377,14 @@ async def test_a_repository_whose_github_group_nobody_bound_gains_no_owner_while
 @pytest.mark.asyncio
 async def test_a_second_sync_merges_into_the_team_it_already_wrote_on_real_mongo(db):
     await _assert_a_second_sync_merges_into_the_bound_team(db)
+
+
+@pytest.mark.asyncio
+async def test_a_same_named_team_this_instance_holds_does_not_block_adopting_the_free_one():
+    await _assert_the_team_this_instance_holds_is_no_second_answer_to_the_name(FakeDatabase())
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_same_named_team_this_instance_holds_does_not_block_adopting_the_free_one_on_real_mongo(db):
+    await _assert_the_team_this_instance_holds_is_no_second_answer_to_the_name(db)

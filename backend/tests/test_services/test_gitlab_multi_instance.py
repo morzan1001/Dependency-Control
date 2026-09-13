@@ -990,6 +990,41 @@ class TestTeamSyncMergeSemantics:
         assert dual_entries[0]["source"] == "gitlab"
         assert dual_entries[0]["role"] == "admin"
 
+    def test_a_moved_group_restamps_the_path_on_the_binding_it_resolved_through(self, gitlab_instance_a):
+        """The path is display-only, so nothing else notices it going stale: a group that moved
+        would go on naming the namespace it left, on the binding and in the picker, until somebody
+        rebound it by hand."""
+        service = GitLabService(gitlab_instance_a)
+        binding = GitLabGroupBinding(instance_id=str(gitlab_instance_a.id), external_id=42, path="old/grp")
+        existing_team = {
+            "_id": "team-moved",
+            "name": "GitLab Group: old/grp",
+            "bindings": [binding.model_dump()],
+            "members": [],
+        }
+
+        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
+            mock_members.return_value = [GitLabMember(username="dev", email="dev@test.com", access_level=30)]
+            users_coll = create_mock_collection(find_one={"_id": "u-dev", "username": "dev"})
+            teams_coll = create_mock_collection(find_one=existing_team)
+            db = create_mock_db({"teams": teams_coll, "users": users_coll})
+
+            asyncio.run(
+                service.sync_team_from_gitlab(
+                    db=db,
+                    gitlab_project_id=100,
+                    gitlab_project_path="new/proj",
+                    gitlab_project_data=make_project_details(
+                        namespace_kind="group", namespace_id=42, namespace_path="new"
+                    ),
+                )
+            )
+
+        update_set = teams_coll.update_one.call_args[0][1]["$set"]
+        assert update_set["bindings.$[entry].path"] == "new"
+        # Addressed by key, so a team bound to several instances restamps only the one that answered.
+        assert teams_coll.update_one.call_args[1]["array_filters"] == [{"entry.key": binding.key}]
+
 
 class TestTeamSyncEmaillessMembers:
     """Sync resolves members to EXISTING local users only and never creates users (which would pull in GitLab service accounts / bots)."""

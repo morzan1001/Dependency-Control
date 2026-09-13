@@ -172,6 +172,19 @@ class TestBackfillProvenance:
         assert db.projects._docs["p1"]["team_sources"] == {"t-synced": "manual"}
         assert db.projects._docs["p1"]["team_source"] == "manual"
 
+    def test_does_not_move_an_owner_to_this_teams_instance(self):
+        """The guard is absent-and-null and nothing else. An entry already naming another instance
+        is that instance's attribution, and restamping it on a startup would hand the owner to this
+        instance's next ingest to retire."""
+        db = FakeDatabase()
+        _seed_team(db, "t-synced", "GitLab Group: acme", bindings=[_gitlab_binding("inst-a", 42)])
+        _seed_project(db, "p1", "t-synced", team_source=team_source(TEAM_SOURCE_GITLAB, "inst-b"))
+
+        asyncio.run(_backfill_member_and_team_provenance(db))
+
+        assert db.projects._docs["p1"]["team_sources"] == {"t-synced": team_source(TEAM_SOURCE_GITLAB, "inst-b")}
+        assert db.projects._docs["p1"]["team_source"] == team_source(TEAM_SOURCE_GITLAB, "inst-b")
+
     def test_idempotent_second_run_is_noop(self):
         db = FakeDatabase()
         _seed_team(

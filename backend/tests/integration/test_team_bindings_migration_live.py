@@ -96,18 +96,26 @@ async def test_the_contract_pass_sheds_every_scalar_and_releases_the_gate(db):
 
 async def test_a_binding_an_old_pod_wrote_during_the_rollout_is_carried_over(db):
     """The window the two passes exist for: a pod on the previous image adopts a team into the
-    scalars after the expand pass has already been over it."""
+    scalars after the expand pass has already been over it.
+
+    The team has to already hold an entry on *another* instance for this to measure anything. The
+    scalars describe one binding per provider, so the entry the contract pass derives from them
+    cannot be the one at risk — what the pass must not drop is the entry that lives only in the
+    array, which is every binding a new pod wrote during the rollout.
+    """
     repo = await _seed(db)
     await run_move(db, batch_size=10, sleep_ms=0, execute=True, drop_scalars=False)
     await db.teams.update_one(
-        {"_id": "t-manual"},
+        {"_id": "t-edge"},
         {"$set": {"github_instance_id": "gh-1", "github_org": "acme", "github_team_id": 900,
                   "github_team_slug": "cards"}},
     )
 
     await run_move(db, batch_size=10, sleep_ms=0, execute=True, drop_scalars=True)
 
-    assert (await repo.get_raw_by_binding(TEAM_SOURCE_GITHUB, "gh-1", 900))["_id"] == "t-manual"
+    assert (await repo.get_raw_by_binding(TEAM_SOURCE_GITHUB, "gh-1", 900))["_id"] == "t-edge"
+    # The entry the expand wrote is still beside it; deriving afresh must add, not replace.
+    assert (await repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, "gl-1", 77))["_id"] == "t-edge"
     assert await count_scalar_bindings(db) == 0
 
 

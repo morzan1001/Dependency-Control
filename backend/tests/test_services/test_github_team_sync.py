@@ -942,6 +942,25 @@ class TestAdoptionByName:
         assert result == GitHubTeamSyncResult([str(created.id)])
 
     @pytest.mark.asyncio
+    async def test_a_group_a_concurrent_ingest_gave_its_own_team_is_not_adopted(self):
+        """The unique index, not the write filter, is what refuses this one: the filter only keeps
+        one team from holding two bindings on an instance, and here the group went to a *different*
+        team between the candidate read and the push. Unhandled it would abort the whole ingest."""
+        service = _service(sync_teams=True)
+        team_repo = _team_repo(unbound=[_unbound("t-existing", "Platform")])
+        team_repo.add_binding_if_absent = AsyncMock(
+            side_effect=DuplicateKeyError(
+                "E11000 duplicate key error", details={"keyValue": {"bindings.key": "github:gh-1:100"}}
+            )
+        )
+
+        with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        created = team_repo.create.await_args.args[0]
+        assert result == GitHubTeamSyncResult([str(created.id)])
+
+    @pytest.mark.asyncio
     async def test_a_group_already_bound_is_never_looked_up_by_name(self):
         """The binding is the answer; a same-named team must not be pulled in beside it."""
         service = _service(sync_teams=True)
