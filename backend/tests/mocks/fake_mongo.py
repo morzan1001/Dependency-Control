@@ -1345,24 +1345,42 @@ class FakeCollection:
 
     # -- writes -----------------------------------------------------------
 
-    def _duplicate_key(self, doc: dict) -> str | None:
-        """The unique index a document collides on, or None.
+    @staticmethod
+    def _index_entries(doc: dict, fields: tuple[str, ...]) -> set[tuple]:
+        """The keys a document contributes to one unique index.
 
-        Sparse semantics: an entry is indexed unless every indexed field is ABSENT. An explicit
-        null is a value and still collides — which is why init_db rebuilds the sparse compound
-        project indexes with a partialFilterExpression (see _migrate_project_indexes), Pydantic
-        serialising None being exactly how those nulls arrive.
+        Sparse semantics: a document contributes nothing when every indexed field is ABSENT. An
+        explicit null is a value and still collides — which is why init_db rebuilds the sparse
+        compound project indexes with a partialFilterExpression (see _migrate_project_indexes),
+        Pydantic serialising None being exactly how those nulls arrive.
+
+        A field inside an array contributes one key per element, as a multikey index does, and a
+        document's own duplicates collapse into one key — so the server accepts two equal entries
+        within one document and refuses the second document carrying either.
         """
+        if all(not _has_field(doc, field) for field in fields):
+            return set()
+        resolved = [_resolve_dotted(doc, field) for field in fields]
+        multikey = next((index for index, value in enumerate(resolved) if isinstance(value, list)), None)
+        if multikey is None:
+            return {tuple(resolved)}
+        return {
+            tuple(element if index == multikey else value for index, value in enumerate(resolved))
+            for element in resolved[multikey]
+        }
+
+    def _duplicate_key(self, doc: dict) -> str | None:
+        """The unique index a document collides on, or None."""
         if doc.get("_id") in self._docs:
             return "_id"
         for fields in self._unique_keys:
-            if all(field not in doc for field in fields):
+            entries = self._index_entries(doc, fields)
+            if not entries:
                 continue
-            values = tuple(doc.get(field) for field in fields)
-            for existing in self._docs.values():
-                if all(field not in existing for field in fields):
+            for existing_id, existing in self._docs.items():
+                if existing_id == doc.get("_id"):
                     continue
-                if tuple(existing.get(field) for field in fields) == values:
+                if entries & self._index_entries(existing, fields):
                     return ", ".join(fields)
         return None
 
@@ -1613,9 +1631,14 @@ class FakeCollection:
             if not isinstance(node, list):
                 return
             predicate = filters.get(part[2:-1])
-            for item in node:
+            for index, item in enumerate(node):
                 if predicate is None or _match_doc(item, predicate):
-                    FakeCollection._set_through_arrays(item, parts[1:], value, filters)
+                    # An identifier that ends the path addresses the element itself, which the
+                    # server then replaces whole rather than descending into it.
+                    if len(parts) == 1:
+                        node[index] = value
+                    else:
+                        FakeCollection._set_through_arrays(item, parts[1:], value, filters)
             return
         if len(parts) == 1:
             node[part] = value

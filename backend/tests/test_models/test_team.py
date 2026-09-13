@@ -4,7 +4,7 @@ import pytest
 from pydantic import ValidationError
 
 from app.core.constants import TEAM_ROLE_MEMBER
-from app.models.team import Team, TeamMember
+from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember, binding_of
 
 
 class TestTeamMember:
@@ -60,24 +60,54 @@ class TestTeamModel:
         assert "_id" in dumped
 
 
-class TestTeamGitHubProvenance:
-    def test_team_carries_the_github_identity_pair(self):
+class TestTeamBindings:
+    def test_a_binding_carries_the_key_the_unique_index_is_on(self):
         team = Team(
             name="GitHub Team: acme/payments",
-            github_instance_id="gh-inst-1",
-            github_org="acme",
-            github_team_id=4711,
-            github_team_slug="payments",
+            bindings=[GitHubTeamBinding(instance_id="gh-inst-1", org="acme", external_id=4711, slug="payments")],
         )
-        assert team.github_instance_id == "gh-inst-1"
-        assert team.github_org == "acme"
-        assert team.github_team_id == 4711
-        assert team.github_team_slug == "payments"
+        assert team.model_dump()["bindings"][0]["key"] == "github:gh-inst-1:4711"
 
-    def test_manual_team_leaves_the_github_fields_unset(self):
-        team = Team(name="Atlas")
-        assert team.github_team_id is None
-        assert team.github_instance_id is None
+    def test_a_stored_key_never_overrides_the_one_the_binding_derives(self):
+        """A key that named another binding would hand that binding's uniqueness to this team."""
+        team = Team(
+            name="Edge", bindings=[
+                    {"provider": "gitlab", "instance_id": "gl-1", "external_id": 77, "key": "gitlab:gl-9:1"}
+                ]
+        )
+        assert team.bindings[0].key == "gitlab:gl-1:77"
+
+    def test_the_provider_decides_which_display_fields_a_binding_carries(self):
+        team = Team(
+            name="Both",
+            bindings=[
+                GitHubTeamBinding(instance_id="gh-1", org="acme", external_id=1),
+                GitLabGroupBinding(instance_id="gl-1", external_id=2, path="mo/edge"),
+            ],
+        )
+        assert isinstance(team.bindings[0], GitHubTeamBinding)
+        assert isinstance(team.bindings[1], GitLabGroupBinding)
+
+    def test_a_github_binding_without_an_organisation_is_refused(self):
+        """It addresses no team on GitHub, and storing it leaves every repository of an
+        organisation undetermined instead of resolving against the bindings that are whole."""
+        with pytest.raises(ValidationError):
+            Team(name="Half", bindings=[{"provider": "github", "instance_id": "gh-1", "external_id": 1}])
+
+    def test_a_manual_team_holds_no_binding(self):
+        assert Team(name="Atlas").bindings == []
+
+    def test_binding_of_answers_for_one_instance_only(self):
+        team = Team(
+            name="Both",
+            bindings=[
+                GitHubTeamBinding(instance_id="gh-1", org="acme", external_id=1),
+                GitHubTeamBinding(instance_id="gh-2", org="acme", external_id=2),
+            ],
+        ).model_dump()
+
+        assert binding_of(team, "gh-2")["external_id"] == 2
+        assert binding_of(team, "gh-3") is None
 
     def test_member_can_be_sourced_from_github(self):
         assert TeamMember(user_id="u-1", source="github").source == "github"

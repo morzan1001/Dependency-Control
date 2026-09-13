@@ -12,6 +12,7 @@ from app.core.constants import (
     GITLAB_ADMIN_MIN_ACCESS,
     GITLAB_JWKS_CACHE_TTL,
     GITLAB_JWKS_URI_CACHE_TTL,
+    TEAM_SOURCE_GITLAB,
 )
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.gitlab_api import (
@@ -22,7 +23,7 @@ from app.models.gitlab_api import (
     OIDCPayload,
 )
 from app.models.gitlab_instance import GitLabInstance
-from app.models.team import Team, TeamMember
+from app.models.team import GitLabGroupBinding, Team, TeamMember
 from app.repositories import TeamRepository, UserRepository
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
@@ -551,35 +552,28 @@ class GitLabService:
         team_members: list[TeamMember],
     ) -> str | None:
         now = datetime.now(timezone.utc)
+        binding = GitLabGroupBinding(instance_id=instance_id, external_id=group_id, path=group_path)
         if existing_team:
             # Merge, not replace: keep manual members, refresh only the gitlab-sourced subset.
             merged_members = self._merge_team_members(existing_team.get("members") or [], team_members)
-            update_data: dict = {
-                "members": merged_members,
-                # Restamped every sync: a group that was renamed or moved keeps the path GitLab
-                # reports now, including on a team bound by hand before any sync ran.
-                "gitlab_group_path": group_path,
-                "updated_at": now,
-            }
+            update_data: dict = {"members": merged_members, "updated_at": now}
             # Sync name only if it still has the auto-generated GitLab prefix.
             # If the team was manually renamed (e.g. to "BOS"), keep the custom name.
             current_name = existing_team.get("name", "")
             if current_name.startswith("GitLab Group:") and current_name != team_name:
                 update_data["name"] = team_name
                 update_data["description"] = description
-            # Defensive: stamp gitlab IDs if a matched team somehow lacks them.
-            if not existing_team.get("gitlab_group_id"):
-                update_data["gitlab_instance_id"] = instance_id
-                update_data["gitlab_group_id"] = group_id
-            await team_repo.update(existing_team["_id"], update_data)
+            # Restamped every sync: a group that was renamed or moved keeps the path GitLab
+            # reports now, including on a team bound by hand before any sync ran.
+            await team_repo.update_with_binding(
+                existing_team["_id"], update_data, binding.key, {"path": group_path}
+            )
             return str(existing_team["_id"])
         if team_members:
             new_team = Team(
                 name=team_name,
                 description=description,
-                gitlab_instance_id=instance_id,
-                gitlab_group_id=group_id,
-                gitlab_group_path=group_path,
+                bindings=[binding],
                 members=team_members,
             )
             await team_repo.create(new_team)
@@ -618,7 +612,7 @@ class GitLabService:
                 )
                 # Match ONLY by the (instance, group) composite key. A name-based fallback
                 # is unsafe: two instances owning a same-path group would collide cross-tenant.
-                team = await team_repo.get_raw_by_gitlab_group(instance_id, group_id)
+                team = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, instance_id, group_id)
                 if team:
                     return GitLabTeamSyncResult([str(team["_id"])])
                 logger.warning(
@@ -628,7 +622,7 @@ class GitLabService:
                 return GitLabTeamSyncResult(None)
 
             # Match ONLY by the (instance, group) composite key (see no-members branch above).
-            existing_team = await team_repo.get_raw_by_gitlab_group(instance_id, group_id)
+            existing_team = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, instance_id, group_id)
             team_members = await self._build_team_members(members, user_repo)
             team_id = await self._upsert_team_with_members(
                 team_repo, existing_team, team_name, description, instance_id, group_id, group_path, team_members

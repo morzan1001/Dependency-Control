@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.models.gitlab_api import GitLabMember
 from app.models.project import Project, Scan
 from app.models.stats import Stats
+from app.models.team import GitLabGroupBinding
 from app.services.gitlab import GitLabService
 from tests.mocks.gitlab import (
     make_gitlab_instance,
@@ -770,9 +771,9 @@ class TestTeamSyncResolveGroupFallback:
             teams_coll.insert_one.assert_called_once()
             team_data = teams_coll.insert_one.call_args[0][0]
             # group_id and name must reference the SAME level — either both deep or both truncated.
-            if team_data["gitlab_group_id"] == 42:
+            if team_data["bindings"][0]["external_id"] == 42:
                 assert team_data["name"] == "GitLab Group: org/subgroup", (
-                    f"If gitlab_group_id is the deep namespace.id (42), the team name must reflect "
+                    f"If the bound group is the deep namespace.id (42), the team name must reflect "
                     f"the deep path, not the unresolvable truncated path. Got name={team_data['name']!r}"
                 )
 
@@ -784,8 +785,23 @@ class _StatefulTeamsCollection:
         self.docs: list[dict] = []
 
     @staticmethod
-    def _matches(doc: dict, query: dict) -> bool:
-        return all(doc.get(k) == v for k, v in query.items())
+    def _resolve(doc: dict, field: str):
+        """A dotted path into the bindings array resolves to every element's value, as Mongo's does."""
+        head, _, rest = field.partition(".")
+        if not rest:
+            return doc.get(head)
+        return [entry.get(rest) for entry in doc.get(head) or []]
+
+    @classmethod
+    def _matches(cls, doc: dict, query: dict) -> bool:
+        for field, wanted in query.items():
+            resolved = cls._resolve(doc, field)
+            if resolved == wanted:
+                continue
+            if isinstance(resolved, list) and wanted in resolved:
+                continue
+            return False
+        return True
 
     async def find_one(self, query, *args, **kwargs):
         for doc in self.docs:
@@ -849,7 +865,7 @@ class TestTeamSyncInstanceScoping:
         )
         # Two separate team documents must exist, each tagged to its own instance.
         assert len(teams.docs) == 2
-        by_instance = {d["gitlab_instance_id"]: d for d in teams.docs}
+        by_instance = {d["bindings"][0]["instance_id"]: d for d in teams.docs}
         assert set(by_instance) == {"inst-a", "inst-b"}
 
     def test_instance_a_members_not_mutated_by_instance_b_sync(self):
@@ -865,7 +881,7 @@ class TestTeamSyncInstanceScoping:
         self._sync(instance_b, teams, group_id=7, group_path="shared-grp")
 
         team_a_after = next(d for d in teams.docs if d["_id"] == team_a_id)
-        assert team_a_after["gitlab_instance_id"] == "inst-a"
+        assert [binding["key"] for binding in team_a_after["bindings"]] == ["gitlab:inst-a:7"]
         assert team_a_after["members"] == members_before
 
     def test_repeated_sync_same_instance_group_reuses_team(self):
@@ -890,8 +906,9 @@ class TestTeamSyncMergeSemantics:
         existing_team = {
             "_id": "team-1",
             "name": "GitLab Group: grp",
-            "gitlab_instance_id": str(gitlab_instance_a.id),
-            "gitlab_group_id": 42,
+            "bindings": [
+                GitLabGroupBinding(instance_id=str(gitlab_instance_a.id), external_id=42).model_dump()
+            ],
             "members": [
                 {"user_id": "manual-user", "role": "admin", "source": "manual"},
                 {"user_id": "stale-gitlab-user", "role": "member", "source": "gitlab"},
@@ -938,8 +955,9 @@ class TestTeamSyncMergeSemantics:
         existing_team = {
             "_id": "team-2",
             "name": "GitLab Group: grp",
-            "gitlab_instance_id": str(gitlab_instance_a.id),
-            "gitlab_group_id": 42,
+            "bindings": [
+                GitLabGroupBinding(instance_id=str(gitlab_instance_a.id), external_id=42).model_dump()
+            ],
             "members": [
                 {"user_id": "dual-user", "role": "member", "source": "manual"},
             ],

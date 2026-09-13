@@ -201,6 +201,18 @@ def team_source(provider: str, instance_id: str) -> str:
     return f"{provider}{TEAM_SOURCE_SEPARATOR}{instance_id}"
 
 
+def team_binding_key(provider: str, instance_id: str, external_id: int) -> str:
+    """The unique key of one team binding.
+
+    A single scalar rather than the three fields compounded: a `teams` document always carries the
+    `members` array, and MongoDB refuses any write to a document indexed across two arrays at once
+    ("cannot index parallel arrays", code 171), so a key built from array fields can never be
+    combined with one outside `bindings`. One string also keeps the lookup a single-field equality
+    on the index the uniqueness is enforced by.
+    """
+    return f"{provider}{TEAM_SOURCE_SEPARATOR}{instance_id}{TEAM_SOURCE_SEPARATOR}{external_id}"
+
+
 # Upper bound on a user-entered policy comment, shared by the audit entry and the request bodies.
 POLICY_COMMENT_MAX_LENGTH = 1000
 
