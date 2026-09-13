@@ -104,6 +104,14 @@ class GitLabInstanceList(BaseModel):
     pages: int
 
 
+class GitLabGroupOption(BaseModel):
+    """One group of an instance, as offered for binding."""
+
+    id: int = Field(..., description="Numeric group id; the binding is stored on this, not on the path")
+    full_path: str = Field(..., description="Full path, which tells two same-named subgroups apart")
+    name: str = Field(..., description="Display name")
+
+
 class GitLabInstanceTestConnectionResponse(BaseModel):
     """Response for connection test."""
 

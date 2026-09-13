@@ -27,7 +27,9 @@ class Team(MongoDocument, CreatedAtModel):
     name: str
     description: str | None = None
     gitlab_instance_id: str | None = None
+    # The numeric id identifies the group; paths move when a group is renamed or transferred.
     gitlab_group_id: int | None = None
+    gitlab_group_path: str | None = None
     github_instance_id: str | None = None
     github_org: str | None = None
     # The numeric id identifies the team; slugs are renameable.

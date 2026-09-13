@@ -674,3 +674,67 @@ class TestTestConnection:
 
         assert result.success is False
         assert "DNS resolution failed" in result.message
+
+
+class TestBindingPickerListing:
+    """What the team-binding dialog offers; a picker that cannot list makes binding guesswork."""
+
+    @staticmethod
+    def _run(admin_user, instance, groups, search=None):
+        from app.api.v1.endpoints.gitlab_instances import list_instance_groups
+
+        mock_repo = _make_repo_mock(get_by_id=instance)
+        service = MagicMock()
+        service.get_groups = AsyncMock(return_value=groups)
+
+        with (
+            patch(f"{MODULE}.GitLabInstanceRepository", return_value=mock_repo),
+            patch(f"{MODULE}.GitLabService", return_value=service),
+        ):
+            result = asyncio.run(
+                list_instance_groups(
+                    instance_id="gl-1", db=MagicMock(), current_user=admin_user, search=search
+                )
+            )
+        return result, service
+
+    def test_each_group_is_offered_with_the_path_that_tells_it_apart(self, admin_user):
+        result, _ = self._run(
+            admin_user,
+            make_gitlab_instance(id="gl-1"),
+            [
+                {"id": 77, "path": "edge", "full_path": "mo/edge", "name": "Edge"},
+                {"id": 12, "path": "mo", "full_path": "mo", "name": "MO"},
+                {"path": "no-id", "full_path": "mo/no-id"},
+            ],
+        )
+
+        assert [(group.id, group.full_path, group.name) for group in result] == [
+            (77, "mo/edge", "Edge"),
+            (12, "mo", "MO"),
+        ]
+
+    def test_the_search_term_reaches_the_instance(self, admin_user):
+        """The listing is capped, so a group beyond the cap is only reachable by search."""
+        _, service = self._run(admin_user, make_gitlab_instance(id="gl-1"), [], search="edge")
+
+        service.get_groups.assert_awaited_once_with("edge")
+
+    def test_an_instance_that_cannot_list_groups_is_a_bad_gateway(self, admin_user):
+        with pytest.raises(HTTPException) as excinfo:
+            self._run(admin_user, make_gitlab_instance(id="gl-1"), None)
+
+        assert excinfo.value.status_code == 502
+
+    def test_an_unknown_instance_is_not_found(self, admin_user):
+        from app.api.v1.endpoints.gitlab_instances import list_instance_groups
+
+        with patch(f"{MODULE}.GitLabInstanceRepository", return_value=_make_repo_mock(get_by_id=None)):
+            with pytest.raises(HTTPException) as excinfo:
+                asyncio.run(
+                    list_instance_groups(
+                        instance_id="gl-absent", db=MagicMock(), current_user=admin_user, search=None
+                    )
+                )
+
+        assert excinfo.value.status_code == 404

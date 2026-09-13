@@ -85,8 +85,8 @@ Resolution asks, per team bound to the instance and organisation, whether it hol
 A GitHub team nobody bound is not a team here, so an organisation with no bindings resolves nothing
 and every project keeps the team it has. Sync creates no team, ever.
 
-Bind in the UI: Teams → the team's GitHub button (needs `system:manage`) → pick the instance, the
-organisation and one of its teams → Save. The organisation listing supplies the slug, so a team the
+Bind in the UI: Teams → the team's link button (needs `system:manage`) → provider GitHub → pick the
+instance, the organisation and one of its teams → Save. The organisation listing supplies the slug, so a team the
 token cannot see cannot be bound, and a second team cannot take a binding another team already holds
 (HTTP 409). The same button removes a binding.
 

@@ -227,40 +227,8 @@ async def _normalise_unowned_projects(database: AsyncIOMotorDatabase[Any]) -> No
         logger.info("Owner normalisation: gave %d project(s) with no team_ids an empty owner list", normalised)
 
 
-async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
-    """Create indexes for all collections."""
-    logger.info("Creating database indexes...")
-
-    await _migrate_project_indexes(database)
-    await _migrate_tie_break_indexes(database)
-    # Reconcile legacy synced teams BEFORE creating the unique team index, so the
-    # index build does not trip over partially-tagged data.
-    await _backfill_synced_team_gitlab_ids(database)
-    # Runs after the instance-id backfill so teams that just gained their instance id are included.
-    await _backfill_member_and_team_provenance(database)
-    # After the provenance backfill, whose pipeline writes team_ids on the projects it stamps.
-    await _normalise_unowned_projects(database)
-
-    # Users
-    await database["users"].create_index("username", unique=True)
-    await database["users"].create_index("email", unique=True)
-
-    # Projects
-    await database["projects"].create_index("owner_id")
-    # Nothing reads team_id any more; it survives only because the write mirror still maintains it.
-    # TODO(phase 8): drop this index in the same migration that drops the scalar, so a document
-    # rewritten by the cutover is not indexed on a field that no longer exists.
-    await database["projects"].create_index("team_id")
-    # Multikey: serves the element equality every ownership filter is, the $in a member's visible
-    # scope is, and the $in [None] the normaliser above is. The project list sorts after filtering
-    # and this index cannot supply that order, so it blocking-sorts the matched set; a compound
-    # {team_ids, <sort key>} would remove it (measured), but only one sort key can be picked and the
-    # list offers six, so at this collection size the sort is left to run in memory.
-    await database["projects"].create_index("team_ids")
-    await database["projects"].create_index("name")
-    await database["projects"].create_index("members.user_id")
-
-    # Teams
+async def create_team_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
+    """The teams keys, including the two that keep a provider binding to one holder."""
     await database["teams"].create_index("members.user_id")
     # Uniqueness scoped to teams carrying BOTH fields via partialFilterExpression:
     # MongoDB sparse compound indexes still collide on explicit null, so the type
@@ -307,6 +275,42 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             response.get("codeName", type(exc).__name__),
             response or exc,
         )
+
+
+async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
+    """Create indexes for all collections."""
+    logger.info("Creating database indexes...")
+
+    await _migrate_project_indexes(database)
+    await _migrate_tie_break_indexes(database)
+    # Reconcile legacy synced teams BEFORE creating the unique team index, so the
+    # index build does not trip over partially-tagged data.
+    await _backfill_synced_team_gitlab_ids(database)
+    # Runs after the instance-id backfill so teams that just gained their instance id are included.
+    await _backfill_member_and_team_provenance(database)
+    # After the provenance backfill, whose pipeline writes team_ids on the projects it stamps.
+    await _normalise_unowned_projects(database)
+
+    # Users
+    await database["users"].create_index("username", unique=True)
+    await database["users"].create_index("email", unique=True)
+
+    # Projects
+    await database["projects"].create_index("owner_id")
+    # Nothing reads team_id any more; it survives only because the write mirror still maintains it.
+    # TODO(phase 8): drop this index in the same migration that drops the scalar, so a document
+    # rewritten by the cutover is not indexed on a field that no longer exists.
+    await database["projects"].create_index("team_id")
+    # Multikey: serves the element equality every ownership filter is, the $in a member's visible
+    # scope is, and the $in [None] the normaliser above is. The project list sorts after filtering
+    # and this index cannot supply that order, so it blocking-sorts the matched set; a compound
+    # {team_ids, <sort key>} would remove it (measured), but only one sort key can be picked and the
+    # list offers six, so at this collection size the sort is left to run in memory.
+    await database["projects"].create_index("team_ids")
+    await database["projects"].create_index("name")
+    await database["projects"].create_index("members.user_id")
+
+    await create_team_indexes(database)
 
     # Scans
     await database["scans"].create_index("pipeline_id")

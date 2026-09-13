@@ -44,11 +44,21 @@ class TeamGitHubBindingUpdate(BaseModel):
     github_team_id: int
 
 
+class TeamGitLabBindingUpdate(BaseModel):
+    """The group is named by its number; the path is read back from the instance."""
+
+    gitlab_instance_id: str
+    gitlab_group_id: int
+
+
 class TeamResponse(TeamBase):
     id: PyObjectId = Field(validation_alias="_id")
     members: list[TeamMemberSchema]
     created_at: datetime
     updated_at: datetime
+    gitlab_instance_id: str | None = None
+    gitlab_group_id: int | None = None
+    gitlab_group_path: str | None = None
     github_instance_id: str | None = None
     github_org: str | None = None
     github_team_id: int | None = None
