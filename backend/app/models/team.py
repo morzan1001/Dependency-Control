@@ -3,7 +3,7 @@ from typing import Annotated, Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
-from app.core.constants import TEAM_ROLE_MEMBER, TEAM_ROLES, team_binding_key
+from app.core.constants import TEAM_ROLE_MEMBER, TEAM_ROLES, TEAM_SOURCE_MANUAL, team_binding_key
 from app.models.base import CreatedAtModel
 from app.models.types import MongoDocument
 
@@ -11,9 +11,14 @@ from app.models.types import MongoDocument
 class TeamMember(BaseModel):
     user_id: str
     role: str = TEAM_ROLE_MEMBER
-    # Defaults to "manual" so manually-added members survive merge-sync; only the
-    # provider-sourced subset is replaced on each sync.
-    source: Literal["gitlab", "github", "manual"] = "manual"
+    # Who put the member here: "manual", or "<provider>:<instance id>" naming the sync that
+    # resolved them. A sync replaces only the entries naming its own instance, so a hand-added
+    # member, another provider's and another instance of the same provider's all survive it. Any
+    # other value belongs to no sync and is replaced by none, which is what an entry written before
+    # the instance ids degrades to.
+    # Unconstrained on purpose: rejecting an unmigrated value here would 500 every read of every
+    # team the member belongs to rather than leave the member in place.
+    source: str = TEAM_SOURCE_MANUAL
 
     @field_validator("role")
     @classmethod
@@ -21,6 +26,26 @@ class TeamMember(BaseModel):
         if v not in TEAM_ROLES:
             raise ValueError(f"Role must be one of: {', '.join(TEAM_ROLES)}")
         return v
+
+
+def merge_team_members(
+    stored_members: list[dict[str, Any]],
+    resolved: list[TeamMember],
+    source: str,
+) -> list[dict[str, Any]]:
+    """The stored member list with the subset ``source`` established replaced by ``resolved``.
+
+    ``source`` names one instance of one provider, so everything else is carried over exactly as
+    stored: restamping a member another sync established would exempt them from that sync, which
+    could then neither refresh their role nor drop them when they leave its group.
+
+    An empty ``resolved`` is a group nobody is left in and empties that subset; a *failed* fetch is
+    the caller's to recognise, and it must not reach here at all.
+    """
+    merged = {member["user_id"]: member for member in stored_members if member.get("source") != source}
+    for member in resolved:
+        merged[member.user_id] = member.model_dump()
+    return list(merged.values())
 
 
 class _ProviderBinding(BaseModel):

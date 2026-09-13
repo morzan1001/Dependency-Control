@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pymongo.errors import DuplicateKeyError
 
+from app.core.constants import TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.team import GitHubTeamBinding, Team, TeamMember
 from app.services.github import GitHubService, GitHubTeamSyncResult, _RepositoryHolder
 from tests.mocks.github import make_github_instance
@@ -22,12 +23,16 @@ _ORG_TEAMS = [_PAYMENTS, _PLATFORM, _ENGINEERING, _NESTED]
 
 _ONE_MAINTAINER = [{"login": "ada", "role": "maintainer"}]
 
+# The subset the service under test replaces: its own instance, and nothing else.
+_INSTANCE = "test-github-instance-id"
+_OWN = team_source(TEAM_SOURCE_GITHUB, _INSTANCE)
+
 # The organisation map, in the shape the walk leaves behind: repository full name -> holding teams.
 _NO_HOLDERS: dict[str, list[int]] = {}
 _HELD_BY_PLATFORM = {"acme/widgets": [100]}
 
 
-def _service(instance_id: str = "test-github-instance-id", *, sync_teams: bool = False) -> GitHubService:
+def _service(instance_id: str = _INSTANCE, *, sync_teams: bool = False) -> GitHubService:
     return GitHubService(make_github_instance(id=instance_id, access_token="ghp-secret", sync_teams=sync_teams))
 
 
@@ -46,7 +51,7 @@ def _bound(
     slug: str = "payments",
     name: str = "Payments",
     members=None,
-    instance_id: str = "test-github-instance-id",
+    instance_id: str = _INSTANCE,
 ) -> dict:
     return {
         "_id": doc_id,
@@ -156,11 +161,14 @@ class TestMemberResolution:
         assert any("dependabot" in record.getMessage() for record in caplog.records if record.levelname == "DEBUG")
 
     @pytest.mark.asyncio
-    async def test_every_resolved_member_is_tagged_github(self):
+    async def test_every_resolved_member_is_tagged_with_the_instance_that_resolved_them(self):
         service = _service()
         repo = _user_repo(by_username={"_id": "u-1"})
         members, _ = await service._build_team_members([{"login": "ada", "role": "member"}], repo)
-        assert members[0].source == "github"
+        assert members[0].source == _OWN
+
+    def test_two_instances_of_one_provider_claim_different_subsets(self):
+        assert _service("gh-inst-a")._member_source != _service("gh-inst-b")._member_source
 
     @pytest.mark.asyncio
     async def test_two_logins_resolving_to_one_user_yield_a_single_member(self):
@@ -171,7 +179,7 @@ class TestMemberResolution:
             [{"login": "ada", "role": "maintainer"}, {"login": "ada-work", "role": "member"}], repo
         )
 
-        assert members == [TeamMember(user_id="u-1", role="admin", source="github")]
+        assert members == [TeamMember(user_id="u-1", role="admin", source=_OWN)]
 
     @pytest.mark.asyncio
     async def test_the_stronger_role_wins_whichever_login_comes_first(self):
@@ -182,7 +190,7 @@ class TestMemberResolution:
             [{"login": "ada-work", "role": "member"}, {"login": "ada", "role": "maintainer"}], repo
         )
 
-        assert members == [TeamMember(user_id="u-1", role="admin", source="github")]
+        assert members == [TeamMember(user_id="u-1", role="admin", source=_OWN)]
 
     @pytest.mark.asyncio
     async def test_a_deduplicated_login_does_not_count_as_unresolved(self):
@@ -233,39 +241,6 @@ class TestRoleMapping:
         assert members[0].role == expected
 
 
-class TestMemberMerge:
-    def test_a_manually_added_member_survives_the_sync(self):
-        existing = [{"user_id": "u-manual", "role": "admin", "source": "manual"}]
-        merged = GitHubService._merge_team_members(existing, [TeamMember(user_id="u-gh", source="github")])
-        assert merged == [
-            {"user_id": "u-manual", "role": "admin", "source": "manual"},
-            {"user_id": "u-gh", "role": "member", "source": "github"},
-        ]
-
-    def test_a_member_synced_from_gitlab_survives_a_github_sync(self):
-        existing = [{"user_id": "u-gl", "role": "admin", "source": "gitlab"}]
-        merged = GitHubService._merge_team_members(existing, [])
-        assert merged == [{"user_id": "u-gl", "role": "admin", "source": "manual"}]
-
-    def test_an_untagged_member_is_treated_as_manual_and_kept(self):
-        merged = GitHubService._merge_team_members([{"user_id": "u-old", "role": "member"}], [])
-        assert merged == [{"user_id": "u-old", "role": "member", "source": "manual"}]
-
-    def test_a_member_removed_on_github_disappears(self):
-        existing = [{"user_id": "u-gone", "role": "member", "source": "github"}]
-        assert GitHubService._merge_team_members(existing, []) == []
-
-    def test_the_github_entry_wins_on_overlap(self):
-        existing = [{"user_id": "u-1", "role": "member", "source": "github"}]
-        merged = GitHubService._merge_team_members(existing, [TeamMember(user_id="u-1", role="admin", source="github")])
-        assert merged == [{"user_id": "u-1", "role": "admin", "source": "github"}]
-
-    def test_a_manual_member_promoted_on_github_is_not_duplicated(self):
-        existing = [{"user_id": "u-1", "role": "member", "source": "manual"}]
-        merged = GitHubService._merge_team_members(existing, [TeamMember(user_id="u-1", role="admin", source="github")])
-        assert merged == [{"user_id": "u-1", "role": "admin", "source": "github"}]
-
-
 class TestTeamMemberWrite:
     @pytest.mark.asyncio
     async def test_the_write_merges_rather_than_replaces_the_member_list(self):
@@ -276,19 +251,34 @@ class TestTeamMemberWrite:
             members=[
                 {"user_id": "u-manual", "role": "admin", "source": "manual"},
                 {"user_id": "u-untagged", "role": "member"},
-                {"user_id": "u-gone", "role": "member", "source": "github"},
+                {"user_id": "u-gone", "role": "member", "source": _OWN},
             ],
         )
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-gh", source="github")])
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-gh", source=_OWN)])
 
         assert repo.update_with_binding.await_args.args[1]["members"] == [
             {"user_id": "u-manual", "role": "admin", "source": "manual"},
-            {"user_id": "u-untagged", "role": "member", "source": "manual"},
-            {"user_id": "u-gh", "role": "member", "source": "github"},
+            {"user_id": "u-untagged", "role": "member"},
+            {"user_id": "u-gh", "role": "member", "source": _OWN},
         ]
+
+    @pytest.mark.asyncio
+    async def test_the_write_leaves_every_subset_that_is_not_this_instances_exactly_as_stored(self):
+        service = _service()
+        foreign = [
+            {"user_id": "u-gl", "role": "admin", "source": team_source(TEAM_SOURCE_GITLAB, "gl-1")},
+            {"user_id": "u-gh-b", "role": "member", "source": team_source(TEAM_SOURCE_GITHUB, "gh-inst-b")},
+            {"user_id": "u-unmigrated", "role": "member", "source": TEAM_SOURCE_GITHUB},
+        ]
+        team = _bound("t-1", 4711, members=list(foreign))
+        repo = _team_repo(team)
+
+        await service._refresh_team(repo, "acme", _RepositoryHolder(team, 4711, "payments"), [])
+
+        assert repo.update_with_binding.await_args.args[1]["members"] == foreign
 
     @pytest.mark.asyncio
     async def test_the_team_keeps_the_name_its_owner_gave_it(self):
@@ -297,7 +287,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source="github")])
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)])
 
         update = repo.update_with_binding.await_args.args[1]
         assert "name" not in update
@@ -310,7 +300,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source="github")])
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)])
 
         update = repo.update_with_binding.await_args.args[1]
         assert update["name"] == "GitHub Team: acme/payments"
@@ -323,7 +313,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source="github")])
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)])
 
         assert "name" not in repo.update_with_binding.await_args.args[1]
 
@@ -334,7 +324,7 @@ class TestTeamMemberWrite:
         repo = _team_repo(team)
 
         await service._refresh_team(
-            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source="github")])
+            repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-1", source=_OWN)])
 
         assert repo.update_with_binding.await_args.args[3] == {"slug": "payments"}
 
@@ -623,7 +613,7 @@ class TestSyncTeamFromGithub:
 
         assert result == GitHubTeamSyncResult(["t-pay"])
         assert team_repo.update_with_binding.await_args.args[1]["members"] == [
-            {"user_id": "u-1", "role": "admin", "source": "github"}
+            {"user_id": "u-1", "role": "admin", "source": _OWN}
         ]
 
     @pytest.mark.asyncio
@@ -634,7 +624,7 @@ class TestSyncTeamFromGithub:
                 "t-pay",
                 4711,
                 members=[
-                    {"user_id": "u-1", "role": "admin", "source": "github"},
+                    {"user_id": "u-1", "role": "admin", "source": _OWN},
                     {"user_id": "u-manual", "role": "member", "source": "manual"},
                 ],
             )
@@ -660,7 +650,7 @@ class TestSyncTeamFromGithub:
 
         assert team_repo.update_with_binding.await_args.args[1]["members"] == [
             {"user_id": "u-manual", "role": "admin", "source": "manual"},
-            {"user_id": "u-1", "role": "admin", "source": "github"},
+            {"user_id": "u-1", "role": "admin", "source": _OWN},
         ]
 
     @pytest.mark.asyncio
@@ -849,7 +839,7 @@ class TestTeamCreation:
 
         assert stubs.members.await_args.args == ("acme", "platform", 100)
         assert team_repo.update_with_binding.await_args.args[1]["members"] == [
-            {"user_id": "u-1", "role": "admin", "source": "github"}
+            {"user_id": "u-1", "role": "admin", "source": _OWN}
         ]
 
 

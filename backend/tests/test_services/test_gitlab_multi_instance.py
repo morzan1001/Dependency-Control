@@ -3,6 +3,7 @@
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from app.core.constants import TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.gitlab_api import GitLabMember
 from app.models.project import Project, Scan
 from app.models.stats import Stats
@@ -15,6 +16,9 @@ from tests.mocks.gitlab import (
     make_project_details,
 )
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
+
+# The subset instance A's sync replaces: its own, and nothing else.
+_OWN = team_source(TEAM_SOURCE_GITLAB, "instance-a-id")
 
 _USABLE_INSTANCE_DOC = {
     "_id": "inst-1",
@@ -911,7 +915,7 @@ class TestTeamSyncMergeSemantics:
             ],
             "members": [
                 {"user_id": "manual-user", "role": "admin", "source": "manual"},
-                {"user_id": "stale-gitlab-user", "role": "member", "source": "gitlab"},
+                {"user_id": "stale-gitlab-user", "role": "member", "source": _OWN},
             ],
         }
 
@@ -943,11 +947,48 @@ class TestTeamSyncMergeSemantics:
         # Manual member must SURVIVE.
         assert "manual-user" in merged
         assert merged["manual-user"]["source"] == "manual"
-        # Stale gitlab member must be dropped (replaced by fresh gitlab subset).
+        # Stale member of this instance must be dropped (replaced by the fresh subset).
         assert "stale-gitlab-user" not in merged
-        # Fresh gitlab member must be present and tagged source="gitlab".
+        # Fresh member must be present and tagged with the instance that resolved them.
         assert "new-gitlab-user" in merged
-        assert merged["new-gitlab-user"]["source"] == "gitlab"
+        assert merged["new-gitlab-user"]["source"] == _OWN
+
+    def test_no_other_instances_subset_is_touched_by_this_ones_sync(self, gitlab_instance_a):
+        """A team bound to several instances holds several subsets; a sync owns exactly one of them."""
+        service = GitLabService(gitlab_instance_a)
+        foreign = [
+            {"user_id": "manual-user", "role": "admin", "source": "manual"},
+            {"user_id": "gh-user", "role": "member", "source": team_source(TEAM_SOURCE_GITHUB, "gh-1")},
+            {"user_id": "gl-b-user", "role": "member", "source": team_source(TEAM_SOURCE_GITLAB, "instance-b-id")},
+            {"user_id": "unmigrated-user", "role": "member", "source": TEAM_SOURCE_GITLAB},
+        ]
+        existing_team = {
+            "_id": "team-3",
+            "name": "GitLab Group: grp",
+            "bindings": [GitLabGroupBinding(instance_id=str(gitlab_instance_a.id), external_id=42).model_dump()],
+            "members": list(foreign),
+        }
+
+        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
+            mock_members.return_value = [GitLabMember(username="newdev", email="newdev@test.com", access_level=30)]
+            users_coll = create_mock_collection(find_one={"_id": "new-gitlab-user", "username": "newdev"})
+            teams_coll = create_mock_collection(find_one=existing_team)
+            db = create_mock_db({"teams": teams_coll, "users": users_coll})
+
+            asyncio.run(
+                service.sync_team_from_gitlab(
+                    db=db,
+                    gitlab_project_id=100,
+                    gitlab_project_path="grp/proj",
+                    gitlab_project_data=make_project_details(
+                        namespace_kind="group", namespace_id=42, namespace_path="grp"
+                    ),
+                )
+            )
+
+        written = teams_coll.update_one.call_args[0][1]["$set"]["members"]
+        assert written[: len(foreign)] == foreign
+        assert written[len(foreign) :] == [{"user_id": "new-gitlab-user", "role": "member", "source": _OWN}]
 
     def test_user_both_manual_and_gitlab_is_not_duplicated_gitlab_role_wins(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
@@ -985,9 +1026,9 @@ class TestTeamSyncMergeSemantics:
 
         update_set = teams_coll.update_one.call_args[0][1]["$set"]
         dual_entries = [m for m in update_set["members"] if m["user_id"] == "dual-user"]
-        # No duplicate; gitlab-sourced entry wins for a synced user.
+        # No duplicate; the synced entry wins for a user the group also holds.
         assert len(dual_entries) == 1
-        assert dual_entries[0]["source"] == "gitlab"
+        assert dual_entries[0]["source"] == _OWN
         assert dual_entries[0]["role"] == "admin"
 
     def test_a_moved_group_restamps_the_path_on_the_binding_it_resolved_through(self, gitlab_instance_a):
