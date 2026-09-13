@@ -506,9 +506,9 @@ rollback returns to.
 
 `teams.members[].source` still records a provider alone. A team bound to two instances **of the same
 provider** has both syncs replacing the same member subset, so its member list follows whichever
-instance ingested last. Binding one team to two instances of *different* providers is unaffected.
-Two instances of one provider are safe for **ownership** — which is what this release is about — and
-not yet for membership.
+instance ingested last, and a team bound to both providers has each sync relabel the other's members
+as hand-added. Two instances of one provider are safe for **ownership** — which is what this release
+is about — and not for membership until `README-deploy-member-provenance.md` has been run.
 
 Neither migration touches `team_ids`, project membership, `teams` other than the binding fields, or
 `Project.gitlab_instance_id` / `Project.github_instance_id` — those record which instance the

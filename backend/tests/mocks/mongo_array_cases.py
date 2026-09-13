@@ -13,6 +13,7 @@ from typing import Any
 from app.core.constants import TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.repositories.projects import remove_team_pipeline, replace_team_subset_pipeline, set_owners_pipeline
 from scripts.backfill_project_team_ids import drift_filter, provenance_gap_filter
+from scripts.backfill_team_member_sources import bare_member_filter
 from scripts.backfill_team_source_instances import bare_source_filter
 
 _CONFLICT = 40
@@ -678,6 +679,50 @@ BARE_SOURCE_DOCS = [
 
 TEAM_SOURCE_INSTANCE_CASES = [
     FindCase("projects carrying a provenance value with no instance", BARE_SOURCE_DOCS, bare_source_filter(), [4, 5, 6, 7])
+]
+
+# The same before and after, for a member's provenance. A member carrying no ``source`` at all
+# predates the field: it reads as manual and no sync may replace it, so it needs no instance.
+BARE_MEMBER_TEAMS = [
+    {"members": [{"user_id": "u1", "source": "manual"}]},
+    {"members": [{"user_id": "u1", "source": _GITLAB_A}]},
+    {"members": []},
+    {"name": "a team with no members field at all"},
+    {"members": [{"user_id": "u1", "source": "gitlab"}, {"user_id": "u2", "source": "gitlab"}]},
+    {"members": [{"user_id": "u1", "source": "github"}, {"user_id": "u2", "source": "gitlab"}]},
+    # One subset of several is bare.
+    {"members": [{"user_id": "u1", "source": _GITHUB_A}, {"user_id": "u2", "source": "gitlab"}]},
+    # Bare on one provider only, so a gate that checks a single provider is not enough.
+    {"members": [{"user_id": "u1", "source": "github"}]},
+    {"members": [{"user_id": "u1", "role": "admin"}]},
+]
+
+TEAM_MEMBER_SOURCE_CASES = [
+    FindCase("teams holding a member whose provenance names no instance", BARE_MEMBER_TEAMS, bare_member_filter(), [4, 5, 6, 7]),
+]
+
+MEMBER_SOURCE_UPDATE_CASES = [
+    UpdateCase(
+        "stamp the instance on the bare member entries and no others",
+        {
+            "members": [
+                {"user_id": "u1", "source": "gitlab"},
+                {"user_id": "u2", "source": "manual"},
+                {"user_id": "u3"},
+                {"user_id": "u4", "source": _GITLAB_B},
+            ]
+        },
+        {"$set": {"members.$[gitlab].source": _GITLAB_A}},
+        expected={
+            "members": [
+                {"user_id": "u1", "source": _GITLAB_A},
+                {"user_id": "u2", "source": "manual"},
+                {"user_id": "u3"},
+                {"user_id": "u4", "source": _GITLAB_B},
+            ]
+        },
+        array_filters=[{"gitlab.source": TEAM_SOURCE_GITLAB}],
+    ),
 ]
 
 # An outer element that lacks the inner array contributes nothing rather than a null.
