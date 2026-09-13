@@ -712,7 +712,7 @@ function InstanceForm({
                 ? "Requires an access token"
                 : formData.type === "gitlab"
                   ? "Sync GitLab group members to local teams"
-                  : "Sync GitHub team members to local teams. The token needs read:org and must belong to a member of the organisation."}
+                  : "Create a team for each GitHub team holding a repository and sync its members. The token needs read:org and must belong to a member of the organisation."}
             </p>
           </div>
           <Switch
