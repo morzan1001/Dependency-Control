@@ -1,4 +1,12 @@
-# Release 1.9.30
+# Release 1.9.31
+
+## 📦 Build & CI
+
+- chore: release 1.9.31 - GitHub creates the teams it does not know yet (#0)
+
+
+
+# Release 1.9.31
 
 ## 📦 Build & CI
 
