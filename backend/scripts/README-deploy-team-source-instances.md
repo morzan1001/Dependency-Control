@@ -14,19 +14,21 @@ sole reason this has not happened yet.
 
 ## 0. What ships, and in what order
 
+**The image goes first and the migration follows it.** This is the opposite of the usual order
+here, and §2 explains why in full.
+
 | Step | What | Reversible on its own? |
 | --- | --- | --- |
 | 1 | Measure the estate | n/a — read-only |
-| 2 | Dry-run the migration | n/a — writes nothing |
-| 3 | `--execute` the migration | Yes — see §7 |
-| 4 | **Gate**: `--verify` exits 0 | n/a |
-| 5 | **Roll the backend image** | See §7 |
-| 6 | Roll the frontend image | Yes — no behaviour change in it |
+| 2 | **Roll the backend image** | Yes, freely, until step 5 |
+| 3 | Roll the frontend image | Yes — no behaviour change in it |
+| 4 | Dry-run the migration | n/a — writes nothing |
+| 5 | `--execute` the migration | Yes, at a cost — see §8 |
+| 6 | **Gate**: `--verify` exits 0 | n/a |
 
-Steps 3, 4 and 5 belong to **one maintenance window**, back to back. §4 says why.
-
-The frontend image carries a type change only; nothing in the UI reads a provenance value today.
-Roll it with the backend or leave it, but build both from the same commit as usual.
+Steps 2 and 5 belong to the same maintenance window, but they are not welded together the way a
+format cutover usually is: §2a is what buys the slack. Do not leave the migration for another day
+all the same — §2a also says what it costs.
 
 `VERSION` is `1.9.34` in this change. Production was running `1.9.32` when this runbook was
 written.
@@ -43,12 +45,63 @@ Exactly **one** GitLab instance and **one** GitHub instance must have `sync_team
 the assumption the migration rests on: a bare `gitlab` value can only have been written by the one
 GitLab instance that syncs, so that is the instance it is attributed to. If the count is anything
 other than one for a provider that has bare values, the migration **aborts** rather than guessing —
-see §3a.
+see §5a.
 
-Count what is to be migrated with §4b's query, run ahead of time. Take the number in the same
-session as the deploy — it is the expectation for §2's `projects planned`.
+Count what is to be migrated with §6b's query. Take the number in the same session as the deploy —
+it is the expectation for §4's `projects planned`.
 
-## 2. Dry-run the migration
+## 2. Roll the backend image — first, and here is why
+
+```bash
+kubectl rollout status deployment/dependency-control-backend -n dependency-control
+```
+
+**Migrating first would be a self-inflicted outage.** A rolling update serves old and new pods
+simultaneously for several minutes. The old image declares the provenance value as one of three
+literals, so `gitlab:<instance id>` fails validation and `Project(**data)` raises — measured:
+`pydantic.ValidationError`. Every read of a migrated project served by a not-yet-replaced pod
+answers **500**, across the whole estate, for the length of the rollout. That is certain, not a
+risk.
+
+The reverse order has no such window, because the new code tolerates unmigrated data and repairs
+most of it as it goes.
+
+### 2a. What the new image does to an unmigrated project
+
+Measured against a real server — `tests/integration/test_project_ownership_live.py::
+test_an_ingest_repairs_the_unmigrated_owners_it_still_resolves_on_real_mongo`. Seeded with
+`{gl-still-held: "gitlab", gl-group-left: "gitlab", by-hand: "manual"}` and one GitLab ingest that
+resolves `gl-still-held`:
+
+| Owner | Before | After the ingest |
+| --- | --- | --- |
+| `gl-still-held` | `gitlab` | `gitlab:gl-inst-a` — **repaired** |
+| `gl-group-left` | `gitlab` | `gitlab` — kept, not retired |
+| `by-hand` | `manual` | `manual` |
+
+A bare value names no instance, so the sync reads those owners as somebody else's and adds beside
+them: **access is never narrowed**. The owner it resolves again comes back carrying the instance,
+because `$setUnion` dedupes on the team id and `$mergeObjects` overwrites that team's entry.
+
+**What a user sees in the intermediate state: nothing.** No error, no changed team list, no lost
+access.
+
+**What it costs to leave it there:** the owner a sync no longer resolves keeps its bare value and
+is therefore retired by nobody. A repository that moved between groups keeps the group it left, in
+addition to the one it moved to, until the migration runs. Access widens, silently, one transfer at
+a time. A project that does not sync at all is never repaired. That is the migration's remaining
+work, and why §5 belongs in the same window and not next month.
+
+## 3. Roll the frontend image
+
+```bash
+kubectl rollout status deployment/dependency-control-frontend -n dependency-control
+```
+
+It carries a type change only; nothing in the UI reads a provenance value today. Build it from the
+same commit as usual.
+
+## 4. Dry-run the migration
 
 Run it as a Kubernetes **Job**, not `kubectl exec` — the autoscaler evicts backend pods and takes a
 long `exec` with them. Use the Job and NetworkPolicy manifest from `README-deploy-waves-2-3.md` §2,
@@ -71,10 +124,11 @@ Wait for the Job **before** reading the logs: a log read against a still-running
 count line at all, which reads like a clean run.
 
 The run prints the instance it attributes each provider's bare values to, then `projects planned`.
-`projects planned` must equal the count §4b's query returns at the same time — that is the check,
-not a fixed number. The run writes nothing.
+`projects planned` must equal the count §6b's query returns at the same time — that is the check,
+not a fixed number. Expect it to be **lower** than the number §1 recorded, by however many projects
+ingested between the rollout and now: §2a repaired those. The run writes nothing.
 
-### 2a. Read the attribution line
+### 4a. Read the attribution line
 
 ```
 [gitlab] bare values attributed to instance <id>
@@ -83,7 +137,7 @@ not a fixed number. The run writes nothing.
 Check that id against §1's instance list before executing. It is the single decision the migration
 makes, and it is the one that cannot be undone by re-running the script.
 
-## 3. Execute the migration
+## 5. Execute the migration
 
 A Job's pod template is immutable, so delete the dry-run Job before reusing the name:
 
@@ -105,7 +159,9 @@ kubectl logs -n dependency-control job/dc-migration
 second dry-run immediately after reports `planned 0`, because a value already naming an instance is
 left exactly as stored.
 
-### 3a. If it aborts
+From this point the estate carries values the previous image cannot read: §8 applies.
+
+### 5a. If it aborts
 
 ```
 backfill_team_source_instances: ERROR — gitlab: 2 instance(s) have team sync enabled (...)
@@ -116,36 +172,7 @@ have come from either, and attributing it to the wrong one hands that owner to t
 next ingest to delete. Resolve it by hand — decide per project which instance established the
 owner and set the value — then re-run.
 
-## 4. HARD GATE — the migration and the backend deploy, in one window
-
-**The migration runs before the image that reads the new format, in the same window.**
-
-### If the image rolls first
-
-Every stored value still reads `gitlab`. A sync's source is now `gitlab:<instance id>`, which
-matches no stored entry, so **every sync stops retiring its own owners**: a repository that moved
-between groups keeps the group it left, alongside the one it moved to, for as long as the bare
-values remain. Nothing errors and nothing is logged. Access widens silently, project by project,
-until the migration runs.
-
-It is recoverable — run the migration and the next ingest reconciles each project — but every
-transfer during the gap has widened access in the meantime.
-
-### If the migration runs and the image does not follow
-
-Pods still running the old image **reject a migrated document**: their model declares the
-provenance value as one of three literals, `gitlab:<id>` is none of them, and `Project(**data)`
-raises. Measured: `pydantic.ValidationError`. Every read of a migrated project answers **500** from
-those pods. This is the reason the two steps share a window and go back to back — do not run the
-migration the evening before.
-
-### The gate, in order
-
-1. `--execute` (§3).
-2. `--verify` and confirm it exits **0** (§4a).
-3. Roll the backend image (§5), immediately.
-
-### 4a. Run the verification
+## 6. The gate
 
 ```yaml
 workingDir: /app
@@ -153,9 +180,11 @@ command: ["python", "-m", "scripts.backfill_team_source_instances", "--verify"]
 ```
 
 It prints `projects with a bare source:` and exits **0** only when that count is zero, **2**
-otherwise.
+otherwise. Unlike the usual gate here this one does not release a deploy — the deploy already
+happened. It releases the *claim* that no owner is left un-retirable, which is the whole point of
+the change: re-run it a day later and it must still read 0.
 
-### 4b. The same check from mongosh
+### 6b. The same check from mongosh
 
 `--verify` runs exactly this filter. It counts a project whenever any `team_sources` value, or the
 legacy `team_source` scalar, is a provider with no instance after it. `manual` matches neither
@@ -176,13 +205,7 @@ db.projects.countDocuments({
 To see which projects it selects rather than how many, pass the same filter to
 `db.projects.find(…, {name: 1, team_ids: 1, team_sources: 1, team_source: 1})`.
 
-## 5. Roll the backend image
-
-```bash
-kubectl rollout status deployment/dependency-control-backend -n dependency-control
-```
-
-### 5a. What changes for an operator
+## 7. What changes for an operator
 
 - A sync retires only the owners its **own instance** established. Turning team sync on for the
   second GitLab instance is now safe: the two instances add and retire disjoint owner sets on the
@@ -197,23 +220,15 @@ kubectl rollout status deployment/dependency-control-backend -n dependency-contr
 - The 16-owner cap is unchanged and still counts every owner across providers, instances and hand
   assignments.
 
-### 5b. Confirm after the rollout
+## 8. Rollback
+
+**Before §5** there is nothing to undo: no stored value has changed, and `kubectl rollout undo` on
+either deployment is enough. This is the second reason the image goes first.
+
+**After §5**, rolling the backend back to `1.9.32`/`1.9.33` breaks every migrated project — the old
+model rejects `gitlab:<instance id>` and each read answers 500. Strip the instances first:
 
 ```js
-db.projects.countDocuments({ "team_source": { $in: ["gitlab", "github"] } })   // must be 0
-```
-
-And re-run §4b's query — it must still be **0**. A count above zero after the rollout means an
-un-migrated project was written by an older pod during the window.
-
-## 6. Rollback
-
-Rolling the backend image back to `1.9.32`/`1.9.33` **breaks every migrated project**: the old
-model rejects `gitlab:<instance id>` and each read answers 500. A rollback therefore requires
-undoing the migration first.
-
-```js
-// Strip the instance from every provenance value, restoring the bare provider.
 db.projects.updateMany(
   { "$expr": { "$gt": [ { "$size": { "$filter": {
       "input": { "$objectToArray": { "$ifNull": ["$team_sources", {}] } },
@@ -234,7 +249,7 @@ Run it **before** `kubectl rollout undo`, and accept what it costs: with the ins
 provider's next sync again treats every instance's owners as its own. That is the bug this release
 removes, and it is the state a rollback returns to.
 
-## 7. What the migration does not do
+## 9. What the migration does not do
 
 It does not touch `team_ids`, project membership, `teams`, or `Project.gitlab_instance_id` /
 `Project.github_instance_id` — those record which instance the *project* came from and are a

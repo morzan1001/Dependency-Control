@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from app.api.deps import _gitlab_team_sync_stages
 from app.api.v1.endpoints.projects import update_project
 from app.core.constants import TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.project import Project
@@ -23,6 +24,7 @@ from app.repositories.projects import (
     set_owners_pipeline,
 )
 from app.schemas.project import ProjectUpdate
+from app.services.gitlab import GitLabTeamSyncResult
 from tests.mocks.fake_mongo import FakeDatabase
 
 _GITLAB_A = team_source(TEAM_SOURCE_GITLAB, "gl-inst-a")
@@ -81,6 +83,47 @@ async def _assert_an_untouched_document_gains_both_shapes(db) -> None:
     assert stored["team_sources"] == {}
     assert stored["team_id"] is None
     assert await db.projects.count_documents({"team_ids": {"$size": 0}}) == 1
+
+
+_UNMIGRATED_PROJECT = {
+    "_id": "p-unmigrated",
+    "name": "predates-the-instance-ids",
+    "gitlab_instance_id": "gl-inst-a",
+    "gitlab_project_id": 100,
+    "team_ids": ["gl-still-held", "gl-group-left", "by-hand"],
+    "team_sources": {"gl-still-held": "gitlab", "gl-group-left": "gitlab", "by-hand": "manual"},
+    "team_id": "gl-still-held",
+    "team_source": "gitlab",
+}
+
+
+async def _assert_an_ingest_repairs_the_unmigrated_owners_it_still_resolves(db) -> None:
+    """What the new image does to a document the migration has not reached, which is what decides
+    the deploy order: the image ships first, so it meets bare values for as long as that takes.
+
+    A bare value matches no instance, so the sync treats those owners as somebody else's and adds
+    beside them — access is kept, never dropped. The owner it resolves again comes back carrying
+    the instance, because ``$setUnion`` dedupes the id and ``$mergeObjects`` overwrites its entry.
+    The owner it no longer resolves keeps its bare value, and that is the migration's remaining
+    work: nothing repairs a project whose sync no longer names the team.
+    """
+    await db.projects.insert_one(dict(_UNMIGRATED_PROJECT))
+    project = Project(**_UNMIGRATED_PROJECT)
+    service = MagicMock()
+    service.get_project_details = AsyncMock(return_value=MagicMock())
+    service.sync_team_from_gitlab = AsyncMock(return_value=GitLabTeamSyncResult(["gl-still-held"]))
+
+    stages = await _gitlab_team_sync_stages(project, "gl-inst-a", 100, "grp/proj", service, db)
+    assert stages, "a bare value names no instance, so the unchanged-subset short circuit must not fire"
+    await ProjectRepository(db).update_raw("p-unmigrated", stages)
+
+    stored = Project(**await db.projects.find_one({"_id": "p-unmigrated"}))
+    assert sorted(stored.team_ids) == ["by-hand", "gl-group-left", "gl-still-held"]
+    assert stored.team_sources == {
+        "gl-still-held": _GITLAB_A,
+        "gl-group-left": "gitlab",
+        "by-hand": "manual",
+    }
 
 
 _TWO_INSTANCE_PROJECT = {
@@ -215,6 +258,17 @@ async def test_the_python_mirror_names_the_owners_the_pipeline_retires(source):
 
     stored = await db.projects.find_one({"_id": "p-mirror"})
     assert set(_MIXED_PROJECT["team_ids"]) - set(stored["team_ids"]) == owners_replaced_by(project, source)
+
+
+@pytest.mark.asyncio
+async def test_an_ingest_repairs_the_unmigrated_owners_it_still_resolves():
+    await _assert_an_ingest_repairs_the_unmigrated_owners_it_still_resolves(FakeDatabase())
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_an_ingest_repairs_the_unmigrated_owners_it_still_resolves_on_real_mongo(db):
+    await _assert_an_ingest_repairs_the_unmigrated_owners_it_still_resolves(db)
 
 
 @pytest.mark.asyncio
