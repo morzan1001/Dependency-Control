@@ -1,5 +1,5 @@
 from datetime import datetime
-from typing import Any, Literal
+from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -32,12 +32,16 @@ class Project(MongoDocument, CreatedAtModel):
     # Ownership: stored as written. Nothing derives these from the scalars below, so a document whose
     # scalar was changed without them keeps the owners it was last written with.
     team_ids: list[str] = Field(default_factory=list, description="Every team that owns this project")
-    # Provenance per owner: "manual" entries are never reverted by sync, and a provider only ever
-    # replaces the entries it wrote itself. A scalar cannot say which of several owners was manual.
-    team_sources: dict[str, Literal["gitlab", "github", "manual"]] = Field(default_factory=dict)
+    # Provenance per owner: "manual", or "<provider>:<instance id>" naming the sync that established
+    # it. A sync only ever replaces the entries naming its own instance, so a hand assignment and
+    # another instance's owner both survive it. Any other value belongs to no sync and is therefore
+    # retired by none, which is what a document written before the instance ids degrades to.
+    # Unconstrained on purpose: rejecting an unmigrated value here would 500 every read of the
+    # project rather than leave its owners in place.
+    team_sources: dict[str, str] = Field(default_factory=dict)
     # Written until the legacy scalars are removed, so a pod running older code still reads an owner.
     team_id: str | None = None
-    team_source: Literal["gitlab", "github", "manual"] | None = None
+    team_source: str | None = None
     members: list[ProjectMember] = Field(default_factory=list)
     api_key_hash: str | None = Field(None, exclude=True)
     active_analyzers: list[str] = Field(default_factory=lambda: list(DEFAULT_ACTIVE_ANALYZERS))

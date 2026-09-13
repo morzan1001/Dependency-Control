@@ -11,7 +11,14 @@ from pydantic import ValidationError
 
 from app.core import security
 from app.core.config import settings
-from app.core.constants import API_KEY_SURFACE_ADHOC, API_KEY_SURFACE_MCP, MAX_PROJECT_TEAMS
+from app.core.constants import (
+    API_KEY_SURFACE_ADHOC,
+    API_KEY_SURFACE_MCP,
+    MAX_PROJECT_TEAMS,
+    TEAM_SOURCE_GITHUB,
+    TEAM_SOURCE_GITLAB,
+    team_source,
+)
 from app.core.permissions import Permissions, has_permission
 from app.db.mongodb import get_database
 from app.models.project import Project
@@ -241,12 +248,19 @@ def _team_subset_stages(project: Project, source: str, resolved: list[str] | Non
 
 async def _gitlab_team_sync_stages(
     project: Project,
+    instance_id: str,
     gitlab_project_id: int,
     gitlab_project_path: str,
     gitlab_service: "GitLabService",
     db: AsyncIOMotorDatabase,
 ) -> list[dict]:
-    """The ownership stages GitLab sync contributes to this ingest's update."""
+    """The ownership stages GitLab sync contributes to this ingest's update.
+
+    ``instance_id`` is the instance whose OIDC token authenticated this ingest — the one that
+    resolved these teams — and not ``project.gitlab_instance_id``, which says where the project
+    came from.
+    """
+    source = team_source(TEAM_SOURCE_GITLAB, instance_id)
     gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
     resolved = await gitlab_service.sync_team_from_gitlab(
         db,
@@ -254,21 +268,23 @@ async def _gitlab_team_sync_stages(
         gitlab_project_path,
         gitlab_project_data=gitlab_project_data,
     )
-    return _team_subset_stages(project, "gitlab", resolved.team_ids, gitlab_project_path)
+    return _team_subset_stages(project, source, resolved.team_ids, gitlab_project_path)
 
 
 async def _github_team_sync_stages(
     project: Project,
+    instance_id: str,
     github_org: str,
     repository_path: str,
     github_service: "GitHubService",
     db: AsyncIOMotorDatabase,
 ) -> list[dict]:
     """The ownership stages GitHub sync contributes to this ingest's update."""
+    source = team_source(TEAM_SOURCE_GITHUB, instance_id)
     result = await github_service.sync_team_from_github(
-        db, github_org, repository_path, owner_budget=_owner_budget(project, "github")
+        db, github_org, repository_path, owner_budget=_owner_budget(project, source)
     )
-    return _team_subset_stages(project, "github", result.team_ids, repository_path)
+    return _team_subset_stages(project, source, result.team_ids, repository_path)
 
 
 async def _sync_project_name(
@@ -332,7 +348,7 @@ async def _handle_gitlab_oidc(
 
         if gitlab_instance.sync_teams:
             ownership_stages = await _gitlab_team_sync_stages(
-                project, gitlab_project_id, gitlab_project_path, gitlab_service, db
+                project, instance_id, gitlab_project_id, gitlab_project_path, gitlab_service, db
             )
 
         return await _sync_project_name(
@@ -353,6 +369,7 @@ async def _handle_gitlab_oidc(
     members = [ProjectMember(user_id=initial_member_id, role="admin")] if initial_member_id else []
 
     owners: list[str] = []
+    gitlab_source = team_source(TEAM_SOURCE_GITLAB, instance_id)
     if gitlab_instance.sync_teams:
         gitlab_project_data = await gitlab_service.get_project_details(gitlab_project_id)
         resolved = await gitlab_service.sync_team_from_gitlab(
@@ -361,7 +378,7 @@ async def _handle_gitlab_oidc(
             gitlab_project_path,
             gitlab_project_data=gitlab_project_data,
         )
-        owners = _new_project_owners("gitlab", resolved.team_ids, gitlab_project_path)
+        owners = _new_project_owners(gitlab_source, resolved.team_ids, gitlab_project_path)
 
     new_project = Project(
         name=gitlab_project_path,
@@ -371,7 +388,7 @@ async def _handle_gitlab_oidc(
         gitlab_project_path=gitlab_project_path,
         default_branch=None,
         active_analyzers=default_analyzers,
-        **ownership_fields(owners, "gitlab"),
+        **ownership_fields(owners, gitlab_source),
     )
 
     project, created = await project_repo.find_or_create_by_gitlab_key(instance_id, gitlab_project_id, new_project)
@@ -411,7 +428,7 @@ async def _handle_github_oidc(
 
         if github_instance.sync_teams:
             ownership_stages = await _github_team_sync_stages(
-                project, gh_payload.repository_owner, repo_path, github_service, db
+                project, instance_id, gh_payload.repository_owner, repo_path, github_service, db
             )
 
         return await _sync_project_name(
@@ -432,9 +449,10 @@ async def _handle_github_oidc(
     members = [ProjectMember(user_id=initial_member_id, role="admin")] if initial_member_id else []
 
     owners: list[str] = []
+    github_source = team_source(TEAM_SOURCE_GITHUB, instance_id)
     if github_instance.sync_teams:
         sync_result = await github_service.sync_team_from_github(db, gh_payload.repository_owner, repo_path)
-        owners = _new_project_owners("github", sync_result.team_ids, repo_path)
+        owners = _new_project_owners(github_source, sync_result.team_ids, repo_path)
 
     new_project = Project(
         name=repo_path,
@@ -444,7 +462,7 @@ async def _handle_github_oidc(
         github_repository_path=repo_path,
         default_branch=None,
         active_analyzers=default_analyzers,
-        **ownership_fields(owners, "github"),
+        **ownership_fields(owners, github_source),
     )
 
     project, created = await project_repo.find_or_create_by_github_key(instance_id, repo_id, new_project)

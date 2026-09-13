@@ -20,11 +20,12 @@ from app.core.constants import (
     MAX_PROJECT_TEAMS,
     TEAM_ROLE_ADMIN,
     TEAM_ROLE_MEMBER,
+    TEAM_SOURCE_GITHUB,
 )
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
 from app.models.github_instance import GitHubInstance
-from app.models.team import Team, TeamMember
+from app.models.team import GitHubTeamBinding, Team, TeamMember, binding_of
 from app.repositories import TeamRepository, UserRepository
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
@@ -627,9 +628,8 @@ class GitHubService:
     async def _refresh_team(
         self,
         team_repo: TeamRepository,
-        team: dict[str, Any],
         org: str,
-        team_slug: str,
+        holder: "_RepositoryHolder",
         team_members: list[TeamMember] | None,
     ) -> None:
         """Write what GitHub has since changed about a holding team.
@@ -637,15 +637,24 @@ class GitHubService:
         ``team_members`` is None to leave the stored members alone, which the rename must not hang
         on: barely a login resolves here, so a name would otherwise never follow a renamed team.
         """
-        updates: dict[str, Any] = self._renamed_fields(team, org, team_slug)
+        team = holder.team
+        updates: dict[str, Any] = self._renamed_fields(team, org, holder.slug)
         if team_members is not None:
             updates["members"] = self._merge_team_members(team.get("members") or [], team_members)
-        if team.get("github_team_slug") != team_slug:
-            # The binding is the numeric team id, so a renamed slug has to follow it.
-            updates["github_team_slug"] = team_slug
-        if not updates:
+        binding = binding_of(team, str(self.instance.id)) or {}
+        # The binding is the numeric team id, so a renamed slug has to follow it.
+        binding_fields = {"slug": holder.slug} if binding.get("slug") != holder.slug else {}
+        if not updates and not binding_fields:
             return
-        await team_repo.update(team["_id"], {**updates, "updated_at": datetime.now(timezone.utc)})
+        await team_repo.update_with_binding(
+            team["_id"],
+            {**updates, "updated_at": datetime.now(timezone.utc)},
+            self._binding(org, holder.team_id, holder.slug).key,
+            binding_fields,
+        )
+
+    def _binding(self, org: str, team_id: int, slug: str) -> GitHubTeamBinding:
+        return GitHubTeamBinding(instance_id=str(self.instance.id), org=org, external_id=team_id, slug=slug)
 
     async def _adopt_unbound_team(
         self,
@@ -656,15 +665,18 @@ class GitHubService:
     ) -> dict[str, Any] | None:
         """A team the owner already has under this group's name, bound to it rather than duplicated.
 
-        Only a team no provider binding claims is taken: one already synced elsewhere would have
-        two syncs replacing each other's members, and one bound to another group or instance is
-        somebody else's. Two teams of the same name are no answer, so neither of them is taken.
+        Only a team this instance holds no binding on is taken: one already bound here is another
+        group of this same instance, whose sync would then fight this one over the same member
+        list. A team bound to another instance is free to answer for this one as well. Two teams of
+        the same name are no answer, so neither of them is taken.
         """
         key = _adoption_key(slug)
         if not key:
             return None
         candidates = [
-            team for team in await team_repo.find_raw_unbound() if _adoption_key(str(team.get("name") or "")) == key
+            team
+            for team in await team_repo.find_raw_unbound_for_instance(str(self.instance.id))
+            if _adoption_key(str(team.get("name") or "")) == key
         ]
         if not candidates:
             return None
@@ -680,14 +692,8 @@ class GitHubService:
             return None
 
         try:
-            adopted = await team_repo.bind_github_team(
-                str(candidates[0]["_id"]),
-                {
-                    "github_instance_id": str(self.instance.id),
-                    "github_org": org,
-                    "github_team_id": team_id,
-                    "github_team_slug": slug,
-                },
+            adopted = await team_repo.add_binding_if_absent(
+                str(candidates[0]["_id"]), self._binding(org, team_id, slug).model_dump()
             )
         except DuplicateKeyError:
             # Another ingest bound this group to a team of its own; that one is the holder.
@@ -719,7 +725,7 @@ class GitHubService:
         worth more than a group that never appears.
         """
         instance_id = str(self.instance.id)
-        existing = await team_repo.get_raw_by_github_team(instance_id, team_id)
+        existing = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITHUB, instance_id, team_id)
         if existing:
             return existing
 
@@ -730,24 +736,21 @@ class GitHubService:
         team = Team(
             name=_auto_team_name(org, slug),
             description=_auto_team_description(org, slug),
-            github_instance_id=instance_id,
-            github_org=org,
-            github_team_id=team_id,
-            github_team_slug=slug,
+            bindings=[self._binding(org, team_id, slug)],
         )
         try:
             await team_repo.create(team)
         except DuplicateKeyError:
             # Another repository of the same organisation is being ingested and got here first.
-            concurrent = await team_repo.get_raw_by_github_team(instance_id, team_id)
+            concurrent = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITHUB, instance_id, team_id)
             if concurrent is None:
                 raise
             return concurrent
         logger.info("Created team '%s' for GitHub team %s/%s (id=%d).", team.name, org, slug, team_id)
         return team.model_dump(by_alias=True)
 
-    @staticmethod
     def _address_bound_teams(
+        self,
         org: str,
         owner: str,
         repo: str,
@@ -762,7 +765,7 @@ class GitHubService:
         """
         addressed = []
         for team in bound_teams:
-            team_id = team.get("github_team_id")
+            team_id = (binding_of(team, str(self.instance.id)) or {}).get("external_id")
             if not isinstance(team_id, int) or (slug := slug_map.get(team_id)) is None:
                 logger.warning(
                     "Team %s is bound to GitHub team %s of %s, which the organisation listing does not "
@@ -833,7 +836,7 @@ class GitHubService:
             )
             return None
 
-        bound_ids = {team.get("github_team_id") for team in bound_teams}
+        bound_ids = {(binding_of(team, str(self.instance.id)) or {}).get("external_id") for team in bound_teams}
         bindings: list[_HolderBinding] = []
         for team_id in repo_map.get(f"{owner}/{repo}".lower(), []):
             if team_id in bound_ids:
@@ -938,7 +941,7 @@ class GitHubService:
     ) -> None:
         """Refresh one holding team. Best effort: the team owns the project either way."""
         members = await self._resolve_holder_members(user_repo, org, holder, repository_path)
-        await self._refresh_team(team_repo, holder.team, org, holder.slug, members)
+        await self._refresh_team(team_repo, org, holder, members)
 
     async def sync_team_from_github(
         self,

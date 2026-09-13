@@ -5,6 +5,7 @@ from typing import Any
 import pymongo
 from motor.motor_asyncio import AsyncIOMotorDatabase
 
+from app.core.constants import TEAM_SOURCE_GITLAB, team_source
 from app.core.metrics import update_db_stats
 from app.core.permissions import ALL_PERMISSIONS
 from app.core.security import get_password_hash
@@ -79,87 +80,13 @@ async def _migrate_project_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
             await projects_collection.drop_index(idx_name)
 
 
-_SYNCED_TEAM_NAME_PREFIX = "GitLab Group: "
-
-
-async def _backfill_synced_team_gitlab_ids(database: AsyncIOMotorDatabase[Any]) -> None:
-    """Idempotent backfill of gitlab_instance_id onto legacy synced teams that predate the
-    (gitlab_instance_id, gitlab_group_id) composite key, so the next sync re-matches them
-    instead of orphaning them.
-
-    Only stamps gitlab_instance_id, and only when the team's linked projects resolve to
-    exactly one non-null GitLab instance (otherwise ambiguous — left untouched). The numeric
-    gitlab_group_id isn't stored locally and is left for the next live sync to fill.
-    """
-    teams = database["teams"]
-    projects = database["projects"]
-
-    cursor = teams.find(
-        {"name": {"$regex": f"^{_SYNCED_TEAM_NAME_PREFIX}"}},
-        {"_id": 1, "name": 1, "gitlab_instance_id": 1, "gitlab_group_id": 1},
-    )
-    legacy_teams = await cursor.to_list(None)
-
-    stamped = 0
-    skipped = 0
-    failed = 0
-    for team in legacy_teams:
-        team_id = team.get("_id")
-        # Isolate per-team failures: this runs before index creation, so an unhandled
-        # raise here would crash startup for every other team.
-        try:
-            # Idempotency: anything already tagged with an instance is left alone.
-            if team.get("gitlab_instance_id"):
-                continue
-
-            linked = await projects.find({"team_ids": team_id}, {"gitlab_instance_id": 1}).to_list(None)
-            instance_ids = {p.get("gitlab_instance_id") for p in linked if p.get("gitlab_instance_id")}
-
-            if len(instance_ids) != 1:
-                skipped += 1
-                logger.warning(
-                    "Backfill: legacy synced team %s (%r) is ambiguous — linked projects "
-                    "resolve to %d distinct GitLab instances (%s). Leaving it untouched; it "
-                    "will be re-tagged on the next live sync or must be reconciled manually.",
-                    team_id,
-                    team.get("name"),
-                    len(instance_ids),
-                    sorted(instance_ids) or "none",
-                )
-                continue
-
-            (instance_id,) = tuple(instance_ids)
-            await teams.update_one({"_id": team_id}, {"$set": {"gitlab_instance_id": instance_id}})
-            stamped += 1
-            logger.info(
-                "Backfill: stamped gitlab_instance_id=%s onto legacy synced team %s (%r). "
-                "gitlab_group_id remains unset and will be filled by the next live sync.",
-                instance_id,
-                team_id,
-                team.get("name"),
-            )
-        except Exception:
-            failed += 1
-            logger.exception(
-                "Backfill: failed to process legacy synced team %s; skipping it and "
-                "continuing with the rest. It can be reconciled on the next live sync.",
-                team_id,
-            )
-            continue
-
-    if legacy_teams:
-        logger.info(
-            "Backfill complete: %d legacy synced team(s) stamped with an instance id, "
-            "%d left for live re-sync, %d failed and skipped.",
-            stamped,
-            skipped,
-            failed,
-        )
-
-
 async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[Any]) -> None:
-    """Idempotent provenance backfill: stamp "gitlab" on the owner entry of projects owned by a
-    gitlab-synced team, but only where that entry is unset (never overwrite "manual").
+    """Idempotent provenance backfill: stamp the GitLab instance that holds the group on the owner
+    entry of projects owned by a gitlab-synced team, but only where that entry is unset.
+
+    A team bound to more than one GitLab instance is skipped rather than attributed to one of
+    them: a value naming the wrong instance hands the owner to that instance's next ingest to
+    delete.
 
     Members are intentionally left unstamped: stamping existing members "gitlab" would put
     manually-added members inside the gitlab subset the next sync's merge replaces, silently
@@ -168,32 +95,42 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
     teams = database["teams"]
     projects = database["projects"]
 
-    # A synced team is identified by a non-null gitlab_group_id. $ne null excludes
-    # both manual teams (field absent) and teams with an explicit null.
     cursor = teams.find(
-        {"gitlab_group_id": {"$ne": None}},
-        {"_id": 1, "gitlab_group_id": 1},
+        {"bindings": {"$elemMatch": {"provider": TEAM_SOURCE_GITLAB}}},
+        {"_id": 1, "bindings": 1},
     )
     synced_teams = await cursor.to_list(None)
 
     projects_stamped = 0
+    unattributable = 0
     failed = 0
     for team in synced_teams:
         team_id = team.get("_id")
         # Per-team isolation: this runs before index creation, so an unhandled raise
         # would crash startup for every other team/project.
         try:
-            if not team.get("gitlab_group_id"):
+            instances = {
+                binding.get("instance_id")
+                for binding in team.get("bindings") or []
+                if binding.get("provider") == TEAM_SOURCE_GITLAB
+            }
+            if len(instances) != 1:
+                unattributable += 1
                 continue
+            (instance_id,) = tuple(instances)
 
             # Per owner, not per project: a project can hold several, and only this one's entry
             # is known to have come from GitLab. Without it the next sync sees no owner of its
             # own to replace and leaves a transferred project owned by both teams.
             provenance = f"team_sources.{team_id}"
-            # $nin matches both missing fields and null, so already-stamped owners are untouched.
+            # Absent and null, and nothing else: any stored value already names a source, and
+            # overwriting one would move an owner between instances on a startup.
             result = await projects.update_many(
-                {"team_ids": team_id, provenance: {"$nin": ["manual", "gitlab", "github"]}},
-                [{"$set": {provenance: "gitlab"}}, *scalar_mirror_stages()],
+                {"team_ids": team_id, provenance: {"$in": [None]}},
+                [
+                    {"$set": {provenance: team_source(TEAM_SOURCE_GITLAB, instance_id)}},
+                    *scalar_mirror_stages(),
+                ],
             )
             projects_stamped += getattr(result, "modified_count", 0) or 0
         except Exception:
@@ -207,11 +144,13 @@ async def _backfill_member_and_team_provenance(database: AsyncIOMotorDatabase[An
 
     if synced_teams:
         logger.info(
-            "Provenance backfill complete: %d project(s) stamped an owner gitlab "
-            "across %d synced team(s), %d team(s) failed and skipped. "
+            "Provenance backfill complete: %d project(s) stamped an owner with its GitLab instance "
+            "across %d synced team(s), %d team(s) named no single instance and were left unstamped, "
+            "%d team(s) failed and skipped. "
             "(Members intentionally left unstamped so manually-added members survive merges.)",
             projects_stamped,
             len(synced_teams),
+            unattributable,
             failed,
         )
 
@@ -227,51 +166,32 @@ async def _normalise_unowned_projects(database: AsyncIOMotorDatabase[Any]) -> No
         logger.info("Owner normalisation: gave %d project(s) with no team_ids an empty owner list", normalised)
 
 
+TEAM_BINDING_KEY_FIELD = "bindings.key"
+# Partial, not sparse: a unique index over a path inside a missing array indexes the document
+# under the key null, so the second team holding no binding collides — measured, not inferred.
+# The filter selects on type, so a team with no bindings stays out of the unique scope entirely.
+TEAM_BINDING_KEY_PARTIAL_FILTER = {TEAM_BINDING_KEY_FIELD: {MONGO_TYPE: "string"}}
+
+
 async def create_team_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
-    """The teams keys, including the two that keep a provider binding to one holder."""
+    """The teams keys, including the one that keeps a binding to a single holder."""
     await database["teams"].create_index("members.user_id")
-    # Uniqueness scoped to teams carrying BOTH fields via partialFilterExpression:
-    # MongoDB sparse compound indexes still collide on explicit null, so the type
-    # filter is required to exclude manual teams (both fields null/absent).
     # Guarded so a pre-existing duplicate can't crash startup into CrashLoopBackOff —
     # the offending key is logged and the index skipped, degrading gracefully.
     try:
         await database["teams"].create_index(
-            [("gitlab_instance_id", pymongo.ASCENDING), ("gitlab_group_id", pymongo.ASCENDING)],
+            [(TEAM_BINDING_KEY_FIELD, pymongo.ASCENDING)],
             unique=True,
-            partialFilterExpression={
-                "gitlab_instance_id": {MONGO_TYPE: "string"},
-                "gitlab_group_id": {MONGO_TYPE: "int"},
-            },
-        )
-    except (pymongo.errors.DuplicateKeyError, pymongo.errors.OperationFailure) as exc:
-        key_info = getattr(exc, "details", None) or str(exc)
-        logger.error(
-            "Skipping unique teams (gitlab_instance_id, gitlab_group_id) index: build "
-            "failed (likely a pre-existing duplicate). Startup continues without it; "
-            "reconcile the duplicate and re-run. Offending key/error: %s",
-            key_info,
-        )
-
-    # Same $type filter as the GitLab index above: teams carrying an explicit null in both
-    # fields must stay out of the unique scope, or the second manual team is a duplicate key.
-    # "number", not "int": pymongo encodes an id >= 2**31 as BSON long, which "int" exempts.
-    try:
-        await database["teams"].create_index(
-            [("github_instance_id", pymongo.ASCENDING), ("github_team_id", pymongo.ASCENDING)],
-            unique=True,
-            partialFilterExpression={
-                "github_instance_id": {MONGO_TYPE: "string"},
-                "github_team_id": {MONGO_TYPE: "number"},
-            },
+            partialFilterExpression=TEAM_BINDING_KEY_PARTIAL_FILTER,
         )
     except pymongo.errors.OperationFailure as exc:
         # Named "response" rather than "details": the Finding.details contract test reads any
         # local of that name as a finding-details access.
         response = exc.details or {}
         logger.error(
-            "Skipping unique teams (github_instance_id, github_team_id) index, build failed "
-            "with %s; the key stays unenforced until it is built. Server response: %s",
+            "Skipping unique teams %s index, build failed with %s; the key stays unenforced "
+            "until it is built. Server response: %s",
+            TEAM_BINDING_KEY_FIELD,
             response.get("codeName", type(exc).__name__),
             response or exc,
         )
@@ -283,10 +203,6 @@ async def create_indexes(database: AsyncIOMotorDatabase[Any]) -> None:
 
     await _migrate_project_indexes(database)
     await _migrate_tie_break_indexes(database)
-    # Reconcile legacy synced teams BEFORE creating the unique team index, so the
-    # index build does not trip over partially-tagged data.
-    await _backfill_synced_team_gitlab_ids(database)
-    # Runs after the instance-id backfill so teams that just gained their instance id are included.
     await _backfill_member_and_team_provenance(database)
     # After the provenance backfill, whose pipeline writes team_ids on the projects it stamps.
     await _normalise_unowned_projects(database)

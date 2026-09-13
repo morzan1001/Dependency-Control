@@ -44,6 +44,11 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+          --ulimit nofile=64000:64000
+        # Each live_mongo test opens a fresh client against a fresh database, and the server hits
+        # the container's default file-descriptor cap partway through the suite: it aborts with
+        # TooManyFilesOpen creating an eventfd (exit 133), which reads as a test failure rather
+        # than a limit. Measured on percona-server-mongodb 8.0.17-6: 172 tests fit, 176 do not.
     env:
       DC_TEST_MONGO_URL: mongodb://localhost:27017
       # Fail the run instead of skipping the live-Mongo tests back into silence.

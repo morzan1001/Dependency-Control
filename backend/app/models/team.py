@@ -1,9 +1,9 @@
 from datetime import datetime, timezone
-from typing import Literal
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
-from app.core.constants import TEAM_ROLE_MEMBER, TEAM_ROLES
+from app.core.constants import TEAM_ROLE_MEMBER, TEAM_ROLES, team_binding_key
 from app.models.base import CreatedAtModel
 from app.models.types import MongoDocument
 
@@ -23,18 +23,47 @@ class TeamMember(BaseModel):
         return v
 
 
+class _ProviderBinding(BaseModel):
+    provider: str
+    instance_id: str
+    # The numeric id identifies the group or team; paths and slugs move when one is renamed.
+    external_id: int
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def key(self) -> str:
+        """Stored, and the unique index is on it. Derived rather than accepted from the caller so
+        it cannot name a binding other than the one it sits in."""
+        return team_binding_key(self.provider, self.instance_id, self.external_id)
+
+
+class GitHubTeamBinding(_ProviderBinding):
+    provider: Literal["github"] = "github"
+    org: str
+    slug: str | None = None
+
+
+class GitLabGroupBinding(_ProviderBinding):
+    provider: Literal["gitlab"] = "gitlab"
+    path: str | None = None
+
+
+TeamBinding = Annotated[GitHubTeamBinding | GitLabGroupBinding, Field(discriminator="provider")]
+
+
+def binding_of(team: dict[str, Any], instance_id: str) -> dict[str, Any] | None:
+    """The team's binding for one instance, as stored. At most one exists per (team, instance)."""
+    for binding in team.get("bindings") or []:
+        if binding.get("instance_id") == instance_id:
+            return dict(binding)
+    return None
+
+
 class Team(MongoDocument, CreatedAtModel):
     name: str
     description: str | None = None
-    gitlab_instance_id: str | None = None
-    # The numeric id identifies the group; paths move when a group is renamed or transferred.
-    gitlab_group_id: int | None = None
-    gitlab_group_path: str | None = None
-    github_instance_id: str | None = None
-    github_org: str | None = None
-    # The numeric id identifies the team; slugs are renameable.
-    github_team_id: int | None = None
-    github_team_slug: str | None = None
+    # One entry per instance the team is bound to, of either provider, in any number.
+    bindings: list[TeamBinding] = Field(default_factory=list)
     members: list[TeamMember] = Field(default_factory=list)
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 

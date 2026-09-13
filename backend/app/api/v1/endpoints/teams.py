@@ -25,16 +25,17 @@ from app.api.v1.helpers.responses import (
 )
 from app.core.constants import TEAM_ROLE_ADMIN
 from app.core.permissions import Permissions, has_permission
-from app.models.team import Team, TeamMember
+from app.models.team import GitHubTeamBinding, GitLabGroupBinding, Team, TeamMember
 from app.models.user import User
 from app.repositories import TeamRepository, UserRepository
 from app.repositories.github_instances import GitHubInstanceRepository
 from app.repositories.gitlab_instances import GitLabInstanceRepository
 from app.repositories.projects import remove_team_pipeline
 from app.schemas.team import (
+    TeamBindingRequest,
     TeamCreate,
-    TeamGitHubBindingUpdate,
-    TeamGitLabBindingUpdate,
+    TeamGitHubBindingRequest,
+    TeamGitLabBindingRequest,
     TeamMemberAdd,
     TeamMemberUpdate,
     TeamResponse,
@@ -50,8 +51,6 @@ router = CustomAPIRouter()
 _MSG_ALREADY_IN_TEAM = "User already in team"
 _MSG_LAST_ADMIN = "Cannot remove the last admin. Add another admin first."
 _MSG_TEAM_NOT_FOUND = "Team not found"
-_GITHUB_BINDING_FIELDS = ("github_instance_id", "github_org", "github_team_id", "github_team_slug")
-_GITLAB_BINDING_FIELDS = ("gitlab_instance_id", "gitlab_group_id", "gitlab_group_path")
 
 
 @router.post("/", response_model=TeamResponse, status_code=status.HTTP_201_CREATED, responses=RESP_AUTH)
@@ -179,175 +178,95 @@ async def delete_team(
     await team_repo.delete(team_id)
 
 
-async def _resolve_bound_team_slug(binding: TeamGitHubBindingUpdate, db: AsyncIOMotorDatabase) -> str:
-    """The slug the organisation reports for the bound team number.
+async def _github_binding(request: TeamGitHubBindingRequest, db: AsyncIOMotorDatabase) -> GitHubTeamBinding:
+    """The binding to store, with the slug the organisation reports for the bound team number.
 
-    Reading it here rather than taking it from the caller is also what proves the team exists:
-    a binding to a number no organisation carries would resolve nothing, silently, forever.
+    Reading the slug here rather than taking it from the caller is also what proves the team
+    exists: a binding to a number no organisation carries would resolve nothing, silently, forever.
     """
-    instance = await GitHubInstanceRepository(db).get_by_id(binding.github_instance_id)
+    instance = await GitHubInstanceRepository(db).get_by_id(request.instance_id)
     if not instance:
-        raise HTTPException(
-            status_code=404, detail=f"GitHub instance with ID {binding.github_instance_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"GitHub instance with ID {request.instance_id} not found")
 
-    org_teams = await GitHubService(instance).get_org_teams(binding.github_org)
+    org_teams = await GitHubService(instance).get_org_teams(request.org)
     if org_teams is None:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=(
-                f"Could not list the teams of organisation '{binding.github_org}' on instance "
+                f"Could not list the teams of organisation '{request.org}' on instance "
                 f"'{instance.name}'. The token needs read:org there."
             ),
         )
 
-    slug = build_team_slug_map(org_teams).get(binding.github_team_id)
+    slug = build_team_slug_map(org_teams).get(request.external_id)
     if slug is None:
         raise HTTPException(
             status_code=400,
             detail=(
-                f"GitHub organisation '{binding.github_org}' has no team with id {binding.github_team_id} "
+                f"GitHub organisation '{request.org}' has no team with id {request.external_id} "
                 f"that instance '{instance.name}' can see."
             ),
         )
-    return slug
+    return GitHubTeamBinding(
+        instance_id=request.instance_id, org=request.org, external_id=request.external_id, slug=slug
+    )
 
 
-async def _reject_taken_binding(team_repo: TeamRepository, team_id: str, binding: TeamGitHubBindingUpdate) -> None:
-    """Two teams bound to one GitHub team would make the repository's owner ambiguous."""
-    holder = await team_repo.get_raw_by_github_team(binding.github_instance_id, binding.github_team_id)
-    if holder is not None and str(holder["_id"]) != team_id:
-        raise HTTPException(
-            status_code=409,
-            detail=f"Team '{holder.get('name')}' is already bound to GitHub team {binding.github_team_id}.",
-        )
+async def _gitlab_binding(request: TeamGitLabBindingRequest, db: AsyncIOMotorDatabase) -> GitLabGroupBinding:
+    """The binding to store, with the full path the instance reports for the bound group number.
 
-
-@router.put("/{team_id}/github-binding", responses=RESP_AUTH_400_404_409_502)
-async def set_team_github_binding(
-    team_id: str,
-    binding_in: TeamGitHubBindingUpdate,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
-    db: DatabaseDep,
-) -> TeamResponse:
-    """Bind a team to a GitHub team, which is what makes that team resolvable from an ingest.
-
-    Gated on system:manage rather than team administration: a binding decides which repositories
-    of the whole estate land in this team, and team membership grants access to them.
+    Reading the path here rather than taking it from the caller is also what proves the group
+    exists: a binding to a number no instance carries would resolve nothing, silently, forever.
     """
-    team_repo = TeamRepository(db)
-    if not await team_repo.get_raw_by_id(team_id):
-        raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
-
-    slug = await _resolve_bound_team_slug(binding_in, db)
-    await _reject_taken_binding(team_repo, team_id, binding_in)
-
-    try:
-        await team_repo.update(
-            team_id,
-            {
-                "github_instance_id": binding_in.github_instance_id,
-                "github_org": binding_in.github_org,
-                "github_team_id": binding_in.github_team_id,
-                "github_team_slug": slug,
-                "updated_at": datetime.now(timezone.utc),
-            },
-        )
-    except DuplicateKeyError:
-        # The unique index caught a binding written between the check above and this write.
-        raise HTTPException(
-            status_code=409,
-            detail=f"Another team was just bound to GitHub team {binding_in.github_team_id}.",
-        )
-
-    logger.info(
-        "Team %s bound to GitHub team %d (%s/%s) by %s",
-        team_id.replace("\n", "_").replace("\r", "_"),
-        binding_in.github_team_id,
-        binding_in.github_org,
-        slug,
-        current_user.username,
-    )
-    return await fetch_and_enrich_team(team_id, db)
-
-
-@router.delete("/{team_id}/github-binding", responses=RESP_AUTH_404)
-async def clear_team_github_binding(
-    team_id: str,
-    current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
-    db: DatabaseDep,
-) -> TeamResponse:
-    """Remove a team's GitHub binding. Its repositories keep the team they have; no later ingest
-    resolves to it until it is bound again."""
-    team_repo = TeamRepository(db)
-    if not await team_repo.get_raw_by_id(team_id):
-        raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
-
-    # Nulled rather than unset: the unique index's partial filter selects on type, so a null pair
-    # is outside the unique scope and any number of cleared teams coexist.
-    await team_repo.update(
-        team_id,
-        {**dict.fromkeys(_GITHUB_BINDING_FIELDS), "updated_at": datetime.now(timezone.utc)},
-    )
-
-    logger.info(
-        "GitHub binding removed from team %s by %s",
-        team_id.replace("\n", "_").replace("\r", "_"),
-        current_user.username,
-    )
-    return await fetch_and_enrich_team(team_id, db)
-
-
-async def _resolve_bound_group_path(binding: TeamGitLabBindingUpdate, db: AsyncIOMotorDatabase) -> str:
-    """The full path the instance reports for the bound group number.
-
-    Reading it here rather than taking it from the caller is also what proves the group exists:
-    a binding to a number no instance carries would resolve nothing, silently, forever.
-    """
-    instance = await GitLabInstanceRepository(db).get_by_id(binding.gitlab_instance_id)
+    instance = await GitLabInstanceRepository(db).get_by_id(request.instance_id)
     if not instance:
-        raise HTTPException(
-            status_code=404, detail=f"GitLab instance with ID {binding.gitlab_instance_id} not found"
-        )
+        raise HTTPException(status_code=404, detail=f"GitLab instance with ID {request.instance_id} not found")
 
-    lookup = await GitLabService(instance).get_group(binding.gitlab_group_id)
+    lookup = await GitLabService(instance).get_group(request.external_id)
     if not lookup.reachable:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=(
-                f"Could not read group {binding.gitlab_group_id} from instance '{instance.name}'. "
+                f"Could not read group {request.external_id} from instance '{instance.name}'. "
                 f"It needs an access token that can read it."
             ),
         )
     if lookup.group is None:
         raise HTTPException(
             status_code=400,
-            detail=(
-                f"GitLab instance '{instance.name}' has no group with id {binding.gitlab_group_id} "
-                f"that it can see."
-            ),
+            detail=f"GitLab instance '{instance.name}' has no group with id {request.external_id} that it can see.",
         )
-    return str(lookup.group.get("full_path") or lookup.group.get("path") or binding.gitlab_group_id)
+    path = str(lookup.group.get("full_path") or lookup.group.get("path") or request.external_id)
+    return GitLabGroupBinding(instance_id=request.instance_id, external_id=request.external_id, path=path)
 
 
-async def _reject_taken_group(team_repo: TeamRepository, team_id: str, binding: TeamGitLabBindingUpdate) -> None:
-    """Two teams bound to one GitLab group would make the project's owner ambiguous."""
-    holder = await team_repo.get_raw_by_gitlab_group(binding.gitlab_instance_id, binding.gitlab_group_id)
+def _binding_conflict(binding: GitHubTeamBinding | GitLabGroupBinding) -> str:
+    if isinstance(binding, GitHubTeamBinding):
+        return f"GitHub team {binding.external_id} of '{binding.org}'"
+    return f"GitLab group {binding.external_id}"
+
+
+async def _reject_taken_binding(
+    team_repo: TeamRepository, team_id: str, binding: GitHubTeamBinding | GitLabGroupBinding
+) -> None:
+    """Two teams bound to one group would make the project's owner ambiguous."""
+    holder = await team_repo.get_raw_by_binding_key(binding.key)
     if holder is not None and str(holder["_id"]) != team_id:
         raise HTTPException(
             status_code=409,
-            detail=f"Team '{holder.get('name')}' is already bound to GitLab group {binding.gitlab_group_id}.",
+            detail=f"Team '{holder.get('name')}' is already bound to {_binding_conflict(binding)}.",
         )
 
 
-@router.put("/{team_id}/gitlab-binding", responses=RESP_AUTH_400_404_409_502)
-async def set_team_gitlab_binding(
+@router.put("/{team_id}/bindings", responses=RESP_AUTH_400_404_409_502)
+async def set_team_binding(
     team_id: str,
-    binding_in: TeamGitLabBindingUpdate,
+    binding_in: TeamBindingRequest,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     db: DatabaseDep,
 ) -> TeamResponse:
-    """Bind a team to a GitLab group, which is what makes that team resolvable from an ingest.
+    """Bind a team to a group on one instance, which is what makes it resolvable from that
+    instance's ingests. A team holds one binding per instance and any number of instances.
 
     Gated on system:manage rather than team administration: a binding decides which projects
     of the whole estate land in this team, and team membership grants access to them.
@@ -356,57 +275,51 @@ async def set_team_gitlab_binding(
     if not await team_repo.get_raw_by_id(team_id):
         raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
 
-    group_path = await _resolve_bound_group_path(binding_in, db)
-    await _reject_taken_group(team_repo, team_id, binding_in)
+    binding = (
+        await _github_binding(binding_in, db)
+        if isinstance(binding_in, TeamGitHubBindingRequest)
+        else await _gitlab_binding(binding_in, db)
+    )
+    await _reject_taken_binding(team_repo, team_id, binding)
 
     try:
-        await team_repo.update(
-            team_id,
-            {
-                "gitlab_instance_id": binding_in.gitlab_instance_id,
-                "gitlab_group_id": binding_in.gitlab_group_id,
-                "gitlab_group_path": group_path,
-                "updated_at": datetime.now(timezone.utc),
-            },
-        )
+        await team_repo.replace_binding_for_instance(team_id, binding.model_dump())
     except DuplicateKeyError:
         # The unique index caught a binding written between the check above and this write.
         raise HTTPException(
             status_code=409,
-            detail=f"Another team was just bound to GitLab group {binding_in.gitlab_group_id}.",
+            detail=f"Another team was just bound to {_binding_conflict(binding)}.",
         )
 
     logger.info(
-        "Team %s bound to GitLab group %d (%s) by %s",
+        "Team %s bound to %s on instance %s by %s",
         team_id.replace("\n", "_").replace("\r", "_"),
-        binding_in.gitlab_group_id,
-        group_path,
+        _binding_conflict(binding),
+        binding.instance_id,
         current_user.username,
     )
     return await fetch_and_enrich_team(team_id, db)
 
 
-@router.delete("/{team_id}/gitlab-binding", responses=RESP_AUTH_404)
-async def clear_team_gitlab_binding(
+@router.delete("/{team_id}/bindings/{instance_id}", responses=RESP_AUTH_404)
+async def clear_team_binding(
     team_id: str,
+    instance_id: str,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
     db: DatabaseDep,
 ) -> TeamResponse:
-    """Remove a team's GitLab binding. Its projects keep the team they have; no later ingest
-    resolves to it until it is bound again."""
+    """Remove a team's binding for one instance, leaving the ones it holds on the others. Its
+    projects keep the team they have; no later ingest from that instance resolves to it."""
     team_repo = TeamRepository(db)
     if not await team_repo.get_raw_by_id(team_id):
         raise HTTPException(status_code=404, detail=_MSG_TEAM_NOT_FOUND)
 
-    # Nulled rather than unset: the unique index's partial filter selects on type, so a null pair
-    # is outside the unique scope and any number of cleared teams coexist.
-    await team_repo.update(
-        team_id,
-        {**dict.fromkeys(_GITLAB_BINDING_FIELDS), "updated_at": datetime.now(timezone.utc)},
-    )
+    if not await team_repo.remove_binding_for_instance(team_id, instance_id):
+        raise HTTPException(status_code=404, detail=f"This team holds no binding for instance {instance_id}.")
 
     logger.info(
-        "GitLab binding removed from team %s by %s",
+        "Binding for instance %s removed from team %s by %s",
+        instance_id.replace("\n", "_").replace("\r", "_"),
         team_id.replace("\n", "_").replace("\r", "_"),
         current_user.username,
     )

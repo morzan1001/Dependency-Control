@@ -1,8 +1,10 @@
 from datetime import datetime
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.core.constants import TEAM_ROLE_MEMBER, TeamRole
+from app.models.team import TeamBinding
 from app.models.types import PyObjectId
 
 
@@ -36,19 +38,26 @@ class TeamUpdate(BaseModel):
     description: str | None = None
 
 
-class TeamGitHubBindingUpdate(BaseModel):
+class TeamGitHubBindingRequest(BaseModel):
     """The team is named by its number; the slug is read back from the organisation listing."""
 
-    github_instance_id: str
-    github_org: str
-    github_team_id: int
+    provider: Literal["github"]
+    instance_id: str
+    org: str
+    external_id: int
 
 
-class TeamGitLabBindingUpdate(BaseModel):
+class TeamGitLabBindingRequest(BaseModel):
     """The group is named by its number; the path is read back from the instance."""
 
-    gitlab_instance_id: str
-    gitlab_group_id: int
+    provider: Literal["gitlab"]
+    instance_id: str
+    external_id: int
+
+
+TeamBindingRequest = Annotated[
+    TeamGitHubBindingRequest | TeamGitLabBindingRequest, Field(discriminator="provider")
+]
 
 
 class TeamResponse(TeamBase):
@@ -56,13 +65,7 @@ class TeamResponse(TeamBase):
     members: list[TeamMemberSchema]
     created_at: datetime
     updated_at: datetime
-    gitlab_instance_id: str | None = None
-    gitlab_group_id: int | None = None
-    gitlab_group_path: str | None = None
-    github_instance_id: str | None = None
-    github_org: str | None = None
-    github_team_id: int | None = None
-    github_team_slug: str | None = None
+    bindings: list[TeamBinding] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True, populate_by_name=True)
 

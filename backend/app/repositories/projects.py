@@ -25,7 +25,11 @@ UNSHAPED_OWNERS: dict[str, Any] = {"team_ids": {"$in": [None]}}
 
 
 def _owned_by(source: str) -> dict[str, Any]:
-    """The team_sources entries this provider wrote, as an array of ``{k, v}`` documents."""
+    """The team_sources entries this source wrote, as an array of ``{k, v}`` documents.
+
+    Equality against the whole value and not a provider prefix: ``source`` names one instance, and
+    a prefix match would hand every instance of a provider the owners of all the others.
+    """
     return {
         "$filter": {
             "input": {"$objectToArray": {"$ifNull": ["$team_sources", {}]}},
@@ -51,8 +55,9 @@ def _sources_except(source: str) -> dict[str, Any]:
 def _retired_by(source: str) -> dict[str, Any]:
     """The owners a ``source`` write replaces — the ones its own provenance entries name.
 
-    An owner no entry names is therefore never retired by a sync: nothing shows that provider set
-    it, and the picker is the only writer that may take it away.
+    An owner no entry names is therefore never retired by a sync: nothing shows that instance set
+    it, and the picker is the only writer that may take it away. A second instance of the same
+    provider is as foreign here as the other provider is.
     """
     return {"$map": {"input": _owned_by(source), "as": "entry", "in": "$$entry.k"}}
 
@@ -112,6 +117,10 @@ def scalar_mirror_stages() -> list[dict[str, Any]]:
 
 def replace_team_subset_pipeline(source: str, team_ids: list[str]) -> list[dict[str, Any]]:
     """A pipeline update replacing exactly the owners ``source`` set, leaving the others alone.
+
+    ``source`` is ``team_source(provider, instance_id)``, so "the owners it set" is per instance:
+    two GitLab instances resolving different teams onto one project each keep the other's owner,
+    where a provider-wide source has them retire each other's on every CI run in turn.
 
     A pipeline and not two modifiers: ``$pull`` plus ``$addToSet`` on ``team_ids`` in one classic
     update is rejected with code 40, and splitting it into two writes exposes an empty ``team_ids``
