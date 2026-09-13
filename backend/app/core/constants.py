@@ -1024,6 +1024,13 @@ GITHUB_JWKS_URI_CACHE_TTL = 86400  # 24 hours (rarely changes)
 # One workflow run fans out into many jobs; without this every job refetches the same three lists.
 GITHUB_TEAM_SYNC_CACHE_TTL = 300  # 5 minutes
 
+# Building the map costs one request per team of the organisation, and the largest one here has 204.
+# At this TTL the three configured organisations together spend ~313 of the token's 5000 requests per
+# hour on it; at five minutes they would spend more than the whole budget. Which repositories a team
+# holds changes when a repository is created or handed over, so an hour of lag is the cost of a
+# repository joining its group one sync late.
+GITHUB_ORG_REPO_MAP_CACHE_TTL = 3600  # 1 hour
+
 # Threshold for classifying a CVE as high-risk based on its composite risk score
 HIGH_RISK_SCORE_THRESHOLD: float = 70.0
 

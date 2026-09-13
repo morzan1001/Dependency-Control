@@ -1,12 +1,14 @@
 """GitHub team-sync reads: the team/repository check, uncapped pagination, role-tagged members, cache."""
 
+import asyncio
+import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
 import pytest
 
 from app.core.cache import CacheService
-from app.services.github import _REPOSITORY_ACCEPT, GitHubService
+from app.services.github import _GITHUB_ORG_WALK_CONCURRENCY, _REPOSITORY_ACCEPT, GitHubService
 from tests.mocks.github import make_github_instance
 
 _ORG_URL = "https://api.github.com/organizations/1234"
@@ -210,6 +212,152 @@ class TestOrgTeams:
 
         assert paginated.await_args.args[0] == "/orgs/acme/teams"
         assert paginated.await_args.kwargs["max_pages"] is None
+
+
+class TestOrgRepositoryMap:
+    """Asking a repository for its teams needs admin on it, so the map is walked team by team."""
+
+    @staticmethod
+    def _listings(held: dict[str, list[str] | None]):
+        async def _paginated(endpoint, params=None, max_pages=10):
+            slug = endpoint.split("/")[4]
+            repositories = held.get(slug)
+            return None if repositories is None else [{"full_name": name} for name in repositories]
+
+        return AsyncMock(side_effect=_paginated)
+
+    @pytest.mark.asyncio
+    async def test_is_walked_team_by_team_and_uncapped(self, fake_cache):
+        service = _service()
+        listings = self._listings({"payments": ["acme/widgets"], "sre": []})
+
+        with patch.object(service, "_api_get_paginated", new=listings):
+            assert await service.get_org_repository_map("acme", _ORG_TEAMS) == {"acme/widgets": [4711]}
+
+        assert [call.args[0] for call in listings.await_args_list] == [
+            "/orgs/acme/teams/payments/repos",
+            "/orgs/acme/teams/sre/repos",
+        ]
+        assert [call.kwargs["max_pages"] for call in listings.await_args_list] == [None, None]
+
+    @pytest.mark.asyncio
+    async def test_names_every_team_holding_one_repository(self):
+        service = _service()
+        listings = self._listings({"payments": ["acme/widgets"], "sre": ["acme/widgets", "acme/gadgets"]})
+
+        with patch.object(service, "_api_get_paginated", new=listings):
+            repo_map = await service.get_org_repository_map("acme", _ORG_TEAMS)
+
+        assert repo_map == {"acme/widgets": [4711, 8150], "acme/gadgets": [8150]}
+
+    @pytest.mark.asyncio
+    async def test_the_full_names_are_lower_cased_so_an_oidc_claim_matches(self):
+        service = _service()
+
+        with patch.object(service, "_api_get_paginated", new=self._listings({"payments": ["Acme/Widgets"], "sre": []})):
+            assert await service.get_org_repository_map("acme", _ORG_TEAMS) == {"acme/widgets": [4711]}
+
+    @pytest.mark.asyncio
+    async def test_a_team_that_went_unanswered_leaves_the_whole_map_undetermined(self):
+        """Half a walk names the wrong holders: the teams it did not reach read as holding nothing."""
+        service = _service()
+
+        with patch.object(service, "_api_get_paginated", new=self._listings({"payments": ["acme/widgets"]})):
+            assert await service.get_org_repository_map("acme", _ORG_TEAMS) is None
+
+    @pytest.mark.asyncio
+    async def test_the_walk_is_paid_once_a_ttl_rather_than_once_an_ingest(self, fake_cache):
+        service = _service()
+        listings = self._listings({"payments": ["acme/widgets"], "sre": []})
+
+        with patch.object(service, "_api_get_paginated", new=listings):
+            first = await service.get_org_repository_map("acme", _ORG_TEAMS)
+            second = await service.get_org_repository_map("acme", _ORG_TEAMS)
+
+        assert first == {"acme/widgets": [4711]}
+        assert second == first
+        assert listings.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_an_organisation_whose_teams_hold_nothing_is_cached_too(self, fake_cache):
+        service = _service()
+        listings = self._listings({"payments": [], "sre": []})
+
+        with patch.object(service, "_api_get_paginated", new=listings):
+            assert await service.get_org_repository_map("acme", _ORG_TEAMS) == {}
+            assert await service.get_org_repository_map("acme", _ORG_TEAMS) == {}
+
+        assert listings.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_an_undetermined_walk_is_never_cached(self, fake_cache):
+        service = _service()
+        attempts = [self._listings({"payments": ["acme/widgets"]}), self._listings({"payments": [], "sre": []})]
+
+        with patch.object(service, "_api_get_paginated", new=attempts[0]):
+            assert await service.get_org_repository_map("acme", _ORG_TEAMS) is None
+        with patch.object(service, "_api_get_paginated", new=attempts[1]):
+            assert await service.get_org_repository_map("acme", _ORG_TEAMS) == {}
+
+    @pytest.mark.asyncio
+    async def test_one_organisation_never_answers_for_another(self, fake_cache):
+        service = _service()
+        listings = self._listings({"payments": ["acme/widgets"], "sre": []})
+
+        with patch.object(service, "_api_get_paginated", new=listings):
+            await service.get_org_repository_map("acme", _ORG_TEAMS)
+            await service.get_org_repository_map("acme-labs", _ORG_TEAMS)
+
+        assert listings.await_count == 4
+
+    @pytest.mark.asyncio
+    async def test_the_listings_do_not_add_up(self, fake_cache):
+        """A cold map on the largest organisation here is 204 listings; in sequence they would
+        outlast the resolution budget the ingest is bounded by."""
+        service = _service()
+        org_teams = [{"id": 1000 + index, "slug": f"t{index}", "parent": None} for index in range(64)]
+
+        async def _slow(_endpoint, params=None, max_pages=10):
+            await asyncio.sleep(0.02)
+            return []
+
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(side_effect=_slow)):
+            started = time.perf_counter()
+            assert await service.get_org_repository_map("acme", org_teams) == {}
+            elapsed = time.perf_counter() - started
+
+        assert elapsed < 0.02 * 64 / 4
+
+    @pytest.mark.asyncio
+    async def test_the_walk_stays_below_the_concurrency_github_tolerates(self, fake_cache):
+        service = _service()
+        org_teams = [{"id": 1000 + index, "slug": f"t{index}", "parent": None} for index in range(64)]
+        in_flight = 0
+        peak = 0
+
+        async def _tracked(_endpoint, params=None, max_pages=10):
+            nonlocal in_flight, peak
+            in_flight += 1
+            peak = max(peak, in_flight)
+            await asyncio.sleep(0.01)
+            in_flight -= 1
+            return []
+
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(side_effect=_tracked)):
+            await service.get_org_repository_map("acme", org_teams)
+
+        assert peak == _GITHUB_ORG_WALK_CONCURRENCY
+
+    @pytest.mark.asyncio
+    async def test_a_team_the_listing_cannot_address_is_left_out_rather_than_fatal(self, fake_cache):
+        service = _service()
+        org_teams = [*_ORG_TEAMS, {"id": None, "slug": "broken", "parent": None}]
+        listings = self._listings({"payments": ["acme/widgets"], "sre": []})
+
+        with patch.object(service, "_api_get_paginated", new=listings):
+            assert await service.get_org_repository_map("acme", org_teams) == {"acme/widgets": [4711]}
+
+        assert listings.await_count == 2
 
 
 class TestOrgTeamCount:

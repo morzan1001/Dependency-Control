@@ -1,4 +1,4 @@
-"""GitHub team sync: member resolution, merge semantics and the resolution of a repository to a bound team."""
+"""GitHub team sync: member resolution, merge semantics, and resolving a repository to the teams holding it."""
 
 import asyncio
 import time
@@ -7,8 +7,9 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pymongo.errors import DuplicateKeyError
 
-from app.models.team import TeamMember
+from app.models.team import Team, TeamMember
 from app.services.github import GitHubService, GitHubTeamSyncResult
 from tests.mocks.github import make_github_instance
 
@@ -21,9 +22,13 @@ _ORG_TEAMS = [_PAYMENTS, _PLATFORM, _ENGINEERING, _NESTED]
 
 _ONE_MAINTAINER = [{"login": "ada", "role": "maintainer"}]
 
+# The organisation map, in the shape the walk leaves behind: repository full name -> holding teams.
+_NO_HOLDERS: dict[str, list[int]] = {}
+_HELD_BY_PLATFORM = {"acme/widgets": [100]}
 
-def _service(instance_id: str = "test-github-instance-id") -> GitHubService:
-    return GitHubService(make_github_instance(id=instance_id, access_token="ghp-secret"))
+
+def _service(instance_id: str = "test-github-instance-id", *, sync_teams: bool = False) -> GitHubService:
+    return GitHubService(make_github_instance(id=instance_id, access_token="ghp-secret", sync_teams=sync_teams))
 
 
 def _user_repo(*, by_username=None, by_email=None) -> MagicMock:
@@ -46,17 +51,27 @@ def _bound(doc_id: str, team_id: int, *, slug: str = "payments", name: str = "Pa
     }
 
 
-def _team_repo(*bound_teams) -> MagicMock:
+def _team_repo(*bound_teams, adopted=None) -> MagicMock:
     repo = MagicMock()
     repo.find_raw_by_github_org = AsyncMock(return_value=list(bound_teams))
+    repo.get_raw_by_github_team = AsyncMock(return_value=adopted)
     repo.update = AsyncMock()
     repo.create = AsyncMock()
     return repo
 
 
 @contextmanager
-def _sync_stubs(service, team_repo, *, org_teams=_ORG_TEAMS, access=None, members=_ONE_MAINTAINER, user_repo=None):
-    """Stub everything the sync reads: the organisation listing, the per-team checks and the members."""
+def _sync_stubs(
+    service,
+    team_repo,
+    *,
+    org_teams=_ORG_TEAMS,
+    access=None,
+    members=_ONE_MAINTAINER,
+    user_repo=None,
+    repo_map=_NO_HOLDERS,
+):
+    """Stub everything the sync reads: the organisation listing and map, the checks and the members."""
     answers = access or {}
 
     async def _check(_org, team_slug, _owner, _repo):
@@ -66,11 +81,13 @@ def _sync_stubs(service, team_repo, *, org_teams=_ORG_TEAMS, access=None, member
         checks=AsyncMock(side_effect=_check),
         org_teams=AsyncMock(return_value=org_teams),
         members=AsyncMock(return_value=members),
+        repo_map=AsyncMock(return_value=repo_map),
     )
     with (
         patch.object(service, "get_org_teams", new=stubs.org_teams),
         patch.object(service, "get_team_repository", new=stubs.checks),
         patch.object(service, "get_team_members", new=stubs.members),
+        patch.object(service, "get_org_repository_map", new=stubs.repo_map),
         patch("app.services.github.TeamRepository", return_value=team_repo),
         patch("app.services.github.UserRepository", return_value=user_repo or _user_repo(by_username={"_id": "u-1"})),
     ):
@@ -249,7 +266,7 @@ class TestTeamMemberWrite:
         )
         repo = _team_repo(team)
 
-        await service._sync_team_members(repo, team, "payments", [TeamMember(user_id="u-gh", source="github")])
+        await service._refresh_team(repo, team, "acme", "payments", [TeamMember(user_id="u-gh", source="github")])
 
         assert repo.update.await_args.args[1]["members"] == [
             {"user_id": "u-manual", "role": "admin", "source": "manual"},
@@ -263,26 +280,71 @@ class TestTeamMemberWrite:
         team = _bound("t-1", 4711, name="Payments Guild")
         repo = _team_repo(team)
 
-        await service._sync_team_members(repo, team, "payments", [TeamMember(user_id="u-1", source="github")])
+        await service._refresh_team(repo, team, "acme", "payments", [TeamMember(user_id="u-1", source="github")])
 
         update = repo.update.await_args.args[1]
         assert "name" not in update
         assert "description" not in update
 
     @pytest.mark.asyncio
-    async def test_the_slug_is_refreshed_on_every_sync(self):
+    async def test_a_team_still_carrying_the_generated_name_follows_the_slug(self):
+        service = _service()
+        team = _bound("t-1", 4711, slug="pay-old", name="GitHub Team: acme/pay-old")
+        repo = _team_repo(team)
+
+        await service._refresh_team(repo, team, "acme", "payments", [TeamMember(user_id="u-1", source="github")])
+
+        update = repo.update.await_args.args[1]
+        assert update["name"] == "GitHub Team: acme/payments"
+        assert update["description"] == "Imported from GitHub team acme/payments"
+
+    @pytest.mark.asyncio
+    async def test_a_generated_name_that_already_matches_is_not_rewritten(self):
+        service = _service()
+        team = _bound("t-1", 4711, name="GitHub Team: acme/payments")
+        repo = _team_repo(team)
+
+        await service._refresh_team(repo, team, "acme", "payments", [TeamMember(user_id="u-1", source="github")])
+
+        assert "name" not in repo.update.await_args.args[1]
+
+    @pytest.mark.asyncio
+    async def test_the_stored_slug_follows_the_one_the_organisation_reports(self):
         service = _service()
         team = _bound("t-1", 4711, slug="pay-old")
         repo = _team_repo(team)
 
-        await service._sync_team_members(repo, team, "payments", [TeamMember(user_id="u-1", source="github")])
+        await service._refresh_team(repo, team, "acme", "payments", [TeamMember(user_id="u-1", source="github")])
 
         assert repo.update.await_args.args[1]["github_team_slug"] == "payments"
+
+    @pytest.mark.asyncio
+    async def test_a_rename_is_written_even_when_no_member_could_be_read(self):
+        """Barely a login resolves here, so a rename tied to a member write would never happen."""
+        service = _service()
+        team = _bound("t-1", 4711, slug="pay-old", name="GitHub Team: acme/pay-old")
+        repo = _team_repo(team)
+
+        await service._refresh_team(repo, team, "acme", "payments", None)
+
+        update = repo.update.await_args.args[1]
+        assert update["name"] == "GitHub Team: acme/payments"
+        assert "members" not in update
+
+    @pytest.mark.asyncio
+    async def test_a_team_nothing_changed_about_is_not_written_at_all(self):
+        service = _service()
+        team = _bound("t-1", 4711)
+        repo = _team_repo(team)
+
+        await service._refresh_team(repo, team, "acme", "payments", None)
+
+        repo.update.assert_not_called()
 
 
 class TestSyncTeamFromGithub:
     @pytest.mark.asyncio
-    async def test_an_organisation_with_no_bound_team_costs_no_api_call_and_creates_nothing(self, caplog):
+    async def test_an_organisation_with_no_bound_team_and_no_creation_costs_no_api_call(self, caplog):
         service = _service()
         team_repo = _team_repo()
 
@@ -293,26 +355,21 @@ class TestSyncTeamFromGithub:
         assert result == GitHubTeamSyncResult([])
         stubs.checks.assert_not_awaited()
         stubs.org_teams.assert_not_awaited()
+        stubs.repo_map.assert_not_awaited()
         team_repo.create.assert_not_called()
         assert any("acme/widgets" in record.getMessage() for record in caplog.records)
 
     @pytest.mark.asyncio
-    async def test_a_github_team_nobody_bound_is_never_adopted(self, caplog):
-        """The cross-cutting groups: a GitHub team nobody bound owns nothing here, however many
-        repositories it holds."""
-        service = _service()
-        team_repo = _team_repo(_bound("t-platform", 100, slug="platform", name="Platform"))
+    async def test_a_bound_team_that_holds_it_keeps_the_organisation_map_out_of_the_ingest(self):
+        """The walk is what the map costs, so an owner already established must not trigger one."""
+        service = _service(sync_teams=True)
+        team_repo = _team_repo(_bound("t-pay", 4711))
 
         with _sync_stubs(service, team_repo, access={"payments": True}) as stubs:
-            with caplog.at_level("INFO", logger="app.services.github"):
-                result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
 
-        assert result == GitHubTeamSyncResult([])
-        team_repo.create.assert_not_called()
-        team_repo.update.assert_not_called()
-        # Only the bound team is asked; the holder nobody bound is not even looked at.
-        assert [call.args[1] for call in stubs.checks.await_args_list] == ["platform"]
-        assert any("acme/widgets" in record.getMessage() for record in caplog.records)
+        assert result == GitHubTeamSyncResult(["t-pay"])
+        stubs.repo_map.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_only_the_bound_teams_that_hold_the_repository_are_attached(self):
@@ -591,6 +648,183 @@ class TestSyncTeamFromGithub:
             result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
 
         assert result == GitHubTeamSyncResult(None)
+
+
+class TestTeamCreation:
+    """A GitHub group nobody bound becomes a team, the way a GitLab group does."""
+
+    @staticmethod
+    def _created(team_repo) -> Team:
+        return team_repo.create.await_args.args[0]
+
+    @pytest.mark.asyncio
+    async def test_a_group_nobody_bound_becomes_a_team_and_owns_the_repository(self, caplog):
+        service = _service(sync_teams=True)
+        team_repo = _team_repo()
+
+        with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
+            with caplog.at_level("INFO", logger="app.services.github"):
+                result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        created = self._created(team_repo)
+        assert created.name == "GitHub Team: acme/platform"
+        assert result == GitHubTeamSyncResult([str(created.id)])
+        assert any("GitHub Team: acme/platform" in record.getMessage() for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_the_new_team_carries_the_binding_that_makes_it_a_candidate_from_then_on(self):
+        service = _service("gh-1", sync_teams=True)
+        team_repo = _team_repo()
+
+        with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
+            await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        created = self._created(team_repo)
+        assert (created.github_instance_id, created.github_org) == ("gh-1", "acme")
+        assert (created.github_team_id, created.github_team_slug) == (100, "platform")
+        assert created.description == "Imported from GitHub team acme/platform"
+
+    @pytest.mark.asyncio
+    async def test_creation_is_off_unless_the_instance_syncs_teams(self):
+        """The bound team that holds nothing is what carries the resolution past the shortcut for
+        an organisation with no binding at all, so the switch itself is what this proves."""
+        service = _service()
+        team_repo = _team_repo(_bound("t-pay", 4711))
+
+        with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM) as stubs:
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult([])
+        team_repo.create.assert_not_called()
+        stubs.repo_map.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_a_team_with_no_resolvable_member_is_still_created(self):
+        """GitHub logins are personal handles and usernames are directory ids, so barely one resolves.
+        Requiring a member, as the GitLab sync does, would mean never creating anything here."""
+        service = _service(sync_teams=True)
+        team_repo = _team_repo()
+
+        with _sync_stubs(
+            service, team_repo, repo_map=_HELD_BY_PLATFORM, members=_ONE_MAINTAINER, user_repo=_user_repo()
+        ):
+            with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=None)):
+                result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        created = self._created(team_repo)
+        assert created.members == []
+        assert result == GitHubTeamSyncResult([str(created.id)])
+
+    @pytest.mark.asyncio
+    async def test_every_group_holding_the_repository_becomes_an_owner(self):
+        service = _service(sync_teams=True)
+        team_repo = _team_repo()
+
+        with _sync_stubs(service, team_repo, repo_map={"acme/widgets": [100, 900]}):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        created = [call.args[0] for call in team_repo.create.await_args_list]
+        assert [team.name for team in created] == ["GitHub Team: acme/platform", "GitHub Team: acme/cards"]
+        assert result == GitHubTeamSyncResult([str(team.id) for team in created])
+
+    @pytest.mark.asyncio
+    async def test_a_group_already_bound_to_a_team_is_adopted_rather_than_created_twice(self):
+        """The second repository of the same group, or one whose binding names another organisation."""
+        service = _service(sync_teams=True)
+        team_repo = _team_repo(adopted=_bound("t-platform", 100, slug="platform", name="Platform"))
+
+        with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult(["t-platform"])
+        team_repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_group_created_by_a_concurrent_ingest_is_adopted(self):
+        service = _service(sync_teams=True)
+        team_repo = _team_repo()
+        team_repo.get_raw_by_github_team = AsyncMock(
+            side_effect=[None, _bound("t-raced", 100, slug="platform", name="GitHub Team: acme/platform")]
+        )
+        team_repo.create = AsyncMock(side_effect=DuplicateKeyError("teams index"))
+
+        with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult(["t-raced"])
+
+    @pytest.mark.asyncio
+    async def test_a_bound_team_that_answered_no_is_not_created_a_second_time_from_the_map(self):
+        """The direct check is the fresher answer; the map may be up to its whole TTL behind it."""
+        service = _service(sync_teams=True)
+        team_repo = _team_repo(_bound("t-platform", 100, slug="platform", name="Platform"))
+
+        with _sync_stubs(service, team_repo, access={"platform": False}, repo_map=_HELD_BY_PLATFORM):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult([])
+        team_repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_a_repository_no_group_holds_keeps_no_github_owner(self):
+        service = _service(sync_teams=True)
+        team_repo = _team_repo()
+
+        with _sync_stubs(service, team_repo, repo_map={"acme/gadgets": [100]}):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult([])
+        team_repo.create.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_an_unfinished_walk_leaves_the_owners_untouched_rather_than_reporting_nobody(self, caplog):
+        service = _service(sync_teams=True)
+        team_repo = _team_repo()
+
+        with _sync_stubs(service, team_repo, repo_map=None):
+            with caplog.at_level("WARNING", logger="app.services.github"):
+                result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult(None)
+        team_repo.create.assert_not_called()
+        assert any("acme/widgets" in record.getMessage() for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_a_group_the_organisation_no_longer_lists_is_left_out(self, caplog):
+        """The map outlives the team listing, so a group dissolved since the walk lands here."""
+        service = _service(sync_teams=True)
+        team_repo = _team_repo()
+
+        with _sync_stubs(service, team_repo, repo_map={"acme/widgets": [6666]}):
+            with caplog.at_level("WARNING", logger="app.services.github"):
+                result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult([])
+        team_repo.create.assert_not_called()
+        assert any("6666" in record.getMessage() for record in caplog.records if record.levelname == "WARNING")
+
+    @pytest.mark.asyncio
+    async def test_the_repository_is_found_whatever_case_github_spells_it_in(self):
+        service = _service(sync_teams=True)
+        team_repo = _team_repo()
+
+        with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
+            result = await service.sync_team_from_github(MagicMock(), "acme", "Acme/Widgets")
+
+        assert result == GitHubTeamSyncResult([str(self._created(team_repo).id)])
+
+    @pytest.mark.asyncio
+    async def test_the_members_of_a_created_team_are_synced_like_any_other_holder(self):
+        service = _service(sync_teams=True)
+        team_repo = _team_repo()
+
+        with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM) as stubs:
+            await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert stubs.members.await_args.args == ("acme", "platform", 100)
+        assert team_repo.update.await_args.args[1]["members"] == [
+            {"user_id": "u-1", "role": "admin", "source": "github"}
+        ]
 
 
 class TestResolutionCost:
