@@ -25,12 +25,20 @@ export interface Team {
   github_org?: string | null;
   github_team_id?: number | null;
   github_team_slug?: string | null;
+  gitlab_instance_id?: string | null;
+  gitlab_group_id?: number | null;
+  gitlab_group_path?: string | null;
 }
 
 export interface TeamGitHubBinding {
   github_instance_id: string;
   github_org: string;
   github_team_id: number;
+}
+
+export interface TeamGitLabBinding {
+  gitlab_instance_id: string;
+  gitlab_group_id: number;
 }
 
 export interface TeamCreate {

@@ -13,7 +13,7 @@ interface TeamCardProps {
   onAddMember: (teamId: string) => void;
   onDelete: (teamId: string) => void;
   onManageWebhooks: (team: Team) => void;
-  onManageGithubBinding: (team: Team) => void;
+  onManageBinding: (team: Team) => void;
 }
 
 export function TeamCard({
@@ -23,7 +23,7 @@ export function TeamCard({
   onAddMember,
   onDelete,
   onManageWebhooks,
-  onManageGithubBinding,
+  onManageBinding,
 }: TeamCardProps) {
   const { permissions, hasPermission } = useAuth();
   const { data: currentUser } = useCurrentUser();
@@ -34,6 +34,7 @@ export function TeamCard({
   const canWebhooks = currentUser ? canManageTeamWebhooks(team, currentUser.id, permissions) : false;
   // A binding decides which repositories of the whole estate land in this team.
   const canBind = hasPermission('system:manage');
+  const isBound = team.github_team_id != null || team.gitlab_group_id != null;
 
   return (
     <Card
@@ -50,13 +51,13 @@ export function TeamCard({
                 variant="ghost"
                 size="icon"
                 className="h-8 w-8"
-                aria-label="GitHub binding"
+                aria-label="Team binding"
                 onClick={(e: React.MouseEvent) => {
                   e.stopPropagation();
-                  onManageGithubBinding(team);
+                  onManageBinding(team);
                 }}
               >
-                  <Link2 className={`h-4 w-4 ${team.github_team_id == null ? 'text-muted-foreground' : ''}`} />
+                  <Link2 className={`h-4 w-4 ${isBound ? '' : 'text-muted-foreground'}`} />
               </Button>
             )}
             {canWebhooks && (

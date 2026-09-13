@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest'
 
-import { githubBindingSummary, githubTeamOptionLabel } from '@/lib/github-team'
+import {
+  githubBindingSummary,
+  githubTeamOptionLabel,
+  gitlabBindingSummary,
+  gitlabGroupOptionLabel,
+} from '@/lib/team-binding'
 import type { Team } from '@/types/team'
 
 function team(binding: Partial<Team>): Team {
@@ -42,5 +47,27 @@ describe('githubBindingSummary', () => {
 
   it('still reports a binding whose slug was never written', () => {
     expect(githubBindingSummary(team({ github_org: 'Acme', github_team_id: 4711 }))).toBe('Acme/? (#4711)')
+  })
+})
+
+describe('gitlabGroupOptionLabel', () => {
+  it('names the full path so two same-named subgroups are distinguishable', () => {
+    expect(gitlabGroupOptionLabel({ id: 77, full_path: 'mo/edge', name: 'Edge' })).toBe('Edge (mo/edge)')
+  })
+})
+
+describe('gitlabBindingSummary', () => {
+  it('reports the path and the number the binding points at', () => {
+    expect(gitlabBindingSummary(team({ gitlab_group_path: 'mo/edge', gitlab_group_id: 77 }))).toBe(
+      'mo/edge (#77)'
+    )
+  })
+
+  it('renders nothing for a team no project resolves to', () => {
+    expect(gitlabBindingSummary(team({}))).toBeNull()
+  })
+
+  it('still reports a binding whose path was never written', () => {
+    expect(gitlabBindingSummary(team({ gitlab_group_id: 77 }))).toBe('? (#77)')
   })
 })

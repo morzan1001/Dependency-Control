@@ -39,6 +39,13 @@ const github = createInstanceHooks<GitHubInstanceList>(githubInstancesApi, githu
 
 export const useGitHubInstances = github.useInstances;
 
+export const useGitLabGroups = (instanceId: string | null, search: string) =>
+  useQuery({
+    queryKey: [...gitlabInstanceKeys.all, instanceId, 'groups', search] as const,
+    queryFn: () => gitlabInstancesApi.listGroups(instanceId as string, search || undefined),
+    enabled: !!instanceId,
+  });
+
 export const useGitHubOrgs = (instanceId: string | null) =>
   useQuery({
     queryKey: [...githubInstanceKeys.all, instanceId, 'orgs'] as const,
