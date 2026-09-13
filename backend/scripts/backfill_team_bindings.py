@@ -18,7 +18,7 @@ holds, because the array is what the new image writes and the scalars are what t
 The planning half is pure so tests call it with plain dicts and no database.
 
 ``--verify`` is the gate on the contract pass: it counts the teams still carrying a scalar and
-exits non-zero while any remain. See ``README-deploy-team-bindings.md``.
+exits non-zero while any remain. See ``README-deploy-team-bindings-and-provenance.md``.
 
 Usage (in-pod): `python -m scripts.backfill_team_bindings --help` from /app.
 

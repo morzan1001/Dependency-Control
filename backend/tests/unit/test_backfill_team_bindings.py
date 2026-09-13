@@ -23,9 +23,9 @@ from scripts.backfill_team_bindings import (
 )
 from tests.mocks.fake_mongo import FakeDatabase
 
-_RUNBOOK = pathlib.Path(__file__).parents[2] / "scripts" / "README-deploy-team-bindings.md"
+_RUNBOOK = pathlib.Path(__file__).parents[2] / "scripts" / "README-deploy-team-bindings-and-provenance.md"
 _COUNT_CALL = "db.teams.countDocuments("
-_GATE_SECTION = "### 7b."
+_GATE_SECTION = "### 8a."
 
 _GITHUB = GitHubTeamBinding(instance_id="gh-1", org="acme", external_id=4711, slug="payments").model_dump()
 _GITLAB = GitLabGroupBinding(instance_id="gl-1", external_id=77, path="mo/edge").model_dump()

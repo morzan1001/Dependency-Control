@@ -14,9 +14,9 @@ ingest to delete.
 
 The planning half is pure so tests call it with plain dicts and no database.
 
-``--verify`` is the release gate for the image that reads the new format: it counts the documents
-still carrying a bare provider value and exits non-zero while any remain.
-See ``README-deploy-team-source-instances.md``.
+``--verify`` is the gate on this migration, which runs *after* the image that reads the new format:
+it counts the documents still carrying a bare provider value and exits non-zero while any remain.
+See ``README-deploy-team-bindings-and-provenance.md``.
 
 Usage (in-pod): `python -m scripts.backfill_team_source_instances --help` from /app.
 
@@ -212,7 +212,9 @@ async def run_verify(db: Any) -> int:
     bare = await count_bare_sources(db)
     print(f"[VERIFY] {'projects with a bare source:':<{_REPORT_LABEL_WIDTH}}{bare}")
     if bare:
-        print("GATE FAILED — run --execute before rolling the image that reads the instance-scoped format.")
+        # The image is already rolled by the time this gate runs; rolling it back is the one
+        # response that turns these projects into 500s.
+        print("GATE FAILED — run --execute. Do not roll the image back: it is what reads these values.")
         return EXIT_BARE_SOURCES_FOUND
     print("Gate passed — every provenance value names the instance that established the owner.")
     return 0

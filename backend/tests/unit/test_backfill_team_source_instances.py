@@ -25,9 +25,9 @@ from scripts.backfill_team_source_instances import (
 from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.mongo_array_cases import BARE_SOURCE_DOCS
 
-_RUNBOOK = pathlib.Path(__file__).parents[2] / "scripts" / "README-deploy-team-source-instances.md"
+_RUNBOOK = pathlib.Path(__file__).parents[2] / "scripts" / "README-deploy-team-bindings-and-provenance.md"
 _COUNT_CALL = "db.projects.countDocuments("
-_GATE_SECTION = "### 6b."
+_GATE_SECTION = "### 9a."
 
 _GITLAB_INSTANCE = "gl-inst-a"
 _GITHUB_INSTANCE = "gh-inst-a"
