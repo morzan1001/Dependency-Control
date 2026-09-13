@@ -49,6 +49,10 @@ vi.mock("sonner", () => ({
 
 const INSTANCE = { id: "gh-1", name: "GitHub.com" };
 const GITLAB_INSTANCE = { id: "gl-1", name: "GitLab Corp" };
+const GITHUB_LIST = { items: [INSTANCE], total: 1, page: 1, size: 100, pages: 1 };
+const GITLAB_LIST = { items: [GITLAB_INSTANCE], total: 1, page: 1, size: 100, pages: 1 };
+const NO_INSTANCES = { items: [], total: 0, page: 1, size: 100, pages: 1 };
+const NOTHING_CONFIGURED = /No active GitHub or GitLab instance is configured/;
 const ORG_TEAMS = [
   { id: 4711, slug: "payments", name: "Payments", parent_slug: null, parent_name: null },
   { id: 900, slug: "cards", name: "Cards", parent_slug: "payments", parent_name: "Payments" },
@@ -91,9 +95,13 @@ function renderDialog(subject: Team) {
   render(<TeamBindingDialog team={subject} isOpen onClose={() => {}} />, { wrapper: Wrapper });
 }
 
-function pickProvider(name: "GitHub" | "GitLab") {
-  fireEvent.click(screen.getByLabelText("Provider"));
-  fireEvent.click(screen.getByRole("option", { name }));
+async function pickProvider(name: "GitHub" | "GitLab") {
+  fireEvent.click(await screen.findByLabelText("Provider"));
+  fireEvent.click(await screen.findByRole("option", { name }));
+}
+
+async function saveBinding() {
+  fireEvent.click(await screen.findByRole("button", { name: /Save Binding/ }));
 }
 
 // The listing selects stay disabled until their query settles, and a click on a disabled
@@ -111,14 +119,8 @@ async function pickOption(label: string, optionName: string) {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  listInstances.mockResolvedValue({ items: [INSTANCE], total: 1, page: 1, size: 100, pages: 1 });
-  listGitlabInstances.mockResolvedValue({
-    items: [GITLAB_INSTANCE],
-    total: 1,
-    page: 1,
-    size: 100,
-    pages: 1,
-  });
+  listInstances.mockResolvedValue(GITHUB_LIST);
+  listGitlabInstances.mockResolvedValue(GITLAB_LIST);
   listOrgs.mockResolvedValue(["Acme"]);
   listOrgTeams.mockResolvedValue(ORG_TEAMS);
   listGroups.mockResolvedValue(GROUPS);
@@ -132,16 +134,16 @@ describe("TeamBindingDialog", () => {
   it("offers both providers, because a team can be bound on either", async () => {
     renderDialog(team());
 
-    fireEvent.click(screen.getByLabelText("Provider"));
+    fireEvent.click(await screen.findByLabelText("Provider"));
 
     expect(await screen.findByRole("option", { name: "GitHub" })).toBeInTheDocument();
     expect(await screen.findByRole("option", { name: "GitLab" })).toBeInTheDocument();
   });
 
-  it("says a team nothing resolves to is unbound on either provider and offers nothing to remove", () => {
+  it("says a team nothing resolves to is unbound on either provider and offers nothing to remove", async () => {
     renderDialog(team());
 
-    expect(screen.getAllByText("Not bound")).toHaveLength(2);
+    expect(await screen.findAllByText("Not bound")).toHaveLength(2);
     expect(screen.queryByRole("button", { name: /Remove/ })).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Save Binding/ })).toBeDisabled();
   });
@@ -170,7 +172,7 @@ describe("TeamBindingDialog", () => {
   it("sends the team number as a number, which is what the binding is stored on", async () => {
     renderDialog(BOUND);
 
-    fireEvent.click(screen.getByRole("button", { name: /Save Binding/ }));
+    await saveBinding();
 
     await waitFor(() =>
       expect(setGithubBinding).toHaveBeenCalledWith("t-1", {
@@ -195,7 +197,7 @@ describe("TeamBindingDialog", () => {
     });
     renderDialog(BOUND);
 
-    fireEvent.click(screen.getByRole("button", { name: /Save Binding/ }));
+    await saveBinding();
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith("Team 'Payments' is already bound to GitHub team 4711."),
@@ -210,16 +212,16 @@ describe("TeamBindingDialog", () => {
     expect(await screen.findByRole("option", { name: "Cards (cards) — under Payments" })).toBeInTheDocument();
   });
 
-  it("opens on GitLab for a team only GitLab resolves to", () => {
+  it("opens on GitLab for a team only GitLab resolves to", async () => {
     renderDialog(GITLAB_BOUND);
 
-    expect(screen.getByLabelText("Group")).toBeInTheDocument();
+    expect(await screen.findByLabelText("Group")).toBeInTheDocument();
   });
 
   it("sends the group number as a number, which is what the binding is stored on", async () => {
     renderDialog(GITLAB_BOUND);
 
-    fireEvent.click(screen.getByRole("button", { name: /Save Binding/ }));
+    await saveBinding();
 
     await waitFor(() =>
       expect(setGitlabBinding).toHaveBeenCalledWith("t-1", {
@@ -251,7 +253,7 @@ describe("TeamBindingDialog", () => {
     });
     renderDialog(GITLAB_BOUND);
 
-    fireEvent.click(screen.getByRole("button", { name: /Save Binding/ }));
+    await saveBinding();
 
     await waitFor(() =>
       expect(toastError).toHaveBeenCalledWith("Team 'Platform' is already bound to GitLab group 77."),
@@ -261,10 +263,10 @@ describe("TeamBindingDialog", () => {
   it("binds on GitLab a team that only GitHub resolves to, without touching the GitHub binding", async () => {
     renderDialog(BOUND);
 
-    pickProvider("GitLab");
+    await pickProvider("GitLab");
     await pickOption("Instance", "GitLab Corp");
     await pickOption("Group", "Edge (mo/edge)");
-    fireEvent.click(screen.getByRole("button", { name: /Save Binding/ }));
+    await saveBinding();
 
     await waitFor(() =>
       expect(setGitlabBinding).toHaveBeenCalledWith("t-1", {
@@ -273,5 +275,70 @@ describe("TeamBindingDialog", () => {
       }),
     );
     expect(setGithubBinding).not.toHaveBeenCalled();
+  });
+
+  it("offers no GitHub section to an installation without a GitHub instance", async () => {
+    listInstances.mockResolvedValue(NO_INSTANCES);
+    renderDialog(team());
+
+    expect(await screen.findByLabelText("Group")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Provider")).not.toBeInTheDocument();
+    expect(screen.queryByText("Select a GitHub instance")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Not bound")).toHaveLength(1);
+  });
+
+  it("promises only the provider the installation has", async () => {
+    listGitlabInstances.mockResolvedValue(NO_INSTANCES);
+    renderDialog(team());
+
+    expect(
+      await screen.findByText(/Repositories held by the bound GitHub team are assigned to Payments Guild/),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/GitLab group/)).not.toBeInTheDocument();
+  });
+
+  it("keeps a binding removable once its provider has no active instance left", async () => {
+    listGitlabInstances.mockResolvedValue(NO_INSTANCES);
+    renderDialog(GITLAB_BOUND);
+
+    expect(await screen.findByText("mo/edge (#77)")).toBeInTheDocument();
+    expect(await screen.findByText(/this binding can only be removed/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Group")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove GitLab binding" }));
+
+    await waitFor(() => expect(clearGitlabBinding).toHaveBeenCalledWith("t-1"));
+  });
+
+  it("names where instances are managed when neither provider is configured", async () => {
+    listInstances.mockResolvedValue(NO_INSTANCES);
+    listGitlabInstances.mockResolvedValue(NO_INSTANCES);
+    renderDialog(team());
+
+    expect(await screen.findByText(NOTHING_CONFIGURED)).toHaveTextContent(
+      "Instances are managed under Settings → Integrations.",
+    );
+    expect(screen.queryByLabelText("Instance")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Save Binding/ })).not.toBeInTheDocument();
+    expect(screen.queryByText("Not bound")).not.toBeInTheDocument();
+  });
+
+  it("waits for both instance lists before declaring the installation empty", async () => {
+    let releaseGithub: (list: typeof GITHUB_LIST) => void = () => {};
+    listInstances.mockReturnValue(
+      new Promise<typeof GITHUB_LIST>((resolve) => {
+        releaseGithub = resolve;
+      }),
+    );
+    listGitlabInstances.mockResolvedValue(NO_INSTANCES);
+    renderDialog(team());
+
+    await waitFor(() => expect(listGitlabInstances).toHaveBeenCalled());
+    expect(screen.queryByText(NOTHING_CONFIGURED)).not.toBeInTheDocument();
+
+    releaseGithub(GITHUB_LIST);
+
+    expect(await screen.findByLabelText("Instance")).toBeInTheDocument();
+    expect(screen.queryByText(NOTHING_CONFIGURED)).not.toBeInTheDocument();
   });
 });
