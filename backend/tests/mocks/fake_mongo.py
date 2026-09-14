@@ -637,7 +637,7 @@ def _eval_expr(doc: dict, expr):
     """Evaluate a MongoDB aggregation expression against a single document.
 
     Handles the operator subset used by the stats pipelines: $ifNull, $cond,
-    $switch, comparison ($eq/$ne/$gt/$gte/$lt/$lte), logical ($and/$or/$in),
+    $switch, comparison ($eq/$ne/$gt/$gte/$lt/$lte), logical ($and/$or/$in/$not),
     arithmetic ($add/$multiply/$divide/$round), $toDouble, and the $$REMOVE /
     $field / dotted-path / literal cases.
     """
@@ -666,6 +666,15 @@ def _eval_expr(doc: dict, expr):
         return _eval_filter(doc, expr["$filter"])
     if "$let" in expr:
         return _eval_let(doc, expr["$let"])
+    if "$concatArrays" in expr:
+        concatenated: list = []
+        for operand in expr["$concatArrays"]:
+            value = _eval_expr(doc, operand)
+            # The server answers null when any operand is not an array rather than skipping it.
+            if not isinstance(value, list):
+                return None
+            concatenated.extend(value)
+        return concatenated
     if "$mergeObjects" in expr:
         merged: dict = {}
         for operand in expr["$mergeObjects"]:
@@ -796,7 +805,7 @@ def _eval_expr(doc: dict, expr):
         value = _to_number(_eval_expr(doc, value_expr))
         return None if value is None else round(value, int(places))
 
-    for op in ("$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$and", "$or", "$in"):
+    for op in ("$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$and", "$or", "$in", "$not"):
         if op in expr:
             return _eval_bool(doc, expr)
     for unknown in (k for k in expr if k.startswith("$")):
@@ -826,6 +835,9 @@ def _eval_bool(doc: dict, expr) -> bool:
         return all(_eval_bool(doc, sub) for sub in expr["$and"])
     if "$or" in expr:
         return any(_eval_bool(doc, sub) for sub in expr["$or"])
+    if "$not" in expr:
+        operand = expr["$not"]
+        return not _eval_bool(doc, operand[0] if isinstance(operand, list) else operand)
     if "$in" in expr:
         needle, haystack = expr["$in"]
         return _eval_expr(doc, needle) in (_eval_expr(doc, haystack) or [])

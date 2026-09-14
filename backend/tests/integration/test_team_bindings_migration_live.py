@@ -59,8 +59,6 @@ async def test_the_new_image_reads_nothing_on_an_unmigrated_team(db):
 
     assert await repo.get_raw_by_binding(TEAM_SOURCE_GITHUB, "gh-1", 4711) is None
     assert await repo.find_raw_by_github_org("gh-1", "acme") == []
-    # And to the new image every one of them looks free to adopt, including the bound ones.
-    assert len(await repo.find_raw_unbound_for_instance("gh-1")) == 3
 
 
 async def test_after_the_expand_pass_both_shapes_answer(db):
@@ -91,7 +89,6 @@ async def test_the_contract_pass_sheds_every_scalar_and_releases_the_gate(db):
     assert await count_scalar_bindings(db) == 0
     assert await run_verify(db) == 0
     assert (await repo.get_raw_by_binding(TEAM_SOURCE_GITHUB, "gh-1", 4711))["_id"] == "t-payments"
-    assert [team["_id"] for team in await repo.find_raw_unbound_for_instance("gh-1")] == ["t-edge", "t-manual"]
 
 
 async def test_a_binding_an_old_pod_wrote_during_the_rollout_is_carried_over(db):

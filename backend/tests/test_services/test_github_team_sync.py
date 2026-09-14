@@ -11,7 +11,8 @@ from pymongo.errors import DuplicateKeyError
 
 from app.core.constants import TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
 from app.models.team import GitHubTeamBinding, Team, TeamMember
-from app.services.github import GitHubService, GitHubTeamSyncResult, _RepositoryHolder
+from app.repositories.teams import MemberSubset
+from app.services.github import GitHubEmailLookup, GitHubService, GitHubTeamSyncResult, _RepositoryHolder
 from tests.mocks.github import make_github_instance
 
 # The organisation listing is the only source of a team's current slug.
@@ -63,21 +64,20 @@ def _bound(
     }
 
 
-def _team_repo(*bound_teams, adopted=None, unbound=None) -> MagicMock:
+def _team_repo(*bound_teams, already_bound=None) -> MagicMock:
     repo = MagicMock()
     repo.find_raw_by_github_org = AsyncMock(return_value=list(bound_teams))
-    repo.get_raw_by_binding = AsyncMock(return_value=adopted)
-    unbound_teams = list(unbound or [])
-
-    async def _bind(team_id, binding):
-        team = next(team for team in unbound_teams if team["_id"] == team_id)
-        return {**team, "bindings": [*(team.get("bindings") or []), binding]}
-
-    repo.find_raw_unbound_for_instance = AsyncMock(return_value=unbound_teams)
-    repo.add_binding_if_absent = AsyncMock(side_effect=_bind)
+    repo.get_raw_by_binding = AsyncMock(return_value=already_bound)
+    # The one door an existing team can be bound through; a sync must never reach it.
+    repo.add_binding_if_absent = AsyncMock()
     repo.update_with_binding = AsyncMock()
     repo.create = AsyncMock()
     return repo
+
+
+def _written_subset(repo) -> MemberSubset | None:
+    """The members the write hands the server, which merges them into the stored array itself."""
+    return repo.update_with_binding.await_args.args[4]
 
 
 @contextmanager
@@ -121,7 +121,7 @@ class TestMemberResolution:
         repo = _user_repo(by_username={"_id": "u-1", "username": "ada"})
 
         with patch.object(service, "get_user_public_email", new=AsyncMock()) as public_email:
-            members, _ = await service._build_team_members([{"login": "ada", "role": "member"}], repo)
+            members, _, _ = await service._build_team_members([{"login": "ada", "role": "member"}], repo)
 
         assert [m.user_id for m in members] == ["u-1"]
         public_email.assert_not_awaited()
@@ -131,8 +131,8 @@ class TestMemberResolution:
         service = _service()
         repo = _user_repo(by_username=None, by_email={"_id": "u-2", "email": "ada@corp.com"})
 
-        with patch.object(service, "get_user_public_email", new=AsyncMock(return_value="Ada@Corp.com")):
-            members, _ = await service._build_team_members([{"login": "ada-l", "role": "member"}], repo)
+        with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup("Ada@Corp.com"))):
+            members, _, _ = await service._build_team_members([{"login": "ada-l", "role": "member"}], repo)
 
         assert [m.user_id for m in members] == ["u-2"]
         repo.get_raw_by_email_ci.assert_awaited_once_with("Ada@Corp.com")
@@ -142,8 +142,8 @@ class TestMemberResolution:
         service = _service()
         repo = _user_repo()
 
-        with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=None)):
-            assert await service._build_team_members([{"login": "ada", "role": "member"}], repo) == ([], 1)
+        with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup(None))):
+            assert await service._build_team_members([{"login": "ada", "role": "member"}], repo) == ([], 1, 0)
 
         repo.get_raw_by_email_ci.assert_not_awaited()
 
@@ -152,19 +152,32 @@ class TestMemberResolution:
         service = _service()
         repo = _user_repo()
 
-        with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=None)):
+        with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup(None))):
             with caplog.at_level("DEBUG", logger="app.services.github"):
-                members, _ = await service._build_team_members([{"login": "dependabot", "role": "member"}], repo)
+                members, _, _ = await service._build_team_members([{"login": "dependabot", "role": "member"}], repo)
 
         assert members == []
         repo.create.assert_not_called()
         assert any("dependabot" in record.getMessage() for record in caplog.records if record.levelname == "DEBUG")
 
     @pytest.mark.asyncio
+    async def test_a_profile_read_github_refused_counts_as_undetermined_not_as_nobody(self):
+        """Counted as nobody the member is left out of the resolved set, and the write then retires
+        them from the team and from every project it owns — for a 403."""
+        service = _service()
+        repo = _user_repo()
+        throttled = AsyncMock(return_value=GitHubEmailLookup(None, determined=False))
+
+        with patch.object(service, "get_user_public_email", new=throttled):
+            assert await service._build_team_members([{"login": "ada", "role": "member"}], repo) == ([], 0, 1)
+
+        repo.get_raw_by_email_ci.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_every_resolved_member_is_tagged_with_the_instance_that_resolved_them(self):
         service = _service()
         repo = _user_repo(by_username={"_id": "u-1"})
-        members, _ = await service._build_team_members([{"login": "ada", "role": "member"}], repo)
+        members, _, _ = await service._build_team_members([{"login": "ada", "role": "member"}], repo)
         assert members[0].source == _OWN
 
     def test_two_instances_of_one_provider_claim_different_subsets(self):
@@ -175,7 +188,7 @@ class TestMemberResolution:
         service = _service()
         repo = _user_repo(by_username={"_id": "u-1"})
 
-        members, _ = await service._build_team_members(
+        members, _, _ = await service._build_team_members(
             [{"login": "ada", "role": "maintainer"}, {"login": "ada-work", "role": "member"}], repo
         )
 
@@ -186,7 +199,7 @@ class TestMemberResolution:
         service = _service()
         repo = _user_repo(by_username={"_id": "u-1"})
 
-        members, _ = await service._build_team_members(
+        members, _, _ = await service._build_team_members(
             [{"login": "ada-work", "role": "member"}, {"login": "ada", "role": "maintainer"}], repo
         )
 
@@ -197,7 +210,7 @@ class TestMemberResolution:
         service = _service()
         repo = _user_repo(by_username={"_id": "u-1"})
 
-        _, unresolved = await service._build_team_members(
+        _, unresolved, _ = await service._build_team_members(
             [{"login": "ada", "role": "maintainer"}, {"login": "ada-work", "role": "member"}], repo
         )
 
@@ -209,8 +222,8 @@ class TestMemberResolution:
         repo = _user_repo()
         github_members = [{"login": f"bot-{index}", "role": "member"} for index in range(3)]
 
-        with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=None)):
-            assert await service._build_team_members(github_members, repo) == ([], 3)
+        with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup(None))):
+            assert await service._build_team_members(github_members, repo) == ([], 3, 0)
 
     @pytest.mark.asyncio
     async def test_the_bots_every_organisation_has_count_without_costing_the_real_members(self):
@@ -224,8 +237,8 @@ class TestMemberResolution:
             {"login": "ada", "role": "member"},
         ]
 
-        with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=None)):
-            members, unresolved = await service._build_team_members(github_members, repo)
+        with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup(None))):
+            members, unresolved, _ = await service._build_team_members(github_members, repo)
 
         assert [m.user_id for m in members] == ["u-1"]
         assert unresolved == 2
@@ -237,13 +250,15 @@ class TestRoleMapping:
     async def test_maintainer_becomes_admin(self, github_role, expected):
         service = _service()
         repo = _user_repo(by_username={"_id": "u-1"})
-        members, _ = await service._build_team_members([{"login": "ada", "role": github_role}], repo)
+        members, _, _ = await service._build_team_members([{"login": "ada", "role": github_role}], repo)
         assert members[0].role == expected
 
 
 class TestTeamMemberWrite:
     @pytest.mark.asyncio
-    async def test_the_write_merges_rather_than_replaces_the_member_list(self):
+    async def test_the_write_hands_over_the_subset_rather_than_a_member_list_merged_here(self):
+        """The snapshot the merge would read is several round trips old, so a member added in
+        between is written back out of the team — after the add reported success to the admin."""
         service = _service()
         team = _bound(
             "t-1",
@@ -259,14 +274,13 @@ class TestTeamMemberWrite:
         await service._refresh_team(
             repo, "acme", _RepositoryHolder(team, 4711, "payments"), [TeamMember(user_id="u-gh", source=_OWN)])
 
-        assert repo.update_with_binding.await_args.args[1]["members"] == [
-            {"user_id": "u-manual", "role": "admin", "source": "manual"},
-            {"user_id": "u-untagged", "role": "member"},
-            {"user_id": "u-gh", "role": "member", "source": _OWN},
-        ]
+        assert "members" not in repo.update_with_binding.await_args.args[1]
+        assert _written_subset(repo) == MemberSubset(_OWN, [{"user_id": "u-gh", "role": "member", "source": _OWN}])
 
     @pytest.mark.asyncio
-    async def test_the_write_leaves_every_subset_that_is_not_this_instances_exactly_as_stored(self):
+    async def test_the_subset_the_write_names_is_this_instances_and_no_other(self):
+        """What bounds the write is the source it names, so no stored entry of another instance,
+        another provider or none at all is within its reach."""
         service = _service()
         foreign = [
             {"user_id": "u-gl", "role": "admin", "source": team_source(TEAM_SOURCE_GITLAB, "gl-1")},
@@ -278,7 +292,7 @@ class TestTeamMemberWrite:
 
         await service._refresh_team(repo, "acme", _RepositoryHolder(team, 4711, "payments"), [])
 
-        assert repo.update_with_binding.await_args.args[1]["members"] == foreign
+        assert _written_subset(repo) == MemberSubset(_OWN, [])
 
     @pytest.mark.asyncio
     async def test_the_team_keeps_the_name_its_owner_gave_it(self):
@@ -340,7 +354,7 @@ class TestTeamMemberWrite:
 
         update = repo.update_with_binding.await_args.args[1]
         assert update["name"] == "GitHub Team: acme/payments"
-        assert "members" not in update
+        assert _written_subset(repo) is None
 
     @pytest.mark.asyncio
     async def test_a_team_nothing_changed_about_is_not_written_at_all(self):
@@ -585,7 +599,7 @@ class TestSyncTeamFromGithub:
         members = [{"login": "ada", "role": "maintainer"}, {"login": "bob", "role": "member"}]
 
         with _sync_stubs(service, team_repo, access={"payments": True}, members=members, user_repo=_user_repo()):
-            with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=None)):
+            with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup(None))):
                 with caplog.at_level("WARNING", logger="app.services.github"):
                     result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
 
@@ -598,6 +612,29 @@ class TestSyncTeamFromGithub:
         assert "no local account" not in warnings
 
     @pytest.mark.asyncio
+    async def test_a_throttled_profile_read_leaves_the_stored_members_untouched(self, caplog):
+        """The member GitHub would not answer for is absent from the resolved set exactly as a
+        departed one is. Writing that costs them their role on every project the team owns, and it
+        happens precisely when the token is under pressure."""
+        service = _service()
+        team_repo = _team_repo(_bound("t-pay", 4711, members=[{"user_id": "u-1", "role": "admin", "source": _OWN}]))
+        user_repo = MagicMock()
+        user_repo.get_raw_by_username = AsyncMock(side_effect=[None, {"_id": "u-2"}])
+        user_repo.get_raw_by_email_ci = AsyncMock(return_value=None)
+        members = [{"login": "ada", "role": "maintainer"}, {"login": "bob", "role": "member"}]
+        throttled = AsyncMock(return_value=GitHubEmailLookup(None, determined=False))
+
+        with _sync_stubs(service, team_repo, access={"payments": True}, members=members, user_repo=user_repo):
+            with patch.object(service, "get_user_public_email", new=throttled):
+                with caplog.at_level("WARNING", logger="app.services.github"):
+                    result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+
+        assert result == GitHubTeamSyncResult(["t-pay"])
+        team_repo.update_with_binding.assert_not_called()
+        warnings = " ".join(record.getMessage() for record in caplog.records if record.levelname == "WARNING")
+        assert "1 of the 2 members" in warnings
+
+    @pytest.mark.asyncio
     async def test_a_member_that_does_not_resolve_never_blocks_the_ones_that_do(self):
         """The routine case: a bot resolves to nobody while a real member does."""
         service = _service()
@@ -608,13 +645,11 @@ class TestSyncTeamFromGithub:
         members = [{"login": "dependabot", "role": "member"}, {"login": "ada", "role": "maintainer"}]
 
         with _sync_stubs(service, team_repo, access={"payments": True}, members=members, user_repo=user_repo):
-            with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=None)):
+            with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup(None))):
                 result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
 
         assert result == GitHubTeamSyncResult(["t-pay"])
-        assert team_repo.update_with_binding.await_args.args[1]["members"] == [
-            {"user_id": "u-1", "role": "admin", "source": _OWN}
-        ]
+        assert _written_subset(team_repo).members == [{"user_id": "u-1", "role": "admin", "source": _OWN}]
 
     @pytest.mark.asyncio
     async def test_a_team_nobody_is_left_in_still_empties_the_github_subset(self):
@@ -634,12 +669,11 @@ class TestSyncTeamFromGithub:
             result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
 
         assert result == GitHubTeamSyncResult(["t-pay"])
-        assert team_repo.update_with_binding.await_args.args[1]["members"] == [
-            {"user_id": "u-manual", "role": "member", "source": "manual"}
-        ]
+        # Empty, not absent: the subset is named, so the entries in it go and no others.
+        assert _written_subset(team_repo) == MemberSubset(_OWN, [])
 
     @pytest.mark.asyncio
-    async def test_a_manual_member_of_the_bound_team_survives_the_sync(self):
+    async def test_the_subset_the_write_names_never_reaches_a_hand_added_member(self):
         service = _service()
         team_repo = _team_repo(
             _bound("t-pay", 4711, members=[{"user_id": "u-manual", "role": "admin", "source": "manual"}])
@@ -648,10 +682,7 @@ class TestSyncTeamFromGithub:
         with _sync_stubs(service, team_repo, access={"payments": True}):
             await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
 
-        assert team_repo.update_with_binding.await_args.args[1]["members"] == [
-            {"user_id": "u-manual", "role": "admin", "source": "manual"},
-            {"user_id": "u-1", "role": "admin", "source": _OWN},
-        ]
+        assert _written_subset(team_repo) == MemberSubset(_OWN, [{"user_id": "u-1", "role": "admin", "source": _OWN}])
 
     @pytest.mark.asyncio
     async def test_an_exception_is_swallowed_and_reports_nothing_determined(self):
@@ -724,7 +755,7 @@ class TestTeamCreation:
         with _sync_stubs(
             service, team_repo, repo_map=_HELD_BY_PLATFORM, members=_ONE_MAINTAINER, user_repo=_user_repo()
         ):
-            with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=None)):
+            with patch.object(service, "get_user_public_email", new=AsyncMock(return_value=GitHubEmailLookup(None))):
                 result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
 
         created = self._created(team_repo)
@@ -747,7 +778,7 @@ class TestTeamCreation:
     async def test_a_group_already_bound_to_a_team_is_adopted_rather_than_created_twice(self):
         """The second repository of the same group, or one whose binding names another organisation."""
         service = _service(sync_teams=True)
-        team_repo = _team_repo(adopted=_bound("t-platform", 100, slug="platform", name="Platform"))
+        team_repo = _team_repo(already_bound=_bound("t-platform", 100, slug="platform", name="Platform"))
 
         with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
             result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
@@ -838,18 +869,13 @@ class TestTeamCreation:
             await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
 
         assert stubs.members.await_args.args == ("acme", "platform", 100)
-        assert team_repo.update_with_binding.await_args.args[1]["members"] == [
-            {"user_id": "u-1", "role": "admin", "source": _OWN}
-        ]
+        assert _written_subset(team_repo).members == [{"user_id": "u-1", "role": "admin", "source": _OWN}]
 
 
-def _unbound(doc_id: str, name: str) -> dict:
-    return {"_id": doc_id, "name": name}
-
-
-class TestAdoptionByName:
-    """Four of the groups holding a scanned repository here are teams the owner already has under
-    their own name; creating beside them lists every one of their projects twice."""
+class TestAGroupNobodyBoundGetsATeamOfItsOwn:
+    """A binding is an access grant: every member of the owning team gets project-admin over every
+    repository the group holds. Taking a team by name handed that to whoever could name one, past
+    the system:manage the binding endpoint is gated on."""
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
@@ -861,106 +887,30 @@ class TestAdoptionByName:
             ("platform", "Platform"),
         ],
     )
-    async def test_an_existing_team_of_the_same_name_is_bound_rather_than_duplicated(self, slug, name):
+    async def test_no_existing_team_is_bound_however_its_name_reads(self, slug, name):
         service = _service("gh-1", sync_teams=True)
-        team_repo = _team_repo(unbound=[_unbound("t-existing", name)])
+        team_repo = _team_repo()
         org_teams = [{"id": 100, "slug": slug, "name": name, "parent": None}]
 
         with _sync_stubs(service, team_repo, org_teams=org_teams, repo_map=_HELD_BY_PLATFORM):
             result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
 
-        assert result == GitHubTeamSyncResult(["t-existing"])
-        team_repo.create.assert_not_called()
-        assert team_repo.add_binding_if_absent.await_args.args == (
-            "t-existing",
-            GitHubTeamBinding(instance_id="gh-1", org="acme", external_id=100, slug=slug).model_dump(),
-        )
-
-    @pytest.mark.asyncio
-    async def test_the_adopted_team_keeps_the_name_it_already_had(self):
-        service = _service(sync_teams=True)
-        team_repo = _team_repo(unbound=[_unbound("t-existing", "Shangri Llama")])
-        org_teams = [{"id": 100, "slug": "team-shangri-llama", "parent": None}]
-
-        with _sync_stubs(service, team_repo, org_teams=org_teams, repo_map=_HELD_BY_PLATFORM):
-            await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
-
-        assert "name" not in team_repo.update_with_binding.await_args.args[1]
-
-    @pytest.mark.asyncio
-    async def test_a_name_that_only_nearly_matches_gets_its_own_team(self):
-        """"team-qala" and "QAlas" are one letter apart and two different teams; guessing which
-        near-misses are the same team is how a sync hands a project to strangers."""
-        service = _service(sync_teams=True)
-        team_repo = _team_repo(unbound=[_unbound("t-qalas", "QAlas")])
-        org_teams = [{"id": 100, "slug": "team-qala", "parent": None}]
-
-        with _sync_stubs(service, team_repo, org_teams=org_teams, repo_map=_HELD_BY_PLATFORM):
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
-
         created = team_repo.create.await_args.args[0]
-        assert created.name == "GitHub Team: acme/team-qala"
+        assert created.name == f"GitHub Team: acme/{slug}"
         assert result == GitHubTeamSyncResult([str(created.id)])
         team_repo.add_binding_if_absent.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_a_name_two_teams_answer_to_is_adopted_by_neither(self, caplog):
+    async def test_a_group_already_bound_is_still_answered_by_the_team_that_holds_the_binding(self):
         service = _service(sync_teams=True)
-        team_repo = _team_repo(unbound=[_unbound("t-a", "Orion"), _unbound("t-b", "orion!")])
-        org_teams = [{"id": 100, "slug": "team-orion", "parent": None}]
-
-        with _sync_stubs(service, team_repo, org_teams=org_teams, repo_map=_HELD_BY_PLATFORM):
-            with caplog.at_level("WARNING", logger="app.services.github"):
-                result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
-
-        created = team_repo.create.await_args.args[0]
-        assert result == GitHubTeamSyncResult([str(created.id)])
-        team_repo.add_binding_if_absent.assert_not_awaited()
-        warnings = " ".join(record.getMessage() for record in caplog.records if record.levelname == "WARNING")
-        assert "Orion" in warnings and "orion!" in warnings
-
-    @pytest.mark.asyncio
-    async def test_a_team_another_ingest_bound_first_is_not_adopted(self):
-        service = _service(sync_teams=True)
-        team_repo = _team_repo(unbound=[_unbound("t-existing", "Platform")])
-        team_repo.add_binding_if_absent = AsyncMock(return_value=None)
-
-        with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
-
-        created = team_repo.create.await_args.args[0]
-        assert result == GitHubTeamSyncResult([str(created.id)])
-
-    @pytest.mark.asyncio
-    async def test_a_group_a_concurrent_ingest_gave_its_own_team_is_not_adopted(self):
-        """The unique index, not the write filter, is what refuses this one: the filter only keeps
-        one team from holding two bindings on an instance, and here the group went to a *different*
-        team between the candidate read and the push. Unhandled it would abort the whole ingest."""
-        service = _service(sync_teams=True)
-        team_repo = _team_repo(unbound=[_unbound("t-existing", "Platform")])
-        team_repo.add_binding_if_absent = AsyncMock(
-            side_effect=DuplicateKeyError(
-                "E11000 duplicate key error", details={"keyValue": {"bindings.key": "github:gh-1:100"}}
-            )
-        )
-
-        with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
-            result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
-
-        created = team_repo.create.await_args.args[0]
-        assert result == GitHubTeamSyncResult([str(created.id)])
-
-    @pytest.mark.asyncio
-    async def test_a_group_already_bound_is_never_looked_up_by_name(self):
-        """The binding is the answer; a same-named team must not be pulled in beside it."""
-        service = _service(sync_teams=True)
-        team_repo = _team_repo(adopted=_bound("t-platform", 100, slug="platform", name="Platform"))
+        team_repo = _team_repo(already_bound=_bound("t-platform", 100, slug="platform", name="Platform"))
 
         with _sync_stubs(service, team_repo, repo_map=_HELD_BY_PLATFORM):
             result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
 
         assert result == GitHubTeamSyncResult(["t-platform"])
-        team_repo.find_raw_unbound_for_instance.assert_not_awaited()
+        team_repo.create.assert_not_called()
+        team_repo.add_binding_if_absent.assert_not_awaited()
 
 
 _SIX_GROUPS = (100, 900, 4711, 500, 101, 902)

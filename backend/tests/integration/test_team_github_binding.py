@@ -1,4 +1,4 @@
-"""Which teams a GitHub group may bind itself to, and which ones this instance already holds."""
+"""What a binding written by hand does to the team that already holds one on the instance."""
 
 import pytest
 
@@ -32,20 +32,9 @@ async def _seeded(db) -> TeamRepository:
     return repo
 
 
-async def _assert_only_teams_this_instance_does_not_hold_are_offered(db) -> None:
-    repo = await _seeded(db)
-
-    unbound = await repo.find_raw_unbound_for_instance("gh-1")
-
-    # A team bound to another instance is free to answer for this one as well; only a team this
-    # instance already holds is somebody's, because one sync cannot serve two groups.
-    assert sorted(team["_id"] for team in unbound) == ["t-free", "t-gitlab", "t-other-instance"]
-    # The name is all the matching needs, and every team of the installation is read.
-    assert set(unbound[0]) == {"_id", "name"}
-
-
 async def _assert_a_team_bound_in_the_meantime_is_not_rebound(db) -> None:
-    """The read that picked the candidate and the write that binds it are two round trips."""
+    """The condition sits in the filter, so a binding written between the endpoint's conflict check
+    and this write is replaced in place rather than doubled."""
     repo = await _seeded(db)
 
     assert await repo.add_binding_if_absent("t-this-instance", _BINDING) is None
@@ -74,17 +63,6 @@ async def _assert_a_team_of_another_instance_gains_a_second_binding(db) -> None:
 
     assert bound is not None
     assert sorted(binding["key"] for binding in bound["bindings"]) == ["github:gh-1:9000", "github:gh-2:1234"]
-
-
-@pytest.mark.asyncio
-async def test_only_teams_this_instance_does_not_hold_are_offered_for_adoption():
-    await _assert_only_teams_this_instance_does_not_hold_are_offered(FakeDatabase())
-
-
-@pytest.mark.live_mongo
-@pytest.mark.asyncio
-async def test_only_teams_this_instance_does_not_hold_are_offered_for_adoption_on_real_mongo(db):
-    await _assert_only_teams_this_instance_does_not_hold_are_offered(db)
 
 
 @pytest.mark.asyncio
