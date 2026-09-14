@@ -20,8 +20,8 @@ _ORG_TEAMS = [
 _OWN = team_source(TEAM_SOURCE_GITHUB, "gh-1")
 _THEIRS = team_source(TEAM_SOURCE_GITHUB, "gh-2")
 
-def _service(*, sync_teams=False):
-    return GitHubService(make_github_instance(id="gh-1", access_token="ghp-secret", sync_teams=sync_teams))
+def _service():
+    return GitHubService(make_github_instance(id="gh-1", access_token="ghp-secret", sync_teams=True))
 
 
 def _stubbed_reads(service, holders=("payments",), repo_map=None, org_teams=None):
@@ -77,7 +77,7 @@ _HELD_BY_PLATFORM = {"acme/widgets": [9000]}
 async def _assert_an_unbound_github_group_becomes_a_team(db) -> None:
     await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
     repo = TeamRepository(db)
-    service = _service(sync_teams=True)
+    service = _service()
     org_reads, check_reads, member_reads, map_reads = _stubbed_reads(service, holders=(), repo_map=_HELD_BY_PLATFORM)
 
     with org_reads, check_reads, member_reads, map_reads:
@@ -96,7 +96,7 @@ async def _assert_the_group_is_not_created_twice(db) -> None:
     the map only confirms that nothing else has been granted access since."""
     await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
     repo = TeamRepository(db)
-    service = _service(sync_teams=True)
+    service = _service()
     org_reads, check_reads, member_reads, map_reads = _stubbed_reads(
         service, holders=("platform",), repo_map=_HELD_BY_PLATFORM
     )
@@ -116,7 +116,7 @@ async def _assert_a_team_of_the_same_name_is_left_alone(db) -> None:
     await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
     repo = TeamRepository(db)
     await repo.create(Team(id="t-llama", name="Shangri Llama", members=[TeamMember(user_id="u-squatter")]))
-    service = _service(sync_teams=True)
+    service = _service()
     org_teams = [{"id": 9000, "slug": "team-shangri-llama", "name": "team-shangri-llama", "parent": None}]
     org_reads, check_reads, member_reads, map_reads = _stubbed_reads(
         service, holders=(), repo_map=_HELD_BY_PLATFORM, org_teams=org_teams
@@ -141,7 +141,7 @@ async def _assert_a_cleared_binding_stays_cleared(db) -> None:
     await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
     repo = TeamRepository(db)
     await repo.create(Team(id="t-platform", name="Platform", bindings=[_github(external_id=9000, slug="platform")]))
-    service = _service(sync_teams=True)
+    service = _service()
     org_reads, check_reads, member_reads, map_reads = _stubbed_reads(
         service, holders=("platform",), repo_map=_HELD_BY_PLATFORM
     )
@@ -161,7 +161,7 @@ async def _assert_a_cleared_binding_stays_cleared(db) -> None:
 async def _sync_against_the_existing_team(db, existing: Team) -> tuple[GitHubTeamSyncResult, TeamRepository]:
     repo = TeamRepository(db)
     await repo.create(existing)
-    service = _service(sync_teams=True)
+    service = _service()
     org_reads, check_reads, member_reads, map_reads = _stubbed_reads(service, holders=(), repo_map=_HELD_BY_PLATFORM)
 
     with org_reads, check_reads, member_reads, map_reads:
@@ -202,7 +202,7 @@ async def _assert_the_group_gets_one_team_however_many_answer_to_its_name(db) ->
     repo = TeamRepository(db)
     await repo.create(Team(id="t-held", name="Platform", bindings=[_github(external_id=1234, org="other")]))
     await repo.create(Team(id="t-free", name="Platform"))
-    service = _service(sync_teams=True)
+    service = _service()
     org_reads, check_reads, member_reads, map_reads = _stubbed_reads(service, holders=(), repo_map=_HELD_BY_PLATFORM)
 
     with org_reads, check_reads, member_reads, map_reads:
@@ -225,23 +225,6 @@ async def _assert_a_team_synced_from_gitlab_gains_no_github_binding(db) -> None:
     created = await _binding_holder(repo, "gh-1", 9000)
     assert result == GitHubTeamSyncResult([created["_id"]])
     assert _binding_keys(await repo.get_raw_by_id("t-gitlab")) == ["gitlab:gl-1:77"]
-
-
-async def _assert_an_unbound_github_group_gets_no_team_while_creation_is_off(db) -> None:
-    """Creation follows the instance's switch, as it does on GitLab. The bound team holding nothing
-    is what carries the resolution past the shortcut for an organisation with no binding at all."""
-    repo = TeamRepository(db)
-    await repo.create(_bound_team())
-    service = _service()
-    org_reads, check_reads, member_reads, map_reads = _stubbed_reads(
-        service, holders=(), repo_map=_HELD_BY_PLATFORM
-    )
-
-    with org_reads, check_reads, member_reads, map_reads:
-        result = await service.sync_team_from_github(db, "acme", "acme/widgets")
-
-    assert result == GitHubTeamSyncResult([])
-    assert await repo.count({}) == 1
 
 
 async def _assert_a_second_sync_merges_into_the_bound_team(db) -> None:
@@ -340,11 +323,6 @@ async def test_a_group_already_created_is_adopted_rather_than_created_again_on_r
 
 
 @pytest.mark.asyncio
-async def test_a_repository_whose_github_group_nobody_bound_gains_no_owner_while_creation_is_off():
-    await _assert_an_unbound_github_group_gets_no_team_while_creation_is_off(FakeDatabase())
-
-
-@pytest.mark.asyncio
 async def test_a_team_whose_name_matches_an_unbound_group_is_never_bound_to_it():
     await _assert_a_team_of_the_same_name_is_left_alone(FakeDatabase())
 
@@ -408,12 +386,6 @@ async def test_a_second_sync_merges_into_the_team_it_already_wrote():
 @pytest.mark.asyncio
 async def test_a_repository_lands_in_the_bound_team_with_its_maintainer_as_admin_on_real_mongo(db):
     await _assert_the_maintainer_lands_in_the_bound_team(db)
-
-
-@pytest.mark.live_mongo
-@pytest.mark.asyncio
-async def test_a_repository_whose_github_group_nobody_bound_gains_no_owner_while_creation_is_off_on_real_mongo(db):
-    await _assert_an_unbound_github_group_gets_no_team_while_creation_is_off(db)
 
 
 @pytest.mark.live_mongo

@@ -170,6 +170,12 @@ TEAM_BINDING_KEY_FIELD = "bindings.key"
 # Partial, not sparse: a unique index over a path inside a missing array indexes the document
 # under the key null, so the second team holding no binding collides — measured, not inferred.
 # The filter selects on type, so a team with no bindings stays out of the unique scope entirely.
+#
+# A constraint, and nothing else: the planner cannot prove an equality on the key implies the
+# $type filter, so the binding lookup is a COLLSCAN. Measured on percona-server-mongodb:8.0.17-6
+# — 0.507 ms/op scanning 5 000 teams against 0.442 ms indexed, on an estate of 29. Serving that
+# read means rebuilding the constraint under an $exists filter, which is not worth a uniqueness
+# gap for 0.06 ms; revisit if the collection ever reaches five figures.
 TEAM_BINDING_KEY_PARTIAL_FILTER = {TEAM_BINDING_KEY_FIELD: {MONGO_TYPE: "string"}}
 
 

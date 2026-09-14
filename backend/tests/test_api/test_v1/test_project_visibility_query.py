@@ -12,6 +12,7 @@ from app.core.permissions import Permissions
 from app.models.user import User
 from app.repositories.teams import TeamRepository
 from app.services.analytics.scopes import ScopeResolver
+from app.services.chat.tools import ChatToolRegistry
 from tests.mocks.fake_mongo import FakeDatabase
 
 _USER = "u1"
@@ -80,6 +81,39 @@ async def test_read_all_is_unfiltered():
     db = await _seeded_db()
 
     assert await build_user_project_query(_user(Permissions.PROJECT_READ_ALL), TeamRepository(db)) == {}
+
+
+@pytest.mark.asyncio
+async def test_a_member_holding_no_project_read_permission_sees_nothing():
+    """The second half of the rule ``check_project_access`` composes. This user is a direct member
+    of one project and in a team owning two more; membership is not what settles a read."""
+    db = await _seeded_db()
+
+    assert await _visible(db, _user()) == set()
+
+
+@pytest.mark.asyncio
+async def test_the_chat_and_mcp_tools_refuse_a_member_holding_no_project_read_permission():
+    """Both surfaces answer through one registry, so the tool gate is the query builder's."""
+    db = await _seeded_db()
+    registry = ChatToolRegistry()
+    no_read = _user()
+
+    listed = await registry.execute_tool("list_projects", {}, no_read, db)
+    named = await registry.execute_tool("get_project_details", {"project_id": "direct"}, no_read, db)
+
+    assert listed == {"projects": [], "count": 0}
+    assert "error" in named
+    assert await registry.execute_tool("get_project_details", {"project_id": "direct"}, _user(Permissions.PROJECT_READ), db) != named
+
+
+@pytest.mark.asyncio
+async def test_the_analytics_scope_refuses_a_member_holding_no_project_read_permission():
+    db = await _seeded_db()
+
+    resolved = await ScopeResolver(db, _user()).resolve(scope="user", scope_id=None)
+
+    assert set(resolved.project_ids or []) == set()
 
 
 @pytest.mark.asyncio

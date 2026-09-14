@@ -33,7 +33,7 @@ def _seed_projects(db, count: int, *, member: bool = False, team_id: str | None 
         db.projects._docs[doc["_id"]] = doc
 
 
-def _resolver(db, *, permissions: frozenset[str] = frozenset()) -> ScopeResolver:
+def _resolver(db, *, permissions: frozenset[str] = frozenset({Permissions.PROJECT_READ})) -> ScopeResolver:
     class _User:
         id = _USER
 

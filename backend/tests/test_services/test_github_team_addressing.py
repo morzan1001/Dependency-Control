@@ -34,8 +34,8 @@ class TestOrgTeamOptions:
             {"id": 2, "slug": "cards-eng", "name": "Cards", "parent": None},
         ]
         assert build_org_team_options(org_teams) == [
-            {"id": 1, "slug": "cards", "name": "Cards", "parent_slug": "payments", "parent_name": "Payments"},
-            {"id": 2, "slug": "cards-eng", "name": "Cards", "parent_slug": None, "parent_name": None},
+            {"id": 1, "slug": "cards", "name": "Cards", "parent_name": "Payments"},
+            {"id": 2, "slug": "cards-eng", "name": "Cards", "parent_name": None},
         ]
 
     def test_a_nameless_team_is_offered_under_its_slug(self):

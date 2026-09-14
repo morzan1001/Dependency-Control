@@ -55,8 +55,8 @@ const LISTING_FAILED = /The instance list could not be loaded/;
 const WITHHELD_NOTE = /GitLab Legacy is not offered: team sync is off/;
 
 const ORG_TEAMS = [
-  { id: 4711, slug: "payments", name: "Payments", parent_slug: null, parent_name: null },
-  { id: 900, slug: "cards", name: "Cards", parent_slug: "payments", parent_name: "Payments" },
+  { id: 4711, slug: "payments", name: "Payments", parent_name: null },
+  { id: 900, slug: "cards", name: "Cards", parent_name: "Payments" },
 ];
 const GROUPS = [
   { id: 77, full_path: "mo/edge", name: "Edge" },

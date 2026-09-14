@@ -135,11 +135,12 @@ async def test_findings_export_row_carries_purl_and_direct(db, seeded):
 @pytest.mark.asyncio
 async def test_remediation_plan_marks_the_package_direct(db, seeded):
     """chat/tools/registry.py dep_index — drives is_direct, ecosystem and the plan ordering."""
+    from app.core.permissions import Permissions
     from app.models.user import User
     from app.services.chat.tools.registry import ChatToolRegistry
 
     await db.findings.update_one({"_id": "f1"}, {"$set": {"severity": "CRITICAL"}})
-    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=["*"])
+    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=[Permissions.PROJECT_READ])
     plan = await ChatToolRegistry().execute_tool("generate_remediation_plan", {"project_id": "p"}, user, db)
 
     step = plan["plan"][0]
@@ -190,10 +191,11 @@ async def test_hotspot_type_resolves_for_a_mixed_case_maven_artifact(client, db,
 @pytest.mark.asyncio
 async def test_find_component_usage_accepts_a_qualified_component(db, seeded):
     """chat/MCP: the caller quotes a finding's component, the inventory holds the bare name."""
+    from app.core.permissions import Permissions
     from app.models.user import User
     from app.services.chat.tools.registry import ChatToolRegistry
 
-    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=["*"])
+    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=[Permissions.PROJECT_READ])
     result = await ChatToolRegistry().execute_tool("find_component_usage", {"component_name": QUALIFIED}, user, db)
 
     assert [m["component"] for m in result["matches"]] == [BARE]
@@ -225,12 +227,13 @@ async def test_inferred_direct_is_reported_the_same_way_by_both_tools(db, seeded
     """generate_remediation_plan treated an inferred-direct package as transitive while
     find_component_usage treated it as direct (and never read the flag). Both now report
     `direct_confidence` so the collapse is the reader's choice, not the tool's."""
+    from app.core.permissions import Permissions
     from app.models.user import User
     from app.services.chat.tools.registry import ChatToolRegistry
 
     await db.dependencies.update_one({"_id": "d1"}, {"$set": {"direct_inferred": True}})
     await db.findings.update_one({"_id": "f1"}, {"$set": {"severity": "CRITICAL"}})
-    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=["*"])
+    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=[Permissions.PROJECT_READ])
     registry = ChatToolRegistry()
 
     plan = await registry.execute_tool("generate_remediation_plan", {"project_id": "p"}, user, db)
@@ -246,6 +249,7 @@ async def test_inferred_direct_is_reported_the_same_way_by_both_tools(db, seeded
 async def test_declared_direct_still_outranks_inferred_direct_in_the_plan(db, seeded):
     """The old `and not direct_inferred` collapse existed to deprioritise guesses; that
     intent moves into the ordering instead of into the reported flag."""
+    from app.core.permissions import Permissions
     from app.models.user import User
     from app.services.chat.tools.registry import ChatToolRegistry
 
@@ -257,7 +261,7 @@ async def test_declared_direct_still_outranks_inferred_direct_in_the_plan(db, se
     declared["purl"] = f"pkg:maven/io.netty/netty-common@{VERSION}"
     await db.dependencies.insert_one(declared)
 
-    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=["*"])
+    user = User(id="ownerp", username="ownerp", email="o@example.com", permissions=[Permissions.PROJECT_READ])
     plan = await ChatToolRegistry().execute_tool("generate_remediation_plan", {"project_id": "p"}, user, db)
 
     assert [s["direct_confidence"] for s in plan["plan"]] == ["declared", "inferred"]

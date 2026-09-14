@@ -25,6 +25,7 @@ from app.api.v1.helpers import (
     get_sort_field,
     is_write_superuser,
     load_from_gridfs,
+    may_read_projects,
     parse_sort_direction,
     resolve_sbom_refs,
     resolve_team_names,
@@ -322,7 +323,7 @@ async def read_projects(
     project_repo = ProjectRepository(db)
     team_repo = TeamRepository(db)
 
-    if not has_permission(current_user.permissions, [Permissions.PROJECT_READ, Permissions.PROJECT_READ_ALL]):
+    if not may_read_projects(current_user):
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     search_query: dict[str, Any] = {}
@@ -382,7 +383,7 @@ async def read_all_scans(
     team_repo = TeamRepository(db)
     scan_repo = ScanRepository(db)
 
-    if not has_permission(current_user.permissions, [Permissions.PROJECT_READ, Permissions.PROJECT_READ_ALL]):
+    if not may_read_projects(current_user):
         raise HTTPException(status_code=403, detail=_MSG_NOT_ENOUGH_PERMISSIONS)
 
     permission_query = await build_user_project_query(current_user, team_repo)

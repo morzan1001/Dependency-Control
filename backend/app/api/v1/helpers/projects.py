@@ -22,12 +22,24 @@ from app.repositories.projects import surviving_owner_admin_filter
 
 _MSG_NOT_ENOUGH_PERMISSIONS = "Not enough permissions"
 
+# The filter for "no project at all". An empty dict already means the opposite here — the whole
+# collection — so a refusal has to be spelled as a filter nothing matches.
+NO_PROJECTS: dict[str, Any] = {"_id": {"$in": []}}
+
 
 async def build_user_project_query(
     user: User,
     team_repo: TeamRepository,
 ) -> dict[str, Any]:
-    """Build a MongoDB query for projects the user can access (empty dict if read_all)."""
+    """Build a MongoDB query for projects the user can access (empty dict if read_all).
+
+    Membership and a project-read permission, the same two layers ``check_project_access``
+    composes: a caller with neither permission reads no project through any surface, however many
+    it is a member of.
+    """
+    if not may_read_projects(user):
+        return NO_PROJECTS
+
     if has_permission(user.permissions, Permissions.PROJECT_READ_ALL):
         return {}
 

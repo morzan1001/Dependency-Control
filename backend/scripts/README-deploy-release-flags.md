@@ -1,5 +1,10 @@
 # Deploy runbook — release flag, the historical tag-build backfill, and the ad-hoc analyze endpoint
 
+> **§1–§8 shipped long ago and read as a record.** Confirm against production before running any of
+> them again; the backfills are one-shot and §4 in particular is not idempotent across a second
+> window. **§9 is still live**: granting `analyze:adhoc` has no UI, so anyone who needs an ad-hoc
+> key follows it today, on an estate that is otherwise past this runbook.
+
 Prod context: `gke_rd-itsecurity-sboms-prod_europe-west1_prod-1`, namespace `dependency-control`.
 
 Run every backfill as a Kubernetes **Job**, never via `kubectl exec`: the autoscaler evicts backend
@@ -829,9 +834,9 @@ whether it works after the rollout.
 
 ### Nothing has to precede the deploy
 
-`adhoc_api_keys` and its three indexes are created by startup's `create_indexes` on an empty
-collection, so unlike §1 there is no index to pre-build and no migration to run. The collection does
-not exist before the first key is minted.
+Ad-hoc keys live in the unified `api_keys` collection, alongside the MCP ones — a key names the
+surfaces it is good for. Its three indexes are created by startup's `create_indexes`, so unlike §1
+there is no index to pre-build and no migration to run.
 
 ### `analyze:adhoc` must be granted explicitly, or nobody can use it
 
@@ -854,9 +859,11 @@ db.users.updateMany(
 )
 ```
 
-Verify by minting a key through `POST /api/v1/analyze-keys/` as one of them, then calling
-`POST /api/v1/analyze` with it. The permission is re-checked on the owner at every request, so
-removing it later revokes every key that identity holds: `POST /analyze` then answers 403, not 401.
+Verify by minting a key through `POST /api/v1/api-keys/` with `{"surfaces": ["adhoc"], …}` as one of
+them, then calling `POST /api/v1/analyze` with it. Minting is gated on the same permission the
+request is: a holder without `analyze:adhoc` is refused the key at **403**, naming the surface. The
+permission is re-checked on the owner at every request, so removing it later revokes every key that
+identity holds: `POST /analyze` then answers 403, not 401.
 
 ### The rate limiter fails open
 
