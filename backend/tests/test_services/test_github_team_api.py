@@ -2,6 +2,7 @@
 
 import asyncio
 import time
+from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import fakeredis.aioredis
@@ -711,3 +712,92 @@ class TestPublicProfileEmailCaching:
             assert await first.get_user_public_email("ada") == "ada@example.com"
         with patch.object(second, "_api_get", new=AsyncMock(return_value=_profile("ada@ghes.internal"))):
             assert await second.get_user_public_email("ada") == "ada@ghes.internal"
+
+
+# 2026-09-09 15:04:00 UTC, the shape GitHub sends: seconds since the epoch.
+_RESET_EPOCH = 1788966240
+_RESET_AT = datetime(2026, 9, 9, 15, 4, tzinfo=timezone.utc)
+
+
+def _rate_limit_response(core_remaining: int, rate_remaining: int = 4321) -> MagicMock:
+    response = MagicMock(status_code=200)
+    response.json = MagicMock(
+        return_value={
+            "resources": {
+                "core": {"limit": 5000, "used": 5000 - core_remaining, "remaining": core_remaining,
+                         "reset": _RESET_EPOCH},
+                "graphql": {"limit": 5000, "used": 0, "remaining": 5000, "reset": _RESET_EPOCH + 60},
+                "search": {"limit": 30, "used": 0, "remaining": 30, "reset": _RESET_EPOCH + 120},
+            },
+            "rate": {"limit": 5000, "used": 5000 - rate_remaining, "remaining": rate_remaining,
+                     "reset": _RESET_EPOCH + 180},
+        }
+    )
+    return response
+
+
+class TestCoreRateLimit:
+    """Told apart from a scope refusal only by an endpoint GitHub answers while everything else 403s."""
+
+    @pytest.mark.asyncio
+    async def test_is_read_from_the_endpoint_that_costs_no_budget(self):
+        service = _service()
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=_rate_limit_response(0))) as api_get:
+            limit = await service.get_core_rate_limit()
+
+        assert api_get.await_args.args[0] == "/rate_limit"
+        assert limit is not None
+        assert limit.remaining == 0
+        assert limit.reset_at == _RESET_AT
+
+    @pytest.mark.asyncio
+    async def test_reports_the_core_resource_rather_than_the_deprecated_rate_block(self):
+        """``rate`` is a legacy alias GitHub keeps for search-era clients; team sync spends ``core``."""
+        service = _service()
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=_rate_limit_response(0, rate_remaining=99))):
+            limit = await service.get_core_rate_limit()
+
+        assert limit is not None
+        assert limit.remaining == 0
+        assert limit.reset_at == _RESET_AT
+
+    @pytest.mark.asyncio
+    async def test_a_budget_still_standing_is_reported_as_such(self):
+        service = _service()
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=_rate_limit_response(4999))):
+            limit = await service.get_core_rate_limit()
+
+        assert limit is not None
+        assert limit.remaining == 4999
+
+    @pytest.mark.asyncio
+    async def test_a_refused_endpoint_is_none_rather_than_a_zero_budget(self):
+        """GHES with rate limiting switched off answers 404; that is not a throttled token."""
+        service = _service()
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=MagicMock(status_code=404))):
+            assert await service.get_core_rate_limit() is None
+
+    @pytest.mark.asyncio
+    async def test_an_unreachable_endpoint_is_none(self):
+        service = _service()
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=None)):
+            assert await service.get_core_rate_limit() is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "body",
+        [
+            {},
+            {"resources": {}},
+            {"resources": {"core": {"remaining": 0}}},
+            {"resources": {"core": {"remaining": "none", "reset": _RESET_EPOCH}}},
+            {"resources": {"core": {"remaining": 0, "reset": "soon"}}},
+        ],
+    )
+    async def test_a_body_it_cannot_read_is_none_rather_than_a_crash(self, body):
+        """A parse error here must degrade to the scope message, not 500 the connection test."""
+        service = _service()
+        response = MagicMock(status_code=200)
+        response.json = MagicMock(return_value=body)
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=response)):
+            assert await service.get_core_rate_limit() is None

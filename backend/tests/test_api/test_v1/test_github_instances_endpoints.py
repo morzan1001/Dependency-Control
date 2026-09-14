@@ -1,12 +1,13 @@
 """Tests for GitHub instance API endpoints."""
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
 
-from app.services.github import GitHubService
+from app.services.github import GitHubCoreRateLimit, GitHubService
 from tests.mocks.github import make_github_instance
 
 MODULE = "app.api.v1.endpoints.github_instances"
@@ -128,24 +129,39 @@ class TestGitHubInstanceUpdateTokenGuard:
         assert exc_info.value.status_code == 400
 
 
-def _run_test_connection(instance, current_user, jwks, orgs=None, team_counts=None):
-    """Drive test_connection with the three outbound calls stubbed; returns (response, org_probe, team_probe)."""
+def _spent_budget(minutes_until_reset=20):
+    return GitHubCoreRateLimit(
+        remaining=0, reset_at=datetime.now(timezone.utc) + timedelta(minutes=minutes_until_reset)
+    )
+
+
+_HEALTHY_BUDGET = GitHubCoreRateLimit(remaining=4999, reset_at=datetime.now(timezone.utc) + timedelta(minutes=42))
+
+
+def _run_test_connection(instance, current_user, jwks, orgs=None, team_counts=None, rate_limit=_HEALTHY_BUDGET):
+    """Drive test_connection with the outbound calls stubbed; returns (response, org, team, rate-limit probes).
+
+    An intact budget is the default because it is the state a test about anything else assumes: a
+    probe refused under it is refused on its own merits.
+    """
     from app.api.v1.endpoints.github_instances import test_connection
 
     mock_repo = _make_repo_mock(get_by_id=instance)
     org_probe = AsyncMock(return_value=orgs)
     counts = team_counts or {}
     team_probe = AsyncMock(side_effect=lambda org: counts[org])
+    rate_limit_probe = AsyncMock(return_value=rate_limit)
 
     with (
         patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo),
         patch.object(GitHubService, "get_jwks", new=AsyncMock(return_value=jwks)),
         patch.object(GitHubService, "get_viewer_organisations", new=org_probe),
         patch.object(GitHubService, "count_org_teams", new=team_probe),
+        patch.object(GitHubService, "get_core_rate_limit", new=rate_limit_probe),
     ):
         result = asyncio.run(test_connection(instance_id="gh-1", db=MagicMock(), current_user=current_user))
 
-    return result, org_probe, team_probe
+    return result, org_probe, team_probe, rate_limit_probe
 
 
 class TestConnectionChecksTheToken:
@@ -155,7 +171,7 @@ class TestConnectionChecksTheToken:
         instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
 
         # None is the service's "the API refused" signal.
-        result, _, _ = _run_test_connection(instance, admin_user, jwks={"keys": [{}]}, orgs=None)
+        result, *_ = _run_test_connection(instance, admin_user, jwks={"keys": [{}]}, orgs=None)
 
         assert result.success is False
         assert "read:org" in result.message
@@ -164,7 +180,7 @@ class TestConnectionChecksTheToken:
         """A token that lists zero organisations syncs zero teams, however willing the API was to answer."""
         instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
 
-        result, _, _ = _run_test_connection(instance, admin_user, jwks={"keys": [{}]}, orgs=[])
+        result, *_ = _run_test_connection(instance, admin_user, jwks={"keys": [{}]}, orgs=[])
 
         assert result.success is False
         assert "read:org" in result.message
@@ -173,7 +189,7 @@ class TestConnectionChecksTheToken:
         """An instance that only ingests needs no org access; demanding it would fail a fine setup."""
         instance = make_github_instance(access_token="ghp-test-token", sync_teams=False)
 
-        result, org_probe, team_probe = _run_test_connection(instance, admin_user, jwks={"keys": [{}]})
+        result, org_probe, team_probe, _ = _run_test_connection(instance, admin_user, jwks={"keys": [{}]})
 
         assert result.success is True
         org_probe.assert_not_called()
@@ -183,7 +199,7 @@ class TestConnectionChecksTheToken:
         """An operator must be able to tell an unreachable issuer from a token that cannot read the org."""
         instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
 
-        result, org_probe, team_probe = _run_test_connection(instance, admin_user, jwks={"keys": []})
+        result, org_probe, team_probe, _ = _run_test_connection(instance, admin_user, jwks={"keys": []})
 
         assert result.success is False
         assert "read:org" not in result.message
@@ -197,7 +213,7 @@ class TestConnectionProbesEveryOrganisation:
     def test_success_names_every_organisation_with_its_team_count(self, admin_user):
         instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
 
-        result, _, team_probe = _run_test_connection(
+        result, _, team_probe, _ = _run_test_connection(
             instance,
             admin_user,
             jwks={"keys": [{}, {}]},
@@ -215,7 +231,7 @@ class TestConnectionProbesEveryOrganisation:
     def test_one_unreadable_organisation_among_several_fails_and_names_it(self, admin_user):
         instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
 
-        result, _, _ = _run_test_connection(
+        result, *_ = _run_test_connection(
             instance,
             admin_user,
             jwks={"keys": [{}]},
@@ -232,7 +248,7 @@ class TestConnectionProbesEveryOrganisation:
         """Zero teams is an answer; only a refusal is a failure."""
         instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
 
-        result, _, _ = _run_test_connection(
+        result, *_ = _run_test_connection(
             instance,
             admin_user,
             jwks={"keys": [{}]},
@@ -248,29 +264,31 @@ class TestBindingPickerListings:
     """What the team-binding dialog offers; a picker that cannot list makes binding guesswork."""
 
     @staticmethod
-    def _run(endpoint, admin_user, instance, **service_returns):
+    def _run(endpoint, instance, **service_returns):
+        """Drive a picker route; returns (result, the stubbed service) so its probes can be asserted on."""
         mock_repo = _make_repo_mock(get_by_id=instance)
         service = MagicMock()
-        for name, value in service_returns.items():
+        # An intact budget unless the test is about the budget: a refusal under it is a scope refusal.
+        for name, value in {"get_core_rate_limit": _HEALTHY_BUDGET, **service_returns}.items():
             setattr(service, name, AsyncMock(return_value=value))
 
         with (
             patch(f"{MODULE}.GitHubInstanceRepository", return_value=mock_repo),
             patch(f"{MODULE}.GitHubService", return_value=service),
         ):
-            return asyncio.run(endpoint)
+            return asyncio.run(endpoint), service
 
     def test_the_organisations_of_the_token_are_offered(self, admin_user):
         from app.api.v1.endpoints.github_instances import list_instance_organisations
 
-        result = self._run(
+        result, service = self._run(
             list_instance_organisations(instance_id="gh-1", db=MagicMock(), current_user=admin_user),
-            admin_user,
             make_github_instance(access_token="ghp-test-token"),
             get_viewer_organisations=[{"login": "acme"}, {"login": "globex"}, {}],
         )
 
         assert result == ["acme", "globex"]
+        service.get_core_rate_limit.assert_not_called()
 
     def test_a_token_that_cannot_list_organisations_is_a_bad_gateway(self, admin_user):
         from app.api.v1.endpoints.github_instances import list_instance_organisations
@@ -278,19 +296,19 @@ class TestBindingPickerListings:
         with pytest.raises(HTTPException) as excinfo:
             self._run(
                 list_instance_organisations(instance_id="gh-1", db=MagicMock(), current_user=admin_user),
-                admin_user,
                 make_github_instance(access_token="ghp-test-token"),
                 get_viewer_organisations=None,
             )
 
         assert excinfo.value.status_code == 502
+        assert "read:org" in excinfo.value.detail
+        assert "rate limit" not in excinfo.value.detail
 
     def test_each_team_is_offered_with_the_parent_that_tells_it_apart(self, admin_user):
         from app.api.v1.endpoints.github_instances import list_organisation_teams
 
-        result = self._run(
+        result, service = self._run(
             list_organisation_teams(instance_id="gh-1", org="acme", db=MagicMock(), current_user=admin_user),
-            admin_user,
             make_github_instance(access_token="ghp-test-token"),
             get_org_teams=[
                 {"id": 4711, "slug": "payments", "name": "Payments", "parent": None},
@@ -307,6 +325,7 @@ class TestBindingPickerListings:
             (4711, "payments", "Payments", None),
             (900, "cards", "Cards", "payments"),
         ]
+        service.get_core_rate_limit.assert_not_called()
 
     def test_an_unreadable_organisation_is_a_bad_gateway(self, admin_user):
         from app.api.v1.endpoints.github_instances import list_organisation_teams
@@ -314,12 +333,12 @@ class TestBindingPickerListings:
         with pytest.raises(HTTPException) as excinfo:
             self._run(
                 list_organisation_teams(instance_id="gh-1", org="acme", db=MagicMock(), current_user=admin_user),
-                admin_user,
                 make_github_instance(access_token="ghp-test-token"),
                 get_org_teams=None,
             )
 
         assert excinfo.value.status_code == 502
+        assert "read:org there" in excinfo.value.detail
 
     def test_an_unknown_instance_is_not_found(self, admin_user):
         from app.api.v1.endpoints.github_instances import list_organisation_teams
@@ -335,3 +354,197 @@ class TestBindingPickerListings:
                 )
 
         assert excinfo.value.status_code == 404
+
+
+class TestPickerListingsTellAThrottledTokenFromAScopeProblem:
+    """The picker inherited the connection test's guess: it named read:org for every refusal."""
+
+    def test_a_throttled_organisation_listing_reports_the_wait(self, admin_user):
+        from app.api.v1.endpoints.github_instances import list_instance_organisations
+
+        budget = _spent_budget()
+        with pytest.raises(HTTPException) as excinfo:
+            TestBindingPickerListings._run(
+                list_instance_organisations(instance_id="gh-1", db=MagicMock(), current_user=admin_user),
+                make_github_instance(access_token="ghp-test-token"),
+                get_viewer_organisations=None,
+                get_core_rate_limit=budget,
+            )
+
+        assert excinfo.value.status_code == 502
+        assert "rate limit is exhausted" in excinfo.value.detail
+        assert "read:org" not in excinfo.value.detail
+        assert f"{budget.reset_at:%Y-%m-%d %H:%M UTC}" in excinfo.value.detail
+
+    def test_a_throttled_team_listing_reports_the_wait(self, admin_user):
+        from app.api.v1.endpoints.github_instances import list_organisation_teams
+
+        budget = _spent_budget(minutes_until_reset=5)
+        with pytest.raises(HTTPException) as excinfo:
+            TestBindingPickerListings._run(
+                list_organisation_teams(instance_id="gh-1", org="acme", db=MagicMock(), current_user=admin_user),
+                make_github_instance(access_token="ghp-test-token"),
+                get_org_teams=None,
+                get_core_rate_limit=budget,
+            )
+
+        assert excinfo.value.status_code == 502
+        assert "rate limit is exhausted" in excinfo.value.detail
+        assert "read:org" not in excinfo.value.detail
+        assert "5 minute(s)" in excinfo.value.detail
+
+    def test_an_unreadable_budget_admits_it_cannot_tell(self, admin_user):
+        """GHES with rate limiting off answers nothing here; neither cause is established, so neither is stated."""
+        from app.api.v1.endpoints.github_instances import list_instance_organisations
+
+        with pytest.raises(HTTPException) as excinfo:
+            TestBindingPickerListings._run(
+                list_instance_organisations(instance_id="gh-1", db=MagicMock(), current_user=admin_user),
+                make_github_instance(access_token="ghp-test-token"),
+                get_viewer_organisations=None,
+                get_core_rate_limit=None,
+            )
+
+        assert excinfo.value.status_code == 502
+        assert "could not be determined" in excinfo.value.detail
+        assert "The token needs read:org." not in excinfo.value.detail
+
+
+class TestConnectionTellsAThrottledTokenFromAScopeProblem:
+    """A token with read:org whose budget is spent 403s exactly like one without the scope."""
+
+    def test_a_throttled_org_probe_reports_the_wait_rather_than_the_scope(self, admin_user):
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
+        budget = _spent_budget()
+
+        result, _, _, rate_probe = _run_test_connection(
+            instance, admin_user, jwks={"keys": [{}]}, orgs=None, rate_limit=budget
+        )
+
+        assert result.success is False
+        assert "rate limit" in result.message
+        assert "read:org" not in result.message
+        assert f"{budget.reset_at:%Y-%m-%d %H:%M UTC}" in result.message
+        assert "20 minute(s)" in result.message
+        rate_probe.assert_awaited_once()
+
+    def test_a_refused_org_probe_still_reports_the_scope(self, admin_user):
+        """The budget stands, so the 403 was about permissions after all."""
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
+
+        result, *_ = _run_test_connection(
+            instance, admin_user, jwks={"keys": [{}]}, orgs=None, rate_limit=_HEALTHY_BUDGET
+        )
+
+        assert result.success is False
+        assert "read:org" in result.message
+        assert "rate limit" not in result.message
+
+    def test_an_unreadable_budget_admits_it_cannot_tell(self, admin_user):
+        """GHES without rate limiting answers nothing here; naming either cause would be a guess."""
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
+
+        result, *_ = _run_test_connection(instance, admin_user, jwks={"keys": [{}]}, orgs=None, rate_limit=None)
+
+        assert result.success is False
+        assert "could not be determined" in result.message
+        assert "Team sync needs read:org" not in result.message
+        assert "rate limit is exhausted" not in result.message
+
+    def test_an_unreadable_budget_does_not_accuse_the_organisation_of_the_team_probe(self, admin_user):
+        """Exhaustion is still on the table, so the organisations after it stay unnamed."""
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
+
+        result, *_ = _run_test_connection(
+            instance,
+            admin_user,
+            jwks={"keys": [{}]},
+            orgs=[{"login": "acme"}, {"login": "globex"}],
+            team_counts={"acme": 7, "globex": None},
+            rate_limit=None,
+        )
+
+        assert result.success is False
+        assert "could not be determined" in result.message
+        assert "globex" not in result.message
+
+    def test_membership_in_no_organisation_is_never_a_rate_limit(self, admin_user):
+        """A 200 carrying an empty list spent budget to say so; asking again would only confuse the message."""
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
+
+        result, _, _, rate_probe = _run_test_connection(
+            instance, admin_user, jwks={"keys": [{}]}, orgs=[], rate_limit=_spent_budget()
+        )
+
+        assert result.success is False
+        assert "read:org" in result.message
+        rate_probe.assert_not_called()
+
+    def test_a_throttled_team_probe_reports_the_wait_rather_than_accusing_the_organisation(self, admin_user):
+        """Mid-loop exhaustion makes every remaining organisation look unreadable; none of them is."""
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
+        budget = _spent_budget(minutes_until_reset=7)
+
+        result, _, _, rate_probe = _run_test_connection(
+            instance,
+            admin_user,
+            jwks={"keys": [{}]},
+            orgs=[{"login": "acme"}, {"login": "globex"}],
+            team_counts={"acme": 7, "globex": None},
+            rate_limit=budget,
+        )
+
+        assert result.success is False
+        assert "rate limit" in result.message
+        assert "read:org" not in result.message
+        assert "globex" not in result.message
+        assert f"{budget.reset_at:%Y-%m-%d %H:%M UTC}" in result.message
+        assert "7 minute(s)" in result.message
+        rate_probe.assert_awaited_once()
+
+    def test_a_refused_team_probe_still_names_the_organisation(self, admin_user):
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
+
+        result, *_ = _run_test_connection(
+            instance,
+            admin_user,
+            jwks={"keys": [{}]},
+            orgs=[{"login": "acme"}, {"login": "globex"}],
+            team_counts={"acme": 7, "globex": None},
+            rate_limit=_HEALTHY_BUDGET,
+        )
+
+        assert result.success is False
+        assert "globex" in result.message
+        assert "read:org" in result.message
+        assert "rate limit" not in result.message
+
+    def test_a_green_test_spends_nothing_on_the_budget_endpoint(self, admin_user):
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
+
+        result, _, _, rate_probe = _run_test_connection(
+            instance,
+            admin_user,
+            jwks={"keys": [{}]},
+            orgs=[{"login": "acme"}],
+            team_counts={"acme": 3},
+            rate_limit=_spent_budget(),
+        )
+
+        assert result.success is True
+        rate_probe.assert_not_called()
+
+    def test_a_reset_already_due_is_not_reported_as_a_negative_wait(self, admin_user):
+        instance = make_github_instance(access_token="ghp-test-token", sync_teams=True)
+
+        result, *_ = _run_test_connection(
+            instance,
+            admin_user,
+            jwks={"keys": [{}]},
+            orgs=None,
+            rate_limit=GitHubCoreRateLimit(remaining=0, reset_at=datetime.now(timezone.utc) - timedelta(seconds=30)),
+        )
+
+        assert result.success is False
+        assert "any moment now" in result.message
+        assert "minute(s)" not in result.message
