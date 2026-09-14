@@ -28,7 +28,7 @@ markdown = "^3.10"
 prometheus-client = ">=0.25,<0.27"
 aiosmtplib = "^5.1.0"
 aiobotocore = "^3.4.0"
-weasyprint = ">=65,<70"
+weasyprint = ">=65,<71"
 packaging = ">=24.0"
 cvss = "^3.6"
 
