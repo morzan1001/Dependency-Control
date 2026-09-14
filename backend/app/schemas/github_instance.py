@@ -97,7 +97,6 @@ class GitHubOrgTeam(BaseModel):
     id: int = Field(..., description="Numeric team id; the binding is stored on this, not on the slug")
     slug: str = Field(..., description="URL slug the team API is addressed by")
     name: str = Field(..., description="Display name")
-    parent_slug: str | None = Field(None, description="Slug of the parent team, null for a top-level team")
     parent_name: str | None = Field(None, description="Display name of the parent team")
 
 

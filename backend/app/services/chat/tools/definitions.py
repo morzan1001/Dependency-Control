@@ -1074,7 +1074,8 @@ TOOL_DEFINITIONS: list[dict[str, Any]] = [
 
 
 TOOL_PERMISSIONS: dict[str, list[str]] = {
-    # Most tools just need project:read (access is further scoped by build_user_project_query)
+    # A tool not named here is project-scoped: build_user_project_query is what demands a
+    # project-read permission of the caller and narrows the answer to the projects they hold.
     "list_global_waivers": [Permissions.WAIVER_READ_ALL],
     "get_system_settings": [Permissions.SYSTEM_MANAGE],
     "get_system_health": [Permissions.SYSTEM_MANAGE],

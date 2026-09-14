@@ -50,7 +50,6 @@ export interface GitHubOrgTeam {
   id: number;
   slug: string;
   name: string;
-  parent_slug?: string | null;
   parent_name?: string | null;
 }
 

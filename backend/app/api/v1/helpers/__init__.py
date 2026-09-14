@@ -49,6 +49,7 @@ from app.api.v1.helpers.projects import (
     check_project_access,
     generate_project_api_key,
     is_write_superuser,
+    may_read_projects,
 )
 from app.api.v1.helpers.responses import (
     RESP_400,
@@ -171,6 +172,7 @@ __all__ = [
     "is_2fa_setup_mode",
     "is_write_superuser",
     "load_from_gridfs",
+    "may_read_projects",
     "parse_generic_format",
     "parse_madge_format",
     "parse_sort_direction",

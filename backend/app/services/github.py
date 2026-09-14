@@ -159,7 +159,6 @@ def build_org_team_options(org_teams: list[dict[str, Any]]) -> list[dict[str, An
                 "id": team_id,
                 "slug": slug,
                 "name": str(team.get("name") or slug),
-                "parent_slug": _team_slug(parent),
                 "parent_name": str(parent["name"]) if parent.get("name") else None,
             }
         )
@@ -843,9 +842,6 @@ class GitHubService:
         granted access after the first owner was found would otherwise never be seen. The walk it
         reads is cached per organisation, so an ingest pays for it once a TTL.
         """
-        if not self.instance.sync_teams:
-            return []
-
         repo_map = await self.get_org_repository_map(org, org_teams)
         if repo_map is None:
             logger.warning(
@@ -995,22 +991,15 @@ class GitHubService:
         that has no others. Past it nothing is created and nothing is written: a team created for an
         ownership write that is then refused is a team nobody owns anything through.
 
+        Both ingest paths call this only for an instance whose ``sync_teams`` is on, so the switch
+        is not read again here.
+
         Never raises.
         """
         try:
             owner, _, repo = repository_path.partition("/")
             team_repo = TeamRepository(db)
             bound_teams = await team_repo.find_raw_by_github_org(str(self.instance.id), org)
-            if not bound_teams and not self.instance.sync_teams:
-                # Determined, not unknown: with nothing bound and nothing creatable, no GitHub team
-                # owns anything here, and the organisation is not worth a request.
-                logger.info(
-                    "No team is bound to GitHub organisation %s and creating one is off; "
-                    "%s keeps no GitHub owner.",
-                    org,
-                    repository_path,
-                )
-                return GitHubTeamSyncResult([])
 
             deadline = asyncio.get_running_loop().time() + _GITHUB_RESOLUTION_TIMEOUT
             try:

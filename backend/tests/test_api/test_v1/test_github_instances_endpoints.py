@@ -321,9 +321,9 @@ class TestBindingPickerListings:
             ],
         )
 
-        assert [(team.id, team.slug, team.name, team.parent_slug) for team in result] == [
+        assert [(team.id, team.slug, team.name, team.parent_name) for team in result] == [
             (4711, "payments", "Payments", None),
-            (900, "cards", "Cards", "payments"),
+            (900, "cards", "Cards", "Payments"),
         ]
         service.get_core_rate_limit.assert_not_called()
 

@@ -1,5 +1,12 @@
 # Deploy runbook — multi-team projects Phase 1
 
+> **This window has run. It is a record, not an instruction.** It shipped against `VERSION` 1.9.26
+> and the tree is now well past it; the image stopped deriving `team_ids` at §7, so an estate this
+> backfill had not run against would already be broken. §4 in particular must never be re-run —
+> re-deriving the list from the scalar truncates every multi-team project back to one team.
+> §7a is the exception: it is consulted for how ownership behaves rather than for what to do, so it
+> has been kept true to the current API instead of frozen at what this window shipped.
+
 Prod context: `gke_rd-itsecurity-sboms-prod_europe-west1_prod-1`, namespace `dependency-control`.
 
 A project stops belonging to one team and starts belonging to several. `team_ids` is the one
@@ -289,21 +296,24 @@ up to and including this deploy.
 - **Unbinding a GitHub team now takes effect.** With no bound team left holding a repository, the
   next ingest retires that repository's GitHub-sourced owners. Removing a binding is therefore a
   change of ownership, not only of resolution.
-- `POST /api/v1/projects/{id}/teams` and `DELETE /api/v1/projects/{id}/teams/{team_id}` add and
-  remove one owner. `PUT /api/v1/projects/{id}` with `team_id` still works and now means "the team
-  this project is assigned to by hand": it replaces the manually-assigned owners and leaves a
-  provider's entry alone. Posting a team that already owns the project answers with the project
-  unchanged — it does not reclaim a provider's entry as a hand assignment.
-- Both `PUT` with `team_id` and `DELETE …/teams/{team_id}` refuse with **400** when the change
-  would leave the project with nobody able to administer it. Only a write superuser may.
+- **Ownership is written through one route: `PUT /api/v1/projects/{id}` with `team_ids`.** It
+  carries the whole owner set, not a delta — the picker sends back every owner it displayed, a
+  sync's included, and an empty list gives up ownership. Each retained owner keeps the provenance
+  it already had, so re-sending a provider's entry does not reclaim it as a hand assignment.
+- The scalar `team_id` is **no longer a field of `ProjectUpdate`**. A body still carrying one is
+  accepted and the key silently dropped — 200, ownership unchanged. Anything still sending the
+  scalar is a no-op, not an error; look for it before assuming a write landed.
+- `PUT` refuses with **400** when the change would leave the project with nobody able to
+  administer it. Only a write superuser may.
+- Gaining an owner is checked before anything is written: an unresolvable team id answers **404**,
+  and a team the caller is not a member of answers **403**. Only the owners being *gained* are
+  checked, so an admin of one owner can still edit the rest. A write superuser bypasses both.
 - A project may have at most 16 owning teams, counted across every provider and every hand
   assignment. A sync whose result would exceed it leaves the project's owners untouched and logs
   `past the cap`; grep for it after the deploy.
-- **At 16 owners, `PUT` with a new `team_id` is refused too**, even though it replaces the manual
-  subset and would therefore leave the project at or under the cap. Deliberate: both routes read
-  the cap off the stored list, so the refusal never depends on who established an owner. The way
-  out is to remove an owner first, or to `PUT` a team that already owns the project — an incumbent
-  is exempt, so narrowing a capped project down to one of its own owners still works.
+- The cap is checked against the set being written, so a `PUT` naming 17 or more owners answers
+  **400** `A project may be owned by at most 16 teams`. Narrowing a capped project works, because
+  the set replaces rather than adds.
 - An owner stored without a `team_sources` entry is read as a hand assignment, so no sync retires
   it and `PUT` with `team_id` replaces it along with the rest of the manual set. §6b's second query
   lists them; the backfill stamps them `manual` so none are left.
