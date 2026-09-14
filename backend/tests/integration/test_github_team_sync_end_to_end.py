@@ -109,11 +109,13 @@ async def _assert_the_group_is_not_created_twice(db) -> None:
     assert second == first
 
 
-async def _assert_a_team_of_the_same_name_is_adopted(db) -> None:
-    """The four groups this matched in production are teams the owner has under their own name."""
+async def _assert_a_team_of_the_same_name_is_left_alone(db) -> None:
+    """The escalation: a team named to match an unbound group collected project-admin over every
+    repository that group holds, for anyone who could create or rename a team. Only the
+    system:manage binding endpoint grants a team a group's projects."""
     await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
     repo = TeamRepository(db)
-    await repo.create(Team(id="t-llama", name="Shangri Llama"))
+    await repo.create(Team(id="t-llama", name="Shangri Llama", members=[TeamMember(user_id="u-squatter")]))
     service = _service(sync_teams=True)
     org_teams = [{"id": 9000, "slug": "team-shangri-llama", "name": "team-shangri-llama", "parent": None}]
     org_reads, check_reads, member_reads, map_reads = _stubbed_reads(
@@ -123,13 +125,37 @@ async def _assert_a_team_of_the_same_name_is_adopted(db) -> None:
     with org_reads, check_reads, member_reads, map_reads:
         result = await service.sync_team_from_github(db, "acme", "acme/widgets")
 
-    assert result == GitHubTeamSyncResult(["t-llama"])
-    assert await repo.count({}) == 1
-    adopted = await _binding_holder(repo, "gh-1", 9000)
-    assert adopted["_id"] == "t-llama"
-    assert adopted["name"] == "Shangri Llama"
-    assert adopted["bindings"][0]["slug"] == "team-shangri-llama"
-    assert adopted["members"] == [{"user_id": "u-1", "role": "admin", "source": _OWN}]
+    created = await _binding_holder(repo, "gh-1", 9000)
+    assert created["_id"] != "t-llama"
+    assert created["name"] == "GitHub Team: acme/team-shangri-llama"
+    assert result == GitHubTeamSyncResult([created["_id"]])
+
+    squatted = await repo.get_raw_by_id("t-llama")
+    assert squatted["bindings"] == []
+    assert squatted["members"] == [{"user_id": "u-squatter", "role": "member", "source": "manual"}]
+
+
+async def _assert_a_cleared_binding_stays_cleared(db) -> None:
+    """An unbound group is what the organisation walk goes looking for, so an ingest that bound the
+    team back left its members without access in between and handed the group to them again."""
+    await db["users"].insert_one({"_id": "u-1", "username": "ada", "email": "ada@corp.com"})
+    repo = TeamRepository(db)
+    await repo.create(Team(id="t-platform", name="Platform", bindings=[_github(external_id=9000, slug="platform")]))
+    service = _service(sync_teams=True)
+    org_reads, check_reads, member_reads, map_reads = _stubbed_reads(
+        service, holders=("platform",), repo_map=_HELD_BY_PLATFORM
+    )
+
+    with org_reads, check_reads, member_reads, map_reads:
+        owned = await service.sync_team_from_github(db, "acme", "acme/widgets")
+        assert owned == GitHubTeamSyncResult(["t-platform"])
+        assert await repo.remove_binding_for_instance("t-platform", "gh-1")
+        result = await service.sync_team_from_github(db, "acme", "acme/widgets")
+
+    assert (await repo.get_raw_by_id("t-platform"))["bindings"] == []
+    created = await _binding_holder(repo, "gh-1", 9000)
+    assert created["_id"] != "t-platform"
+    assert result == GitHubTeamSyncResult([created["_id"]])
 
 
 async def _sync_against_the_existing_team(db, existing: Team) -> tuple[GitHubTeamSyncResult, TeamRepository]:
@@ -142,19 +168,18 @@ async def _sync_against_the_existing_team(db, existing: Team) -> tuple[GitHubTea
         return await service.sync_team_from_github(db, "acme", "acme/widgets"), repo
 
 
-async def _assert_a_team_bound_to_another_instance_is_adopted_beside_its_binding(db) -> None:
-    """Two instances are two tenants, and the same name on both is two different teams."""
+async def _assert_a_team_bound_to_another_instance_keeps_only_that_binding(db) -> None:
+    """Two instances are two tenants; a team already bound on one is no answer for a group on the
+    other just because the names read alike."""
     result, repo = await _sync_against_the_existing_team(
         db,
         Team(id="t-elsewhere", name="Platform", bindings=[_github(instance_id="gh-2", external_id=1234, org="other")]),
     )
 
-    # A team of another instance is adoptable for this one, and gains a second binding rather
-    # than losing the one it had.
-    adopted = await _binding_holder(repo, "gh-1", 9000)
-    assert adopted["_id"] == "t-elsewhere"
-    assert result == GitHubTeamSyncResult(["t-elsewhere"])
-    assert _binding_keys(adopted) == ["github:gh-1:9000", "github:gh-2:1234"]
+    created = await _binding_holder(repo, "gh-1", 9000)
+    assert created["_id"] != "t-elsewhere"
+    assert result == GitHubTeamSyncResult([created["_id"]])
+    assert _binding_keys(await repo.get_raw_by_id("t-elsewhere")) == ["github:gh-2:1234"]
 
 
 async def _assert_a_team_this_instance_already_holds_is_not_stolen(db) -> None:
@@ -171,10 +196,9 @@ async def _assert_a_team_this_instance_already_holds_is_not_stolen(db) -> None:
     assert _binding_keys(untouched) == ["github:gh-1:1234"]
 
 
-async def _assert_the_team_this_instance_holds_is_no_second_answer_to_the_name(db) -> None:
-    """Two teams answer to "Platform", but one of them is this instance's own and therefore not a
-    candidate at all. Read as one the pair would look ambiguous, and the group that has a perfectly
-    good team waiting for it would get a duplicate instead."""
+async def _assert_the_group_gets_one_team_however_many_answer_to_its_name(db) -> None:
+    """Two teams read as "Platform" and neither is bound here. Both keep their own names and their
+    own projects: what decides is the rule, not how many teams answer to a group's name."""
     repo = TeamRepository(db)
     await repo.create(Team(id="t-held", name="Platform", bindings=[_github(external_id=1234, org="other")]))
     await repo.create(Team(id="t-free", name="Platform"))
@@ -184,24 +208,26 @@ async def _assert_the_team_this_instance_holds_is_no_second_answer_to_the_name(d
     with org_reads, check_reads, member_reads, map_reads:
         result = await service.sync_team_from_github(db, "acme", "acme/widgets")
 
-    assert result == GitHubTeamSyncResult(["t-free"])
-    assert await repo.count({}) == 2
-    assert _binding_keys(await repo.get_raw_by_id("t-free")) == ["github:gh-1:9000"]
+    created = await _binding_holder(repo, "gh-1", 9000)
+    assert result == GitHubTeamSyncResult([created["_id"]])
+    assert await repo.count({}) == 3
+    assert (await repo.get_raw_by_id("t-free"))["bindings"] == []
     assert _binding_keys(await repo.get_raw_by_id("t-held")) == ["github:gh-1:1234"]
 
 
-async def _assert_a_team_synced_from_gitlab_is_adopted_for_github_too(db) -> None:
-    """Nothing of this instance holds it, so one team can answer for the group on both providers."""
+async def _assert_a_team_synced_from_gitlab_gains_no_github_binding(db) -> None:
+    """One team answering for a group on both providers is a deliberate binding, not something an
+    ingest may arrange by reading names."""
     result, repo = await _sync_against_the_existing_team(
         db, Team(id="t-gitlab", name="Platform", bindings=[GitLabGroupBinding(instance_id="gl-1", external_id=77)])
     )
 
-    assert result == GitHubTeamSyncResult(["t-gitlab"])
-    adopted = await repo.get_raw_by_id("t-gitlab")
-    assert _binding_keys(adopted) == ["github:gh-1:9000", "gitlab:gl-1:77"]
+    created = await _binding_holder(repo, "gh-1", 9000)
+    assert result == GitHubTeamSyncResult([created["_id"]])
+    assert _binding_keys(await repo.get_raw_by_id("t-gitlab")) == ["gitlab:gl-1:77"]
 
 
-async def _assert_an_unbound_github_group_is_not_adopted(db) -> None:
+async def _assert_an_unbound_github_group_gets_no_team_while_creation_is_off(db) -> None:
     """Creation follows the instance's switch, as it does on GitLab. The bound team holding nothing
     is what carries the resolution past the shortcut for an organisation with no binding at all."""
     repo = TeamRepository(db)
@@ -315,29 +341,40 @@ async def test_a_group_already_created_is_adopted_rather_than_created_again_on_r
 
 @pytest.mark.asyncio
 async def test_a_repository_whose_github_group_nobody_bound_gains_no_owner_while_creation_is_off():
-    await _assert_an_unbound_github_group_is_not_adopted(FakeDatabase())
+    await _assert_an_unbound_github_group_gets_no_team_while_creation_is_off(FakeDatabase())
 
 
 @pytest.mark.asyncio
-async def test_a_group_whose_team_already_exists_under_its_own_name_is_adopted():
-    await _assert_a_team_of_the_same_name_is_adopted(FakeDatabase())
+async def test_a_team_whose_name_matches_an_unbound_group_is_never_bound_to_it():
+    await _assert_a_team_of_the_same_name_is_left_alone(FakeDatabase())
 
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_a_group_whose_team_already_exists_under_its_own_name_is_adopted_on_real_mongo(db):
-    await _assert_a_team_of_the_same_name_is_adopted(db)
+async def test_a_team_whose_name_matches_an_unbound_group_is_never_bound_to_it_on_real_mongo(db):
+    await _assert_a_team_of_the_same_name_is_left_alone(db)
 
 
 @pytest.mark.asyncio
-async def test_a_team_bound_to_another_instance_is_adopted_beside_its_binding():
-    await _assert_a_team_bound_to_another_instance_is_adopted_beside_its_binding(FakeDatabase())
+async def test_a_cleared_binding_stays_cleared_across_the_next_ingest():
+    await _assert_a_cleared_binding_stays_cleared(FakeDatabase())
 
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_a_team_bound_to_another_instance_is_adopted_beside_its_binding_on_real_mongo(db):
-    await _assert_a_team_bound_to_another_instance_is_adopted_beside_its_binding(db)
+async def test_a_cleared_binding_stays_cleared_across_the_next_ingest_on_real_mongo(db):
+    await _assert_a_cleared_binding_stays_cleared(db)
+
+
+@pytest.mark.asyncio
+async def test_a_team_bound_to_another_instance_keeps_only_that_binding():
+    await _assert_a_team_bound_to_another_instance_keeps_only_that_binding(FakeDatabase())
+
+
+@pytest.mark.live_mongo
+@pytest.mark.asyncio
+async def test_a_team_bound_to_another_instance_keeps_only_that_binding_on_real_mongo(db):
+    await _assert_a_team_bound_to_another_instance_keeps_only_that_binding(db)
 
 
 @pytest.mark.asyncio
@@ -352,14 +389,14 @@ async def test_a_team_this_instance_already_holds_is_not_stolen_on_real_mongo(db
 
 
 @pytest.mark.asyncio
-async def test_a_team_gitlab_already_syncs_is_adopted_for_github_too():
-    await _assert_a_team_synced_from_gitlab_is_adopted_for_github_too(FakeDatabase())
+async def test_a_team_gitlab_already_syncs_gains_no_github_binding_from_an_ingest():
+    await _assert_a_team_synced_from_gitlab_gains_no_github_binding(FakeDatabase())
 
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_a_team_gitlab_already_syncs_is_adopted_for_github_too_on_real_mongo(db):
-    await _assert_a_team_synced_from_gitlab_is_adopted_for_github_too(db)
+async def test_a_team_gitlab_already_syncs_gains_no_github_binding_from_an_ingest_on_real_mongo(db):
+    await _assert_a_team_synced_from_gitlab_gains_no_github_binding(db)
 
 
 @pytest.mark.asyncio
@@ -376,7 +413,7 @@ async def test_a_repository_lands_in_the_bound_team_with_its_maintainer_as_admin
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
 async def test_a_repository_whose_github_group_nobody_bound_gains_no_owner_while_creation_is_off_on_real_mongo(db):
-    await _assert_an_unbound_github_group_is_not_adopted(db)
+    await _assert_an_unbound_github_group_gets_no_team_while_creation_is_off(db)
 
 
 @pytest.mark.live_mongo
@@ -386,11 +423,11 @@ async def test_a_second_sync_merges_into_the_team_it_already_wrote_on_real_mongo
 
 
 @pytest.mark.asyncio
-async def test_a_same_named_team_this_instance_holds_does_not_block_adopting_the_free_one():
-    await _assert_the_team_this_instance_holds_is_no_second_answer_to_the_name(FakeDatabase())
+async def test_the_group_gets_one_team_however_many_answer_to_its_name():
+    await _assert_the_group_gets_one_team_however_many_answer_to_its_name(FakeDatabase())
 
 
 @pytest.mark.live_mongo
 @pytest.mark.asyncio
-async def test_a_same_named_team_this_instance_holds_does_not_block_adopting_the_free_one_on_real_mongo(db):
-    await _assert_the_team_this_instance_holds_is_no_second_answer_to_the_name(db)
+async def test_the_group_gets_one_team_however_many_answer_to_its_name_on_real_mongo(db):
+    await _assert_the_group_gets_one_team_however_many_answer_to_its_name(db)

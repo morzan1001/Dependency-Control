@@ -26,8 +26,9 @@ from app.core.constants import (
 from app.core.http_utils import InstrumentedAsyncClient
 from app.models.github_api import GitHubIssueComment, GitHubOIDCPayload, GitHubPullRequest
 from app.models.github_instance import GitHubInstance
-from app.models.team import GitHubTeamBinding, Team, TeamMember, binding_of, merge_team_members
+from app.models.team import GitHubTeamBinding, Team, TeamMember, binding_of
 from app.repositories import TeamRepository, UserRepository
+from app.repositories.teams import MemberSubset
 from app.services.oidc_utils import validate_oidc_token as _validate_oidc_token
 
 logger = logging.getLogger(__name__)
@@ -42,8 +43,8 @@ _GITHUB_API_TIMEOUT = 10.0
 _GITHUB_RESOLUTION_TIMEOUT = 30.0
 
 _DEFAULT_ACCEPT = "application/vnd.github+json"
-# Without this media type the team/repository check answers 204, and "holds it" stops being the
-# 200 the caller tests for.
+# Without this media type the team/repository check answers 204 with no body, and the body is the
+# only place the team's permission level on the repository is reported.
 _REPOSITORY_ACCEPT = "application/vnd.github.v3.repository+json"
 
 # One request per team of the organisation, and the largest one here has 204 of them. Run in
@@ -69,9 +70,6 @@ _WRITE_PERMISSIONS = ("push", "maintain", "admin")
 
 _AUTO_TEAM_NAME_PREFIX = "GitHub Team:"
 
-# A GitHub slug carries a prefix the same team's Dependency Control name does not.
-_ADOPTION_PREFIXES = ("team-", "team_")
-
 _org_walk_gates: "weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, asyncio.Semaphore]" = (
     weakref.WeakKeyDictionary()
 )
@@ -91,15 +89,13 @@ def _org_walk_gate() -> asyncio.Semaphore:
     return gate
 
 
-def _adoption_key(name: str) -> str:
-    """The form two names are compared in before a team is created: lower case, without a leading
-    "team-", letters and digits only. "team-shangri-llama" and "Shangri Llama" are one team under it."""
-    lowered = name.strip().lower()
-    for prefix in _ADOPTION_PREFIXES:
-        if lowered.startswith(prefix):
-            lowered = lowered[len(prefix) :]
-            break
-    return "".join(character for character in lowered if character.isalnum())
+def _json_document(response: httpx.Response) -> dict[str, Any]:
+    """The response body as a document; ``{}`` for anything else, which reads as "GitHub did not say"."""
+    try:
+        body = response.json()
+    except ValueError:
+        return {}
+    return body if isinstance(body, dict) else {}
 
 
 def _team_writes_to(repository: dict[str, Any]) -> bool | None:
@@ -197,6 +193,37 @@ class _RepositoryHolder(NamedTuple):
     team: dict[str, Any]
     team_id: int
     slug: str
+
+
+class GitHubEmailLookup(NamedTuple):
+    """A login's public profile email.
+
+    ``determined`` is False for a GitHub that would not answer — throttled, refused or timed out —
+    which is not the same as a profile that hides its email.
+    """
+
+    email: str | None
+    determined: bool = True
+
+
+class _MemberResolution(NamedTuple):
+    """The local user one GitHub login names.
+
+    ``undetermined`` is a lookup GitHub refused. A member counted as resolving to nobody is retired
+    from the team and loses their role on every project it owns, so a throttled read must not say
+    that: it is the same undetermined-versus-empty distinction the rest of this sync draws.
+    """
+
+    user: dict[str, Any] | None
+    undetermined: bool = False
+
+
+class _ResolvedMembers(NamedTuple):
+    """One team's members as this instance resolves them, with what went unanswered beside them."""
+
+    members: list[TeamMember]
+    unresolved: int
+    undetermined: int
 
 
 class GitHubCoreRateLimit(NamedTuple):
@@ -386,7 +413,8 @@ class GitHubService:
         return items
 
     async def get_team_repository(self, org: str, team_slug: str, owner: str, repo: str) -> bool | None:
-        """Whether one team holds one repository; None when GitHub did not answer.
+        """Whether one team holds one repository with write access or better; None when GitHub did
+        not answer.
 
         Answers on a read-only organisation token, which asking the repository for its teams
         cannot: that requires the admin role on every single repository.
@@ -403,7 +431,21 @@ class GitHubService:
             return None
 
         if response.status_code == 200:
-            has_repo = True
+            # This endpoint is a permission check, not a write check: it answers 200 on pull as
+            # readily as on admin, so the level in the body is what decides, exactly as it does
+            # when the organisation walk reads the same repository from the team's listing.
+            writes = _team_writes_to(_json_document(response))
+            if writes is None:
+                logger.warning(
+                    "GitHub answered for team %s/%s on %s/%s without saying what the team's access "
+                    "is; the holder stays undetermined.",
+                    org,
+                    team_slug,
+                    owner,
+                    repo,
+                )
+                return None
+            has_repo = writes
         elif response.status_code == 404:
             has_repo = False
         else:
@@ -560,21 +602,21 @@ class GitHubService:
             logger.warning("GitHub rate limit response could not be read: %s", e)
             return None
 
-    async def get_user_public_email(self, login: str) -> str | None:
-        """The public profile email, or None when the user hides it. Cached per login: this is the
-        one per-member call of a sync, and the jobs of one workflow run must not repeat it."""
+    async def get_user_public_email(self, login: str) -> GitHubEmailLookup:
+        """The public profile email. Cached per login: this is the one per-member call of a sync,
+        and the jobs of one workflow run must not repeat it."""
         cache_key = self._get_cache_key(f"user_email:{login}")
         # "" is the stored "no public email": a cached None reads back as a miss, and the bots that
         # never resolve are exactly the logins not worth asking about twice.
         cached: str | None = await cache_service.get(cache_key)
         if cached is not None:
-            return cached or None
+            return GitHubEmailLookup(cached or None)
 
         response = await self._api_get(f"/users/{login}")
         if response is None:
-            return None
+            return GitHubEmailLookup(None, determined=False)
         if response.status_code == 200:
-            profile_email = response.json().get("email")
+            profile_email = _json_document(response).get("email")
             email = str(profile_email) if profile_email else ""
         elif response.status_code == 404:
             email = ""
@@ -582,21 +624,23 @@ class GitHubService:
             # A refusal read as "no public email" would silently disable email matching for every
             # member; caching it would extend that to every later job of the run.
             logger.warning("GitHub API GET /users/%s failed: %s", login, response.status_code)
-            return None
+            return GitHubEmailLookup(None, determined=False)
 
         await cache_service.set(cache_key, email, ttl_seconds=GITHUB_TEAM_SYNC_CACHE_TTL)
-        return email or None
+        return GitHubEmailLookup(email or None)
 
-    async def _find_user_for_github_member(self, login: str, user_repo: UserRepository) -> dict[str, Any] | None:
+    async def _find_user_for_github_member(self, login: str, user_repo: UserRepository) -> _MemberResolution:
         """Resolve a GitHub login to an EXISTING local user: username first, then the public email."""
         user = await user_repo.get_raw_by_username(login)
         if user:
-            return user
-        email = await self.get_user_public_email(login)
-        if email:
+            return _MemberResolution(user)
+        lookup = await self.get_user_public_email(login)
+        if not lookup.determined:
+            return _MemberResolution(None, undetermined=True)
+        if lookup.email:
             # Case-insensitive: the OIDC-login email may differ in case from the profile one.
-            return await user_repo.get_raw_by_email_ci(email)
-        return None
+            return _MemberResolution(await user_repo.get_raw_by_email_ci(lookup.email))
+        return _MemberResolution(None)
 
     @property
     def _member_source(self) -> str:
@@ -607,29 +651,33 @@ class GitHubService:
         self,
         members: list[dict[str, Any]],
         user_repo: UserRepository,
-    ) -> tuple[list[TeamMember], int]:
-        """Map GitHub members onto existing local users, tagged with this instance, plus the
-        unresolved count."""
+    ) -> _ResolvedMembers:
+        """Map GitHub members onto existing local users, tagged with this instance, plus how many
+        resolved to nobody and how many GitHub would not answer for."""
         resolved: dict[str, TeamMember] = {}
         unresolved = 0
+        undetermined = 0
         for member in members:
             login = member["login"]
-            user = await self._find_user_for_github_member(login, user_repo)
-            if not user:
+            resolution = await self._find_user_for_github_member(login, user_repo)
+            if resolution.undetermined:
+                undetermined += 1
+                continue
+            if resolution.user is None:
                 # Sync never creates users; a real member is added on their next sync after
                 # logging in via OIDC.
                 unresolved += 1
                 logger.debug("Skipping GitHub member that resolved to no local user (login=%s).", login)
                 continue
             role = TEAM_ROLE_ADMIN if member.get("role") == "maintainer" else TEAM_ROLE_MEMBER
-            user_id = str(user.get("_id", user.get("id")))
+            user_id = str(resolution.user.get("_id", resolution.user.get("id")))
             # Two logins can resolve to one local user. A duplicate entry breaks add_member's $ne
             # guard, and the next sync's last-wins merge would silently demote the admin entry.
             previous = resolved.get(user_id)
             if previous is not None and previous.role == TEAM_ROLE_ADMIN:
                 continue
             resolved[user_id] = TeamMember(user_id=user_id, role=role, source=self._member_source)
-        return list(resolved.values()), unresolved
+        return _ResolvedMembers(list(resolved.values()), unresolved, undetermined)
 
     @staticmethod
     def _renamed_fields(team: dict[str, Any], org: str, team_slug: str) -> dict[str, Any]:
@@ -657,75 +705,29 @@ class GitHubService:
         """
         team = holder.team
         updates: dict[str, Any] = self._renamed_fields(team, org, holder.slug)
-        if team_members is not None:
-            updates["members"] = merge_team_members(team.get("members") or [], team_members, self._member_source)
+        # Handed to the server as the subset to replace rather than merged here: the snapshot is
+        # several round trips old, and a member added in between would be written back out of the
+        # team after the add had already reported success.
+        subset = (
+            MemberSubset(self._member_source, [member.model_dump() for member in team_members])
+            if team_members is not None
+            else None
+        )
         binding = binding_of(team, str(self.instance.id)) or {}
         # The binding is the numeric team id, so a renamed slug has to follow it.
         binding_fields = {"slug": holder.slug} if binding.get("slug") != holder.slug else {}
-        if not updates and not binding_fields:
+        if not updates and not binding_fields and subset is None:
             return
         await team_repo.update_with_binding(
             team["_id"],
             {**updates, "updated_at": datetime.now(timezone.utc)},
             self._binding(org, holder.team_id, holder.slug).key,
             binding_fields,
+            subset,
         )
 
     def _binding(self, org: str, team_id: int, slug: str) -> GitHubTeamBinding:
         return GitHubTeamBinding(instance_id=str(self.instance.id), org=org, external_id=team_id, slug=slug)
-
-    async def _adopt_unbound_team(
-        self,
-        team_repo: TeamRepository,
-        org: str,
-        team_id: int,
-        slug: str,
-    ) -> dict[str, Any] | None:
-        """A team the owner already has under this group's name, bound to it rather than duplicated.
-
-        Only a team this instance holds no binding on is taken: one already bound here is another
-        group of this same instance, whose sync would then fight this one over the same member
-        list. A team bound to another instance is free to answer for this one as well. Two teams of
-        the same name are no answer, so neither of them is taken.
-        """
-        key = _adoption_key(slug)
-        if not key:
-            return None
-        candidates = [
-            team
-            for team in await team_repo.find_raw_unbound_for_instance(str(self.instance.id))
-            if _adoption_key(str(team.get("name") or "")) == key
-        ]
-        if not candidates:
-            return None
-        if len(candidates) > 1:
-            logger.warning(
-                "GitHub team %s/%s reads as %d existing teams here (%s); creating a team of its own "
-                "rather than binding the wrong one.",
-                org,
-                slug,
-                len(candidates),
-                [team.get("name") for team in candidates],
-            )
-            return None
-
-        try:
-            adopted = await team_repo.add_binding_if_absent(
-                str(candidates[0]["_id"]), self._binding(org, team_id, slug).model_dump()
-            )
-        except DuplicateKeyError:
-            # Another ingest bound this group to a team of its own; that one is the holder.
-            return None
-        if adopted is None:
-            return None
-        logger.info(
-            "Bound existing team '%s' to GitHub team %s/%s (id=%d) instead of creating a second one.",
-            adopted.get("name"),
-            org,
-            slug,
-            team_id,
-        )
-        return adopted
 
     async def _team_for_github_group(
         self,
@@ -734,8 +736,12 @@ class GitHubService:
         team_id: int,
         slug: str,
     ) -> dict[str, Any]:
-        """The Dependency Control team for a GitHub team: the one bound to it, one of the same name,
-        or a new one.
+        """The Dependency Control team for a GitHub team: the one bound to it, or a new one.
+
+        A group nobody bound gets a team of its own and never an existing team whose name happens
+        to match it. A binding hands every member of that team project-admin over everything the
+        group holds, which is system:manage's to grant, while a team's name is its own admin's to
+        set; binding by name let anyone who can name a team collect the group's repositories.
 
         Created even when GitHub names members none of whom resolve: logins here are personal
         handles while usernames are directory ids, so requiring a resolved member — as the GitLab
@@ -746,10 +752,6 @@ class GitHubService:
         existing = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITHUB, instance_id, team_id)
         if existing:
             return existing
-
-        adopted = await self._adopt_unbound_team(team_repo, org, team_id, slug)
-        if adopted:
-            return adopted
 
         team = Team(
             name=_auto_team_name(org, slug),
@@ -933,7 +935,21 @@ class GitHubService:
             )
             return None
 
-        team_members, unresolved = await self._build_team_members(members, user_repo)
+        team_members, unresolved, undetermined = await self._build_team_members(members, user_repo)
+        if undetermined:
+            # Whoever GitHub would not answer for is absent from the resolved set, and writing it
+            # would retire them from the team along with the role it gives them on its projects.
+            logger.warning(
+                "GitHub would not say who %d of the %d members of team %s/%s (id=%d) are while "
+                "syncing %s; leaving the existing members untouched.",
+                undetermined,
+                len(members),
+                org,
+                holder.slug,
+                holder.team_id,
+                repository_path,
+            )
+            return None
         if unresolved and not team_members:
             # A token that lost profile access resolves nobody; writing that would strip the
             # whole github subset and read as a team everyone left.

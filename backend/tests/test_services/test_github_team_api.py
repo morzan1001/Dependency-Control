@@ -9,7 +9,12 @@ import fakeredis.aioredis
 import pytest
 
 from app.core.cache import CacheService
-from app.services.github import _GITHUB_ORG_WALK_CONCURRENCY, _REPOSITORY_ACCEPT, GitHubService
+from app.services.github import (
+    _GITHUB_ORG_WALK_CONCURRENCY,
+    _REPOSITORY_ACCEPT,
+    GitHubEmailLookup,
+    GitHubService,
+)
 from tests.mocks.github import make_github_instance
 
 _ORG_URL = "https://api.github.com/organizations/1234"
@@ -132,6 +137,52 @@ class TestTeamRepositoryCheck:
             await service.get_team_repository("acme", "payments", "acme", "widgets")
 
         assert client.get.await_args.kwargs["headers"]["Accept"] == _REPOSITORY_ACCEPT
+
+    @pytest.mark.asyncio
+    async def test_read_only_access_is_not_holding_it(self, fake_cache):
+        """The endpoint answers 200 on pull as readily as on admin, so the status is a permission
+        check and not a write check. A group with read-everything would otherwise own the estate."""
+        service = _service()
+        reader = {**_TEAM_REPOSITORY, "role_name": "read", "permissions": {"pull": True, "triage": True}}
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=_response(200, reader))):
+            assert await service.get_team_repository("acme", "auditors", "acme", "widgets") is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("level", ["push", "maintain", "admin"])
+    async def test_write_access_or_better_is_holding_it(self, fake_cache, level):
+        service = _service()
+        writer = {**_TEAM_REPOSITORY, "permissions": {"pull": True, level: True}}
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=_response(200, writer))):
+            assert await service.get_team_repository("acme", "payments", "acme", "widgets") is True
+
+    @pytest.mark.asyncio
+    async def test_a_body_that_names_no_permissions_is_undetermined(self, fake_cache, caplog):
+        """Read as read-only it would retire the owners of a whole organisation."""
+        service = _service()
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=_response(200, {"full_name": "acme/w"}))):
+            with caplog.at_level("WARNING", logger="app.services.github"):
+                assert await service.get_team_repository("acme", "payments", "acme", "widgets") is None
+
+        assert any("payments" in record.getMessage() for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_a_body_that_is_not_a_document_is_undetermined(self, fake_cache):
+        service = _service()
+        unreadable = MagicMock(status_code=200)
+        unreadable.json = MagicMock(side_effect=ValueError("not json"))
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=unreadable)):
+            assert await service.get_team_repository("acme", "payments", "acme", "widgets") is None
+
+    @pytest.mark.asyncio
+    async def test_a_read_only_answer_is_cached_as_the_no_it_is(self, fake_cache):
+        service = _service()
+        reader = {**_TEAM_REPOSITORY, "permissions": {"pull": True}}
+        with patch.object(service, "_api_get", new=AsyncMock(return_value=_response(200, reader))) as get:
+            first = await service.get_team_repository("acme", "auditors", "acme", "widgets")
+            second = await service.get_team_repository("acme", "auditors", "acme", "widgets")
+
+        assert first is False and second is False
+        assert get.await_count == 1
 
     @pytest.mark.asyncio
     async def test_a_404_says_the_team_does_not_hold_it(self, fake_cache):
@@ -617,7 +668,7 @@ class TestPublicProfileEmail:
     async def test_returns_the_public_email(self, fake_cache):
         service = _service()
         with patch.object(service, "_api_get", new=AsyncMock(return_value=_profile("ada@example.com"))) as api_get:
-            assert await service.get_user_public_email("ada") == "ada@example.com"
+            assert await service.get_user_public_email("ada") == GitHubEmailLookup("ada@example.com")
 
         assert api_get.await_args.args[0] == "/users/ada"
 
@@ -625,7 +676,7 @@ class TestPublicProfileEmail:
     async def test_returns_none_when_the_profile_hides_it(self, fake_cache):
         service = _service()
         with patch.object(service, "_api_get", new=AsyncMock(return_value=_profile(None))):
-            assert await service.get_user_public_email("ada") is None
+            assert await service.get_user_public_email("ada") == GitHubEmailLookup(None)
 
     @pytest.mark.asyncio
     async def test_a_refusal_is_logged_rather_than_read_as_a_hidden_email(self, fake_cache, caplog):
@@ -633,7 +684,9 @@ class TestPublicProfileEmail:
         response = MagicMock(status_code=403)
         with patch.object(service, "_api_get", new=AsyncMock(return_value=response)):
             with caplog.at_level("WARNING", logger="app.services.github"):
-                assert await service.get_user_public_email("ada") is None
+                # Undetermined, not "this profile hides its email": the caller retires a member on
+                # the second answer and must not on the first.
+                assert await service.get_user_public_email("ada") == GitHubEmailLookup(None, determined=False)
 
         warnings = [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
         assert len(warnings) == 1, warnings
@@ -646,7 +699,7 @@ class TestPublicProfileEmail:
         response = MagicMock(status_code=404)
         with patch.object(service, "_api_get", new=AsyncMock(return_value=response)):
             with caplog.at_level("WARNING", logger="app.services.github"):
-                assert await service.get_user_public_email("ghost") is None
+                assert await service.get_user_public_email("ghost") == GitHubEmailLookup(None)
 
         assert [r.getMessage() for r in caplog.records if r.levelname == "WARNING"] == []
 
@@ -658,8 +711,8 @@ class TestPublicProfileEmailCaching:
     async def test_the_second_lookup_of_a_login_is_served_from_the_cache(self, fake_cache):
         service = _service()
         with patch.object(service, "_api_get", new=AsyncMock(return_value=_profile("ada@example.com"))) as api_get:
-            assert await service.get_user_public_email("ada") == "ada@example.com"
-            assert await service.get_user_public_email("ada") == "ada@example.com"
+            assert await service.get_user_public_email("ada") == GitHubEmailLookup("ada@example.com")
+            assert await service.get_user_public_email("ada") == GitHubEmailLookup("ada@example.com")
 
         assert api_get.await_count == 1
 
@@ -668,8 +721,8 @@ class TestPublicProfileEmailCaching:
         """Bots and private profiles are the routine answer, so refetching them is what burns the budget."""
         service = _service()
         with patch.object(service, "_api_get", new=AsyncMock(return_value=_profile(None))) as api_get:
-            assert await service.get_user_public_email("dependabot") is None
-            assert await service.get_user_public_email("dependabot") is None
+            assert await service.get_user_public_email("dependabot") == GitHubEmailLookup(None)
+            assert await service.get_user_public_email("dependabot") == GitHubEmailLookup(None)
 
         assert api_get.await_count == 1
 
@@ -677,8 +730,8 @@ class TestPublicProfileEmailCaching:
     async def test_an_unknown_login_is_cached_too(self, fake_cache):
         service = _service()
         with patch.object(service, "_api_get", new=AsyncMock(return_value=MagicMock(status_code=404))) as api_get:
-            assert await service.get_user_public_email("ghost") is None
-            assert await service.get_user_public_email("ghost") is None
+            assert await service.get_user_public_email("ghost") == GitHubEmailLookup(None)
+            assert await service.get_user_public_email("ghost") == GitHubEmailLookup(None)
 
         assert api_get.await_count == 1
 
@@ -690,8 +743,8 @@ class TestPublicProfileEmailCaching:
             return _profile(f"{endpoint.rsplit('/', 1)[1]}@example.com")
 
         with patch.object(service, "_api_get", new=AsyncMock(side_effect=_by_login)):
-            assert await service.get_user_public_email("ada") == "ada@example.com"
-            assert await service.get_user_public_email("bob") == "bob@example.com"
+            assert await service.get_user_public_email("ada") == GitHubEmailLookup("ada@example.com")
+            assert await service.get_user_public_email("bob") == GitHubEmailLookup("bob@example.com")
 
     @pytest.mark.asyncio
     async def test_a_refusal_is_not_cached(self, fake_cache):
@@ -699,8 +752,8 @@ class TestPublicProfileEmailCaching:
         service = _service()
         responses = [MagicMock(status_code=403), _profile("ada@example.com")]
         with patch.object(service, "_api_get", new=AsyncMock(side_effect=responses)):
-            assert await service.get_user_public_email("ada") is None
-            assert await service.get_user_public_email("ada") == "ada@example.com"
+            assert await service.get_user_public_email("ada") == GitHubEmailLookup(None, determined=False)
+            assert await service.get_user_public_email("ada") == GitHubEmailLookup("ada@example.com")
 
     @pytest.mark.asyncio
     async def test_a_second_instance_does_not_read_the_first_ones_entry(self, fake_cache):
@@ -709,9 +762,9 @@ class TestPublicProfileEmailCaching:
         second = GitHubService(make_github_instance(id="gh-2", access_token="ghp-other"))
 
         with patch.object(first, "_api_get", new=AsyncMock(return_value=_profile("ada@example.com"))):
-            assert await first.get_user_public_email("ada") == "ada@example.com"
+            assert await first.get_user_public_email("ada") == GitHubEmailLookup("ada@example.com")
         with patch.object(second, "_api_get", new=AsyncMock(return_value=_profile("ada@ghes.internal"))):
-            assert await second.get_user_public_email("ada") == "ada@ghes.internal"
+            assert await second.get_user_public_email("ada") == GitHubEmailLookup("ada@ghes.internal")
 
 
 # 2026-09-09 15:04:00 UTC, the shape GitHub sends: seconds since the epoch.
