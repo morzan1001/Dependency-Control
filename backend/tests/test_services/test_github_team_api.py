@@ -88,8 +88,8 @@ _ORG_MEMBERSHIPS = [
 ]
 
 
-def _service() -> GitHubService:
-    return GitHubService(make_github_instance(access_token="ghp-secret"))
+def _service(instance_id: str = "test-github-instance-id") -> GitHubService:
+    return GitHubService(make_github_instance(id=instance_id, access_token="ghp-secret"))
 
 
 @pytest.fixture
@@ -256,14 +256,79 @@ class TestTeamRepositoryCheck:
 
 
 class TestOrgTeams:
+    """Every GitHub ingest resolves its owner through this listing, so all of it is load-bearing:
+    what it answers with, how far it reads, what it makes of a refusal, and who its entry answers
+    for."""
+
     @pytest.mark.asyncio
     async def test_are_fetched_uncapped_from_the_org_endpoint(self, fake_cache):
         service = _service()
-        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=[])) as paginated:
-            await service.get_org_teams("acme")
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_ORG_TEAMS)) as paginated:
+            assert await service.get_org_teams("acme") == _ORG_TEAMS
 
         assert paginated.await_args.args[0] == "/orgs/acme/teams"
+        # A capped listing is an organisation quietly missing teams, and a team the listing omits
+        # reads as one the organisation dissolved.
         assert paginated.await_args.kwargs["max_pages"] is None
+
+    @pytest.mark.asyncio
+    async def test_an_organisation_without_teams_is_an_empty_listing(self, fake_cache):
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=[])):
+            assert await service.get_org_teams("acme") == []
+
+    @pytest.mark.asyncio
+    async def test_an_unanswered_listing_is_none_rather_than_an_organisation_without_teams(self, fake_cache):
+        """Read as empty, a refused listing retires the owner of every project in the organisation."""
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=None)):
+            assert await service.get_org_teams("acme") is None
+
+    @pytest.mark.asyncio
+    async def test_an_unanswered_listing_is_not_cached(self, fake_cache):
+        """A cached refusal would hold the whole organisation undetermined for the TTL."""
+        service = _service()
+        responses = [None, _ORG_TEAMS]
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(side_effect=responses)) as paginated:
+            assert await service.get_org_teams("acme") is None
+            assert await service.get_org_teams("acme") == _ORG_TEAMS
+
+        assert paginated.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_the_second_read_is_served_from_the_cache_whole(self, fake_cache):
+        """The jobs of one workflow run arrive together, and each would otherwise page the listing
+        again. What comes back out has to be the listing, parents and all: the parent is what tells
+        two same-named teams apart."""
+        service = _service()
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(return_value=_ORG_TEAMS)) as paginated:
+            await service.get_org_teams("acme")
+            second = await service.get_org_teams("acme")
+
+        assert second == _ORG_TEAMS
+        assert paginated.await_count == 1
+
+    @pytest.mark.asyncio
+    async def test_one_organisation_never_answers_for_another(self, fake_cache):
+        service = _service()
+        responses = [_ORG_TEAMS, []]
+        with patch.object(service, "_api_get_paginated", new=AsyncMock(side_effect=responses)) as paginated:
+            assert await service.get_org_teams("acme") == _ORG_TEAMS
+            assert await service.get_org_teams("acme-labs") == []
+
+        assert [call.args[0] for call in paginated.await_args_list] == [
+            "/orgs/acme/teams",
+            "/orgs/acme-labs/teams",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_one_instance_never_answers_for_another(self, fake_cache):
+        """Two instances can both be configured for the same organisation name, and each reads it
+        through its own token."""
+        responses = [_ORG_TEAMS, []]
+        with patch.object(GitHubService, "_api_get_paginated", new=AsyncMock(side_effect=responses)):
+            assert await _service("gh-1").get_org_teams("acme") == _ORG_TEAMS
+            assert await _service("gh-2").get_org_teams("acme") == []
 
 
 _ACCESS_LEVELS = ("pull", "triage", "push", "maintain", "admin")
