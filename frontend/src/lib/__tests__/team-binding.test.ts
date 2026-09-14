@@ -4,8 +4,8 @@ import {
   bindingSummary,
   githubTeamOptionLabel,
   gitlabGroupOptionLabel,
-  instanceOptionLabel,
   providerInstances,
+  withheldInstancesNote,
 } from '@/lib/team-binding'
 
 function instance(overrides: Partial<{ id: string; name: string; is_active: boolean; sync_teams: boolean }> = {}) {
@@ -76,16 +76,23 @@ describe('providerInstances', () => {
   })
 })
 
-describe('instanceOptionLabel', () => {
-  it('names an instance that syncs teams by itself', () => {
-    expect(instanceOptionLabel({ ...instance({ name: 'GitLab Corp' }), provider: 'gitlab' })).toBe(
-      'GitLab Corp'
+describe('withheldInstancesNote', () => {
+  it('names the single instance held back and the toggle that brings it back', () => {
+    expect(
+      withheldInstancesNote([{ ...instance({ name: 'GitLab Legacy', sync_teams: false }), provider: 'gitlab' }])
+    ).toBe(
+      'GitLab Legacy is not offered: team sync is off, so a binding would assign nothing. ' +
+        'Switch it on under Settings → Integrations.'
     )
   })
 
-  it('says a binding on an instance without team sync assigns nothing', () => {
-    expect(
-      instanceOptionLabel({ ...instance({ name: 'GitLab Legacy', sync_teams: false }), provider: 'gitlab' })
-    ).toBe('GitLab Legacy — team sync off, assigns nothing')
+  it('names every instance held back, so none goes missing silently', () => {
+    const note = withheldInstancesNote([
+      { ...instance({ id: 'gh-2', name: 'GitHub Enterprise', sync_teams: false }), provider: 'github' },
+      { ...instance({ id: 'gl-2', name: 'GitLab Legacy', sync_teams: false }), provider: 'gitlab' },
+      { ...instance({ id: 'gl-3', name: 'GitLab Attic', sync_teams: false }), provider: 'gitlab' },
+    ])
+
+    expect(note).toContain('GitHub Enterprise, GitLab Legacy and GitLab Attic are not offered')
   })
 })
