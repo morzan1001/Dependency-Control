@@ -51,7 +51,7 @@ const GITLAB_NO_SYNC = { id: "gl-2", name: "GitLab Legacy", is_active: true, syn
 const listOf = (items: object[]) => ({ items, total: items.length, page: 1, size: 100, pages: 1 });
 const NO_INSTANCES = listOf([]);
 const NOTHING_CONFIGURED = /No active GitHub or GitLab instance is configured/;
-const SYNC_OFF_OPTION = /GitLab Legacy — team sync off, assigns nothing/;
+const WITHHELD_NOTE = /GitLab Legacy is not offered: team sync is off/;
 
 const ORG_TEAMS = [
   { id: 4711, slug: "payments", name: "Payments", parent_slug: null, parent_name: null },
@@ -151,13 +151,21 @@ describe("TeamBindingDialog", () => {
   });
 
   it("does not offer an instance this team is already bound to", async () => {
-    renderDialog(team([GITHUB_BINDING, GITLAB_BINDING]));
+    renderDialog(team([GITLAB_BINDING]));
 
     await openSelect("Instance");
 
-    expect(await screen.findByRole("option", { name: SYNC_OFF_OPTION })).toBeInTheDocument();
+    expect(await screen.findByRole("option", { name: "GitHub.com" })).toBeInTheDocument();
     expect(screen.queryByRole("option", { name: "GitLab Corp" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("option", { name: "GitHub.com" })).not.toBeInTheDocument();
+  });
+
+  it("does not offer an instance whose team sync is off", async () => {
+    renderDialog(team());
+
+    await openSelect("Instance");
+
+    expect(await screen.findByRole("option", { name: "GitLab Corp" })).toBeInTheDocument();
+    expect(screen.queryByRole("option", { name: /GitLab Legacy/ })).not.toBeInTheDocument();
   });
 
   it("keeps a binding listed and removable once its instance is gone", async () => {
@@ -260,20 +268,33 @@ describe("TeamBindingDialog", () => {
     expect(await screen.findByRole("option", { name: "Edge (mo/edge)" })).toBeInTheDocument();
   });
 
-  it("marks an instance that does not sync teams as assigning nothing", async () => {
+  it("names the instance it withholds, so its absence is not read as a fault", async () => {
     renderDialog(team());
 
-    await pickOption("Instance", SYNC_OFF_OPTION);
-
-    expect(
-      await screen.findByText(/Team sync is off on GitLab Legacy, so a binding there assigns nothing/),
-    ).toBeInTheDocument();
+    expect(await screen.findByText(WITHHELD_NOTE)).toHaveTextContent(
+      "Switch it on under Settings → Integrations.",
+    );
   });
 
-  it("says a binding held on an instance without team sync assigns nothing", async () => {
+  it("says nothing about withheld instances when every instance syncs teams", async () => {
+    listGitlabInstances.mockResolvedValue(listOf([GITLAB]));
+    renderDialog(team());
+
+    expect(await screen.findByLabelText("Instance")).toBeInTheDocument();
+    expect(screen.queryByText(/not offered/)).not.toBeInTheDocument();
+  });
+
+  it("keeps a binding held on an instance without team sync listed and removable", async () => {
     renderDialog(team([LEGACY_BINDING]));
 
-    expect(await screen.findByText(/Team sync is off on this instance/)).toBeInTheDocument();
+    expect(await screen.findByText("GitLab · GitLab Legacy")).toBeInTheDocument();
+    expect(screen.getByText("mo/attic (#5)")).toBeInTheDocument();
+    expect(screen.getByText(/Team sync is off on this instance/)).toBeInTheDocument();
+    expect(screen.queryByText(WITHHELD_NOTE)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove the binding on GitLab Legacy" }));
+
+    await waitFor(() => expect(clearBinding).toHaveBeenCalledWith("t-1", "gl-2"));
   });
 
   it("picks the only instance on offer, so a single-instance installation needs no choice", async () => {

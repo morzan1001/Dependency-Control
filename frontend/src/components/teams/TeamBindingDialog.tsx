@@ -13,8 +13,8 @@ import {
   bindingSummary,
   githubTeamOptionLabel,
   gitlabGroupOptionLabel,
-  instanceOptionLabel,
   providerInstances,
+  withheldInstancesNote,
   ProviderInstance,
   PROVIDER_LABEL,
 } from '@/lib/team-binding';
@@ -278,7 +278,9 @@ export function TeamBindingDialog({ team, isOpen, onClose }: TeamBindingDialogPr
 
   const bindings = team?.bindings ?? [];
   const bound = new Set(bindings.map((binding) => binding.instance_id));
-  const offerable = instances.filter((instance) => instance.is_active && !bound.has(instance.id));
+  const unbound = instances.filter((instance) => instance.is_active && !bound.has(instance.id));
+  const offerable = unbound.filter((instance) => instance.sync_teams);
+  const withheld = unbound.filter((instance) => !instance.sync_teams);
 
   const activeProviders = [
     ...new Set(instances.filter((instance) => instance.is_active).map((i) => i.provider)),
@@ -345,42 +347,38 @@ export function TeamBindingDialog({ team, isOpen, onClose }: TeamBindingDialogPr
           </p>
         )}
 
-        {!instancesLoading && activeProviders.length > 0 && offerable.length === 0 && (
+        {!instancesLoading && activeProviders.length > 0 && unbound.length === 0 && (
           <p className="text-sm text-muted-foreground">
             This team already holds a binding on every active instance.
           </p>
         )}
 
         {offerable.length > 0 && (
-          <div className="grid gap-2">
-            <FieldRow label="Instance" htmlFor="binding-instance">
-              <Select value={selected?.id ?? ''} onValueChange={setPickedInstanceId}>
-                <SelectTrigger id="binding-instance">
-                  <SelectValue placeholder="Select an instance" />
-                </SelectTrigger>
-                <SelectContent>
-                  {offerableProviders.map((provider) => (
-                    <SelectGroup key={provider}>
-                      <SelectLabel>{PROVIDER_LABEL[provider]}</SelectLabel>
-                      {offerable
-                        .filter((instance) => instance.provider === provider)
-                        .map((instance) => (
-                          <SelectItem key={instance.id} value={instance.id}>
-                            {instanceOptionLabel(instance)}
-                          </SelectItem>
-                        ))}
-                    </SelectGroup>
-                  ))}
-                </SelectContent>
-              </Select>
-            </FieldRow>
-            {selected && !selected.sync_teams && (
-              <p className="text-xs text-muted-foreground">
-                Team sync is off on {selected.name}, so a binding there assigns nothing until it is
-                switched on under Settings &rarr; Integrations.
-              </p>
-            )}
-          </div>
+          <FieldRow label="Instance" htmlFor="binding-instance">
+            <Select value={selected?.id ?? ''} onValueChange={setPickedInstanceId}>
+              <SelectTrigger id="binding-instance">
+                <SelectValue placeholder="Select an instance" />
+              </SelectTrigger>
+              <SelectContent>
+                {offerableProviders.map((provider) => (
+                  <SelectGroup key={provider}>
+                    <SelectLabel>{PROVIDER_LABEL[provider]}</SelectLabel>
+                    {offerable
+                      .filter((instance) => instance.provider === provider)
+                      .map((instance) => (
+                        <SelectItem key={instance.id} value={instance.id}>
+                          {instance.name}
+                        </SelectItem>
+                      ))}
+                  </SelectGroup>
+                ))}
+              </SelectContent>
+            </Select>
+          </FieldRow>
+        )}
+
+        {!instancesLoading && withheld.length > 0 && (
+          <p className="text-xs text-muted-foreground">{withheldInstancesNote(withheld)}</p>
         )}
 
         {team && selected?.provider === 'github' && (

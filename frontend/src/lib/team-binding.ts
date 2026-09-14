@@ -52,8 +52,14 @@ export function providerInstances(
   return [...tagged(github, 'github'), ...tagged(gitlab, 'gitlab')];
 }
 
-// A binding on an instance that does not sync teams resolves nothing, so the offer says so rather
-// than withholding the instance: sync can be switched on later and the binding then starts working.
-export function instanceOptionLabel(instance: ProviderInstance): string {
-  return instance.sync_teams ? instance.name : `${instance.name} — team sync off, assigns nothing`;
+// An instance missing from the offer without explanation reads as a misconfiguration, so the
+// instances held back are named alongside the toggle that brings them back.
+export function withheldInstancesNote(instances: ProviderInstance[]): string {
+  const names = instances.map((instance) => instance.name);
+  const listed =
+    names.length === 1 ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+  return (
+    `${listed} ${names.length === 1 ? 'is' : 'are'} not offered: team sync is off, so a binding ` +
+    `would assign nothing. Switch it on under Settings → Integrations.`
+  );
 }
