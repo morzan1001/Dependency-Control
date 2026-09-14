@@ -8,7 +8,7 @@ from app.models.gitlab_api import GitLabMember
 from app.models.project import Project, Scan
 from app.models.stats import Stats
 from app.models.team import GitLabGroupBinding
-from app.services.gitlab import GitLabService
+from app.services.gitlab import GitLabGroupLookup, GitLabService
 from tests.mocks.gitlab import (
     make_gitlab_instance,
     make_merge_request,
@@ -82,7 +82,7 @@ class TestTeamMemberSyncResolveOnly:
         user_repo.get_raw_by_username = AsyncMock(return_value=None)
         user_repo.create = AsyncMock()
         members = [GitLabMember(username="real", email="real@example.com", access_level=40)]
-        result = asyncio.run(service._build_team_members(members, user_repo))
+        result, _ = asyncio.run(service._build_team_members(members, user_repo))
         assert len(result) == 1
         assert result[0].user_id == "u-1"
         user_repo.create.assert_not_called()
@@ -96,7 +96,7 @@ class TestTeamMemberSyncResolveOnly:
         user_repo.get_raw_by_username = AsyncMock(return_value=None)
         user_repo.create = AsyncMock()
         members = [GitLabMember(username="alice", email="Alice@Corp.com", access_level=40)]
-        result = asyncio.run(service._build_team_members(members, user_repo))
+        result, _ = asyncio.run(service._build_team_members(members, user_repo))
         assert len(result) == 1
         assert result[0].user_id == "u-1"
         user_repo.get_raw_by_email_ci.assert_awaited_once_with("Alice@Corp.com")
@@ -109,8 +109,8 @@ class TestTeamMemberSyncResolveOnly:
         user_repo.get_raw_by_username = AsyncMock(return_value=None)
         user_repo.create = AsyncMock()
         members = [GitLabMember(username="group_875_bot_f4597604b42b729d0de22d01e5126164", access_level=40)]
-        result = asyncio.run(service._build_team_members(members, user_repo))
-        assert result == []
+        result, unresolved = asyncio.run(service._build_team_members(members, user_repo))
+        assert (result, unresolved) == ([], 1)
         user_repo.create.assert_not_called()
 
 
@@ -574,7 +574,7 @@ class TestTeamSyncGroupMembers:
             patch.object(service, "_resolve_group_by_path", new_callable=AsyncMock) as mock_resolve,
         ):
             mock_members.return_value = members
-            mock_resolve.return_value = {"id": 10}  # Parent group ID
+            mock_resolve.return_value = GitLabGroupLookup(reachable=True, group={"id": 10})
 
             user_doc = {"_id": "uid", "username": "dev"}
             users_coll = create_mock_collection(find_one=user_doc)
@@ -751,7 +751,8 @@ class TestTeamSyncResolveGroupFallback:
             patch.object(service, "_resolve_group_by_path", new_callable=AsyncMock) as mock_resolve,
         ):
             mock_members.return_value = members
-            mock_resolve.return_value = None  # truncated path "org" cannot be resolved
+            # Reachable and absent: the truncated path "org" carries no group on this instance.
+            mock_resolve.return_value = GitLabGroupLookup(reachable=True, group=None)
 
             user_doc = {"_id": "uid", "username": "dev"}
             users_coll = create_mock_collection(find_one=user_doc)

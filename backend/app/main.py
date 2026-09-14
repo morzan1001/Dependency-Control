@@ -42,6 +42,7 @@ from app.api.v1.endpoints import (
 from app.core.config import settings
 from app.core.init_db import init_db
 from app.core.metrics import PrometheusMiddleware, metrics_endpoint
+from app.core.middleware import RelativeLocationMiddleware
 from app.core.worker import worker_manager
 from app.db.mongodb import close_mongo_connection, connect_to_mongo
 from app.services.analytics.scopes import ScopeResolutionError, ScopeTooLargeError
@@ -80,6 +81,7 @@ Source Code: [GitHub Repository](https://github.com/morzan1001/Dependency-Contro
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 app.add_middleware(PrometheusMiddleware)
+app.add_middleware(RelativeLocationMiddleware)
 
 
 @app.exception_handler(ScopeResolutionError)

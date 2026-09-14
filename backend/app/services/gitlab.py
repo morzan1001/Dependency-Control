@@ -375,7 +375,8 @@ class GitLabService:
 
         # /members/all includes inherited members; uncapped so large projects aren't truncated.
         members = await self._api_get_paginated(f"/projects/{project_id}/members/all", max_pages=None)
-        return [GitLabMember(**m) for m in members] if members else None
+        # An empty list is a project nobody is left in, and stays a list; only None is a failure.
+        return None if members is None else [GitLabMember(**m) for m in members]
 
     async def get_group_members(self, group_id: int) -> list[GitLabMember] | None:
         """Fetch all group members via the system token."""
@@ -385,7 +386,8 @@ class GitLabService:
 
         # Uncapped so large groups aren't silently truncated.
         members = await self._api_get_paginated(f"/groups/{group_id}/members/all", max_pages=None)
-        return [GitLabMember(**m) for m in members] if members else None
+        # An empty list is a group nobody is left in, and stays a list; only None is a failure.
+        return None if members is None else [GitLabMember(**m) for m in members]
 
     async def get_groups(self, search: str | None = None) -> list[dict[str, Any]] | None:
         """The groups this instance's token can see, to pick from when binding a team.
@@ -413,16 +415,23 @@ class GitLabService:
         logger.error("GitLab GET /groups/%s answered %s", group_id, response.status_code)
         return GitLabGroupLookup(reachable=False, group=None)
 
-    async def _resolve_group_by_path(self, group_path: str) -> dict[str, Any] | None:
-        """Resolve a GitLab group by its full path. Returns group dict with 'id' key."""
+    async def _resolve_group_by_path(self, group_path: str) -> GitLabGroupLookup:
+        """One group by its full path."""
         import urllib.parse
 
         encoded_path = urllib.parse.quote(group_path, safe="")
         response = await self._api_get(f"/groups/{encoded_path}")
-        if response and response.status_code == 200:
-            result: dict[str, Any] = response.json()
-            return result
-        return None
+        if response is None:
+            return GitLabGroupLookup(reachable=False, group=None)
+        if response.status_code == 200:
+            group: dict[str, Any] = response.json()
+            return GitLabGroupLookup(reachable=True, group=group)
+        # 404 is also what GitLab answers for a group the token may not see, which is the same
+        # answer here: this instance cannot resolve it.
+        if response.status_code == 404:
+            return GitLabGroupLookup(reachable=True, group=None)
+        logger.error("GitLab GET /groups/%s answered %s", group_path, response.status_code)
+        return GitLabGroupLookup(reachable=False, group=None)
 
     async def _resolve_sync_target_group(
         self,
@@ -463,9 +472,18 @@ class GitLabService:
         if len(parts) <= depth:
             return group_id, truncated_path
 
-        parent_group = await self._resolve_group_by_path(truncated_path)
-        if parent_group:
-            return parent_group["id"], truncated_path
+        parent = await self._resolve_group_by_path(truncated_path)
+        if parent.group:
+            return parent.group["id"], truncated_path
+
+        if not parent.reachable:
+            # Falling back here would sync a team of different granularity than every other run,
+            # so an unanswered lookup leaves the project's owner undetermined instead.
+            logger.warning(
+                f"GitLab did not answer for group path '{truncated_path}' while syncing "
+                f"project_id={gitlab_project_id}; the owner stays undetermined."
+            )
+            return None
 
         # Cannot resolve parent — fall back to the deepest known group consistently.
         # Mixing the truncated *name* with the deep *id* produces a team whose
@@ -485,19 +503,21 @@ class GitLabService:
         self,
         gitlab_members: list[GitLabMember],
         user_repo: UserRepository,
-    ) -> list[TeamMember]:
-        """Resolve each GitLab member to an EXISTING local user and map to TeamMember.
+    ) -> tuple[list[TeamMember], int]:
+        """Resolve each GitLab member to an EXISTING local user, plus the unresolved count.
 
         Tagged with this instance so the merge in ``_upsert_team_with_members`` refreshes only the
         subset this instance established. Members without a local account are skipped — sync never
         creates users (see ``_find_user``).
         """
         team_members: list[TeamMember] = []
+        unresolved = 0
         for member in gitlab_members:
             user = await self._find_user(member, user_repo)
             if not user:
                 # No local account yet, or a GitLab service account/bot. Sync never creates
                 # users; a real member is added on their next sync after logging in via OIDC.
+                unresolved += 1
                 logger.debug(
                     "Skipping GitLab member with no local account (username=%s, access_level=%s).",
                     member.username,
@@ -507,7 +527,7 @@ class GitLabService:
             role = "admin" if member.access_level >= GITLAB_ADMIN_MIN_ACCESS else "member"
             user_id = str(user.get("_id", user.get("id")))
             team_members.append(TeamMember(user_id=user_id, role=role, source=self._member_source))
-        return team_members
+        return team_members, unresolved
 
     async def _find_user(
         self,
@@ -527,6 +547,27 @@ class GitLabService:
             return await user_repo.get_raw_by_username(member.username)
         return None
 
+    async def _resolve_group_members(
+        self,
+        members: list[GitLabMember],
+        user_repo: UserRepository,
+        team_name: str,
+        group_id: int,
+    ) -> list[TeamMember] | None:
+        """The members to store for a group, or None to leave the stored ones alone."""
+        team_members, unresolved = await self._build_team_members(members, user_repo)
+        if unresolved and not team_members:
+            # A token that lost profile access resolves nobody; writing that would strip the
+            # whole gitlab subset and read as a group everyone left.
+            logger.warning(
+                "Resolved 0 of %d members of GitLab group '%s' (group_id=%d); leaving the existing members untouched.",
+                unresolved,
+                team_name,
+                group_id,
+            )
+            return None
+        return team_members
+
     async def _upsert_team_with_members(
         self,
         team_repo: TeamRepository,
@@ -536,16 +577,19 @@ class GitLabService:
         instance_id: str,
         group_id: int,
         group_path: str,
-        team_members: list[TeamMember],
+        team_members: list[TeamMember] | None,
     ) -> str | None:
+        """``team_members`` is None to leave the stored members alone, which the rename must not
+        hang on: a group whose members none resolve would otherwise never follow a rename."""
         now = datetime.now(timezone.utc)
         binding = GitLabGroupBinding(instance_id=instance_id, external_id=group_id, path=group_path)
         if existing_team:
-            # Merge, not replace: refresh only the subset this instance established.
-            merged_members = merge_team_members(
-                existing_team.get("members") or [], team_members, self._member_source
-            )
-            update_data: dict = {"members": merged_members, "updated_at": now}
+            update_data: dict = {"updated_at": now}
+            if team_members is not None:
+                # Merge, not replace: refresh only the subset this instance established.
+                update_data["members"] = merge_team_members(
+                    existing_team.get("members") or [], team_members, self._member_source
+                )
             # Sync name only if it still has the auto-generated GitLab prefix.
             # If the team was manually renamed (e.g. to "BOS"), keep the custom name.
             current_name = existing_team.get("name", "")
@@ -594,7 +638,7 @@ class GitLabService:
             instance_id = str(self.instance.id)
 
             members = await self.get_group_members(group_id)
-            if not members:
+            if members is None:
                 logger.warning(
                     f"Failed to fetch members for group '{team_name}' (group_id={group_id}) "
                     f"while syncing project_id={gitlab_project_id}. Skipping member sync."
@@ -610,9 +654,9 @@ class GitLabService:
                 )
                 return GitLabTeamSyncResult(None)
 
-            # Match ONLY by the (instance, group) composite key (see no-members branch above).
+            # Match ONLY by the (instance, group) composite key (see the failed-fetch branch above).
             existing_team = await team_repo.get_raw_by_binding(TEAM_SOURCE_GITLAB, instance_id, group_id)
-            team_members = await self._build_team_members(members, user_repo)
+            team_members = await self._resolve_group_members(members, user_repo, team_name, group_id)
             team_id = await self._upsert_team_with_members(
                 team_repo, existing_team, team_name, description, instance_id, group_id, group_path, team_members
             )
