@@ -1,4 +1,12 @@
-# Release 1.9.39
+# Release 1.9.40
+
+## 📦 Build & CI
+
+- chore: release 1.9.40 — GitLab parity, the permission gate, and the tests that pinned nothing (#0)
+
+
+
+# Release 1.9.40
 
 
 
