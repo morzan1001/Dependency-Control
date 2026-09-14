@@ -76,6 +76,21 @@ class TestAnEmptyGroupRetiresItsMembers:
         # The subset names this instance, and the server replaces no entry outside it.
         assert _written_subset(team_repo).source == _OWN
 
+    def test_an_empty_group_no_team_is_bound_to_creates_none(self):
+        """Determined, and the answer is nobody. A team with no members owns its projects on behalf
+        of no one, and every project of the group would then show an owner nobody can be reached
+        through."""
+        service = _service()
+
+        with (
+            make_repositories() as (team_repo, _),
+            patch.object(service, "get_group_members", new=AsyncMock(return_value=[])),
+        ):
+            result = _run(service)
+
+        assert result.team_ids == []
+        team_repo.create.assert_not_called()
+
 
 class TestAnUnreachableGroupChangesNothing:
     def test_a_failed_member_fetch_leaves_the_stored_members_untouched(self):
@@ -243,7 +258,11 @@ class TestATeamNothingChangedAboutIsNotWritten:
         ):
             _run(service)
 
-        assert team_repo.update_with_binding.await_args.args[1]["name"] == "GitLab Group: grp"
+        update = team_repo.update_with_binding.await_args.args[1]
+        assert update["name"] == "GitLab Group: grp"
+        # The description names the group as well, and left behind it goes on naming the one the
+        # team was moved out of.
+        assert update["description"] == "Imported from GitLab Group grp"
 
     def test_a_team_its_owner_renamed_keeps_that_name(self):
         service = _service()

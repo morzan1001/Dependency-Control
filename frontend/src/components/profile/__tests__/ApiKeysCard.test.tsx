@@ -436,11 +436,18 @@ describe("ApiKeysCard", () => {
     ).toBeInTheDocument();
   });
 
-  it("renders a damaged key and still offers to revoke it", async () => {
+  it("names every missing field of a damaged key and still offers to revoke it", async () => {
     const confirmed = vi.spyOn(window, "confirm").mockReturnValue(true);
     renderCard([damagedKey]);
 
+    // The row is listed at all so its owner can revoke a key nothing else can identify, which
+    // takes a placeholder wherever the stored key has nothing to show.
     expect(await screen.findByText(/Unnamed key/i)).toBeInTheDocument();
+    expect(screen.getByText("no surfaces stored")).toBeInTheDocument();
+    expect(screen.getByText("prefix not recorded")).toBeInTheDocument();
+    expect(screen.getByText("creation date not recorded")).toBeInTheDocument();
+    expect(screen.getByText("no expiry stored")).toBeInTheDocument();
+    expect(screen.getByText("usage not recorded")).toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: DAMAGED_REVOKE_LABEL }));
 

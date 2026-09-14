@@ -685,7 +685,9 @@ class TestTeamSyncSilentReturnsAreLogged:
             f"Expected info naming project_id 777 and 'user namespace'. Got: {[r.message for r in caplog.records]}"
         )
 
-    def test_logs_when_group_members_empty_and_no_existing_team(self, gitlab_instance_a, caplog):
+    def test_logs_when_the_member_fetch_fails_and_no_existing_team(self, gitlab_instance_a, caplog):
+        """The fetch failing is what reaches this return; an empty group is an answer and takes the
+        determined path instead."""
         service = GitLabService(gitlab_instance_a)
 
         with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
