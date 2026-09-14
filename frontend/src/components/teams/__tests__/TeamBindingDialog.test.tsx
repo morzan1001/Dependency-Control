@@ -51,6 +51,7 @@ const GITLAB_NO_SYNC = { id: "gl-2", name: "GitLab Legacy", is_active: true, syn
 const listOf = (items: object[]) => ({ items, total: items.length, page: 1, size: 100, pages: 1 });
 const NO_INSTANCES = listOf([]);
 const NOTHING_CONFIGURED = /No active GitHub or GitLab instance is configured/;
+const LISTING_FAILED = /The instance list could not be loaded/;
 const WITHHELD_NOTE = /GitLab Legacy is not offered: team sync is off/;
 
 const ORG_TEAMS = [
@@ -337,6 +338,38 @@ describe("TeamBindingDialog", () => {
       await screen.findByText("This team already holds a binding on every active instance."),
     ).toBeInTheDocument();
     expect(screen.queryByLabelText("Instance")).not.toBeInTheDocument();
+  });
+
+  it("does not read a failed listing as an installation with nothing configured", async () => {
+    listInstances.mockRejectedValue({ response: { data: { detail: "Upstream timed out" } } });
+    listGitlabInstances.mockRejectedValue({ response: { data: { detail: "Upstream timed out" } } });
+    renderDialog(team([GITLAB_BINDING]));
+
+    expect(await screen.findByText(LISTING_FAILED)).toHaveTextContent("Upstream timed out");
+    expect(screen.queryByText(NOTHING_CONFIGURED)).not.toBeInTheDocument();
+  });
+
+  it("does not mark a live binding orphaned because the listing failed", async () => {
+    listGitlabInstances.mockRejectedValue(new Error("boom"));
+    renderDialog(team([GITLAB_BINDING]));
+
+    expect(await screen.findByText(LISTING_FAILED)).toBeInTheDocument();
+    expect(screen.queryByText(/this binding can only be removed/)).not.toBeInTheDocument();
+    expect(screen.getByText("mo/edge (#77)")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Remove the binding on gl-1" }));
+
+    await waitFor(() => expect(clearBinding).toHaveBeenCalledWith("t-1", "gl-1"));
+  });
+
+  it("withholds the every-instance-is-bound verdict while a listing is missing", async () => {
+    listInstances.mockRejectedValue(new Error("boom"));
+    renderDialog(team([GITHUB_BINDING, GITLAB_BINDING, LEGACY_BINDING]));
+
+    expect(await screen.findByText(LISTING_FAILED)).toBeInTheDocument();
+    expect(
+      screen.queryByText("This team already holds a binding on every active instance."),
+    ).not.toBeInTheDocument();
   });
 
   it("waits for both instance lists before declaring the installation empty", async () => {

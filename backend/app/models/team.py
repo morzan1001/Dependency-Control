@@ -28,26 +28,6 @@ class TeamMember(BaseModel):
         return v
 
 
-def merge_team_members(
-    stored_members: list[dict[str, Any]],
-    resolved: list[TeamMember],
-    source: str,
-) -> list[dict[str, Any]]:
-    """The stored member list with the subset ``source`` established replaced by ``resolved``.
-
-    ``source`` names one instance of one provider, so everything else is carried over exactly as
-    stored: restamping a member another sync established would exempt them from that sync, which
-    could then neither refresh their role nor drop them when they leave its group.
-
-    An empty ``resolved`` is a group nobody is left in and empties that subset; a *failed* fetch is
-    the caller's to recognise, and it must not reach here at all.
-    """
-    merged = {member["user_id"]: member for member in stored_members if member.get("source") != source}
-    for member in resolved:
-        merged[member.user_id] = member.model_dump()
-    return list(merged.values())
-
-
 class _ProviderBinding(BaseModel):
     provider: str
     instance_id: str

@@ -8,12 +8,15 @@ from app.models.gitlab_api import GitLabMember
 from app.models.project import Project, Scan
 from app.models.stats import Stats
 from app.models.team import GitLabGroupBinding
+from app.repositories.teams import MemberSubset
 from app.services.gitlab import GitLabGroupLookup, GitLabService
+from tests.mocks.fake_mongo import FakeDatabase
 from tests.mocks.gitlab import (
     make_gitlab_instance,
     make_merge_request,
     make_note,
     make_project_details,
+    make_repositories,
 )
 from tests.mocks.mongodb import create_mock_collection, create_mock_db
 
@@ -467,7 +470,9 @@ class TestMrDecorationInstanceRouting:
 class TestTeamSyncNamespaceCheck:
     """Team sync should only run for group-namespace projects."""
 
-    def test_returns_none_for_user_namespace(self, gitlab_instance_a):
+    def test_reports_no_owner_for_a_user_namespace(self, gitlab_instance_a):
+        """Determined, not unknown: GitLab says a person owns this project, so the group owner it
+        carried from before the move is retired."""
         service = GitLabService(gitlab_instance_a)
 
         result = asyncio.run(
@@ -482,7 +487,7 @@ class TestTeamSyncNamespaceCheck:
                 ),
             )
         )
-        assert result.team_ids is None
+        assert result.team_ids == []
 
     def test_returns_none_when_no_project_data(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
@@ -675,7 +680,7 @@ class TestTeamSyncSilentReturnsAreLogged:
                 )
             )
 
-        assert result.team_ids is None
+        assert result.team_ids == []
         assert any("777" in r.message and "user namespace" in r.message.lower() for r in caplog.records), (
             f"Expected info naming project_id 777 and 'user namespace'. Got: {[r.message for r in caplog.records]}"
         )
@@ -737,32 +742,21 @@ class TestTeamSyncSilentReturnsAreLogged:
 
 
 class TestTeamSyncResolveGroupFallback:
-    """When _resolve_group_by_path fails, the team must be created consistently (name and group_id at the same level)."""
+    """A parent path that will not resolve leaves the owner undetermined rather than binding a team
+    of different granularity than every other run of the instance."""
 
-    def test_falls_back_to_deep_group_id_and_path_when_truncation_unresolvable(self, gitlab_instance_a):
+    def _sync(self, gitlab_instance_a, lookup):
         service = GitLabService(gitlab_instance_a)
-
-        members = [
-            GitLabMember(username="dev", email="dev@test.com", access_level=30),
-        ]
+        members = [GitLabMember(username="dev", email="dev@test.com", access_level=30)]
 
         with (
-            patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members,
-            patch.object(service, "_resolve_group_by_path", new_callable=AsyncMock) as mock_resolve,
+            make_repositories(user_doc={"_id": "uid", "username": "dev"}) as (team_repo, _),
+            patch.object(service, "get_group_members", new=AsyncMock(return_value=members)),
+            patch.object(service, "_resolve_group_by_path", new=AsyncMock(return_value=lookup)),
         ):
-            mock_members.return_value = members
-            # Reachable and absent: the truncated path "org" carries no group on this instance.
-            mock_resolve.return_value = GitLabGroupLookup(reachable=True, group=None)
-
-            user_doc = {"_id": "uid", "username": "dev"}
-            users_coll = create_mock_collection(find_one=user_doc)
-            teams_coll = create_mock_collection(find_one=None)
-            teams_coll.insert_one = AsyncMock()
-            db = create_mock_db({"teams": teams_coll, "users": users_coll})
-
-            asyncio.run(
+            result = asyncio.run(
                 service.sync_team_from_gitlab(
-                    db=db,
+                    db=MagicMock(),
                     gitlab_project_id=100,
                     gitlab_project_path="org/subgroup/proj",
                     gitlab_project_data=make_project_details(
@@ -772,72 +766,47 @@ class TestTeamSyncResolveGroupFallback:
                     ),
                 )
             )
+        return result, team_repo
 
-            teams_coll.insert_one.assert_called_once()
-            team_data = teams_coll.insert_one.call_args[0][0]
-            # group_id and name must reference the SAME level — either both deep or both truncated.
-            if team_data["bindings"][0]["external_id"] == 42:
-                assert team_data["name"] == "GitLab Group: org/subgroup", (
-                    f"If the bound group is the deep namespace.id (42), the team name must reflect "
-                    f"the deep path, not the unresolvable truncated path. Got name={team_data['name']!r}"
-                )
+    def test_a_truncated_path_the_instance_does_not_carry_creates_nothing(self, gitlab_instance_a):
+        result, team_repo = self._sync(gitlab_instance_a, GitLabGroupLookup(reachable=True, group=None))
 
+        assert result.team_ids is None
+        team_repo.create.assert_not_called()
 
-class _StatefulTeamsCollection:
-    """In-memory teams collection mimicking MongoDB find_one/insert_one/update_one filter semantics."""
+    def test_a_truncated_path_that_went_unanswered_creates_nothing(self, gitlab_instance_a):
+        result, team_repo = self._sync(gitlab_instance_a, GitLabGroupLookup(reachable=False, group=None))
 
-    def __init__(self):
-        self.docs: list[dict] = []
+        assert result.team_ids is None
+        team_repo.create.assert_not_called()
 
-    @staticmethod
-    def _resolve(doc: dict, field: str):
-        """A dotted path into the bindings array resolves to every element's value, as Mongo's does."""
-        head, _, rest = field.partition(".")
-        if not rest:
-            return doc.get(head)
-        return [entry.get(rest) for entry in doc.get(head) or []]
+    def test_a_resolved_parent_binds_the_truncated_group(self, gitlab_instance_a):
+        result, team_repo = self._sync(gitlab_instance_a, GitLabGroupLookup(reachable=True, group={"id": 10}))
 
-    @classmethod
-    def _matches(cls, doc: dict, query: dict) -> bool:
-        for field, wanted in query.items():
-            resolved = cls._resolve(doc, field)
-            if resolved == wanted:
-                continue
-            if isinstance(resolved, list) and wanted in resolved:
-                continue
-            return False
-        return True
-
-    async def find_one(self, query, *args, **kwargs):
-        for doc in self.docs:
-            if self._matches(doc, query):
-                return dict(doc)
-        return None
-
-    async def insert_one(self, doc):
-        self.docs.append(dict(doc))
-        return MagicMock(inserted_id=doc.get("_id", "mock-id"))
-
-    async def update_one(self, query, update, *args, **kwargs):
-        for doc in self.docs:
-            if self._matches(doc, query):
-                doc.update(update.get("$set", {}))
-                return MagicMock(modified_count=1)
-        return MagicMock(modified_count=0)
+        assert result.team_ids is not None
+        created = team_repo.create.await_args.args[0]
+        assert created.name == "GitLab Group: org"
+        assert created.bindings[0].external_id == 10
 
 
 class TestTeamSyncInstanceScoping:
     """GitLab team matching must be scoped to the (instance, group) composite key; two instances owning a group with the SAME path must NOT collide."""
 
-    def _sync(self, instance, teams_coll, group_id, group_path):
+    @staticmethod
+    def _db():
+        db = FakeDatabase()
+        asyncio.run(db.users.insert_one({"_id": "uid", "username": "dev", "email": "dev@test.com"}))
+        return db
+
+    @staticmethod
+    def _teams(db):
+        return asyncio.run(db.teams.find({}).to_list(None))
+
+    def _sync(self, instance, db, group_id, group_path):
         """The one team the group resolves to, or None."""
         service = GitLabService(instance)
         members = [GitLabMember(username="dev", email="dev@test.com", access_level=30)]
-        user_doc = {"_id": "uid", "username": "dev"}
-        users_coll = create_mock_collection(find_one=user_doc)
-        db = create_mock_db({"teams": teams_coll, "users": users_coll})
-        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
-            mock_members.return_value = members
+        with patch.object(service, "get_group_members", new=AsyncMock(return_value=members)):
             result = asyncio.run(
                 service.sync_team_from_gitlab(
                     db=db,
@@ -856,10 +825,10 @@ class TestTeamSyncInstanceScoping:
         """Instance A and B both own a group at path 'shared-grp' (same group id, different instances); syncing B must create a NEW team, not adopt/mutate A's."""
         instance_a = make_gitlab_instance(id="inst-a", name="A", url="https://a.com")
         instance_b = make_gitlab_instance(id="inst-b", name="B", url="https://b.com")
-        teams = _StatefulTeamsCollection()
+        db = self._db()
 
-        team_a_id = self._sync(instance_a, teams, group_id=7, group_path="shared-grp")
-        team_b_id = self._sync(instance_b, teams, group_id=7, group_path="shared-grp")
+        team_a_id = self._sync(instance_a, db, group_id=7, group_path="shared-grp")
+        team_b_id = self._sync(instance_b, db, group_id=7, group_path="shared-grp")
 
         assert team_a_id is not None
         assert team_b_id is not None
@@ -869,70 +838,52 @@ class TestTeamSyncInstanceScoping:
             "this is the cross-tenant collision (Finding 8)."
         )
         # Two separate team documents must exist, each tagged to its own instance.
-        assert len(teams.docs) == 2
-        by_instance = {d["bindings"][0]["instance_id"]: d for d in teams.docs}
-        assert set(by_instance) == {"inst-a", "inst-b"}
+        teams = self._teams(db)
+        assert len(teams) == 2
+        assert {d["bindings"][0]["instance_id"] for d in teams} == {"inst-a", "inst-b"}
 
     def test_instance_a_members_not_mutated_by_instance_b_sync(self):
         """Instance A's team and its member list must be untouched after B syncs."""
         instance_a = make_gitlab_instance(id="inst-a", name="A", url="https://a.com")
         instance_b = make_gitlab_instance(id="inst-b", name="B", url="https://b.com")
-        teams = _StatefulTeamsCollection()
+        db = self._db()
 
-        team_a_id = self._sync(instance_a, teams, group_id=7, group_path="shared-grp")
-        team_a_before = next(d for d in teams.docs if d["_id"] == team_a_id)
+        team_a_id = self._sync(instance_a, db, group_id=7, group_path="shared-grp")
+        team_a_before = next(d for d in self._teams(db) if d["_id"] == team_a_id)
         members_before = [dict(m) for m in team_a_before["members"]]
 
-        self._sync(instance_b, teams, group_id=7, group_path="shared-grp")
+        self._sync(instance_b, db, group_id=7, group_path="shared-grp")
 
-        team_a_after = next(d for d in teams.docs if d["_id"] == team_a_id)
+        team_a_after = next(d for d in self._teams(db) if d["_id"] == team_a_id)
         assert [binding["key"] for binding in team_a_after["bindings"]] == ["gitlab:inst-a:7"]
         assert team_a_after["members"] == members_before
 
     def test_repeated_sync_same_instance_group_reuses_team(self):
         """Re-syncing the SAME (instance, group) must re-use the same team, not create a duplicate."""
         instance_a = make_gitlab_instance(id="inst-a", name="A", url="https://a.com")
-        teams = _StatefulTeamsCollection()
+        db = self._db()
 
-        first_id = self._sync(instance_a, teams, group_id=7, group_path="shared-grp")
-        second_id = self._sync(instance_a, teams, group_id=7, group_path="shared-grp")
+        first_id = self._sync(instance_a, db, group_id=7, group_path="shared-grp")
+        second_id = self._sync(instance_a, db, group_id=7, group_path="shared-grp")
 
         assert first_id == second_id
-        assert len(teams.docs) == 1
+        assert len(self._teams(db)) == 1
 
 
-class TestTeamSyncMergeSemantics:
-    """Sync must MERGE members, not REPLACE the whole array: manual members survive; only the gitlab-sourced subset is refreshed."""
+class TestMemberResolution:
+    """A member is looked for under both keys GitLab offers: the email it reports, and the handle."""
 
-    def test_manual_member_survives_gitlab_resync(self, gitlab_instance_a):
+    @staticmethod
+    def _resolved(gitlab_instance_a, member, **user_lookups):
         service = GitLabService(gitlab_instance_a)
 
-        # Existing team already has a manually-added member AND a stale gitlab member.
-        existing_team = {
-            "_id": "team-1",
-            "name": "GitLab Group: grp",
-            "bindings": [
-                GitLabGroupBinding(instance_id=str(gitlab_instance_a.id), external_id=42).model_dump()
-            ],
-            "members": [
-                {"user_id": "manual-user", "role": "admin", "source": "manual"},
-                {"user_id": "stale-gitlab-user", "role": "member", "source": _OWN},
-            ],
-        }
-
-        # GitLab now reports a single, different member.
-        members = [GitLabMember(username="newdev", email="newdev@test.com", access_level=30)]
-
-        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
-            mock_members.return_value = members
-            user_doc = {"_id": "new-gitlab-user", "username": "newdev"}
-            users_coll = create_mock_collection(find_one=user_doc)
-            teams_coll = create_mock_collection(find_one=existing_team)
-            db = create_mock_db({"teams": teams_coll, "users": users_coll})
-
-            result = asyncio.run(
+        with (
+            make_repositories(**user_lookups) as (team_repo, user_repo),
+            patch.object(service, "get_group_members", new=AsyncMock(return_value=[member])),
+        ):
+            asyncio.run(
                 service.sync_team_from_gitlab(
-                    db=db,
+                    db=MagicMock(),
                     gitlab_project_id=100,
                     gitlab_project_path="grp/proj",
                     gitlab_project_data=make_project_details(
@@ -940,22 +891,85 @@ class TestTeamSyncMergeSemantics:
                     ),
                 )
             )
+        return team_repo, user_repo
+
+    def test_a_member_whose_email_matches_nobody_is_still_found_by_their_handle(self, gitlab_instance_a):
+        """GitLab reports the address on the account, which need not be the one the local user was
+        created with; dropping the member costs them every project the team owns."""
+        member = GitLabMember(username="ada", email="ada@personal.example", access_level=30)
+
+        team_repo, user_repo = self._resolved(gitlab_instance_a, member, by_username={"_id": "u-ada"})
+
+        user_repo.get_raw_by_username.assert_awaited_once_with("ada")
+        created = team_repo.create.await_args.args[0]
+        assert [m.user_id for m in created.members] == ["u-ada"]
+
+    def test_a_member_the_email_names_is_not_looked_up_twice(self, gitlab_instance_a):
+        """The email comes with the listing, so it costs no request and is tried first."""
+        member = GitLabMember(username="ada", email="ada@corp.com", access_level=30)
+
+        team_repo, user_repo = self._resolved(gitlab_instance_a, member, by_email={"_id": "u-ada"})
+
+        user_repo.get_raw_by_username.assert_not_awaited()
+        assert [m.user_id for m in team_repo.create.await_args.args[0].members] == ["u-ada"]
+
+    def test_a_member_neither_key_names_is_skipped(self, gitlab_instance_a):
+        member = GitLabMember(username="ghost", email="ghost@corp.com", access_level=30)
+
+        team_repo, _ = self._resolved(gitlab_instance_a, member)
+
+        team_repo.create.assert_not_called()
+
+
+class TestTeamSyncMergeSemantics:
+    """A sync hands the server the subset it resolved, and the server replaces exactly that subset:
+    a hand-added member and every other instance's survive, this instance's stale ones do not."""
+
+    @staticmethod
+    def _sync(service, existing_team, members, user_doc, *, namespace_path="grp"):
+        with (
+            make_repositories(existing_team=existing_team, user_doc=user_doc) as (team_repo, _),
+            patch.object(service, "get_group_members", new=AsyncMock(return_value=members)),
+        ):
+            result = asyncio.run(
+                service.sync_team_from_gitlab(
+                    db=MagicMock(),
+                    gitlab_project_id=100,
+                    gitlab_project_path=f"{namespace_path}/proj",
+                    gitlab_project_data=make_project_details(
+                        namespace_kind="group", namespace_id=42, namespace_path=namespace_path
+                    ),
+                )
+            )
+        return result, team_repo
+
+    @staticmethod
+    def _team(doc_id, members, *, path=None, name="GitLab Group: grp"):
+        binding = GitLabGroupBinding(instance_id="instance-a-id", external_id=42, path=path)
+        return {"_id": doc_id, "name": name, "bindings": [binding.model_dump()], "members": members}
+
+    def test_the_write_claims_only_the_subset_this_instance_resolved(self, gitlab_instance_a):
+        service = GitLabService(gitlab_instance_a)
+        existing_team = self._team(
+            "team-1",
+            [
+                {"user_id": "manual-user", "role": "admin", "source": "manual"},
+                {"user_id": "stale-gitlab-user", "role": "member", "source": _OWN},
+            ],
+            path="grp",
+        )
+        members = [GitLabMember(username="newdev", email="newdev@test.com", access_level=30)]
+
+        result, team_repo = self._sync(service, existing_team, members, {"_id": "new-gitlab-user"})
 
         assert result.team_ids == ["team-1"]
-        teams_coll.update_one.assert_called_once()
-        update_set = teams_coll.update_one.call_args[0][1]["$set"]
-        merged = {m["user_id"]: m for m in update_set["members"]}
-        # Manual member must SURVIVE.
-        assert "manual-user" in merged
-        assert merged["manual-user"]["source"] == "manual"
-        # Stale member of this instance must be dropped (replaced by the fresh subset).
-        assert "stale-gitlab-user" not in merged
-        # Fresh member must be present and tagged with the instance that resolved them.
-        assert "new-gitlab-user" in merged
-        assert merged["new-gitlab-user"]["source"] == _OWN
+        assert team_repo.update_with_binding.await_args.args[4] == MemberSubset(
+            _OWN, [{"user_id": "new-gitlab-user", "role": "member", "source": _OWN}]
+        )
 
-    def test_no_other_instances_subset_is_touched_by_this_ones_sync(self, gitlab_instance_a):
-        """A team bound to several instances holds several subsets; a sync owns exactly one of them."""
+    def test_the_write_carries_no_member_of_another_provenance(self, gitlab_instance_a):
+        """A team bound to several instances holds several subsets; a sync owns exactly one of them,
+        and the write never mentions the rest."""
         service = GitLabService(gitlab_instance_a)
         foreign = [
             {"user_id": "manual-user", "role": "admin", "source": "manual"},
@@ -963,109 +977,54 @@ class TestTeamSyncMergeSemantics:
             {"user_id": "gl-b-user", "role": "member", "source": team_source(TEAM_SOURCE_GITLAB, "instance-b-id")},
             {"user_id": "unmigrated-user", "role": "member", "source": TEAM_SOURCE_GITLAB},
         ]
-        existing_team = {
-            "_id": "team-3",
-            "name": "GitLab Group: grp",
-            "bindings": [GitLabGroupBinding(instance_id=str(gitlab_instance_a.id), external_id=42).model_dump()],
-            "members": list(foreign),
-        }
+        members = [GitLabMember(username="newdev", email="newdev@test.com", access_level=30)]
 
-        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
-            mock_members.return_value = [GitLabMember(username="newdev", email="newdev@test.com", access_level=30)]
-            users_coll = create_mock_collection(find_one={"_id": "new-gitlab-user", "username": "newdev"})
-            teams_coll = create_mock_collection(find_one=existing_team)
-            db = create_mock_db({"teams": teams_coll, "users": users_coll})
+        _, team_repo = self._sync(
+            service, self._team("team-3", list(foreign), path="grp"), members, {"_id": "new-gitlab-user"}
+        )
 
-            asyncio.run(
-                service.sync_team_from_gitlab(
-                    db=db,
-                    gitlab_project_id=100,
-                    gitlab_project_path="grp/proj",
-                    gitlab_project_data=make_project_details(
-                        namespace_kind="group", namespace_id=42, namespace_path="grp"
-                    ),
-                )
-            )
+        subset = team_repo.update_with_binding.await_args.args[4]
+        assert subset == MemberSubset(_OWN, [{"user_id": "new-gitlab-user", "role": "member", "source": _OWN}])
 
-        written = teams_coll.update_one.call_args[0][1]["$set"]["members"]
-        assert written[: len(foreign)] == foreign
-        assert written[len(foreign) :] == [{"user_id": "new-gitlab-user", "role": "member", "source": _OWN}]
-
-    def test_user_both_manual_and_gitlab_is_not_duplicated_gitlab_role_wins(self, gitlab_instance_a):
+    def test_a_user_the_group_also_holds_is_resolved_once_with_the_gitlab_role(self, gitlab_instance_a):
         service = GitLabService(gitlab_instance_a)
-
-        existing_team = {
-            "_id": "team-2",
-            "name": "GitLab Group: grp",
-            "bindings": [
-                GitLabGroupBinding(instance_id=str(gitlab_instance_a.id), external_id=42).model_dump()
-            ],
-            "members": [
-                {"user_id": "dual-user", "role": "member", "source": "manual"},
-            ],
-        }
+        existing_team = self._team("team-2", [{"user_id": "dual-user", "role": "member", "source": "manual"}], path="grp")
         # GitLab reports the same user as a Maintainer (admin).
         members = [GitLabMember(username="dual", email="dual@test.com", access_level=40)]
 
-        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
-            mock_members.return_value = members
-            user_doc = {"_id": "dual-user", "username": "dual"}
-            users_coll = create_mock_collection(find_one=user_doc)
-            teams_coll = create_mock_collection(find_one=existing_team)
-            db = create_mock_db({"teams": teams_coll, "users": users_coll})
+        _, team_repo = self._sync(service, existing_team, members, {"_id": "dual-user"})
 
-            asyncio.run(
-                service.sync_team_from_gitlab(
-                    db=db,
-                    gitlab_project_id=100,
-                    gitlab_project_path="grp/proj",
-                    gitlab_project_data=make_project_details(
-                        namespace_kind="group", namespace_id=42, namespace_path="grp"
-                    ),
-                )
-            )
+        assert team_repo.update_with_binding.await_args.args[4] == MemberSubset(
+            _OWN, [{"user_id": "dual-user", "role": "admin", "source": _OWN}]
+        )
 
-        update_set = teams_coll.update_one.call_args[0][1]["$set"]
-        dual_entries = [m for m in update_set["members"] if m["user_id"] == "dual-user"]
-        # No duplicate; the synced entry wins for a user the group also holds.
-        assert len(dual_entries) == 1
-        assert dual_entries[0]["source"] == _OWN
-        assert dual_entries[0]["role"] == "admin"
+    def test_two_gitlab_members_resolving_to_one_user_keep_the_admin_entry(self, gitlab_instance_a):
+        """A duplicate entry breaks add_member's $ne guard, and a last-wins merge demotes the admin."""
+        service = GitLabService(gitlab_instance_a)
+        members = [
+            GitLabMember(username="ada", email="ada@test.com", access_level=50),
+            GitLabMember(username="ada-bot", email="ada.bot@test.com", access_level=10),
+        ]
+
+        _, team_repo = self._sync(service, self._team("team-4", [], path="grp"), members, {"_id": "u-ada"})
+
+        assert team_repo.update_with_binding.await_args.args[4] == MemberSubset(
+            _OWN, [{"user_id": "u-ada", "role": "admin", "source": _OWN}]
+        )
 
     def test_a_moved_group_restamps_the_path_on_the_binding_it_resolved_through(self, gitlab_instance_a):
         """The path is display-only, so nothing else notices it going stale: a group that moved
         would go on naming the namespace it left, on the binding and in the picker, until somebody
         rebound it by hand."""
         service = GitLabService(gitlab_instance_a)
-        binding = GitLabGroupBinding(instance_id=str(gitlab_instance_a.id), external_id=42, path="old/grp")
-        existing_team = {
-            "_id": "team-moved",
-            "name": "GitLab Group: old/grp",
-            "bindings": [binding.model_dump()],
-            "members": [],
-        }
+        existing_team = self._team("team-moved", [], path="old/grp", name="GitLab Group: old/grp")
+        members = [GitLabMember(username="dev", email="dev@test.com", access_level=30)]
 
-        with patch.object(service, "get_group_members", new_callable=AsyncMock) as mock_members:
-            mock_members.return_value = [GitLabMember(username="dev", email="dev@test.com", access_level=30)]
-            users_coll = create_mock_collection(find_one={"_id": "u-dev", "username": "dev"})
-            teams_coll = create_mock_collection(find_one=existing_team)
-            db = create_mock_db({"teams": teams_coll, "users": users_coll})
+        _, team_repo = self._sync(service, existing_team, members, {"_id": "u-dev"}, namespace_path="new")
 
-            asyncio.run(
-                service.sync_team_from_gitlab(
-                    db=db,
-                    gitlab_project_id=100,
-                    gitlab_project_path="new/proj",
-                    gitlab_project_data=make_project_details(
-                        namespace_kind="group", namespace_id=42, namespace_path="new"
-                    ),
-                )
-            )
-
-        update_set = teams_coll.update_one.call_args[0][1]["$set"]
-        assert update_set["bindings.$[entry].path"] == "new"
         # Addressed by key, so a team bound to several instances restamps only the one that answered.
-        assert teams_coll.update_one.call_args[1]["array_filters"] == [{"entry.key": binding.key}]
+        assert team_repo.update_with_binding.await_args.args[2] == "gitlab:instance-a-id:42"
+        assert team_repo.update_with_binding.await_args.args[3] == {"path": "new"}
 
 
 class TestTeamSyncEmaillessMembers:

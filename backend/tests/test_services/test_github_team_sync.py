@@ -1032,3 +1032,32 @@ class TestResolutionCost:
         assert result == GitHubTeamSyncResult(None)
         assert elapsed < 1
         assert any("acme/widgets" in record.getMessage() for record in caplog.records)
+
+    @pytest.mark.asyncio
+    async def test_the_member_reads_share_the_budget_the_checks_drew_on(self, caplog):
+        """One budget for the whole resolution: the member listing and profile read per holding
+        team run inside the ingest request too, and an ingest was measured at 46s with only the
+        checks bounded."""
+        service = _service()
+        org_teams, bound = self._many_bound_teams(2)
+        team_repo = _team_repo(*bound)
+
+        async def _never_answers(*_args, **_kwargs):
+            await asyncio.sleep(60)
+            raise AssertionError("the member listing should have been abandoned")
+
+        with _sync_stubs(service, team_repo, org_teams=org_teams, access={"t0": True, "t1": True}) as stubs:
+            stubs.members.side_effect = _never_answers
+            with (
+                patch("app.services.github._GITHUB_RESOLUTION_TIMEOUT", 0.05),
+                caplog.at_level("WARNING", logger="app.services.github"),
+            ):
+                started = time.perf_counter()
+                result = await service.sync_team_from_github(MagicMock(), "acme", "acme/widgets")
+                elapsed = time.perf_counter() - started
+
+        assert elapsed < 1
+        # The teams hold the repository whatever their member lists say, so ownership is determined.
+        assert result == GitHubTeamSyncResult(["t-0", "t-1"])
+        team_repo.update_with_binding.assert_not_called()
+        assert any("stay as they are" in record.getMessage() for record in caplog.records)
