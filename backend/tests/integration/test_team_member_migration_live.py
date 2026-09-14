@@ -11,8 +11,8 @@ from datetime import datetime, timezone
 import pytest
 
 from app.core.constants import TEAM_SOURCE_GITHUB, TEAM_SOURCE_GITLAB, team_source
-from app.models.team import TeamMember, merge_team_members
-from app.repositories.teams import TeamRepository
+from app.models.team import TeamMember
+from app.repositories.teams import MemberSubset, TeamRepository
 from scripts.backfill_team_member_sources import (
     EXIT_BARE_MEMBERS_FOUND,
     apply_plan,
@@ -69,12 +69,14 @@ async def test_the_new_image_reads_an_unmigrated_team_and_claims_none_of_its_mem
     and the estate is simply un-refreshed until the migration runs."""
     await _seed(db)
 
-    team = await TeamRepository(db).get_by_id("t-edge")
+    repo = TeamRepository(db)
+    team = await repo.get_by_id("t-edge")
     assert [member.source for member in team.members] == [TEAM_SOURCE_GITLAB, "manual", "manual"]
 
     stored = await _members(db, "t-edge")
     for source in (_STAMPED_GITLAB, team_source(TEAM_SOURCE_GITLAB, "gl-legacy")):
-        assert merge_team_members(stored, [], source) == stored
+        await repo.update_with_binding("t-edge", {}, f"gitlab:{source}:1", {}, MemberSubset(source, []))
+        assert await _members(db, "t-edge") == stored
 
 
 async def test_the_migration_stamps_the_bare_entries_and_nothing_else(db):

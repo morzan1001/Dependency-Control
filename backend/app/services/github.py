@@ -38,8 +38,9 @@ _GITHUB_COM_JWKS_URI = "https://token.actions.githubusercontent.com/.well-known/
 
 _GITHUB_API_TIMEOUT = 10.0
 
-# The resolution runs inside the ingest request. The per-team checks are concurrent, so this bounds
-# the whole step rather than one call, and a GitHub that answers slowly costs an ingest this much once.
+# The resolution runs inside the ingest request. One deadline covers every call it makes -- the
+# per-team checks and the per-member reads that follow them -- so a GitHub that answers slowly costs
+# an ingest this much once, rather than this much per phase.
 _GITHUB_RESOLUTION_TIMEOUT = 30.0
 
 _DEFAULT_ACCEPT = "application/vnd.github+json"
@@ -1011,13 +1012,10 @@ class GitHubService:
                 )
                 return GitHubTeamSyncResult([])
 
+            deadline = asyncio.get_running_loop().time() + _GITHUB_RESOLUTION_TIMEOUT
             try:
-                # Only the reads are bounded: cancelling them costs nothing, while cancelling a
-                # half-written set of teams would leave teams behind that own nothing.
-                bindings = await asyncio.wait_for(
-                    self._resolve_repository_holders(org, owner, repo, bound_teams),
-                    _GITHUB_RESOLUTION_TIMEOUT,
-                )
+                async with asyncio.timeout_at(deadline):
+                    bindings = await self._resolve_repository_holders(org, owner, repo, bound_teams)
             except TimeoutError:
                 logger.warning(
                     "Resolving the owning teams of %s took longer than %.0fs; leaving them untouched.",
@@ -1050,10 +1048,26 @@ class GitHubService:
                 [binding.slug for binding in bindings],
             )
 
+            # Local writes, outside the deadline: the ownership answer below is what the ingest is
+            # here for, and it needs every holder to have a team.
             holders = await self._materialise_holders(team_repo, org, bindings)
             user_repo = UserRepository(db)
-            for holder in holders:
-                await self._sync_holder(team_repo, user_repo, org, holder, repository_path)
+            try:
+                # The same deadline, so the reads and the member listing and profile read per team
+                # share one budget instead of each getting a whole one.
+                async with asyncio.timeout_at(deadline):
+                    for holder in holders:
+                        await self._sync_holder(team_repo, user_repo, org, holder, repository_path)
+            except TimeoutError:
+                # The teams hold the repository either way, which is what the ingest asked; only
+                # their member lists stay as stored until a sync finishes inside the budget.
+                logger.warning(
+                    "Refreshing the members of the %d team(s) holding %s did not finish inside the "
+                    "%.0fs resolution budget; they still own it and their stored members stay as they are.",
+                    len(holders),
+                    repository_path,
+                    _GITHUB_RESOLUTION_TIMEOUT,
+                )
             return GitHubTeamSyncResult([str(holder.team["_id"]) for holder in holders])
 
         except Exception as e:

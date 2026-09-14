@@ -93,7 +93,10 @@ def _patch_response():
     return _ctx()
 
 
-def _make_gitlab_service_mock(response):
+_ONE_GROUP = [{"id": 1, "full_path": "mo", "name": "MO"}]
+
+
+def _make_gitlab_service_mock(response, groups=_ONE_GROUP):
     mock_client = AsyncMock()
     mock_client.get = AsyncMock(return_value=response)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
@@ -103,6 +106,7 @@ def _make_gitlab_service_mock(response):
     mock_svc._api_client.return_value = mock_client
     mock_svc.api_url = "https://gitlab.test.com/api/v4"
     mock_svc._get_auth_headers.return_value = {"PRIVATE-TOKEN": "tok"}
+    mock_svc.get_groups = AsyncMock(return_value=groups)
     return mock_svc
 
 
@@ -628,6 +632,45 @@ class TestTestConnection:
 
         assert result.success is True
         assert result.gitlab_version == "16.5.0"
+        assert "1 group(s)" in result.message
+
+    @staticmethod
+    def _probe(admin_user, *, sync_teams=True, groups=_ONE_GROUP):
+        from app.api.v1.endpoints.gitlab_instances import test_connection
+
+        instance = make_gitlab_instance(id="inst-1", access_token="glpat-tok", sync_teams=sync_teams)
+        response = MagicMock(status_code=200)
+        response.json.return_value = {"version": "16.5.0"}
+        service = _make_gitlab_service_mock(response, groups=groups)
+
+        with (
+            patch(f"{MODULE}.GitLabInstanceRepository", return_value=_make_repo_mock(get_by_id=instance)),
+            patch(f"{MODULE}.GitLabService", return_value=service),
+        ):
+            result = asyncio.run(test_connection(instance_id="inst-1", db=MagicMock(), current_user=admin_user))
+        return result, service
+
+    def test_a_token_that_cannot_list_groups_fails_a_team_syncing_instance(self, admin_user):
+        """The listing is how team sync resolves a project's group; a green test here sends the
+        operator looking elsewhere while nothing ever syncs."""
+        result, _ = self._probe(admin_user, groups=None)
+
+        assert result.success is False
+        assert "read_api" in result.message
+        assert result.gitlab_version == "16.5.0"
+
+    def test_a_token_belonging_to_no_group_fails_a_team_syncing_instance(self, admin_user):
+        result, _ = self._probe(admin_user, groups=[])
+
+        assert result.success is False
+        assert "no group" in result.message
+
+    def test_a_pure_ingest_instance_is_never_asked_for_groups(self, admin_user):
+        """Demanding group access of an instance that syncs no teams would fail a good setup."""
+        result, service = self._probe(admin_user, sync_teams=False, groups=None)
+
+        assert result.success is True
+        service.get_groups.assert_not_called()
 
     def test_http_error_returns_failure(self, admin_user):
         from app.api.v1.endpoints.gitlab_instances import test_connection

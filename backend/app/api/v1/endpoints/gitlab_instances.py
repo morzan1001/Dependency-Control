@@ -291,13 +291,63 @@ async def list_instance_groups(
     return [GitLabGroupOption(**option) for option in build_group_options(groups)]
 
 
+def _test_result(
+    instance: GitLabInstance,
+    *,
+    success: bool,
+    message: str,
+    version: str | None = None,
+) -> GitLabInstanceTestConnectionResponse:
+    return GitLabInstanceTestConnectionResponse(
+        success=success,
+        message=message,
+        gitlab_version=version,
+        instance_name=instance.name,
+        url=instance.url,
+    )
+
+
+async def _probe_group_access(
+    gitlab_service: GitLabService, instance: GitLabInstance, version: str | None
+) -> GitLabInstanceTestConnectionResponse | str:
+    """A failure response, or the sentence saying how many groups the token reads.
+
+    The groups it can see are exactly the groups team sync can resolve, so a token that reads none
+    syncs nothing — and a green test that hides that sends the operator looking elsewhere for weeks.
+    """
+    groups = await gitlab_service.get_groups()
+    if groups is None:
+        return _test_result(
+            instance,
+            success=False,
+            version=version,
+            message=(
+                "Connection successful, but the token could not list groups. Team sync resolves a "
+                "project's group through this listing, so it needs a token with the read_api or api "
+                "scope. Until then no repository on this instance gets a team."
+            ),
+        )
+    if not groups:
+        return _test_result(
+            instance,
+            success=False,
+            version=version,
+            message=(
+                "Connection successful, but the token belongs to no group. GitLab scopes the group "
+                "listing to the token's own memberships, so team sync needs an identity that is a "
+                "member of the groups DependencyControl covers, or an administrator token."
+            ),
+        )
+    return f" Token reads {len(groups)} group(s)."
+
+
 @router.post("/{instance_id}/test-connection", responses=RESP_AUTH_404)
 async def test_connection(
     instance_id: str,
     db: DatabaseDep,
     current_user: Annotated[User, Depends(deps.PermissionChecker(Permissions.SYSTEM_MANAGE))],
 ) -> GitLabInstanceTestConnectionResponse:
-    """Test connection by calling GitLab's /version endpoint to verify connectivity and credentials."""
+    """Call GitLab's /version endpoint and, for a team-syncing instance, exercise the token's group access."""
     instance_repo = GitLabInstanceRepository(db)
     instance = await instance_repo.get_by_id(instance_id)
 
@@ -307,13 +357,7 @@ async def test_connection(
         )
 
     if not instance.access_token:
-        return GitLabInstanceTestConnectionResponse(
-            success=False,
-            message="No access token configured for this instance",
-            gitlab_version=None,
-            instance_name=instance.name,
-            url=instance.url,
-        )
+        return _test_result(instance, success=False, message="No access token configured for this instance")
 
     gitlab_service = GitLabService(instance)
 
@@ -321,29 +365,20 @@ async def test_connection(
         async with gitlab_service._api_client() as client:
             response = await client.get(f"{gitlab_service.api_url}/version", headers=gitlab_service._get_auth_headers())
 
-            if response.status_code == 200:
-                version_data = response.json()
-                return GitLabInstanceTestConnectionResponse(
-                    success=True,
-                    message="Connection successful",
-                    gitlab_version=version_data.get("version"),
-                    instance_name=instance.name,
-                    url=instance.url,
-                )
-            else:
-                return GitLabInstanceTestConnectionResponse(
-                    success=False,
-                    message=f"GitLab API returned HTTP {response.status_code}",
-                    gitlab_version=None,
-                    instance_name=instance.name,
-                    url=instance.url,
-                )
+        if response.status_code != 200:
+            return _test_result(instance, success=False, message=f"GitLab API returned HTTP {response.status_code}")
+
+        version = response.json().get("version")
+        message = "Connection successful"
+        # Only an instance that syncs teams needs group access; demanding it of a pure-ingest
+        # instance would fail a perfectly good setup.
+        if instance.sync_teams:
+            probe = await _probe_group_access(gitlab_service, instance, version)
+            if isinstance(probe, GitLabInstanceTestConnectionResponse):
+                return probe
+            message += probe
+
+        return _test_result(instance, success=True, message=message, version=version)
     except Exception as e:
         logger.exception("Connection test failed for instance '%s': %s", instance.name, e)
-        return GitLabInstanceTestConnectionResponse(
-            success=False,
-            message=f"Connection failed: {e!s}",
-            gitlab_version=None,
-            instance_name=instance.name,
-            url=instance.url,
-        )
+        return _test_result(instance, success=False, message=f"Connection failed: {e!s}")

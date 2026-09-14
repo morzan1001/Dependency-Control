@@ -10,12 +10,7 @@ from app.models.team import (
     Team,
     TeamMember,
     binding_of,
-    merge_team_members,
 )
-
-_GITHUB_A = team_source(TEAM_SOURCE_GITHUB, "gh-inst-a")
-_GITHUB_B = team_source(TEAM_SOURCE_GITHUB, "gh-inst-b")
-_GITLAB_A = team_source(TEAM_SOURCE_GITLAB, "gl-inst-a")
 
 
 class TestTeamMember:
@@ -128,51 +123,3 @@ class TestTeamBindings:
         teams; rejecting the value here answers 500 instead of leaving the member in place."""
         assert TeamMember(user_id="u-1", source="gitlab").source == "gitlab"
 
-
-class TestMergeTeamMembers:
-    """One sync's write over a team several syncs and several people contribute members to."""
-
-    def test_a_hand_added_member_is_never_removed_by_a_sync(self):
-        manual = {"user_id": "u-manual", "role": "admin", "source": "manual"}
-
-        assert merge_team_members([manual], [], _GITHUB_A) == [manual]
-
-    def test_another_providers_member_keeps_the_provenance_that_can_refresh_them(self):
-        """Relabelled manual, they would be exempt from the sync that does own them — kept for
-        good, and never retired when they leave that group."""
-        gitlab_member = {"user_id": "u-gl", "role": "admin", "source": _GITLAB_A}
-
-        assert merge_team_members([gitlab_member], [], _GITHUB_A) == [gitlab_member]
-
-    def test_another_instance_of_the_same_provider_keeps_its_subset(self):
-        theirs = {"user_id": "u-b", "role": "member", "source": _GITHUB_B}
-
-        merged = merge_team_members([theirs], [TeamMember(user_id="u-a", source=_GITHUB_A)], _GITHUB_A)
-
-        assert merged == [theirs, {"user_id": "u-a", "role": TEAM_ROLE_MEMBER, "source": _GITHUB_A}]
-
-    def test_a_member_whose_source_names_no_instance_is_nobodys_to_replace(self):
-        """Nothing says which instance added them, so neither sync of that provider may drop them."""
-        unmigrated = {"user_id": "u-old", "role": "member", "source": TEAM_SOURCE_GITHUB}
-        untagged = {"user_id": "u-older", "role": "member"}
-
-        assert merge_team_members([unmigrated, untagged], [], _GITHUB_A) == [unmigrated, untagged]
-
-    def test_a_member_who_left_the_group_disappears(self):
-        departed = [{"user_id": "u-gone", "role": "member", "source": _GITHUB_A}]
-
-        assert merge_team_members(departed, [], _GITHUB_A) == []
-
-    def test_the_resolved_entry_wins_over_the_stored_one(self):
-        stored = [{"user_id": "u-1", "role": "member", "source": _GITHUB_A}]
-
-        merged = merge_team_members(stored, [TeamMember(user_id="u-1", role="admin", source=_GITHUB_A)], _GITHUB_A)
-
-        assert merged == [{"user_id": "u-1", "role": "admin", "source": _GITHUB_A}]
-
-    def test_a_hand_added_member_the_group_also_holds_is_not_duplicated(self):
-        stored = [{"user_id": "u-1", "role": "member", "source": "manual"}]
-
-        merged = merge_team_members(stored, [TeamMember(user_id="u-1", role="admin", source=_GITHUB_A)], _GITHUB_A)
-
-        assert merged == [{"user_id": "u-1", "role": "admin", "source": _GITHUB_A}]

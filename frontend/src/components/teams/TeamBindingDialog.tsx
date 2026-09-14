@@ -267,12 +267,16 @@ function GitLabBindingForm({
 export function TeamBindingDialog({ team, isOpen, onClose }: TeamBindingDialogProps) {
   const [pickedInstanceId, setPickedInstanceId] = useState<string | null>(null);
 
-  const { data: githubInstances, isLoading: githubLoading } = useGitHubInstances();
-  const { data: gitlabInstances, isLoading: gitlabLoading } = useGitLabInstances();
+  const { data: githubInstances, isLoading: githubLoading, error: githubError } = useGitHubInstances();
+  const { data: gitlabInstances, isLoading: gitlabLoading, error: gitlabError } = useGitLabInstances();
 
   const clearBinding = useClearTeamBinding();
 
   const instancesLoading = githubLoading || gitlabLoading;
+  const instancesError = githubError ?? gitlabError;
+  // A listing that failed is not a listing of nothing: until both answer, an instance missing from
+  // them is unknown rather than gone, and a live binding must not be reported as orphaned.
+  const instancesKnown = !instancesLoading && !instancesError;
   const instances = providerInstances(githubInstances?.items ?? [], gitlabInstances?.items ?? []);
   const instanceById = new Map(instances.map((instance) => [instance.id, instance]));
 
@@ -294,7 +298,7 @@ export function TeamBindingDialog({ team, isOpen, onClose }: TeamBindingDialogPr
 
   // A binding outlives the instance it names, and only its row can still clear it.
   const bindingNote = (binding: TeamBinding) => {
-    if (instancesLoading) return undefined;
+    if (!instancesKnown) return undefined;
     const instance = instanceById.get(binding.instance_id);
     if (!instance?.is_active) return STALE_INSTANCE_NOTE;
     return instance.sync_teams ? undefined : SYNC_OFF_NOTE;
@@ -340,14 +344,21 @@ export function TeamBindingDialog({ team, isOpen, onClose }: TeamBindingDialogPr
           </div>
         )}
 
-        {!instancesLoading && activeProviders.length === 0 && (
+        {instancesError && (
+          <p className="text-sm text-destructive">
+            {'The instance list could not be loaded, so an instance may be missing here and a binding ' +
+              `above that names one is not orphaned. ${extractErrorMessage(instancesError)}`}
+          </p>
+        )}
+
+        {instancesKnown && activeProviders.length === 0 && (
           <p className="text-sm text-muted-foreground">
             No active GitHub or GitLab instance is configured, so no binding can be made. Instances are
             managed under Settings &rarr; Integrations.
           </p>
         )}
 
-        {!instancesLoading && activeProviders.length > 0 && unbound.length === 0 && (
+        {instancesKnown && activeProviders.length > 0 && unbound.length === 0 && (
           <p className="text-sm text-muted-foreground">
             This team already holds a binding on every active instance.
           </p>
@@ -377,7 +388,7 @@ export function TeamBindingDialog({ team, isOpen, onClose }: TeamBindingDialogPr
           </FieldRow>
         )}
 
-        {!instancesLoading && withheld.length > 0 && (
+        {instancesKnown && withheld.length > 0 && (
           <p className="text-xs text-muted-foreground">{withheldInstancesNote(withheld)}</p>
         )}
 
